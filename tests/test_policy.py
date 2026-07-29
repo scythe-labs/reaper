@@ -703,6 +703,18 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
         assert "3 years" in flagged.message
         assert "lower this wait" in flagged.message
 
+    def test_a_single_unit_floor_keeps_its_number(self) -> None:
+        """The shipped floor is three years, so it never exercised ``humanize_window``'s
+        dropped "1" -- and this slot has no article to carry it. An operator who lowered the
+        floor to a year read "Reaper waits year of no watching" (rule 21).
+
+        Both settable single-unit floors, and there is no third: ``_protective_floors`` refuses
+        a threshold under 5 days, so "1 day" is unreachable here (rule 141).
+        """
+        for threshold, expected in ((365, "1 year"), (30, "1 month")):
+            [flagged] = self._floor_warnings(self._floored(threshold), reach=1.0)
+            assert f"waits {expected} of no watching" in flagged.message
+
     def test_the_boundary_is_exact(self) -> None:
         """At the floor a title CAN read as dormant enough, so the claim stops being true."""
         assert len(self._floor_warnings(self._floored(), reach=float(self.FLOOR) - 1)) == 1
@@ -2033,6 +2045,21 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         # span to point at, and the remedy names the box the operator is looking at.
         assert "6 months" in flagged.message
         assert "lower this to match your history" in flagged.message
+
+    def test_a_single_unit_hold_keeps_its_number(self) -> None:
+        """The dormancy floor's twin (rule 72): 180 is two units, so the shipped case never
+        exercised ``humanize_window``'s dropped "1", and "for year after they last watched"
+        has no article to carry it (rule 21).
+
+        Driven on the lowest floor the gate accepts, since this branch needs a reach that
+        clears the floor and still falls short of the hold. That is also why "1 day" has no
+        case: any reach clearing a 5-day floor already spans a 1-day hold (rule 141).
+        """
+        floored = (GateSetting(gate=GateId.MIN_DORMANCY, threshold=5),)
+        for hold, expected in ((365, "1 year"), (30, "1 month")):
+            body = self._tv(in_progress_hold_days=hold, gates=floored)
+            [flagged] = self._hold_warnings(body, reach=10.0)
+            assert f"place for {expected} after they last watched" in flagged.message
 
     def test_the_journey_that_used_to_end_on_a_silent_page(self) -> None:
         """The whole point of the issue: clearing the window warning must not clear this one.

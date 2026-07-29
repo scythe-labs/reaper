@@ -42,7 +42,7 @@ from typing import Annotated, Any, ClassVar, Literal, Self, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from reaper.clock import humanize_window
+from reaper.clock import humanize_days, humanize_window
 from reaper.engine.fields import BY_KEY, Condition, Lane, Op, ReachSpan
 from reaper.engine.gates import (
     GateId,
@@ -1222,8 +1222,11 @@ def inspect(
                 field=f"gates.{GateId.MIN_DORMANCY.value}.threshold",
                 severity="warn",
                 message=(
+                    # ``humanize_days``, not ``humanize_window``: the window helper drops a
+                    # lone "1" so it composes as "in the last year", and this slot has no
+                    # article to carry it ("waits year of no watching"). Rule 21.
                     "Nothing will be flagged for removal. Reaper waits "
-                    f"{humanize_window(dormancy_floor.threshold)} of no watching before "
+                    f"{humanize_days(dormancy_floor.threshold)} of no watching before "
                     f"anything can go, and {floor_short}, so it can't yet show a title sitting "
                     "untouched that long. Wait for it to build up, or lower this wait."
                 ),
@@ -1578,9 +1581,11 @@ def inspect(
             )
             # The hold is named BEFORE the cause clause, for the reason the window branch
             # names its span first: the in-margin arm is "does not go back that far".
+            # ``humanize_days`` for the same reason as the dormancy branch above: "for year
+            # after they last watched" has no article to carry the dropped "1" (rule 21).
             cause = (
                 "Reaper holds a viewer's place for "
-                f"{humanize_window(body.in_progress_hold_days)} after they last watched, and "
+                f"{humanize_days(body.in_progress_hold_days)} after they last watched, and "
                 f"{hold_short}"
             )
             remedy = "Wait for it to build up, or lower this to match your history."
