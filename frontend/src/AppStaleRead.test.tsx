@@ -244,8 +244,9 @@ describe("the sign-in gate through a failed refetch", () => {
     // that 401s is a loop -- so that expiry arrives as DATA, not as an error, and the gate must
     // still catch it. This is the case the deleted `isError ||` arm was mistaken for.
     //
-    // It is every 401 EXCEPT one: `/api/auth/` is exempt from that handler, so this stands in for
-    // the reads that do write, and the sign-out below drives the path that does not.
+    // It is every 401 except those under `/api/auth/`, exempt from that handler as a whole prefix,
+    // so this stands in for the reads that do write and the sign-out below drives one that does
+    // not.
     queryClient.setQueryData(["me"], null);
 
     expect(await screen.findByText(/Sign in with Plex/)).toBeInTheDocument();
@@ -272,5 +273,28 @@ describe("the sign-in gate through a failed refetch", () => {
 
     expect(await screen.findByText(/Sign in with Plex/)).toBeInTheDocument();
     expect(dashboardNav()).toBeNull();
+    // Written, not asked: the read that would have answered a dead session with an error never
+    // happens. Without this the test passes on "lands on Login" and says nothing about how.
+    expect(apiMock.me).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays signed in and asks again when the sign-out fails", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
+
+    // The other half of the split, and the reason the failure path still invalidates: nothing was
+    // revoked, so the session may well still be live and the answer is whatever `/api/auth/me`
+    // says. Deleting `signOut.onError` leaves the whole suite green without this.
+    apiMock.logout.mockRejectedValue(new Error("the network went away"));
+
+    await user.click(screen.getByRole("button", { name: /owner/ }));
+    const out = screen.getByRole("button", { name: "Sign out" });
+    await waitFor(() => expect(out).toBeEnabled());
+    await user.click(out);
+
+    expect(await screen.findByText("Couldn't sign you out. Try again.")).toBeInTheDocument();
+    await waitFor(() => expect(apiMock.me).toHaveBeenCalledTimes(2));
+    expect(dashboardNav()).toBeInTheDocument();
   });
 });

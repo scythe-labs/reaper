@@ -424,11 +424,11 @@ export function UserMenu({ user }: { user: AuthUser }) {
   const signOut = useMutation({
     mutationFn: () => api.logout(),
     // A sign-out that WORKED is written, not asked about -- the same call `main.tsx` makes for
-    // every other 401, for the same reason. `/api/auth/me` is the one path exempt from the
-    // unauthorized handler (`noteAuthFailure`, api.ts), so refetching it here answers a dead
-    // session with a query ERROR while React Query still holds the last good user beside it, and
-    // the gate below reads that as still signed in. Asking left the operator on their own
-    // dashboard until an unrelated poll happened to 401.
+    // every other 401, for the same reason. `noteAuthFailure` (api.ts) exempts the whole
+    // `/api/auth/` PREFIX, which is seven routes and this key's own read among them, so refetching
+    // it here answers a dead session with a query ERROR while React Query still holds the last
+    // good user beside it, and the gate below reads that as still signed in. Asking left the
+    // operator on their own dashboard until an unrelated poll happened to 401.
     onSuccess: () => queryClient.setQueryData(["me"], null),
     // A failure is the opposite question, and the refetch is the right way to ask it: the session
     // may well still be live, and the answer is whatever `/api/auth/me` says.
@@ -1048,10 +1048,12 @@ export function App() {
   // in. A sign-out that failed on a flaky network reached it and signed the operator out of the
   // UI anyway, which is the opposite of what that failure means.
   //
-  // What this test canNOT see is a 401 on `["me"]` itself: that path is exempt from the
-  // unauthorized handler, so it arrives as an error with the last good user still held. Every
-  // writer of this key therefore has to put the signed-out state IN, never refetch to discover
-  // it -- which is why the sign-out above writes rather than invalidates.
+  // What this test canNOT see is a 401 on `["me"]` itself: the handler exempts the whole
+  // `/api/auth/` prefix, so this key's own read arrives as an error with the last good user still
+  // held. A writer that means to convey SIGNED OUT therefore has to put that state in, never
+  // refetch to discover it -- which is why the sign-out above writes on success. Invalidating is
+  // still right where the question is open rather than answered: `signOut.onError`, where the
+  // session may well still be live, and `Login`'s `onAuthed`, where the refetch is the sign-in.
   return (
     <>
       <Announcer />
