@@ -40,7 +40,11 @@
 # together, because Vite's /api proxy target reads REAPER_PORT (see the note further down), so
 # moving only the web port leaves the second UI talking to the first instance's API. Every stop
 # this script performs is scoped to its own two ports, on `down` and on `up` alike, so a second
-# instance cannot disturb a running first one.
+# instance cannot disturb a running first one. Its logs are its own too: .dev-logs holds one file
+# per PORT, in the main checkout beside data/, so an instance booted from a worktree is still
+# readable from here. `down` and `logs` therefore need the SAME two ports the `up` had, or they
+# reach the default instance instead; a successful `up` prints the exact spelling to use.
+# One thing IS shared on purpose: the data dir, so both instances serve the same real DB.
 #
 set -euo pipefail
 
@@ -102,11 +106,27 @@ else
   DATA_DIR="$REPO/data"
 fi
 
-API_PORT="${REAPER_PORT:-8420}"
-WEB_PORT="${REAPER_WEB_PORT:-5173}"
-LOG_DIR="$REPO/.dev-logs"
-API_LOG="$LOG_DIR/api.log"
-WEB_LOG="$LOG_DIR/web.log"
+API_PORT_DEFAULT=8420
+WEB_PORT_DEFAULT=5173
+API_PORT="${REAPER_PORT:-$API_PORT_DEFAULT}"
+WEB_PORT="${REAPER_WEB_PORT:-$WEB_PORT_DEFAULT}"
+
+# A log belongs to the INSTANCE, and what identifies an instance is its PORT -- not the tree it
+# was booted from. So both halves of the path follow the port: the files are named for it, and
+# they sit in the main checkout, which is where data/ already resolves to and the scope `down`
+# and `status` already act at, since lsof reaches a port whichever tree started it.
+#
+# Keyed to the tree, both halves failed, and quietly. One directory per tree meant two instances
+# from one checkout shared one pair of files, and `nohup ... > "$API_LOG"` truncates on open: the
+# second one's start emptied the log the first was still writing to, while the first's uvicorn
+# held its file offset across that truncation and went on appending at a stale one. The other
+# half is `--branch`/`--worktree`, which re-execs from the TARGET tree: logs landed over there
+# while `down` and `logs` for those same ports were run from here, so `logs` reported nothing
+# running for a live instance -- or tailed an identically named file left by an earlier run and
+# presented it as that instance's current output.
+LOG_DIR="$MAIN_ROOT/.dev-logs"
+API_LOG="$LOG_DIR/api-$API_PORT.log"
+WEB_LOG="$LOG_DIR/web-$WEB_PORT.log"
 
 port_pids() { lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' | sed 's/ *$//' || true; }
 
@@ -152,7 +172,20 @@ case "$cmd" in
     done
     exit 0 ;;
   logs)
-    [ -f "$API_LOG" ] || { warn "no logs yet; run 'up' first"; exit 1; }
+    # Keying the files to the port moves the ambiguity from write time to read time unless this
+    # says which instance it looked for: `logs` without the env vars a second instance was
+    # started with reads the DEFAULT pair, and a bare "no logs yet" would report that as
+    # "nothing is running" while the instance you meant streams on untouched.
+    [ -f "$API_LOG" ] || {
+      warn "no logs for API :$API_PORT / web :$WEB_PORT -- run 'up' first, or set"
+      warn "REAPER_PORT and REAPER_WEB_PORT to the instance you meant"
+      # `|| true` is load-bearing under `set -euo pipefail`: with no log dir yet, `ls` fails,
+      # pipefail hands that status to the assignment and -e exits RIGHT HERE, skipping the
+      # `exit 1` below. It read as correct only because macOS `ls` happens to return 1.
+      have="$(ls "$LOG_DIR" 2>/dev/null | sed -n 's/^api-\(.*\)\.log$/\1/p' | tr '\n' ' ')" || true
+      [ -n "$have" ] && warn "logs on disk for API port(s): $have"
+      exit 1
+    }
     tail -n 40 -f "$API_LOG" "$WEB_LOG" ;;
   up|"") : ;;  # fall through
   # Print the header comment however long it grows: a hardcoded line range truncates the help
@@ -200,13 +233,20 @@ REAPER_PORT="$API_PORT" \
 wait_ready "http://127.0.0.1:$API_PORT/api/health" "API"
 wait_ready "http://localhost:$WEB_PORT/" "frontend"
 
+# `logs` and `down` reach the instance whose ports they carry, so a second instance has to be
+# told back in the spelling that reaches IT -- the bare command sends the reader to the default
+# instance, which is the same wrong-instance mistake one layer up. Empty for the default pair.
+ENVPFX=""
+[ "$API_PORT" = "$API_PORT_DEFAULT" ] && [ "$WEB_PORT" = "$WEB_PORT_DEFAULT" ] \
+  || ENVPFX="REAPER_PORT=$API_PORT REAPER_WEB_PORT=$WEB_PORT "
+
 cat <<EOF
 
   Reaper dev is up:
     UI        http://localhost:$WEB_PORT     (open this)
     API       http://localhost:$API_PORT/api
-    logs      scripts/dev-local.sh logs   (or tail $LOG_DIR/*.log)
-    stop      scripts/dev-local.sh down
+    logs      ${ENVPFX}scripts/dev-local.sh logs   (or tail $API_LOG $WEB_LOG)
+    stop      ${ENVPFX}scripts/dev-local.sh down
 
   Both auto-update: backend edits reload the API, frontend edits hot-swap in the browser.
   Log in with your normal account, or mint a throwaway local admin (prints a one-time

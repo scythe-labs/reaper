@@ -278,7 +278,10 @@ them.
   `npm run build` is a CI gate only. **A second instance beside a running one** is
   `REAPER_PORT` + `REAPER_WEB_PORT`, and the two move together: `REAPER_PORT` reaches
   uvicorn *and* Vite, whose `/api` proxy target reads it (`frontend/vite.config.ts`).
-  Setting only the web port leaves the second UI talking to the first instance's API.
+  Setting only the web port leaves the second UI talking to the first instance's API. Those
+  two ports also name its logs (`.dev-logs/api-<port>.log`, in the main checkout whichever
+  tree booted it), so pass them to `down` / `logs` / `status` as well, or those commands
+  answer for the default instance instead.
 - API calls require the header **`X-Reaper-CSRF: 1`**; auth is a cookie session.
 - Secrets live in a gitignored **`.env.local`**; `data/` (`reaper.db`, `cache.db`) is
   gitignored and rebuildable. Never paste real keys into the transcript or a commit.

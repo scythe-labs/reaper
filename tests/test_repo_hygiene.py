@@ -477,6 +477,97 @@ def test_the_pattern_kill_matcher_reads_every_spelling_it_claims() -> None:
     )
 
 
+# A FILE inside a log directory -- ``$LOG_DIR/``, ``${LOG_DIR}/``, ``$API_LOGDIR/``. The trailing
+# separator is what makes this a file rather than the directory: ``mkdir -p "$LOG_DIR"`` and
+# ``ls "$LOG_DIR"`` act on the directory, which is per-tree on purpose, and must not be collected.
+# The leading class accepts ZERO characters before ``LOG``, which a first draft does not: written
+# as ``[A-Za-z_][A-Za-z0-9_]*LOG_?DIR`` it requires a prefix and reads every spelling EXCEPT the
+# bare ``$LOG_DIR`` this tree actually uses, i.e. it collects nothing and passes (rule 147).
+_LOG_DIR_FILE = re.compile(r"\$\{?[A-Za-z0-9_]*LOG_?DIR\}?/")
+
+#: ``API_LOG`` and ``WEB_LOG`` in ``scripts/dev-local.sh``. Pinned because the ban below cannot
+#: tell a path that carries its port from one the walk no longer reaches -- both read green
+#: (rule 147). The population is the log-path lines, not the scripts: dev-local.sh dropping out
+#: of the walk takes this count to 0, so one figure covers both losses.
+_EXPECTED_INSTANCE_LOG_PATHS = 2
+
+
+def test_a_dev_script_writes_only_its_own_logs() -> None:
+    """A per-instance file names the instance: a log path must carry the port that owns it.
+
+    ``scripts/dev-local.sh`` keyed ``LOG_DIR`` to the TREE while keying every other per-instance
+    resource to the port, so two instances started from one checkout shared one pair of log
+    files. ``nohup ... > "$API_LOG"`` truncates on open, so the second instance's start emptied
+    the log the first was still writing to, and the first one's uvicorn held its file offset
+    across that truncation and kept appending at a stale one. ``logs`` then tailed whichever
+    instance opened the file last, and nothing in either instance's output said so, which is the
+    part that costs a debugging session: the output is a real instance's, just not the one the
+    reader meant (#235).
+
+    Same class as the unscoped kill above (#223) at a different resource -- a dev script acting
+    outside its own scope -- and the same fix, since the port is the only thing that tells this
+    instance from a parallel one.
+    """
+    scripts = sorted(p for p, _ in _repo_text_files() if p.suffix == ".sh")
+    paths = [
+        (path, lineno, line.strip())
+        for path in scripts
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _LOG_DIR_FILE.search(_SHELL_COMMENT.sub("", line))
+    ]
+    assert len(paths) == _EXPECTED_INSTANCE_LOG_PATHS, (
+        f"expected {_EXPECTED_INSTANCE_LOG_PATHS} log path(s) inside a log dir, "
+        f"found {len(paths)}:\n"
+        + "\n".join(f"  {p.relative_to(REPO)}:{n} -> {t}" for p, n, t in paths)
+        + "\n\nEvery one must name a port. Bump the number when you add one; if you did not add\n"
+        "one, a script dropped out of the walk and the ban below no longer reads it."
+    )
+
+    unkeyed = [
+        f"{path.relative_to(REPO)}:{lineno} -> {text}"
+        for path, lineno, text in paths
+        if not _PORT_VAR.search(text)
+    ]
+    assert not unkeyed, (
+        "a file under the dev log dir must carry the port of the instance that writes it, or a\n"
+        "second instance truncates the first one's log and every later read is of the wrong\n"
+        "instance with nothing saying so:\n" + "\n".join(unkeyed)
+    )
+
+
+def test_the_log_path_matcher_reads_every_spelling_it_claims() -> None:
+    """Rule 147: the ban above is bounded by what its regex can parse, so prove the parse.
+
+    The rejects are the near misses that must stay out. Two are the log DIRECTORY, which is
+    per-tree by design and would be a false positive; a gate that fires on ``mkdir`` is a gate
+    someone deletes. The third is prose about a log path, which is not one.
+    """
+    accepted = [
+        'API_LOG="$LOG_DIR/api-$API_PORT.log"',
+        'WEB_LOG="${LOG_DIR}/web-${WEB_PORT}.log"',
+        '  nohup cmd > "$LOG_DIR/api.log" 2>&1 &',
+        "tail -f $LOG_DIR/*.log",
+        'X="$API_LOGDIR/api.log"',
+    ]
+    rejected = [
+        'mkdir -p "$LOG_DIR"',
+        '      have="$(ls "$LOG_DIR" 2>/dev/null)"',
+        "  # .dev-logs holds one file per port, so $LOG_DIR/api.log would collide",
+        'log "data dir: $DATA_DIR"',
+    ]
+    missed = [line for line in accepted if not _LOG_DIR_FILE.search(_SHELL_COMMENT.sub("", line))]
+    assert not missed, "the matcher cannot read spellings the ban claims to cover:\n" + "\n".join(
+        missed
+    )
+    false_positives = [
+        line for line in rejected if _LOG_DIR_FILE.search(_SHELL_COMMENT.sub("", line))
+    ]
+    assert not false_positives, (
+        "the matcher collects lines that do not name a file inside the log dir:\n"
+        + "\n".join(false_positives)
+    )
+
+
 def _repo_text_files() -> list[tuple[Path, str]]:
     """Every readable text file in THIS checkout, with its contents.
 
@@ -496,7 +587,21 @@ def _repo_text_files() -> list[tuple[Path, str]]:
     silently emptying the walk.
     """
     found: list[tuple[Path, str]] = []
-    skip = {".git", "node_modules", ".venv", "dist", "__pycache__", ".ruff_cache", ".mypy_cache"}
+    # ``.dev-logs`` is gitignored runtime output, like the rest of these: whatever the dev
+    # servers happened to print last is not this branch's source. It earns a place here because
+    # the walk reads it -- a stack trace echoing a uvicorn command line would be collected as a
+    # LAUNCH SITE and fail ``_EXPECTED_LAUNCHES`` in whichever checkout last ran the script,
+    # naming a file no branch can fix. One log file per port makes that likelier, not rarer.
+    skip = {
+        ".git",
+        "node_modules",
+        ".venv",
+        "dist",
+        "__pycache__",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".dev-logs",
+    }
     for path in REPO.rglob("*"):
         if not path.is_file() or path.resolve() == SELF:
             continue
