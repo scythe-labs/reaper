@@ -2016,6 +2016,39 @@ class TestTheCondemnLanesCoverage:
         )
         assert self._condemn_warnings(on_the_rule)[0].field == "custom_condemn"
 
+    def test_a_split_lands_on_the_card_holding_more_of_them(self) -> None:
+        """The case the two above cannot discriminate: both put the whole withheld weight on
+        one card, so presence and magnitude agree and either rule passes them. Split unevenly
+        and they diverge -- 5 points on the built-in beside 50 on the operator's own rule sent
+        them to the slider holding 5 of the 55, and the card that has to change got nothing.
+        """
+
+        def anchor(built_in: int, rule: int) -> str:
+            body = _policy(
+                **self._gate_off(
+                    signals=(
+                        SignalSetting(
+                            signal=SignalId.UNWATCHED, weight=100 - built_in - rule, saturate_at=730
+                        ),
+                        SignalSetting(signal=SignalId.FEW_WATCHERS, weight=built_in, saturate_at=3),
+                    ),
+                    custom_condemn=(
+                        GradedCondemnSpec(
+                            name="hardly watched",
+                            field="recent_watchers",
+                            weight=rule,
+                            saturate_at=3,
+                        ),
+                    ),
+                )
+            )
+            return self._condemn_warnings(body)[0].field
+
+        assert anchor(built_in=5, rule=50) == "custom_condemn"
+        assert anchor(built_in=50, rule=5) == "signals"
+        # A tie goes to the signals card, which is the one further up the page.
+        assert anchor(built_in=25, rule=25) == "signals"
+
 
 class TestAHoldTheWatchHistoryCannotEstablish:
     """The season path's member of the family, and the last of the four lanes (#154).

@@ -1396,12 +1396,15 @@ def inspect(
     # filed rather than guessed at here.
     withheld = 0
     never_earned = 0
-    withheld_on_a_signal = False
+    # Kept apart from the totals so the anchor below can weigh the two cards against each
+    # other. The built-in slider is the only reach-bounded signal, so this IS the signals
+    # card's share; everything else in the totals comes from the custom-rules card.
+    on_the_signals_card = 0
     if window_short is not None:
         for signal in body.signals:
             if signal.signal is SignalId.FEW_WATCHERS and signal.weight > 0:
                 withheld += signal.weight
-                withheld_on_a_signal = True
+                on_the_signals_card += signal.weight
         for condemn in body.custom_condemn:
             condemn_spec = BY_KEY.get(condemn.field)
             if (
@@ -1435,9 +1438,17 @@ def inspect(
             warnings.append(
                 PolicyWarning(
                     # Beside the points that have to move. The built-in's slider and the
-                    # custom rules sit in different cards, so this follows the weight rather
-                    # than defaulting to one of them (rule 42).
-                    field="signals" if withheld_on_a_signal else "custom_condemn",
+                    # custom rules sit in different cards and one ``field`` can only claim
+                    # one of them, so it goes to whichever holds MORE of the weight rather
+                    # than to whichever holds any (rule 42). It used to fire on the built-in's
+                    # mere presence, so 5 points on the slider beside 50 on a custom rule sent
+                    # the operator to the smaller number and left the card that has to change
+                    # unmarked. Ties go to the signals card, which is the one above.
+                    field=(
+                        "signals"
+                        if on_the_signals_card * 2 >= withheld + never_earned
+                        else "custom_condemn"
+                    ),
                     severity="warn",
                     message=(
                         f"Nothing will be flagged for removal. {withheld + never_earned} of "
