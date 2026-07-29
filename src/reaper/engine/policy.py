@@ -1717,9 +1717,21 @@ def inspect(
     # would be telling them to do nothing forever (rules 7/24, 21). The sentence instead ends on
     # where those shows go, which is true and is the only move that exists.
     #
+    # The keep rule must also be able to PRODUCE a comparison partner, which is the difference
+    # between a conflict and nothing at all. ``_detect_conflicts`` iterates ``prunable`` against
+    # ``kept_seasons``, and that list drops specials, so a policy keeping no season on age alone
+    # leaves it empty, the inner loop never runs, and no conflict is raised however short the
+    # mirror is. Claiming the hold there would be false in the reassuring direction (rules 7/24):
+    # the operator would read that old shows wait for them while every season of those shows is
+    # condemnable on score. ``keep_last_seasons`` and ``keep_first_season`` are the two rules
+    # that protect on age alone, so they are what this asks. An incomplete or airing season can
+    # still supply a partner under a policy holding neither, but both are transient per-item
+    # states, and this function is handed one reach and never a season list -- the same reason
+    # the message below names the affected set rather than claiming an empty one.
     if (
         body.media_type == "tv"
         and body.flag_keep_conflicts
+        and (body.keep_last_seasons > 0 or body.keep_first_season)
         and history_reach_days is not None
         and reach_clears_dormancy
         and not mid_binge_holds_everything

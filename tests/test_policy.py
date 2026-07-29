@@ -56,6 +56,7 @@ from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource
 from reaper.services.scan_runner import GATE_TYPES, build_gates
+from reaper.services.season_pruning import SeasonStats, plan_series_prune
 
 #: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
 #: ``GATE_TYPES`` because it takes a set of per-source bars rather than one GateConfig, so
@@ -2384,6 +2385,56 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
 
         assert "Wait for it to build up" not in flagged.message
         assert flagged.message.endswith('marks those shows "Needs a look" instead of guessing.')
+
+    def test_a_keep_rule_holding_no_season_silences_it(self) -> None:
+        """The hold this claims has to be one the keep rule can actually produce.
+
+        ``_detect_conflicts`` iterates ``prunable`` against ``kept_seasons``, and that list drops
+        specials, so a policy keeping no season on age alone leaves it empty and the inner loop
+        never runs: no conflict is raised however short the mirror is, and every one of those
+        seasons is condemnable on score. Claiming the hold there is false in the REASSURING
+        direction (rules 7/24, 144) -- the operator reads that old shows are waiting for them
+        while the run is about to remove exactly those seasons.
+
+        Driven against the real planner rather than an argument about it (rule 119).
+        """
+        seasons = [
+            SeasonStats(
+                season_number=n,
+                monitored=True,
+                episode_file_count=10,
+                size_on_disk=1_000,
+                total_episode_count=10,
+                wanted_episode_count=0,
+            )
+            for n in range(1, 6)
+        ]
+        plan = plan_series_prune(
+            series_title="Placeholder Show",
+            seasons=seasons,
+            keep_last=0,
+            keep_first_season=False,
+            flag_keep_conflicts=True,
+            watchers_by_season=dict.fromkeys(range(1, 6), 3),
+            # Every season's count is a lower bound, which is the state this warning is about.
+            shortfall_by_season=dict.fromkeys(
+                range(1, 6), "mirror starts after this season arrived"
+            ),
+        )
+
+        # The premise: nothing to compare against, so the detector raises nothing at all and the
+        # whole show is auto-approvable despite every count being unsupported.
+        assert [p.season_number for p in plan.protected] == []
+        assert plan.conflicts == []
+        assert plan.auto_approvable
+
+        assert self._conflict_warnings(self._tv(keep_last_seasons=0, keep_first_season=False)) == []
+
+        # The discriminators: either rule alone puts a season back in ``kept_seasons``, so the
+        # comparison exists again and the lane is live. Without these the silence above would
+        # also read green if the branch had simply stopped firing.
+        assert self._conflict_warnings(self._tv(keep_last_seasons=1, keep_first_season=False)) != []
+        assert self._conflict_warnings(self._tv(keep_last_seasons=0, keep_first_season=True)) != []
 
     def test_the_shipped_tv_policy_is_no_longer_silent_on_a_deep_mirror(self) -> None:
         """The reported state, driven on the shipped policy with nothing lowered.
