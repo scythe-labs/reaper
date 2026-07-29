@@ -10,6 +10,7 @@ export function Segmented<T extends string>({
   onChange,
   label,
   fill = false,
+  describedBy,
 }: {
   value: T;
   /** [value, visible text] pairs, in display order. */
@@ -19,9 +20,19 @@ export function Segmented<T extends string>({
   /** Give every segment equal width, so short and long labels center in the track
    *  instead of the active pill hogging its side. Off by default. */
   fill?: boolean;
+  /** Ids of the message(s) explaining what is wrong with this choice. On the group, not the
+   *  segments: the complaint is about which option is in force, not about the button under the
+   *  cursor. No `invalid` companion -- `aria-invalid` on a `role="group"` is not a state ARIA
+   *  defines, and a policy warning does not refuse the value anyway. */
+  describedBy?: string | undefined;
 }) {
   return (
-    <div className={fill ? "segmented fill" : "segmented"} role="group" aria-label={label}>
+    <div
+      className={fill ? "segmented fill" : "segmented"}
+      role="group"
+      aria-label={label}
+      aria-describedby={describedBy}
+    >
       {options.map(([v, text]) => (
         <button
           key={v}

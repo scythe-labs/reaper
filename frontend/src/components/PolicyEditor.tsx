@@ -156,13 +156,21 @@ export function warningId(anchor: WarningAnchorId | "unanchored", i: number): st
  *  `undefined` when there are none, and that is not a tidiness choice -- `WarnBlock` renders
  *  nothing at all when the list is empty, so a fixed id would be a reference to an element not
  *  in the document. Readers treat a dangling `aria-describedby` inconsistently, and the one
- *  behavior they share is that the operator learns nothing from it. */
+ *  behavior they share is that the operator learns nothing from it.
+ *
+ *  `fields` narrows it to the warnings about ONE of an anchor's fields, for an anchor whose
+ *  block serves more than one control. The filter runs INSIDE the map and never before it:
+ *  `warningId` is positional within the anchor's rendered list, so filtering the array first
+ *  would number the survivors 0..n and point them at the wrong notices. */
 export function warningsDescribing(
   anchor: WarningAnchorId | "unanchored",
   warnings: PolicyWarning[],
+  fields?: readonly string[],
 ): string | undefined {
-  if (warnings.length === 0) return undefined;
-  return warnings.map((_w, i) => warningId(anchor, i)).join(" ");
+  const ids = warnings
+    .map((w, i) => (fields === undefined || fields.includes(w.field) ? warningId(anchor, i) : null))
+    .filter((id): id is string => id !== null);
+  return ids.length === 0 ? undefined : ids.join(" ");
 }
 
 // No `aria-invalid` companion to the above, deliberately. A policy warning of EITHER severity
@@ -1605,7 +1613,13 @@ export function PolicyEditor({
                     min={0}
                     width="narrow"
                     ariaLabel="Newest seasons to always keep"
-                    describedBy={warningsDescribing("keep_last", warningsAt("keep_last"))}
+                    // This anchor's block serves two controls, so each takes only the warnings
+                    // about its own field. Handed the whole list, this box spoke the complaint
+                    // about the scope control below -- a sentence ending "or switch this to
+                    // 'All shows'", where "this" resolves to a box offering no such option.
+                    describedBy={warningsDescribing("keep_last", warningsAt("keep_last"), [
+                      "keep_last_seasons",
+                    ])}
                     onChange={(v) => update({ keep_last_seasons: Math.max(0, v) })}
                   />
                   <span>of every show</span>
@@ -1624,6 +1638,11 @@ export function PolicyEditor({
                     value={draft.keep_last_scope}
                     onChange={(keep_last_scope) => update({ keep_last_scope })}
                     label="Keep-last scope"
+                    // The other half of `keep_last`: the warning about "Requested only" with no
+                    // Seerr connected is fixed from HERE, and this is the control it names.
+                    describedBy={warningsDescribing("keep_last", warningsAt("keep_last"), [
+                      "keep_last_scope",
+                    ])}
                     options={[
                       ["all", "All shows"],
                       ["requested", "Requested only"],

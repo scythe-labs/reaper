@@ -802,20 +802,38 @@ describe("PolicyEditor warning anchors", () => {
   // rule editors -- where there is no single box to point at and binding every child would
   // read the whole card's complaints at each of them. Deliberately partial, and named here so
   // the boundary is a decision on the page rather than an omission (#174).
-  const BOUND: { anchor: WarningAnchorId; control: string }[] = [
-    { anchor: "condemn_at", control: "Put a title on the list once it scores" },
-    { anchor: "keep_last", control: "Newest seasons to always keep" },
-    { anchor: "max_unmeasured_per_run", control: "Items with an unknown size" },
+  // Keyed by FIELD, not by anchor: `keep_last` claims two, and each is fixed from a different
+  // control. Bound to the anchor as a whole, the seasons box spoke the scope control's
+  // complaint and the scope control said nothing.
+  const BOUND: { anchor: WarningAnchorId; controls: Record<string, string> }[] = [
+    { anchor: "condemn_at", controls: { condemn_at: "Put a title on the list once it scores" } },
+    {
+      anchor: "keep_last",
+      controls: {
+        keep_last_seasons: "Newest seasons to always keep",
+        keep_last_scope: "Keep-last scope",
+      },
+    },
+    {
+      anchor: "max_unmeasured_per_run",
+      controls: { max_unmeasured_per_run: "Items with an unknown size" },
+    },
   ];
 
-  for (const { anchor: id, control } of BOUND) {
-    it(`lets the ${id} control speak the warning that is about it`, async () => {
+  for (const { anchor: id, controls } of BOUND) {
+    it(`lets each ${id} control speak the warning that is about IT`, async () => {
       // The warning was rendered beside the box and the box never mentioned it, so reaching it
       // meant leaving the control to go looking. Asserted as the accessible DESCRIPTION, which
       // is what a reader computes: an `aria-describedby` naming an id that is not on the page
       // would satisfy an attribute check and still say nothing.
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
       const mine = probes(anchor);
+
+      // Every field this anchor claims has a control named above, so widening an anchor
+      // without giving its new field somewhere to speak from fails here rather than silently
+      // hanging the warning off whichever control was already bound.
+      expect(Object.keys(controls).sort()).toEqual([...anchor.fields].sort());
+
       await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...mine, catchAll]);
 
       // Wait for the WARNING, not for the box: validation is debounced, so the control is on
@@ -823,26 +841,35 @@ describe("PolicyEditor warning anchors", () => {
       // on the box alone would read the empty description every time (rule 137's shape).
       await screen.findByText(mine[0]!.message);
 
-      const box = screen.getByLabelText(control);
       for (const w of mine) {
+        const box = screen.getByLabelText(controls[w.field]!);
         expect(box).toHaveAccessibleDescription(new RegExp(w.message));
+        // And ONLY that one: a control speaking a sibling field's complaint sends the operator
+        // to fix it here, where it cannot be fixed.
+        for (const other of mine) {
+          if (other.field === w.field) continue;
+          expect(box).not.toHaveAccessibleDescription(new RegExp(other.message));
+        }
+        // Never invalid. A policy warning does not block a save -- the save gate is a 422 from
+        // body validation plus the points budget, and `severity` reaches neither -- so a box
+        // marked invalid states a refusal that will not happen, which is the same lie as one
+        // that hides the complaint.
+        expect(box).not.toHaveAttribute("aria-invalid");
       }
-      // Never invalid, at EITHER severity. A policy warning does not block a save -- the save
-      // gate is a 422 from body validation plus the points budget, and `severity` reaches
-      // neither -- so a box marked invalid states a refusal that will not happen, which is the
-      // same lie as one that hides the complaint. Asserted for `danger` too, because the
-      // first version of #174 read "danger" as "blocks" and marked three controls invalid over
-      // values the app saves happily.
-      expect(box).not.toHaveAttribute("aria-invalid");
     });
 
-    it(`never marks the ${id} control invalid, even when the warning is danger`, async () => {
+    it(`never marks a ${id} control invalid, even when the warning is danger`, async () => {
+      // The severity a `warn` probe cannot reach. The first version of #174 read "danger" as
+      // "blocks a save" and marked three controls invalid over values the app saves happily,
+      // so this arm is what keeps the encoding from coming back.
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
       const blocking = probes(anchor).map((w) => ({ ...w, severity: "danger" as const }));
       await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...blocking, catchAll]);
       await screen.findByText(blocking[0]!.message);
 
-      expect(screen.getByLabelText(control)).not.toHaveAttribute("aria-invalid");
+      for (const name of Object.values(controls)) {
+        expect(screen.getByLabelText(name)).not.toHaveAttribute("aria-invalid");
+      }
     });
   }
 
