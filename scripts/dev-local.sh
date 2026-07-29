@@ -36,6 +36,12 @@
 #                         branch head usually fails, because the models expect the new
 #                         columns -- the upgrade is additive-only, so it is safe to run)
 #
+# Two instances side by side: give the second BOTH REAPER_PORT and REAPER_WEB_PORT -- they move
+# together, because Vite's /api proxy target reads REAPER_PORT (see the note further down), so
+# moving only the web port leaves the second UI talking to the first instance's API. Every stop
+# this script performs is scoped to its own two ports, on `down` and on `up` alike, so a second
+# instance cannot disturb a running first one.
+#
 set -euo pipefail
 
 log()  { printf '\033[36m[dev]\033[0m %s\n' "$*"; }
@@ -122,8 +128,16 @@ stop_all() {
     local pids; pids="$(port_pids "$p")"
     if [ -n "$pids" ]; then log "stopping :$p ($pids)"; kill $pids 2>/dev/null || true; killed=1; fi
   done
-  # uvicorn's --reload spawns a child; make sure the reloader parent is gone too.
-  pkill -f "uvicorn reaper.main:create_app" 2>/dev/null || true
+  # One process is left over, and it is not the one you would guess: --reload binds the socket
+  # in the reloader parent and hands it to a `multiprocessing.spawn` child, so lsof reports
+  # BOTH of those and the loop above already has them. What it cannot see is the `uv run`
+  # wrapper, which holds no socket. Hence a pattern match -- SCOPED TO THIS PORT, which the
+  # wrapper's own argv carries. Unscoped, the pattern matched every Reaper API on the machine,
+  # and since `up` calls stop_all unconditionally (below), starting a second instance killed a
+  # first one's API before printing a line, while its Vite kept serving and every request in
+  # the browser failed against a backend that was gone. The digit class is load-bearing: a bare
+  # `--port 6553` is a substring of `--port 65535`.
+  pkill -f "uvicorn reaper.main:create_app.*--port $API_PORT([^0-9]|$)" 2>/dev/null || true
   [ "$killed" = 1 ] || log "nothing was running"
 }
 
@@ -141,7 +155,9 @@ case "$cmd" in
     [ -f "$API_LOG" ] || { warn "no logs yet; run 'up' first"; exit 1; }
     tail -n 40 -f "$API_LOG" "$WEB_LOG" ;;
   up|"") : ;;  # fall through
-  *) warn "unknown command: $cmd"; sed -n '2,40p' "${BASH_SOURCE[0]}"; exit 2 ;;
+  # Print the header comment however long it grows: a hardcoded line range truncates the help
+  # mid-sentence the first time anything above `set -euo pipefail` is edited, and says nothing.
+  *) warn "unknown command: $cmd"; awk 'NR>1 && !/^#/{exit} NR>1' "${BASH_SOURCE[0]}"; exit 2 ;;
 esac
 
 # --- up ------------------------------------------------------------------------------------

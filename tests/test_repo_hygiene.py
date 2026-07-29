@@ -353,6 +353,163 @@ def test_dev_proxy_target_follows_the_api_port() -> None:
         )
 
 
+# ``pkill``/``killall`` select processes by PATTERN, which is machine-wide: nothing in the
+# pattern distinguishes this dev instance from a parallel one. ``pgrep`` only counts when the
+# same line goes on to kill (``pgrep -f x | xargs kill``); read-only, it is a status check and
+# owes no scope.
+#
+# Spellings this accepts, written down before shipping the matcher (rule 147): ``pkill -f x``,
+# ``pkill -9 -f x``, ``killall x``, a leading path (``/usr/bin/pkill``), a ``sudo`` prefix, and
+# ``pgrep -f x | xargs kill``. It reads the command WORD, so flags, quoting and argument order
+# do not matter. It does NOT read a kill assembled through a variable (``K=pkill; $K x``) or one
+# routed through ``ps | awk | xargs kill``; neither is spelled anywhere in this tree, and both
+# would need this matcher widened rather than the ban weakened.
+# The lookbehind excludes word characters and ``-`` but NOT ``/``, so ``/usr/bin/pkill`` is
+# still a kill while ``uv-pkill`` is not. Writing ``/`` into that class is what a first draft
+# does, and it silently exempts every absolute invocation.
+_PATTERN_KILL = re.compile(r"(?<![\w-])(?:pkill|killall)(?![\w-])")
+_PGREP = re.compile(r"(?<![\w-])pgrep(?![\w-])")
+_KILL_WORD = re.compile(r"(?<![\w-])kill(?![\w-])")
+# A shell comment, so prose ABOUT a kill is not read as one. ``#`` must open a word, which is
+# the shell's own rule. A ``#`` inside a quoted string that happens to follow a space is read as
+# a comment here -- that can only hide a kill, never invent one, and the pinned count below is
+# what notices a member going missing.
+_SHELL_COMMENT = re.compile(r"(?:^|\s)#.*$")
+# ``$API_PORT``, ``${WEB_PORT}``, ``$REAPER_PORT``.
+_PORT_VAR = re.compile(r"\$\{?[A-Za-z_][A-Za-z0-9_]*PORT\b")
+
+
+def _selects_processes_by_pattern(line: str) -> bool:
+    """Whether this shell line kills processes chosen by pattern rather than by port or pid."""
+    code = _SHELL_COMMENT.sub("", line)
+    if _PATTERN_KILL.search(code):
+        return True
+    return bool(_PGREP.search(code) and _KILL_WORD.search(code))
+
+
+#: ``docker-entrypoint.sh``, ``scripts/dev-local.sh``, ``scripts/log-instructions-loaded.sh``.
+_EXPECTED_SHELL_SCRIPTS = 3
+#: The one in ``dev-local.sh``'s ``stop_all``. Pinned separately from the script count because
+#: the walk and the ban cover different populations (rule 147): a script that drops out of the
+#: walk is absent from both, so a single figure would agree with itself while disagreeing with
+#: the tree.
+_EXPECTED_PATTERN_KILLS = 1
+
+
+def test_a_dev_script_kills_only_its_own_ports() -> None:
+    """A pattern is not a scope: a kill that selects by name must also name a port.
+
+    ``scripts/dev-local.sh`` ended ``stop_all`` with ``pkill -f`` on a pattern that named the app
+    and nothing else, so it matched every Reaper API on the machine. ``up`` calls ``stop_all``
+    unconditionally, and the script advertises ``REAPER_PORT``/``REAPER_WEB_PORT`` as the
+    supported way to run a second instance -- so following the documented workflow killed the
+    instance it was meant to leave alone, before printing a line about what it was doing. Quiet
+    in the worst way: only the API dies, the first instance's Vite keeps serving its own port, so
+    the browser still loads the app and every request fails against a backend that is gone, which
+    reads as an app bug rather than a dev-script one (#223).
+
+    A port is the only thing in a dev script that tells this instance from a parallel one, so a
+    pattern kill has to carry one. Killing by pid or by port is already scoped and is not
+    collected here.
+    """
+    scripts = sorted(p for p, _ in _repo_text_files() if p.suffix == ".sh")
+    assert len(scripts) == _EXPECTED_SHELL_SCRIPTS, (
+        f"expected {_EXPECTED_SHELL_SCRIPTS} shell scripts, found {len(scripts)}:\n"
+        + "\n".join(f"  {p.relative_to(REPO)}" for p in scripts)
+        + "\n\nIf you ADDED one, bump the number. If you did not, one dropped out of the walk,\n"
+        "and the ban below reads green on a script it can no longer see."
+    )
+
+    kills = [
+        (path, lineno, line.strip())
+        for path in scripts
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _selects_processes_by_pattern(line)
+    ]
+    assert len(kills) == _EXPECTED_PATTERN_KILLS, (
+        f"expected {_EXPECTED_PATTERN_KILLS} pattern-matching process kill(s), "
+        f"found {len(kills)}:\n"
+        + "\n".join(f"  {p.relative_to(REPO)}:{n} -> {t}" for p, n, t in kills)
+        + "\n\nEvery one of them must name a port. Bump the number when you add one."
+    )
+
+    unscoped = [
+        f"{path.relative_to(REPO)}:{lineno} -> {text}"
+        for path, lineno, text in kills
+        if not _PORT_VAR.search(text)
+    ]
+    assert not unscoped, (
+        "a kill that selects processes by pattern must name the port it means, or it reaches\n"
+        "every instance on the machine and takes a parallel session's API down with it:\n"
+        + "\n".join(unscoped)
+    )
+
+
+def test_the_pattern_kill_matcher_reads_every_spelling_it_claims() -> None:
+    """Rule 147: the ban above is bounded by what its regex can parse, so prove the parse.
+
+    A matcher anchored on the literal ``pkill -f`` would read the one line this fixed and
+    nothing else. The rejects are the near misses that must stay out: a kill already scoped by
+    pid, and prose describing a kill. A false positive is a gate that gets deleted.
+    """
+    accepted = [
+        'pkill -f "uvicorn reaper.main:create_app"',
+        "pkill -9 -f uvicorn",
+        "  killall uvicorn",
+        "/usr/bin/pkill -f x",
+        "sudo pkill -f x",
+        "pgrep -f uvicorn | xargs kill",
+    ]
+    rejected = [
+        "kill $pids 2>/dev/null || true",
+        "  # an unscoped pkill would reach every instance on the machine",
+        "pgrep -f uvicorn && log 'still running'",
+        'log "stopping :$p ($pids)"',
+    ]
+    missed = [line for line in accepted if not _selects_processes_by_pattern(line)]
+    assert not missed, "the matcher cannot read spellings the ban claims to cover:\n" + "\n".join(
+        missed
+    )
+    false_positives = [line for line in rejected if _selects_processes_by_pattern(line)]
+    assert not false_positives, (
+        "the matcher collects lines that do not select processes by pattern:\n"
+        + "\n".join(false_positives)
+    )
+
+
+def _repo_text_files() -> list[tuple[Path, str]]:
+    """Every readable text file in THIS checkout, with its contents.
+
+    Scoped to this checkout on purpose. ``.claude/worktrees/`` is gitignored (``.gitignore``)
+    and holds agent worktrees, which are entire repo copies sitting inside the repo root -- and
+    ``rglob`` honors no ignore file, so walking into them judges other branches' files as if
+    they were ours. A worktree's ``.git`` is a *file*, so the skip entry below does not stop the
+    descent either. Left in, ``uv run pytest`` in the main checkout fails the moment any
+    worktree cut before this fix is still on disk, naming files the branch under test cannot
+    reach. A gate nobody can turn green from their own branch is a gate that gets deleted.
+
+    The skip is matched on the REPO-RELATIVE path, which is the part that is easy to get
+    backwards: ``skip`` is tested against ``path.parts``, so putting ``"worktrees"`` in it
+    would match the ABSOLUTE path and skip every file in the tree whenever the suite runs
+    from inside a worktree -- which is where these sessions run it. The relative form also
+    stops an ancestor directory outside the repo that happens to be named ``dist`` from
+    silently emptying the walk.
+    """
+    found: list[tuple[Path, str]] = []
+    skip = {".git", "node_modules", ".venv", "dist", "__pycache__", ".ruff_cache", ".mypy_cache"}
+    for path in REPO.rglob("*"):
+        if not path.is_file() or path.resolve() == SELF:
+            continue
+        relative = path.relative_to(REPO)
+        if any(p in skip for p in relative.parts) or relative.parts[:2] == (".claude", "worktrees"):
+            continue
+        try:
+            found.append((path, path.read_text(encoding="utf-8")))
+        except (UnicodeDecodeError, OSError):
+            continue
+    return found
+
+
 # Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory
 # and uvicorn cannot boot it otherwise. That is what separates an invocation from a mention:
 # dev-local.sh's ``pkill -f "uvicorn reaper.main:create_app"`` names the same string and is not
@@ -378,38 +535,15 @@ _EXPECTED_LAUNCHES = 5
 def _uvicorn_launches() -> list[tuple[Path, int, str]]:
     """Every line in one of THIS checkout's own text files that boots the app under uvicorn.
 
-    Scoped to this checkout on purpose. ``.claude/worktrees/`` is gitignored
-    (``.gitignore``) and holds agent worktrees, which are entire repo copies sitting inside
-    the repo root -- and ``rglob`` honors no ignore file, so walking into them judges other
-    branches' launches as if they were ours. A worktree's ``.git`` is a *file*, so the skip
-    entry below does not stop the descent either. Left in, ``uv run pytest`` in the main
-    checkout fails the moment any worktree cut before this fix is still on disk, naming files
-    the branch under test cannot reach. A gate nobody can turn green from their own branch is
-    a gate that gets deleted.
-
-    The skip is matched on the REPO-RELATIVE path, which is the part that is easy to get
-    backwards: ``skip`` is tested against ``path.parts``, so putting ``"worktrees"`` in it
-    would match the ABSOLUTE path and skip every file in the tree whenever the suite runs
-    from inside a worktree -- which is where these sessions run it. The relative form also
-    stops an ancestor directory outside the repo that happens to be named ``dist`` from
-    silently emptying the walk.
+    The walk is ``_repo_text_files``, which is scoped to this checkout for reasons worth
+    reading before changing either caller.
     """
-    found: list[tuple[Path, int, str]] = []
-    skip = {".git", "node_modules", ".venv", "dist", "__pycache__", ".ruff_cache", ".mypy_cache"}
-    for path in REPO.rglob("*"):
-        if not path.is_file() or path.resolve() == SELF:
-            continue
-        relative = path.relative_to(REPO)
-        if any(p in skip for p in relative.parts) or relative.parts[:2] == (".claude", "worktrees"):
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        for lineno, line in enumerate(text.splitlines(), 1):
-            if _UVICORN_LAUNCH.search(line) and "--factory" in line:
-                found.append((path, lineno, line.strip()))
-    return found
+    return [
+        (path, lineno, line.strip())
+        for path, text in _repo_text_files()
+        for lineno, line in enumerate(text.splitlines(), 1)
+        if _UVICORN_LAUNCH.search(line) and "--factory" in line
+    ]
 
 
 def test_every_uvicorn_launch_disables_proxy_headers() -> None:
