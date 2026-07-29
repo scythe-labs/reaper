@@ -387,6 +387,23 @@ describe("the app-wide reap bar", () => {
     expect(bar).toHaveAttribute("aria-valuetext", "25%, 1 of 4 removed");
   });
 
+  it("keeps Stop out of the progressbar, so a reader can still halt the run", async () => {
+    // `progressbar` carries ARIA's Children Presentational: True. With the role on the bar's
+    // CONTAINER, View, Stop and the alert that reports a failed Stop were all pruned out of the
+    // accessibility tree -- a reader watching a live deletion heard the percentage and had no
+    // way to halt it. Same pruning `CardOpen` exists to undo on the queue's four cards, so the
+    // bar nearest deletion was the one sibling the sweep missed (rule 72).
+    //
+    // RTL's role queries do not emulate the pruning, so asking for the Stop button proves
+    // nothing. What discriminates is whether the progressbar CONTAINS it.
+    renderBar();
+
+    const bar = await screen.findByRole("progressbar", { name: "Reaping" });
+    const stop = screen.getByRole("button", { name: "Stop" });
+    expect(bar).not.toContainElement(stop);
+    expect(bar).not.toContainElement(screen.getByRole("button", { name: "View" }));
+  });
+
   it("says out loud that the reap finished, and how much went", async () => {
     const queryClient = renderBar();
     await screen.findByRole("progressbar", { name: "Reaping" });

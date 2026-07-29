@@ -302,21 +302,27 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
 
   const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
   return (
-    <div
-      className="reap-bar"
-      // The fill is a `<span>` with an inline width and nothing else -- a picture of a number.
-      // The role goes on the bar rather than the fill because the fill is decoration painted
-      // over it; `aria-valuetext` says what a person would say, so a reader is not left reading
-      // out "62" (`ScanLine` is the twin, rule 72).
-      role="progressbar"
-      aria-label="Reaping"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={pct}
-      aria-valuetext={`${pct}%, ${count(status.done)} of ${count(status.total)} removed`}
-    >
+    <div className="reap-bar">
       <span className="banner-dot" aria-hidden="true" />
-      <span className="reap-bar-text">
+      {/* The role goes on the TEXT, never on the bar. `progressbar` carries ARIA's Children
+          Presentational: True, so a role on the container prunes everything inside it -- and
+          this container holds View, Stop, and the `role="alert"` that reports a Stop that
+          failed. A reader watching a live deletion heard the percentage and had no way to halt
+          it. That is the same pruning `CardOpen` exists to undo on the queue's four cards, so
+          the bar nearest deletion was the one sibling the sweep missed (rule 72); the three
+          sibling bars and `ScanLine` all carry the role on an element holding only a fill.
+          The text is the right anchor here: it is the visible readout, it is never empty, and
+          it holds no control -- where the fill is 0px wide at 0% and can drop out of the tree.
+          `aria-valuetext` says what a person would say, so nobody is left reading out "62". */}
+      <span
+        className="reap-bar-text"
+        role="progressbar"
+        aria-label="Reaping"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        aria-valuetext={`${pct}%, ${count(status.done)} of ${count(status.total)} removed`}
+      >
         {status.stopping ? (
           <b>Stopping after the current one…</b>
         ) : (
