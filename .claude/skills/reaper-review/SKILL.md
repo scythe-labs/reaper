@@ -220,7 +220,12 @@ It leaves that state in one command, which is the whole reason it is an issue an
 - **Proven.** `tea issue edit <n> --add-labels "Reviewed/Confirmed"`, then a *second* call with
   `--remove-labels "Status/Need More Info"` — `--add-labels` takes precedence over
   `--remove-labels` in one invocation, so a combined command silently keeps the old label.
-  Nothing is re-filed; the issue keeps its number, its body, and its history.
+  Nothing is re-filed; the issue keeps its number, its body, and its history. **Promoting it
+  edits the body too, naming what settled it** — the test that was written, the journey that
+  was driven — and strikes the sentence that said nobody had. A body still reading "was not
+  demonstrated" under a `Reviewed/Confirmed` label is a false statement about the work, which
+  is rule 134's standard pointed at the tracker. Two issues promoted in the same second were
+  not both demonstrated.
 - **Refuted, or stale because the cited code moved.** `tea issue edit <n> --add-labels
   "Reviewed/Invalid"`, then `tea issue close <n>`, then append the reasoning to
   `references/refuted.md` naming the issue number. Leave `Status/Need More Info` on it as the
@@ -228,11 +233,18 @@ It leaves that state in one command, which is the whole reason it is an issue an
   own. That file, not the closed issue, is what stops the next pass re-raising it — a pass reads
   `refuted.md` before it looks at anything and never reads closed issues.
 
-**Cap at 8 confirmed issues per run, and 4 unproven ones** — lower because an unproven issue
-asserts less and still costs someone a judgment call to close. Past either cap the remainder goes
+**Cap at 8 confirmed issues per session, and 4 unproven ones** — a session, not a review run,
+because most findings arrive while building something else and a cap that binds only `/reaper-review`
+does not bind where the volume comes from. Unproven is lower because such an issue asserts less
+and still costs someone a judgment call to close. Past either cap the remainder goes
 into a single tracking issue that lists them all, labeled like the ones it carries, so nothing is
 lost and the tracker is not flooded. Say in the run summary how many were rolled up — a cap that
 hides what it dropped reads as "that was everything."
+
+**The cap never merges unrelated defects into one issue.** *One issue per fix* governs when they
+disagree: a bundle nobody can close in one commit hides its contents from every filter, which is
+worse than the eleventh issue. Roll the remainder into a tracking issue that *lists* them, and
+never into a single issue that *is* them.
 
 **Check for duplicates first** (`tea issue list --state all`). Re-running a review must not
 re-file what is already open. Each body carries a stable fingerprint line to match on:
@@ -287,7 +299,12 @@ short sections, in this order and no others, or six on an unproven one. If a sec
 than three sentences, the finding is really two issues.
 
 ```
-**What breaks.** One or two sentences: the trigger, and what the operator loses.
+**What breaks.** One or two sentences: the trigger, and what the operator loses. Say the loss
+in the present tense where there is one, and where there is not — a redundant interlock whose
+partner still catches it, a shape that costs nothing until someone writes the next one — say
+exactly that and file it as a question. "Nothing today" is a statement about reachability and
+never a reason to stay quiet: rule 38/117 wants a protection that cannot fire retired, and
+`executor.py` trusts neither layer alone.
 
 **Where.** `path/to/file.py:123` — `function_name`
 

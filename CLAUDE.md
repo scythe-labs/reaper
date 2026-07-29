@@ -80,17 +80,13 @@ rule narrating the gate that enforces it pays twice for one constraint.
   summary" is not a record. Every defect leaves fixed or filed, in *every* session, not just
   `/reaper-review`: most are found while building something else, which is when the temptation
   to note it and move on is strongest. Filing needs no approval; say what you filed in the
-  summary rather than asking first. **A
-  candidate you could not demonstrate is filed too, as a question** — `Status/Need More Info`,
-  no `Reviewed/` label, plus the evidence that would settle it, because an issue asserting a
-  defect must not assert what nobody showed. Proving it later is one label edit; killing it is a
-  close as `Reviewed/Invalid`. The skill's *Opening issues* section holds the mechanics: Gitea
-  via `tea` (`gh` does not reach it), one issue per *fix* rather than per finding, a duplicate
-  check on the `finding:` fingerprint first, the commit pinned with `--referenced-version`,
-  **three labels (`Kind/` + `Priority/` + one of `Reviewed/Confirmed` or `Status/Need More
-  Info`, priority ranking the operator's loss if the trigger is real, not the size of the
-  fix)**, and a title naming what the operator loses. An unlabeled issue is missing from every
-  filter the backlog is triaged through.
+  summary rather than asking first. **A candidate you could not demonstrate is filed too, as a
+  question** — `Status/Need More Info`, no `Reviewed/` label, because an issue asserting a
+  defect must not assert what nobody showed. Promoting it later is one label edit *and* the
+  evidence that settled it, written into the issue; killing it is a close as `Reviewed/Invalid`.
+  The `reaper-review` skill's *Opening issues* section holds every mechanic, label and cap, and
+  binds every session rather than only a review pass — read it before filing. It is stated once,
+  there, so nothing here can drift from it.
 - **Commit as you go, in focused commits — don't wait to be asked.** One commit tells one
   story, and a fix ships with the test that pins it and the doc line it corrects, because those
   are the same story. Nothing else rides along. **The reviewer's attention is the scarce
