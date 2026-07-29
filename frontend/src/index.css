@@ -1355,7 +1355,13 @@ main.split {
 
 /* Below this, a side-by-side panel would squeeze the cards into a ragged stack -- so
    the panel rides OVER the list as a right-hand sheet instead, and the cards keep
-   their width. The list stays clickable: picking another card swaps the sheet. */
+   their width. The list stays clickable: picking another card swaps the sheet.
+
+   COUPLED (rule 67): this 1100 is also `PANEL_OVERLAY_QUERY` in useMediaQuery.ts, which is
+   where `WhyShell` starts claiming `role="dialog"`, taking focus and trapping Tab -- because
+   the cards this block hides under the sheet are otherwise still tabbable, Spare and Reap
+   included (#184). Move them together. Do NOT reach for the 900px block's number instead:
+   that one is `NARROW_SCREEN_QUERY` and means something else. */
 @media (max-width: 1100px) {
   main.split {
     /* `minmax(0, ...)` for the same reason the two-column form above carries it, and the
@@ -2167,20 +2173,23 @@ a.rating-chip:hover {
    is what wins here, so keep this block below that one. `width: auto` is the one property
    the 1100px block sets that `inset: 0` alone cannot undo.
 
-   COUPLED (rule 67): FOUR JS readers ask whether this rule is in force, and all of them take
+   COUPLED (rule 67): THREE JS readers ask whether this rule is in force, and all of them take
    the query from `NARROW_SCREEN_QUERY` in useMediaQuery.ts -- the one declaration of this width
    on that side, so change this 900 and change that constant with it. App.tsx's `fullSheet`
    stops tracking the list's scroll behind a sheet that covers it; the review queue's
    "expand seasons by default" mode opens a show's season list on one screen size and not the
    other -- which makes this number the stored meaning of the operator's "Mobile" and
-   "Desktop" choices, not just a layout detail; Settings swaps its rail for a select; and
-   `WhyShell` reads it to decide whether THIS block is in force, which is the one reader whose
-   job is this declaration itself. Because the panel covers the whole application here, that is
-   what makes it a dialog that takes focus and keeps Tab inside itself -- so a 900 moved here
-   and not there leaves a full-cover panel announcing itself as a plain aside, with the covered
-   card list still in the Tab order (issue #171, which is how it was found). This side once
-   carried no reference at all, so someone editing the query here had nothing telling them a
-   hook depends on it (R-8). */
+   "Desktop" choices, not just a layout detail; and Settings swaps its rail for a select. This
+   side once carried no reference at all, so someone editing the query here had nothing telling
+   them a hook depends on it (R-8).
+
+   `WhyShell` is deliberately NOT on that list, and used to be: it decides whether the panel is
+   a dialog that takes focus and keeps Tab inside itself, and the question it is really asking
+   is "does the panel cover cards the operator can still reach", which the 1100px block above
+   answers and this one does not. Keyed here, the 200px between the two blocks left a panel
+   floating over the right of the cards announcing itself as a plain aside (issue #171 at 900,
+   #184 in the band above it). It now reads `PANEL_OVERLAY_QUERY` and the 1100px block carries
+   that coupling. */
 @media (max-width: 900px) {
   main.split .why {
     position: fixed;

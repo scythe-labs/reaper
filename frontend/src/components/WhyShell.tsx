@@ -5,21 +5,21 @@
 // first and third -- and it owns what all six owe a keyboard operator, written once so a
 // seventh cannot ship without it.
 //
-// It is a dialog on a phone and a side panel on a desktop, and that is not a detail: index.css
-// makes `main.split .why` a right-hand sheet at 1100px and `inset: 0; z-index: 50` at 900px, so
-// under 900px this covers the entire application. Claiming `role="dialog"` at every width would
-// be false above 1100px, where the panel really does sit beside the list and both are usable;
-// not claiming it on a phone leaves a screen reader browsing the covered page underneath. So the
-// dialog contract is conditional on NARROW_SCREEN_QUERY -- the same boundary the CSS uses, read
-// from the one declaration both sides share (rule 67).
+// It is a dialog wherever it covers the list and a side panel where it does not, and that is not
+// a detail: index.css makes `main.split .why` a right-hand sheet floated over the cards at 1100px
+// and `inset: 0; z-index: 50` at 900px, so from 1100px down this covers cards the operator can
+// still reach, and under 900px it covers the entire application. Claiming `role="dialog"` at
+// every width would be false above 1100px, where the panel really does sit beside the list in its
+// own grid column and both are usable; not claiming it while it overlays leaves a screen reader
+// browsing the covered page underneath. So the dialog contract is conditional on
+// PANEL_OVERLAY_QUERY -- the 1100px boundary the CSS overlay block uses, read from the one
+// declaration both sides share (rule 67).
 //
-// KNOWN GAP, issue #184: those two widths are not the same number. The panel starts overlaying
-// the list at 1100px, not 900px, so between 901px and 1100px it floats over the right of the
-// cards while this treats it as a side panel -- no focus move, no Tab trap, and the covered cards
-// still in the Tab order with their Spare and Reap. Do not read the paragraph above as saying
-// that band is handled; it is #171 surviving in 200px of width. The fix is a second constant for
-// the 1100px block rather than moving this one, whose 900 is the stored meaning of the operator's
-// Mobile/Desktop choice.
+// The boundary is 1100 and NOT `NARROW_SCREEN_QUERY`'s 900, which is the whole of #184: keyed on
+// the 900, 200px of viewport width had the panel floating over the right of the cards with no
+// focus move and no Tab trap, so a keyboard operator tabbed into cards hidden underneath and
+// could press Spare or Reap on an item they could not see. The two numbers must stay apart --
+// 900 is the stored meaning of the operator's Mobile/Desktop choice and cannot follow this one.
 //
 // Escape lives here too. It used to live in three places and be missing from a fourth: App's
 // review-view key handler covered the two panels reachable from the queue, ScalesPanel and
@@ -30,7 +30,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useModalOpen } from "../backnav";
 import { useDialogFocus } from "../focus";
-import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
+import { PANEL_OVERLAY_QUERY, useMediaQuery } from "../useMediaQuery";
 import { trapTab } from "./ModalShell";
 
 /** Every `.why` panel's close: a media-sheet disc floated over the hero art (see .why-close),
@@ -71,7 +71,7 @@ export function WhyShell({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLElement>(null);
-  const modal = useMediaQuery(NARROW_SCREEN_QUERY);
+  const modal = useMediaQuery(PANEL_OVERLAY_QUERY);
 
   useDialogFocus(panelRef, modal);
 
@@ -108,7 +108,7 @@ export function WhyShell({
     <aside
       ref={panelRef}
       className="why"
-      // A wide screen leaves this a plain <aside> (complementary), named but not modal.
+      // Above the overlay boundary this is a plain <aside> (complementary), named but not modal.
       role={modal ? "dialog" : undefined}
       aria-modal={modal || undefined}
       aria-labelledby={headingId}

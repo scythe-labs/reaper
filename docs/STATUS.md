@@ -119,10 +119,13 @@ Last verified against the code: 2026-07-26.
    carry a word for pass/fail rather than a glyph and a color, but neither sits in a live region:
    read when reached, not announced. **The `.why` panels are landed too**, and that sweep found
    six rather than the four the issue named. All six now render one `WhyShell` owning the dialog
-   contract, conditional on `NARROW_SCREEN_QUERY` because the panel is a genuine split-view side
-   panel above it and covers the application below it. That boundary is 900px but the panel
-   starts overlaying at 1100px, so 200px of width still gets an overlay with no focus containment
-   — #171 surviving in a band, filed as **#184**. Escape moved into the shell, keeping App's
+   contract, conditional on `PANEL_OVERLAY_QUERY` (1100px) because the panel is a genuine
+   split-view side panel above that and rides over the cards below it. **#184 closed**: the
+   contract keyed on `NARROW_SCREEN_QUERY`'s 900px at first, so for 200px of width the panel
+   floated over the right of the cards — the side the Spare and Reap buttons are on — with no
+   focus move and no Tab trap, #171 surviving in a band. The two constants stay apart because 900
+   is the stored meaning of the operator's Mobile/Desktop choice; a stub answering per query pins
+   which one the shell reads. Escape moved into the shell, keeping App's
    `INPUT/TEXTAREA/SELECT` bail scoped to fields the panel does not own; popovers over a panel
    stop the key rather than letting both layers close on one press. **The menus are landed too**:
    the spare-length menu, the ＋ Filter menu and the filter chips' value picker each claimed

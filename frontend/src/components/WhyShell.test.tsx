@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The `.why` panel shell. Six panels render it, and what it owes them changes with the screen:
-// on a desktop it is a side panel beside the list and both are usable, on a phone index.css
-// gives it `inset: 0; z-index: 50` and it covers the entire application. The contract has to
-// follow that, which is why every test here is written twice -- once per side of the boundary.
+// above 1100px it is a side panel in its own grid column beside the list and both are usable,
+// below it index.css floats it over the cards, and below 900px `inset: 0; z-index: 50` puts it
+// over the entire application. The contract has to follow that, which is why every test here is
+// written twice -- once per side of the boundary.
+//
+// **The boundary is 1100, not 900**, and `stubOverlayBand` below is the test that says so: keyed
+// on 900 the shell left 200px of viewport width overlaying the cards with no dialog, no focus
+// move and no Tab trap (#184). A stub answering `true` to every query cannot catch that -- it
+// makes both numbers look alike -- so the band test answers per query.
 //
 // jsdom has no `matchMedia`, so `useMediaQuery` reports false and an unstubbed test sees the
 // wide screen. `stubMatchMedia(true)` is the phone.
@@ -12,11 +18,30 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { WhyShell } from "./WhyShell";
+import { NARROW_SCREEN_QUERY, PANEL_OVERLAY_QUERY } from "../useMediaQuery";
 
-/** Report `matches` for every query asked, the way a phone would for the narrow one. */
+/** Report `matches` for every query asked, the way a phone would for both of them. */
 function stubMatchMedia(matches: boolean) {
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }));
+}
+
+/** A window between 901px and 1100px: the panel overlays the cards but does not cover them.
+ *
+ *  Answers each query on its own, so a shell reading the wrong constant reports the wrong thing
+ *  rather than the same thing. Rule 141 in miniature -- a stub that answers alike whatever it is
+ *  asked cannot prove which question was put to it. */
+function stubOverlayBand() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === PANEL_OVERLAY_QUERY,
     media: query,
     onchange: null,
     addEventListener: () => {},
@@ -78,7 +103,7 @@ function Harness() {
   );
 }
 
-describe("WhyShell on a desktop", () => {
+describe("WhyShell on a wide desktop", () => {
   it("is a named side region, not a dialog, and does not take focus off the card", async () => {
     const user = userEvent.setup();
     render(<Harness />);
@@ -86,7 +111,8 @@ describe("WhyShell on a desktop", () => {
     await user.click(opener);
 
     // A side panel that claimed role="dialog" would be telling a screen reader the rest of the
-    // page is unavailable, which on a wide screen is simply false: the queue is right beside it.
+    // page is unavailable, which above 1100px is simply false: the queue is right beside it in
+    // its own grid column.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const panel = screen.getByRole("complementary", { name: NAME });
     expect(panel).not.toHaveAttribute("aria-modal");
@@ -106,6 +132,73 @@ describe("WhyShell on a desktop", () => {
 
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
     expect(outside).toHaveFocus();
+  });
+});
+
+describe("WhyShell in the overlay band, between a phone and a desktop", () => {
+  // 901px to 1100px: `main.split` has collapsed to one track and the panel is `position: fixed;
+  // right: 0` over the right of the cards. It hides the side of every card the Spare and Reap
+  // buttons sit on, so the dialog contract starts HERE and not 200px further down (#184). Each
+  // of the three is the shell's whole answer to a keyboard operator, so each is asserted.
+
+  it("is a dialog even though the narrow-screen query does not match", async () => {
+    stubOverlayBand();
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+
+    // Named the same way it is at every other width -- what changed is only that it now claims
+    // the page behind it is unavailable, which is true the moment it covers the cards.
+    expect(screen.getByRole("dialog", { name: NAME })).toHaveAttribute("aria-modal", "true");
+  });
+
+  it("moves focus into itself", async () => {
+    stubOverlayBand();
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+
+    expect(screen.getByRole("dialog", { name: NAME })).toHaveFocus();
+  });
+
+  it("keeps Tab inside itself, so a covered card's Reap never takes focus", async () => {
+    stubOverlayBand();
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+
+    const close = screen.getByRole("button", { name: "Close" });
+    screen.getByRole("button", { name: "A control inside the panel" }).focus();
+    await user.tab();
+
+    expect(close).toHaveFocus();
+  });
+
+  it("reads the overlay query and not the narrow one", async () => {
+    // The two constants must not be the same number, and nothing else in this file would notice
+    // if someone collapsed them: every other stub here answers both queries alike. Asserting on
+    // the values rather than on a render, because that is the fact the band tests above rest on.
+    expect(PANEL_OVERLAY_QUERY).not.toBe(NARROW_SCREEN_QUERY);
+    const asked: string[] = [];
+    vi.stubGlobal("matchMedia", (query: string) => {
+      asked.push(query);
+      return {
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      };
+    });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+
+    expect(asked).toContain(PANEL_OVERLAY_QUERY);
+    expect(asked).not.toContain(NARROW_SCREEN_QUERY);
   });
 });
 
