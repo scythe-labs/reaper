@@ -1370,12 +1370,18 @@ def _legacy_rating_body(**gate: object) -> dict[str, object]:
 
     The shape that matters: no ``keep_rating_rules`` key at all, and the bar still on the
     gate as ``threshold`` (tenths) + ``secondary`` (minimum votes).
+
+    ``schema_version`` is 2 because that is what an affected body actually carries: it was
+    2 before the bar moved and the move did not bump it, which is why the shim keys on the
+    absent key instead. Dumping the current version here made the restamp a no-op, so the
+    test asserting it could not fail (rule 141).
     """
     raw = _policy(
         gates=(GateSetting(gate=GateId.RATING_FLOOR),),
         keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1000),),
     ).model_dump(mode="json")
     del raw["keep_rating_rules"]
+    raw["schema_version"] = 2
     raw["gates"] = [{**raw["gates"][0], "threshold": 75, "secondary": 1000, **gate}]
     return raw
 
@@ -1422,6 +1428,25 @@ class TestRestoringALostRatingBar:
         no reason to degrade a scan over it."""
         assert recover_rating_rules(_legacy_rating_body(enabled=False)) is None
 
+    def test_a_gate_row_carrying_no_switch_at_all_is_still_recovered(self) -> None:
+        """Absent means on, module-wide: every switch is an explicit ``enabled: false``.
+
+        A row a hand edit stripped the key from is an enabled gate holding a real bar, so
+        reading it as disabled would skip the recovery and leave the operator's bar empty --
+        the one outcome this shim exists to prevent (rule 105). Every fixture above reaches
+        the switch through ``model_dump``, which always writes it, so nothing exercised the
+        default until this case.
+        """
+        raw = _legacy_rating_body()
+        del raw["gates"][0]["enabled"]
+
+        restored = recover_rating_rules(raw)
+
+        assert restored is not None
+        assert restored["keep_rating_rules"] == [
+            {"source": RatingSource.IMDB.value, "floor": 75, "min_votes": 1000}
+        ]
+
     @pytest.mark.parametrize(
         "gate",
         [
@@ -1450,6 +1475,37 @@ class TestRestoringALostRatingBar:
         inventing a protection value on the operator's behalf, and ``RatingRuleSpec`` would
         refuse it anyway -- ``bool`` is an ``int`` subclass, so ``true`` must not read as 1."""
         assert recover_rating_rules(_legacy_rating_body(**gate)) is None
+
+    @pytest.mark.parametrize(
+        "gate",
+        [
+            {"threshold": 1, "secondary": 1000},
+            {"threshold": 100, "secondary": 1000},
+            {"threshold": 75, "secondary": 1},
+        ],
+        ids=["lowest-floor", "highest-floor", "one-vote"],
+    )
+    def test_the_bars_the_old_validator_accepted_are_restored(
+        self, gate: dict[str, object]
+    ) -> None:
+        """The inclusive edges of the accepted range, which the refusals above cannot pin.
+
+        The old validator took ``1 <= threshold <= 100`` and ``secondary >= 1``, so every one
+        of these is a bar an operator really could have saved. Refusing one is not a cosmetic
+        miss: the bar stays empty, ``RatingFloorGate`` abstains on every item, and a
+        protection the operator can still see configured holds nothing, on a healthy and
+        executable snapshot. Testing only 0 and 101 left all three edges free to move.
+        """
+        restored = recover_rating_rules(_legacy_rating_body(**gate))
+
+        assert restored is not None
+        assert restored["keep_rating_rules"] == [
+            {
+                "source": RatingSource.IMDB.value,
+                "floor": gate["threshold"],
+                "min_votes": gate["secondary"],
+            }
+        ]
 
     def test_a_body_with_no_rating_gate_at_all_is_left_alone(self) -> None:
         raw = _policy().model_dump(mode="json")

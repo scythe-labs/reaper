@@ -1764,6 +1764,57 @@ app shell: expensive-first paid 105.5 ms in the wait; cheap-first paid 49.3 ms i
 the wrong shape for this: it helps at most one site per file, the ~40 others are already warm at
 ~6 ms, and a new test written in the old shape re-introduces it.
 
+## Mutation testing the two policy repair shims (2026-07-29)
+
+Sixty mutants over `policy.rebalance` and `policy.recover_rating_rules` — operator flips, ±1
+constants, dropped `not`s, `and`/`or` swaps, and ten single-statement deletions — run against
+`tests/test_policy.py` plus `tests/test_profiles.py`. Baseline 2.6 s, whole sweep about three
+minutes. **48 killed, 10 survived, 2 unparseable.** Scoping by *function* rather than by file
+is what makes that a coffee break: the same operators over all of `policy.py` would be well
+over a thousand mutants.
+
+The ten survivors were three different things, and the count alone said none of it:
+
+| survivors | what it was |
+| --- | --- |
+| 1 | **a test that could not fail** |
+| 6 | correct behavior with nothing defending it, all one direction |
+| 2 | equivalent mutants — the answer cannot change |
+| 1 | the same test defect, reached by a second mutant |
+
+**The real defect was a fixture that misrepresented its own population.**
+`_legacy_rating_body()` dumped the *current* `schema_version`, while every body the shim
+actually repairs carries the previous one — production's own docstring says so. So
+`body["schema_version"] = SCHEMA_VERSION` was a no-op for the fixture, and deleting that line
+from production left the suite green. The assertion read as a proof of the restamp and proved
+nothing (rule 141, found mechanically rather than by argument).
+
+**The six undefended branches all failed the same way, which is the part worth keeping.** Each
+one, mutated, made the shim *refuse a legal repair*: `floor` at 1, `floor` at 100, `min_votes`
+at 1, and a gate row with no `enabled` key. The existing tests covered the outside of the range
+(0, 101, zero votes) and none of the inclusive edges. Refusing any of them leaves the
+operator's rating bar empty, `RatingFloorGate` abstaining on every item, and a protection they
+can still see configured holding nothing — on a healthy, executable snapshot. That is rule 105's
+worst outcome, and no mutant pointed the other way. **Direction is the finding; the score is
+not.** A survivor list sorted by "does this widen what gets deleted" is readable, and one
+sorted by mutation score is not.
+
+**Defense in depth reads as a test gap.** `total <= 0` in `rebalance` survives as `total == 0`
+because the only input where they differ, a negative total, produces weights
+`PolicyBody.model_validate` refuses anyway — both paths return `None`. The guard is redundant
+with the validation behind it and should stay; the equivalent mutant is the architecture
+working, reported in the same column as a bug. Same for `strict=True` in the `zip`, whose
+lengths cannot differ by construction. Neither earns a test (rule 118: a test that cannot
+discriminate must not read as a proof).
+
+**A probe corpus built from the test's own fixture inherits its blind spots.** The harness
+classifies each survivor by re-running both functions over a fixed corpus and diffing against
+baseline. It labeled the schema-stamp survivor "no observable change" — wrong, and wrong for
+exactly the reason the test was wrong, because the corpus imported `_legacy_rating_body` and so
+carried the same current-version stamp. The mutant surfaced the defect; the classifier missed
+it. Reuse a fixture and you reuse whatever it cannot see, so a differential probe needs at
+least one case built from the *spec* rather than from the existing helper.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
