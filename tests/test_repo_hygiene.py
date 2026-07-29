@@ -719,7 +719,18 @@ _READ_HOOKS = {
 
 # The hooks whose failure is an action's, not a read's. Listed rather than assumed, so the walk
 # fails on a hook it has never seen instead of quietly filing it here.
-_ACTION_HOOKS = {"useMutation"}
+#
+# ``useOverrideMutations`` is the tree's one BAG -- it hands back ``{ setOverride, clearOverride,
+# refresh }`` and the call site reads ``setOverride.isError`` -- so it arrives here through the
+# member branch of the walk rather than through a directly bound ``useMutation``. Both members are
+# ``useMutation``, so a spare or a reap that fails is an action's failure. It is listed for the
+# shape as much as the answer: a READ hook written this way is the one that would otherwise be
+# invisible, and now it stops the run here until someone says which it is.
+_ACTION_HOOKS = {"useMutation", "useOverrideMutations"}
+
+# React Query's own hooks, whose result shape the walk already knows: a member other than
+# ``error``/``isError`` is payload, never a nested failure handle. A custom hook's is unknown.
+_QUERY_PRIMITIVES = {"useQuery", "useInfiniteQuery", "useMutation"}
 
 _OBJECT_BINDING = re.compile(r"const\s+(\w+)\s*=\s*(use[A-Z]\w*)\s*[(<]")
 _DESTRUCTURED_BINDING = re.compile(r"const\s*\{([^}]*)\}\s*=\s*(use[A-Z]\w*)\s*[(<]")
@@ -769,10 +780,33 @@ def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
             for part in (p.strip() for p in inner.split(",")):
                 if not part:
                     continue
-                key = part.split(":", 1)[0].strip()
+                key, local = part.split(":", 1)[0].strip(), part.split(":", 1)[-1].strip()
                 if key in ("error", "isError"):
                     hooks.add(hook)
                     found += 1 if hook in _READ_HOOKS else 0
+                    continue
+                # A BAG: ``const { health } = usePlexHealth()``, where the handle is a member of
+                # the returned object and the ``useQuery`` lives in the hook's own module. Without
+                # this the walk resolved nothing -- the member is not named ``error``, and the
+                # hook's own file binds it to a name this file never mentions -- so such a read
+                # was absent from the count AND from the unknown-hook arm, landing nowhere while
+                # the gate stayed green. The tree already spells hooks this way.
+                #
+                # Only for a hook whose result shape this walk does not already know. React
+                # Query's own hooks return payload under ``data``, and two of the tree's scan
+                # lines rename it (``const { data: status } = useQuery``) and then read
+                # ``status.error`` -- the SERVER's error message on the payload, not a handle.
+                # Counting those would have moved the number for a read that does not exist.
+                if hook in _QUERY_PRIMITIVES:
+                    continue
+                reads = [
+                    a
+                    for a in ("isError", "error")
+                    if re.search(rf"\b{re.escape(local)}\.{a}\b", text)
+                ]
+                if reads:
+                    hooks.add(hook)
+                    found += len(reads) if hook in _READ_HOOKS else 0
         if found:
             per_file[name] = found
     return per_file, hooks
