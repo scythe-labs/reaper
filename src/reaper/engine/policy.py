@@ -1144,10 +1144,11 @@ def inspect(
     # It was false of the mid-binge hold from the day that guard shipped:
     # ``in_progress_hold_days`` is a control on this same editor, one card down, and a hold
     # the mirror cannot span holds every season on disk (issue #154). That branch is at the
-    # foot of this function now. The lifetime-shortfall conflict is the one member with no
-    # control behind it -- it turns on each ITEM's age against the reach, and no setting the
-    # operator can reach moves either -- so it stays unwarned here, deliberately and not by
-    # omission (rules 7/24, 72).
+    # foot of this function now, and so is the lifetime-shortfall conflict, the fifth member
+    # (issue #224). This comment used to close by declaring that one deliberately unwarned,
+    # "the one member with no control behind it": ``flag_keep_conflicts`` is a switch on this
+    # same editor, so the premise was false as written, and the branch that now speaks for it
+    # explains what is true instead (rules 7/24, 72).
     #
     # WHO blocks on this window, which is what makes "nothing will be flagged" true. This
     # detector claims it for the PROTECT lane only: a blocked protect ABSTAINs every item
@@ -1216,11 +1217,11 @@ def inspect(
     # the mirror catches up. On the shipped 1095-day floor that is every operator holding under
     # three years of history, which is most new installs.
     #
-    # It has to be said HERE because ``reach_clears_dormancy`` is read four times below to
+    # It has to be said HERE because ``reach_clears_dormancy`` is read five times below to
     # SILENCE the other warnings in this family, each correctly: under the floor their remedies
     # would move no verdict. The aggregate was a page that went quietest exactly where the list
     # was emptiest, with nothing speaking for the condition that silenced everything. This
-    # branch is that voice, and it cannot stack with the four, because it fires on precisely
+    # branch is that voice, and it cannot stack with the five, because it fires on precisely
     # the negation they are guarded on.
     if dormancy_floor is not None and history_reach_days is not None and not reach_clears_dormancy:
         floor_short = history_shortfall(
@@ -1590,7 +1591,7 @@ def inspect(
         )
 
     # The season path's member of the same family, one field down the same editor card, and
-    # the last of the four lanes a shallow mirror empties (rule 72, issue #154). The mid-binge
+    # the fourth of the five lanes a shallow mirror empties (rule 72, issue #154). The mid-binge
     # guard holds a viewer whose last play falls inside ``in_progress_hold_days``; where the
     # mirror does not span that hold, an invisible viewer and an expired one are the same
     # viewer, so the set is UN-ESTABLISHABLE rather than empty and ``plan_series_prune`` holds

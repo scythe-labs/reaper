@@ -312,7 +312,7 @@ export function GeneralPanel({
       // announcement is delivered through a live region, so it is HEARD ALONE and cannot borrow
       // a referent from elsewhere on the page (rule 21). The wording is that paragraph's own
       // phrase for what the key is for, so the two read alike (rule 144), and it follows the
-      // house pattern the Discord removal already sets a few hundred lines down: say what the
+      // house pattern the Discord `remove` mutation sets in `NotificationsPanel`: say what the
       // operator loses, not what stops working on the wire.
       announce(
         "API key removed. Scripts and other apps can no longer use Reaper without signing in.",
