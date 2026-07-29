@@ -47,6 +47,7 @@ from reaper.engine.fields import BY_KEY, Condition, Lane, Op, ReachSpan
 from reaper.engine.gates import GateId, RatingRule, history_shortfall
 from reaper.engine.observation import Known
 from reaper.engine.signals import MAX_SCORE, CustomSignalConfig, KeepConfig, SignalId
+from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 
 SCHEMA_VERSION = 3
@@ -1148,14 +1149,11 @@ def inspect(
     # pressure while keeping its weight in the denominator.
     #
     # That last one lowers scores without blocking anything, so it cannot empty the list
-    # through PRESSURE -- but it can through COVERAGE, and nothing here warns about that yet.
-    # A blocked signal is unevaluated, so its weight leaves the numerator and stays in the
-    # denominator; enough weight on reach-bounded fields drops coverage under
-    # ``coverage_floor_bp`` and ``decide_verdict`` abstains library-wide. Measured with the
-    # gate off, a 60-day dormancy floor and a 90-day reach: weights of 40 unwatched / 60
-    # few-watchers give coverage 0.40 against a floor of 0.50, every item abstains, and
-    # ``inspect`` says nothing. Weights need only total 100, so that split is legal. Tracked
-    # as issue #164; do not read this paragraph as ruling that lane safe (rule 7/24).
+    # through PRESSURE -- but it can through COVERAGE, and **that lane is warned about now
+    # too, further down** (issue #164 closed). This paragraph used to rule it safe and was
+    # wrong to (rule 7/24): a blocked signal is unevaluated, so its weight leaves the
+    # numerator and stays in the denominator, and enough weight on reach-bounded fields drops
+    # coverage under ``coverage_floor_bp`` for every item at once.
     #
     # ``warn``, not ``danger``: the outcome is that Reaper deletes nothing, which is the
     # keep direction. Every ``danger`` here marks a config that removes MORE.
@@ -1298,6 +1296,84 @@ def inspect(
                 ),
             )
         )
+
+    # The CONDEMN lane, the third of the four and the one the comment above used to rule out.
+    # A blocked condemn rule withholds its pressure and keeps its weight in the denominator
+    # (``signals.score``), so it cannot empty the list through pressure. The weight it leaves
+    # behind lowers BOTH bounds ``decide_verdict`` reads, though: coverage, which is what
+    # issue #164 measured, and the score ceiling with it -- ``signals``' "``condemn_at`` is
+    # itself a coverage floor" note. So the question is put to the real decision function
+    # rather than answered here, which covers both bounds and keeps the floor comparison in
+    # the one place allowed to make it (rule 3/22).
+    #
+    # Summed over the readers whose block is LIBRARY-WIDE, which is not every reader of the
+    # field. Driven at a 90-day reach against the 365-day fallback, coverage per item:
+    #
+    #     built-in FEW_WATCHERS:   0.45 at 0 watchers, 0.45 at 50   -- always withheld
+    #     a graded custom rule:    0.45 at 0 watchers, 0.45 at 50   -- always withheld
+    #     a boolean custom rule:   0.45 at 0 watchers, 0.80 at 50   -- per item
+    #
+    # The built-in withholds on every observation it can take: a Known count fails the reach
+    # check, an Absent one fails it too (rule 93's precondition is a GENUINE absence, which a
+    # window the mirror does not span cannot establish), and an Unknown has no number to ramp.
+    # The graded arm exempts an Absent input, which ``distinct_watchers`` never is -- every
+    # builder writes Known or Unknown, none of them Absent -- so it too is withheld for every
+    # item. ``watchers_all_time`` cannot appear on either: it is PROTECT-only, so
+    # ``ITEM_LIFETIME`` never reaches the condemn lane and the window is the only span here.
+    #
+    # A BOOLEAN rule is deliberately NOT in the sum. It goes through ``fields.evaluate``,
+    # which keeps ``_survives_more_history``'s earned outcomes, so the items it does not block
+    # are judged normally and the list is genuinely not empty -- claiming otherwise would be
+    # false in the reassuring direction (rule 144). What it does instead is abstain exactly
+    # the titles nobody watched recently, which is a set ``inspect`` cannot size from one
+    # reach, and it is filed rather than guessed at here.
+    withheld = 0
+    withheld_on_a_signal = False
+    if window_short is not None:
+        for signal in body.signals:
+            if signal.signal is SignalId.FEW_WATCHERS and signal.weight > 0:
+                withheld += signal.weight
+                withheld_on_a_signal = True
+        for condemn in body.custom_condemn:
+            condemn_spec = BY_KEY.get(condemn.field)
+            if (
+                isinstance(condemn, GradedCondemnSpec)
+                and condemn.weight > 0
+                and condemn_spec is not None
+                and condemn_spec.reach_span is ReachSpan.POPULARITY_WINDOW
+            ):
+                withheld += condemn.weight
+    if withheld > 0:
+        # The best any item can do once that weight is withheld: the pressure it could have
+        # carried is out of the numerator, and its share of the denominator is unevaluated.
+        # Both are the same number because the denominator is pinned at ``MAX_SCORE``
+        # (``_weights_total_one_hundred``), so a weight IS its share.
+        ceiling = MAX_SCORE - withheld
+        best_case = decide_verdict(
+            protected=False,
+            blocked=False,
+            score=ceiling,
+            coverage_bp=round(ceiling / MAX_SCORE * 10_000),
+            condemn_at=body.condemn_at,
+            coverage_floor_bp=body.coverage_floor_bp,
+        )
+        if best_case != "condemn":
+            warnings.append(
+                PolicyWarning(
+                    # Beside the points that have to move. The built-in's slider and the
+                    # custom rules sit in different cards, so this follows the weight rather
+                    # than defaulting to one of them (rule 42).
+                    field="signals" if withheld_on_a_signal else "custom_condemn",
+                    severity="warn",
+                    message=(
+                        f"Nothing will be flagged for removal. {withheld} of your "
+                        f"{MAX_SCORE} removal points count who watched a title in the last "
+                        f"{humanize_window(window_days)}, and {window_short}, so only "
+                        f"{ceiling} points are left to judge on. Wait for it to build up, or "
+                        "move those points to a reason that doesn't count watchers."
+                    ),
+                )
+            )
 
     # The lean lane, which the comment above used to name as a known gap. A graded keep takes
     # its FULL ``max_discount`` on a shortfall, on every item it reaches, with no

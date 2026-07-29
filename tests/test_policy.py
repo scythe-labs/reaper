@@ -35,8 +35,10 @@ from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     SCHEMA_VERSION,
     SCORER_VERSION,
+    BooleanCondemnSpec,
     ConditionSpec,
     GateSetting,
+    GradedCondemnSpec,
     GradedKeepSpec,
     PolicyBody,
     PolicyWarning,
@@ -1712,3 +1714,190 @@ class TestTheOtherReachShortfallLanes:
         both = self._warnings_on(self._lean("recent_watchers", 70), "graded_keeps", reach=90.0)
         assert len(both) == 2
         assert sum("subtract up to" in w.message for w in both) == 1
+
+
+class TestTheCondemnLanesCoverage:
+    """The fourth lane, and the one ``inspect`` used to rule harmless in a comment.
+
+    A blocked condemn rule withholds its pressure and keeps its weight in the denominator, so
+    it cannot empty the list through PRESSURE -- which is what the old comment said, and it
+    stopped there. The weight it leaves behind lowers both bounds ``decide_verdict`` reads:
+    coverage falls under ``coverage_floor_bp`` and every item abstains, and the score ceiling
+    falls with it so nothing can reach ``condemn_at`` either. Weights need only total 100, so
+    a split that does this is a legal policy nothing refused and nothing announced (#164).
+
+    Claimed only over the readers whose block is library-wide, which is not every reader of
+    the field -- see the boolean case below, which is why this is a sum over two of the three
+    and not over the field.
+    """
+
+    def _condemn_warnings(
+        self, body: PolicyBody, reach: float | None = 90.0
+    ) -> list[PolicyWarning]:
+        return [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=reach)
+            if w.field in ("signals", "custom_condemn")
+        ]
+
+    def _gate_off(self, **overrides: object) -> dict[str, object]:
+        """The gate off, so the window is the 365-day fallback, beside a dormancy floor the
+        reach clears. Without the second the floor keeps every item on age alone and every
+        warning in this family is correctly silent."""
+        return {
+            "gates": (
+                GateSetting(gate=GateId.SERVER_POPULARITY, enabled=False, threshold=2),
+                GateSetting(gate=GateId.MIN_DORMANCY, threshold=60),
+            ),
+            **overrides,
+        }
+
+    def test_weight_parked_on_a_blocked_signal_empties_the_list(self) -> None:
+        """Issue #164's second measured split, driven: 30 unwatched / 60 few-watchers / 10
+        rating against a 90-day mirror and the 365-day fallback gives coverage 0.40 under the
+        shipped floor of 0.50, so ``decide_verdict`` abstains for every item."""
+        body = _policy(**self._gate_off(signals=_split(40, 60)))
+
+        [flagged] = self._condemn_warnings(body)
+
+        assert flagged.severity == "warn"
+        assert flagged.message.startswith("Nothing will be flagged for removal.")
+        # The number that makes it actionable is the weight to move, not a coverage ratio.
+        assert "60 of your 100 removal points" in flagged.message
+        assert "40 points are left to judge on" in flagged.message
+
+    def test_a_graded_custom_rule_adds_to_the_same_sum(self) -> None:
+        """#164's first split: 20 on the built-in alone clears both bounds, and the operator's
+        own graded rule on the same count is what carries it under. Summed rather than tested
+        one at a time, for the reason the lean lane is: each is withheld in full and the
+        shortfall in the denominator is their total."""
+        alone = _policy(**self._gate_off(signals=_split(80, 20)))
+        assert self._condemn_warnings(alone) == []
+
+        with_rule = _policy(
+            **self._gate_off(
+                signals=(
+                    SignalSetting(signal=SignalId.UNWATCHED, weight=35, saturate_at=730),
+                    SignalSetting(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
+                    SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
+                ),
+                custom_condemn=(
+                    GradedCondemnSpec(
+                        name="hardly watched", field="recent_watchers", weight=35, saturate_at=3
+                    ),
+                ),
+            )
+        )
+
+        [flagged] = self._condemn_warnings(with_rule)
+
+        assert "55 of your 100 removal points" in flagged.message
+
+    def test_a_boolean_rule_is_left_out_because_its_block_is_per_item(self) -> None:
+        """The discriminator for the sum, and the reason it is not simply "weight on the field".
+
+        A boolean rule goes through ``fields.evaluate``, which keeps
+        ``_survives_more_history``'s earned outcomes, so an item the truncated count already
+        settles is judged normally. Measured at a 90-day reach against the 365-day fallback:
+        the same 35-point rule leaves coverage at 0.45 for a title with 0 recent watchers and
+        0.80 for one with 50, where the graded arm holds 0.45 for both. Counting it would
+        claim an empty list that is not empty, which is rule 144's reassuring direction.
+        """
+        boolean = _policy(
+            **self._gate_off(
+                signals=(
+                    SignalSetting(signal=SignalId.UNWATCHED, weight=35, saturate_at=730),
+                    SignalSetting(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
+                    SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
+                ),
+                custom_condemn=(
+                    BooleanCondemnSpec(
+                        name="hardly watched",
+                        field="recent_watchers",
+                        op=Op.LTE,
+                        value=1,
+                        weight=35,
+                    ),
+                ),
+            )
+        )
+
+        assert self._condemn_warnings(boolean) == []
+
+    def test_both_bounds_the_verdict_reads_are_covered(self) -> None:
+        """The floor is not the only way this empties the list, so neither is tested alone.
+
+        ``decide_verdict`` abstains under ``coverage_floor_bp`` AND fails to reach
+        ``condemn_at``, and withheld weight lowers both at once. Each case below clears one
+        bound and fails the other, so a fix reading only one of them leaves a case silent.
+        Asking the real decision function is what makes that free (rule 3/22).
+        """
+        # Coverage alone: 60 withheld leaves a ceiling of 40, which clears a threshold of 20
+        # and still sits under the 0.50 floor.
+        coverage_only = _policy(**self._gate_off(signals=_split(40, 60), condemn_at=20))
+        assert len(self._condemn_warnings(coverage_only)) == 1
+
+        # The threshold alone: 45 withheld leaves 55, which clears the 0.50 floor and cannot
+        # reach the shipped threshold of 70.
+        threshold_only = _policy(**self._gate_off(signals=_split(55, 45)))
+        assert len(self._condemn_warnings(threshold_only)) == 1
+
+        # Neither: 20 withheld leaves 80, over the floor and over the threshold, so items are
+        # still condemned and there is no empty list to announce.
+        neither = _policy(**self._gate_off(signals=_split(80, 20)))
+        assert self._condemn_warnings(neither) == []
+
+    def test_the_shipped_movie_policy_is_not_flagged(self) -> None:
+        """The population this must not fire on. ``FEW_WATCHERS`` carries 20 of the shipped
+        100, which leaves 80 against a threshold of 70 and a floor of 0.50, so a title is
+        still condemnable on a short mirror and claiming otherwise would be false."""
+        assert [
+            w
+            for w in inspect(DEFAULT_MOVIE_POLICY, ProfileSettings(), history_reach_days=90.0)
+            if w.field in ("signals", "custom_condemn")
+        ] == []
+
+    def test_a_history_that_covers_the_window_is_silent(self) -> None:
+        """Nothing is withheld once the mirror spans the window, so the weight is doing its
+        job and there is nothing to say."""
+        body = _policy(**self._gate_off(signals=_split(40, 60)))
+
+        assert self._condemn_warnings(body, reach=365.0) == []
+        assert self._condemn_warnings(body, reach=800.0) == []
+
+    def test_a_caller_that_cannot_read_the_mirror_stays_quiet(self) -> None:
+        """The ``requests_app_configured`` posture, same as every other lane here: a caller
+        that cannot tell must not guess, since guessing short condemns a policy that is fine."""
+        assert self._condemn_warnings(_policy(**self._gate_off(signals=_split(40, 60))), None) == []
+
+    def test_the_dormancy_floor_silences_it(self) -> None:
+        """Under the floor every item is kept on age alone and PROTECT beats the coverage
+        check in ``decide_verdict``, so the weights decide nothing and the remedy would move
+        no verdict. The same guard the three other lanes take, for the same reason."""
+        floored = _policy(
+            gates=(
+                GateSetting(gate=GateId.SERVER_POPULARITY, enabled=False, threshold=2),
+                GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),
+            ),
+            signals=_split(40, 60),
+        )
+
+        assert self._condemn_warnings(floored) == []
+
+    def test_the_warning_lands_on_the_card_holding_the_points(self) -> None:
+        """Rule 42: the built-in's slider and the operator's own rules are different cards, so
+        the anchor follows the weight rather than defaulting to one of them."""
+        on_the_signal = _policy(**self._gate_off(signals=_split(40, 60)))
+        assert self._condemn_warnings(on_the_signal)[0].field == "signals"
+
+        on_the_rule = _policy(
+            **self._gate_off(
+                signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=40, saturate_at=730),),
+                custom_condemn=(
+                    GradedCondemnSpec(
+                        name="hardly watched", field="recent_watchers", weight=60, saturate_at=3
+                    ),
+                ),
+            )
+        )
+        assert self._condemn_warnings(on_the_rule)[0].field == "custom_condemn"
