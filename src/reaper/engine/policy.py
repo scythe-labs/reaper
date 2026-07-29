@@ -836,6 +836,15 @@ class PolicyWarning(Frozen):
     severity: Literal["warn", "danger"]
 
 
+def _join_and(parts: list[str]) -> str:
+    """Join as `"a", "b" and "c"`. The conjunctive twin of `fields._join_or`, kept in the
+    module that needs it rather than reaching across for a private name; both exist because a
+    comma-joined dump is not something an operator reads at a glance."""
+    if len(parts) <= 1:
+        return parts[0] if parts else ""
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
 def rebalance(raw: object) -> dict[str, Any] | None:
     """A stored policy body rescaled so its removal weights total exactly 100.
 
@@ -1110,9 +1119,7 @@ def inspect(
     # (``verdict.decide_verdict``), library-wide, for as long as the shortfall lasts. Two
     # readers sit in that lane and the built-in gate is only one of them -- an operator's
     # own keep-outright rule on a popularity-window field is the other, and ``build_gates``
-    # hands it this same span whether the gate is on or off. The condemn lane genuinely
-    # cannot empty the list: ``evaluate_custom`` withholds its pressure and keeps its weight
-    # in the denominator, which lowers scores without blocking anything.
+    # hands it this same span whether the gate is on or off.
     #
     # **The lean lane is warned about too now, further down**, and this comment carried it as
     # a known gap for a while: a graded keep takes its FULL ``max_discount`` on a shortfall,
@@ -1125,10 +1132,19 @@ def inspect(
     # which is why the lean check does not read the gate either (rules 7/24, 140).
     #
     # This branch remains about the PROTECT lane only. The three lanes and what each does under
-    # a shortfall, since the asymmetry is the whole reason there are three checks: a protect
-    # blocks and abstains, a lean takes its full discount, and the condemn lane genuinely
-    # cannot empty the list -- ``evaluate_custom`` withholds its pressure and keeps its weight
-    # in the denominator, which lowers scores without blocking anything.
+    # a shortfall, since the asymmetry is the whole reason there are separate checks: a protect
+    # blocks and abstains, a lean takes its full discount, and a condemn rule withholds its
+    # pressure while keeping its weight in the denominator.
+    #
+    # That last one lowers scores without blocking anything, so it cannot empty the list
+    # through PRESSURE -- but it can through COVERAGE, and nothing here warns about that yet.
+    # A blocked signal is unevaluated, so its weight leaves the numerator and stays in the
+    # denominator; enough weight on reach-bounded fields drops coverage under
+    # ``coverage_floor_bp`` and ``decide_verdict`` abstains library-wide. Measured with the
+    # gate off, a 60-day dormancy floor and a 90-day reach: weights of 40 unwatched / 60
+    # few-watchers give coverage 0.40 against a floor of 0.50, every item abstains, and
+    # ``inspect`` says nothing. Weights need only total 100, so that split is legal. Tracked
+    # as issue #164; do not read this paragraph as ruling that lane safe (rule 7/24).
     #
     # ``warn``, not ``danger``: the outcome is that Reaper deletes nothing, which is the
     # keep direction. Every ``danger`` here marks a config that removes MORE.
@@ -1155,13 +1171,15 @@ def inspect(
         span for c in body.protect_conditions if (span := _protect_blocks_on_reach(c)) is not None
     }
     owner_protect_on_window = ReachSpan.POPULARITY_WINDOW in protect_spans
-    short: str | None = None
-    if (popularity is not None or owner_protect_on_window) and (
-        history_reach_days is not None and reach_clears_dormancy
-    ):
-        short = history_shortfall(
+    # Derived once and read by both lanes below (rule 104). The protect lane additionally
+    # requires a reader on the window, which is what ``short`` adds; the lean lane does not,
+    # because a graded keep on a window field is discounted whether the gate is on or off.
+    window_short: str | None = None
+    if history_reach_days is not None and reach_clears_dormancy:
+        window_short = history_shortfall(
             Known(value=history_reach_days, source="tautulli"), float(window_days)
         )
+    short = window_short if (popularity is not None or owner_protect_on_window) else None
     if short is not None:
         window_text = humanize_window(window_days)
         if popularity is not None:
@@ -1255,37 +1273,74 @@ def inspect(
     #
     # Anchored on ``graded_keeps`` beside the rule doing it, and it can name the rule, which
     # the protect lanes above cannot: a ``GradedKeepSpec`` carries a name the operator typed.
+    # Summed per span, never per rule. ``evaluate_keep`` grants each blocked keep its full
+    # ``max_discount`` and ``score()`` subtracts the SUM, so two keeps of 20 against a headroom
+    # of 30 empty the list exactly as one keep of 40 does. Testing each rule alone left that
+    # case silent, which is the same dead zone this warning exists to close, one arity up.
+    #
+    # The two spans are kept apart because they bound different things. A window shortfall is a
+    # property of the operator's DATA, so a window keep's discount lands on every item; a
+    # lifetime shortfall is a property of each ITEM's age, and ``inspect`` is handed one reach
+    # and never a list of arrival dates. So window keeps alone crossing the headroom is the only
+    # case that may claim an empty list, and the combined case names the affected set instead
+    # (rule 144's reassuring-direction failure, which is why the wider claim is not made here).
     headroom = MAX_SCORE - body.condemn_at
-    for keep in body.graded_keeps:
-        keep_spec = BY_KEY.get(keep.field)
-        if keep_spec is None or keep_spec.reach_span is None or keep.max_discount <= headroom:
-            continue
-        if history_reach_days is None or not reach_clears_dormancy:
-            continue
-        if keep_spec.reach_span is ReachSpan.POPULARITY_WINDOW:
-            lean_short = history_shortfall(
-                Known(value=history_reach_days, source="tautulli"), float(window_days)
-            )
-            if lean_short is None:
+    window_keeps: list[GradedKeepSpec] = []
+    lifetime_keeps: list[GradedKeepSpec] = []
+    if history_reach_days is not None and reach_clears_dormancy:
+        for keep in body.graded_keeps:
+            keep_spec = BY_KEY.get(keep.field)
+            if keep_spec is None or keep_spec.reach_span is None:
                 continue
-            reach_clause = (
-                f"Reaper can't say who watched a title in the last "
-                f"{humanize_window(window_days)}, and {lean_short}"
-            )
-            scope = "Nothing will be flagged for removal."
+            if keep_spec.reach_span is ReachSpan.POPULARITY_WINDOW:
+                if window_short is not None:
+                    window_keeps.append(keep)
+            else:
+                lifetime_keeps.append(keep)
+
+    windowed_total = sum(k.max_discount for k in window_keeps)
+    combined_total = windowed_total + sum(k.max_discount for k in lifetime_keeps)
+    contributors: list[GradedKeepSpec] = []
+    scope = cause = ""
+    total = 0
+    if windowed_total > headroom:
+        contributors, total = window_keeps, windowed_total
+        scope = "Nothing will be flagged for removal."
+        cause = (
+            f"Reaper can't say who watched a title in the last "
+            f"{humanize_window(window_days)}, and {window_short}, so "
+        )
+    elif combined_total > headroom:
+        contributors, total = window_keeps + lifetime_keeps, combined_total
+        scope = "Titles added before your watch history starts won't be flagged for removal."
+    if contributors:
+        named = _join_and([f'"{k.name}"' for k in contributors])
+        many = len(contributors) > 1
+        rule_phrase = f"your keep rules {named} take" if many else f"your keep rule {named} takes"
+        theirs = "their" if many else "its"
+        # ``max_discount`` is ``ge=1``, so at ``condemn_at`` 100 the headroom is 0 and every
+        # settable value is too high. Naming a number there sends the operator to a control
+        # that refuses it, so the remedy drops to the one move that still works.
+        if headroom < 1:
+            remedy = f"remove {'those rules' if many else 'that rule'}"
         else:
-            reach_clause = "Reaper can't count plays from before your history begins"
-            scope = "Titles added before your watch history starts won't be flagged for removal."
+            unit = "point" if headroom == 1 else "points"
+            what = "their total" if many else "it"
+            remedy = f"set {what} to {headroom} {unit} or less"
+        # The cause clause leads only on the window branch; without it the sentence starts on
+        # "your", so it is capitalized here rather than carried as a second literal that could
+        # drift out of step with the one above it.
+        said = (
+            f"{cause}{rule_phrase} all {total} of {theirs} points off "
+            f"{'every title' if cause else 'them'}."
+        )
+        if not cause:
+            said = said[:1].upper() + said[1:]
         warnings.append(
             PolicyWarning(
                 field="graded_keeps",
                 severity="warn",
-                message=(
-                    f'{scope} {reach_clause}, so your keep rule "{keep.name}" takes all '
-                    f"{keep.max_discount} of its points off every one of them. That alone is "
-                    f"enough to hold them under your remove threshold of {body.condemn_at}. "
-                    f"Wait for it to build up, or set that rule to {headroom} points or less."
-                ),
+                message=f"{scope} {said} Wait for it to build up, or {remedy}.",
             )
         )
 

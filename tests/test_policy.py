@@ -1303,10 +1303,13 @@ class TestTheOtherReachShortfallLanes:
     The lean lane is the other one, and it does not block at all: ``signals.evaluate_keep``
     grants the FULL ``max_discount`` on a shortfall with no earned-outcome test, and
     ``score()`` is ``max(0, base - keep_discount)`` over a base bounded by ``MAX_SCORE``, so
-    a keep worth more than the headroom holds every affected item under the threshold as
-    provably as a block does. The pre-existing ``graded_keeps`` warning fires on the keeps
-    TOTALLING at least ``condemn_at`` -- 70 against a headroom of 31 on shipped values -- so
-    a keep at 40 sat in a dead zone that warned about nothing (rule 140).
+    keeps worth more than the headroom hold every affected item under the threshold as
+    provably as a block does. That is summed per SPAN, not per rule: each blocked keep takes
+    its full discount and ``score()`` subtracts the sum, so two keeps of 20 against a headroom
+    of 30 empty the list exactly as one keep of 40 does. The pre-existing ``graded_keeps``
+    warning fires on the keeps TOTALLING at least ``condemn_at`` -- 70 against a headroom of
+    30 on shipped values -- so a keep at 40 sat in a dead zone that warned about nothing
+    (rule 140).
     """
 
     def _all_time_rule(self, *, op: Op = Op.GTE) -> PolicyBody:
@@ -1455,9 +1458,131 @@ class TestTheOtherReachShortfallLanes:
         [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
 
         # MAX_SCORE - condemn_at == 20 here, not the 30 the shipped threshold gives, so a
-        # transcribed constant would fail this (rule 141).
+        # transcribed constant would fail this (rule 141). The message used to restate the
+        # threshold in a third sentence too; that sentence said again what the lead already
+        # says and was cut, so the derived number is the only thing left to pin -- which is
+        # the half that could actually be wrong.
         assert "20 points or less" in flagged.message
-        assert "remove threshold of 80" in flagged.message
+
+    def test_a_caller_that_cannot_read_the_mirror_stays_quiet_on_the_lean_lane(self) -> None:
+        """The lean twin of the protect-lane guard above (rules 118, 72).
+
+        Both arms were pinned on the protect lane and neither was pinned here: neutering the
+        guard passed all 119 tests.
+
+        **The lifetime span is the arm that actually needs it, so it is the one that must be
+        driven.** A window keep is held back a second time by ``window_short``, which is None
+        with no mirror, so a window-only case passes with the guard gone and reads as a proof
+        it is not (rule 118). A lifetime keep has no second test: without the guard it warns
+        that titles older than the history are held, while nothing knows how far the history
+        reaches.
+        """
+        for field in ("recent_watchers", "watchers_all_time"):
+            assert self._warnings_on(self._lean(field, 40), "graded_keeps", None) == []
+
+    def test_the_dormancy_floor_silences_the_lean_lane_too(self) -> None:
+        """The other arm, same reason as every other lane: under the floor every item is kept
+        on age alone, so lowering the keep would move no verdict.
+
+        Both spans for the reason given above: only the lifetime one discriminates here.
+        """
+        for field in ("recent_watchers", "watchers_all_time"):
+            body = _policy(
+                gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),),
+                graded_keeps=(
+                    GradedKeepSpec(
+                        name="my lean", field=field, max_discount=40, floor=0, saturate_at=10
+                    ),
+                ),
+            )
+            assert self._warnings_on(body, "graded_keeps", reach=90.0) == []
+
+    def test_the_message_names_the_operators_window_not_the_fallback(self) -> None:
+        """Every lean test above runs on a policy with no ``SERVER_POPULARITY`` row, so the
+        window is the 365-day fallback in all of them and a hardcoded ``humanize_window(365)``
+        passed the suite. 180 is not the default, so only the wiring can produce it (rule 141).
+        """
+        body = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=180),),
+            graded_keeps=(
+                GradedKeepSpec(
+                    name="my lean",
+                    field="recent_watchers",
+                    max_discount=40,
+                    floor=0,
+                    saturate_at=10,
+                ),
+            ),
+        )
+        [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
+
+        assert "6 months" in flagged.message
+        assert "year" not in flagged.message
+
+    # --- the total is per span, never per rule ------------------------------------
+
+    def test_two_keeps_each_inside_the_headroom_still_empty_the_list(self) -> None:
+        """The dead zone one arity up, and the reason the check is summed.
+
+        ``evaluate_keep`` grants each blocked keep its FULL ``max_discount`` and ``score()``
+        subtracts the sum, so two keeps of 20 against a headroom of 30 hold every item under
+        70 exactly as one keep of 40 does. Tested per rule, both sat under the bar and the
+        page said nothing -- while the pre-existing total-based warning needs 70.
+        """
+        body = _policy(
+            graded_keeps=(
+                GradedKeepSpec(
+                    name="one", field="recent_watchers", max_discount=20, floor=0, saturate_at=10
+                ),
+                GradedKeepSpec(
+                    name="two", field="recent_watchers", max_discount=20, floor=0, saturate_at=10
+                ),
+            )
+        )
+        [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
+
+        assert flagged.message.startswith("Nothing will be flagged for removal.")
+        # Both contributors are named: the operator cannot act on a total alone, because
+        # neither rule looks wrong on its own.
+        assert '"one" and "two"' in flagged.message
+        assert "all 40 of their points" in flagged.message
+        assert "set their total to 30 points or less" in flagged.message
+
+    def test_a_window_keep_and_a_lifetime_keep_name_the_affected_set(self) -> None:
+        """Mixed spans do NOT claim an empty list, and that asymmetry is deliberate.
+
+        A window shortfall is a property of the operator's data, so it reaches every item; a
+        lifetime shortfall is a property of each item's age, and ``inspect`` is handed one
+        reach and never a list of arrival dates. So 20 + 20 crossing the headroom is only
+        provable for titles older than the mirror, and claiming the whole library would be
+        false in the reassuring direction for a young one (rule 144).
+        """
+        body = _policy(
+            graded_keeps=(
+                GradedKeepSpec(
+                    name="recent", field="recent_watchers", max_discount=20, floor=0, saturate_at=10
+                ),
+                GradedKeepSpec(
+                    name="ever", field="watchers_all_time", max_discount=20, floor=0, saturate_at=10
+                ),
+            )
+        )
+        [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
+
+        assert flagged.message.startswith("Titles added before your watch history starts")
+        assert "Nothing will be flagged" not in flagged.message
+        assert '"recent" and "ever"' in flagged.message
+
+    def test_a_threshold_with_no_headroom_names_a_move_the_editor_accepts(self) -> None:
+        """``condemn_at`` may be 100, which is the cautious direction, and ``max_discount`` is
+        ``ge=1`` -- so the headroom is 0 and every settable value is too high. Naming a number
+        sent the operator to a control that refuses it ("set that rule to 0 points or less").
+        """
+        body = _policy(condemn_at=100, graded_keeps=self._lean("recent_watchers", 40).graded_keeps)
+        [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
+
+        assert "remove that rule" in flagged.message
+        assert "0 points or less" not in flagged.message
 
     def test_it_is_not_the_total_based_warning_and_both_can_fire(self) -> None:
         """They answer different questions on one anchor, and neither covers the other.
