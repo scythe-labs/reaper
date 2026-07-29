@@ -302,6 +302,10 @@ export function GeneralPanel({
     onSuccess: () => {
       setRevealedKey(null);
       setConfirmRemove(false);
+      // The three neighbours above all announce; this one's entire success signal was the key
+      // block unmounting and taking the pressed Confirm with it, which is an absence and cannot
+      // be heard (#192's shape, missed in its sweep).
+      announce("API key removed. Nothing gets in on the header now.");
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
   });
@@ -922,7 +926,12 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
   });
   const remove = useMutation({
     mutationFn: () => api.deleteInstance(instance.id),
-    onSuccess: invalidate,
+    // Adding a service speaks and removing one did not, which is the asymmetry #192 was about:
+    // the whole card vanishes, and an absence cannot be perceived by ear.
+    onSuccess: () => {
+      announce(`${instance.name} removed.`);
+      invalidate();
+    },
   });
 
   const certCheckOff = !instance.verify_tls && instance.base_url.startsWith("https://");
@@ -1737,6 +1746,9 @@ function ScheduleModal({
   const save = useMutation({
     mutationFn: (cron: string | null) => api.saveJobSchedule(job.id, cron),
     onSuccess: () => {
+      // The modal closing was the entire success signal, the same shape `ServiceModal`'s save
+      // was fixed for -- and it takes the focused button with it.
+      announce("Schedule saved.");
       void queryClient.invalidateQueries({ queryKey: ["schedule"] });
       onClose();
     },
@@ -2201,6 +2213,9 @@ function NotificationsPanel({
       setUrl("");
       setTest(null);
       setError(null);
+      // Success here is the box emptying and a line above it flipping, both silent. The test
+      // button between these two mutations already speaks (#192); these are its siblings.
+      announce("Discord webhook saved.");
       invalidate();
     },
     onError: (e: Error) => setError(e.message),
@@ -2221,6 +2236,7 @@ function NotificationsPanel({
       setUrl("");
       setTest(null);
       setError(null);
+      announce("Discord webhook removed. Leaving-soon warnings won't be sent.");
       invalidate();
     },
     onError: (e: Error) => setError(e.message),
@@ -2282,7 +2298,11 @@ function NotificationsPanel({
           {isError && <StaleReadNotice what="whether Discord is connected" />}
           {connected ? (
             <p className="muted">
-              ✓ Discord connected. Leaving-soon warnings post to your channel.
+              {/* The sentence says the state in words either way, so the tick would only
+                  interrupt it with a stray character -- the same call `:1467`'s `.dot` ✓ makes
+                  a few hundred lines above, and the one #177 made for the `.gate-mark` pair. */}
+              <span aria-hidden="true">✓</span> Discord connected. Leaving-soon warnings post to
+              your channel.
             </p>
           ) : (
             <p className="muted">No Discord webhook set, so leaving-soon warnings won't be sent.</p>

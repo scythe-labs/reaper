@@ -405,6 +405,7 @@ function RatingBarRow({
         )}
       </span>
       <button
+        {...REMOVES_ITS_ROW}
         type="button"
         className="bar-x"
         onClick={onRemove}
@@ -458,6 +459,12 @@ function RatingFloorRow({
       ? "Nothing is kept yet: add a rating source to set the score a title must clear to stay."
       : `Keep a title rated at least ${rules.map(describeBar).join(joiner)}.`;
 
+  // The same shape as the keep-tag chips 290 lines above, on the same ~1,900-line form: the ×
+  // removes the row it lives in, so without this focus falls to `<body>` and the next Tab
+  // restarts at the top (#173). Missed in that sweep and caught by a rule 72 pass over it.
+  const addSourceRef = useRef<HTMLSelectElement>(null);
+  const bars = useRemovalFocus(addSourceRef);
+
   return (
     <div className="rules-card">
       <label className="toggle card-head">
@@ -471,13 +478,16 @@ function RatingFloorRow({
       {gate.enabled && (
         <>
           {rules.length > 0 && (
-            <div className="bar-table">
+            <div className="bar-table" ref={bars.ref as RefObject<HTMLDivElement>}>
               {rules.map((rule, i) => (
                 <RatingBarRow
                   key={rule.source}
                   rule={rule}
                   onChange={(r) => onRules(rules.map((x, j) => (j === i ? r : x)))}
-                  onRemove={() => onRules(rules.filter((_, j) => j !== i))}
+                  onRemove={() => {
+                    bars.removing(i);
+                    onRules(rules.filter((_, j) => j !== i));
+                  }}
                 />
               ))}
             </div>
@@ -485,6 +495,7 @@ function RatingFloorRow({
           <div className="bar-foot">
             {available.length > 0 ? (
               <select
+                ref={addSourceRef}
                 value=""
                 aria-label="Add a rating source"
                 onChange={(e) => {

@@ -678,7 +678,9 @@ export function KeepRulesEditor({
           {conditions.map((c, i) => (
             <div className="rules-row rules-row-simple" key={`h-${c.field}-${c.op}-${i}`}>
               <span className="rules-rule">
-                <span className="rule-kind">Keeps it, always · </span>
+                <span className="rule-kind">
+                  Keeps it, always<span aria-hidden="true"> · </span>
+                </span>
                 {describeCondition(c, allFields)}
               </span>
               <span className="rules-weight-keep">kept outright</span>
@@ -700,7 +702,9 @@ export function KeepRulesEditor({
             return (
               <div className="rules-row rules-row-simple" key={`k-${k.name}-${i}`}>
                 <span className="rules-rule">
-                  <span className="rule-kind">Leans · </span>
+                  <span className="rule-kind">
+                    Leans<span aria-hidden="true"> · </span>
+                  </span>
                   {f?.label ?? k.field}: the {k.direction === "low_keeps" ? "less" : "more"}, the
                   safer (full effect at {rampValue(f, k.saturate_at)})
                 </span>

@@ -552,11 +552,12 @@ describe("the all-seasons list", () => {
 });
 
 describe("what a screen reader hears on a season row", () => {
-  // The row is a `role="button"`, which makes its own name the whole of what is announced. With
-  // no `aria-label` that name was computed from its contents, so the row read out as its score,
-  // its chip, the nested Spare/Reap group label and its size run together -- and this is the row
-  // where a per-season keep-or-delete decision is made. The movie card, the show card head and
-  // the Scales card all name themselves this way already; only this one did not (rule 72).
+  // The row's name is the name of the `CardOpen` control on its season title, and that control
+  // is what makes the rest of the row readable at all. The row USED to be a `role="button"`,
+  // which made its own name the whole of what was announced -- so with no `aria-label` it read
+  // out as its score, its chip, the nested Spare/Reap group label and its size run together, and
+  // with one it read out as the label and nothing else. #169 took the role off every card; what
+  // these still pin is that each row names itself for the season it opens.
   //
   // The existing lane test reaches these rows with `{ name: /Season \d/ }`, which matched the
   // old computed name just as well as the new one -- the name-blind shape that let this hide.
