@@ -38,7 +38,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from typing import Annotated, Any, ClassVar, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -969,9 +969,20 @@ def _protect_blocks_on_reach(cond: ConditionSpec) -> ReachSpan | None:
     """Which span's shortfall would block this rule on EVERY item, or ``None`` for neither.
 
     Two tests, and the second is the one that is easy to miss. The registry owns the span
-    (``FieldSpec.reach_span``), so a field that gains or loses that bound moves this with it
+    (``FieldSpec.reach_span``), so a FIELD that gains or loses that bound moves this with it
     rather than leaving a second list to drift (rule 103). An unknown key is ``None``: a rule
     that no longer validates cannot be blocking anything.
+
+    That sentence used to be written as though it covered a new SPAN too, and it never did
+    (rules 7/24, 103). The consumers hand-enumerate the members -- the two ``in
+    protect_spans`` tests below, one per warning, and the lean loop's match -- so a third
+    ``ReachSpan`` took the ``else`` and was scored against the wrong bound with nothing
+    failing (issue #168). The two routing sites now match member by member and mypy holds
+    them (``fields.reach_shortfall``, the lean loop). The membership tests cannot be closed
+    that way, because each one carries copy written for its own span: a third member simply
+    gets no warning, which is silence rather than a wrong answer.
+    ``tests.test_policy.TestEveryReachSpanIsRoutedByName`` is what fails when the set
+    changes, and it names every site that has to grow a branch.
 
     It answers with the SPAN rather than a yes for one of them, because the two spans need
     different world-facts to decide whether the shortfall is live and the caller has to tell
@@ -1292,11 +1303,18 @@ def inspect(
             keep_spec = BY_KEY.get(keep.field)
             if keep_spec is None or keep_spec.reach_span is None:
                 continue
-            if keep_spec.reach_span is ReachSpan.POPULARITY_WINDOW:
-                if window_short is not None:
-                    window_keeps.append(keep)
-            else:
-                lifetime_keeps.append(keep)
+            # Matched member by member, ``fields.reach_shortfall``'s twin and for the same
+            # reason: the ``else`` here filed any third span under lifetime, which would
+            # print the "plays from before your history begins" copy about a span that is
+            # not the one blocking them, and score it against the wrong bound (issue #168).
+            match keep_spec.reach_span:
+                case ReachSpan.POPULARITY_WINDOW:
+                    if window_short is not None:
+                        window_keeps.append(keep)
+                case ReachSpan.ITEM_LIFETIME:
+                    lifetime_keeps.append(keep)
+                case _:
+                    assert_never(keep_spec.reach_span)
 
     windowed_total = sum(k.max_discount for k in window_keeps)
     combined_total = windowed_total + sum(k.max_discount for k in lifetime_keeps)

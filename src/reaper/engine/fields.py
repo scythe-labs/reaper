@@ -31,7 +31,7 @@ import enum
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, assert_never
 
 from reaper.clock import humanize_days
 from reaper.engine.gates import (
@@ -656,14 +656,26 @@ def reach_shortfall(spec: FieldSpec | None, facts: Facts, *, window_days: int | 
     """
     if spec is None or spec.reach_span is None:
         return None
-    if spec.reach_span is ReachSpan.POPULARITY_WINDOW:
-        if window_days is None:
-            return "this scan did not record the window the count covers"
-        return history_shortfall(facts.history_reach_days, float(window_days))
-    # ITEM_LIFETIME. Through the shared helper, which the season path's keep-rule conflict
-    # detector also asks -- it compares two all-time counts and reads no ``Facts``, so the
-    # span it needs must not be restated there (rules 104, 140).
-    return lifetime_shortfall(facts.history_reach_days, facts.days_since_added)
+    # Matched member by member with no ``else``, so a third span cannot inherit an answer
+    # computed for a different one. It used to: ``ITEM_LIFETIME`` sat on the fallback arm,
+    # so a new member silently measured the mirror against the item's AGE. Driven on a
+    # local third member -- reach 90d, item age 30d, window 365d -- it answered ``None``,
+    # "no shortfall", because the mirror does span that item's life. That is the permissive
+    # direction on a helper whose whole job is withholding unsupported counts, and no test
+    # went red (issue #168). ``assert_never`` makes mypy the guard rule 103 asks for, and
+    # ``TestEveryReachSpanIsRoutedByName`` names both sites for an author who skips it.
+    match spec.reach_span:
+        case ReachSpan.POPULARITY_WINDOW:
+            if window_days is None:
+                return "this scan did not record the window the count covers"
+            return history_shortfall(facts.history_reach_days, float(window_days))
+        case ReachSpan.ITEM_LIFETIME:
+            # Through the shared helper, which the season path's keep-rule conflict
+            # detector also asks -- it compares two all-time counts and reads no ``Facts``,
+            # so the span it needs must not be restated there (rules 104, 140).
+            return lifetime_shortfall(facts.history_reach_days, facts.days_since_added)
+        case _:
+            assert_never(spec.reach_span)
 
 
 def _survives_more_history(op: Op, *, matched: bool) -> bool:

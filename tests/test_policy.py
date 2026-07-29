@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from reaper.api.schemas import GateSettingIn
 from reaper.engine import policy as policy_module
-from reaper.engine.fields import Op
+from reaper.engine.fields import Op, ReachSpan
 from reaper.engine.gates import (
     POLICY_AUTHORABLE_GATES,
     Facts,
@@ -1288,6 +1288,41 @@ class TestRestoringALostRatingBar:
         """``services.profiles.active_policy`` must not raise on anything a hand-edited row
         can hold: it keeps the one page that fixes a broken policy reachable."""
         assert recover_rating_rules(raw) is None
+
+
+class TestEveryReachSpanIsRoutedByName:
+    """A new ``ReachSpan`` member has to be handled at four sites, and this is the alarm.
+
+    Two of them ROUTE, and both now match member by member behind ``assert_never``:
+    ``fields.reach_shortfall`` picks which bound the mirror is measured against, and
+    ``inspect``'s lean loop files a graded keep under the span that blocks it. mypy fails
+    on those first, so this test is for the author who skips that gate -- and for its own
+    failure message, which is the one place all four sites are written down.
+
+    The other two are membership tests, one per warning: an owner protect rule on the
+    window (``owner_protect_on_window``) and the all-time rule below it. Each carries copy
+    written for its own span, so neither can be generated from the set. A third member
+    there is silence rather than a wrong answer, which is why they are named here instead
+    of guarded in code.
+
+    Rule 103's drift guard, and it was absent. Issue #168's probe measured what that cost:
+    a third member added locally took ``reach_shortfall``'s ``else``, answered
+    ITEM_LIFETIME's question instead of its own, and returned "no shortfall" for an item
+    younger than the mirror against a window the mirror does not span -- the permissive
+    direction, from the helper whose whole job is withholding unsupported counts. Nothing
+    in the suite went red.
+    """
+
+    def test_the_two_spans_every_consumer_handles_are_the_two_that_exist(self) -> None:
+        assert set(ReachSpan) == {ReachSpan.POPULARITY_WINDOW, ReachSpan.ITEM_LIFETIME}, (
+            "A ReachSpan member was added or removed. Four sites decide what a span means "
+            "and none of them can infer it: fields.reach_shortfall (which bound the mirror "
+            "is measured against), policy.inspect's lean loop (which span a graded keep's "
+            "discount is charged to), and inspect's two protect membership tests "
+            "(owner_protect_on_window, and the ITEM_LIFETIME branch under it), each of "
+            "which needs operator copy written for that span. Handle all four, then update "
+            "this test."
+        )
 
 
 class TestTheOtherReachShortfallLanes:
