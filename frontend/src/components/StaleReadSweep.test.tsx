@@ -85,9 +85,8 @@ const WHAT_HINT =
   "caller supplies. Callers added by #190: NotInScanPanel (the last scan), Fairness (Scales), " +
   "ServicesPanel (your connections), ServiceModal (this instance's folders, your Plex " +
   "libraries, this portal's services, your Sonarr and Radarr connections), ReviewQueue (the " +
-  "queue) and its season list, which uses `staleReadLine` because rule 42 keeps `.notice` out " +
-  "of the review surfaces. The settings panels are pinned in SettingsStaleRead.test.tsx and " +
-  "PlexPanel.test.tsx.";
+  "queue) and its season list, which uses `staleReadLine` because its own note grammar is not " +
+  "a notice. The settings panels are pinned in SettingsStaleRead.test.tsx and PlexPanel.test.tsx.";
 
 function renderWithClient(ui: ReactElement): QueryClient {
   const client = seedSettings(testQueryClient());

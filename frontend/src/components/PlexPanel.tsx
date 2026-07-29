@@ -778,11 +778,13 @@ export function PlexPanel({
               per-library Switch and the Refresh button for one paragraph while React Query still
               held the last good list (#166).
 
-              Two ordinary things reach it. `invalidateAllPlex` invalidates this key, and it has
+              Ordinary things reach it. `invalidateAllPlex` invalidates this key, and it has
               exactly ONE caller, `switchServer.onSuccess` -- the comment here used to name three,
-              adding a link and an unlink it does not fire on (#196). A link reaches the branch by
-              a different route: this query is `enabled: linked`, so linking mounts the read for
-              the first time, and a failure there is the never-loaded arm rather than this one.
+              adding a link and an unlink it does not fire on (#196). `SetupWizard` reaches it by
+              a second route: it fires a bare `invalidateQueries()` when the first scan ends, and
+              it renders this panel on that same screen, so every key refetches with the last good
+              list in hand. A link is NOT one of them: this query is `enabled: linked`, so linking
+              mounts the read for the first time, and a failure there is the never-loaded arm.
 
               The list is a read, not a draft, so what is lost is smaller than the General panel's
               typed value -- but a switch the operator cannot see is a library they cannot turn

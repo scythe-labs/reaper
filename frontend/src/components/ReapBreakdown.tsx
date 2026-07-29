@@ -110,8 +110,10 @@ export function ReapBreakdown({
   // many titles this reap removes at the moment the operator changed that number. `PolicyEditor`
   // settles the same question the same way for the simulator's column ("a stale count shown as
   // current is exactly what this column must never do"), so refusing is the consistent answer
-  // rather than an unswept branch. `isPending` is handled above, so this arm is reached WITH a
-  // value in hand and drops it deliberately.
+  // rather than an unswept branch. The arm covers both reads and the `!data` disjunct says so:
+  // a first read that failed settles at `isError` with `data` still undefined, which `isPending`
+  // above does not catch. Only the OTHER case, a failed refetch with a ledger still in hand, is
+  // dropping anything, and it is the one this note is about.
   if (isError || !data) {
     return (
       <Notice tone="warn">

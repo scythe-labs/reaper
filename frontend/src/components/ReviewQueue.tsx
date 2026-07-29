@@ -861,8 +861,9 @@ function SeasonList({
   // `!data` alone, never `error || !data`: ["group", …] is override-aware, so sparing ONE season
   // refetches it, and an undivided `error` traded every season row -- each with its own Spare and
   // Reap -- for one red line while React Query still held the last good list (#190). A failed
-  // refetch says so above the rows instead, in the list's own note grammar (rule 42 keeps
-  // `.notice` out of the review surfaces).
+  // refetch says so above the rows instead, in the list's own `.season-list-note` grammar, which
+  // its loading and failed lines already speak. Not a rule: nothing keeps a `.notice` out of a
+  // review surface, and the queue one screen out renders one.
   if (isPending) {
     return <p className="season-list-note muted">Loading seasons…</p>;
   }

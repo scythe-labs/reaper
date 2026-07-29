@@ -32,8 +32,11 @@ import { Notice } from "./Notice";
  *  a list React Query was still holding. A file entering this set does not always do it once, so
  *  finding one branch that tests a bare `isError` is a reason to read the rest of the file.
  *
- *  Security is the one with a clock behind it: `useSafety` refetches every 15 seconds, so its
- *  form met this state without the operator doing anything at all. Backup is the one where the
+ *  Security is the one whose clock always runs: `useSafety` refetches every 15 seconds whatever
+ *  the app is doing, so its form met this state without the operator doing anything at all. Jobs
+ *  has a clock too and it is the conditional one -- 1500ms, only while something is running
+ *  (`Settings.tsx`) -- which is why the paragraph below says "most callers" rather than "all but
+ *  Security". Backup is the one where the
  *  never-loaded sentence was actively harmful rather than merely wrong: it says to reload, and a
  *  reload does not run the restore card's unmount cleanup, so the staged archive is orphaned by
  *  an operator doing what the page told them.
@@ -89,13 +92,18 @@ export function StaleReadNotice({
   );
 }
 
-/** The sentence itself, for the two surfaces that cannot carry a `.notice`.
+/** The sentence itself, for a surface whose own grammar is not a `.notice`.
  *
- *  The review queue's expanded season list speaks in `.season-list-note` lines, the grammar its
- *  own loading and failed states already use, and rule 42 keeps the review surfaces out of
- *  `.notice` — so those two would otherwise hand-write this claim, which is the drift rule 144
- *  describes. The wording lives here and the presentation varies; a caller that CAN render a
- *  notice uses the component above rather than this. */
+ *  The review queue's expanded season list speaks in `.season-list-note` lines -- the grammar its
+ *  loading and failed states already use, inside a card where a full-width notice block does not
+ *  belong -- so it would otherwise hand-write this claim, which is the drift rule 144 describes.
+ *  The wording lives here and the presentation varies; a caller that CAN render a notice uses the
+ *  component above rather than this, as the queue itself does one screen out.
+ *
+ *  Rule 42 is NOT the reason, though three comments said it was: it puts action failures in
+ *  `.notice.notice-error` everywhere and lets bare red `.error` survive in the review surfaces,
+ *  which permits `.error` there rather than banning `.notice`. Nothing forbids a notice in a
+ *  review surface, and `ReviewQueue` renders one. */
 export function staleReadLine(what: string) {
   return `Couldn't check ${what} just now, so what's below may be out of date.`;
 }
