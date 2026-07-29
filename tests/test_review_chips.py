@@ -1246,6 +1246,37 @@ class TestTheMatchStatusVocabulary:
         assert MATCH_UNREADABLE in BAD_MATCH_STATES
 
     @pytest.mark.parametrize(
+        "status",
+        ["garbage", "Ambiguous", "matched ", "{'a': 1}", "5"],
+        ids=["unknown", "wrong-case", "trailing-space", "stringified-dict", "number"],
+    )
+    def test_a_status_this_build_does_not_know_still_holds_a_hand_reap(self, status: str) -> None:
+        """The population the derivation above cannot cover, and the direction that matters.
+
+        ``BAD_MATCH_STATES`` can only ever enumerate the statuses THIS build defines, so a
+        stored value from outside that set -- a row frozen by a later build and then rolled
+        back, or a corrupted explanation -- is not in it. Tested as membership that would
+        read as a clean bind and let the reap through on a row the resolver never identified
+        (rule 96). ``bad_match`` is phrased against the single clean value instead, so the
+        unknown ones hold.
+        """
+        exp = {"match": {"status": status}, "protections_fired": [], "protections_unknown": []}
+        assert status not in BAD_MATCH_STATES, "fixture must sit outside the derived set"
+        assert reap_override_verdict_decoded(exp, score=99) == "protect", (
+            f"a stored match status of {status!r} is not a confident bind, so a hand reap "
+            "must be held. See condemned.MATCH_CLEAN."
+        )
+
+    def test_a_confident_bind_still_lets_a_hand_reap_through(self) -> None:
+        """The other half of the pair, so the fix above cannot pass by holding everything."""
+        exp = {
+            "match": {"status": identity.MatchStatus.MATCHED.value},
+            "protections_fired": [],
+            "protections_unknown": [],
+        }
+        assert reap_override_verdict_decoded(exp, score=99) == "condemn"
+
+    @pytest.mark.parametrize(
         "reasons",
         [MOVIE_NO_KEY_REASONS, SEASON_NO_KEY_REASONS],
         ids=["movie", "season"],

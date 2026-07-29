@@ -41,15 +41,36 @@ from reaper.services import whitelist
 #: :func:`match_state` returns for a record it cannot read.
 MATCH_UNREADABLE = "unreadable"
 
-#: Match states that HOLD a hand reap: every resolver outcome that is not a confident bind,
-#: plus :data:`MATCH_UNREADABLE`, which is the same "we could not tie this to one thing"
-#: arrived at differently. **Derived from the enum, never listed by hand** (rule 103): this
-#: set was written out once and a fourth status shipped later, which would have made every
-#: item carrying it reapable while the resolver was refusing to say what it was. Deriving it
-#: fails closed instead -- a new status holds a reap until someone deliberately excludes it.
+#: The one match state that does NOT hold a hand reap. Everything else does, including a
+#: status this build has never heard of: :func:`bad_match` tests against THIS, so the hold is
+#: an allow-list of one rather than a list of the bad values (rule 1). A denylist has to
+#: enumerate every way a row can be unidentifiable, and the one it misses fails open -- a
+#: string no enum in this build defines (a row frozen by a later build and then rolled back,
+#: or a corrupted explanation) would read as a clean bind and let the reap through on a row
+#: the resolver never identified, which is the inversion rule 96 exists to close.
+MATCH_CLEAN = MatchStatus.MATCHED.value
+
+#: Match states that hold a hand reap, for the drift test and for readers: every resolver
+#: outcome that is not a confident bind, plus :data:`MATCH_UNREADABLE`, which is the same "we
+#: could not tie this to one thing" arrived at differently. **Derived from the enum, never
+#: listed by hand** (rule 103): this set was written out once and a fourth status shipped
+#: later. It documents the known bad values; it is not the gate, because a set of known bad
+#: values cannot be one.
 BAD_MATCH_STATES = frozenset(
     {MATCH_UNREADABLE, *(s.value for s in MatchStatus if s is not MatchStatus.MATCHED)}
 )
+
+
+def bad_match(explanation: Mapping[str, Any]) -> bool:
+    """Whether this row's Plex match HOLDS a hand reap -- anything but a confident bind.
+
+    Phrased against :data:`MATCH_CLEAN` rather than :data:`BAD_MATCH_STATES` on purpose: an
+    unrecognized status is "we do not know what this row is", which is the holding answer, and
+    a membership test against the bad values would have called it clean. ``None`` (the block
+    genuinely absent) stays permissive, per :func:`match_state`.
+    """
+    state = match_state(explanation)
+    return state is not None and state != MATCH_CLEAN
 
 
 def match_state(explanation: Mapping[str, Any]) -> str | None:
@@ -163,13 +184,13 @@ def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
     fired, fired_unreadable = _protection_entries(exp.get("protections_fired"))
     unknown, unknown_unreadable = _protection_entries(exp.get("protections_unknown"))
     unreadable = fired_unreadable or unknown_unreadable
-    bad_match = match_state(exp) in BAD_MATCH_STATES
+    match_holds = bad_match(exp)
 
     return decide_verdict(
         protected=bool(fired),
         # Truthful but inert, like the zeros below: the reap branch reads only
         # ``blocked_holds_reap`` and ``safety_protected``, so nothing here is the interlock.
-        blocked=bool(unknown) or bad_match or unreadable,
+        blocked=bool(unknown) or match_holds or unreadable,
         # THIS is the interlock, and it is now exactly two things, NEITHER of them a
         # protection. A gate that could not be checked does not hold a hand reap: the owner
         # is reading the panel that names the failed check and is entitled to answer it.
@@ -183,7 +204,7 @@ def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
         # ``unknown`` is deliberately no longer consulted: it is the list of blocked gates,
         # and that is precisely what stopped holding. It still drives ABSTAIN through
         # ``blocked`` above, so nothing automatic touches the item either way.
-        blocked_holds_reap=bad_match or unreadable,
+        blocked_holds_reap=match_holds or unreadable,
         score=score,
         coverage_bp=0,
         condemn_at=0,
