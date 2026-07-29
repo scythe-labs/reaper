@@ -260,15 +260,17 @@ export function ReapPlan({
           -- phrase, count, Execute, steps -- hangs off this one query, so a failed fetch used to
           unmount all of it silently and a click on a history row simply looked like it did
           nothing. Same two branches, same words, as the reap sheet's loader (App.tsx, rule 36). */}
-      {runId != null && !run && (
-        <p className={runPending ? "help" : "notice notice-error"}>
-          {runPending
-            ? "Loading the plan…"
-            : runError instanceof ApiError && runError.status === 404
+      {runId != null &&
+        !run &&
+        (runPending ? (
+          <p className="help">Loading the plan…</p>
+        ) : (
+          <Notice tone="error">
+            {runError instanceof ApiError && runError.status === 404
               ? "That plan is no longer available."
               : "Reaper couldn't load this plan. Reload the page to try again."}
-        </p>
-      )}
+          </Notice>
+        ))}
 
       {run && (
         <>

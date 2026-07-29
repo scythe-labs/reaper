@@ -472,11 +472,13 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # Every notice the app renders, counted once. Rule 145: the assertion below cannot tell a
 # notice that complies from one that dropped out of the walk, and reads green for both.
 #
-# 108, not the 109 hand-rolled sites this replaced: the two draft-refusal notices were
-# byte-identical twins in Settings and PolicyEditor, and both now render through the single
-# Notice inside ``SwitchConfirm`` (rule 18). The two figures mean different things and are
-# deliberately not derived from each other.
-_EXPECTED_NOTICES = 108
+# 109, and it does not line up with the 109 hand-rolled sites this replaced -- the two figures
+# mean different things and are deliberately not derived from each other. The sweep landed 108:
+# the two draft-refusal notices were byte-identical twins in Settings and PolicyEditor, and both
+# now render through the single Notice inside ``SwitchConfirm`` (rule 18). The 109th is
+# ``ReapPlan``'s plan loader, which the sweep missed because the ban could not parse a ternary
+# ``className``; converting it is what took that count back up.
+_EXPECTED_NOTICES = 109
 
 
 def _shipped_tsx() -> list[Path]:
@@ -503,18 +505,37 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
     below names them.
     """
     component = FRONTEND_SRC / "components" / "Notice.tsx"
+    # Read the WHOLE ``className`` value -- a quoted literal or a ``{...}`` expression -- and then
+    # every quoted run inside it. A ternary and a template literal are ordinary ways to write this
+    # attribute, and the quote-anchored pattern this replaces could parse neither: it required a
+    # quote immediately after ``className=`` or after ``{``. ``ReapPlan``'s plan loader sat in that
+    # blind spot as ``className={runPending ? "help" : "notice notice-error"}`` and shipped mute
+    # while this test passed. The count below could not see it either -- a site that was never
+    # converted is absent from both halves -- which is rule 145 exactly: the ban read green over
+    # the one thing it existed to catch.
+    #
     # The bare ``notice`` token, not a substring of one: ``budget-notice`` and ``kept-notice``
     # are layout classes that ride ON a Notice via its ``className`` prop, and a ``\bnotice\b``
     # match counts them as offenders because the hyphen is a word boundary.
-    classes = re.compile(r'className=\{?["`]([^"`}]*)["`]')
-    offenders = [
-        f"{p.relative_to(REPO)}:{n}"
-        for p in _shipped_tsx()
-        if p != component
-        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
-        for m in classes.finditer(_strip_prose(line))
-        if "notice" in m.group(1).split()
-    ]
+    #
+    # ``_strip_prose`` is deliberately NOT used here. It drops every backticked span, which in a
+    # .tsx file is a template literal rather than prose, so it would blind this check to one of
+    # the two forms it was just widened to catch. Whole-line comments are skipped instead.
+    attr = re.compile(r"className=(\{(?:[^{}]|\{[^{}]*\})*\}|\"[^\"]*\"|`[^`]*`)")
+    quoted = re.compile(r"\"([^\"]*)\"|`([^`]*)`")
+    offenders = list(
+        dict.fromkeys(
+            f"{p.relative_to(REPO)}:{n}"
+            for p in _shipped_tsx()
+            if p != component
+            for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+            if not line.lstrip().startswith(("//", "*", "/*", "{/*"))
+            for m in attr.finditer(line)
+            for q in quoted.finditer(m.group(1))
+            for g in q.groups()
+            if g and "notice" in g.split()
+        )
+    )
     assert not offenders, (
         "these write a .notice class by hand, so they render with no role and are silent to a\n"
         "screen reader. Use <Notice tone=...>, which carries role=alert; pass `standing` only\n"

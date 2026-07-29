@@ -111,7 +111,11 @@ Last verified against the code: 2026-07-26.
    operator's complaint verbatim — and it costs 112 lockfile entries, an `overrides` entry to
    survive `npm ci` on eslint 10, and two new audit advisories. So it is not installed. The gate
    is `test_repo_hygiene`'s ban on hand-rolled notices with the population pinned, plus tests
-   that reach controls by the name an operator can hear. No new dependency.
+   that reach controls by the name an operator can hear. No new dependency. The ban reads the
+   whole `className` value, literal or expression: its first form anchored on a quote straight
+   after `className=`, so a ternary and a template literal were both unreadable to it, and the
+   sweep's own count of 109 was short by the one notice written that way — `ReapPlan`'s plan
+   loader, which shipped mute while the test read green (rule 145).
 
 ## Decisions locked
 

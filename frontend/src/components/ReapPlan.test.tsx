@@ -185,7 +185,10 @@ describe("the plan the page is showing", () => {
     const person = userEvent.setup();
     await person.click(await screen.findByRole("button", { name: `#${run.id}` }));
 
-    expect(await screen.findByText(/couldn't load this plan/i)).toBeInTheDocument();
+    // By ROLE, not by text: the message was there before and still said nothing out loud. It
+    // was the one hand-rolled `.notice` the sweep missed, because it is written with a ternary
+    // className and the hygiene ban could parse only a quoted literal (rule 145).
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't load this plan/i);
   });
 
   it("won't offer to build a plan from a scan that came back incomplete", async () => {
