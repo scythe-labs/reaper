@@ -79,12 +79,22 @@ own, rather than something anyone has to remember to ask for.
 
 ## Before you look for anything
 
-**Read `references/refuted.md`.** It holds candidates a previous pass raised and an
-independent verifier killed. Re-raising one costs a full verify cycle and returns nothing.
-Each entry records the commit it was refuted at — if the cited code has changed since, the
-refutation is stale and the candidate is live again.
+**Grep `references/refuted.md` per candidate, before you report it — do not read the file.**
+It indexes candidates a previous pass raised and an independent verifier killed, keyed on the
+same fingerprint as an issue (`<path>:<symbol> — <slug>`). Nobody holds that many refutations in
+mind while reviewing, and the check only matters once you have something to report, so run it
+then, once per candidate, against the path and the symbol you are about to name:
 
-**Then list the open questions: `tea issue list -L "Status/Need More Info"`.** Those are the
+```
+grep -in 'season_pruning\|plan_series_prune' .claude/skills/reaper-review/references/refuted.md
+```
+
+A hit means read the row and either accept it or beat it — re-raising one costs a full verify
+cycle and returns nothing. No hit means report. Each row records the commit it was refuted at:
+if the cited code has changed since, the refutation is stale and the candidate is live again.
+Two sections after the index are *not* refutations and bind nothing — the file says which.
+
+**Up front, list the open questions: `tea issue list -L "Status/Need More Info"`.** Those are the
 other outcome — candidates a previous pass raised and could not prove, so they were filed as
 questions rather than as defects. Each body carries a *What would settle it* section naming the
 evidence it wants. If this pass can supply that evidence cheaply, do: settling one is worth more
@@ -92,8 +102,8 @@ than a fresh tier-4 finding, and it costs one label edit either way. Same stalen
 `refuted.md` — each is pinned to the commit it was raised at, so a changed citation means
 re-derive rather than trust it.
 
-**Do not restate the numbered rules.** `.claude/rules/*.md` holds 133 blockers, distilled from
-six adversarial passes, and they load automatically when you read a file they govern — reading
+**Do not restate the numbered rules.** `.claude/rules/*.md` holds them, distilled from
+adversarial passes, and they load automatically when you read a file they govern — reading
 `src/reaper/engine/gates.py` pulls in `backend.md` before you can edit it. They are already in
 your context. Never paste them into a prompt, never re-derive them, and never close a review
 with a summary of them. **Cite by number** (`violates rule 93`) — that is the whole point of
@@ -146,10 +156,11 @@ Two things go in the working tree, not the report:
 
 - **Every refuted candidate** appends to `references/refuted.md`, with the commit it was
   refuted at. This is the only reason the next pass does not re-raise it.
-- **A finding that represents a *class* the 133 rules do not cover** proposes exactly one new
-  rule, appended at 134+ to the scoped file that governs it. One rule, in the file, in the same
-  change. Do not emit a list of "agent rules" — that duplicates `.claude/rules/` and puts
-  pressure on numbers that are permanent.
+- **A finding that represents a *class* the numbered rules do not cover** proposes exactly one
+  new rule, appended to the scoped file in `.claude/rules/` that governs it and numbered from
+  where `CLAUDE.md`'s index says the list continues. One rule, in the file, in the same change.
+  Do not emit a list of "agent rules" — that duplicates `.claude/rules/` and puts pressure on
+  numbers that are permanent.
 
 ## Applying the fixes
 
