@@ -614,7 +614,13 @@ describe("the groups below the form, through a failed refetch", () => {
 
   it("keeps the library grid and its switches when the refetch fails", async () => {
     const queryClient = renderWithClient();
-    const toggle = await screen.findByRole("switch", { name: "Let Reaper touch Movies" });
+    // Cheap text first, then the switch synchronously (#228, rule 72's twin of the Leaving Soon
+    // row in SettingsStaleRead.test.tsx). This grid is two reads deep -- the panel returns early
+    // while `plex` is pending and the grid waits on `plex-libraries` behind it -- and a
+    // `findByRole` with a name matcher re-computes accessible names across the whole panel on
+    // every 50ms poll, so the pair had one 1000ms budget with the looking taken out of it.
+    await screen.findByText("Refresh libraries");
+    const toggle = screen.getByRole("switch", { name: "Let Reaper touch Movies" });
 
     apiMock.plexLibraries.mockRejectedValue(new Error("boom"));
     await act(async () => {
@@ -645,7 +651,12 @@ describe("the groups below the form, through a failed refetch", () => {
 
   it("keeps both Leaving Soon switches when the refetch fails", async () => {
     const queryClient = renderWithClient();
-    const shelf = await screen.findByRole("switch", { name: 'Show "Leaving Soon" in Plex' });
+    // Same shape as the grid above, on the same query key #228 was about. "Update while
+    // read-only" is the second row's label, rendered only once `leaving-soon-settings` has
+    // landed, so it settles the read this switch's existence depends on without walking the
+    // tree for names.
+    await screen.findByText("Update while read-only");
+    const shelf = screen.getByRole("switch", { name: 'Show "Leaving Soon" in Plex' });
 
     apiMock.leavingSoonSettings.mockRejectedValue(new Error("boom"));
     await act(async () => {
