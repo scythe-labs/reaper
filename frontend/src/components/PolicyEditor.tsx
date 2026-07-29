@@ -165,11 +165,13 @@ export function warningsDescribing(
   return warnings.map((_w, i) => warningId(anchor, i)).join(" ");
 }
 
-/** Whether any warning at an anchor is the kind that blocks a save, which is what a control
- *  reports as `aria-invalid`. Advice is not invalidity: a `warn` leaves the policy saveable. */
-export function warningsBlock(warnings: PolicyWarning[]): boolean {
-  return warnings.some((w) => w.severity === "danger");
-}
+// No `aria-invalid` companion to the above, deliberately. A policy warning of EITHER severity
+// leaves the policy saveable: `policyBlocked` below is a 422 from body validation plus the
+// points budget, `severity` reaches nothing else, and the save route never inspects. ARIA 1.2
+// defines `aria-invalid` as a value the application does not accept, so flagging a legal
+// setting states a refusal that will not happen -- on a slider whose whole job is choosing an
+// aggressive threshold on purpose. The warning still reaches the operator as the control's
+// description, which is what #174 asked for.
 
 /** Inline warnings for one control group, rendered beside the control that fixes them.
  *  Renders nothing when the group has nothing to say. */
@@ -1448,7 +1450,6 @@ export function PolicyEditor({
             // The warning about this threshold is rendered directly below and was reachable
             // only by leaving the slider to go looking for it (#174).
             aria-describedby={warningsDescribing("condemn_at", warningsAt("condemn_at"))}
-            aria-invalid={warningsBlock(warningsAt("condemn_at")) ? true : undefined}
             value={draft.condemn_at}
             onChange={(e) => update({ condemn_at: Number(e.target.value) })}
           />
@@ -1605,7 +1606,6 @@ export function PolicyEditor({
                     width="narrow"
                     ariaLabel="Newest seasons to always keep"
                     describedBy={warningsDescribing("keep_last", warningsAt("keep_last"))}
-                    invalid={warningsBlock(warningsAt("keep_last"))}
                     onChange={(v) => update({ keep_last_seasons: Math.max(0, v) })}
                   />
                   <span>of every show</span>
@@ -1938,7 +1938,6 @@ export function PolicyEditor({
                     "max_unmeasured_per_run",
                     warningsAt("max_unmeasured_per_run"),
                   )}
-                  invalid={warningsBlock(warningsAt("max_unmeasured_per_run"))}
                   onChange={(v) => updatePace({ max_unmeasured_per_run: v })}
                 />
                 <span className="help">

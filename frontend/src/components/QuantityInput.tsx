@@ -130,7 +130,10 @@ export function QuantityInput({
   /** Ids of the message(s) explaining what is wrong with this box's value. Same contract as
    *  `FixedQuantity`'s (rule 72); there is no unit id to join here, for the reason below. */
   describedBy?: string | undefined;
-  /** True while the value breaks a rule that BLOCKS a save. */
+  /** True while the form REFUSES this value -- the action the box feeds is disabled and the
+   *  press is a no-op, as a backwards ramp disables Add. Not for a value that merely draws a
+   *  warning: `aria-invalid` states a refusal, so a setting the app will accept must not carry
+   *  it. `FixedQuantity` has no such prop for exactly that reason (rule 72). */
   invalid?: boolean | undefined;
 }) {
   const [unit, setUnit] = useState<Unit>(() => bestUnit(value, units));
@@ -224,7 +227,6 @@ export function FixedQuantity({
   ariaLabel,
   disabled,
   describedBy,
-  invalid,
 }: {
   value: number | string;
   onChange: (next: number) => void;
@@ -240,9 +242,9 @@ export function FixedQuantity({
    *  beside the control that fixes it. Joined with the unit below rather than replacing it:
    *  the number still needs its unit while it is also being complained about. */
   describedBy?: string | undefined;
-  /** True while the value breaks a rule that BLOCKS a save. Advice does not set this: a
-   *  warning the operator may save through is not an invalid field. */
-  invalid?: boolean | undefined;
+  // No `invalid` here, unlike `QuantityInput` above (rule 72). Every caller of this one is a
+  // policy control, and a policy warning of either severity still saves, so there is no state
+  // this box could honestly report as invalid.
 }) {
   const typed = useTypedNumber(String(value), onChange, { min, max });
   // The unit is the other half of the value, and it used to be `aria-hidden`, so the box
@@ -274,7 +276,6 @@ export function FixedQuantity({
         // Unit first, then whatever is wrong with the value: "40, titles, that is more than
         // the run cap allows" reads in the order the operator needs it.
         aria-describedby={describedBy ? `${unitId} ${describedBy}` : unitId}
-        aria-invalid={invalid ? true : undefined}
         disabled={disabled}
         {...typed}
       />

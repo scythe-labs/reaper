@@ -827,19 +827,22 @@ describe("PolicyEditor warning anchors", () => {
       for (const w of mine) {
         expect(box).toHaveAccessibleDescription(new RegExp(w.message));
       }
-      // `probes` builds `warn`, which is advice: the policy still saves, so the box is not
-      // invalid. Severity is the discriminator here, and a box marked invalid over a value the
-      // operator may keep is the same lie as one that hides the complaint.
+      // Never invalid, at EITHER severity. A policy warning does not block a save -- the save
+      // gate is a 422 from body validation plus the points budget, and `severity` reaches
+      // neither -- so a box marked invalid states a refusal that will not happen, which is the
+      // same lie as one that hides the complaint. Asserted for `danger` too, because the
+      // first version of #174 read "danger" as "blocks" and marked three controls invalid over
+      // values the app saves happily.
       expect(box).not.toHaveAttribute("aria-invalid");
     });
 
-    it(`marks the ${id} control invalid only when the warning blocks a save`, async () => {
+    it(`never marks the ${id} control invalid, even when the warning is danger`, async () => {
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
       const blocking = probes(anchor).map((w) => ({ ...w, severity: "danger" as const }));
       await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...blocking, catchAll]);
       await screen.findByText(blocking[0]!.message);
 
-      expect(screen.getByLabelText(control)).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByLabelText(control)).not.toHaveAttribute("aria-invalid");
     });
   }
 
