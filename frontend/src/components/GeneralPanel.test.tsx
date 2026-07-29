@@ -230,6 +230,29 @@ describe("the save bar", () => {
     await waitFor(() => expect(saveChanges()).toBeEnabled());
   });
 
+  it("hands the refused hex box the sentence saying why", async () => {
+    // #174. `aria-invalid` and `aria-describedby` appeared ZERO times in the whole frontend, so
+    // a box that refuses to save had no way to reach the sentence explaining it: the message
+    // was visible beside the field and the field never mentioned it. Asserted as the accessible
+    // DESCRIPTION rather than as an id string, because that is what a reader actually computes
+    // -- an id pointing at nothing would pass an attribute check and still say nothing.
+    const person = renderPanel();
+    const hex = await screen.findByLabelText("Accent color hex code");
+
+    await person.clear(hex);
+    await person.type(hex, "#12");
+
+    await waitFor(() => expect(hex).toHaveAccessibleDescription("Enter a hex code like #25c3ff."));
+    expect(hex).toHaveAttribute("aria-invalid", "true");
+
+    // And it lets go once the value is usable: a box still marked invalid over a value that
+    // saves is the same lie in the other direction.
+    await person.type(hex, "3456");
+
+    await waitFor(() => expect(hex).not.toHaveAttribute("aria-invalid"));
+    expect(hex).toHaveAccessibleDescription("");
+  });
+
   it("still re-seeds from the server's canonical value", async () => {
     // Rule 39: the field it sent comes back from the response, trimmed the way the server
     // stored it -- so the row settles on what is really saved, not on what was typed.

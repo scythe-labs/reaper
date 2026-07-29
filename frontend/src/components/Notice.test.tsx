@@ -23,10 +23,30 @@ describe("a notice", () => {
     );
     const announced = screen.getAllByRole("alert");
     expect(announced).toHaveLength(2);
+    // The lead is part of what is announced (#174). Severity used to be `notice-error` against
+    // `notice-warn` and nothing else, so "this blocks you" and "this is advice" were the same
+    // sentence to anyone not reading the color -- a 1.4.1 failure as much as a 4.1.3 one.
     expect(announced.map((n) => n.textContent)).toEqual([
-      "The scan didn't start.",
-      "Check this before saving.",
+      "Problem: The scan didn't start.",
+      "Warning: Check this before saving.",
     ]);
+  });
+
+  it("carries severity in words, not only in the color class", () => {
+    // Pinned apart from the assertion above so the reason survives: a later edit that drops the
+    // lead leaves both notices reading identically, which is the defect, and the class it would
+    // still be setting is invisible to a reader.
+    render(
+      <>
+        <Notice tone="error">Same sentence.</Notice>
+        <Notice tone="warn">Same sentence.</Notice>
+      </>,
+    );
+    const [problem, warning] = screen.getAllByRole("alert");
+
+    expect(problem).toHaveTextContent(/^Problem:/);
+    expect(warning).toHaveTextContent(/^Warning:/);
+    expect(problem!.textContent).not.toBe(warning!.textContent);
   });
 
   // `role="alert"` and not `role="status"` is the load-bearing choice, and it is not style: these

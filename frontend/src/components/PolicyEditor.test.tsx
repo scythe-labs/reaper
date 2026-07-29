@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { testQueryClient } from "../test/queryClient";
-import type { WarningAnchor, WarningGuard } from "./PolicyEditor";
+import type { WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
 import { PolicyEditor, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -794,6 +794,52 @@ describe("PolicyEditor warning anchors", () => {
         // wrong, and it prints the same sentence twice on one page.
         expect(screen.getAllByText(w.message)).toHaveLength(1);
       }
+    });
+  }
+
+  // The anchors whose warning has ONE control that fixes it, and that control's accessible
+  // name. The other five warn about a LIST or a card -- the signal sliders, the gate rows, the
+  // rule editors -- where there is no single box to point at and binding every child would
+  // read the whole card's complaints at each of them. Deliberately partial, and named here so
+  // the boundary is a decision on the page rather than an omission (#174).
+  const BOUND: { anchor: WarningAnchorId; control: string }[] = [
+    { anchor: "condemn_at", control: "Put a title on the list once it scores" },
+    { anchor: "keep_last", control: "Newest seasons to always keep" },
+    { anchor: "max_unmeasured_per_run", control: "Items with an unknown size" },
+  ];
+
+  for (const { anchor: id, control } of BOUND) {
+    it(`lets the ${id} control speak the warning that is about it`, async () => {
+      // The warning was rendered beside the box and the box never mentioned it, so reaching it
+      // meant leaving the control to go looking. Asserted as the accessible DESCRIPTION, which
+      // is what a reader computes: an `aria-describedby` naming an id that is not on the page
+      // would satisfy an attribute check and still say nothing.
+      const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
+      const mine = probes(anchor);
+      await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...mine, catchAll]);
+
+      // Wait for the WARNING, not for the box: validation is debounced, so the control is on
+      // the page a beat before there is anything for it to describe itself with, and asserting
+      // on the box alone would read the empty description every time (rule 137's shape).
+      await screen.findByText(mine[0]!.message);
+
+      const box = screen.getByLabelText(control);
+      for (const w of mine) {
+        expect(box).toHaveAccessibleDescription(new RegExp(w.message));
+      }
+      // `probes` builds `warn`, which is advice: the policy still saves, so the box is not
+      // invalid. Severity is the discriminator here, and a box marked invalid over a value the
+      // operator may keep is the same lie as one that hides the complaint.
+      expect(box).not.toHaveAttribute("aria-invalid");
+    });
+
+    it(`marks the ${id} control invalid only when the warning blocks a save`, async () => {
+      const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
+      const blocking = probes(anchor).map((w) => ({ ...w, severity: "danger" as const }));
+      await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...blocking, catchAll]);
+      await screen.findByText(blocking[0]!.message);
+
+      expect(screen.getByLabelText(control)).toHaveAttribute("aria-invalid", "true");
     });
   }
 

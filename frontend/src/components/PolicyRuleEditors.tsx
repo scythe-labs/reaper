@@ -43,6 +43,10 @@ const RAMP_PHRASES: Record<string, string> = {
 /** The sentinel option value for a ramp phrase in the condition dropdown. */
 const RAMP_OP = "__ramp__";
 
+/** The backwards-ramp complaint, named once so the six boxes that can be wrong and the one
+ *  sentence explaining it are the same string rather than seven that can drift (rule 67). */
+const RAMP_ERROR_ID = "ramp-bounds-error";
+
 /** Sensible starting ramp per field type, in the field's native units. */
 function rampDefaults(field: VocabField): [number, number] {
   if (field.type === "days") return [365, 1825];
@@ -424,11 +428,18 @@ export function RemoveRulesEditor({
                 {isRamp ? (
                   <span className="ramp-bounds">
                     <span className="muted">from</span>
+                    {/* All six boxes below carry the same pair, because the complaint is about
+                        the PAIR: either number can be the one that is wrong, and the operator
+                        may be standing on whichever they typed second (rule 72 -- three
+                        branches per bound, and only fixing the branch in front of you leaves
+                        the other two silent for a different `field.type`). */}
                     {field.type === "days" ? (
                       <QuantityInput
                         value={rFrom}
                         units={TIME_UNITS}
                         ariaLabel="Starts counting at"
+                        describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
+                        invalid={rampBackwards}
                         onChange={setRFrom}
                       />
                     ) : field.type === "bytes" ? (
@@ -436,10 +447,18 @@ export function RemoveRulesEditor({
                         value={rFrom}
                         units={SIZE_UNITS}
                         ariaLabel="Starts counting at"
+                        describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
+                        invalid={rampBackwards}
                         onChange={setRFrom}
                       />
                     ) : (
-                      <input type="number" aria-label="Starts counting at" {...rampFrom} />
+                      <input
+                        type="number"
+                        aria-label="Starts counting at"
+                        aria-describedby={rampBackwards ? RAMP_ERROR_ID : undefined}
+                        aria-invalid={rampBackwards ? true : undefined}
+                        {...rampFrom}
+                      />
                     )}
                     <span className="muted">to</span>
                     {field.type === "days" ? (
@@ -447,6 +466,8 @@ export function RemoveRulesEditor({
                         value={rTo}
                         units={TIME_UNITS}
                         ariaLabel="Full effect at"
+                        describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
+                        invalid={rampBackwards}
                         onChange={setRTo}
                       />
                     ) : field.type === "bytes" ? (
@@ -454,10 +475,18 @@ export function RemoveRulesEditor({
                         value={rTo}
                         units={SIZE_UNITS}
                         ariaLabel="Full effect at"
+                        describedBy={rampBackwards ? RAMP_ERROR_ID : undefined}
+                        invalid={rampBackwards}
                         onChange={setRTo}
                       />
                     ) : (
-                      <input type="number" aria-label="Full effect at" {...rampTo} />
+                      <input
+                        type="number"
+                        aria-label="Full effect at"
+                        aria-describedby={rampBackwards ? RAMP_ERROR_ID : undefined}
+                        aria-invalid={rampBackwards ? true : undefined}
+                        {...rampTo}
+                      />
                     )}
                   </span>
                 ) : field.type === "bool" ? (
@@ -503,7 +532,7 @@ export function RemoveRulesEditor({
           </div>
           {/* Beside the boxes that fix it (rule 42), and only while it is true. */}
           {rampBackwards && (
-            <p className="help help-warn">
+            <p className="help help-warn" id={RAMP_ERROR_ID}>
               The second number has to be higher than the first: a rule like this builds up between
               them.
             </p>

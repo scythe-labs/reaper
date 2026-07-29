@@ -576,8 +576,11 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # missed by the sweep entirely, because the ban could not parse a ternary ``className``; and the
 # About, Jobs and Notifications panels each grew a second hand-rolled notice while this branch was
 # in flight, when their failed-read handling was split into a never-loaded case and a stale case.
+# Then 109: the service form's malformed-external-URL complaint became a notice of its own beside
+# the box it is about, instead of a sentence written into the form's shared error slot 150 lines
+# below it, which is where a failed save and a failed connection test also land (#174, rule 42).
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 108
+_EXPECTED_NOTICES = 109
 
 
 def _shipped_tsx() -> list[Path]:

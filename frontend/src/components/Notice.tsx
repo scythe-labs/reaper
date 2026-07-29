@@ -73,6 +73,15 @@ export function Notice({
   const El = Tag as ElementType;
   return (
     <El className={classes} role={standing ? undefined : "alert"} {...rest}>
+      {/* Severity was a color and nothing else: `notice-error` against `notice-warn` was the
+          only difference between "this blocks you" and "this is advice", so the two were
+          indistinguishable by ear even once the text was reached -- a 1.4.1 failure as much as
+          a 4.1.3 one. Visually hidden, because the color already says it to anyone who can see
+          it and a visible lead would say twice what the tone shows.
+
+          Here rather than at the call sites for the same reason the role is here: one answer to
+          "can a reader tell these apart?", provable once instead of 108 times (rule 18). */}
+      <span className="sr-only">{tone === "error" ? "Problem: " : "Warning: "}</span>
       {children}
     </El>
   );

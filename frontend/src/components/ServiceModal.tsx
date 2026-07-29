@@ -80,6 +80,9 @@ export function TestBadge({ result }: { result: InstanceTest | null }) {
   );
 }
 
+/** The external-URL box's complaint, named once for both ends of the association (rule 67). */
+const EXTERNAL_URL_ERROR_ID = "service-external-url-error";
+
 interface UrlParts {
   ssl: boolean;
   host: string;
@@ -175,6 +178,10 @@ export function ServiceModal({
   const [externalUrl, setExternalUrl] = useState(instance?.external_url ?? "");
   const [test, setTest] = useState<InstanceTest | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `error` above, which is the form's shared slot for a failed save and a
+  // failed connection test. One flag rather than a message, because there is exactly one thing
+  // wrong a malformed external URL can be, and the sentence lives at the field.
+  const [extUrlBad, setExtUrlBad] = useState(false);
 
   const baseUrl = () => joinBaseUrl({ ssl, host, port, urlBase });
   // Only Sonarr and Radarr delete, so only they carry the re-download switch.
@@ -439,9 +446,10 @@ export function ServiceModal({
           setError(null);
           const ext = externalUrl.trim();
           if (ext && !isWebUrl(ext)) {
-            setError("The external URL must be a full web address, like https://192.0.2.10:8989.");
+            setExtUrlBad(true);
             return;
           }
+          setExtUrlBad(false);
           save.mutate();
         }}
       >
@@ -533,11 +541,28 @@ export function ServiceModal({
           <input
             type="url"
             value={externalUrl}
-            onChange={(e) => setExternalUrl(e.target.value)}
+            // Cleared as soon as it is being fixed, so the box never claims a value the
+            // operator has already retyped is still the one that was refused.
+            onChange={(e) => {
+              setExternalUrl(e.target.value);
+              setExtUrlBad(false);
+            }}
             placeholder={`https://${kind}.example.com`}
             autoComplete="off"
+            aria-invalid={extUrlBad ? true : undefined}
+            aria-describedby={extUrlBad ? EXTERNAL_URL_ERROR_ID : undefined}
           />
         </label>
+        {/* Beside the control that fixes it (rule 42). This complaint used to be written into
+            the form's one shared `error` slot, which renders after ~150 lines of other fields
+            and is also where a failed save and a failed connection test land -- so it was both
+            out of reach of the box and impossible to bind to it without claiming a save failure
+            was the URL's fault. */}
+        {extUrlBad && (
+          <Notice tone="error" id={EXTERNAL_URL_ERROR_ID}>
+            The external URL must be a full web address, like https://192.0.2.10:8989.
+          </Notice>
+        )}
         <p className="help">
           Where links to {kindLabel(kind)} open. Leave blank to use the address above.
         </p>

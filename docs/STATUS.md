@@ -110,7 +110,15 @@ Last verified against the code: 2026-07-26.
    button were the same event. `announce()` (`announce.tsx`) speaks into a region mounted once
    above every route; it is two alternating regions because saving twice must say so twice, and a
    text node that does not change is not announced. `TestBadge` and the job flash chip carry a
-   word for pass/fail rather than a glyph and a color. **The `.why` panels are landed
+   word for pass/fail rather than a glyph and a color. **And a refusal now says which box it is
+   about (#174)**: `aria-invalid` and `aria-describedby` appeared zero times app-wide, so a
+   control that would not save had no route to the sentence explaining it. `WarnBlock` emits the
+   id `fb87ecb` deferred, `warningsDescribing()` names both ends of the association, and severity
+   moved out of the color into a word in `Notice` — `notice-error` against `notice-warn` was the
+   whole difference between "this blocks you" and "this is advice". Bound at the three policy
+   anchors with one owning control, and at the hex, webhook, password, ramp and external-URL
+   boxes; the five anchors that warn about a *list* are deliberately left with ids only, since
+   binding every child reads the whole card at each of them. **The `.why` panels are landed
    too**, and the app-wide sweep behind that fix found six of them rather than the four the issue
    named — `WhyPanelFallback` and `ScalesPanelFallback` render the same `<aside className="why">`,
    and the second carried no Escape handler at all, so a Scales panel stuck loading or failed

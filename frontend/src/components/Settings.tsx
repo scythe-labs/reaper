@@ -144,6 +144,12 @@ function allTimeZones(): string[] {
 // agree: Discard putting back a different number is how a discarded draft came back (issue #90).
 const SPARE_DAYS_SEED = 30;
 
+/** The hex field's refusal message, named once so the box's `aria-describedby` and the message's
+ *  own `id` are the same string rather than two that can drift (rule 67). A module constant and
+ *  not a `useId`: this panel is a singleton, and the id is only useful while the message is
+ *  rendered -- which is exactly when the box points at it. */
+const ACCENT_ERROR_ID = "accent-hex-error";
+
 export function GeneralPanel({
   /** Called whenever the save bar gains or loses a draft, so the section rail can hold a
    *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
@@ -498,6 +504,10 @@ export function GeneralPanel({
                   spellCheck={false}
                   maxLength={7}
                   aria-label="Accent color hex code"
+                  // The box refuses the save and the sentence saying why sits below it, out of
+                  // reach of anyone who arrived at the box by keyboard (#174).
+                  aria-invalid={accentValid ? undefined : true}
+                  aria-describedby={accentValid ? undefined : ACCENT_ERROR_ID}
                   onChange={(e) => setAccent(e.target.value)}
                 />
               </span>
@@ -507,7 +517,11 @@ export function GeneralPanel({
                 </button>
               )}
             </div>
-            {!accentValid && <p className="help field-error">Enter a hex code like #25c3ff.</p>}
+            {!accentValid && (
+              <p className="help field-error" id={ACCENT_ERROR_ID}>
+                Enter a hex code like #25c3ff.
+              </p>
+            )}
             {/* role="group" is what carries the name: ARIA does not expose an aria-label on a
                 plain div, so "Quick colors" reached nobody. Same shape as `Segmented`. */}
             <div className="presets" role="group" aria-label="Quick colors">
@@ -2125,6 +2139,9 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
  *  spares a round-trip and gives an instant hint. */
 const DISCORD_WEBHOOK_HOSTS = ["discord.com", "discordapp.com"];
 
+/** The webhook box's format complaint, named once for both ends (rule 67). */
+const WEBHOOK_ERROR_ID = "discord-webhook-error";
+
 function isDiscordWebhook(raw: string): boolean {
   let url: URL;
   try {
@@ -2271,6 +2288,10 @@ function NotificationsPanel({
                 : "https://discord.com/api/webhooks/…"
             }
             autoComplete="off"
+            // The complaint renders after the whole button row, so in DOM order it is three
+            // controls away from the box it is about (#174).
+            aria-invalid={badFormat ? true : undefined}
+            aria-describedby={badFormat ? WEBHOOK_ERROR_ID : undefined}
           />
         </label>
       </div>
@@ -2319,7 +2340,7 @@ function NotificationsPanel({
         <TestBadge result={test} />
       </div>
       {badFormat && (
-        <Notice tone="error">
+        <Notice tone="error" id={WEBHOOK_ERROR_ID}>
           That doesn't look like a Discord webhook URL. Paste the full
           https://discord.com/api/webhooks/… URL from the channel's integration settings.
         </Notice>
@@ -2335,6 +2356,11 @@ function NotificationsPanel({
 // reaper/services/admin_password.py), so the placeholder, the live message, and the server
 // rule all state one number.
 const MIN_ADMIN_PASSWORD = 12;
+
+/** The password form's one error region, named once for both ends of the association (rule 67).
+ *  Which BOX claims it varies: the region carries whichever complaint is live, and only the box
+ *  that complaint is about points at it. */
+const PASSWORD_ERROR_ID = "admin-password-error";
 
 function AdminPasswordForm({
   needed,
@@ -2466,6 +2492,12 @@ function AdminPasswordForm({
               placeholder="at least 12 characters"
               autoComplete="new-password"
               maxLength={128}
+              // One region carries three different complaints, so each box claims only the one
+              // that is about IT: "too short" belongs to this box, "don't match" to the next.
+              // Pointing both at the region unconditionally would have each box read out the
+              // other's problem (#174).
+              aria-invalid={tooShort ? true : undefined}
+              aria-describedby={tooShort ? PASSWORD_ERROR_ID : undefined}
             />
           </label>
           <label className="field-sm">
@@ -2476,6 +2508,8 @@ function AdminPasswordForm({
               onChange={onEdit(setConfirm)}
               autoComplete="new-password"
               maxLength={128}
+              aria-invalid={mismatch ? true : undefined}
+              aria-describedby={mismatch ? PASSWORD_ERROR_ID : undefined}
             />
           </label>
           <div className="add-actions">
@@ -2485,7 +2519,11 @@ function AdminPasswordForm({
             {msg && <span className="muted">{msg}</span>}
           </div>
         </form>
-        {errorNode && <Notice tone="error">{errorNode}</Notice>}
+        {errorNode && (
+          <Notice tone="error" id={PASSWORD_ERROR_ID}>
+            {errorNode}
+          </Notice>
+        )}
       </div>
     </div>
   );

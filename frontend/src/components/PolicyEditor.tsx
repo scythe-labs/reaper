@@ -143,21 +143,60 @@ function KeepTagsEditor({
   );
 }
 
+/** The DOM id of the `i`th warning rendered at one anchor. Both ends of the association are
+ *  named by this one function, so the control's `aria-describedby` and the notice's `id` cannot
+ *  drift apart the way two hand-written strings would. */
+export function warningId(anchor: WarningAnchorId | "unanchored", i: number): string {
+  return `policy-warning-${anchor}-${i}`;
+}
+
+/** What a control at `anchor` points `aria-describedby` at: every warning currently rendered
+ *  there, in order.
+ *
+ *  `undefined` when there are none, and that is not a tidiness choice -- `WarnBlock` renders
+ *  nothing at all when the list is empty, so a fixed id would be a reference to an element not
+ *  in the document. Readers treat a dangling `aria-describedby` inconsistently, and the one
+ *  behavior they share is that the operator learns nothing from it. */
+export function warningsDescribing(
+  anchor: WarningAnchorId | "unanchored",
+  warnings: PolicyWarning[],
+): string | undefined {
+  if (warnings.length === 0) return undefined;
+  return warnings.map((_w, i) => warningId(anchor, i)).join(" ");
+}
+
+/** Whether any warning at an anchor is the kind that blocks a save, which is what a control
+ *  reports as `aria-invalid`. Advice is not invalidity: a `warn` leaves the policy saveable. */
+export function warningsBlock(warnings: PolicyWarning[]): boolean {
+  return warnings.some((w) => w.severity === "danger");
+}
+
 /** Inline warnings for one control group, rendered beside the control that fixes them.
  *  Renders nothing when the group has nothing to say. */
-function WarnBlock({ warnings }: { warnings: PolicyWarning[] }) {
+function WarnBlock({
+  anchor,
+  warnings,
+}: {
+  /** Which anchor this block is rendering, so each notice can carry the id the control that
+   *  fixes it points at. Required rather than optional: a block with no anchor emits no ids,
+   *  and the control beside it would then describe itself with nothing (#174). */
+  anchor: WarningAnchorId | "unanchored";
+  warnings: PolicyWarning[];
+}) {
   if (warnings.length === 0) return null;
   return (
     <>
       {warnings.map((w, i) => (
         // `standing`, not announced: these re-render on every debounced validate as the
         // operator types, so an alert per keystroke would talk over them continuously. The
-        // right mechanism here is `aria-describedby` from each field to its own warning,
-        // which needs an id WarnBlock does not emit yet; filed rather than half-done.
+        // right mechanism is `aria-describedby` from each field to its own warning, which is
+        // what the `id` below now makes possible -- the field speaks it when the operator
+        // reaches the control, instead of the page interrupting them mid-keystroke.
         <Notice
           tone={w.severity === "danger" ? "error" : "warn"}
           inline
           standing
+          id={warningId(anchor, i)}
           // Field and message do not separate these. Two protect conditions on the same
           // movie-only field in a TV policy produce byte-identical warnings, because the
           // producer has no name to put in them -- `ConditionSpec` carries a field, an
@@ -453,7 +492,7 @@ function RatingFloorRow({
               one keyed on the bare message, so it carried the duplicate-key defect in a
               worse form than the original and would not have been swept with it. */}
           {warnings.length > 0 ? (
-            <WarnBlock warnings={warnings} />
+            <WarnBlock anchor="keep_rating_rules" warnings={warnings} />
           ) : (
             <p className="help">{summary}</p>
           )}
@@ -1406,6 +1445,10 @@ export function PolicyEditor({
             // the one control that sets the score a title is condemned at. The signal sliders
             // above already name themselves this way.
             aria-label="Put a title on the list once it scores"
+            // The warning about this threshold is rendered directly below and was reachable
+            // only by leaving the slider to go looking for it (#174).
+            aria-describedby={warningsDescribing("condemn_at", warningsAt("condemn_at"))}
+            aria-invalid={warningsBlock(warningsAt("condemn_at")) ? true : undefined}
             value={draft.condemn_at}
             onChange={(e) => update({ condemn_at: Number(e.target.value) })}
           />
@@ -1414,7 +1457,7 @@ export function PolicyEditor({
             Protections below still win. This only decides among titles nothing is keeping.
           </span>
         </label>
-        <WarnBlock warnings={warningsAt("condemn_at")} />
+        <WarnBlock anchor="condemn_at" warnings={warningsAt("condemn_at")} />
 
         <label className="field">
           <span className="field-label">
@@ -1451,14 +1494,14 @@ export function PolicyEditor({
             />
           ))}
         </ul>
-        <WarnBlock warnings={warningsAt("signals")} />
+        <WarnBlock anchor="signals" warnings={warningsAt("signals")} />
 
         <RemoveRulesEditor
           condemn={draft.custom_condemn}
           mediaType={mediaType}
           onCondemn={(custom_condemn) => update({ custom_condemn })}
         />
-        <WarnBlock warnings={warningsAt("custom_condemn")} />
+        <WarnBlock anchor="custom_condemn" warnings={warningsAt("custom_condemn")} />
 
         <div className="policy-divider" />
 
@@ -1488,7 +1531,7 @@ export function PolicyEditor({
             return <GateRow key={gate.gate} gate={gate} onChange={setGate} />;
           })}
         </ul>
-        <WarnBlock warnings={warningsAt("gates")} />
+        <WarnBlock anchor="gates" warnings={warningsAt("gates")} />
 
         {(() => {
           const i = draft.gates.findIndex((g) => g.gate === "rating_floor");
@@ -1561,6 +1604,8 @@ export function PolicyEditor({
                     min={0}
                     width="narrow"
                     ariaLabel="Newest seasons to always keep"
+                    describedBy={warningsDescribing("keep_last", warningsAt("keep_last"))}
+                    invalid={warningsBlock(warningsAt("keep_last"))}
                     onChange={(v) => update({ keep_last_seasons: Math.max(0, v) })}
                   />
                   <span>of every show</span>
@@ -1708,7 +1753,7 @@ export function PolicyEditor({
                 </p>
               </li>
             </ul>
-            <WarnBlock warnings={warningsAt("keep_last")} />
+            <WarnBlock anchor="keep_last" warnings={warningsAt("keep_last")} />
           </div>
         )}
 
@@ -1726,7 +1771,7 @@ export function PolicyEditor({
             one surface either can be fixed from. `protect_conditions` carries the
             gate-off popularity window (`engine/policy.py:inspect`), which has nowhere
             else to go: with that protection off its window control is not rendered. */}
-        <WarnBlock warnings={warningsAt("keep_rules")} />
+        <WarnBlock anchor="keep_rules" warnings={warningsAt("keep_rules")} />
 
         {/* A validation failure is an ERROR (red): this policy cannot be saved as-is. */}
         {invalidMessage && (
@@ -1743,7 +1788,7 @@ export function PolicyEditor({
           </Notice>
         )}
         {/* Warnings live beside their controls; only one no anchor claims lands here. */}
-        <WarnBlock warnings={unanchoredWarnings} />
+        <WarnBlock anchor="unanchored" warnings={unanchoredWarnings} />
 
         <p className="hash">
           {validation && (
@@ -1887,12 +1932,22 @@ export function PolicyEditor({
                   max={25}
                   width="narrow"
                   ariaLabel="Items with an unknown size"
+                  // The one setting that lets deletions past the size caps, so the warning
+                  // about it is worth hearing from the box rather than after it.
+                  describedBy={warningsDescribing(
+                    "max_unmeasured_per_run",
+                    warningsAt("max_unmeasured_per_run"),
+                  )}
+                  invalid={warningsBlock(warningsAt("max_unmeasured_per_run"))}
                   onChange={(v) => updatePace({ max_unmeasured_per_run: v })}
                 />
                 <span className="help">
                   Kept by default. Size caps can't measure them. Set 0 to always keep, 25 at most.
                 </span>
-                <WarnBlock warnings={warningsAt("max_unmeasured_per_run")} />
+                <WarnBlock
+                  anchor="max_unmeasured_per_run"
+                  warnings={warningsAt("max_unmeasured_per_run")}
+                />
               </span>
             </div>
           </>

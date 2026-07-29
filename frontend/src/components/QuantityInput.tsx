@@ -119,12 +119,19 @@ export function QuantityInput({
   units,
   min = 1,
   ariaLabel,
+  describedBy,
+  invalid,
 }: {
   value: number;
   onChange: (base: number) => void;
   units: Unit[];
   min?: number;
   ariaLabel?: string;
+  /** Ids of the message(s) explaining what is wrong with this box's value. Same contract as
+   *  `FixedQuantity`'s (rule 72); there is no unit id to join here, for the reason below. */
+  describedBy?: string | undefined;
+  /** True while the value breaks a rule that BLOCKS a save. */
+  invalid?: boolean | undefined;
 }) {
   const [unit, setUnit] = useState<Unit>(() => bestUnit(value, units));
 
@@ -181,6 +188,8 @@ export function QuantityInput({
         min={shownMin}
         step="any"
         aria-label={ariaLabel}
+        aria-describedby={describedBy}
+        aria-invalid={invalid ? true : undefined}
         {...typed}
         onBlur={onBlur}
       />
@@ -214,6 +223,8 @@ export function FixedQuantity({
   width,
   ariaLabel,
   disabled,
+  describedBy,
+  invalid,
 }: {
   value: number | string;
   onChange: (next: number) => void;
@@ -225,6 +236,13 @@ export function FixedQuantity({
   width?: "narrow" | "regular";
   ariaLabel?: string;
   disabled?: boolean;
+  /** Ids of the message(s) explaining what is wrong with this box's value -- a policy warning
+   *  beside the control that fixes it. Joined with the unit below rather than replacing it:
+   *  the number still needs its unit while it is also being complained about. */
+  describedBy?: string | undefined;
+  /** True while the value breaks a rule that BLOCKS a save. Advice does not set this: a
+   *  warning the operator may save through is not an invalid field. */
+  invalid?: boolean | undefined;
 }) {
   const typed = useTypedNumber(String(value), onChange, { min, max });
   // The unit is the other half of the value, and it used to be `aria-hidden`, so the box
@@ -253,7 +271,10 @@ export function FixedQuantity({
         max={max}
         step={step}
         aria-label={ariaLabel}
-        aria-describedby={unitId}
+        // Unit first, then whatever is wrong with the value: "40, titles, that is more than
+        // the run cap allows" reads in the order the operator needs it.
+        aria-describedby={describedBy ? `${unitId} ${describedBy}` : unitId}
+        aria-invalid={invalid ? true : undefined}
         disabled={disabled}
         {...typed}
       />
