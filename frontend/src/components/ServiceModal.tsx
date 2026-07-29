@@ -623,6 +623,19 @@ export function ServiceModal({
             ) : rootFolders.data && rootFolders.data.length > 0 ? (
               <>
                 {rootFolders.error && <StaleReadNotice what="this instance's folders" />}
+                {/* Over the grid, beside the folder line, because the shared sentence says what
+                    is BELOW may be out of date and the stale library names are inside the pickers
+                    under it. Emitted after the grid it pointed at the help paragraph instead,
+                    which is the placement `Settings.tsx` fixed for the jobs rows and says every
+                    other call site already keeps.
+
+                    `libOptions.length === 0` is what tells the two failures apart: a refetch that
+                    fails with the libraries still held leaves every picker below populated, and
+                    "couldn't read your Plex libraries" printed there sat beside a working list
+                    (#190). Said as staleness instead, which is what it is. */}
+                {plexLibraries.error && libOptions.length > 0 && (
+                  <StaleReadNotice what="your Plex libraries" />
+                )}
                 <div className="plex-map-grid">
                   {rootFolders.data.map((f) => (
                     <Fragment key={f.path}>
@@ -654,15 +667,8 @@ export function ServiceModal({
                 {/* A failed fetch also empties `libOptions`, and "no libraries yet" would then
                     state as fact something we never learned -- and send the operator off to
                     re-sync a list that is already there. The empty sentence is only for a list
-                    we genuinely read and found empty.
-
-                    `libOptions.length === 0` is what tells the two failures apart: a refetch that
-                    fails with the libraries still held leaves every picker above populated, and
-                    "couldn't read your Plex libraries" printed there sat beside a working list
-                    (#190). Said as staleness instead, which is what it is. */}
-                {plexLibraries.error && libOptions.length > 0 && (
-                  <StaleReadNotice what="your Plex libraries" />
-                )}
+                    we genuinely read and found empty. This one stays under the grid: it replaces
+                    the help text rather than describing the pickers. */}
                 {plexLibraries.error && libOptions.length === 0 ? (
                   <Notice tone="warn">Reaper couldn't read your Plex libraries. Try again.</Notice>
                 ) : !plexLibraries.isPending && libOptions.length === 0 ? (
@@ -706,6 +712,12 @@ export function ServiceModal({
             ) : seerrServices.data && seerrServices.data.length > 0 ? (
               <>
                 {seerrServices.error && <StaleReadNotice what="this portal's services" />}
+                {/* Over the grid, for the same reason as the library line above (rule 72): the
+                    stale connection names are inside the pickers below it. */}
+                {arrInstances.error &&
+                  seerrServices.data.some((s) => instanceOptions(s.kind).length > 0) && (
+                    <StaleReadNotice what="your Sonarr and Radarr connections" />
+                  )}
                 <div className="plex-map-grid">
                   {seerrServices.data.map((s) => (
                     <Fragment key={svcKey(s)}>
@@ -747,11 +759,9 @@ export function ServiceModal({
                 {/* Same trap as the library picker above: a failed fetch leaves every
                     `instanceOptions` empty, and "none yet" would be a claim we never checked --
                     and divided the same way, so a refetch that fails with the connections still
-                    held reads as stale rather than as unreadable beside populated pickers. */}
-                {arrInstances.error &&
-                  seerrServices.data.some((s) => instanceOptions(s.kind).length > 0) && (
-                    <StaleReadNotice what="your Sonarr and Radarr connections" />
-                  )}
+                    held reads as stale rather than as unreadable beside populated pickers. This
+                    one stays under the grid: it replaces the help text, it does not describe the
+                    pickers. */}
                 {arrInstances.error &&
                 seerrServices.data.every((s) => instanceOptions(s.kind).length === 0) ? (
                   <Notice tone="warn">

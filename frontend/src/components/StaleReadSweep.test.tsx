@@ -109,6 +109,21 @@ async function blink(
   await waitFor(() => expect(fn.mock.calls.length).toBeGreaterThan(before));
 }
 
+/** Whether `first` comes before `second` in reading order.
+ *
+ *  The shared sentence ends "so what's BELOW may be out of date", which is a claim about
+ *  placement and not only about wording: a caller that emits it after its content points the
+ *  operator at whatever follows instead. `Settings.tsx` moved the jobs line above its rows for
+ *  this reason and states that every other call site does the same, so that sentence is only
+ *  true while something checks it. */
+const PLACEMENT_HINT =
+  "The stale line must render ABOVE the content it describes -- it says what's below may be " +
+  "out of date. See the note on the jobs line in Settings.tsx.";
+
+function precedes(first: Element, second: Element): boolean {
+  return Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
 // --- the not-in-the-last-scan panel -------------------------------------------------------
 //
 // Props, not a query: `items` arrives from the parent as `fairnessReport?.unmatched ?? []`, so
@@ -302,8 +317,11 @@ describe("the service editor's mapping grid through a failed refetch", () => {
     const stale = await screen.findByText(STALE_ANY);
     expect(stale, WHAT_HINT).toHaveTextContent(/Couldn't check your Plex libraries just now/);
     // "couldn't read your Plex libraries" sat here beside a picker still full of them.
-    expect(screen.getByRole("option", { name: "TV" })).toBeInTheDocument();
+    const option = screen.getByRole("option", { name: "TV" });
+    expect(option).toBeInTheDocument();
     expect(screen.queryByText(/couldn't read your Plex libraries/i)).toBeNull();
+    // The stale names are the options inside the grid, so the line has to sit over it.
+    expect(precedes(stale, option), PLACEMENT_HINT).toBe(true);
   });
 
   it("still refuses the grid when the folders never landed", async () => {
@@ -401,10 +419,12 @@ describe("the service editor's requested-by grid through a failed refetch", () =
     expect(stale, WHAT_HINT).toHaveTextContent(
       /Couldn't check your Sonarr and Radarr connections just now/,
     );
-    expect(screen.getByRole("option", { name: "Main" })).toBeInTheDocument();
+    const option = screen.getByRole("option", { name: "Main" });
+    expect(option).toBeInTheDocument();
     expect(
       screen.queryByText(/Reaper couldn't read your Sonarr and Radarr connections/),
     ).toBeNull();
+    expect(precedes(stale, option), PLACEMENT_HINT).toBe(true);
   });
 
   it("still says the connections are unreadable when none ever landed", async () => {
