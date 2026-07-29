@@ -666,6 +666,34 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 _EXPECTED_SELECTS = 19
 
 
+def _without_line_comments(chunk: str) -> str:
+    """``chunk`` with every ``//`` run to end-of-line removed."""
+    return "\n".join(line.split("//", 1)[0] for line in chunk.splitlines())
+
+
+def _select_is_named(tag: str, text: str) -> bool:
+    """Whether ``tag`` carries a name a screen reader can say, resolved against its own file.
+
+    Accepts, and these are the spellings the tree actually uses (rule 147):
+      - ``aria-label="…"`` and ``aria-label={…}``
+      - ``aria-labelledby=…``
+      - ``id=X`` where the SAME file holds a ``htmlFor=X``, matched on the raw attribute value
+        so ``id="tz"``/``htmlFor="tz"`` and ``id={rowId}``/``htmlFor={rowId}`` both resolve.
+
+    Rejects, each of which the previous matcher accepted:
+      - ``id=X`` with no ``htmlFor`` anywhere -- an id names nothing on its own, and the
+        assertion's own message promised a label that nothing looked for (rule 7/24)
+      - ``id=X`` where the file's only ``htmlFor`` points at a DIFFERENT id
+      - a comment inside the tag that merely mentions ``aria-label=`` or ``id=``
+    """
+    if re.search(r"\baria-label(?:ledby)?=", tag):
+        return True
+    ident = re.search(r'\bid=("[^"]*"|\{[^}]*\})', tag)
+    if not ident:
+        return False
+    return re.search(rf"\bhtmlFor={re.escape(ident.group(1))}", text) is not None
+
+
 def _shipped_selects() -> list[tuple[Path, int, str]]:
     """Every ``<select>`` opening tag in shipped .tsx, as (path, line, tag text).
 
@@ -679,6 +707,12 @@ def _shipped_selects() -> list[tuple[Path, int, str]]:
     ``onChange={(e) => ...}`` whose own ``>`` and ``}`` sit inside the attribute -- and hands
     back the whole tag to be inspected as one string. That is rule 147: prefer reading the whole
     attribute or call over anchoring on a delimiter one spelling happens to put there.
+
+    **A ``//`` comment inside the tag is dropped before anything reads it**, and that is not
+    hypothetical tidying: two selects in this tree carry a multi-line comment between their
+    attributes. Left in, the comment text is part of the string the name search runs against, so
+    a comment merely *mentioning* ``aria-label=`` names the control -- and a ``>`` inside one
+    ends the walk early, handing back half a tag.
     """
     found: list[tuple[Path, int, str]] = []
     for path in _shipped_tsx():
@@ -686,6 +720,11 @@ def _shipped_selects() -> list[tuple[Path, int, str]]:
         for match in re.finditer(r"<select\b", text):
             i, depth = match.end(), 0
             while i < len(text):
+                # Skip a line comment whole: its `{`, `}` and `>` are prose, not syntax.
+                if text.startswith("//", i):
+                    nl = text.find("\n", i)
+                    i = len(text) if nl == -1 else nl
+                    continue
                 char = text[i]
                 if char == "{":
                     depth += 1
@@ -694,7 +733,7 @@ def _shipped_selects() -> list[tuple[Path, int, str]]:
                 elif char == ">" and depth == 0:
                     break
                 i += 1
-            tag = " ".join(text[match.start() : i + 1].split())
+            tag = " ".join(_without_line_comments(text[match.start() : i + 1]).split())
             # The bare word ``<select>`` inside a comment is prose about a select, not one:
             # three sites in the tree talk about the element, and a scan that counts them
             # reports permanent offenders nobody can fix. A real one always carries at least a
@@ -730,10 +769,49 @@ def test_every_select_says_what_it_is_for() -> None:
     unnamed = [
         f"{path.relative_to(REPO)}:{lineno} -> {tag}"
         for path, lineno, tag in selects
-        if not re.search(r"\baria-label(?:ledby)?=|\bid=", tag)
+        if not _select_is_named(tag, path.read_text(encoding="utf-8"))
     ]
     assert not unnamed, (
         "every <select> needs a name a screen reader can say -- aria-label, aria-labelledby, or\n"
         "an id a <label htmlFor> points at. Without one it is announced as an unlabeled combo\n"
         "box, and the operator has to guess which row it belongs to:\n" + "\n".join(unnamed)
     )
+
+
+def test_the_select_name_matcher_rejects_what_it_claims_to_reject() -> None:
+    """The gate above is a source-text scan, so it is worth exactly what its matcher can parse.
+
+    Rule 147: a matcher ships with the spellings it accepts AND the ones it rejects, run. Both
+    rejections below were live holes -- the first shipped promising a ``<label htmlFor>`` lookup
+    that did not exist (rule 7/24), and the second let a comment name a control, on a gate whose
+    own commit put multi-line comments inside two select tags.
+    """
+    labelled = '<label htmlFor="tz">Zone</label>'
+    accepted = [
+        ('<select aria-label="Time zone" value={tz}>', ""),
+        ("<select aria-label={label} value={tz}>", ""),
+        ('<select aria-labelledby="tz-head" value={tz}>', ""),
+        ('<select id="tz" value={tz}>', labelled),
+        ("<select id={rowId} value={tz}>", "<label htmlFor={rowId}>Zone</label>"),
+    ]
+    rejected = [
+        ("<select value={tz}>", labelled),
+        # An id names nothing on its own, and nothing in this tree points a label at one.
+        ('<select id="tz" value={tz}>', ""),
+        # A label, but pointed somewhere else.
+        ('<select id="tz" value={tz}>', '<label htmlFor="other">Zone</label>'),
+        # Prose about a name is not a name. Both spellings the old matcher fell for.
+        ("<select value={tz}>", ""),
+    ]
+    for tag, text in accepted:
+        assert _select_is_named(tag, text), f"should count as named: {tag}"
+    for tag, text in rejected:
+        assert not _select_is_named(tag, text), f"should NOT count as named: {tag}"
+
+    # And the comment stripping, which happens before the matcher ever sees the tag: a comment
+    # mentioning either spelling must not survive into the string that gets searched.
+    for comment in ("// no aria-label= needed here", "// matches the id= of the row above"):
+        stripped = " ".join(
+            _without_line_comments(f"<select\n  {comment}\n  value={{tz}}>").split()
+        )
+        assert not _select_is_named(stripped, ""), f"comment named the control: {comment}"
