@@ -1009,18 +1009,160 @@ describe("the kept-by-the-whole-show note", () => {
 // The row and card that hold OverrideControls also handle Enter/Space themselves (to open the
 // why-panel). Keydown from the buttons must not bubble into that handler, whose preventDefault
 // would cancel the button's own activation and open the panel instead of saving the override.
+describe("what a screen reader hears on a queue card", () => {
+  // Every card WAS its own control -- `<article role="button" aria-label="Why … scored …">` --
+  // and ARIA gives `role="button"` Children Presentational: True, so everything inside was
+  // pruned from the accessibility tree and replaced by that one label. The card's evidence IS
+  // the case for deleting the file (#169). These drive the tree the way a reader reads it:
+  // `getByRole`/`getByText` under Testing Library resolve against the accessibility tree, so a
+  // pruned chip is a query that finds nothing.
+
+  it("reads the card's evidence, not just its title and score", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([
+        movie(1, {
+          library: "Films",
+          video_resolution: "1080",
+          requested_by: "someone",
+          reason: "Nobody has watched it since it arrived",
+          chip: { tone: "look", text: "Nobody watched it" },
+        }),
+      ]),
+    );
+    renderQueue();
+
+    // The control the card opens through, named as the card used to name itself.
+    expect(
+      await screen.findByRole("button", { name: "Why Example Movie 1 scored 80" }),
+    ).toBeInTheDocument();
+    // ...and everything the old label replaced. Each of these is a signal the operator is
+    // deciding on; under the pruned card a reader reached none of them.
+    expect(screen.getByText("Films")).toBeInTheDocument();
+    expect(screen.getByText("1080p")).toBeInTheDocument();
+    expect(screen.getByText(/someone/)).toBeInTheDocument();
+    expect(screen.getByText(/Nobody has watched it since it arrived/)).toBeInTheDocument();
+  });
+
+  it("leaves no button nested inside another button", async () => {
+    // `nested-interactive`: the real Spare and Reap controls sat inside the card's
+    // `role="button"`, which is invalid and which leaves what a reader does with them undefined.
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    renderQueue();
+    await screen.findByRole("button", { name: "Why Example Movie 1 scored 80" });
+
+    // Rule 145: every button the card renders, counted rather than sampled -- a control that
+    // dropped out of the walk is missing from the proof as surely as from the guard.
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.length).toBeGreaterThan(3);
+    for (const b of buttons) {
+      expect(b.parentElement?.closest("button, [role='button']")).toBeNull();
+    }
+  });
+
+  it("keeps the season list a list, so it announces how many seasons there are", async () => {
+    // `<li role="button">` strips `listitem`, and a list of no items announces no count.
+    apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:show:1",
+      title: "Example Show",
+      year: 2011,
+      poster_url: null,
+      summary: null,
+      size_bytes: 2 * 1024 ** 3,
+      unknown_size_seasons: 0,
+      reason: null,
+      library: null,
+      chip: null,
+      show_override: null,
+      show_spare_expires_at: null,
+      links: {},
+      show_status: null,
+      seasons: [season(1, "condemn"), season(2, "condemn")],
+    });
+    renderQueue();
+    await userEvent.click(await screen.findByRole("button", { name: "2 seasons" }));
+
+    const list = await screen.findByRole("list");
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+  });
+
+  it("opens a card from the keyboard through its title control", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(7)]));
+    const onSelect = vi.fn();
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReviewQueue
+          verdict="condemn"
+          onVerdictChange={() => {}}
+          selectedId={null}
+          selectedGroupKey={null}
+          onSelect={onSelect}
+          onSelectGroup={() => {}}
+          latestScanSnapshotId={null}
+        />
+      </QueryClientProvider>,
+    );
+    (await screen.findByRole("button", { name: "Why Example Movie 7 scored 80" })).focus();
+    await userEvent.keyboard("{Enter}");
+
+    // Exactly once. The control cancels the key's default action, so the click a `<button>`
+    // would otherwise synthesize never fires and one press is one open.
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(7);
+  });
+
+  it("picks a card in Select mode from the keyboard, exactly once", async () => {
+    // The other half of that: in Select mode the CARD's own pointerdown acts on a press, so the
+    // control stands its click down and only the key path acts. Both firing toggled the card
+    // straight back off, which is a selection that silently refuses to happen.
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
+    renderQueue();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Select" }));
+
+    const pick = screen.getByRole("button", { name: "Select Example Movie 1" });
+    expect(pick).toHaveAttribute("aria-pressed", "false");
+    pick.focus();
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByRole("button", { name: "Select Example Movie 1" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("picks a card in Select mode with the mouse, exactly once", async () => {
+    // And with a pointer, where the card's pointerdown is the thing that acts. A click on the
+    // title must land on one net toggle, not two.
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
+    renderQueue();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Select" }));
+
+    await user.click(screen.getByRole("button", { name: "Select Example Movie 1" }));
+
+    expect(screen.getByRole("button", { name: "Select Example Movie 1" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+});
+
 describe("keyboard activation of a revealed Spare/Reap button", () => {
-  it("saves the override and does not bubble to the row's key handler (B-7)", async () => {
+  // These buttons used to sit INSIDE a `role="button"` card whose own key handler called
+  // preventDefault, cancelling their activation -- so each carried a `stopPropagation` guard
+  // (B-7, rule 60). The cards are plain containers now (#169) and the guards are gone with the
+  // handler they guarded against; what these still pin is that the buttons work from a keyboard
+  // and that pressing one never opens the panel behind it.
+  it("saves the override", async () => {
     const onSet = vi.fn();
-    const rowKeyDown = vi.fn();
     // OverrideControls reads the default spare length from the general-settings query, so it
     // needs a client even in isolation; unresolved, the default reads as 0 (forever).
     const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
-        <div onKeyDown={rowKeyDown}>
-          <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
-        </div>
+        <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
       </QueryClientProvider>,
     );
     screen.getByRole("button", { name: "Spare" }).focus();
@@ -1029,15 +1171,38 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
     // A plain Spare press carries the operator's default length; unknown settings read as 0
     // (forever), the safe default.
     expect(onSet).toHaveBeenCalledWith("spare", 0);
-    // The key stopped at the control, so the row handler (which would preventDefault and open
-    // the panel) never ran.
-    expect(rowKeyDown).not.toHaveBeenCalled();
   });
 
-  it("expands a show from the keyboard: the season pill's key never reaches the card head", async () => {
-    // The card head owns Enter/Space AND calls preventDefault, which cancels the pill's own
-    // activation. Without the guard a keyboard user cannot expand a show at all -- Enter
-    // opens the show panel instead (rule 60).
+  it("spares from the keyboard without also opening the card's reasons", async () => {
+    // The whole failure B-7 named, driven through the real card rather than a stand-in row: a
+    // press on Spare must save the decision and leave the operator where they are.
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const onSelect = vi.fn();
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReviewQueue
+          verdict="condemn"
+          onVerdictChange={() => {}}
+          selectedId={null}
+          selectedGroupKey={null}
+          onSelect={onSelect}
+          onSelectGroup={() => {}}
+          latestScanSnapshotId={null}
+        />
+      </QueryClientProvider>,
+    );
+    const spare = await screen.findByRole("button", { name: "Spare" });
+    spare.focus();
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => expect(apiMock.override).toHaveBeenCalled());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("expands a show from the keyboard", async () => {
+    // Enter on the season pill expands the show. It used to open the show panel instead,
+    // because the card head canceled the pill's activation.
     apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
     renderQueue("condemn");
     const expander = await screen.findByRole("button", { name: "2 seasons" });

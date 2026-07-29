@@ -178,12 +178,12 @@ export function OverrideControls({
       className={`override-controls ${menuAt ? "menu-open" : ""}`}
       role="group"
       aria-label="Spare or reap this item"
-      // The buttons activate on Enter/Space natively; stop the key from bubbling to a row or
-      // card whose own handler calls preventDefault, which would cancel the button's
-      // activation and open the panel instead (B-7). Mirrors the SeasonStrip square guard.
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-      }}
+      // No Enter/Space guard here any more. It existed because every row and card holding these
+      // buttons was a `role="button"` with its own key handler calling preventDefault, which
+      // canceled the button's activation and opened the panel instead (B-7). Those containers
+      // are plain again (#169), and the buttons were never validly nested inside them to begin
+      // with. Nothing above this cancels an activation, so a guard here would be a comment
+      // claiming a safeguard against a handler that does not exist (rule 7/24).
     >
       <span className="ov-split">
         <button

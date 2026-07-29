@@ -45,6 +45,7 @@ import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
+import { CardOpen } from "./CardOpen";
 import { ReapConfirm } from "./ReapConfirm";
 import { KeptByShowNote, OverrideControls, OverrideMark } from "./OverrideControls";
 import { usePopoverShift } from "./popoverFit";
@@ -605,14 +606,13 @@ function SeasonStrip({
             title={`${name}: ${lane}${overrideNote}. Open for its full reasoning.`}
             aria-label={`Open ${name}, ${lane}`}
             onClick={(e) => {
-              // The whole card head opens the show; a square opens just its season.
+              // The whole card head still opens the show on a click; a square opens just its
+              // season. No key guard beside it any more: the head's `role="button"` and its
+              // Enter/Space handler are gone (#169), so nothing above this cancels the button's
+              // own activation, and a guard against a handler that does not exist is a comment
+              // claiming a safeguard (rule 7/24).
               e.stopPropagation();
               onOpen(mark.id);
-            }}
-            onKeyDown={(e) => {
-              // The card head owns Enter/Space for "open the show". Keep a focused
-              // square from bubbling into it; the button fires its own click natively.
-              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
             }}
           >
             {mark.season === 0 ? "SP" : (mark.season ?? "·")}
@@ -649,14 +649,10 @@ function SeasonExpander({
       aria-expanded={open}
       title={open ? "Hide the season list" : "Show every season and where it stands"}
       onClick={(e) => {
+        // A click still bubbles into the head, which opens the show, so it stops here.
+        // Enter/Space needs no guard: the head no longer handles keys at all (#169).
         e.stopPropagation();
         onToggle();
-      }}
-      onKeyDown={(e) => {
-        // The card head owns Enter/Space for "open the show" AND calls preventDefault, which
-        // cancels this button's own activation. Without this a keyboard user cannot expand a
-        // show at all: Enter on the pill opens the panel instead (rule 60).
-        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
       }}
     >
       <svg
@@ -933,24 +929,20 @@ function SeasonList({
                     ? "card-reaped"
                     : ""
               } ${season.id === selectedId ? "card-selected" : ""} ${reason ? "has-reason" : ""}`}
+              // A plain `<li>`. It carried `role="button"`, which stripped `listitem` off every
+              // row -- so the list announced no item count -- and pruned the row's score, chip
+              // and reason line out of the tree, on the row where a per-season keep-or-delete
+              // decision is made (#169). `CardOpen` on the season name is the control.
               onClick={() => onOpen(season.id)}
-              role="button"
-              tabIndex={0}
-              // Named like the movie and show cards above (rule 72). Without this the row's name
-              // is computed from its contents, so it read out as its score, its chip, the nested
-              // Spare/Reap group label and its size run together -- and this is the row where a
-              // per-season keep-or-delete decision is made.
-              aria-label={`Why ${seasonName(season.title, data.title)} scored ${season.score}`}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  onOpen(season.id);
-                }
-              }}
             >
               <Score item={season} />
               <span className="season-title">
-                <span className="season-name">{seasonName(season.title, data.title)}</span>
+                <CardOpen
+                  name={`Why ${seasonName(season.title, data.title)} scored ${season.score}`}
+                  onActivate={() => onOpen(season.id)}
+                >
+                  <span className="season-name">{seasonName(season.title, data.title)}</span>
+                </CardOpen>
                 {chip}
               </span>
               {/* The control toggles the season's OWN decision (override_own), never the one it
@@ -1013,19 +1005,12 @@ const MovieCard = memo(function MovieCard({
       className={`card clickable ${state} ${selected ? "card-selected" : ""} ${
         selectMode ? "card-select" : ""
       } ${isSelected ? "card-picked" : ""}`}
+      // A plain container: the control that opens it is `CardOpen` on the title below, and the
+      // click here is the redundant mouse affordance beside it (#169). Carrying `role="button"`
+      // pruned every chip, reason and season mark on the card out of the accessibility tree.
       onClick={() => !selectMode && onOpen(item.id)}
       onPointerDown={(e) => selectMode && select.onSelectDown(item.media_key, e)}
       onPointerEnter={() => selectMode && select.onSelectEnter(item.media_key)}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selectMode ? isSelected : undefined}
-      aria-label={selectMode ? `Select ${item.title}` : `Why ${item.title} scored ${item.score}`}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          selectMode ? select.onSelectToggle(item.media_key) : onOpen(item.id);
-        }
-      }}
     >
       <Backdrop posterUrl={item.poster_url} />
       {selectMode && (
@@ -1037,7 +1022,18 @@ const MovieCard = memo(function MovieCard({
       <div className="card-body">
         <div className="card-title-row">
           <h3 className="card-title">
-            {item.title}
+            <CardOpen
+              name={selectMode ? `Select ${item.title}` : `Why ${item.title} scored ${item.score}`}
+              pressed={selectMode ? isSelected : undefined}
+              pressHandledByCard={selectMode}
+              onActivate={() =>
+                selectMode ? select.onSelectToggle(item.media_key) : onOpen(item.id)
+              }
+            >
+              {item.title}
+            </CardOpen>
+            {/* Outside the control, so the control's visible text stays exactly the string its
+                name contains (WCAG 2.5.3). */}
             {item.year && <span className="card-year"> {item.year}</span>}
           </h3>
           <OverrideChip
@@ -1209,17 +1205,11 @@ const ShowCard = memo(function ShowCard({
     >
       <div
         className={`card-head clickable ${selectedGroupKey === group.key ? "card-selected" : ""}`}
+        // A plain container, for the reason MovieCard's is: the head held a `role="button"`, and
+        // it holds the season strip, the removal count and the expander, every one of which was
+        // pruned out of the accessibility tree by it (#169). `CardOpen` on the title is the
+        // control; this click is the redundant mouse affordance.
         onClick={() => !selectMode && onOpenGroup(group.key)}
-        role="button"
-        tabIndex={0}
-        aria-pressed={selectMode ? isSelected : undefined}
-        aria-label={selectMode ? `Select ${group.title}` : `About ${group.title}`}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            selectMode ? select.onSelectToggle(group.key) : onOpenGroup(group.key);
-          }
-        }}
       >
         <Backdrop posterUrl={group.poster} />
         {selectMode && (
@@ -1231,7 +1221,16 @@ const ShowCard = memo(function ShowCard({
         <div className="card-body">
           <div className="card-title-row">
             <h3 className="card-title">
-              {group.title}
+              <CardOpen
+                name={selectMode ? `Select ${group.title}` : `About ${group.title}`}
+                pressed={selectMode ? isSelected : undefined}
+                pressHandledByCard={selectMode}
+                onActivate={() =>
+                  selectMode ? select.onSelectToggle(group.key) : onOpenGroup(group.key)
+                }
+              >
+                {group.title}
+              </CardOpen>
               {group.year && <span className="card-year"> {group.year}</span>}
             </h3>
             <OverrideChip

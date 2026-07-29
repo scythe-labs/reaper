@@ -4793,12 +4793,61 @@ a.rating-chip:hover {
 .card.clickable {
   cursor: pointer;
 }
-.card.clickable:focus-visible,
-.fair-card.clickable:focus-visible,
+/* The ring lands on the card even though the focusable thing inside it is `.card-open` (the
+   title button, components/CardOpen.tsx): the card is what the operator sees themselves
+   standing on, and moving the ring onto a few words of title would have been a visible
+   regression bought with the accessibility fix (#169). `:has()` is how a container reacts to a
+   descendant's focus without being focusable itself -- the same tool `.card-side:has(>
+   .override-controls.menu-open)` already uses.
+
+   Scoped through `.card-title`, which is the card's OWN heading: a show card holds a whole
+   season list, each row with a `.card-open` of its own, and a bare `:has(.card-open:...)` would
+   light the show's border every time a season name inside it took focus. The season rows and
+   the show card's head answer for themselves below, each in the treatment its own hover uses. */
+.card.clickable:has(.card-title > .card-open:focus-visible),
+.fair-card.clickable:has(.fair-row1 > .card-open:focus-visible),
 .fair-stat-btn:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* Neither of these has a border of its own to light -- a show card's border belongs to the
+   `<article>` wrapping the head AND the season list, and a season row has none -- so both take
+   the accent wash their `:hover` takes. */
+.card-head:has(> .card-body .card-title > .card-open:focus-visible),
+.season-row:has(> .season-title > .card-open:focus-visible) {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+/* The control that opens a card: the card title, worn as a plain run of text. It inherits
+   everything from the heading it sits in so nothing about the card LOOKS different -- what
+   changed is that a screen reader can now read past it into the card's chips, reason line and
+   season marks, which a `role="button"` container pruned away entirely (#169, and the file
+   header of components/CardOpen.tsx). Its own ring is small and tight to the words, for the
+   season row, where there is no card border for the rule above to light. */
+.card-open {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-decoration: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  max-width: 100%;
+  /* The heading wraps a long title across lines; a button that did not would paint its tail
+     out of the card (rule 139's failure, reached from inside a control). */
+  white-space: inherit;
+  overflow-wrap: inherit;
+  /* The whole card is the pointer target, so the text inside it must not read as a separate
+     one by growing its own hand or I-beam. */
+  cursor: inherit;
+}
+.card-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 .card-selected,
 .fair-card.selected,

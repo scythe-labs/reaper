@@ -101,6 +101,22 @@ describe("PersonCard", () => {
     expect(onSelect).toHaveBeenCalledTimes(2);
   });
 
+  it("reads its balance and its watched share, not just the person's name", async () => {
+    // The card was a `role="button"`, whose Children Presentational pruned everything inside it
+    // out of the accessibility tree: a reader heard the name and nothing else, on the screen
+    // that says whose files are candidates (#169). The control is the name now, and the body
+    // beside it is ordinary content again.
+    render(<PersonCard row={row()} selected={false} onSelect={vi.fn()} horizonAt={HORIZON} />);
+
+    expect(screen.getByRole("button", { name: /marlow/i })).toBeInTheDocument();
+    expect(screen.getByText(/requests/i)).toBeInTheDocument();
+    expect(screen.getByText(/earning its keep/i)).toBeInTheDocument();
+    expect(screen.getByText(/to reclaim · 3 titles/i)).toBeInTheDocument();
+    // The balance bar states itself for a reader through `role="img"`; under the pruned card
+    // that name was unreachable too.
+    expect(screen.getByRole("img", { name: /kept,.*reclaim/i })).toBeInTheDocument();
+  });
+
   it("wears the selection bar when it is the open card", () => {
     const { container } = render(
       <PersonCard row={row()} selected onSelect={vi.fn()} horizonAt={HORIZON} />,

@@ -98,11 +98,9 @@ Last verified against the code: 2026-07-26.
    above every route; a refusal names the box it is about (`aria-invalid` + `aria-describedby`);
    the six `.why` panels share one `WhyShell` that is a dialog wherever it covers the cards
    (`PANEL_OVERLAY_QUERY`, 1100px — **#184 closed**); the three menus are disclosures that hand
-   focus back to their trigger.
-   Still filed rather than fixed: the queue's cards are `role="button"`, which makes every chip,
-   reason and score inside them presentational; the deletion path announces nothing at any stage;
-   a connection test and a hand-run job say their result to no one; and **116 controls unmount or
-   disable themselves on their own press**, dropping focus to `<body>` (#173).
+   focus back to their trigger; and the queue's four cards are plain containers opening through
+   one shared `CardOpen`, so a screen reader reads past the title into the evidence and no button
+   nests inside another (**#169 closed**).
    **The guard is the durable half.** Measured against the real pre-#132 tree,
    `eslint-plugin-jsx-a11y` catches none of the filed bugs and costs 112 lockfile entries, an
    `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not

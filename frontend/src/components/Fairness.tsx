@@ -15,9 +15,9 @@
 // It deletes nothing. It reads the last scan, so it can never disagree with Review.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type KeyboardEvent } from "react";
 import { api, type RequesterRow } from "../api";
 import { bytes, count } from "../format";
+import { CardOpen } from "./CardOpen";
 import { type WatchReach, mirrorNote, reachIsMeasured, watchReach } from "./watchReach";
 import { Notice } from "./Notice";
 
@@ -94,29 +94,22 @@ export function PersonCard({
   const hasReclaim = row.reclaimable_items > 0;
 
   const open = () => onSelect(row.identity);
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      open();
-    }
-  };
 
   return (
-    <div
-      className={`fair-card clickable${selected ? " selected" : ""}`}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open ${row.name}'s request breakdown`}
-      onClick={open}
-      onKeyDown={onKeyDown}
-    >
+    // A plain container: `CardOpen` on the name is the control, and this click is the redundant
+    // mouse affordance. It carried `role="button"`, whose Children Presentational pruned the
+    // card's whole body out of the accessibility tree -- the request count, the granted figure,
+    // the kept/reclaimable balance and the watched percentage -- leaving one name (#169).
+    <div className={`fair-card clickable${selected ? " selected" : ""}`} onClick={open}>
       <span className="fair-avatar" aria-hidden="true">
         {initial(row.name)}
       </span>
 
       <div className="fair-body">
         <div className="fair-row1">
-          <span className="fair-name">{row.name}</span>
+          <CardOpen name={`Open ${row.name}'s request breakdown`} onActivate={open}>
+            <span className="fair-name">{row.name}</span>
+          </CardOpen>
           <span className="fair-sub">
             <strong>{count(row.requests_made)}</strong> requests · <strong>{bytes(granted)}</strong>{" "}
             granted
