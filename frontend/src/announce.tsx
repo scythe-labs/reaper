@@ -27,15 +27,18 @@
 // layer up.
 //
 // **Why a queue.** The store holds ONE sentence, so a second `announce()` landing before the
-// first has had a turn blanks the region holding it: the first sentence exists for one commit
-// and may never be spoken. That is not hypothetical here. One press of the policy page's Save
-// fires two mutations whose `onSuccess` callbacks both announce, and the deletion path now
-// speaks at each stage of a run whose status polls every second, beside every other surface in
-// the app. So sentences are held and drained one `MESSAGE_GAP_MS` apart instead of overwriting.
-// (#193 filed the policy-Save case as a question, because whether a reader coalesces two updates
-// landing on adjacent commits cannot be settled in jsdom. The queue is right either way: the
-// added call sites make the race real, and holding a sentence for a beat costs nothing when
-// nothing is competing for the region.)
+// first has had a turn blanks the region holding it -- and on the most common desktop stack the
+// first sentence then produces no accessibility event at all. It is not a race and not a DOM
+// problem: one press of the policy page's Save fires two mutations whose `onSuccess` callbacks
+// both announce, and driven in a real browser the two writes land inside ONE serialization batch
+// in 10 runs out of 10 (#193). Screen readers never read the DOM; they get events derived from a
+// batched, diffed accessibility tree, so a region going "" -> text -> "" inside one batch is a
+// net-zero diff and nothing is emitted for it. The second sentence still announces, which is
+// exactly the reported symptom: one press, one sentence. So sentences are held and drained one
+// `MESSAGE_GAP_MS` apart instead of overwriting.
+//
+// The deletion path makes it broader than that one press: it speaks at each stage of a run whose
+// status polls every second, beside every other surface in the app.
 
 import { useSyncExternalStore } from "react";
 
@@ -49,12 +52,25 @@ const SILENT: Spoken = { text: "", slot: 0 };
 
 /** How long a sentence keeps the region before the next one may replace it.
  *
- *  Not a guess at how long the sentence takes to SAY -- that is unknowable, and readers queue
- *  polite utterances themselves once they have observed the change, so a message already picked
- *  up is not lost when the DOM moves on. What this defends against is the observation itself
- *  being merged: VoiceOver in particular coalesces live-region updates that land close together
- *  and reads the last one only. A few hundred milliseconds makes them separate observations, and
- *  is short enough that a run announcing its stages still keeps up with itself. */
+ *  Not a guess at how long the sentence takes to SAY -- that is unknowable, and an AT queues a
+ *  polite utterance itself once it has observed the change, so a message already picked up is
+ *  not lost when the DOM moves on. What this clears is the window in which the observation is
+ *  never made at all.
+ *
+ *  **The number that decides that is Blink's 150 ms, not a rendering frame** (`constexpr int
+ *  kDelayForDeferredUpdatesAfterPageLoad = 150` -- `CommitAXUpdates` early-returns until it
+ *  elapses, so a batch spans many frames). Blink emits no live-region event itself; the browser
+ *  process generates them by diffing successive accessibility trees, so a write and its blanking
+ *  inside one batch cancel out and nothing fires. Measured on the policy page's both-halves-dirty
+ *  Save: both writes complete within 74 ms of the click, every run, so they shared one batch and
+ *  the first sentence was reliably lost (#193, and `docs/LEARNINGS.md`).
+ *
+ *  WebKit is the opposite and the folklore about it is stale: its live-region timer is
+ *  `startOneShot(0_s)`, so writes in separate tasks get separate flushes and are not coalesced
+ *  away. Sizing for Blink covers both.
+ *
+ *  400 clears 150 nearly three times over -- measured at a 386-389 ms real gap against this
+ *  implementation -- and is short enough that a run announcing its stages keeps up with itself. */
 const MESSAGE_GAP_MS = 400;
 
 let spoken: Spoken = SILENT;

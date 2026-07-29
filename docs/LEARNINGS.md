@@ -1670,6 +1670,48 @@ library. Dropping a row is the keep direction (the item resolves unmatched), so 
 cannot over-condemn — but it can blind a library, which is why a gap past 10% of the spine
 degrades the snapshot instead: at that size the likelier story is a section the sweep never
 walked, not a stale cache.
+## A live region blanked inside 150 ms is never announced at all (2026-07-29)
+
+The number that decides whether two `aria-live` messages both get announced is **Blink's 150 ms
+serialization window, not one 16.67 ms rendering frame** — and the mistake is not conservative,
+because the real window is nine times wider than the folklore one.
+
+Measured on the policy page's Save with both halves dirty, which fires two mutations whose
+`onSuccess` callbacks each `announce()`. Ten clean runs per engine, against a throwaway database,
+with a `MutationObserver` on both regions plus frame boundaries and a wrapped `fetch`:
+
+| | Chrome (Blink) | WebKit |
+| --- | --- | --- |
+| The two HTTP responses land apart | **0.1–0.2 ms** | 3–10 ms |
+| First sentence's dwell in the DOM | median **13.7 ms** | median **4 ms** |
+| Click → second write | 65–74 ms | 44–67 ms |
+| Both writes inside one frame | 10/10 | 10/10, no frame boundary between them |
+
+**This was never a network race.** The two responses arrive 0.1 ms apart; the ~14 ms gap is React's
+commit scheduling and is the same every run. There is no deployment where the two saves are far
+enough apart to be safe.
+
+Three mechanism facts, from engine source, that a plausible-sounding argument got wrong:
+
+- **Blink emits no live-region event itself** (`NOTREACHED() << "Event not expected from Blink"`).
+  They are generated in the browser process by `ui::AXEventGenerator`, which **diffs successive
+  accessibility trees** — so a region going `"" → text → ""` inside one batch is a net-zero diff
+  and produces nothing. The AT's read-at-drain behavior never comes into play; there is nothing
+  to drain.
+- **`CommitAXUpdates` is rate-limited by `kDelayForDeferredUpdatesAfterPageLoad = 150`.** The
+  per-frame hook is real but early-returns until the delay elapses, so a batch spans many frames.
+  A click forces an immediate serialization and starts that clock; both writes complete by 74 ms.
+- **WebKit is the opposite, and the common folklore about it is stale.** Its
+  `m_liveRegionChangedPostTimer` is `startOneShot(0_s)` — it was `20_ms` until ~2022. Writes in
+  separate tasks get separate flushes, so WebKit does *not* coalesce them away.
+
+⇒ **Chrome + NVDA/JAWS reliably loses the first message; Safari + VoiceOver is unverifiable from
+public source** (the shipping notification carries a target, not text, so it reduces to VoiceOver's
+read-back timing against a 4 ms dwell). One stack proven lost is enough. `announce.tsx` queues
+sentences 400 ms apart, measured at a real 386–389 ms gap, which clears 150 ms nearly three times
+over. **Reproducing this needs no screen reader and no device**: a `MutationObserver` on
+`[role=status][aria-live=polite]`, `performance.now()` at the click, and one Save — and the number
+to compare against is 150 ms.
 
 ## Prior art
 
