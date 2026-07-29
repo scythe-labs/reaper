@@ -189,11 +189,58 @@ not reach it.
 tracker: one commit tells one story, so one issue describes one commit. If two findings would
 be closed by the same edit, they are one issue.
 
+**A class is what one edit closes, not what shares a subject.** That test is the whole boundary,
+and it cuts both ways. The screen-reader findings of #169–#176 are one *theme* and eight
+different classes — a card's name, a live region, focus containment, a menu's keyboard path —
+each needing its own edit, so eight issues was right. #203 and #204 are the opposite: one
+mechanism, a cached value used as the input to a write or a gate, filed as strangers.
+
+**Sweep the class before you file, so the issue states the extent and not just the first site
+you hit.** Rule 72 binds a *fix* to every sibling; this binds the *filing* the same way, because
+a defect found at one site is a question about the tree. Grep for the rest before writing the
+body. The bar is thoroughness, not perfection: a later pass may legitimately find a site the
+sweep missed, and raising it is right. What is being avoided is the *unswept* file, where a
+class is rediscovered a site at a time because nobody looked.
+
+**But the class is the unit of knowledge, and the issue is still the unit of work.** Measured on
+this tracker: issues citing one or two sites close 78% of the time, median 2.9 hours; issues
+citing five or more close 52%, median 10.6. #190 is the warning, because it is exactly the sweep
+this section asks for — twenty sites, filed as one issue — and it is the oldest still-open issue
+in its class. **An issue nobody closes has not fixed the problem entirely, which was the whole
+point of sweeping.** So a class stays one issue only while one commit can close it. Past about
+eight sites, or across two `Kind/` values or two `Priority/` tiers, it is filed as several
+closable issues that share one `class:` line. One issue carries one `Kind/` and one `Priority/`,
+so folding a `Security`/`High` site into a `Bug`/`Medium` class issue drops it out of the filter
+the backlog is triaged from — the same failure as not filing it.
+
+**A later pass that finds a new site** appends it to the class issue when that issue is open and
+the new site does not outrank its `Priority/`. When the issue is closed, file a new one carrying
+the same `class:` line and citing it — a closed issue is read by nobody. When the new site
+outranks the class, it is its own issue at its own priority.
+
+The other measured over-split is **#140 and #166** — the same two-branch split on the same shared
+component, filed three hours apart. Like #203 and #204, it went uncaught because the duplicate
+check ran on site-shaped fingerprints.
+
+Two things are *not* over-splitting, and a sweep must not force them together. Findings that
+share a subject but need different edits are different classes, however similar they read. And a
+finding that did not exist until an earlier fix shipped could not have been swept for: #196's
+false premise entered the tree in the very commit that fixed #166, and #195 exists only because
+#153 removed a clause from the shared notice and left its copies behind. A later pass finding
+those is the process working, not failing.
+
 | Findings | Grouping |
 | --- | --- |
-| tier 1–2 | one issue each — each earns its own commit, and each is individually worth doing |
-| tier 3–4 | grouped by shared root cause, or by shared file and theme; the body lists each as a checklist item |
-| siblings under rule 72 (the same defect in sibling functions) | always **one** issue, because the rule requires them fixed together |
+| one class, up to ~8 sites, one `Kind/` and one `Priority/`, one verdict | **one** issue; sites are checklist rows under *Where* |
+| one class, but a site outranks the others, or takes a different `Kind/`, or is undemonstrated while they are proven | that site is **its own** issue at its own labels, carrying the same `class:` line |
+| one class, more than ~8 sites | a tracking issue that **lists** per-file issues, never one issue that **is** them — past eight nobody closes it |
+| siblings under rule 72 (the same defect in sibling functions) | **one** issue, because the rule requires them fixed together |
+| tier 1–2, each a genuinely distinct class | one issue each — each earns its own commit, and each is individually worth doing |
+| tier 3–4 | grouped by shared root cause, or by shared file and theme; the body lists each as a checklist row |
+
+**When two rows disagree, the one that keeps the issue closable governs, and `Priority/` is never
+averaged down to fit.** Splitting a class costs a `class:` line; burying a `Critical` inside a
+cosmetic bundle costs the file.
 
 **An unproven candidate is filed too, as a question rather than as a defect.** It does not go
 in a reference file and it does not stay in `.claude/review-findings/`, which is gitignored
@@ -234,26 +281,40 @@ It leaves that state in one command, which is the whole reason it is an issue an
   `refuted.md` before it looks at anything and never reads closed issues.
 
 **Cap at 8 confirmed issues per session, and 4 unproven ones** — a session, not a review run,
-because most findings arrive while building something else and a cap that binds only `/reaper-review`
-does not bind where the volume comes from. Unproven is lower because such an issue asserts less
-and still costs someone a judgment call to close. Past either cap the remainder goes
+because most findings arrive while building something else, and a cap binding only
+`/reaper-review` does not bind where the volume comes from. Unproven is lower because such an
+issue asserts less and still costs someone a judgment call to close. Past either cap the
+remainder goes
 into a single tracking issue that lists them all, labeled like the ones it carries, so nothing is
 lost and the tracker is not flooded. Say in the run summary how many were rolled up — a cap that
 hides what it dropped reads as "that was everything."
 
-**The cap never merges unrelated defects into one issue.** *One issue per fix* governs when they
-disagree: a bundle nobody can close in one commit hides its contents from every filter, which is
-worse than the eleventh issue. Roll the remainder into a tracking issue that *lists* them, and
-never into a single issue that *is* them.
+**The cap merges by class, never by coincidence.** Sites of one defect belong in one issue
+however many there are, and the cap is no reason to put two *unrelated* defects in one — a
+bundle nobody can close in one commit hides its contents from every filter. So the remainder
+goes into a tracking issue that *lists* them, never into a single issue that *is* them. If the
+cap is biting, the usual cause is a class that was filed a site at a time; merge it and the
+count falls on its own.
 
 **Check for duplicates first** (`tea issue list --state all`). Re-running a review must not
 re-file what is already open. Each body carries a stable fingerprint line to match on:
 
 ```
 finding: <path>:<symbol> — <short-slug>
+class:   <mechanism-slug>
 ```
 
-Match on that, never on the line number, which drifts with every edit above it.
+Match on those, never on the line number, which drifts with every edit above it. `finding:`
+identifies this issue; **`class:` names the mechanism and is what makes the duplicate check
+work across sites** — grep it first, and reuse an existing class slug verbatim rather than
+coining a synonym.
+
+A site-shaped fingerprint alone is why #203 and #204 were never linked:
+`Settings.tsx:api-key-row — stale-api-key-set-drops-the-confirm` and
+`PlexPanel.tsx:saveVerify — absolute-write-from-cached-value` are one mechanism, a cached value
+used as the input to a write or a gate, and share no matchable text. A shared
+`class: cached-value-drives-a-write` would have collided where neither `finding:` line could,
+since a class spanning several files has no single path to match on.
 
 **A fingerprint that hits an open `Status/Need More Info` issue is not a duplicate to skip — it
 is the question this run just answered.** Upgrade it or close it with the two commands above.
@@ -306,11 +367,16 @@ exactly that and file it as a question. "Nothing today" is a statement about rea
 never a reason to stay quiet: rule 38/117 wants a protection that cannot fire retired, and
 `executor.py` trusts neither layer alone.
 
-**Where.** `path/to/file.py:123` — `function_name`
+**Where.** `path/to/file.py:123` — `function_name`. A class covering more than one site lists
+them here as `- [ ]` rows, one line each, path and symbol and trigger only. This is the one
+section that may run past three sentences, and the only place a site list belongs.
 
 **Why it happens.** Two or three sentences of mechanism. Cite the rule number if one applies.
 
-**Fix.** What to change, concretely. One or two sentences.
+**Fix.** The cheapest change that removes the loss, concretely. One or two sentences. Proposing
+a redesign where a corrected comment or a one-line guard would do is how a `Low` finding becomes
+a week nobody starts. This governs what you *propose*, never whether you file or how you rank:
+priority still ranks the operator's loss and never the size of the fix.
 
 **What would settle it.** Unproven issues only. The evidence that would prove or kill it.
 
