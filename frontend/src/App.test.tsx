@@ -11,10 +11,13 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "./test/queryClient";
-import { ScanFreshness, ScanLine, SectionNav, UserMenu, WhyPanelFallback } from "./App";
+import { App, ScanFreshness, ScanLine, SectionNav, UserMenu, WhyPanelFallback } from "./App";
+import { announce } from "./announce";
 import { ApiError, type AuthUser, type Safety, type Snapshot } from "./api";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: { logout: vi.fn(), safety: vi.fn() } }));
+const { apiMock } = vi.hoisted(() => ({
+  apiMock: { logout: vi.fn(), safety: vi.fn(), me: vi.fn(), authContext: vi.fn() },
+}));
 
 // Partial mock: ApiError and the types stay real, because ScanFreshness branches on a real
 // instance of it.
@@ -254,5 +257,57 @@ describe("WhyPanelFallback", () => {
     render(<WhyPanelFallback error={false} onClose={onClose} />);
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the announcer's mount point", () => {
+  // `announce()` writes to a module store that only speaks through the ONE `<Announcer />` the
+  // app root mounts, and nothing else in the suite renders `App` -- the two tests that call
+  // `announce` mount their own region. So deleting the line from `App` silenced every success
+  // sentence in the product with all 611 tests, lint and build still green. That is the whole
+  // feature resting on an unpinned line (#175, rule 118).
+  //
+  // Driven through the loading and logged-out branches because those are the two the gate can
+  // reach without the whole authed tree, and the claim at the render site is that the region is
+  // a sibling of EVERY branch (rule 72) -- one branch would not pin that.
+  beforeEach(() => {
+    apiMock.me.mockReset();
+    apiMock.authContext.mockReset();
+    apiMock.authContext.mockResolvedValue({ plex_configured: true, local_account: false });
+  });
+
+  /** The live regions themselves: `role="status"` is not enough to find them, because the
+   *  loading branch's own wrapper carries it too. `aria-live` is what only these two have. */
+  const regions = () =>
+    screen.getAllByRole("status").filter((n) => n.getAttribute("aria-live") === "polite");
+
+  it("mounts two polite regions while the gate is still deciding", async () => {
+    apiMock.me.mockReturnValue(new Promise(() => {}));
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <App />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Loading Reaper…");
+    expect(regions()).toHaveLength(2);
+
+    // And they are reachable from the store, which is the half a presence check alone misses:
+    // a region rendered but never subscribed would satisfy the count and stay silent.
+    act(() => announce("Policy saved."));
+    expect(regions().map((n) => n.textContent)).toContain("Policy saved.");
+  });
+
+  it("keeps them mounted on the signed-out branch", async () => {
+    apiMock.me.mockRejectedValue(new ApiError(401, "nope"));
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <App />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(regions()).toHaveLength(2));
+    act(() => announce("Settings saved."));
+    expect(regions().map((n) => n.textContent)).toContain("Settings saved.");
   });
 });
