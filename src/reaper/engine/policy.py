@@ -1198,6 +1198,38 @@ def inspect(
         for c in body.protect_conditions
         if (span := _protect_blocks_on_reach(c)) is not None
     ]
+    # The floor itself, which is the ROOT of this family rather than another member of it, and
+    # had no warning at all (issue #217). Dormancy is clamped to the mirror --
+    # ``dormancy.reference_instant`` is ``last_played or max(added_at, horizon)``, and all three
+    # arms are at most the reach -- so the most dormant any item can read IS the reach.
+    # ``MinDormancyGate`` PROTECTs anything under its threshold and PROTECT beats everything in
+    # ``decide_verdict``, so a floor above the reach keeps the entire library on age alone until
+    # the mirror catches up. On the shipped 1095-day floor that is every operator holding under
+    # three years of history, which is most new installs.
+    #
+    # It has to be said HERE because ``reach_clears_dormancy`` is read four times below to
+    # SILENCE the other warnings in this family, each correctly: under the floor their remedies
+    # would move no verdict. The aggregate was a page that went quietest exactly where the list
+    # was emptiest, with nothing speaking for the condition that silenced everything. This
+    # branch is that voice, and it cannot stack with the four, because it fires on precisely
+    # the negation they are guarded on.
+    if dormancy_floor is not None and history_reach_days is not None and not reach_clears_dormancy:
+        floor_short = history_shortfall(
+            Known(value=history_reach_days, source="tautulli"), float(dormancy_floor.threshold)
+        )
+        warnings.append(
+            PolicyWarning(
+                field=f"gates.{GateId.MIN_DORMANCY.value}.threshold",
+                severity="warn",
+                message=(
+                    "Nothing will be flagged for removal. Reaper waits "
+                    f"{humanize_window(dormancy_floor.threshold)} of no watching before "
+                    f"anything can go, and {floor_short}, so it can't yet show a title sitting "
+                    "untouched that long. Wait for it to build up, or lower this wait."
+                ),
+            )
+        )
+
     protect_spans = {span for _, span in blocking}
     window_blockers = [c for c, span in blocking if span is ReachSpan.POPULARITY_WINDOW]
     owner_protect_on_window = bool(window_blockers)

@@ -12,6 +12,7 @@ import itertools
 import json
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from hypothesis import given, settings
@@ -20,6 +21,7 @@ from pydantic import ValidationError
 
 from reaper.api.schemas import GateSettingIn
 from reaper.engine import policy as policy_module
+from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
 from reaper.engine.gates import (
     POLICY_AUTHORABLE_GATES,
@@ -643,6 +645,88 @@ class TestTheDangerousConfigDetector:
     def test_the_shipped_default_raises_no_warnings(self) -> None:
         """A user who changes nothing should see a clean policy."""
         assert inspect(DEFAULT_MOVIE_POLICY, ProfileSettings()) == []
+
+
+class TestADormancyFloorDeeperThanTheWatchHistory:
+    """The root of the shallow-mirror family, and the one member that had no warning (#217).
+
+    Dormancy is clamped to the mirror, so the most dormant any item can read IS the reach:
+    ``dormancy.reference_instant`` is ``last_played or max(added_at, horizon)`` and all three
+    arms are at most the reach. ``MinDormancyGate`` PROTECTs anything under its threshold and
+    PROTECT beats everything in ``decide_verdict``, so a floor above the reach holds the whole
+    library on age alone until the mirror catches up. On the shipped 1095-day floor that is
+    every operator with under three years of history.
+
+    It is the root rather than a fifth member because the other four are all guarded on
+    ``reach_clears_dormancy`` and go silent below the floor -- correctly, since their remedies
+    would move no verdict there. The aggregate was a page that went quietest exactly where the
+    list was emptiest.
+    """
+
+    FLOOR = 1095
+
+    def _floored(self, threshold: int = FLOOR, *, enabled: bool = True) -> PolicyBody:
+        return _policy(
+            gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=threshold, enabled=enabled),)
+        )
+
+    def _floor_warnings(self, body: PolicyBody, reach: float | None) -> list[PolicyWarning]:
+        anchor = f"gates.{GateId.MIN_DORMANCY.value}.threshold"
+        return [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=reach)
+            if w.field == anchor
+        ]
+
+    def test_the_clamp_that_makes_the_claim_true(self) -> None:
+        """Driven against the real derivation rather than restated (rule 119): the most dormant
+        reading possible is the reach, whichever arm ``reference_instant`` takes."""
+        now = datetime(2026, 7, 29, tzinfo=UTC)
+        horizon = now - timedelta(days=90)
+
+        # Never played, added long before the mirror begins: measured from the horizon.
+        added_early = reference_instant(
+            last_played=None, added_at=now - timedelta(days=5000), horizon=horizon
+        )
+        assert dormancy_days(added_early, now=now) == 90
+        # Added after the horizon: measured from arrival, which is nearer still.
+        added_late = reference_instant(
+            last_played=None, added_at=now - timedelta(days=10), horizon=horizon
+        )
+        assert dormancy_days(added_late, now=now) == 10
+
+    def test_a_floor_the_history_cannot_reach_is_flagged(self) -> None:
+        [flagged] = self._floor_warnings(self._floored(), reach=90.0)
+
+        assert flagged.severity == "warn"
+        assert flagged.message.startswith("Nothing will be flagged for removal.")
+        assert "3 years" in flagged.message
+        assert "lower this wait" in flagged.message
+
+    def test_the_boundary_is_exact(self) -> None:
+        """At the floor a title CAN read as dormant enough, so the claim stops being true."""
+        assert len(self._floor_warnings(self._floored(), reach=float(self.FLOOR) - 1)) == 1
+        assert self._floor_warnings(self._floored(), reach=float(self.FLOOR)) == []
+        assert self._floor_warnings(self._floored(), reach=5000.0) == []
+
+    def test_a_caller_that_cannot_read_the_mirror_stays_quiet(self) -> None:
+        """The posture every lane here takes: a caller that cannot tell must not guess."""
+        assert self._floor_warnings(self._floored(), reach=None) == []
+
+    def test_a_disabled_floor_holds_nothing(self) -> None:
+        """No gate, no protection, so no empty list to explain."""
+        assert self._floor_warnings(self._floored(enabled=False), reach=90.0) == []
+
+    def test_it_speaks_where_the_rest_of_the_family_is_silenced(self) -> None:
+        """The reason this is the root, driven on the shipped policy rather than argued.
+
+        Below the floor every other reach warning is deliberately quiet, so before this branch
+        the page carried nothing at all while nothing in the library could be flagged. This is
+        also why the two cannot stack: it fires on exactly the negation they are guarded on.
+        """
+        shallow = inspect(DEFAULT_MOVIE_POLICY, ProfileSettings(), history_reach_days=90.0)
+
+        assert [w.field for w in shallow] == [f"gates.{GateId.MIN_DORMANCY.value}.threshold"]
 
 
 class TestAPopularityWindowLongerThanTheWatchHistory:

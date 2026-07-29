@@ -1630,15 +1630,20 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert flagged[0]["severity"] == "warn"
         assert "Nothing will be flagged for removal" in flagged[0]["message"]
 
-    def test_the_shipped_dormancy_floor_keeps_it_quiet(
+    def test_the_shipped_dormancy_floor_moves_the_warning_to_the_floor(
         self, client: TestClient, tmp_path: Path
     ) -> None:
         """The same short mirror, against the gates Reaper actually ships.
 
         ``min_dormancy`` holds every item at 1095 days and dormancy is clamped to the
         mirror, so on a 90-day history nothing can be condemned whatever the popularity
-        window says. Warning here would send the operator to shorten a keep protection
-        that changes nothing, so the detector says nothing instead.
+        window says. Warning on the WINDOW would send the operator to shorten a keep
+        protection that changes nothing, so that anchor stays silent.
+
+        This used to say the detector said nothing at all, and that was the defect: the page
+        went quietest exactly where the list was emptiest (#217). The floor speaks for itself
+        now, on its own control, and it is the only thing on the page here -- which is also
+        what proves the two cannot stack, since one fires on the negation of the other.
         """
         self._seed_mirror(tmp_path, days_back=90)
 
@@ -1647,6 +1652,12 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert [
             w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"
         ] == []
+        [floor] = [w for w in body["warnings"] if w["field"] == "gates.min_dormancy.threshold"]
+        assert floor["severity"] == "warn"
+        assert "Nothing will be flagged for removal" in floor["message"]
+        # Through the route, so this pins the reach actually reaching `inspect` here too: with
+        # the mirror unread the branch cannot fire at all (rule 141).
+        assert "3 years" in floor["message"]
 
     def test_a_mirror_that_covers_the_window_is_quiet(
         self, client: TestClient, tmp_path: Path
