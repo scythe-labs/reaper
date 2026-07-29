@@ -1830,6 +1830,52 @@ carried the same current-version stamp. The mutant surfaced the defect; the clas
 it. Reuse a fixture and you reuse whatever it cannot see, so a differential probe needs at
 least one case built from the *spec* rather than from the existing helper.
 
+## Mutation testing the policy save boundary (2026-07-29)
+
+Zone 2: the twelve validators that decide what an operator is allowed to store, 78 mutants
+against five test files. **64 killed, 14 survived**, and unlike zone 1 the survivors were
+mostly real — twelve of the fourteen earned a test.
+
+**The dangerous direction inverts between the two zones, which is the whole reason to record
+direction rather than a count.** A repair shim fails badly by *refusing* a legal repair. A
+validator fails badly by *accepting* a policy it should refuse, because the save boundary is
+the last place anything can say no. Seven survivors loosened the boundary, five tightened it:
+
+| survivors | validator | what the mutant let through |
+| --- | --- | --- |
+| 5 | the three `floor >= saturate_at` copies | a ramp with no width, and a ramp running backwards |
+| 3 | `RatingRuleSpec._vote_floor_matches_the_source` | a vote floor on a source that has no votes |
+| 4 | `ProfileSettings._run_cap_within_rolling_cap` | equality refused on all three cap relations |
+| 1 | `_weights_total_one_hundred` | "Give out the other **-1**" |
+| 1 | `_weights_total_one_hundred` | nothing — genuinely unreachable |
+
+**One rule, three copies, and the two newer ones were the weak ones.** `floor >= saturate_at`
+is rule 72's shape: `SignalSetting` had a test, and the `GradedCondemnSpec` and `GradedKeepSpec`
+copies had none. Worse than the missing equality case, `>=` mutated to `==` survived on both,
+which means **an inverted ramp could be saved** — floor above saturate_at, the rule running
+backwards — and only the original copy refused it. The sibling sweep that rule 72 asks for was
+never done on the tests, only on the code.
+
+**A probe only sees what it records, and this is the second zone to prove it.** The first pass
+called the weights-remedy mutant "no observable change," because the probe recorded
+accepted-or-rejected and nothing else. But a validator's job is *both* halves: refuse the
+policy, and say what to change. The mutant left the refusal intact and turned the remedy into
+"Give out the other -1" — a negative number in operator copy, rule 21's floor. Recording the
+message alongside the verdict caught it. Zone 1's blind spot was an inherited fixture; this one
+was a missing dimension. Same lesson twice: **the probe has to record the thing the zone is
+responsible for**, and "no observable change" should be read as a question, not an answer.
+
+**Twelve validators, but only ten produce mutants.** `ConditionSpec` and `BooleanCondemnSpec`
+hand the whole decision to the `fields` registry, so there is nothing in them to flip. They are
+still named in the zone: a zone calling itself "the save boundary" while quietly omitting two of
+its members is the flag-shaped coverage claim rule 145 is about.
+
+**And the static read that fed this was wrong about one thing, which is why it was filed as a
+question.** A hand sweep predicted `GateSetting._protective_floors` (`threshold < 1`,
+`threshold < 5`) was unpinned. All fifteen of its mutants died, both boundary constants
+included. Reading tests to guess what they pin is unreliable in both directions; running the
+mutants is not.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

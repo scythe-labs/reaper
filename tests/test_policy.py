@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -355,6 +355,21 @@ class TestFloorsThatCannotBeZero:
         with pytest.raises(ValidationError, match="no vote count"):
             RatingRuleSpec(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75, min_votes=500)
 
+    def test_one_vote_is_the_least_a_counting_source_accepts(self) -> None:
+        """The inclusive edge of the vote floor, which the refusal above cannot pin.
+
+        ``min_votes >= 1`` is the whole rule, so 1 has to be allowed. Refusing it would make
+        the smallest legal bar unsavable while the error text still told the operator to
+        "use at least 1".
+        """
+        assert RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1).min_votes == 1
+
+    def test_a_single_vote_on_a_percentage_source_is_refused_too(self) -> None:
+        """The other side reads `!= 0`, so it is 1 and not 500 that pins it: a probe at 500
+        leaves the comparison free to become "anything but 1" and still pass."""
+        with pytest.raises(ValidationError, match="no vote count"):
+            RatingRuleSpec(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75, min_votes=1)
+
     def test_a_rating_floor_out_of_range_is_refused(self) -> None:
         """A percentage above 100, or an IMDb floor above 10, cannot even be spelled."""
         with pytest.raises(ValidationError):
@@ -390,6 +405,19 @@ class TestFloorsThatCannotBeZero:
         with pytest.raises(ValidationError, match="Give out the other 30"):
             _policy(signals=_split(50, 20))
 
+    def test_a_one_point_miss_names_one_point_and_never_a_negative(self) -> None:
+        """The smallest miss in each direction, because it is the one that can go negative.
+
+        The remedy picks its branch on `over > 0`, and `over` is 1 or -1 here. Only ever
+        driving a miss of 20 or 30 left the comparison free to move: at `over > 1` a total of
+        101 takes the under-allocated branch and tells the operator to "give out the other -1",
+        which is rule 21's floor, not a rounding detail.
+        """
+        with pytest.raises(ValidationError, match=r"Take 1 away"):
+            _policy(signals=_split(51, 50))
+        with pytest.raises(ValidationError, match=r"Give out the other 1\b"):
+            _policy(signals=_split(50, 49))
+
     def test_both_shipped_defaults_already_balance(self) -> None:
         """The reason this change moves no score: the policies operators start on are
         already at exactly 100, so pinning the total is a relabeling, not a migration."""
@@ -407,9 +435,40 @@ class TestFloorsThatCannotBeZero:
                 )
             )
 
-    def test_a_signal_floor_above_saturation_is_refused(self) -> None:
-        with pytest.raises(ValidationError, match="must be below saturate_at"):
-            SignalSetting(signal=SignalId.UNWATCHED, weight=10, saturate_at=10, floor=20)
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda floor: SignalSetting(
+                signal=SignalId.UNWATCHED, weight=10, saturate_at=10, floor=floor
+            ),
+            lambda floor: GradedCondemnSpec(
+                name="big", field="size_bytes", weight=10, saturate_at=10, floor=floor
+            ),
+            lambda floor: GradedKeepSpec(
+                name="loved",
+                field="watchers_all_time",
+                max_discount=10,
+                saturate_at=10,
+                floor=floor,
+            ),
+        ],
+        ids=["built-in signal", "graded condemn rule", "graded keep rule"],
+    )
+    @pytest.mark.parametrize("floor", [10, 20], ids=["floor-equals-saturate", "floor-above"])
+    def test_a_ramp_that_cannot_ramp_is_refused_on_every_spec_that_has_one(
+        self, build: Callable[[int], object], floor: int
+    ) -> None:
+        """``floor >= saturate_at`` is one rule with three copies (rule 72), and each has to
+        refuse BOTH ways of collapsing the ramp.
+
+        At equality the ramp has no width, so the rule is either always off or always at full
+        pressure; above it the ramp runs backwards. Neither is a bound an operator can have
+        meant. This was three copies deep and only one of them was tested, at only one of the
+        two values -- so an operator flip on either newer copy let a degenerate rule be saved,
+        and the save boundary is the last place that can refuse it.
+        """
+        with pytest.raises(ValidationError, match="below saturate_at"):
+            build(floor)
 
 
 class TestCaps:
@@ -433,6 +492,31 @@ class TestCaps:
                 max_bytes_per_run=3_000_000_000_000,
                 max_bytes_per_30d=2_000_000_000_000,
             )
+
+    def test_a_run_cap_equal_to_the_rolling_cap_is_allowed(self) -> None:
+        """All three cap relationships are `>`, so equality is legal on each: one run may
+        spend the whole 30-day budget, and every unmeasured item may be the run's whole
+        allowance. Nothing pinned that, which left all three free to become `>=` and refuse a
+        configuration the copy never warns about.
+        """
+        settings_ = ProfileSettings(
+            max_items_per_run=10,
+            max_items_per_30d=10,
+            max_bytes_per_run=1_000_000_000,
+            max_bytes_per_30d=1_000_000_000,
+            max_unmeasured_per_run=10,
+        )
+
+        assert settings_.max_items_per_run == settings_.max_items_per_30d
+        assert settings_.max_bytes_per_run == settings_.max_bytes_per_30d
+        assert settings_.max_unmeasured_per_run == settings_.max_items_per_run
+
+    def test_more_unmeasured_items_than_items_is_refused(self) -> None:
+        """A run that may delete more unknown-size items than items in total is incoherent,
+        and the allowance is the only bound on that population -- an unmeasured item adds
+        nothing to either byte cap, so the byte caps cannot catch it."""
+        with pytest.raises(ValidationError, match="unknown"):
+            ProfileSettings(max_items_per_run=9, max_items_per_30d=10, max_unmeasured_per_run=10)
 
     def test_a_grace_period_under_a_week_is_refused(self) -> None:
         """Shorter than a week is one your users cannot realistically act on."""

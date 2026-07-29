@@ -6,18 +6,19 @@ is defending. `docs/LEARNINGS.md` records what the first run found.
 
 Run it:
 
-    uv run python scripts/mutation_scope.py                 # the declared zone
-    uv run python scripts/mutation_scope.py --report out.json
+    uv run python scripts/mutation_scope.py --zone policy-repair-shims
+    uv run python scripts/mutation_scope.py --zone policy-save-boundary
 
-Point it somewhere new by editing `ZONE` below: name the module, the functions, and the tests
-that could plausibly kill a mutant in them. **Scope by function, not by file.** The two shims
-here are 60 mutants and three minutes; the same operators over all of `policy.py` would be
-past a thousand, which is how an exercise like this stops being run at all.
+Add a zone to `ZONES` below: the module, the functions (`Class.method` for a method), the tests
+that could plausibly kill a mutant in them, and a probe. **Scope by function, not by file.**
+The two shims are 60 mutants and three minutes, the save boundary 78; the same operators over
+all of `policy.py` would be past a thousand, which is how an exercise like this stops being
+run at all.
 
 Two passes per mutant:
 
 1. *kill or survive* -- run the tests against the mutated source.
-2. *direction* -- for survivors only, re-run the functions over the `PROBE` corpus and diff
+2. *direction* -- for survivors only, re-run the zone's `probe` corpus and diff
    against baseline. This is the half that makes the output readable: "seven survived" is a
    number, while "each of these makes the shim refuse a legal repair, leaving the operator's
    bar empty" is a finding. Reaper's whole safety argument is directional, so a survivor that
@@ -51,22 +52,19 @@ REPO = Path(__file__).resolve().parents[1]
 
 @dataclass(frozen=True)
 class Zone:
-    """What to mutate, and what gets to object."""
+    """What to mutate, what gets to object, and how to tell survivors apart.
+
+    ``probe`` is Python source run in a fresh subprocess against the mutated module. It must
+    print ``{"cases": {name: answer}}`` as JSON. Whatever an "answer" is, it has to be a value
+    the direction of a change is readable from: a returned body for a repair shim, an
+    accepted-or-rejected verdict for a validator.
+    """
 
     module: Path
     functions: tuple[str, ...]
     tests: tuple[str, ...]
+    probe: str
 
-
-ZONE = Zone(
-    module=Path("src/reaper/engine/policy.py"),
-    functions=("rebalance", "recover_rating_rules"),
-    tests=(
-        "tests/test_policy.py::TestRebalancingAnOldPolicy",
-        "tests/test_policy.py::TestRestoringALostRatingBar",
-        "tests/test_profiles.py",
-    ),
-)
 
 #: Swaps per token. Deliberately small: an operator whose every mutant is caught by the
 #: type checker or the parser costs a run slot and teaches nothing.
@@ -252,7 +250,7 @@ def run_tests(zone: Zone, timeout: float) -> str:
         "--hypothesis-seed=0",
     ]
     try:
-        proc = subprocess.run(  # noqa: S603 -- argv is this file's literals plus ZONE.tests
+        proc = subprocess.run(  # noqa: S603 -- argv is this file's literals plus zone.tests
             argv, cwd=REPO, capture_output=True, text=True, timeout=timeout
         )
     except subprocess.TimeoutExpired:
@@ -266,7 +264,7 @@ def run_tests(zone: Zone, timeout: float) -> str:
 #: model: the first run's one real defect was a fixture that stamped the current
 #: `schema_version` where a genuinely affected body carries the previous one, and a probe built
 #: on that fixture could not see it either.
-PROBE = r"""
+REPAIR_SHIM_PROBE = r"""
 import json
 from reaper.engine.policy import (
     MAX_SCORE,
@@ -334,10 +332,196 @@ print(json.dumps({"order": order, "cases": cases}))
 """
 
 
-def probe(timeout: float) -> dict[str, object] | str:
+#: Zone 2: the save boundary. Twelve validators decide what an operator is allowed to store,
+#: so the dangerous direction here is the opposite of a repair shim's -- a mutant that makes a
+#: validator ACCEPT what it should refuse lets a policy that protects nothing be saved, while
+#: one that refuses a legal policy only blocks the operator, loudly. The probe records
+#: accepted-or-rejected rather than a value, so that asymmetry is what the diff shows.
+#:
+#: Field keys and rating sources are drawn from the live registries rather than hardcoded: a
+#: probe naming a field that later moves lanes would silently stop testing the branch it was
+#: written for.
+SAVE_BOUNDARY_PROBE = r"""
+import json
+from reaper.engine.fields import BY_KEY, Lane, Op
+from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    GateId,
+    GateSetting,
+    GradedCondemnSpec,
+    GradedKeepSpec,
+    PolicyBody,
+    ProfileSettings,
+    RatingRuleSpec,
+    RatingSource,
+    SignalSetting,
+    is_percentage_source,
+)
+
+cases, order = {}, []
+
+# Record accept-or-refuse AND the sentence the operator would read. A validator's job is both
+# halves: refusing the policy, and saying what to change. A probe recording only the verdict
+# called a mutant "no observable change" when it had turned a remedy into "Give out the other
+# -1", so the message belongs in the answer here.
+def case(name, build):
+    order.append(name)
+    try:
+        build()
+        cases[name] = "accepted"
+    except Exception as exc:
+        text = " ".join(str(exc).split())
+        cases[name] = f"rejected:{type(exc).__name__}:{text[:160]}"
+
+# --- GateSetting._protective_floors: the two floors, each side of each boundary ---
+for gate, floor in ((GateId.SERVER_POPULARITY, 1), (GateId.MIN_DORMANCY, 5)):
+    tag = gate.value
+    case(f"gate-{tag}-at-floor", lambda g=gate, f=floor: GateSetting(gate=g, threshold=f))
+    case(f"gate-{tag}-below-floor", lambda g=gate, f=floor: GateSetting(gate=g, threshold=f - 1))
+    case(f"gate-{tag}-far-below", lambda g=gate: GateSetting(gate=g, threshold=0))
+    case(
+        f"gate-{tag}-below-but-off",
+        lambda g=gate, f=floor: GateSetting(gate=g, threshold=f - 1, enabled=False),
+    )
+# The rating gate is only a switch now: it must NOT police a threshold of its own.
+case("gate-rating-floor-zero-is-fine", lambda: GateSetting(gate=GateId.RATING_FLOOR, threshold=0))
+
+# --- the three floor/saturate_at copies (rules 72, 104): equality is the boundary ---
+numeric_condemn = next(
+    k for k, s in BY_KEY.items() if Lane.CONDEMN in s.lanes and Op.GTE in s.ops
+)
+numeric_any = next(k for k, s in BY_KEY.items() if Op.GTE in s.ops)
+non_numeric = next((k for k, s in BY_KEY.items() if Op.GTE not in s.ops), None)
+non_condemn = next((k for k, s in BY_KEY.items() if Lane.CONDEMN not in s.lanes), None)
+
+for label, build in (
+    ("signal", lambda fl, sat: SignalSetting(signal=DEFAULT_MOVIE_POLICY.signals[0].signal,
+                                             weight=10, floor=fl, saturate_at=sat)),
+    ("graded-condemn", lambda fl, sat: GradedCondemnSpec(name="r", field=numeric_condemn,
+                                                         weight=10, floor=fl, saturate_at=sat)),
+    ("graded-keep", lambda fl, sat: GradedKeepSpec(name="r", field=numeric_any,
+                                                   max_discount=10, floor=fl, saturate_at=sat)),
+):
+    case(f"{label}-floor-below-saturate", lambda b=build: b(4, 5))
+    case(f"{label}-floor-equals-saturate", lambda b=build: b(5, 5))
+    case(f"{label}-floor-above-saturate", lambda b=build: b(6, 5))
+
+# --- the registry checks the two graded specs make ---
+def condemn_on(key):
+    return lambda: GradedCondemnSpec(name="r", field=key, weight=10, saturate_at=5)
+
+def keep_on(key):
+    return lambda: GradedKeepSpec(name="r", field=key, max_discount=10, floor=0, saturate_at=5)
+
+case("graded-condemn-unknown-field", condemn_on("no_such_field"))
+case("graded-keep-unknown-field", keep_on("no_such_field"))
+if non_condemn is not None:
+    case("graded-condemn-wrong-lane", condemn_on(non_condemn))
+if non_numeric is not None:
+    case("graded-condemn-not-a-number", condemn_on(non_numeric))
+    case("graded-keep-not-a-number", keep_on(non_numeric))
+
+# --- RatingRuleSpec: a vote floor means something on one kind of source and not the other ---
+pct = next(s for s in RatingSource if is_percentage_source(s))
+voted = next(s for s in RatingSource if not is_percentage_source(s))
+case("pct-source-no-votes", lambda: RatingRuleSpec(source=pct, floor=75, min_votes=0))
+case("pct-source-one-vote", lambda: RatingRuleSpec(source=pct, floor=75, min_votes=1))
+case("voted-source-no-votes", lambda: RatingRuleSpec(source=voted, floor=75, min_votes=0))
+case("voted-source-one-vote", lambda: RatingRuleSpec(source=voted, floor=75, min_votes=1))
+
+# --- ProfileSettings caps: each relationship at equality and one past it ---
+def caps(**over):
+    base = dict(max_items_per_run=10, max_items_per_30d=10,
+                max_bytes_per_run=1_000, max_bytes_per_30d=1_000, max_unmeasured_per_run=0)
+    return lambda: ProfileSettings(**(base | over))
+
+case("caps-items-equal", caps())
+case("caps-items-run-over", caps(max_items_per_run=11))
+case("caps-items-run-over-but-off", caps(max_items_per_run=11, caps_enabled=False))
+case("caps-bytes-equal", caps(max_bytes_per_run=1_000))
+case("caps-bytes-run-over", caps(max_bytes_per_run=1_001))
+case("caps-unmeasured-equals-run", caps(max_unmeasured_per_run=10))
+case("caps-unmeasured-over-run", caps(max_items_per_run=9, max_unmeasured_per_run=10))
+
+# --- PolicyBody: the weight budget, and the duplicate checks ---
+body = DEFAULT_MOVIE_POLICY.model_dump(mode="json")
+
+def reweighted(total):
+    raw = json.loads(json.dumps(body))
+    sigs = raw["signals"]
+    raw["custom_condemn"] = []
+    per = total // len(sigs)
+    for s in sigs:
+        s["weight"] = per
+    sigs[0]["weight"] = per + (total - per * len(sigs))
+    return lambda: PolicyBody.model_validate(raw)
+
+case("weights-total-100", reweighted(100))
+case("weights-total-99", reweighted(99))
+case("weights-total-101", reweighted(101))
+
+def duplicated(key):
+    raw = json.loads(json.dumps(body))
+    if raw.get(key):
+        raw[key] = [raw[key][0], json.loads(json.dumps(raw[key][0]))]
+    return lambda: PolicyBody.model_validate(raw)
+
+for key in ("gates", "signals", "keep_rating_rules"):
+    case(f"duplicate-{key}", duplicated(key))
+
+print(json.dumps({"order": order, "cases": cases}))
+"""
+
+
+ZONES: dict[str, Zone] = {
+    "policy-repair-shims": Zone(
+        module=Path("src/reaper/engine/policy.py"),
+        functions=("rebalance", "recover_rating_rules"),
+        tests=(
+            "tests/test_policy.py::TestRebalancingAnOldPolicy",
+            "tests/test_policy.py::TestRestoringALostRatingBar",
+            "tests/test_profiles.py",
+        ),
+        probe=REPAIR_SHIM_PROBE,
+    ),
+    "policy-save-boundary": Zone(
+        module=Path("src/reaper/engine/policy.py"),
+        functions=(
+            "GateSetting._protective_floors",
+            "SignalSetting._floor_below_saturation",
+            "ConditionSpec._valid_protect_condition",
+            "BooleanCondemnSpec._valid_condemn_condition",
+            "GradedCondemnSpec._valid_graded",
+            "GradedKeepSpec._valid_keep",
+            "RatingRuleSpec._vote_floor_matches_the_source",
+            "PolicyBody._pin_to_the_running_scorer",
+            "PolicyBody._drop_retired_gates",
+            "PolicyBody._weights_total_one_hundred",
+            "PolicyBody._no_duplicates",
+            "ProfileSettings._run_cap_within_rolling_cap",
+        ),
+        tests=(
+            "tests/test_policy.py",
+            "tests/test_custom_condemn.py",
+            "tests/test_signal_quality.py",
+            "tests/test_profiles.py",
+            "tests/test_policy_permutations.py",
+        ),
+        probe=SAVE_BOUNDARY_PROBE,
+    ),
+}
+DEFAULT_ZONE = "policy-repair-shims"
+
+#: The two delegating validators contribute no mutants: they hand the whole decision to the
+#: `fields` registry, so there is nothing here to flip. They are named in the zone anyway,
+#: because a zone claiming to be "the save boundary" and quietly omitting two of its members
+#: would be the flag-shaped coverage claim rule 145 is about. Their logic is a separate zone.
+
+
+def probe(zone: Zone, timeout: float) -> dict[str, object] | str:
     try:
         proc = subprocess.run(  # noqa: S603 -- fixed argv, no caller input
-            ["uv", "run", "python", "-c", PROBE],  # noqa: S607 -- `uv` is how CLAUDE.md runs everything
+            ["uv", "run", "python", "-c", zone.probe],  # noqa: S607 -- `uv` is how CLAUDE.md runs everything
             cwd=REPO,
             capture_output=True,
             text=True,
@@ -354,20 +538,24 @@ def probe(timeout: float) -> dict[str, object] | str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", type=Path, default=REPO / "mutation-report.json")
+    parser.add_argument("--zone", choices=sorted(ZONES), default=DEFAULT_ZONE)
+    parser.add_argument("--report", type=Path, default=None)
     args = parser.parse_args()
 
-    path = REPO / ZONE.module
-    original = path.read_text()
-    mutants = generate(original, ZONE)
-    print(f"{len(mutants)} mutants across {', '.join(ZONE.functions)}\n", flush=True)
+    name, zone = args.zone, ZONES[args.zone]
+    report = args.report or REPO / f"mutation-report-{name}.json"
 
-    baseline = probe(180)
+    path = REPO / zone.module
+    original = path.read_text()
+    mutants = generate(original, zone)
+    print(f"zone {name}: {len(mutants)} mutants across {len(zone.functions)} targets\n", flush=True)
+
+    baseline = probe(zone, 180)
     if isinstance(baseline, str):
         raise SystemExit(f"baseline {baseline}")
 
     started = time.time()
-    if (status := run_tests(ZONE, 900)) != "survived":
+    if (status := run_tests(zone, 900)) != "survived":
         raise SystemExit(f"baseline suite is not green ({status}); fix that before mutating")
     each = time.time() - started
     print(
@@ -388,9 +576,9 @@ def main() -> int:
                 print(f"[{i}/{len(mutants)}] INVAL {m.label}", flush=True)
                 continue
             path.write_text(mutated)
-            m.status = run_tests(ZONE, max(120.0, each * 6))
+            m.status = run_tests(zone, max(120.0, each * 6))
             if m.status == "survived":
-                after = probe(180)
+                after = probe(zone, 180)
                 if isinstance(after, str):
                     m.direction = [after]
                 else:
@@ -410,7 +598,7 @@ def main() -> int:
         path.write_text(original)
         print("\nsource restored", flush=True)
 
-    args.report.write_text(
+    report.write_text(
         json.dumps(
             [
                 {
@@ -436,7 +624,7 @@ def main() -> int:
     print("\n== summary ==")
     for status in sorted(counts):
         print(f"  {status}: {counts[status]}")
-    print(f"\nreport: {args.report}")
+    print(f"\nreport: {report}")
     return 0
 
 
