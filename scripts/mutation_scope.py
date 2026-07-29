@@ -100,16 +100,20 @@ class Mutant:
         return f"{self.func}:{self.line} {self.original!r} -> {self.replacement!r}"
 
 
-def func_spans(source: str, functions: tuple[str, ...]) -> dict[str, tuple[int, int]]:
+def func_spans(source: str, functions: tuple[str, ...], module: Path) -> dict[str, tuple[int, int]]:
     """Body line span of each named function, docstring excluded.
 
     The docstrings here are long and carry prose comparisons; mutating them produces mutants
     no test could ever kill and no author would ever act on.
+
+    A method is named ``Class.method``, because a bare name is not unique: `engine/gates.py`
+    holds nine `evaluate` methods, and keying on the bare name silently kept the last one --
+    a report about a function nobody asked for, reading exactly like a real answer. So an
+    ambiguous name raises instead of binding, the way anything else here refuses to guess.
     """
-    spans: dict[str, tuple[int, int]] = {}
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.FunctionDef) or node.name not in functions:
-            continue
+    found: dict[str, list[tuple[int, int]]] = {}
+
+    def record(name: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         head = node.body[0]
         docstring = (
             isinstance(head, ast.Expr)
@@ -117,10 +121,25 @@ def func_spans(source: str, functions: tuple[str, ...]) -> dict[str, tuple[int, 
             and isinstance(head.value.value, str)
         )
         start = (head.end_lineno or head.lineno) + 1 if docstring else head.lineno
-        spans[node.name] = (start, node.end_lineno or node.lineno)
-    missing = sorted(set(functions) - set(spans))
-    if missing:
-        raise SystemExit(f"functions not found in {ZONE.module}: {missing}")
+        found.setdefault(name, []).append((start, node.end_lineno or node.lineno))
+
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                    record(f"{node.name}.{child.name}", child)
+                    record(child.name, child)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            record(node.name, node)
+
+    spans: dict[str, tuple[int, int]] = {}
+    for name in functions:
+        matches = found.get(name, [])
+        if not matches:
+            raise SystemExit(f"{name!r} not found in {module}")
+        if len(matches) > 1:
+            raise SystemExit(f"{name!r} is ambiguous in {module}; qualify it as Class.method")
+        spans[name] = matches[0]
     return spans
 
 
@@ -129,7 +148,7 @@ def owner(spans: dict[str, tuple[int, int]], line: int) -> str | None:
 
 
 def generate(source: str, zone: Zone) -> list[Mutant]:
-    spans = func_spans(source, zone.functions)
+    spans = func_spans(source, zone.functions, zone.module)
     out: list[Mutant] = []
     seen: set[tuple[int, int, str]] = set()
     for tok in tokenize.generate_tokens(io.StringIO(source).readline):

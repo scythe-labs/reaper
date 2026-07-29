@@ -1807,6 +1807,21 @@ working, reported in the same column as a bug. Same for `strict=True` in the `zi
 lengths cannot differ by construction. Neither earns a test (rule 118: a test that cannot
 discriminate must not read as a proof).
 
+**It generalizes, and the second target says the suite is mostly fine.** Pointed at
+`MinDormancyGate.evaluate` (8 mutants, five test files that could kill them), exactly one
+survived: `dormant.value < floor` reads the same as `<=` because no test drives a dormancy at
+the floor — only 400 days against a 1,095-day floor, and 1,200 and 1,500 well past it. The
+other seven died, including all three inverted comparisons. Worth noting **which way the one
+survivor points**: `<=` protects an item dormant exactly at the floor, so the undefended
+direction keeps a file rather than deleting one. A real gap, and a low-severity one, and the
+distinction is only visible because the direction was asked about.
+
+**A bare function name is not a unique target.** Scoping the runner by name silently kept the
+last match, and `engine/gates.py` holds nine `evaluate` methods — so the first attempt at a
+second zone would have mutated whichever gate came last and reported it as the one asked for,
+which reads exactly like a real answer. Methods are named `Class.method` now, and an ambiguous
+name raises instead of binding, the way the rest of this codebase refuses to guess on ambiguity.
+
 **A probe corpus built from the test's own fixture inherits its blind spots.** The harness
 classifies each survivor by re-running both functions over a fixed corpus and diffing against
 baseline. It labeled the schema-stamp survivor "no observable change" — wrong, and wrong for
