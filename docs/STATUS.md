@@ -127,10 +127,12 @@ Last verified against the code: 2026-07-26.
    view opened at `h2`, so heading navigation had no root); the scan bar's and the simulator's
    progress fills carry `role="progressbar"`, which completes the sweep `ScanLine` started; the
    synopsis more/less is a stated disclosure; both `<th>` rows carry `scope`; the docs pane is
-   keyboard-scrollable; and the decorative ticks and middots are hidden. **Still open in #177**:
-   `aria-busy` is unused, a background scan still changes every number with no signal, and the
-   queue's two `role="status"` toasts are still mounted with their text, which is the shape
-   `Notice` had to abandon.
+   keyboard-scrollable; the decorative tick and cross glyphs are hidden, all of them; and four
+   standalone middot separators are. **Still open in #177**: `aria-busy` is unused, a background
+   scan still changes every number with no signal, the queue's two `role="status"` toasts are
+   still mounted with their text, which is the shape `Notice` had to abandon, and the middot
+   sweep covered the standalone `.scales-dot` spans only — roughly fifty separators in running
+   text still read out as "middle dot" between two facts, in sixteen files.
    **The guard is the durable half.** Measured against the real pre-#132 tree,
    `eslint-plugin-jsx-a11y` catches none of the filed bugs and costs 112 lockfile entries, an
    `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not

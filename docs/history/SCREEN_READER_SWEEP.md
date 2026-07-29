@@ -79,5 +79,3 @@ pinned, plus tests that reach controls by the name an operator can hear. No new 
 The ban reads the whole `className` value, literal or expression: its first form missed a
 ternary and a template literal, so the sweep's own count was short by `ReapPlan`'s plan
 loader, which shipped mute while the test read green (rule 145).
-
-## Decisions locked
