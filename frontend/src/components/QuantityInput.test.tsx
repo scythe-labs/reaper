@@ -165,6 +165,43 @@ describe("the rating bar", () => {
   });
 });
 
+describe("the unit a screen reader hears", () => {
+  it("gives the fixed-suffix box its unit, and does not repeat it in the name", () => {
+    // #176: the suffix was `aria-hidden`, so the box announced "Most titles per run, 40" and
+    // the unit lived on screen and nowhere else. It arrives as the DESCRIPTION, read after
+    // the value ("40, titles"), so the eleven call sites whose name already says the unit do
+    // not stutter it (rule 21 binds a spoken string as hard as a printed one).
+    render(<Fixed initial={40} />);
+
+    expect(box()).toHaveAccessibleName("Most titles per run");
+    expect(box()).toHaveAccessibleDescription("titles");
+  });
+
+  it("describes the box with the suffix that is on screen, not a second copy of it", () => {
+    // The description points AT the rendered suffix, so a unit cannot be right in the box and
+    // wrong in the announcement -- there is one copy of the word, not two that drift (rule
+    // 144). "/ 10" is the case a table of spoken units would have had to carry separately.
+    render(<RatingBar onEmit={vi.fn()} />);
+    const bar = screen.getByLabelText("Rating score out of 10");
+
+    expect(bar).toHaveAccessibleDescription("/ 10");
+    expect(screen.getByText("/ 10")).toHaveAttribute("id", bar.getAttribute("aria-describedby"));
+  });
+
+  it("leaves the changeable-unit box undescribed, because its unit is a control", () => {
+    // Rule 72's twin, deliberately not swept and pinned so the deferral is not silently
+    // undone: here the unit is a real <select> beside the number that names itself and
+    // announces the unit as its own value. Describing the number with it as well would say
+    // the unit twice on the way through the pair.
+    render(
+      <QuantityInput value={60} units={TIME_UNITS} onChange={vi.fn()} ariaLabel="Grace period" />,
+    );
+
+    expect(screen.getByLabelText("Grace period")).not.toHaveAttribute("aria-describedby");
+    expect(screen.getByLabelText("Grace period unit")).toHaveValue("months");
+  });
+});
+
 describe("the unit a value is shown in", () => {
   it("follows a value replaced from outside", () => {
     // U17: the unit was picked once, on mount, so a preset staging 7 days into a box left

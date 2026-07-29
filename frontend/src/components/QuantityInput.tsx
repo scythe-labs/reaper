@@ -9,7 +9,7 @@
 //   - a fixed suffix ("30 days", "3 people", "6.5 / 10"): the unit cannot change, so it
 //     renders as a quiet suffix inside the same box instead of a dropdown.
 
-import { useRef, useState, type ChangeEvent } from "react";
+import { useId, useRef, useState, type ChangeEvent } from "react";
 
 export interface Unit {
   label: string;
@@ -172,6 +172,10 @@ export function QuantityInput({
 
   return (
     <span className="qty">
+      {/* No unit description here, unlike FixedQuantity's twin below (rule 72). This variant's
+          unit is a real control standing next to the box: it names itself `${ariaLabel} unit`
+          and announces the unit as its own value, so the pairing is already reachable. Binding
+          the number to it as well would say the unit twice on the way through the pair. */}
       <input
         type="number"
         min={shownMin}
@@ -223,6 +227,23 @@ export function FixedQuantity({
   disabled?: boolean;
 }) {
   const typed = useTypedNumber(String(value), onChange, { min, max });
+  // The unit is the other half of the value, and it used to be `aria-hidden`, so the box
+  // announced "Points this rule adds, 12" for a number that means 12 points -- the unit was on
+  // screen and nowhere else. It is bound as the input's DESCRIPTION rather than folded into its
+  // name, for two reasons.
+  //
+  // A description is read after the value ("12, points"), which is the order the pairing is
+  // spoken in anyway; a name is read before it ("Points this rule adds in points, 12"), and
+  // eleven of the fifteen call sites already name their unit in `ariaLabel`, so composing one
+  // would make most of them stutter -- rule 21 binds a spoken string as hard as a printed one.
+  //
+  // And it points at the suffix ALREADY on screen, so the word exists once. Composing a name
+  // from a table of spoken units would mint a second copy that drifts from the visible one, on
+  // a control whose whole job is to pair a number with a unit (rule 144).
+  //
+  // Every call site passes `ariaLabel`, so this never lands on an unnamed box; the description
+  // is bound unconditionally because the suffix is never absent.
+  const unitId = useId();
 
   return (
     <span className={width === "narrow" ? "qty qty-narrow" : "qty"}>
@@ -232,10 +253,11 @@ export function FixedQuantity({
         max={max}
         step={step}
         aria-label={ariaLabel}
+        aria-describedby={unitId}
         disabled={disabled}
         {...typed}
       />
-      <span className="qty-suffix" aria-hidden="true">
+      <span className="qty-suffix" id={unitId}>
         {suffix}
       </span>
     </span>

@@ -100,7 +100,10 @@ Last verified against the code: 2026-07-26.
    `Notice` that owns `role="alert"`; `standing` is the declared opt-out for text that is page
    furniture rather than a reaction. #155's two draft-refusal twins collapsed into one
    `SwitchConfirm` that also moves focus, keyed on a nonce because a repeat press changes no
-   state and an effect watching the value would not re-fire. **The `.why` panels are landed
+   state and an effect watching the value would not re-fire. A number with a fixed unit now
+   carries that unit (#176), as the box's *description* rather than folded into its name: it
+   points at the suffix already on screen, so the word exists once and cannot drift, and the eleven
+   call sites whose name already says the unit do not stutter it. **The `.why` panels are landed
    too**, and the app-wide sweep behind that fix found six of them rather than the four the issue
    named — `WhyPanelFallback` and `ScalesPanelFallback` render the same `<aside className="why">`,
    and the second carried no Escape handler at all, so a Scales panel stuck loading or failed
