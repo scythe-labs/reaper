@@ -43,7 +43,14 @@ from typing import Annotated, Any, ClassVar, Literal, Self, assert_never
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from reaper.clock import humanize_days, humanize_window
-from reaper.engine.fields import BY_KEY, Condition, Lane, Op, ReachSpan
+from reaper.engine.fields import (
+    BY_KEY,
+    Condition,
+    Lane,
+    Op,
+    ReachSpan,
+    can_add_pressure_under_a_shortfall,
+)
 from reaper.engine.gates import (
     GateId,
     RatingRule,
@@ -1370,13 +1377,25 @@ def inspect(
     # item. ``watchers_all_time`` cannot appear on either: it is PROTECT-only, so
     # ``ITEM_LIFETIME`` never reaches the condemn lane and the window is the only span here.
     #
-    # A BOOLEAN rule is deliberately NOT in the sum. It goes through ``fields.evaluate``,
-    # which keeps ``_survives_more_history``'s earned outcomes, so the items it does not block
-    # are judged normally and the list is genuinely not empty -- claiming otherwise would be
-    # false in the reassuring direction (rule 144). What it does instead is abstain exactly
-    # the titles nobody watched recently, which is a set ``inspect`` cannot size from one
-    # reach, and it is filed rather than guessed at here.
+    # A BOOLEAN rule lowers ONE of the two bounds, which is why it is summed separately
+    # rather than either counted with the rest or left out. It goes through
+    # ``fields.evaluate``, which keeps ``_survives_more_history``'s earned outcomes, so an
+    # item the truncated count already settles comes back EVALUATED and keeps its weight in
+    # coverage -- the 0.80 row above. But a boolean rule is all-or-nothing, and under ``lte``
+    # the outcome that gets blocked is the MATCH: an item over the bar earns nothing because
+    # the rule did not fire, and one under it earns nothing because the rule was blocked. So
+    # the weight leaves the score for every item at once while coverage keeps it, and no item
+    # can reach a threshold that needs it. Under ``gte`` the reverse holds and a matched item
+    # does earn the weight, so the list is genuinely not empty and counting it would be false
+    # in the reassuring direction (rule 144). ``fields.can_add_pressure_under_a_shortfall``
+    # is that discrimination, asked rather than restated (rule 104).
+    #
+    # What this still does NOT claim is the partial case: where the remaining weight can
+    # reach the threshold, an ``lte`` rule abstains exactly the titles nobody watched
+    # recently, a set ``inspect`` cannot size from one reach. That is issue #215, and it is
+    # filed rather than guessed at here.
     withheld = 0
+    never_earned = 0
     withheld_on_a_signal = False
     if window_short is not None:
         for signal in body.signals:
@@ -1386,23 +1405,29 @@ def inspect(
         for condemn in body.custom_condemn:
             condemn_spec = BY_KEY.get(condemn.field)
             if (
-                isinstance(condemn, GradedCondemnSpec)
-                and condemn.weight > 0
-                and condemn_spec is not None
-                and condemn_spec.reach_span is ReachSpan.POPULARITY_WINDOW
+                condemn.weight <= 0
+                or condemn_spec is None
+                or condemn_spec.reach_span is not ReachSpan.POPULARITY_WINDOW
             ):
+                continue
+            if isinstance(condemn, GradedCondemnSpec):
                 withheld += condemn.weight
-    if withheld > 0:
-        # The best any item can do once that weight is withheld: the pressure it could have
-        # carried is out of the numerator, and its share of the denominator is unevaluated.
-        # Both are the same number because the denominator is pinned at ``MAX_SCORE``
-        # (``_weights_total_one_hundred``), so a weight IS its share.
-        ceiling = MAX_SCORE - withheld
+            elif not can_add_pressure_under_a_shortfall(condemn.op):
+                never_earned += condemn.weight
+    if withheld > 0 or never_earned > 0:
+        # The best any item can do once that weight is gone. The denominator is pinned at
+        # ``MAX_SCORE`` (``_weights_total_one_hundred``), so a weight IS its share, and the
+        # two bounds differ only by the boolean weight that stays evaluated.
+        covered = MAX_SCORE - withheld
+        ceiling = covered - never_earned
+        # Each is a genuine upper bound on its own, and ``decide_verdict`` is monotone in
+        # both, so passing the best of each independently is the most permissive reading
+        # available. The warning can therefore only fire late, never falsely.
         best_case = decide_verdict(
             protected=False,
             blocked=False,
             score=ceiling,
-            coverage_bp=round(ceiling / MAX_SCORE * 10_000),
+            coverage_bp=round(covered / MAX_SCORE * 10_000),
             condemn_at=body.condemn_at,
             coverage_floor_bp=body.coverage_floor_bp,
         )
@@ -1415,8 +1440,8 @@ def inspect(
                     field="signals" if withheld_on_a_signal else "custom_condemn",
                     severity="warn",
                     message=(
-                        f"Nothing will be flagged for removal. {withheld} of your "
-                        f"{MAX_SCORE} removal points count who watched a title in the last "
+                        f"Nothing will be flagged for removal. {withheld + never_earned} of "
+                        f"your {MAX_SCORE} removal points count who watched a title in the last "
                         f"{humanize_window(window_days)}, and {window_short}, so only "
                         f"{ceiling} points are left to judge on. Wait for it to build up, or "
                         "move those points to a reason that doesn't count watchers."

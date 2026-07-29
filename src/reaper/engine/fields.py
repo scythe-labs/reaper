@@ -702,6 +702,23 @@ def _survives_more_history(op: Op, *, matched: bool) -> bool:
             return False
 
 
+def can_add_pressure_under_a_shortfall(op: Op) -> bool:
+    """Whether a BOOLEAN rule under this operator can still land its weight on any item.
+
+    A boolean rule is unsigned and all-or-nothing: it adds its full weight when it matches
+    and nothing when it does not. So if a MATCH is the outcome :func:`evaluate` blocks, the
+    rule contributes zero pressure to every item at once for as long as the shortfall
+    stands -- blocked where it matched, and honestly zero where it did not.
+
+    That is what makes the weight part of the score CEILING rather than a per-item
+    discount, and it is exactly the discrimination ``policy.inspect``'s condemn lane needs:
+    under ``gte`` a matched item still earns the weight, so the list is not empty, while
+    under ``lte`` no item can earn it at all. Asked here rather than restated at the caller,
+    so there is one derivation of what a short mirror does to an outcome (rule 104).
+    """
+    return _survives_more_history(op, matched=True)
+
+
 def evaluate(
     condition: Condition, facts: Facts, *, window_days: int | None = None
 ) -> ConditionResult:

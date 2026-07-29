@@ -1890,17 +1890,9 @@ class TestTheCondemnLanesCoverage:
 
         assert "55 of your 100 removal points" in flagged.message
 
-    def test_a_boolean_rule_is_left_out_because_its_block_is_per_item(self) -> None:
-        """The discriminator for the sum, and the reason it is not simply "weight on the field".
-
-        A boolean rule goes through ``fields.evaluate``, which keeps
-        ``_survives_more_history``'s earned outcomes, so an item the truncated count already
-        settles is judged normally. Measured at a 90-day reach against the 365-day fallback:
-        the same 35-point rule leaves coverage at 0.45 for a title with 0 recent watchers and
-        0.80 for one with 50, where the graded arm holds 0.45 for both. Counting it would
-        claim an empty list that is not empty, which is rule 144's reassuring direction.
-        """
-        boolean = _policy(
+    def _boolean(self, op: Op) -> PolicyBody:
+        """The measured split, with the rule's operator as the only variable."""
+        return _policy(
             **self._gate_off(
                 signals=(
                     SignalSetting(signal=SignalId.UNWATCHED, weight=35, saturate_at=730),
@@ -1911,7 +1903,7 @@ class TestTheCondemnLanesCoverage:
                     BooleanCondemnSpec(
                         name="hardly watched",
                         field="recent_watchers",
-                        op=Op.LTE,
+                        op=op,
                         value=1,
                         weight=35,
                     ),
@@ -1919,7 +1911,32 @@ class TestTheCondemnLanesCoverage:
             )
         )
 
-        assert self._condemn_warnings(boolean) == []
+    def test_a_boolean_rule_that_can_never_fire_is_in_the_sum(self) -> None:
+        """The bound a per-item block still moves, which is the score and not coverage.
+
+        A boolean rule is all-or-nothing, and under ``lte`` the outcome ``fields.evaluate``
+        blocks is the MATCH. So an item under the bar earns nothing because the rule was
+        blocked and one over it earns nothing because the rule did not fire: the weight is
+        out of every item's score at once, even though the second item keeps it in coverage.
+        Driven through the real scorer at a 90-day reach, watcher counts 0 through 50 all
+        return ``abstain`` on a ceiling of 45 against the shipped threshold of 70, and all of
+        them condemn once the mirror is deep. The list is empty, and this used to be silent.
+        """
+        [flagged] = self._condemn_warnings(self._boolean(Op.LTE))
+
+        assert "55 of your 100 removal points" in flagged.message
+        assert "45 points are left to judge on" in flagged.message
+
+    def test_a_boolean_rule_that_can_still_fire_is_left_out(self) -> None:
+        """The discriminator, and the reason the sum is not simply "weight on the field".
+
+        Same rule, same weights, ``gte`` instead: now the blocked outcome is the one that
+        does NOT match, so an item over the bar is settled by the truncated count, comes back
+        evaluated, and earns the full 35. The list is genuinely not empty and claiming
+        otherwise would be rule 144's reassuring direction. Coverage alone cannot tell these
+        two apart, which is why ``fields.can_add_pressure_under_a_shortfall`` reads the op.
+        """
+        assert self._condemn_warnings(self._boolean(Op.GTE)) == []
 
     def test_both_bounds_the_verdict_reads_are_covered(self) -> None:
         """The floor is not the only way this empties the list, so neither is tested alone.
