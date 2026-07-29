@@ -783,10 +783,16 @@ const ANCHORS = [
   { id: "keep_rating_rules", fields: ["keep_rating_rules"], guard: "ratingGate" },
   { id: "keep_last", fields: ["keep_last_seasons", "keep_last_scope"], guard: "tv" },
   // Its block sits inside the mid-binge row but OUTSIDE that row's `keep_in_progress`
-  // subtree, so `tv` is the only mount condition it has and the one guard here can name it.
-  // Nesting it under the switch as well would need two, which this type cannot express
-  // (#200) -- and would buy nothing: the server only sends this field while the protection
-  // is on, since a guard that is off is holding no seasons.
+  // subtree, so `tv` is the only mount condition it has and one guard names it exactly.
+  //
+  // Nesting it under the switch too would have been expressible -- `guardsHeld` folds a
+  // conjunction into one boolean, which is what `ratingGate` already does for an anchor under
+  // two conditions (issue #200 was closed as refuted on precisely that). It is not done
+  // because it would buy nothing here and costs the operator something: the server sends this
+  // field only while the protection is on, since a guard that is off is holding no seasons,
+  // so the extra condition can never discriminate -- and a claim that narrow drops the warning
+  // to the catch-all if the backend ever widens, printing "lower this" at the foot of the page
+  // instead of beside the box. Claiming on `tv` alone keeps it in the card either way.
   { id: "in_progress", fields: ["in_progress_hold_days"], guard: "tv" },
   { id: "signals", fields: ["signals"] },
   { id: "custom_condemn", fields: ["custom_condemn"] },
