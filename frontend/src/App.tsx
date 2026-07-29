@@ -373,6 +373,14 @@ function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => voi
   // null render would leave the View button dead forever. Worse, useBackGuard keys on
   // reapSheetRun, not this render, so a Back press would silently close an invisible sheet. Show
   // a loading line or a plain error, both with ModalShell's own working close (PR-1, rule 36).
+  //
+  // It does NOT say to reload (#225). This sheet is rendered outside `<main>` and gated on
+  // `reapSheetRun`, which the bar's View sets without touching `view` -- so unlike the other
+  // three sites that still carry the advice, this one opens OVER a mounted review queue. The
+  // queue's `selected` is component state with no storage behind it (only the filters persist)
+  // and "Select everything matching" pages the whole list to build it, so a reload here drops a
+  // selection that may have cost thousands of rows, with nothing asking first (`frontend/src`
+  // has no `beforeunload`). The close this modal already has keeps it, so the line points there.
   return (
     <ModalShell title="Reap report" onClose={onClose}>
       <div className="service-form">
@@ -382,7 +390,7 @@ function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => voi
           <Notice tone="error">
             {error instanceof ApiError && error.status === 404
               ? "That reap is no longer available."
-              : "Reaper couldn't load this reap. Reload the page to try again."}
+              : "Reaper couldn't load this reap. Close this and try View again."}
           </Notice>
         )}
       </div>

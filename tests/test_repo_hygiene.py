@@ -824,7 +824,6 @@ def test_every_query_failure_branch_is_counted() -> None:
 # on screen. What is left is here so the next one has to be classified rather than typed.
 #
 # Per file, and every entry is a deliberate keep:
-#   App.tsx (1)              the reap sheet's loader. Not in #195's enumeration; see the note below
 #   Fairness.tsx (1)         NOT advice: the Refresh button's ``title``, "Reload requests and
 #                            watch history". It is in the walk because the walk is of a word, and
 #                            dropping it by hand is how a matcher starts lying about its own scope
@@ -839,11 +838,16 @@ def test_every_query_failure_branch_is_counted() -> None:
 #
 # **#195's enumeration was not the whole population**, which is why this counts rather than
 # trusting the issue: it named 8 to fix and 9 to leave, called that 15, and did not reach the reap
-# sheet, the plan loader, the ledger refusal or this panel at all. Those four are kept here as a
-# question, not as a settled answer -- a reload from any of them drops a bulk selection made in
-# the queue underneath, which nobody has demonstrated (#225).
+# sheet, the plan loader, the ledger refusal or the not-in-scan panel at all. #225 asked what those
+# four cost, and the component tree answers it: ``<main>`` is a plain ternary on one ``view``
+# state, so exactly one section is mounted. The plan loader, the ledger refusal and the not-in-scan
+# panel all sit in a different arm from ``ReviewQueue``, so reaching them has already unmounted the
+# queue and destroyed the selection -- their advice costs nothing the queue owned, and they stay.
+# The reap sheet was the one that did not: it renders OUTSIDE ``<main>``, gated on ``reapSheetRun``,
+# which the reap bar's View sets without touching ``view``, so it opens over a mounted queue by
+# construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
+# from this dict.
 _RELOAD_ADVICE = {
-    "frontend/src/App.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
     "frontend/src/components/NotInScanPanel.tsx": 1,
     "frontend/src/components/PlexPanel.tsx": 1,
