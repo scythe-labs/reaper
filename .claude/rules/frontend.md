@@ -122,9 +122,7 @@ Rows of repeated per-item controls align in one grid with a shared label column,
 well per row.
 
 **45. Help text binds to exactly one control, directly beneath it.** Never one help paragraph
-covering two controls, and never help detached from the row it explains. *Known deferred
-exception:* the `.warn` banner (ScanBar + the review card) merges into `.notice-warn` whenever
-the review UI is next touched.
+covering two controls, and never help detached from the row it explains.
 
 **138. An anchored popover is measured against the viewport before it is drawn.** Absolutely
 placing a popover at `left: 0` inside its anchor is right only while that anchor is far enough
