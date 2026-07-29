@@ -680,7 +680,15 @@ export function ServiceModal({
                 )}
               </>
             ) : (
-              <p className="help">This instance reports no root folders to map.</p>
+              // A list that landed EMPTY and then failed to refetch reaches this arm, not the
+              // never-landed one above: `[]` is truthy, so `!rootFolders.data` is false. The
+              // sentence below is a positive claim about the instance, so it takes the stale
+              // line like every other held value -- without it, the one state where the read
+              // failed AND the app has something to say rendered no warning at all.
+              <>
+                {rootFolders.error && <StaleReadNotice what="this instance's folders" />}
+                <p className="help">This instance reports no root folders to map.</p>
+              </>
             )}
           </div>
         )}
@@ -764,7 +772,11 @@ export function ServiceModal({
                 )}
               </>
             ) : (
-              <p className="help">This portal reports no Sonarr or Radarr services to map.</p>
+              // The empty-and-then-failed arm, exactly as the folder grid above (rule 72).
+              <>
+                {seerrServices.error && <StaleReadNotice what="this portal's services" />}
+                <p className="help">This portal reports no Sonarr or Radarr services to map.</p>
+              </>
             )}
           </div>
         )}

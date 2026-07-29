@@ -26,6 +26,7 @@ import type {
   Instance,
   PlexLibrary,
   RootFolder,
+  SeerrService,
   UnmatchedRequest,
   Vocabulary,
 } from "../api";
@@ -45,6 +46,7 @@ const { apiMock } = vi.hoisted(() => ({
     general: vi.fn(),
     group: vi.fn(),
     instanceRootFolders: vi.fn(),
+    instanceSeerrServices: vi.fn(),
     instances: vi.fn(),
     plexLibraries: vi.fn(),
     profile: vi.fn(),
@@ -314,6 +316,128 @@ describe("the service editor's mapping grid through a failed refetch", () => {
       await screen.findByText(/Reaper couldn't read this instance's folders/),
     ).toBeInTheDocument();
     expect(screen.queryByText(STALE_ANY)).toBeNull();
+  });
+
+  // The third state, and the one the first division missed: a list that landed EMPTY is not the
+  // never-landed arm, because `[]` is truthy and `!rootFolders.data` is false. It fell through to
+  // "This instance reports no root folders to map." -- a positive claim about the instance, made
+  // from a read that had just failed, with no warning of any kind on screen.
+  it("keeps the empty answer and says the folder read may be out of date", async () => {
+    apiMock.instanceRootFolders.mockResolvedValue([]);
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    apiMock.updateInstance.mockResolvedValue(sonarr());
+    const client = renderWithClient(
+      <ServiceModal kind="sonarr" instance={sonarr()} onClose={vi.fn()} />,
+    );
+    expect(
+      await screen.findByText("This instance reports no root folders to map."),
+    ).toBeInTheDocument();
+
+    await blink(client, apiMock.instanceRootFolders, ["instance-root-folders"]);
+
+    const stale = await screen.findByText(STALE_ANY);
+    expect(stale, WHAT_HINT).toHaveTextContent(/Couldn't check this instance's folders just now/);
+    expect(screen.getByText("This instance reports no root folders to map.")).toBeInTheDocument();
+    // Still not the never-landed sentence: this list DID land, and said there were none.
+    expect(screen.queryByText(/Reaper couldn't read this instance's folders/)).toBeNull();
+  });
+});
+
+// --- the service editor's requested-by grid -------------------------------------------------
+//
+// The seerr half of the same modal. Its two divisions were shipped with no case at all: reverting
+// both to a bare `.error` left the whole suite green, while `WHAT_HINT` above already named them
+// as covered here (rule 132).
+
+const SERVICES: SeerrService[] = [
+  { service_id: 0, kind: "sonarr", name: "Shows", is_4k: false, suggested_instance_id: null },
+];
+
+function seerr(over: Partial<Instance> = {}): Instance {
+  return { ...sonarr(), id: 7, kind: "seerr", name: "Portal", api_path_prefix: "/api/v1", ...over };
+}
+
+function renderSeerrModal(): QueryClient {
+  apiMock.instanceSeerrServices.mockResolvedValue(SERVICES);
+  apiMock.instances.mockResolvedValue([sonarr()]);
+  apiMock.updateInstance.mockResolvedValue(seerr());
+  return renderWithClient(<ServiceModal kind="seerr" instance={seerr()} onClose={vi.fn()} />);
+}
+
+describe("the service editor's requested-by grid through a failed refetch", () => {
+  it("keeps the service rows and says that read may be out of date", async () => {
+    const client = renderSeerrModal();
+    expect(await screen.findByText("Shows")).toBeInTheDocument();
+
+    await blink(client, apiMock.instanceSeerrServices, ["instance-seerr-services"]);
+
+    const stale = await screen.findByText(STALE_ANY);
+    expect(stale, WHAT_HINT).toHaveTextContent(/Couldn't check this portal's services just now/);
+    expect(screen.getByText("Shows")).toBeInTheDocument();
+    expect(screen.queryByText(/Reaper couldn't read this portal's services/)).toBeNull();
+  });
+
+  it("still refuses the grid when the services never landed", async () => {
+    apiMock.instanceSeerrServices.mockRejectedValue(new Error("boom"));
+    apiMock.instances.mockResolvedValue([sonarr()]);
+    apiMock.updateInstance.mockResolvedValue(seerr());
+    renderWithClient(<ServiceModal kind="seerr" instance={seerr()} onClose={vi.fn()} />);
+
+    expect(
+      await screen.findByText(/Reaper couldn't read this portal's services/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(STALE_ANY)).toBeNull();
+  });
+
+  // `arrInstances` carries the only nontrivial predicate in the sweep -- `.some(...)` over the
+  // service list decides staleness, `.every(...)` decides unreadable -- and had no case at all.
+  it("keeps the connection options and says that read may be out of date", async () => {
+    const client = renderSeerrModal();
+    expect(await screen.findByRole("option", { name: "Main" })).toBeInTheDocument();
+
+    await blink(client, apiMock.instances, ["instances"]);
+
+    const stale = await screen.findByText(STALE_ANY);
+    expect(stale, WHAT_HINT).toHaveTextContent(
+      /Couldn't check your Sonarr and Radarr connections just now/,
+    );
+    expect(screen.getByRole("option", { name: "Main" })).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Reaper couldn't read your Sonarr and Radarr connections/),
+    ).toBeNull();
+  });
+
+  it("still says the connections are unreadable when none ever landed", async () => {
+    apiMock.instanceSeerrServices.mockResolvedValue(SERVICES);
+    apiMock.instances.mockRejectedValue(new Error("boom"));
+    apiMock.updateInstance.mockResolvedValue(seerr());
+    renderWithClient(<ServiceModal kind="seerr" instance={seerr()} onClose={vi.fn()} />);
+
+    expect(
+      await screen.findByText(/Reaper couldn't read your Sonarr and Radarr connections/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(STALE_ANY)).toBeNull();
+  });
+
+  it("keeps the empty answer and says the service read may be out of date", async () => {
+    apiMock.instanceSeerrServices.mockResolvedValue([]);
+    apiMock.instances.mockResolvedValue([sonarr()]);
+    apiMock.updateInstance.mockResolvedValue(seerr());
+    const client = renderWithClient(
+      <ServiceModal kind="seerr" instance={seerr()} onClose={vi.fn()} />,
+    );
+    expect(
+      await screen.findByText("This portal reports no Sonarr or Radarr services to map."),
+    ).toBeInTheDocument();
+
+    await blink(client, apiMock.instanceSeerrServices, ["instance-seerr-services"]);
+
+    const stale = await screen.findByText(STALE_ANY);
+    expect(stale, WHAT_HINT).toHaveTextContent(/Couldn't check this portal's services just now/);
+    expect(
+      screen.getByText("This portal reports no Sonarr or Radarr services to map."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Reaper couldn't read this portal's services/)).toBeNull();
   });
 });
 
