@@ -28,6 +28,7 @@ const NO_LINKS: Links = {
   tmdb: null,
   rotten_tomatoes: null,
   trakt: null,
+  match_candidates: [],
 };
 
 function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Candidate {
@@ -153,5 +154,39 @@ describe("the show panel's accessible name", () => {
   it("names itself from the show title it is showing", () => {
     renderPanel(group([season(1, "condemn")]));
     expect(screen.getByRole("complementary", { name: /Example Show/ })).toBeInTheDocument();
+  });
+});
+
+// A show whose match Reaper refused to settle. The season why-panel offers a way into each
+// Plex row it was choosing between; this panel is served the same list and used to drop it,
+// so a conflicted SHOW named a problem in Plex with nothing to open -- its own header link is
+// built from the show's rating key, which is null on exactly these rows (rule 72).
+describe("the show panel's candidate Plex rows", () => {
+  it("offers a way into each Plex row it could not choose between", () => {
+    renderPanel({
+      ...group([season(1, "abstain")]),
+      reason: "Kept to be safe: Plex and Sonarr describe this show differently.",
+      links: {
+        ...NO_LINKS,
+        match_candidates: [
+          { rating_key: 555, plex: "https://plex.example/555", tautulli: "https://taut/555" },
+          { rating_key: 777, plex: "https://plex.example/777", tautulli: "https://taut/777" },
+        ],
+      },
+    });
+    expect(screen.getByText(/Reaper saw 2 possible matches/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Plex 1/ })).toHaveAttribute(
+      "href",
+      "https://plex.example/555",
+    );
+    expect(screen.getByRole("link", { name: /Tautulli 2/ })).toHaveAttribute(
+      "href",
+      "https://taut/777",
+    );
+  });
+
+  it("shows no candidate row on a show Reaper did tie to one Plex entry", () => {
+    renderPanel(group([season(1, "condemn")]));
+    expect(screen.queryByText(/possible matches/i)).not.toBeInTheDocument();
   });
 });

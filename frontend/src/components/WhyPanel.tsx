@@ -269,8 +269,12 @@ function KeptNotice({
  *  on exactly the rows this notice appears over -- so before this, the panel named a problem
  *  in the owner's Plex and offered no way to open it. Reaper knows nothing about these rows
  *  but their keys, so they are numbered rather than named; a single candidate drops the
- *  number, since "Plex 1" alone reads as a label for something it is not. */
-function MatchCandidates({ links }: { links: Links }) {
+ *  number, since "Plex 1" alone reads as a label for something it is not.
+ *
+ *  Exported because `ShowPanel` renders the same rows under the same kind of sentence
+ *  (rule 72): a conflicted SHOW lands there, its title link is `group.links.plex`, and that
+ *  is null for exactly these rows -- the identical dead end this component exists to close. */
+export function MatchCandidates({ links }: { links: Links }) {
   const candidates = links.match_candidates ?? [];
   if (candidates.length === 0) return null;
   const numbered = candidates.length > 1;

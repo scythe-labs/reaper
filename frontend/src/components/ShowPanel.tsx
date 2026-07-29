@@ -15,7 +15,7 @@ import { useOverrideMutations } from "../useOverrideMutations";
 import { LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { handFate, showReapIsNoop } from "./reviewFate";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
-import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
+import { JumpPill, MatchCandidates, Synopsis, WhyHero } from "./WhyPanel";
 import { WhyShell } from "./WhyShell";
 
 /** The one pill a season row wears. The owner's hand decision replaces the scan chip
@@ -106,6 +106,12 @@ export function ShowPanel({
       {/* The full sentence behind the chip -- a keep-rule conflict's complete wording,
           or whatever line put this show in front of you. */}
       {group.reason && <p className="show-reason">{group.reason}</p>}
+      {/* The Plex rows an abstain could not choose between, directly under the sentence
+          naming the problem -- the same pairing the season why-panel uses (rule 72). The
+          header's own Plex link above is built from the show's rating key, which is null on
+          exactly these rows, so without this the panel says Plex and Sonarr disagree and
+          offers nothing to open. Renders nothing on every other show. */}
+      <MatchCandidates links={group.links} />
 
       <section className="block">
         <h3>Seasons</h3>
