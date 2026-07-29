@@ -30,7 +30,7 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
   keeps their hold. The guard can only see the viewers the watch mirror reaches, so where
   the mirror is shallower than that hold -- or the hold is unbounded -- the viewer set is
   *un-establishable* rather than empty and every season on disk is held instead
-  (:func:`progress_is_establishable`).
+  (:func:`reaper.engine.gates.progress_is_establishable`).
 
 * **Never touch a season that is mid-run or short of episodes.** Maintainerr #949: a
   mid-season break longer than the timeout leaves the back half permanently undownloaded.
@@ -356,7 +356,8 @@ def active_progress(
     A viewer the mirror never saw is a third case, and this function cannot reach it: they
     contribute no rows, so there is nobody here to keep and an empty result is
     indistinguishable from "nobody is part-way through". That one is answered separately by
-    :func:`progress_is_establishable`, whose answer ``plan_series_prune`` takes.
+    :func:`reaper.engine.gates.progress_is_establishable`, whose answer ``plan_series_prune``
+    takes.
     """
     if hold_days <= 0:
         return dict(progress_by_user)
@@ -384,7 +385,7 @@ def plan_series_prune(
     season_lookahead: int = SEQUENTIAL_LOOKAHEAD,
     keep_in_progress: bool = True,
     # Whether the watch mirror reaches far enough back for the mid-binge guard to have an
-    # answer at all (``progress_is_establishable``). False holds every season on disk: the
+    # answer at all (``gates.progress_is_establishable``). False holds every season on disk: the
     # viewer set is un-establishable, not empty. Defaults True because that is what a
     # default-configured operator has -- nothing is condemnable at all until the mirror
     # spans min_dormancy (1095 days), well past the 180-day default hold.

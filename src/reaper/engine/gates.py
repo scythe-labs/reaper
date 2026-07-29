@@ -568,7 +568,8 @@ def progress_is_establishable(*, reach_days: int, hold_days: int) -> bool:
     ``reach_days`` an invisible viewer and an expired one are the same viewer and losing
     them costs nothing; *inside* it they are not, and the viewer simply has no rows.
 
-    That gap is what this predicate exists to name. :func:`active_progress` reads no rows as
+    That gap is what this predicate exists to name.
+    :func:`reaper.services.season_pruning.active_progress` reads no rows as
     "nobody is part-way through" -- a genuine ``Absent`` -- when the truth is "the mirror
     cannot see far enough to know", which is ``Unknown`` (rule 93). It is careful in the
     right way and cannot help: it keeps a viewer whose last-watched time is *unreadable*,
