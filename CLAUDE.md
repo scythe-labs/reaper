@@ -10,19 +10,16 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
 
 ## Where the engineering rules live
 
-147 numbered blockers, distilled and adversarially verified across seven review passes. **The
-numbers are permanent** — tests and source comments cite them by number (`rule 28` in
-`snapshot.py`, `rule 88` in `tests/test_lists_matching.py`), so never renumber and never reuse
-a number for a different rule. A comment may only cite a rule that exists: 37 comments once
-cited rules 70–87 while the list ended at 69, making every one of them unverifiable.
-`tests/test_repo_hygiene.py` now fails on a citation with no rule behind it. New rules append
-to the scoped file that governs them and continue from 148.
+147 numbered blockers, adversarially verified across seven review passes. **The numbers are
+permanent** — code and comments cite them (`rule 28` in `snapshot.py`), so never renumber and
+never reuse a number for a different rule. A comment may only cite a rule that exists;
+`tests/test_repo_hygiene.py` fails on one that does not. New rules append to the scoped file
+that governs them, from 148.
 
 They live in `.claude/rules/`, scoped by `paths` frontmatter so each set loads when you read a
-file it governs — and since a file must be read before it can be edited, the rules for a file
-are always in context before you change it. **The scoping is the budget**: a set that loads for
-work it does not govern is paid for on every unrelated session, so a cluster large enough to
-notice earns its own file.
+file it governs, and a file must be read before it can be edited. **The scoping is the budget**:
+a set that loads for work it does not govern is paid for on every unrelated session, so a
+cluster large enough to notice earns its own file.
 
 | File | Governs | Rules |
 | --- | --- | --- |
@@ -63,10 +60,10 @@ rule narrating the gate that enforces it pays twice for one constraint.
   control. These surfaces are *scanned* while deciding what to delete, so long copy does not
   get read at all. After writing an operator string, cut it once more. Rule 21 governs its
   vocabulary, this rule its length.
-- **Mock up UI/UX before touching code.** Present a rendered, self-contained HTML artifact
-  that faithfully represents Reaper's look and feel, and iterate on *that* until it is
-  approved — only then edit frontend code. Iterating on a picture is far faster and cheaper
-  than iterating on a diff.
+- **Mock up UI/UX before touching code.** Present a rendered, self-contained HTML artifact in
+  Reaper's look and feel and iterate on *that* until it is approved — only then edit frontend
+  code.
+  Iterating on a picture is far cheaper than iterating on a diff.
 - **Ship additive, non-breaking migrations. Never make a tester rebuild their DB.** Testers
   run Reaper on real data, so the Alembic baseline (`22777b2b5015`) is **frozen** — never
   edit it. Every schema change is its own new revision chained onto the current head by
@@ -79,30 +76,27 @@ rule narrating the gate that enforces it pays twice for one constraint.
   negative results, go to `docs/LEARNINGS.md`. `docs/README.md` says what belongs where: state,
   knowledge, and history have different lifespans and never share a file.
 - **A bug you are not fixing becomes an issue before the session ends — don't wait to be
-  asked.** A defect left in a transcript is lost when the session is: nobody greps a dead
-  conversation, and "I flagged it in the summary" is not a record. So every defect leaves the
-  session one of two ways, fixed or filed. This binds *every* session, not just
-  `/reaper-review` — most bugs are found while building something else, which is exactly when
-  the temptation to note it and move on is strongest. Filing needs no approval; say what you
-  filed in the summary rather than asking first. **A candidate you could not demonstrate is
-  filed too, as a question rather than as a defect**: it carries `Status/Need More Info` and no
-  `Reviewed/` label, plus the evidence that would settle it, because an issue asserting a defect
-  must not assert what nobody showed. Proving it later is one label edit, killing it is a close
-  as `Reviewed/Invalid`, and both beat prose in a file nobody re-reads. That skill's *Opening
-  issues* section holds the mechanics — Gitea via `tea` (`gh` does not reach it), one issue per
-  *fix* rather than per finding, a duplicate check on the `finding:` fingerprint first, the
-  commit pinned with `--referenced-version`, **three labels (`Kind/` + `Priority/` + one of
-  `Reviewed/Confirmed` or `Status/Need More Info`, and priority ranks the operator's loss if the
-  trigger is real, not the size of the fix)**, and a title naming what the operator loses. An
-  unlabeled issue is absent from every filter the backlog is triaged through, which wastes the
-  filing.
+  asked.** A defect left in a transcript dies with the session, and "I flagged it in the
+  summary" is not a record. Every defect leaves fixed or filed, in *every* session, not just
+  `/reaper-review`: most are found while building something else, which is when the temptation
+  to note it and move on is strongest. Filing needs no approval; say what you filed in the
+  summary rather than asking first. **A
+  candidate you could not demonstrate is filed too, as a question** — `Status/Need More Info`,
+  no `Reviewed/` label, plus the evidence that would settle it, because an issue asserting a
+  defect must not assert what nobody showed. Proving it later is one label edit; killing it is a
+  close as `Reviewed/Invalid`. The skill's *Opening issues* section holds the mechanics: Gitea
+  via `tea` (`gh` does not reach it), one issue per *fix* rather than per finding, a duplicate
+  check on the `finding:` fingerprint first, the commit pinned with `--referenced-version`,
+  **three labels (`Kind/` + `Priority/` + one of `Reviewed/Confirmed` or `Status/Need More
+  Info`, priority ranking the operator's loss if the trigger is real, not the size of the
+  fix)**, and a title naming what the operator loses. An unlabeled issue is missing from every
+  filter the backlog is triaged through.
 - **Commit as you go, in focused commits — don't wait to be asked.** One commit tells one
-  story: a feature, a bug fix, a cleanup that stands on its own. A fix ships with the test
-  that pins it and the doc line it corrects, because those are the same story. Nothing else
-  rides along. **The reviewer's attention is the scarce resource, so balance it both ways:**
-  don't dribble one change across a string of tiny commits, and don't lump unrelated work into
-  a big one. Aim for the fewest commits that each still stand alone and read clearly. End
-  commit messages with the `Co-Authored-By` trailer.
+  story, and a fix ships with the test that pins it and the doc line it corrects, because those
+  are the same story. Nothing else rides along. **The reviewer's attention is the scarce
+  resource, so balance it both ways:** don't dribble one change across a string of tiny commits,
+  and don't lump unrelated work into a big one. Aim for the fewest commits that each still stand
+  alone and read clearly. End commit messages with the `Co-Authored-By` trailer.
 
 ## Rules that apply everywhere
 
@@ -142,44 +136,38 @@ names a committed, runnable script (`frontend/scripts/gen-icons.mjs`,
 one.
 
 **72. A fix lands on every sibling of the thing you fixed, in the same change.** Grep for the
-siblings before closing, then fix or explicitly defer each *in writing*; a "when next touched"
-deferral is honored the moment ANY commit touches the sibling, not only when someone remembers.
-This rule is the general obligation, and on its own it covers a copied **function** (paging
-loops, section resolution, error mapping). Four backend rules say what "sibling" means for the
-other kinds of change: **127** an interlock whose docstring claims *every*, **140** a value you
-re-qualified, **142** a discriminator you typed, **143** a set whose membership you changed. The
-sweep is identical each time; only the thing being swept differs, which is why finding one of
-these usually means checking the other four.
+siblings before closing, then fix or defer each *in writing*; a "when next touched" deferral is
+honored the moment ANY commit touches the sibling, not when someone remembers. On its own this
+covers a copied **function** (paging loops, section resolution, error mapping). Four backend
+rules say what "sibling" means otherwise: **127** an interlock whose docstring claims *every*,
+**140** a value you re-qualified, **142** a discriminator you typed, **143** a set whose
+membership you changed. Same sweep each time, so finding one usually means checking the rest.
 
 **134. A gate is judged by its exit code, never by the output you kept.** A pipeline exits with
 its LAST command's status, so `npm --prefix frontend run build | tail -4` reports `tail`'s
-success and a failing `tsc` scrolls past; anything chained after it with `&&` then runs on a
-broken tree. That is not hypothetical — a TypeScript error reached a commit exactly this way,
-because the `&& git commit` after the pipe saw the pipe succeed. Run each gate on its own and
-read the status (`cmd > /tmp/out 2>&1; echo "exit: $?"`, or a `for` loop over the gate names),
-and only pipe a command whose success you are not currently deciding on. `| head` is worse
-still: it SIGPIPEs the writer, so the command dies partway and reports that as its own result.
-This binds every verification in this file, and reporting a gate as green on a pipe's exit code
-is a false statement about the work.
+success while a failing `tsc` scrolls past, and anything chained after it with `&&` then runs on
+a broken tree — which is exactly how a TypeScript error once reached a commit. Run each gate on
+its own and read the status (`cmd > /tmp/out 2>&1; echo "exit: $?"`), and only pipe a command
+whose success you are not currently deciding on. `| head` is worse still: it SIGPIPEs the
+writer, so the command dies partway and reports that as its own result. This binds every
+verification in this file, and reporting a gate green on a pipe's exit code is a false statement
+about the work.
 
 **144. Generating one copy of an operator-facing claim raises the risk on every copy you did
-not generate.** Rule 72 sweeps twins of a *function*; rule 103 guards a *list* that mirrors a
-declaration. This is the same obligation for a *sentence*. One fact about what the app does is
+not generate.** Rule 72 sweeps twins of a *function* and rule 103 guards a *list* mirroring a
+declaration; this is the same obligation for a *sentence*. One fact about what the app does is
 normally stated in several places — a help paragraph, an API description, the error body that
-fires when the thing is enforced — each written by someone reading a different one. Deriving one
-of them from the code does not make the rest safe; it makes them **more** dangerous, because the
-derived copy is now demonstrably correct and vouches for a consistency that does not exist. The
-API key fence is the case: its auth box was generated from the allowlist, and all three
-ungenerated siblings were then wrong in the same safe-sounding direction — the 403 body a key
-receives denied that a key can turn the run caps off, in the response immediately before the
-request that does; the panel that hands out the key said it "reads your library" while a key
-also reads every settings page and one person's viewing history; and the scheme added beside it
-promised a try-it-out button that cannot send a write at all. So grep for the sibling copies of
-any sentence you are about to generate, and either generate them from the same declaration or
-**point the generated one's test at them by name**: a failure message saying which other file to
-change costs one line, where a comment asking future authors to remember costs nothing and does
-nothing. Which direction the stale copy is wrong in is not luck — a rounded claim is written to
-sound reassuring, so it fails toward telling the operator the app is safer than it is.
+fires when it is enforced — each written by someone reading a different one. Deriving one from
+the code does not make the rest safe; it makes them **more** dangerous, because the derived copy
+is demonstrably correct and vouches for a consistency that does not exist. The API key fence is
+the case: its auth box was generated from the allowlist, and all three ungenerated siblings were
+then wrong in the same reassuring direction — two denied capabilities a key actually has, and the
+third promised a try-it-out button that cannot send a write at all. So grep the sibling copies of
+any sentence you are about
+to generate, and either generate them from the same declaration or **point the generated one's
+test at them by name** — a failure message naming the other file costs one line, where a comment
+asking future authors to remember does nothing. The direction is not luck: a rounded claim is
+written to reassure, so it fails toward telling the operator the app is safer than it is.
 
 ## Branch & merge workflow
 
@@ -194,13 +182,11 @@ sound reassuring, so it fails toward telling the operator the app is safer than 
   git checkout -b <branch> origin/dev     # not `dev`, not the current HEAD
   ```
 
-  A local `dev` is a cache of the answer, not the answer, and nothing in a session refreshes it
-  on its own. **A worktree makes this sharper**: a session opens on the branch that worktree was
-  created for, which is routinely an old feature branch, so branching from HEAD there carries
-  someone else's commits into the new branch and the diff reads as yours. Verify with
-  `git log --oneline origin/dev..HEAD` before you start — empty means you are current, and
-  anything else means you are about to build on a stale base. Getting this right by luck is the
-  normal outcome, which is why it is checked rather than assumed.
+  A local `dev` is a cache of the answer, and nothing in a session refreshes it. **A worktree
+  makes this sharper**: the session opens on whatever branch that worktree was cut for, often an
+  old feature branch, so branching from HEAD carries someone else's commits in and the diff
+  reads as yours. Verify with `git log --oneline origin/dev..HEAD` before you start — empty
+  means current, anything else means a stale base.
 - **Re-check before you open the PR, because `dev` moves while you work.** `git fetch origin &&
   git rebase origin/dev` immediately before pushing, then re-run the gates: a branch that was
   current when it was cut can still merge into a tree its tests were never run against.
@@ -209,23 +195,20 @@ sound reassuring, so it fails toward telling the operator the app is safer than 
   fact). A PR closing an issue inherits that issue's two; `Reviewed/` is issue triage and stays
   off a PR. Reviewers filter the queue the same way the backlog is filtered, and an unlabeled
   PR is missing from it.
-- **Landing a branch into `dev` is CI-gated, and the style is `rebase`.** Ask the API whether
-  the branch head is green before merging (below) — a fresh PR sits `pending` for minutes, so
-  poll rather than assume — then `tea pr merge --style rebase <n>`, which keeps the commit
-  message you wrote. `merge` (the default) and `squash` both compose a new message out of the
-  PR title and body, throwing that text away; `squash` is right for `dev` → `main` below, where
-  the granular history is deliberately collapsed, and wrong here. Three things that cost a
-  round trip each: a **draft will not merge** and there is no ready-for-review flag, so strip
-  the `WIP:` prefix with `tea pr edit <n> --title "…"`; `tea` has no `--delete-branch`, so
-  `git push origin --delete <branch>` after; and **a rebase-merge lands a sha CI never tested**,
-  since the branch is replayed onto whatever `dev` is now. Landing several PRs back to back
-  therefore ends with the gates re-run on the merged `dev`, not with three green per-branch
-  runs — same reason the re-check above exists, one step later in the sequence.
-- **`main` is release-only.** Never push to `main` directly. To promote `dev`, open a pull
-  request from `dev` → `main` and **squash-merge** it, so `main`'s history is a clean
-  sequence of squashed releases while the granular history lives on `dev`. With the `tea`
-  CLI: `tea pr create --base main --head dev`, then `tea pr merge --style squash <n>`, and
-  delete any temporary feature branch after.
+- **Landing a branch into `dev` is CI-gated, and the style is `rebase`.** Poll the API for the
+  branch head's status before merging (a fresh PR sits `pending` for minutes), then `tea pr
+  merge --style rebase <n>`, which keeps the commit message you wrote; `merge` (the default) and
+  `squash` both compose a new one from the PR title and body and throw that text away. Three
+  round-trip costs:
+  a **draft will not merge** and there is no ready-for-review flag, so strip the `WIP:` prefix
+  with `tea pr edit <n> --title "…"`; `tea` has no `--delete-branch`, so `git push origin
+  --delete <branch>` after; and **a rebase-merge lands a sha CI never tested**, since the branch
+  replays onto whatever `dev` is now, so landing several PRs back to back ends with the gates
+  re-run on the merged `dev` rather than three green per-branch runs.
+- **`main` is release-only.** Never push to `main` directly. Promote `dev` with a pull request
+  from `dev` → `main`, **squash-merged**, so `main` reads as a sequence of releases while the
+  granular history lives on `dev`: `tea pr create --base main --head dev`, then `tea pr merge
+  --style squash <n>`, and delete any temporary feature branch after.
 
 ## Verification gates (these mirror CI)
 
@@ -251,46 +234,41 @@ stop at green tests.
 defeats every other gate on this list.
 
 **A green `npm run test` is not a quiet one.** Vitest's console interception drops test console
-output entirely on some Node versions: on Node 26 a bare `console.error` inside a test prints
-nothing, while CI (pinned to Node 24) prints it. So `act()` warnings, unhandled rejections and
-library errors are invisible exactly where you would act on them — 302 React Query "no queryFn"
-warnings once piled up behind a green suite, every one of them a component quietly rendering a
-failed read. To see console output locally, run
-`npx vitest run <file> --disableConsoleIntercept`; otherwise read the CI job log. Rule 135 is
-the standing answer: a test that has something to tell you must fail, not warn.
+output on some Node versions — nothing on Node 26, printed on CI's pinned Node 24 — so `act()`
+warnings and unhandled rejections are invisible exactly where you would act on them, and 302
+"no queryFn" warnings once piled up behind a green suite. Run `npx vitest run <file>
+--disableConsoleIntercept` to see them locally, or read the CI log. Rule 135 is the standing
+answer: a test with something to tell you must fail, not warn.
 
-**Asking whether CI is green** is a different question from reading a log, and a much cheaper
-one: `$B/commits/<sha>/status` returns a combined `state` plus one entry per job. It is the
-merge gate above. A read-only `curl` with tea's token is the sanctioned way to get it — but
-anything that *changes* a PR goes through `tea`. **Which jobs appear depends on what the
-commit touched.** CI runs in two lanes: `ci.yml` (`check`, `frontend`, `docker`) ignores
-exactly the paths `docs.yml` (`hygiene`, the repo-hygiene test alone) claims — `docs/**`,
-`**.md`, `.claude/**` — so a docs-only commit reports `hygiene` and nothing else, and a
-missing `docker` there is a skipped lane, not a stalled run. The two path lists are
-complementary by construction; edit one and you must edit the other.
+**Asking whether CI is green** is far cheaper than reading a log: `$B/commits/<sha>/status`
+returns a combined `state` plus one entry per job, and it is the merge gate above. A read-only
+`curl` with tea's token is the sanctioned way to get it; anything that *changes* a PR goes
+through `tea`. **Which jobs appear depends on what the commit touched.** `ci.yml` (`check`,
+`frontend`, `docker`) ignores exactly the paths `docs.yml` (`hygiene`, the repo-hygiene test
+alone) claims — `docs/**`,
+`**.md`, `.claude/**` — so a docs-only commit reports `hygiene` alone, and a missing `docker`
+there is a skipped lane, not a stall. The two lists are complementary; edit one and you must
+edit the other.
 
-**Reading a CI log.** CI is Gitea Actions, so `gh` does not reach it and `tea` has no log
-subcommand. Fetch with tea's token (macOS: `~/Library/Application Support/tea/config.yml`,
-*not* `~/.config/tea/`) against `$B` = `<host>/api/v1/repos/<owner>/reaper`. **The `id` in
-`$B/actions/tasks` is a task id, and `$B/actions/jobs/<id>/logs` wants a job id** — mixing them
-up returns some unrelated job's log, which reads as a real answer and cost one wrong diagnosis
-already. Go through the run (`$B/actions/runs/<run>/jobs`, the run id being the tail of a task's
-`url`) and confirm `head_sha` against `git rev-parse HEAD`. Log timestamps are the runner's
-local time, so they trail the API's UTC by hours; match on the sha, never the clock.
+**Reading a CI log.** Gitea Actions, so `gh` does not reach it and `tea` has no log subcommand.
+Fetch with tea's token (macOS: `~/Library/Application Support/tea/config.yml`, *not*
+`~/.config/tea/`) against `$B` = `<host>/api/v1/repos/<owner>/reaper`. **The `id` in
+`$B/actions/tasks` is a task id; `$B/actions/jobs/<id>/logs` wants a job id** — mixing them
+returns an unrelated job's log, which reads as a real answer and cost one wrong diagnosis
+already. Go through `$B/actions/runs/<run>/jobs` (the run id is the tail of a task's `url`) and
+confirm `head_sha` against `git rev-parse HEAD`. Log timestamps are runner-local and trail the API's UTC by hours; match on the sha,
+never the clock.
 
-**Both halves of the tree are machine-formatted, so never hand-argue style.** `ruff format`
-owns Python, prettier owns `frontend/`, and both run in CI. They share one width: prettier's
-`printWidth` is 100 because that is ruff's `line-length`. Everything else is prettier's
-default, measured against this tree rather than assumed — `frontend/prettier.config.mjs`
-carries the numbers. Write code at whatever shape is clearest, run the formatter, and stage
-what it gives you. If a reformat ever sweeps files you did not touch, that means someone
-skipped the gate; land the sweep as its own commit and add it to `.git-blame-ignore-revs`.
-
-**Prettier's territory stops at `frontend/`.** Invoke it as `npm --prefix frontend run format`,
-never `npx prettier` from the repo root: the config lives in `frontend/`, so a root invocation
-finds none, falls back to an 80-column default, and reflows every hand-wrapped line of
-`CLAUDE.md`, `docs/`, and the commented CI workflow. Markdown and YAML here are wrapped by
-hand, where the line breaks carry meaning, and no formatter owns them.
+**Both halves of the tree are machine-formatted, so never hand-argue style.** `ruff format` owns
+Python, prettier owns `frontend/`, both run in CI, and they share one width (prettier's
+`printWidth` is 100 because that is ruff's `line-length`; `frontend/prettier.config.mjs` carries
+the rest). Write code at whatever shape is clearest, run the formatter, stage what it gives you.
+If a reformat sweeps files you did not touch, someone skipped the gate: land it as its own
+commit and add it to `.git-blame-ignore-revs`. **Prettier's territory stops at `frontend/`** —
+invoke it as `npm --prefix frontend run format`, never `npx prettier` from the repo root, which
+finds no config, falls back to 80 columns, and reflows every hand-wrapped line of `CLAUDE.md`,
+`docs/`, and the CI workflow. Markdown and YAML here are wrapped by hand and no formatter owns
+them.
 
 ## Dev environment
 
@@ -316,11 +294,10 @@ hand, where the line breaks carry meaning, and no formatter owns them.
   `GuardedSession` twin for plexapi) refuses any mutating request unless deletion is armed on
   the host **and** the executor declared the intent to the journal first.
 - `src/reaper/engine/` — `gates` (hard, fail-closed protections), `signals` (soft weighted
-  pressure, and `score()`: **unsigned** pressure over a fixed denominator, so missing or
-  keep-arguing evidence can only ever *lower* the score, never a signed score off a neutral
-  baseline, which inverts under failure — see the "Why unsigned" note atop `signals.py`),
-  `verdict.decide_verdict` (the one condemn/abstain/protect decision), and the explainable
-  "why" record.
+  pressure; `score()` is **unsigned** pressure over a fixed denominator, so missing or
+  keep-arguing evidence can only *lower* the score — a signed score off a neutral baseline
+  inverts under failure, see the "Why unsigned" note atop `signals.py`),
+  `verdict.decide_verdict` (the one condemn/abstain/protect decision), and the "why" record.
 - `src/reaper/services/` — `snapshot` (gather → freeze → hash → score), `planner` (build the
   journalled plan), `executor` (the real send + interlocks), plus grace, leaving_soon,
   scan_runner, whitelist.
