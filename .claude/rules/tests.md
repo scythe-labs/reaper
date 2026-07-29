@@ -110,7 +110,14 @@ the *matcher* already collected, so one it never saw is missing from both guard 
 `--no-proxy-headers` guard went red on cue while blind to the one launch site still missing the
 flag. So **count what the scan collects, reconcile that number by hand against the members you
 believe exist, then pin the count** — a flag-shaped assertion cannot tell a member that complies
-from one that dropped out of the walk. Scope the walk, too: `rglob`
+from one that dropped out of the walk. **That count covers a member that left the walk, not a
+field dropped from one that stayed, and it says nothing about the STATE each member was driven
+in.** The policy anchor walk pinned eight anchors and still read green when a mount-condition
+declaration was deleted from one of them, because the single page state it drove that anchor in
+happened to hold the condition, and the deletion took the only case naming the anchor away with
+it — 40 green instead of 41 red (#167). So where a member's behavior forks on a branch, drive
+every branch, and treat the branch the default state hands you for free as the one a missing
+declaration hides behind. Scope the walk, too: `rglob`
 descends into gitignored agent worktrees, whole repo copies inside the repo root, so match skips
 on the REPO-relative path, never on `path.parts` of the absolute one, which matches the worktree
 the suite is *running in* and silently empties the walk.

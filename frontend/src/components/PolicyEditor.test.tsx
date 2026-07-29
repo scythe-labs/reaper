@@ -893,6 +893,42 @@ describe("PolicyEditor warning anchors", () => {
     });
   }
 
+  // The two walks above prove a guard an anchor DECLARES, and they are blind to one it should
+  // have declared and did not -- which is #145 itself, not a variant of it. The first walk
+  // drives an unguarded anchor in one state, and `pace` is held there, so a block sitting
+  // inside the pace section had a mount to paint its probe on and the failed-read branch was
+  // never rendered at all; the second walk skips the anchor for having no guard to drive.
+  // Dropping `guard: "pace"` from `max_unmeasured_per_run` therefore put the unknown-size
+  // warning back off the page and this file went green (#167) -- at 40 cases rather than 41,
+  // because the mutation deletes the one case that mentions it and every case left still
+  // passes, which is the flag shape rule 145 is about. The two guards that DO fail on that
+  // mutation only do so by luck of the default state being their absent branch, so the walk
+  // below is what actually holds this, not them.
+  //
+  // So every anchor is also driven through every branch it does NOT name, where rule 42's
+  // sentence is the whole invariant: a claimed field lands at its own block or in the bottom
+  // catch-all, and either way renders EXACTLY ONCE. Zero is the silent drop; twice is a claim
+  // that also fell through. This needs no assertion about which of the two it was -- an anchor
+  // is free to be unmounted here, and pinning the location would only re-state the declaration.
+  const GUARD_NAMES = Object.keys(GUARDS) as WarningGuard[];
+
+  for (const anchor of WARNING_ANCHORS) {
+    for (const guard of GUARD_NAMES) {
+      // Its own guard's absent branch is the case above, which asserts more than this one.
+      if (anchor.guard === guard) continue;
+      it(`still renders ${anchor.id}'s warnings, exactly once, with ${guard} not mounted`, async () => {
+        const mine = probes(anchor);
+        await GUARDS[guard].absent([...mine, catchAll]);
+
+        expect(await screen.findByText(catchAll.message)).toBeInTheDocument();
+        for (const w of mine) {
+          expect(await screen.findByText(w.message)).toBeInTheDocument();
+          expect(screen.getAllByText(w.message)).toHaveLength(1);
+        }
+      });
+    }
+  }
+
   it("renders both of two warnings that are byte-identical", async () => {
     // #146. Two protect conditions on the same movie-only field produce the same sentence,
     // because `ConditionSpec` carries nothing an operator named. Keyed on field+message they

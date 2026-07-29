@@ -781,8 +781,18 @@ const ANCHORS = [
  *  the page in the state each guard requires, and fails when one renders nowhere -- an anchor
  *  added with no `warningsAt` call site, or a `WarnBlock` deleted from under one. That walk
  *  was a hand-mirrored copy of this list, which could not see a new anchor at all, and before
- *  that a count in a comment that went stale at seven against eight. What the walk does NOT
- *  check is which control a warning landed beside, only that the claim reached the page. */
+ *  that a count in a comment that went stale at seven against eight.
+ *
+ *  It also drives every anchor through every branch it does NOT name, which is what catches
+ *  the `guard` that was never declared -- the omission #145 actually was. Naming a guard is
+ *  therefore checked both ways round, so neither adding a mount condition nor forgetting to
+ *  is a silent change (#167).
+ *
+ *  Two bounds on that, both real: the walk does not check WHICH control a warning landed
+ *  beside, only that the claim reached the page; and `guard` is one condition, not a set, so
+ *  a `WarnBlock` nested under two of them cannot be declared here and is not covered by
+ *  either direction. Put one under a second mount condition and it needs this type widened
+ *  and the test's states composed, not a second anchor. */
 export const WARNING_ANCHORS: readonly WarningAnchor[] = ANCHORS;
 
 /** The id of an anchor above. A render site naming one that does not exist is a type error. */

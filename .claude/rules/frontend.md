@@ -104,9 +104,17 @@ and a settings-bearing group's sub-controls render only while its toggle is on �
 disabled, matching the gates.
 
 **42. A warning renders beside the control that fixes it.** Policy warnings anchor by `field` to
-their rule (the anchor list + `WarnBlock` in `PolicyEditor`); adding a warning field means adding
-an anchor, or knowingly letting it fall through to the bottom stack, which exists so no field is
-ever silently dropped. Action failures everywhere are `.notice.notice-error` with a
+their rule (`WARNING_ANCHORS` + `WarnBlock` in `PolicyEditor`); adding a warning field means
+adding an anchor, or knowingly letting it fall through to the bottom stack. **Claiming a field is
+a promise to RENDER it, because claiming is exactly what excludes it from that stack** — which
+therefore catches only what no anchor claims, and can never catch an anchor. So a `WarnBlock`
+inside a conditional subtree takes its warning off the page altogether on the branch that subtree
+does not mount, rather than down to the bottom, and its anchor names that condition as its
+`guard` so it claims only while the condition holds. The warning lost that way was the one about
+a setting that lets deletions past the size caps (#145). Both directions are proven in
+`PolicyEditor.test.tsx`, never argued here: every anchor is driven through the state its guard
+requires, and through every branch it does not name, so a guard that is missing fails as loudly
+as one that is wrong (#167). Action failures everywhere are `.notice.notice-error` with a
 plain-language lead ("The scan didn't start: …"); bare red `.error` text survives only in the
 review surfaces and the simulator's dedicated failure panel.
 
