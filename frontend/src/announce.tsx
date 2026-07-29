@@ -19,11 +19,23 @@
 // `polite` work. Polite and not assertive: a save that worked must not cut off whatever the
 // operator is reading.
 //
-// **Why two regions.** Saving twice says "Policy saved." twice, and a text node that does not
-// change is not announced -- the second save would be as silent as the bug this replaces. So the
-// message alternates between two always-mounted regions: whichever one receives it has changed,
-// so it speaks. The one it left goes empty, and an empty atomic region has nothing to read out.
-// A nonce is the same trick `SwitchConfirm` needed for a repeat press, one layer up.
+// **Why two regions.** Saying the same sentence twice is two announcements, and a text node that
+// does not change is not announced -- the second save would be as silent as the bug this
+// replaces. So the message alternates between two always-mounted regions: whichever one receives
+// it has changed, so it speaks. The one it left goes empty, and an empty atomic region has
+// nothing to read out. A nonce is the same trick `SwitchConfirm` needed for a repeat press, one
+// layer up.
+//
+// **Why a queue.** The store holds ONE sentence, so a second `announce()` landing before the
+// first has had a turn blanks the region holding it: the first sentence exists for one commit
+// and may never be spoken. That is not hypothetical here. One press of the policy page's Save
+// fires two mutations whose `onSuccess` callbacks both announce, and the deletion path now
+// speaks at each stage of a run whose status polls every second, beside every other surface in
+// the app. So sentences are held and drained one `MESSAGE_GAP_MS` apart instead of overwriting.
+// (#193 filed the policy-Save case as a question, because whether a reader coalesces two updates
+// landing on adjacent commits cannot be settled in jsdom. The queue is right either way: the
+// added call sites make the race real, and holding a sentence for a beat costs nothing when
+// nothing is competing for the region.)
 
 import { useSyncExternalStore } from "react";
 
@@ -35,18 +47,53 @@ type Spoken = {
 
 const SILENT: Spoken = { text: "", slot: 0 };
 
+/** How long a sentence keeps the region before the next one may replace it.
+ *
+ *  Not a guess at how long the sentence takes to SAY -- that is unknowable, and readers queue
+ *  polite utterances themselves once they have observed the change, so a message already picked
+ *  up is not lost when the DOM moves on. What this defends against is the observation itself
+ *  being merged: VoiceOver in particular coalesces live-region updates that land close together
+ *  and reads the last one only. A few hundred milliseconds makes them separate observations, and
+ *  is short enough that a run announcing its stages still keeps up with itself. */
+const MESSAGE_GAP_MS = 400;
+
 let spoken: Spoken = SILENT;
+/** Sentences said while an earlier one still holds the region, oldest first. */
+let pending: string[] = [];
+let drainTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<() => void>();
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
-    // Nothing is mounted to hear it, so nothing can be said. Reset, or the next mount opens
-    // holding the last thing the previous one announced -- a logged-out operator signing back
-    // in to "Policy saved.", and, in the suite, one test's message read as the next test's.
-    if (listeners.size === 0) spoken = SILENT;
+    // Nothing is mounted to hear it, so nothing can be said. Reset -- the queue and its timer
+    // along with the message, or a sentence held back by the gap would surface in the NEXT
+    // mount: a logged-out operator signing back in to "Policy saved.", and, in the suite, one
+    // test's message read as the next test's.
+    if (listeners.size === 0) {
+      spoken = SILENT;
+      pending = [];
+      if (drainTimer !== null) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+      }
+    }
   };
+}
+
+function emit(): void {
+  for (const listener of listeners) listener();
+}
+
+/** Hand the region to the next sentence, or let it fall quiet. */
+function drain(): void {
+  drainTimer = null;
+  const next = pending.shift();
+  if (next === undefined) return;
+  spoken = { text: next, slot: spoken.slot === 0 ? 1 : 0 };
+  emit();
+  drainTimer = setTimeout(drain, MESSAGE_GAP_MS);
 }
 
 /** Say something happened, in a whole sentence an operator would recognize as the thing they
@@ -56,12 +103,15 @@ function subscribe(listener: () => void): () => void {
  *  (rule 85). Announcing at issuance says a save worked while it is still in flight, and the
  *  failure that follows arrives as a second, contradicting sentence.
  *
+ *  The first sentence reaches the region in this same tick, so a caller speaking alone is
+ *  unchanged. Only one arriving on top of a sentence still holding its turn waits.
+ *
  *  A plain function rather than a hook, because nearly every call site is a React Query
  *  `onSuccess` callback rather than a render. */
 export function announce(text: string): void {
   if (text === "") return;
-  spoken = { text, slot: spoken.slot === 0 ? 1 : 0 };
-  for (const listener of listeners) listener();
+  pending.push(text);
+  if (drainTimer === null) drain();
 }
 
 /** The two live regions themselves. Mounted once, at the app root, above every branch -- so it

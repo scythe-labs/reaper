@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The region the app speaks its successes into (#175). What is pinned here is the three
+// The region the app speaks its successes into (#175). What is pinned here is the four
 // properties that make a polite region actually speak: it exists before the message does, the
-// same sentence twice is two announcements, and nothing survives into the next mount.
+// same sentence twice is two announcements, a sentence is never blanked before it has had a
+// turn, and nothing survives into the next mount.
 import { render, screen } from "@testing-library/react";
 import { act } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { announce, Announcer } from "./announce";
 
 /** Both regions, in DOM order. Found by role rather than by class, which is the only way a
@@ -18,6 +19,12 @@ const spoken = () =>
     .map((r) => r.textContent)
     .filter((t) => t !== "")
     .join("|");
+
+// Rule 133: fake timers left standing are inherited by the next test in the file, and by every
+// file after it in the same worker.
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("the announcer", () => {
   it("is mounted and empty before anything has been said", () => {
@@ -48,12 +55,15 @@ describe("the announcer", () => {
     // text node that does not change is not announced -- so a single region would have made
     // the second save exactly as silent as the bug being fixed. The message moves to the
     // OTHER region, so whichever one receives it has changed and speaks.
+    vi.useFakeTimers();
     render(<Announcer />);
 
     act(() => announce("Policy saved."));
     const firstHolder = regions().findIndex((r) => r.textContent !== "");
 
     act(() => announce("Policy saved."));
+    // The second waits for the first's turn (the queue), then moves regions.
+    act(() => void vi.advanceTimersByTime(400));
     const secondHolder = regions().findIndex((r) => r.textContent !== "");
 
     expect(spoken()).toBe("Policy saved.");
@@ -64,10 +74,9 @@ describe("the announcer", () => {
     render(<Announcer />);
 
     act(() => announce("Rule added."));
-    act(() => announce("Settings saved."));
 
     expect(regions().filter((r) => r.textContent !== "")).toHaveLength(1);
-    expect(spoken()).toBe("Settings saved.");
+    expect(spoken()).toBe("Rule added.");
   });
 
   it("says nothing for an empty message", () => {
@@ -76,6 +85,63 @@ describe("the announcer", () => {
     act(() => announce(""));
 
     expect(spoken()).toBe("");
+  });
+
+  it("gives the first sentence its turn before the second replaces it", () => {
+    // The store holds ONE sentence, so a second `announce()` on the same tick used to blank the
+    // region holding the first: it existed for one commit, and a reader that had not observed
+    // it yet never would. One press of the policy page's Save does exactly this, firing two
+    // mutations that each announce; so does a reap, whose stages speak while every other
+    // surface in the app is still free to (#193). Both sentences are now said, in order.
+    vi.useFakeTimers();
+    render(<Announcer />);
+
+    act(() => {
+      announce("Movie policy saved.");
+      announce("Pace and limits saved.");
+    });
+    expect(spoken()).toBe("Movie policy saved.");
+
+    act(() => void vi.advanceTimersByTime(400));
+    expect(spoken()).toBe("Pace and limits saved.");
+    // And still only one region holds it, so it is read once.
+    expect(regions().filter((r) => r.textContent !== "")).toHaveLength(1);
+  });
+
+  it("drains a whole run of sentences in the order they were said", () => {
+    // A reap speaks at each stage while its status polls every second. Nothing may be dropped
+    // and nothing may jump the line.
+    vi.useFakeTimers();
+    render(<Announcer />);
+
+    act(() => {
+      announce("Reaping 3 souls.");
+      announce("Half done.");
+      announce("Reap finished.");
+    });
+
+    const heard = [spoken()];
+    for (let i = 0; i < 2; i++) {
+      act(() => void vi.advanceTimersByTime(400));
+      heard.push(spoken());
+    }
+    expect(heard).toEqual(["Reaping 3 souls.", "Half done.", "Reap finished."]);
+  });
+
+  it("falls quiet once the queue is empty, rather than holding the last sentence forever", () => {
+    // An atomic region still holding text is not re-read, but leaving it there means the next
+    // identical sentence is a text node that did not change -- the silent-second-save bug the
+    // two regions exist to avoid, reintroduced by a queue that never lets go.
+    vi.useFakeTimers();
+    render(<Announcer />);
+
+    act(() => announce("Password saved."));
+    act(() => void vi.advanceTimersByTime(400));
+    expect(spoken()).toBe("Password saved.");
+
+    act(() => announce("Password saved."));
+    expect(spoken()).toBe("Password saved.");
+    expect(regions().filter((r) => r.textContent !== "")).toHaveLength(1);
   });
 
   it("opens silent again after the last region unmounts", () => {
