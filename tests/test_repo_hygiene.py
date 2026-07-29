@@ -472,13 +472,14 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # Every notice the app renders, counted once. Rule 145: the assertion below cannot tell a
 # notice that complies from one that dropped out of the walk, and reads green for both.
 #
-# 109, and it does not line up with the 109 hand-rolled sites this replaced -- the two figures
+# 108, and it does not line up with the 109 hand-rolled sites this replaced -- the two figures
 # mean different things and are deliberately not derived from each other. The sweep landed 108:
 # the two draft-refusal notices were byte-identical twins in Settings and PolicyEditor, and both
-# now render through the single Notice inside ``SwitchConfirm`` (rule 18). The 109th is
-# ``ReapPlan``'s plan loader, which the sweep missed because the ban could not parse a ternary
-# ``className``; converting it is what took that count back up.
-_EXPECTED_NOTICES = 109
+# now render through the single Notice inside ``SwitchConfirm`` (rule 18). Converting
+# ``ReapPlan``'s plan loader -- the one the sweep missed, because the ban could not parse a
+# ternary ``className`` -- took it to 109, and folding the rating card's hand copy of
+# ``WarnBlock`` back into the shared component took it down again.
+_EXPECTED_NOTICES = 108
 
 
 def _shipped_tsx() -> list[Path]:
