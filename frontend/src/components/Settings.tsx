@@ -937,7 +937,10 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
             </button>
             <button
               type="button"
-              aria-label={`Keep ${instance.name}`}
+              // The visible word first. A name that drops it entirely leaves a voice-control
+              // operator saying "click Cancel" at a button that answers to "Keep", with the
+              // red Confirm remove as the only other control in reach.
+              aria-label={`Cancel, keep ${instance.name}`}
               onClick={() => setConfirmingRemove(false)}
             >
               Cancel
@@ -948,7 +951,13 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
             <button
               type="button"
               disabled={testSaved.isPending}
-              aria-label={`Test ${instance.name}`}
+              // Carries the state, because the name REPLACES the visible text rather than
+              // extending it: a fixed name freezes the button at "Test" while its label flips
+              // to "Testing…", and nothing else here announces that the press did anything.
+              // Visible word first, so "click Test" still reaches it by voice.
+              aria-label={
+                testSaved.isPending ? `Testing…, ${instance.name}` : `Test, ${instance.name}`
+              }
               onClick={() => testSaved.mutate()}
             >
               {testSaved.isPending ? "Testing…" : "Test"}
@@ -1826,7 +1835,10 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
         <span className="slot-act">
           <button
             className="primary"
-            aria-label={`Run ${meta.title} now`}
+            // Same shape as the connection test above: the state is in the name, and the
+            // visible words lead so voice control still reaches it. "Run now" is not a
+            // contiguous part of "Run Trash sweep now", which is what the fixed name was.
+            aria-label={running ? `Running…, ${meta.title}` : `Run now, ${meta.title}`}
             onClick={() => run.mutate()}
             disabled={running}
           >
@@ -1974,7 +1986,7 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
         <span className="slot-act">
           <button
             className="primary"
-            aria-label={`Update ${title} now`}
+            aria-label={running ? `Updating…, ${title}` : `Update now, ${title}`}
             onClick={() => runSync.mutate()}
             disabled={running}
           >

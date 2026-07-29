@@ -877,4 +877,24 @@ describe("the controls a screen reader has to tell apart", () => {
     expect(tagBox.tagName.toLowerCase()).toBe("input");
     expect(screen.queryByLabelText("add a tag…")).not.toBeInTheDocument();
   });
+
+  it("gives two lean keep rules on one field Remove buttons that answer to different names", async () => {
+    // Two lean rules on one field is a supported setup -- `addLean` runs the name through
+    // `uniqueName` precisely because they collide -- and the rows differ on screen. Named by
+    // the field alone, both Remove buttons announce the same words, and what gets removed by
+    // mistake is a keep rule, so the next scan condemns titles the operator believed were held.
+    const lean = (saturate_at: number, name: string) => ({
+      name,
+      field: "imdb_rating",
+      max_discount: 10,
+      floor: 0,
+      saturate_at,
+      direction: "high_keeps" as const,
+    });
+    renderEditor({ body: { ...body(), graded_keeps: [lean(60, "first"), lean(90, "second")] } });
+
+    const removes = await screen.findAllByRole("button", { name: /^Remove rule: leans/ });
+    expect(removes).toHaveLength(2);
+    expect(new Set(removes.map((b) => b.getAttribute("aria-label"))).size).toBe(2);
+  });
 });

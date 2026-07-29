@@ -638,7 +638,14 @@ export function KeepRulesEditor({
                 </span>
                 <button
                   className="ghost sm"
-                  aria-label={`Remove rule: leans, ${f?.label ?? k.field}`}
+                  // The whole visible sentence, not just the field. Two lean rules on one
+                  // field are a supported setup -- `addLean` runs the name through
+                  // `uniqueName` precisely because they collide -- and the field alone gives
+                  // both Remove buttons the same name. What gets removed by mistake is a keep
+                  // rule, so the next scan condemns titles the operator believed were held.
+                  aria-label={`Remove rule: leans, ${f?.label ?? k.field}, the ${
+                    k.direction === "low_keeps" ? "less" : "more"
+                  }, the safer, full effect at ${rampValue(f, k.saturate_at)}`}
                   onClick={() => onKeeps(keeps.filter((_, j) => j !== i))}
                 >
                   Remove
