@@ -186,7 +186,9 @@ function renderBlock(b: Block, key: number): ReactNode {
             <thead>
               <tr>
                 {b.head.map((cell, i) => (
-                  <th key={i}>{cell}</th>
+                  <th key={i} scope="col">
+                    {cell}
+                  </th>
                 ))}
               </tr>
             </thead>

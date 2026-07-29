@@ -862,7 +862,12 @@ function Dashboard({ user }: { user: AuthUser }) {
         <div className="brand">
           <BrandMark className="brand-mark sm" />
           <div className="brand-text">
-            <span className="brand-word">Reaper</span>
+            {/* The authenticated app's only `h1`, and it had none: every view opened at `h2`,
+                so heading navigation (H, 1) had no top-level landing point at all. `Login.tsx`
+                already promoted the same class this way and the pattern was not carried into
+                the shell (#177). No level is skipped anywhere below it -- this was a missing
+                root, not a broken outline. */}
+            <h1 className="brand-word">Reaper</h1>
             <span className="muted brand-sub">Grave decisions, clearly explained</span>
           </div>
         </div>

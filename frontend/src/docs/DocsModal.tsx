@@ -90,7 +90,19 @@ export function DocsModal({
           <p className="docs-index-foot">More guides are added here as questions come up.</p>
         </nav>
 
-        <div className="docs-content" ref={contentRef}>
+        {/* `overflow-y: auto` with nothing focusable inside it is a pane a keyboard operator
+            cannot scroll at all -- a doc is prose, so there is no link or button to tab onto
+            and carry the scroll with (WCAG 2.1.1, #177). `tabIndex={0}` makes the pane itself
+            a stop, and it carries a role and a name to be worth stopping on: naming it for the
+            doc on screen is also what tells the operator the pane changed when they pick a
+            different one from the index beside it. */}
+        <div
+          className="docs-content"
+          ref={contentRef}
+          tabIndex={0}
+          role="region"
+          aria-label={doc.title}
+        >
           <article>
             <p className="doc-kicker">{doc.group}</p>
             <h1>{doc.title}</h1>

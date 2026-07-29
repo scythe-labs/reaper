@@ -173,7 +173,14 @@ function TitleRow({
         <span className="scales-title-meta">
           {meta.map((m, i) => (
             <span key={i}>
-              {i > 0 && <span className="scales-dot">·</span>}
+              {/* A separator, not a word: read out it lands as "middle dot" between two
+                  facts a reader is trying to hear as a list (#177). Its twin in
+                  UnmatchedList/ScalesPanel carries the same hide (rule 72). */}
+              {i > 0 && (
+                <span className="scales-dot" aria-hidden="true">
+                  ·
+                </span>
+              )}
               {m}
             </span>
           ))}

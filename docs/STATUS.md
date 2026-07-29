@@ -121,6 +121,14 @@ Last verified against the code: 2026-07-26.
    app's only confirmation that a spare worked) reach nobody. `pending` is now per row, and the
    pressed button takes focus back when its own wait ends. **Still open in #173**: the backup
    Restore, the Plex sign-in poll, the simulator and the Plex panel.
+   **The smaller gaps (#177, mostly landed)**: the authenticated app has an `h1` at last (every
+   view opened at `h2`, so heading navigation had no root); the scan bar's and the simulator's
+   progress fills carry `role="progressbar"`, which completes the sweep `ScanLine` started; the
+   synopsis more/less is a stated disclosure; both `<th>` rows carry `scope`; the docs pane is
+   keyboard-scrollable; and the decorative ticks and middots are hidden. **Still open in #177**:
+   `aria-busy` is unused, a background scan still changes every number with no signal, and the
+   queue's two `role="status"` toasts are still mounted with their text, which is the shape
+   `Notice` had to abandon.
    **The guard is the durable half.** Measured against the real pre-#132 tree,
    `eslint-plugin-jsx-a11y` catches none of the filed bugs and costs 112 lockfile entries, an
    `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not

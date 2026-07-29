@@ -211,7 +211,17 @@ export function ScanRow({
 
         {scanning ? (
           <>
-            <div className="bar">
+            {/* A bare div with an inline width is a picture of a number and nothing else.
+                `ScanLine` in App.tsx was the correct twin in the tree and this was not swept
+                with it (#177, rule 72); the deletion path's pair went the same way in #170. */}
+            <div
+              className="bar"
+              role="progressbar"
+              aria-label="Scanning your library"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={pct ?? 0}
+            >
               <div className="bar-fill" style={{ width: `${pct ?? 0}%` }} />
             </div>
             <div className="jobrow-sched">You can leave this page; it keeps running.</div>

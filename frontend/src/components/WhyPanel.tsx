@@ -176,7 +176,15 @@ export function Synopsis({ text }: { text: string }) {
     <p className="why-summary">
       <span className={expanded ? undefined : "clamp-2"}>{text}</span>
       {text.length > 150 && (
-        <button className="link-btn" onClick={() => setExpanded((v) => !v)}>
+        <button
+          className="link-btn"
+          // A disclosure that never said it was one. The clamp is CSS-only (`.clamp-2`), so the
+          // whole synopsis is in the accessibility tree either way and pressing this appeared to
+          // do nothing at all -- twice, since the label flips back. Every other disclosure in
+          // this file is a native `<details>` and states itself for free (#177).
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
           {expanded ? "less" : "more"}
         </button>
       )}
@@ -838,7 +846,13 @@ function Gates({
           const custom = outcome.gate === "custom";
           return (
             <li key={`${outcome.gate}:${outcome.detail}`} className={custom ? "gate-custom" : ""}>
-              <span className="gate-mark">✓</span>
+              {/* Decoration: every row in this list is a pass, so the tick adds nothing a
+                  reader needs and lands mid-sentence as a stray character (#177). Where a
+                  list can hold BOTH outcomes -- the reap report's per-item checks -- the
+                  glyph is hidden and a word carries it instead (#170). */}
+              <span className="gate-mark" aria-hidden="true">
+                ✓
+              </span>
               <span className="gate-detail">
                 {custom ? customGateDetail(outcome.detail) : outcome.detail}
                 {custom && <RuleTag />}

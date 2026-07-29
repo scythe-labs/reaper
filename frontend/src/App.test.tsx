@@ -10,6 +10,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN } from "./test/apiFixtures";
 import { testQueryClient } from "./test/queryClient";
 import {
   App,
@@ -31,6 +32,14 @@ const { apiMock } = vi.hoisted(() => ({
     authContext: vi.fn(),
     reapStatus: vi.fn(),
     stopRun: vi.fn(),
+    setupStatus: vi.fn(),
+    scanStatus: vi.fn(),
+    latestSnapshot: vi.fn(),
+    fairness: vi.fn(),
+    candidates: vi.fn(),
+    general: vi.fn(),
+    profile: vi.fn(),
+    reapBreakdown: vi.fn(),
   },
 }));
 
@@ -438,5 +447,47 @@ describe("the app-wide reap bar", () => {
 
     await screen.findByText(/Reaped\./);
     expect(screen.queryByText(/Reap finished\./)).not.toBeInTheDocument();
+  });
+});
+
+describe("the authenticated app's heading outline", () => {
+  // There was no `h1` at all: `App` rendered the brand as a `<span>` and every view opened at
+  // `h2`, so heading navigation (H, 1) had no top-level landing point. `Login.tsx` already used
+  // `<h1 className="brand-word">` -- the same class, promoted -- and the pattern was not carried
+  // into the shell (#177). A missing root, not a broken outline: no level is skipped below it.
+  beforeEach(() => {
+    apiMock.me.mockReset();
+    apiMock.authContext.mockReset();
+    apiMock.authContext.mockResolvedValue({ plex_configured: true, local_account: false });
+  });
+
+  it("opens with an h1 naming the app", async () => {
+    // The whole authed shell, because the masthead is what is being asserted and it exists
+    // nowhere else. Every read the tree makes is answered, or rule 135's gate fails the run
+    // rather than letting a failed-read branch render as if it were the app.
+    apiMock.me.mockResolvedValue(user);
+    apiMock.safety.mockResolvedValue(SAFETY);
+    apiMock.setupStatus.mockResolvedValue({ complete: true, steps: [] });
+    apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
+    apiMock.latestSnapshot.mockResolvedValue(snapshot);
+    apiMock.fairness.mockResolvedValue({ generated_at: null, horizon_at: null, requesters: [] });
+    apiMock.candidates.mockResolvedValue({
+      items: [],
+      total: 0,
+      totalBytes: 0,
+      unknownSize: 0,
+      offset: 0,
+      snapshotId: 1,
+    });
+    apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
+    apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
+    apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: true, will_reap: 0, condemned_by: [] });
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <App />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Reaper" })).toBeInTheDocument();
   });
 });

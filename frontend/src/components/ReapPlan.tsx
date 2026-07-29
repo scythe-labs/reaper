@@ -54,10 +54,14 @@ function Steps({ run }: { run: Run }) {
       <table className="plan-steps">
         <thead>
           <tr>
-            <th>#</th>
-            <th>Action</th>
-            <th>Request</th>
-            <th>State</th>
+            {/* `scope` explicitly, on the journalled record of what a run will send. A
+                single-row `<thead>` is one browsers infer reliably, so the real-world harm is
+                low -- but inferring is not the same as being told, and this is the table an
+                operator reads to decide (#177). `docs/DocBody.tsx` is the twin (rule 72). */}
+            <th scope="col">#</th>
+            <th scope="col">Action</th>
+            <th scope="col">Request</th>
+            <th scope="col">State</th>
           </tr>
         </thead>
         <tbody>
@@ -129,7 +133,13 @@ function Report({ report }: { report: RunReport }) {
           // One outcome per item, never more: executor._run_deletes records exactly one
           // StepOutcome per delete, so the item's own key is unique among siblings.
           <li key={o.media_key}>
-            <span className="gate-mark">✓</span>
+            {/* Decoration: every row in this list is a pass, so the tick adds nothing a
+                  reader needs and lands mid-sentence as a stray character (#177). Where a
+                  list can hold BOTH outcomes -- the reap report's per-item checks -- the
+                  glyph is hidden and a word carries it instead (#170). */}
+            <span className="gate-mark" aria-hidden="true">
+              ✓
+            </span>
             <code>{o.detail}</code>
           </li>
         ))}
