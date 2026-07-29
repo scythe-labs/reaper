@@ -9,6 +9,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Announcer } from "../announce";
 import type { GeneralSettings } from "../api";
 import { testQueryClient } from "../test/queryClient";
 import { GeneralPanel } from "./Settings";
@@ -60,11 +61,23 @@ function renderPanel() {
   const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
+      {/* Mounted the way the app mounts it -- once, above the panel, before anything can speak
+          into it. Without it in the tree a call to `announce` writes to a store nothing is
+          listening to, so a test could only ever prove the call did not throw. */}
+      <Announcer />
       <GeneralPanel />
     </QueryClientProvider>,
   );
   return userEvent.setup();
 }
+
+/** What a screen reader would have heard: the region currently holding a sentence. */
+const announced = () =>
+  screen
+    .getAllByRole("status")
+    .map((r) => r.textContent)
+    .filter((t) => t !== "")
+    .join("|");
 
 // The same tree plus the draft signal `Settings` subscribes to, for the tests about what this
 // panel REPORTS rather than what it renders. The two can be wrong in opposite directions: a
@@ -164,6 +177,24 @@ describe("the save bar", () => {
     });
     // Everything it sent is saved, so the bar has nothing left to offer.
     await waitFor(() => expect(bar()).toBeNull());
+  });
+
+  it("says the save worked, rather than only taking the bar away", async () => {
+    // #175. Success here was the savebar unmounting -- and it takes the button that had focus
+    // with it, so the operator got no message, then no message, then a lost focus point. An
+    // absence cannot be perceived by ear, which made a successful save and a dead button the
+    // same event. The sentence is asserted through the live region, so this fails if the
+    // `announce` call is dropped from the mutation OR if the region stops being reachable.
+    const person = renderPanel();
+    const name = await screen.findByLabelText("Application name");
+
+    await person.clear(name);
+    await person.type(name, "Second install");
+    await person.click(saveChanges());
+
+    await waitFor(() => expect(announced()).toBe("Settings saved."));
+    // On the server's answer, not on the press (rule 85): the bar is gone by the time it speaks.
+    expect(bar()).toBeNull();
   });
 
   it("puts every draft back on Discard, and sends nothing", async () => {

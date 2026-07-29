@@ -90,6 +90,10 @@ export function JobStatus({
     content = (
       <div className={`jobrow-last ${flash.ok ? "is-flash" : "is-flash-fail"}`}>
         <span className="flash-chip">
+          {/* The glyph is hidden and the class is a color, so whether the job worked was
+              carried by nothing a reader can voice -- and the chip is gone again in 4.2
+              seconds, so there is no going back for it. */}
+          <span className="sr-only">{flash.ok ? "Finished: " : "Failed: "}</span>
           <span className="check" aria-hidden="true">
             {flash.ok ? "✓" : "✕"}
           </span>{" "}

@@ -38,6 +38,7 @@ import {
   type RatingSource,
   type SignalSetting,
 } from "../api";
+import { announce } from "../announce";
 import { useDocs } from "../docs/DocsContext";
 import { bytes, count } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
@@ -794,6 +795,7 @@ export function PolicyEditor({
   const savePace = useMutation({
     mutationFn: (s: ProfileSettings) => api.saveProfile(s),
     onSuccess: (s) => {
+      announce("Pace and limits saved.");
       setPace(s);
       void queryClient.invalidateQueries({ queryKey: ["profile"] });
       // The Reap breakdown reads grace_days (its countdown and unmeasured lines), so a saved
@@ -919,6 +921,11 @@ export function PolicyEditor({
       // showing when the response lands: a mid-flight Movies/TV toggle must not write
       // one type's policy into the other type's cache.
       const savedType = policy.body.media_type === "tv" ? "tv" : "movie";
+      // The savebar unmounting is the only thing that used to happen here, and an operator
+      // using a screen reader cannot perceive an absence: no message, then a lost focus point.
+      // Named for the half that saved, because the other half saves separately and its own
+      // sentence follows. On the server's answer, never on the press (rule 85).
+      announce(savedType === "tv" ? "TV policy saved." : "Movie policy saved.");
       queryClient.setQueryData(["policy", savedType], policy);
       // Re-seed the draft from the server's response so the dirty check compares
       // canonical forms. The server can order fields differently from the draft the
@@ -1958,6 +1965,10 @@ export function PolicyEditor({
               onClick={() => {
                 if (dirty) setDraft(saved?.body ?? null);
                 if (paceDirty) setPace(savedPace ?? null);
+                // Discard is the larger silence of the two: up to fifty controls revert at
+                // once and the bar that did it disappears, so there was nothing to notice
+                // except that the page had stopped offering to save.
+                announce("Changes discarded.");
               }}
             >
               Discard

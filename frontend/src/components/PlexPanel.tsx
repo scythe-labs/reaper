@@ -9,6 +9,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { announce } from "../announce";
 import { api, type PlexLinkPoll, type PlexResourceConnection } from "../api";
 import { count, since } from "../format";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
@@ -247,7 +248,13 @@ export function PlexPanel({
     // Carry the operator's current certificate-check choice, so switching to a
     // self-signed server they have already turned it off for probes correctly.
     mutationFn: (machineId: string) => api.plexSwitchServer(machineId, verifyRef.current),
-    onSuccess: () => {
+    onSuccess: (_result, machineId) => {
+      // This one did not merely say nothing on success -- it CLEARED the only message slot on
+      // the panel (below), so switching which server Reaper will delete from was quieter than
+      // doing nothing. Named from the list rather than the id, falling back to a plain
+      // sentence if the picker's own label cannot be resolved.
+      const picked = resources.data?.servers.find((s) => s.machine_identifier === machineId);
+      announce(picked ? `Now using ${picked.name}.` : "Server changed.");
       setMessage(null);
       setPlexError(null);
       invalidateAllPlex();
@@ -264,11 +271,13 @@ export function PlexPanel({
   const setConnection = useMutation({
     mutationFn: (uri: string) => api.plexSetConnection(uri),
     onSuccess: () => {
+      announce("Connection saved.");
       setConnError(null);
       // A successful connection save fixes reachability, so a prior "couldn't reach"
       // from a failed switch is now stale: clear it, or a red notice lingers beside a
       // healthy connection.
       setPlexError(null);
+      // Collapsing the editor was the only success signal, and it unmounts the focused button.
       setManualOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },

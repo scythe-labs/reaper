@@ -16,6 +16,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useState, type RefObject } from "react";
+import { announce } from "../announce";
 import { api, type Instance, type InstanceTest, type SeerrService } from "../api";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
@@ -66,7 +67,13 @@ export function TestBadge({ result }: { result: InstanceTest | null }) {
   if (!result) return null;
   return (
     <span className={`test-badge ${result.ok ? "ok" : "bad"}`}>
-      {result.ok ? "✓ " : "✗ "}
+      {/* Whether Reaper reached your Sonarr used to be a glyph and a color and nothing else:
+          "✓" and "✗" are read the same way by a reader at its default symbol level, so the
+          detail line that follows ("Reached", or the error) was the only difference, and
+          "Couldn't reach it" read as a result rather than a failure. A word carries it now.
+          Failing 1.4.1 as well as 4.1.3 -- color was doing the same work alone. */}
+      <span className="sr-only">{result.ok ? "Passed: " : "Failed: "}</span>
+      <span aria-hidden="true">{result.ok ? "✓ " : "✗ "}</span>
       {result.detail}
       {result.version && ` (v${result.version})`}
     </span>
@@ -388,6 +395,10 @@ export function ServiceModal({
       return api.createInstance(createBody);
     },
     onSuccess: () => {
+      // The modal closing was the entire success signal, and it takes the focused button with
+      // it. Named for which of the two things just happened, because the operator gets back a
+      // list they now have to find the row in.
+      announce(instance ? `${name} saved.` : `${name} added.`);
       invalidate();
       onClose();
     },

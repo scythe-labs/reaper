@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import { applyAccent } from "./accent";
+import { Announcer } from "./announce";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
 import { Login } from "./components/Login";
@@ -1021,18 +1022,25 @@ export function App() {
     staleTime: 0,
   });
 
-  if (isLoading) {
-    return (
-      <div className="auth-screen" role="status">
-        <div className="auth-aurora" aria-hidden="true" />
-        {/* Same as the setup gate above (rule 72). */}
-        <span className="spinner spinner-lg" aria-hidden="true" />
-        <span className="sr-only">Loading Reaper…</span>
-      </div>
-    );
-  }
-
-  if (isError || !user) return <Login />;
-
-  return <Authed user={user} />;
+  // One expression rather than the three early returns this used to be, so `Announcer` is a
+  // sibling of every branch instead of three copies of itself (rule 72). It has to sit above
+  // the whole gate: a polite region only speaks reliably when it was already in the DOM before
+  // the message arrived, so it must outlive a route change, a Suspense fallback and a logout.
+  return (
+    <>
+      <Announcer />
+      {isLoading ? (
+        <div className="auth-screen" role="status">
+          <div className="auth-aurora" aria-hidden="true" />
+          {/* Same as the setup gate above (rule 72). */}
+          <span className="spinner spinner-lg" aria-hidden="true" />
+          <span className="sr-only">Loading Reaper…</span>
+        </div>
+      ) : isError || !user ? (
+        <Login />
+      ) : (
+        <Authed user={user} />
+      )}
+    </>
+  );
 }

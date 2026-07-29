@@ -20,6 +20,7 @@ import {
   useState,
 } from "react";
 import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
+import { announce } from "../announce";
 import {
   api,
   type ExpandSeasonsMode,
@@ -207,6 +208,11 @@ export function GeneralPanel({
       //
       // Setting the query cache stays unconditional: it is the canonical stored state, and it
       // is what re-applies the accent app-wide so a save re-tints everything.
+      //
+      // Two shapes reach here and both were silent: the savebar, whose success was the bar
+      // unmounting under the button that had focus, and the two controls that save on the spot,
+      // whose success was nothing at all.
+      announce("Settings saved.");
       queryClient.setQueryData(["general-settings"], data);
       if ("application_name" in sent) setName(data.application_name);
       if ("application_url" in sent) setUrl(data.application_url ?? "");
@@ -230,7 +236,14 @@ export function GeneralPanel({
   const reveal = useMutation({
     mutationFn: api.revealApiKey,
     onMutate: () => setKeyError(null),
-    onSuccess: (r) => setRevealedKey(r.key),
+    // Show swaps a readonly box from dots to the live secret and flips its own button to
+    // Hide. Revealing a credential on screen is worth saying out loud -- not least because
+    // the operator may be somewhere they would rather it stayed hidden. The key itself is
+    // never announced: it is in the box, and a live region is the wrong place for a secret.
+    onSuccess: (r) => {
+      setRevealedKey(r.key);
+      announce("API key shown.");
+    },
     onError: (e: Error) => setKeyError(e.message),
   });
   const generate = useMutation({
@@ -239,6 +252,7 @@ export function GeneralPanel({
     onSuccess: (r) => {
       setRevealedKey(r.key);
       setConfirmReplace(false);
+      announce("New API key generated. The old one no longer works.");
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
     onError: (e: Error) => setKeyError(e.message),
@@ -258,6 +272,9 @@ export function GeneralPanel({
       );
     }
     await navigator.clipboard.writeText(key);
+    // The only feedback was the button's own label reading "Copied" for two seconds -- a
+    // change to the name of the control the operator is standing on, which is not announced.
+    announce("API key copied.");
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -1414,7 +1431,13 @@ function RestoreCard({
                 <span>Decisions, settings, credentials</span>
               </div>
               <div className="verdict-ok">
-                <span className="dot">✓</span>
+                {/* Decorative here, unlike the test badge: both branches of the sentence below
+                    say the verdict in words, so the glyph would only interrupt it with a stray
+                    character. Hidden rather than given a text twin (rule 144 -- a second copy
+                    of a claim that gates a restore is the copy that goes wrong). */}
+                <span className="dot" aria-hidden="true">
+                  ✓
+                </span>
                 {summary.verdict === "current"
                   ? "Matches this server. Safe to restore."
                   : "Saved on an older version. Reaper will update it when it restarts."}
@@ -2336,6 +2359,11 @@ function AdminPasswordForm({
       setPw("");
       setConfirm("");
       setMsg("Password saved.");
+      // The visible half is a `.muted` span beside the button, which announces nothing. The
+      // failure half of this form already speaks (`Notice`, `role="alert"`), so success was
+      // the only outcome of changing the password that arms deletion an operator could not
+      // hear -- the one asymmetry the comment below is careful about, reached another way.
+      announce("Password saved.");
       void queryClient.invalidateQueries({ queryKey: ["safety"] });
     },
     // No onError: a failure renders from `save.error` as an error notice, never in `msg`.

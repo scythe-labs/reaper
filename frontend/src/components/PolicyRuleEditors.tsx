@@ -17,6 +17,7 @@
 // Curated: a phrase exists only where more-of-the-number honestly means more reason to
 import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { announce } from "../announce";
 import { api, type Condition, type CustomCondemn, type GradedKeep, type VocabField } from "../api";
 import { FIELD_TO_GATE, FIELD_TO_SIGNAL, humanDays, OP_LABELS } from "./PolicyEditor";
 import { usePopoverShift } from "./popoverFit";
@@ -343,6 +344,11 @@ export function RemoveRulesEditor({
         },
       ]);
     }
+    // The new row appears in a list far above, the composer's boxes empty, and the Add button
+    // disables itself -- three ways of saying nothing. Announced only on the branch that
+    // actually added one: the guard above returns silently, so a no-op press and a successful
+    // one were the same event to a reader.
+    announce("Rule added.");
     setRField("");
     setRValue("");
   };
@@ -569,6 +575,8 @@ export function KeepRulesEditor({
       ...conditions,
       { field: hardField.key, op: hOp, value: coerceValue(hardField, hValue) },
     ]);
+    // Same silence as the condemn composer's Add, on the same guard (rule 72).
+    announce("Rule added.");
     setHField("");
     setHValue("");
   };
@@ -593,6 +601,8 @@ export function KeepRulesEditor({
         direction: lDir,
       },
     ]);
+    // And the third (rule 72).
+    announce("Rule added.");
     setLField("");
     setLAt("");
   };
