@@ -79,6 +79,33 @@ describe("the admin password form", () => {
     expect(await screen.findByText(/password saved/i)).toBeInTheDocument();
   });
 
+  it("never describes a box with the other box's complaint", async () => {
+    // Both boxes point at ONE region, and `tooShort` and `mismatch` are independent, so a short
+    // password with a non-matching confirm holds both at once while the region shows only the
+    // first. Gated on the bare predicates, the confirm box read out "use at least 12
+    // characters" -- the box above it -- and the mismatch text was not on the page to reach.
+    // Asserted as the accessible DESCRIPTION, which is what a reader computes: an
+    // `aria-describedby` naming an id that is not rendered satisfies an attribute check and
+    // still says nothing.
+    apiMock.safety.mockResolvedValue({ has_password: false });
+    const person = renderPanel();
+
+    const next = await screen.findByLabelText(/^new password$/i);
+    const confirm = screen.getByLabelText(/confirm new password/i);
+    await person.type(next, "hunter7");
+    await person.type(confirm, "x");
+
+    expect(confirm).not.toHaveAccessibleDescription(/use at least 12 characters/i);
+    expect(next).toHaveAccessibleDescription(/use at least 12 characters/i);
+
+    // And once the length complaint clears, the mismatch is the live one and moves to the box
+    // it is actually about.
+    await person.type(next, "-long-enough");
+    expect(await screen.findByText(/the passwords don't match/i)).toBeInTheDocument();
+    expect(confirm).toHaveAccessibleDescription(/don't match/i);
+    expect(next).not.toHaveAccessibleDescription(/don't match/i);
+  });
+
   it("needs the current password before Save when one is already set", async () => {
     apiMock.safety.mockResolvedValue({ has_password: true });
     const person = renderPanel();

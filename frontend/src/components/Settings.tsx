@@ -2359,7 +2359,9 @@ const MIN_ADMIN_PASSWORD = 12;
 
 /** The password form's one error region, named once for both ends of the association (rule 67).
  *  Which BOX claims it varies: the region carries whichever complaint is live, and only the box
- *  that complaint is about points at it. */
+ *  that complaint is about points at it -- see `errorOwner`, which derives that from the same
+ *  chain the message comes off. Two independent predicates cannot decide it, because they
+ *  overlap and the region does not. */
 const PASSWORD_ERROR_ID = "admin-password-error";
 
 function AdminPasswordForm({
@@ -2419,6 +2421,14 @@ function AdminPasswordForm({
       `The password wasn't changed: ${save.error.message}`
     )
   ) : null;
+
+  // Which BOX the live complaint belongs to, derived from the same chain that picks it rather
+  // than from the predicates separately. `tooShort` and `mismatch` are independent and both
+  // hold constantly -- any short password with a non-matching confirm -- while the region shows
+  // only the first. Read off the two predicates, the confirm box then pointed at a region
+  // holding "Use at least 12 characters", reading the box above it out as its own problem, and
+  // "The passwords don't match." was not on the page at all to be reached (#174).
+  const errorOwner: "new" | "confirm" | null = tooShort ? "new" : mismatch ? "confirm" : null;
 
   // What this form would LOSE, reported up through `SecurityPanel` to `Settings` so leaving the
   // section can stop and ask first. Any of the three boxes counts: a password too short to save,
@@ -2492,12 +2502,12 @@ function AdminPasswordForm({
               placeholder="at least 12 characters"
               autoComplete="new-password"
               maxLength={128}
-              // One region carries three different complaints, so each box claims only the one
-              // that is about IT: "too short" belongs to this box, "don't match" to the next.
-              // Pointing both at the region unconditionally would have each box read out the
-              // other's problem (#174).
+              // One region carries three different complaints, so each box describes itself
+              // with the live one only while it is the one about IT -- `errorOwner`, off the
+              // same chain that picks the message. `aria-invalid` stays on this box's own
+              // predicate: a short password is short whichever complaint is showing.
               aria-invalid={tooShort ? true : undefined}
-              aria-describedby={tooShort ? PASSWORD_ERROR_ID : undefined}
+              aria-describedby={errorOwner === "new" ? PASSWORD_ERROR_ID : undefined}
             />
           </label>
           <label className="field-sm">
@@ -2509,7 +2519,7 @@ function AdminPasswordForm({
               autoComplete="new-password"
               maxLength={128}
               aria-invalid={mismatch ? true : undefined}
-              aria-describedby={mismatch ? PASSWORD_ERROR_ID : undefined}
+              aria-describedby={errorOwner === "confirm" ? PASSWORD_ERROR_ID : undefined}
             />
           </label>
           <div className="add-actions">
