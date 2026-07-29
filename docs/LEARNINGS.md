@@ -1713,6 +1713,57 @@ over. **Reproducing this needs no screen reader and no device**: a `MutationObse
 `[role=status][aria-live=polite]`, `performance.now()` at the click, and one Save — and the number
 to compare against is 150 ms.
 
+## The frontend suite's "expensive role query" is jsdom's first `getComputedStyle` (2026-07-29)
+
+#149, #228 and #234 read a family of intermittent CI reds as *query cost*: a first
+`await findByRole(..., { name })` re-computing accessible names across the whole tree on every
+50 ms poll, sharing one 1000 ms `findBy` budget with the read that makes the control exist.
+#236 swept ~50 more sites on that reading. **The reading is wrong, and it is wrong in a way that
+inverted the inventory.** Timed with `findByRole` re-implemented as the `waitFor(getByRole)` it
+already is (`query-helpers.js:makeFindQuery`), so every matcher evaluation could be counted and
+timed separately from the waiting; 8 full-suite runs per arm.
+
+| | mean | worst |
+| --- | --- | --- |
+| First `*ByRole` await in a file — time inside the matcher | **61.9 ms** | 253.8 ms |
+| Every later `role`+`name` await — same | **5.8 ms** | 54.9 ms |
+
+The cliff is at the *first* one, and it is not about names, tree size, or polling. On a
+**four-element** DOM: a bare `getAllByRole("button")` with no name matcher costs **60.1 ms** cold
+and **0.6 ms** warm; one `window.getComputedStyle(el)` beforehand drops that cold query to
+**7.8 ms**. So the cost is **jsdom building its CSSOM on the first `getComputedStyle` call**, which
+every `*ByRole` query makes because `queryAllByRole` filters inaccessible elements by computed
+visibility. It is paid once per test file (vitest isolates the module registry and the jsdom per
+file) by whichever role query runs first — and when that query is a test's first `await`, it is
+spent inside `findBy`'s fixed 1000 ms budget.
+
+Two things the mechanism ruled out, both of which had looked like the answer:
+
+- **The accessible-name matcher is nearly free.** Warm, `getAllByRole(role)` is 0.9 ms and
+  `getAllByRole(role, { name })` is 1.9 ms, against trees up to the whole app shell.
+- **A missed poll does *not* build the expensive "here are the accessible roles" diagnostic.**
+  `role.js:getMissingError` does enumerate every role with its name — 20.5 ms mean, 248.8 ms worst
+  — but `wait-for.js:124` wraps each poll in `runWithExpensiveErrorDiagnosticsDisabled`, so a
+  `findBy` never pays it. Measuring that path outside `waitFor` is how it gets mistaken for a
+  per-poll cost.
+
+⇒ `src/test/setup.ts` pays the one `getComputedStyle` per file, where nothing is timing it. Summed
+across the ten files whose first await is a role query, that first wait goes **723 ms → 273 ms**;
+seven of them gain 43–85 ms each, and the three that gain nothing are the ones already warmed by
+something earlier in the file. Total suite wall clock is unchanged (18.07 s → 17.84 s over three
+runs): the cost is relocated, not removed.
+
+**What this does not fix, and the honest limit of the whole family.** 52 ms of a 1000 ms budget
+cannot by itself explain #228's timeout — its dumped DOM showed the two reads simply had not
+landed. The dominant term is read and scheduler latency under runner load, and it survives:
+`AppStaleRead.test.tsx:178`'s first wait still has a 258 ms worst case warm. Converting a site
+from `findByRole` to `findByText` + a synchronous `getByRole` does not make the wait cheaper
+either — it **relocates** the same work outside the timed window. Measured both orderings on the
+app shell: expensive-first paid 105.5 ms in the wait; cheap-first paid 49.3 ms in the wait plus
+52.4 ms in the synchronous take, for the same 101.6 ms of work. Which is why the per-site sweep is
+the wrong shape for this: it helps at most one site per file, the ~40 others are already warm at
+~6 ms, and a new test written in the old shape re-introduces it.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

@@ -9,6 +9,37 @@ import { afterEach } from "vitest";
 // closes, so make it a quiet no-op here -- nothing in the tests reads a real scroll.
 window.scrollTo = () => {};
 
+// Pay jsdom's first `getComputedStyle` here, where nothing is timing it.
+//
+// The first such call in a jsdom instance costs ~52ms building the CSSOM, and every
+// `*ByRole` query makes one: `queryAllByRole` filters inaccessible elements, which reads
+// computed visibility. So whichever role query runs first in a file paid that ~52ms, and
+// when that query was a test's first `await findByRole(...)` the cost landed INSIDE
+// `findBy`'s fixed 1000ms budget, spending 5% of the margin before the read it is waiting
+// for had a chance to land. Ten test files opened on a role query that way.
+//
+// Measured on a four-element DOM, so this is not about tree size and not about matching an
+// accessible name: a bare `getAllByRole("button")` costs 60ms cold and 0.6ms warm, and one
+// `getComputedStyle` beforehand drops the cold query to 7.8ms. See docs/LEARNINGS.md.
+//
+// Vitest gives each test file its own module registry and jsdom, so this runs per file,
+// which is exactly the granularity the cost is paid at. It leaves no DOM behind (rule 133).
+//
+// The property is read, not just the call made, because jsdom builds the CSSOM on first
+// access rather than on the call -- and the value is then asserted, so a jsdom that stops
+// answering fails here loudly instead of leaving this line silently warming nothing.
+const warm = document.createElement("div");
+document.body.appendChild(warm);
+const warmedVisibility = window.getComputedStyle(warm).visibility;
+warm.remove();
+if (warmedVisibility === "") {
+  throw new Error(
+    "jsdom returned no computed visibility for a plain div, so this file is no longer " +
+      "paying the first-getComputedStyle cost it exists to pay. Every test file's first " +
+      "*ByRole query is back to spending ~52ms of its findBy budget on it.",
+  );
+}
+
 // A query with no queryFn FAILS the test rather than warning (rule 135).
 //
 // React Query answers a missing queryFn with a console.error and an error state, so a test that
