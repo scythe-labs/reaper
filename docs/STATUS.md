@@ -133,19 +133,21 @@ Last verified against the code: 2026-07-26.
    still mounted with their text, which is the shape `Notice` had to abandon, and the middot
    sweep covered the standalone `.scales-dot` spans only — roughly fifty separators in running
    text still read out as "middle dot" between two facts, in sixteen files.
-   **The guard is the durable half.** Re-measured, `eslint-plugin-jsx-a11y` still stays out: no
-   release since October 2024, a peer range capped at eslint 9 against the 10 in the lockfile,
-   116 lockfile entries, an `overrides` entry to survive `npm ci`, three audit advisories, and of
-   its 36 findings 15 are false because it cannot see through `<Switch>` to the `<input>` it
-   renders. **`axe-core` goes in instead**: one lockfile entry, no new advisory, dev-only and
-   absent from every bundle chunk. It reads the tree the browser built, so a name assembled from
-   props or a role that prunes its own children is visible to it and invisible to a source
-   scanner, which is where this project's a11y bugs actually lived. `src/test/a11y.ts` fails on
-   what it finds (rule 135); `a11y.test.tsx` proves it goes red naming the rule. It joins rather
-   than replaces the notice ban, the tests reaching controls by the name an operator can hear,
-   and the brace-aware scan pinning all 19 shipped `<select>`s named (**#180 closed**) — still the
-   only layer covering a control no fixture mounts, since an `<input>` scan measured 94% false
-   positives and `<button>`'s defect class is an ambiguous-but-present name no scanner sees.
+   **The guard is the durable half.** `eslint-plugin-jsx-a11y` stays out, re-measured: unreleased
+   since October 2024, capped at eslint 9, 116 lockfile entries, three advisories, 15 of its 36
+   findings false. **`axe-core` goes in instead** — one lockfile entry, dev-only, absent from every
+   bundle chunk — because it reads the tree the browser BUILT, where this project's a11y bugs lived.
+   `src/test/a11y.ts` fails on what it finds *and on what axe could not decide*: jsdom files an
+   unsettled rule under `incomplete`, where `aria-hidden-focus` lands — the invariant `Settings.tsx`
+   keeps by hand at 113 sites — so violations alone passed it silently. **Coverage is counted, not
+   conventional** (**#230, #231 closed**): 28 suites audit the tree they mount, 10 are exempt with a
+   stated reason, and `test_repo_hygiene` fails on a rendering test file that is neither. Three
+   whole pages had no landmark at all — sign-in, recovery, setup. **#232** stays open: the reasons
+   panel is an `<aside>` claiming `role="dialog"`, suppressed because both repairs break something
+   the suite guarantees. It joins the notice ban, the tests reaching controls by the name an
+   operator can hear, and the brace-aware scan pinning all 19 shipped `<select>`s named (**#180
+   closed**) — still the only layer covering a control no fixture mounts, since an `<input>` scan
+   measured 94% false positives and `<button>`'s is an ambiguous-but-present name no scanner sees.
 
 ## Decisions locked
 
