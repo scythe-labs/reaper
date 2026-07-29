@@ -18,6 +18,7 @@
 
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -26,7 +27,9 @@ import {
 import { createPortal } from "react-dom";
 import type { Override } from "../api";
 import { useBackGuard } from "../backnav";
+import { useDialogFocus } from "../focus";
 import { spareRemaining } from "../format";
+import { trapTab } from "./ModalShell";
 import { CaretDownGlyph, ClockGlyph, PenGlyph, ScytheIcon, SpareGlyph } from "./queueIcons";
 import { useDefaultSpareDays } from "./queueSettings";
 
@@ -80,6 +83,7 @@ export function OverrideControls({
   const defaultDays = useDefaultSpareDays();
   const [menuAt, setMenuAt] = useState<MenuPos | null>(null);
   const caretRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
   // Back closes the open length menu before it does anything else (only the one open menu has a
   // non-null position, so only it registers).
   useBackGuard(menuAt !== null, () => setMenuAt(null));
@@ -222,8 +226,11 @@ export function OverrideControls({
             expired ? "expired" : ""
           }`}
           disabled={pending}
-          aria-haspopup="menu"
+          // A disclosure, not an ARIA menu, and for the reason App's UserMenu records: this
+          // never implemented the arrow-key navigation `role="menu"` promises. `aria-controls`
+          // is what ties the caret to a panel the portal puts at the far end of <body>.
           aria-expanded={menuAt !== null}
+          aria-controls={menuAt !== null ? menuId : undefined}
           aria-label="Choose how long to keep it"
           onClick={toggleMenu}
         >
@@ -233,6 +240,7 @@ export function OverrideControls({
       {menuAt && (
         <SpareMenu
           at={menuAt}
+          menuId={menuId}
           defaultDays={defaultDays}
           triggerRef={caretRef}
           onPick={(spareDays) => {
@@ -280,6 +288,7 @@ export function OverrideControls({
  *  scroll that would strand it off its anchor. */
 function SpareMenu({
   at,
+  menuId,
   defaultDays,
   triggerRef,
   onPick,
@@ -287,6 +296,9 @@ function SpareMenu({
   onClose,
 }: {
   at: MenuPos;
+  /** Pointed at by the caret's `aria-controls`. The portal puts this panel at the end of
+   *  `<body>`, nowhere near the button that opened it, so the association has to be stated. */
+  menuId: string;
   defaultDays: number;
   triggerRef: RefObject<HTMLButtonElement | null>;
   onPick: (days: number) => void;
@@ -296,6 +308,12 @@ function SpareMenu({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // The portal is why this is not optional. Rendered at the end of <body>, the menu's items sit
+  // nowhere near the caret in the Tab order, so opening it and pressing Tab used to walk on to
+  // the next control INSIDE the card while the menu hung open beside it, its own rows reachable
+  // only by tabbing through the remainder of the page. Focus goes in, Tab stays in, and it comes
+  // back to the caret on every exit -- pick, Escape, or an outside click.
+  useDialogFocus(ref);
   const [custom, setCustom] = useState(false);
   // Held as free text so the box types and clears naturally; clamped to [1, 3650] only when
   // Spare is pressed, never mid-keystroke (which would snap a half-typed number).
@@ -352,9 +370,16 @@ function SpareMenu({
   return createPortal(
     <div
       ref={ref}
+      id={menuId}
       className="dur-menu"
-      role="menu"
+      // Not `role="menu"`: that promises arrow-key navigation between items, which this never
+      // implemented, on a panel whose first child is a heading rather than an item. App's
+      // UserMenu records the same defect being fixed the same way. The honest role is the one
+      // whose keyboard contract this actually keeps -- a labeled group of buttons.
+      role="group"
       aria-label="Spare this item for"
+      tabIndex={-1}
+      onKeyDown={(e) => trapTab(e, ref.current)}
       style={{
         position: "fixed",
         left: at.left,
@@ -364,7 +389,7 @@ function SpareMenu({
     >
       <div className="dur-head">Spare for…</div>
       {dayRows.map((d) => (
-        <button key={d} type="button" role="menuitem" className="dur-mi" onClick={() => onPick(d)}>
+        <button key={d} type="button" className="dur-mi" onClick={() => onPick(d)}>
           <span className="mi-glyph">
             <ClockGlyph />
           </span>
@@ -372,7 +397,7 @@ function SpareMenu({
           {d === defaultDays && <span className="mi-tag">Default</span>}
         </button>
       ))}
-      <button type="button" role="menuitem" className="dur-mi" onClick={() => onPick(0)}>
+      <button type="button" className="dur-mi" onClick={() => onPick(0)}>
         <span className="mi-glyph">
           <span className="infinity" aria-hidden="true">
             ∞
@@ -406,7 +431,7 @@ function SpareMenu({
           </button>
         </div>
       ) : (
-        <button type="button" role="menuitem" className="dur-mi" onClick={() => setCustom(true)}>
+        <button type="button" className="dur-mi" onClick={() => setCustom(true)}>
           <span className="mi-glyph mi-pen">
             <PenGlyph />
           </span>
@@ -419,7 +444,7 @@ function SpareMenu({
           say what it does. The next scan deletes a spent row anyway
           (`whitelist.purge_expired_spares`), so this is that, now. */}
       {onClear && (
-        <button type="button" role="menuitem" className="dur-mi dur-clear" onClick={onClear}>
+        <button type="button" className="dur-mi dur-clear" onClick={onClear}>
           <span className="mi-label">Clear this spare</span>
         </button>
       )}

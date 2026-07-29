@@ -4,7 +4,7 @@
 // The bug that motivated it: a 90-day spare under a Forever default left the button reading
 // "∞ Spared" -- the wrong glyph, and no sign of when the spare ends.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "../test/queryClient";
@@ -158,7 +158,7 @@ describe("a spare whose clock has passed", () => {
     const user = userEvent.setup();
     draw({ ...SPENT, onClear, roomy: true });
     await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
-    await user.click(screen.getByRole("menuitem", { name: "Clear this spare" }));
+    await user.click(screen.getByRole("button", { name: "Clear this spare" }));
     expect(onClear).toHaveBeenCalled();
   });
 
@@ -167,7 +167,7 @@ describe("a spare whose clock has passed", () => {
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "Choose how long to keep it" }));
-    expect(screen.queryByRole("menuitem", { name: "Clear this spare" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear this spare" })).not.toBeInTheDocument();
   });
 });
 
@@ -189,5 +189,56 @@ describe("the resting mark", () => {
 
     const { container: ever } = render(<OverrideMark override="spare" spareExpiresAt={null} />);
     expect(ever.textContent).toContain("∞");
+  });
+});
+
+// The spare-length menu is portaled to <body>, so it is the one popover in the app where the DOM
+// order and the visual anchor have nothing to do with each other. Opening it and pressing Tab used
+// to walk on to the next control INSIDE the card, leaving the menu's own rows reachable only by
+// tabbing through the remainder of the page -- on the control that decides how long a file is kept.
+describe("the spare-length menu's keyboard reach", () => {
+  it("takes focus when it opens, since the portal puts it out of Tab's reach", async () => {
+    const user = userEvent.setup();
+    draw({}, 30);
+    await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+    expect(screen.getByRole("group", { name: "Spare this item for" })).toHaveFocus();
+  });
+
+  it("hands focus back to the caret when it closes", async () => {
+    const user = userEvent.setup();
+    draw({}, 30);
+    const caret = screen.getByRole("button", { name: "Choose how long to keep it" });
+    await user.click(caret);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("group", { name: "Spare this item for" })).not.toBeInTheDocument();
+    expect(caret).toHaveFocus();
+  });
+
+  it("keeps Tab inside itself while it is open", async () => {
+    const user = userEvent.setup();
+    draw({}, 30);
+    await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+    const menu = screen.getByRole("group", { name: "Spare this item for" });
+    const rows = within(menu).getAllByRole("button");
+    rows[rows.length - 1]!.focus();
+    await user.tab();
+    expect(rows[0]!).toHaveFocus();
+  });
+
+  // The roles it used to claim promised arrow-key navigation between items that was never
+  // implemented. Announcing a contract the widget does not keep is worse than announcing none.
+  it("claims no ARIA menu contract it does not implement", async () => {
+    const user = userEvent.setup();
+    draw({}, 30);
+    const caret = screen.getByRole("button", { name: "Choose how long to keep it" });
+    expect(caret).not.toHaveAttribute("aria-haspopup");
+    await user.click(caret);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+    // What replaces it: the caret says what it controls, which the portal otherwise hides.
+    expect(caret).toHaveAttribute("aria-expanded", "true");
+    expect(caret.getAttribute("aria-controls")).toBe(
+      screen.getByRole("group", { name: "Spare this item for" }).id,
+    );
   });
 });

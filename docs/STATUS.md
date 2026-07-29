@@ -110,12 +110,24 @@ Last verified against the code: 2026-07-26.
    `role="dialog"` at every width would be false on a desktop. Escape moved into the shell from
    the three places that had it, which also fixed it firing from inside the panel's own fields —
    App's handler bailed on `INPUT/TEXTAREA/SELECT`, a bail `j`/`k` need and Escape does not.
+   **The menus are landed too**, following the precedent `UserMenu` set: the spare-length menu,
+   the ＋ Filter menu and the filter chips' value picker all claimed `role="menu"`/`menuitem` or
+   `role="listbox"`/`option`, and implemented no part of either contract — no arrow keys, no
+   roving focus, no `aria-activedescendant`, every option its own Tab stop. A listbox is
+   *announced* as an arrow-key widget, so the role told operators to press keys that did nothing.
+   All three are now plain disclosures that keep what they promise, each with `aria-controls` and
+   a focus return to its trigger; the chip picker states which value is in force with
+   `aria-current`, the app's existing idiom. The spare menu needed more than the other two
+   because it is portaled to `<body>`: its rows sat nowhere near the caret in the Tab order, so
+   pressing Tab walked on into the card while the menu hung open beside it. It now takes focus,
+   keeps Tab inside itself, and hands focus back on every exit. Scales' "Not in the last scan"
+   tile lost an `aria-expanded` that pointed at a panel App renders in a different subtree.
    What is filed rather than fixed is still larger: the review queue's cards are `role="button"`,
    which makes every chip, reason and score inside them presentational; the deletion path
-   announces nothing at any stage, arming through progress to the final report; two menus promise
-   a keyboard contract they never implemented; and **116 controls unmount or disable themselves
-   on their own press**, dropping focus to `<body>` — the app-wide count behind #173, against the
-   ~20 sites that issue lists. **The guard is the durable half.** Measured against the real pre-#132 tree,
+   announces nothing at any stage, arming through progress to the final report; and **116
+   controls unmount or disable themselves on their own press**, dropping focus to `<body>` — the
+   app-wide count behind #173, against the ~20 sites that issue lists. **The guard is the durable
+   half.** Measured against the real pre-#132 tree,
    `eslint-plugin-jsx-a11y` catches none of the three filed bugs — its
    `control-has-associated-label` counts `<option>` text as a `<select>`'s label, which is the
    operator's complaint verbatim — and it costs 112 lockfile entries, an `overrides` entry to

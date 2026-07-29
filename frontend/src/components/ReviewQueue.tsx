@@ -21,6 +21,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -198,11 +199,13 @@ function FilterChip({
  *  a phone screen -- the ＋ Filter button sits at the end of the toolbar row, and a wrapped chip
  *  can land there too -- so `usePopoverShift` slides it back (see `popoverFit.ts`). */
 function FilterMenu({
-  role,
+  id,
   label,
   children,
 }: {
-  role: "menu" | "listbox";
+  /** Pointed at by its trigger's `aria-controls`, which is the only thing tying the two
+   *  together: the popover is a sibling of the button, not a descendant. */
+  id: string;
   /** Names the menu for a screen reader, and heads it for everyone else. */
   label: string;
   children: ReactNode;
@@ -210,11 +213,17 @@ function FilterMenu({
   const ref = useRef<HTMLUListElement>(null);
   const shift = usePopoverShift(ref, "filter-anchor");
 
+  // A plain list behind a disclosure, deliberately: this took `role="menu"` and `role="listbox"`
+  // from a prop, and implemented neither one's keyboard contract -- no arrow keys, no roving
+  // focus, no `aria-activedescendant`, and every option a separate Tab stop, which is not the
+  // listbox pattern at all. A listbox is ANNOUNCED as an arrow-key widget, so the roles were
+  // telling an operator to press keys that did nothing. App's UserMenu records the same defect
+  // being fixed the same way, and PolicyRuleEditors' combobox shows what keeping the role costs.
   return (
     <ul
       ref={ref}
+      id={id}
       className="filter-menu"
-      role={role}
       aria-label={label}
       style={{ "--pop-shift": `${shift}px` } as CSSProperties}
     >
@@ -1370,8 +1379,21 @@ export function ReviewQueue({
   // The plan whose confirmation sheet is open, if any. Building it is the "Reap now" step;
   // the sheet then dry-runs, checks arming, and takes the typed confirmation before deleting.
   const [reapRun, setReapRun] = useState<Run | null>(null);
+  const menuIdBase = useId();
+  // The control that opened the popover, so closing it can hand focus back rather than dropping
+  // it on <body> -- where the next Tab restarts at the top of the page, above the whole queue.
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const openMenuFrom = (id: string, trigger: HTMLButtonElement) => {
+    menuTriggerRef.current = trigger;
+    setOpenMenu((m) => (m === id ? null : id));
+    if (openMenu === id) trigger.focus();
+  };
+  const closeMenu = () => {
+    setOpenMenu(null);
+    menuTriggerRef.current?.focus();
+  };
   // Back closes an open filter popover, then the reap-confirm sheet, before leaving the app.
-  useBackGuard(openMenu !== null, () => setOpenMenu(null));
+  useBackGuard(openMenu !== null, closeMenu);
   useBackGuard(reapRun !== null, () => setReapRun(null));
   // The in-flight drag: whether a press-and-drag is currently adding or removing, so every card
   // the pointer crosses paints the same way. A ref, not state -- it changes mid-drag and must
@@ -1391,10 +1413,13 @@ export function ReviewQueue({
   useEffect(() => {
     if (openMenu === null) return;
     const onDown = (e: MouseEvent) => {
+      // A click elsewhere is the operator choosing where to be, so this one only closes.
       if (!(e.target as HTMLElement).closest(".filter-anchor")) setOpenMenu(null);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpenMenu(null);
+      if (e.key !== "Escape") return;
+      setOpenMenu(null);
+      menuTriggerRef.current?.focus();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -2094,24 +2119,23 @@ export function ReviewQueue({
               <button
                 type="button"
                 className={`add-filter ${openMenu === "add" ? "open" : ""}`}
-                aria-haspopup="menu"
                 aria-expanded={openMenu === "add"}
-                onClick={() => setOpenMenu((m) => (m === "add" ? null : "add"))}
+                aria-controls={openMenu === "add" ? `${menuIdBase}-add` : undefined}
+                onClick={(e) => openMenuFrom("add", e.currentTarget)}
               >
                 <PlusIcon />
                 Filter
               </button>
               {openMenu === "add" && (
-                <FilterMenu role="menu" label="Add a filter">
+                <FilterMenu id={`${menuIdBase}-add`} label="Add a filter">
                   {addableDimensions.map((d) => (
-                    <li key={d.id} role="none">
+                    <li key={d.id}>
                       <button
                         type="button"
-                        role="menuitem"
                         className="filter-mi"
                         onClick={() => {
                           setFilters((f) => d.set(f, d.options[0]!.value));
-                          setOpenMenu(null);
+                          closeMenu();
                         }}
                       >
                         <span className="filter-mi-ic" aria-hidden="true">
@@ -2209,9 +2233,9 @@ export function ReviewQueue({
                       type="button"
                       className="fchip-body"
                       title={`Filter: ${d.label}`}
-                      aria-haspopup="listbox"
                       aria-expanded={openMenu === d.id}
-                      onClick={() => setOpenMenu((m) => (m === d.id ? null : d.id))}
+                      aria-controls={openMenu === d.id ? `${menuIdBase}-${d.id}` : undefined}
+                      onClick={(e) => openMenuFrom(d.id, e.currentTarget)}
                     >
                       <span className="fchip-ic" aria-hidden="true">
                         {d.icon}
@@ -2232,17 +2256,19 @@ export function ReviewQueue({
                     </button>
                   </span>
                   {openMenu === d.id && (
-                    <FilterMenu role="listbox" label={d.label}>
+                    <FilterMenu id={`${menuIdBase}-${d.id}`} label={d.label}>
                       {d.options.map((o) => (
-                        <li key={o.value} role="none">
+                        <li key={o.value}>
                           <button
                             type="button"
-                            role="option"
-                            aria-selected={o.value === current}
+                            // Which one is in force, without `aria-selected`'s promise that this
+                            // is a listbox. `aria-current` is the app's existing way of saying
+                            // "this is the one you are on" (the section rail says `page`).
+                            aria-current={o.value === current ? "true" : undefined}
                             className={`filter-mi ${o.value === current ? "sel" : ""}`}
                             onClick={() => {
                               setFilters((f) => d.set(f, o.value));
-                              setOpenMenu(null);
+                              closeMenu();
                             }}
                           >
                             <span className="filter-mi-label">{o.label}</span>

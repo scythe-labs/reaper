@@ -216,7 +216,11 @@ export function Fairness({
       type="button"
       className={`fair-stat fair-stat-btn${unmatchedSelected ? " selected" : ""}`}
       onClick={() => onOpenUnmatched?.()}
-      aria-expanded={unmatchedSelected ?? false}
+      // No `aria-expanded`: this opens NotInScanPanel, which App renders in a different subtree
+      // entirely, so the attribute promised a disclosure whose content sits nowhere near it and
+      // pointed at nothing. It is the same gesture as a review card opening the why panel, and
+      // those claim nothing either. What tells the operator it opened is the panel itself, which
+      // names itself and, on a phone where it covers the screen, takes focus (WhyShell).
     >
       <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>
       <span className="fair-stat-lbl">Not in the last scan</span>

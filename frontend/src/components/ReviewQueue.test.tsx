@@ -1324,7 +1324,7 @@ describe("the Spare length menu", () => {
     const user = userEvent.setup();
     const onSet = renderControls();
     await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
-    await user.click(screen.getByRole("menuitem", { name: /90 days/ }));
+    await user.click(screen.getByRole("button", { name: /90 days/ }));
     expect(onSet).toHaveBeenCalledWith("spare", 90);
   });
 
@@ -1332,7 +1332,7 @@ describe("the Spare length menu", () => {
     const user = userEvent.setup();
     const onSet = renderControls();
     await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
-    await user.click(screen.getByRole("menuitem", { name: /Forever/ }));
+    await user.click(screen.getByRole("button", { name: /Forever/ }));
     expect(onSet).toHaveBeenCalledWith("spare", 0);
   });
 
@@ -1340,12 +1340,16 @@ describe("the Spare length menu", () => {
     const user = userEvent.setup();
     const onSet = renderControls();
     await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
-    await user.click(screen.getByRole("menuitem", { name: /Custom length/ }));
+    await user.click(screen.getByRole("button", { name: /Custom length/ }));
     const box = screen.getByLabelText("Custom spare length in days");
     await user.clear(box);
     await user.type(box, "45");
     // Scope to the menu: the row's own split Spare button is also named "Spare".
-    await user.click(within(screen.getByRole("menu")).getByRole("button", { name: "Spare" }));
+    await user.click(
+      within(screen.getByRole("group", { name: "Spare this item for" })).getByRole("button", {
+        name: "Spare",
+      }),
+    );
     expect(onSet).toHaveBeenCalledWith("spare", 45);
   });
 });
@@ -1366,7 +1370,7 @@ describe("the unified filter bar", () => {
     // Add the Library filter. Its options come from the scan's vocabulary, so the menu entry
     // appears once that query resolves.
     await user.click(screen.getByRole("button", { name: "Filter" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Library" }));
+    await user.click(await screen.findByRole("button", { name: "Library" }));
 
     // The candidates query now carries the library, and the filter is a removable chip.
     await waitFor(() =>
@@ -1381,7 +1385,7 @@ describe("the unified filter bar", () => {
 
     // Clicking the chip opens its value picker; choosing another value re-filters in place.
     await user.click(screen.getByRole("button", { name: "Movies" }));
-    await user.click(await screen.findByRole("option", { name: "4K Movies" }));
+    await user.click(await screen.findByRole("button", { name: "4K Movies" }));
     await waitFor(() =>
       expect(apiMock.candidates).toHaveBeenCalledWith(
         "condemn",
@@ -1477,5 +1481,60 @@ describe("switching tabs", () => {
       (c) => c[0] === "protect" && (c[1] as { genre: string }).genre === "Example Genre",
     );
     expect(wrongPair).toEqual([]);
+  });
+});
+
+// Both filter popovers used to render `role="menu"`/`menuitem` and `role="listbox"`/`option`
+// while implementing neither contract: no arrow keys, no roving focus, no `aria-activedescendant`,
+// and every option its own Tab stop, which is not the listbox pattern at all. A listbox is
+// ANNOUNCED as an arrow-key widget, so the role told an operator to press keys that did nothing.
+describe("the filter popovers' keyboard contract", () => {
+  it("hands focus back to the trigger when Escape closes the ＋ Filter menu", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+
+    const trigger = screen.getByRole("button", { name: "Filter" });
+    await user.click(trigger);
+    expect(screen.getByRole("list", { name: "Add a filter" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("list", { name: "Add a filter" })).not.toBeInTheDocument();
+    // Without this the next Tab restarts at the top of the document, above the whole queue.
+    expect(trigger).toHaveFocus();
+  });
+
+  it("promises no ARIA menu or listbox contract, and says what it controls instead", async () => {
+    apiMock.vocabularyValues.mockImplementation((field: string) =>
+      Promise.resolve({ field, values: field === "library" ? ["Movies", "4K Movies"] : [] }),
+    );
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+
+    const trigger = screen.getByRole("button", { name: "Filter" });
+    expect(trigger).not.toHaveAttribute("aria-haspopup");
+    await user.click(trigger);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+    expect(trigger.getAttribute("aria-controls")).toBe(
+      screen.getByRole("list", { name: "Add a filter" }).id,
+    );
+
+    // The chip's value picker, the one that claimed to be a listbox.
+    await user.click(await screen.findByRole("button", { name: "Library" }));
+    const chip = screen.getByRole("button", { name: "Movies" });
+    expect(chip).not.toHaveAttribute("aria-haspopup");
+    await user.click(chip);
+    // Scoped to the popover: the toolbar's real `<select>`s expose native `option`s, which are
+    // correct and are a different population from the buttons this popover renders.
+    const picker = screen.getByRole("list", { name: "Library" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(within(picker).queryAllByRole("option")).toHaveLength(0);
+    // Which value is in force is still stated -- as `aria-current`, which promises no arrow keys.
+    expect(screen.getByRole("button", { name: "Movies", current: true })).toBeInTheDocument();
   });
 });
