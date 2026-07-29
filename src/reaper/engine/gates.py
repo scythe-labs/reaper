@@ -559,6 +559,42 @@ def lifetime_shortfall(reach: Observation[float], age: Observation[float]) -> st
     return history_shortfall(reach, float(age.value))
 
 
+def progress_is_establishable(*, reach_days: int, hold_days: int) -> bool:
+    """Whether the watch mirror reaches back far enough to answer "who is part-way through".
+
+    The guard holds a viewer whose last play of the show falls inside ``hold_days``. It can
+    only see plays the mirror holds, and the mirror begins at its horizon, ``reach_days``
+    back, so the answer is sound exactly when the mirror spans the whole hold window. Past
+    ``reach_days`` an invisible viewer and an expired one are the same viewer and losing
+    them costs nothing; *inside* it they are not, and the viewer simply has no rows.
+
+    That gap is what this predicate exists to name. :func:`active_progress` reads no rows as
+    "nobody is part-way through" -- a genuine ``Absent`` -- when the truth is "the mirror
+    cannot see far enough to know", which is ``Unknown`` (rule 93). It is careful in the
+    right way and cannot help: it keeps a viewer whose last-watched time is *unreadable*,
+    but this viewer is not unreadable, they are missing, and there is nobody to keep. So the
+    caller must ask this separately, and ``services.season_pruning.plan_series_prune`` holds
+    every season on disk when the answer is False.
+
+    It lives here beside :func:`history_shortfall` and :func:`lifetime_shortfall` because it is
+    the third member of one family -- a span the mirror is asked to cover, and what it means
+    when it cannot -- and because ``policy.inspect`` has to ask it to warn about this one
+    before a scan runs into it. An engine module may not import a service, and reimplementing
+    the two-line predicate at the second caller is exactly what rule 104 forbids.
+
+    ``hold_days <= 0`` means the hold never expires, and no finite mirror supports an
+    unbounded claim: a viewer whose every play predates the horizon is invisible at any
+    reach, and with no expiry to make that harmless, the set is never establishable.
+
+    ``in_progress_hold_days`` is not a bound on the mirror, it is the span the guard claims
+    to cover, so a mirror shallower than it is exactly the unsupported claim rule 140 exists
+    for. Pure: the reach is an argument, never measured here.
+    """
+    if hold_days <= 0:
+        return False
+    return reach_days >= hold_days
+
+
 @dataclass(frozen=True, slots=True)
 class ServerPopularityGate:
     """Keep what your users actually watch, regardless of who asked for it.

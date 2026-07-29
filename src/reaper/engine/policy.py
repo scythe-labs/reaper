@@ -44,7 +44,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from reaper.clock import humanize_window
 from reaper.engine.fields import BY_KEY, Condition, Lane, Op, ReachSpan
-from reaper.engine.gates import GateId, RatingRule, history_shortfall
+from reaper.engine.gates import (
+    GateId,
+    RatingRule,
+    history_shortfall,
+    progress_is_establishable,
+)
 from reaper.engine.observation import Known
 from reaper.engine.signals import MAX_SCORE, CustomSignalConfig, KeepConfig, SignalId
 from reaper.engine.verdict import decide_verdict
@@ -437,7 +442,7 @@ class PolicyBody(Frozen):
 
     This is a span the guard *claims to cover*, not a bound on the watch mirror, so setting
     it past how far the mirror reaches (``0`` included, which no finite mirror can cover)
-    makes the claim unsupportable: ``services.season_pruning.progress_is_establishable``
+    makes the claim unsupportable: ``gates.progress_is_establishable``
     then holds every season on disk rather than letting an unseeable viewer read as an
     absent one."""
 
@@ -1123,8 +1128,17 @@ def inspect(
     # missing id), which is why no surface was ever obliged to name a remedy for one. The
     # ones that do not are all the same family, a mirror shallower than the question, and the
     # other members are held on the season path: ``season_scan``'s lifetime-shortfall
-    # conflict and ``season_pruning.progress_is_establishable``. This is the member with a
-    # control the operator can turn, so the editor is where it has to be said.
+    # conflict and ``gates.progress_is_establishable``.
+    #
+    # This used to read "the member with a control the operator can turn, so the editor is
+    # where it has to be said", which quietly justified saying nothing about the other two.
+    # It was false of the mid-binge hold from the day that guard shipped:
+    # ``in_progress_hold_days`` is a control on this same editor, one card down, and a hold
+    # the mirror cannot span holds every season on disk (issue #154). That branch is at the
+    # foot of this function now. The lifetime-shortfall conflict is the one member with no
+    # control behind it -- it turns on each ITEM's age against the reach, and no setting the
+    # operator can reach moves either -- so it stays unwarned here, deliberately and not by
+    # omission (rules 7/24, 72).
     #
     # WHO blocks on this window, which is what makes "nothing will be flagged" true. This
     # detector claims it for the PROTECT lane only: a blocked protect ABSTAINs every item
@@ -1479,6 +1493,72 @@ def inspect(
                     f"A {window_days}-day watch window is very short: almost nothing gets "
                     "watched inside it, so the few-recent-watchers pressure applies to nearly "
                     "your whole library. A year is the usual setting."
+                ),
+            )
+        )
+
+    # The season path's member of the same family, one field down the same editor card, and
+    # the last of the four lanes a shallow mirror empties (rule 72, issue #154). The mid-binge
+    # guard holds a viewer whose last play falls inside ``in_progress_hold_days``; where the
+    # mirror does not span that hold, an invisible viewer and an expired one are the same
+    # viewer, so the set is UN-ESTABLISHABLE rather than empty and ``plan_series_prune`` holds
+    # every season on disk. Nothing is left for the scoring lane to judge, and until now the
+    # page said nothing at all: ``in_progress_hold_days`` appeared in this module only as a
+    # field declaration.
+    #
+    # The journey this closes is the one that reads as Reaper being broken. An operator on a
+    # short mirror gets the popularity-window warning, follows it, lowers the window to match
+    # their history, and clears it -- and the list is still empty, now with no warning on the
+    # page at all, because the one surface that ever named their history reach was the warning
+    # they just cleared.
+    #
+    # Guarded on ``progress_is_establishable`` rather than on a shortfall, because the two
+    # disagree at ``hold_days = 0``: that means "hold a place forever", which no finite mirror
+    # can support and the predicate answers False at any reach, while
+    # ``history_shortfall(reach, 0.0)`` sees a span of zero days, finds it covered, and returns
+    # None. So the predicate decides WHETHER to speak and the shortfall supplies the cause
+    # clause only, and the zero arm needs its own cause. Asking the predicate is also what
+    # keeps one derivation of "does the mirror span the hold" (rule 104); it moved to
+    # ``engine.gates`` beside its two siblings so this could ask it without an engine module
+    # importing a service.
+    if (
+        body.media_type == "tv"
+        and body.keep_in_progress
+        and history_reach_days is not None
+        and reach_clears_dormancy
+        and not progress_is_establishable(
+            reach_days=int(history_reach_days), hold_days=body.in_progress_hold_days
+        )
+    ):
+        if body.in_progress_hold_days <= 0:
+            # No number to compare a reach against, so no shortfall sentence exists to
+            # borrow. The editor's own help text under this control already says a 0 keeps
+            # every season; this is the same fact at the moment it is true (rule 144).
+            cause = (
+                "At 0 days a viewer's place is held forever, and no watch history reaches "
+                "back far enough to check that"
+            )
+            remedy = "Set a number of days, or turn this protection off."
+        else:
+            hold_short = history_shortfall(
+                Known(value=history_reach_days, source="tautulli"),
+                float(body.in_progress_hold_days),
+            )
+            # The hold is named BEFORE the cause clause, for the reason the window branch
+            # names its span first: the in-margin arm is "does not go back that far".
+            cause = (
+                "Reaper holds a viewer's place for "
+                f"{humanize_window(body.in_progress_hold_days)} after they last watched, and "
+                f"{hold_short}"
+            )
+            remedy = "Wait for it to build up, or lower this to match your history."
+        warnings.append(
+            PolicyWarning(
+                field="in_progress_hold_days",
+                severity="warn",
+                message=(
+                    f"No TV season will be flagged for removal. {cause}, so it can't tell "
+                    f"who is partway through a show and holds every season. {remedy}"
                 ),
             )
         )

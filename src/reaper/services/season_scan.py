@@ -79,7 +79,13 @@ from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
-from reaper.engine.gates import Facts, GateId, GateResult, lifetime_shortfall
+from reaper.engine.gates import (
+    Facts,
+    GateId,
+    GateResult,
+    lifetime_shortfall,
+    progress_is_establishable,
+)
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource, merge_by_source
 from reaper.services import library_index, lists, requested_by
@@ -90,7 +96,6 @@ from reaper.services.season_pruning import (
     SeriesPrunePlan,
     active_progress,
     plan_series_prune,
-    progress_is_establishable,
 )
 
 log = structlog.get_logger(__name__)

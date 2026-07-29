@@ -782,6 +782,12 @@ const ANCHORS = [
   { id: "gates", fields: ["gates.server_popularity.window_days"], prefix: "gates." },
   { id: "keep_rating_rules", fields: ["keep_rating_rules"], guard: "ratingGate" },
   { id: "keep_last", fields: ["keep_last_seasons", "keep_last_scope"], guard: "tv" },
+  // Its block sits inside the mid-binge row but OUTSIDE that row's `keep_in_progress`
+  // subtree, so `tv` is the only mount condition it has and the one guard here can name it.
+  // Nesting it under the switch as well would need two, which this type cannot express
+  // (#200) -- and would buy nothing: the server only sends this field while the protection
+  // is on, since a guard that is off is holding no seasons.
+  { id: "in_progress", fields: ["in_progress_hold_days"], guard: "tv" },
   { id: "signals", fields: ["signals"] },
   { id: "custom_condemn", fields: ["custom_condemn"] },
   { id: "keep_rules", fields: ["graded_keeps", "protect_conditions"] },
@@ -1731,6 +1737,9 @@ export function PolicyEditor({
                         min={0}
                         width="narrow"
                         ariaLabel="Days without watching before a held place is released"
+                        // One anchor, one field, one box: this is the control the warning's
+                        // remedy names, so it takes the whole list unfiltered (#174).
+                        describedBy={warningsDescribing("in_progress", warningsAt("in_progress"))}
                         onChange={(v) => update({ in_progress_hold_days: Math.max(0, v) })}
                       />
                       <span>without watching</span>
@@ -1759,6 +1768,9 @@ export function PolicyEditor({
                     </p>
                   </>
                 )}
+                {/* Outside the subtree above on purpose: one mount condition, so the anchor
+                    can declare it (rule 42). */}
+                <WarnBlock anchor="in_progress" warnings={warningsAt("in_progress")} />
               </li>
 
               <li className="rule-row">

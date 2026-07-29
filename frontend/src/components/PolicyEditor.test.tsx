@@ -769,11 +769,11 @@ describe("PolicyEditor warning anchors", () => {
     message: "anchor probe: the catch-all stack",
   };
 
-  it("declares the eight anchors these cases walk", () => {
+  it("declares the nine anchors these cases walk", () => {
     // Pinned because the walk is flag-shaped: an anchor deleted from the list takes its own
     // case away with it, and every assertion that remains still passes (rule 145). Move this
     // number in the same commit that adds or removes an anchor.
-    expect(WARNING_ANCHORS).toHaveLength(8);
+    expect(WARNING_ANCHORS).toHaveLength(9);
   });
 
   for (const anchor of WARNING_ANCHORS) {
@@ -805,6 +805,11 @@ describe("PolicyEditor warning anchors", () => {
   // rule editors -- where there is no single box to point at and binding every child would
   // read the whole card's complaints at each of them. Deliberately partial, and named here so
   // the boundary is a decision on the page rather than an omission (#174).
+  //
+  // `in_progress` joined the bound side rather than the list: it claims one field and its
+  // remedy ("lower this to match your history") names one box, so leaving it unbound would
+  // have added a sixth item to the backlog that comment describes rather than a considered
+  // boundary.
   // Keyed by FIELD, not by anchor: `keep_last` claims two, and each is fixed from a different
   // control. Bound to the anchor as a whole, the seasons box spoke the scope control's
   // complaint and the scope control said nothing.
@@ -820,6 +825,12 @@ describe("PolicyEditor warning anchors", () => {
     {
       anchor: "max_unmeasured_per_run",
       controls: { max_unmeasured_per_run: "Items with an unknown size" },
+    },
+    {
+      anchor: "in_progress",
+      controls: {
+        in_progress_hold_days: "Days without watching before a held place is released",
+      },
     },
   ];
 

@@ -28,6 +28,7 @@ from reaper.engine.gates import (
     GateId,
     ServerPopularityGate,
     history_shortfall,
+    progress_is_establishable,
 )
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import (
@@ -1901,3 +1902,127 @@ class TestTheCondemnLanesCoverage:
             )
         )
         assert self._condemn_warnings(on_the_rule)[0].field == "custom_condemn"
+
+
+class TestAHoldTheWatchHistoryCannotEstablish:
+    """The season path's member of the family, and the last of the four lanes (#154).
+
+    The mid-binge guard holds a viewer whose last play falls inside ``in_progress_hold_days``.
+    Where the mirror does not span that hold, an invisible viewer and an expired one are the
+    same viewer, so ``season_pruning`` calls the set un-establishable rather than empty and
+    ``plan_series_prune`` holds every season on disk. The removal list is empty and nothing on
+    the page said why: ``in_progress_hold_days`` appeared in ``policy`` only as a declaration.
+
+    Rule 72's twin one field down the same editor card, and the journey is what makes it bite.
+    An operator on a short mirror gets the popularity-window warning, follows it, lowers the
+    window to match their history, and clears it -- leaving a page with no warnings and a list
+    that is still empty, because the warning they just cleared was the only surface that ever
+    named their history reach.
+    """
+
+    #: Under the shipped 1095-day floor every item is kept on age alone (dormancy is clamped to
+    #: the mirror), so the hold decides nothing and this family is correctly silent. 30 is the
+    #: issue's own journey: low enough that the reach clears it, so the hold is what binds.
+    DORMANCY = 30
+
+    def _tv(self, **overrides: object) -> PolicyBody:
+        base: dict[str, object] = {
+            "media_type": "tv",
+            "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
+        }
+        return _policy(**{**base, **overrides})
+
+    def _hold_warnings(self, body: PolicyBody, reach: float | None = 90.0) -> list[PolicyWarning]:
+        return [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=reach)
+            if w.field == "in_progress_hold_days"
+        ]
+
+    def test_a_hold_longer_than_the_history_is_flagged(self) -> None:
+        """The shipped 180-day hold against a 90-day mirror, which is the reported case."""
+        [flagged] = self._hold_warnings(self._tv(in_progress_hold_days=180))
+
+        assert flagged.severity == "warn"
+        assert flagged.message.startswith("No TV season will be flagged for removal.")
+        # The hold is named before the cause clause, so the in-margin arm's "that far" has a
+        # span to point at, and the remedy names the box the operator is looking at.
+        assert "6 months" in flagged.message
+        assert "lower this to match your history" in flagged.message
+
+    def test_the_journey_that_used_to_end_on_a_silent_page(self) -> None:
+        """The whole point of the issue: clearing the window warning must not clear this one.
+
+        Both warnings hold at the start. The operator follows the first, lowers the window to
+        their reach, and that one goes -- and this one stays, because the hold is a different
+        span and lowering the window did nothing to it. Before, the page went silent here
+        while the list stayed empty.
+        """
+        window_anchor = f"gates.{GateId.SERVER_POPULARITY.value}.window_days"
+
+        def fields_at(window: int) -> list[str]:
+            body = self._tv(
+                in_progress_hold_days=180,
+                gates=(
+                    GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),
+                    GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=window),
+                ),
+            )
+            return [w.field for w in inspect(body, ProfileSettings(), history_reach_days=90.0)]
+
+        assert fields_at(365) == [window_anchor, "in_progress_hold_days"]
+        assert fields_at(90) == ["in_progress_hold_days"]
+
+    def test_a_hold_of_zero_gets_its_own_cause(self) -> None:
+        """The measured trap, and why the predicate decides this rather than the shortfall.
+
+        ``0`` means "hold a place forever", which no finite mirror supports, so
+        ``progress_is_establishable`` answers False at any reach at all. ``history_shortfall``
+        disagrees: handed a span of zero days it finds the mirror covers it and returns None,
+        so a branch guarded on the shortfall would go silent on the one setting that can never
+        be established, and a message built from it would have had no cause clause to print.
+        """
+        assert progress_is_establishable(reach_days=10_000, hold_days=0) is False
+        assert history_shortfall(Known(value=10_000.0, source="tautulli"), 0.0) is None
+
+        [flagged] = self._hold_warnings(self._tv(in_progress_hold_days=0), reach=10_000.0)
+
+        assert "held forever" in flagged.message
+        assert "Set a number of days, or turn this protection off." in flagged.message
+
+    def test_a_history_that_spans_the_hold_is_silent(self) -> None:
+        """The guard can answer, so it is doing its job and there is nothing to say. 180 is the
+        exact boundary: establishable AT the hold, not one day under it."""
+        body = self._tv(in_progress_hold_days=180)
+
+        assert self._hold_warnings(body, reach=180.0) == []
+        assert self._hold_warnings(body, reach=800.0) == []
+        assert len(self._hold_warnings(body, reach=179.0)) == 1
+
+    def test_the_protection_being_off_silences_it(self) -> None:
+        """``season_pruning`` reads ``keep_in_progress and not progress_established``, so a
+        guard that is switched off is holding no seasons and there is no empty list to explain.
+        The control is not on the page either."""
+        assert (
+            self._hold_warnings(self._tv(in_progress_hold_days=180, keep_in_progress=False)) == []
+        )
+
+    def test_the_movies_policy_never_speaks(self) -> None:
+        """Movies have no seasons and ignore the field outright, so a warning here would name a
+        control the movie editor does not render."""
+        assert self._hold_warnings(_policy(in_progress_hold_days=0)) == []
+
+    def test_a_caller_that_cannot_read_the_mirror_stays_quiet(self) -> None:
+        assert self._hold_warnings(self._tv(in_progress_hold_days=180), reach=None) == []
+
+    def test_the_dormancy_floor_silences_it(self) -> None:
+        """The fourth lane takes the same guard as the other three, for the same reason: under
+        the floor every item is kept on age alone, dormancy being clamped to the mirror, so the
+        hold decides nothing and its remedy would move no verdict. Without this it would fire
+        on both shipped policies for every operator holding under three years of history."""
+        floored = self._tv(
+            in_progress_hold_days=180,
+            gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),),
+        )
+
+        assert self._hold_warnings(floored) == []

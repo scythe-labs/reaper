@@ -13,11 +13,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from reaper.clients.sonarr_stats import SeasonStats
+from reaper.engine.gates import progress_is_establishable
 from reaper.services.season_pruning import (
     _because,
     active_progress,
     plan_series_prune,
-    progress_is_establishable,
     sequential_protections,
 )
 

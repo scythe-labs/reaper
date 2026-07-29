@@ -337,36 +337,6 @@ def sequential_protections(
     return protected
 
 
-def progress_is_establishable(*, reach_days: int, hold_days: int) -> bool:
-    """Whether the watch mirror reaches back far enough to answer "who is part-way through".
-
-    The guard holds a viewer whose last play of the show falls inside ``hold_days``. It can
-    only see plays the mirror holds, and the mirror begins at its horizon, ``reach_days``
-    back, so the answer is sound exactly when the mirror spans the whole hold window. Past
-    ``reach_days`` an invisible viewer and an expired one are the same viewer and losing
-    them costs nothing; *inside* it they are not, and the viewer simply has no rows.
-
-    That gap is what this predicate exists to name. :func:`active_progress` reads no rows as
-    "nobody is part-way through" -- a genuine ``Absent`` -- when the truth is "the mirror
-    cannot see far enough to know", which is ``Unknown`` (rule 93). It is careful in the
-    right way and cannot help: it keeps a viewer whose last-watched time is *unreadable*,
-    but this viewer is not unreadable, they are missing, and there is nobody to keep. So the
-    caller must ask this separately, and :func:`plan_series_prune` holds every season on
-    disk when the answer is False.
-
-    ``hold_days <= 0`` means the hold never expires, and no finite mirror supports an
-    unbounded claim: a viewer whose every play predates the horizon is invisible at any
-    reach, and with no expiry to make that harmless, the set is never establishable.
-
-    ``in_progress_hold_days`` is not a bound on the mirror, it is the span the guard claims
-    to cover, so a mirror shallower than it is exactly the unsupported claim rule 140 exists
-    for. Pure: the reach is an argument, never measured here.
-    """
-    if hold_days <= 0:
-        return False
-    return reach_days >= hold_days
-
-
 def active_progress(
     progress_by_user: Mapping[str, Mapping[int, int | None]],
     last_watched_by_user: Mapping[str, datetime | None],
