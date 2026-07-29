@@ -660,6 +660,161 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
     )
 
 
+# Every handle on a READ's failure the shipped app binds, by the file that binds it.
+#
+# The sweep for branches that test a query's failure without asking whether the value is still in
+# hand has now run three times -- #140, then #166/#181, then the nine deferred into #190 -- and
+# every pass found sites the previous one missed, including one inside the very file being edited.
+# Nothing counted the population, so the next one was caught by the next human reviewer or not at
+# all (#197). This is that count.
+#
+# **What a handle is.** One `error` or `isError` a component can branch on, resolved to the hook
+# that produced it: `const { isError } = useQuery(…)`, `const { error: vocabError } = useQuery(…)`,
+# and `libraries.isError` where `libraries` came from a `useQuery`. A file with three components
+# each destructuring `isError` has three.
+#
+# **What is in the walk, and what is not.** Reads are in; a mutation's `error` is an action
+# failure, a different population with a different rule (rule 42's `.notice.notice-error`), and is
+# out. The two lists below are the whole of what the matcher will accept, and an initializer
+# spelled `use*` that is in neither FAILS the test rather than being guessed at either way -- a new
+# read hook silently landing in the mutation bucket is exactly how a site goes missing from a walk
+# that reads green (rules 145, 147).
+#
+# **Roughly half of these are deliberately undivided, and that is the point of counting rather than
+# banning.** Every safety indicator reads an unreadable state as *unknown* on purpose, which is
+# fail-closed and the opposite of the #190 fix: `App`'s two `useSafety` gates, `DeletionToggle`,
+# `ReapPlan` and `ReapConfirm`'s safety reads, both `usePlexTrash` call sites, `ReapBreakdown`'s
+# unknown-size allowance AND its ledger (which states delete counts, so a held one would be a stale
+# number shown as current), `queueSettings`' allowance, and `PolicyEditor`'s simulator column,
+# which argues the same thing in as many words. A ban would have to exempt all of them; a count
+# does not care which way a site resolved, only that nobody added one without deciding.
+_QUERY_FAILURE_HANDLES = {
+    "frontend/src/App.tsx": 9,
+    "frontend/src/components/DeletionToggle.tsx": 1,
+    "frontend/src/components/Fairness.tsx": 1,
+    "frontend/src/components/LogsPanel.tsx": 1,
+    "frontend/src/components/PlexPanel.tsx": 4,
+    "frontend/src/components/PolicyEditor.tsx": 4,
+    "frontend/src/components/PolicyRuleEditors.tsx": 2,
+    "frontend/src/components/ReapBreakdown.tsx": 2,
+    "frontend/src/components/ReapConfirm.tsx": 2,
+    "frontend/src/components/ReapPlan.tsx": 3,
+    "frontend/src/components/ReviewQueue.tsx": 3,
+    "frontend/src/components/ServiceModal.tsx": 4,
+    "frontend/src/components/Settings.tsx": 8,
+    "frontend/src/components/SetupWizard.tsx": 1,
+    "frontend/src/components/queueSettings.tsx": 1,
+}
+
+# The hooks that hand back a READ's failure. The last three wrap a ``useQuery`` in their own
+# module, so the branch that acts on the failure is written at the CALL site and only this list
+# reaches it.
+_READ_HOOKS = {
+    "useQuery",
+    "useInfiniteQuery",
+    "useSafety",
+    "usePlexTrash",
+    "useHoldsBackUnmeasured",
+}
+
+# The hooks whose failure is an action's, not a read's. Listed rather than assumed, so the walk
+# fails on a hook it has never seen instead of quietly filing it here.
+_ACTION_HOOKS = {"useMutation"}
+
+_OBJECT_BINDING = re.compile(r"const\s+(\w+)\s*=\s*(use[A-Z]\w*)\s*[(<]")
+_DESTRUCTURED_BINDING = re.compile(r"const\s*\{([^}]*)\}\s*=\s*(use[A-Z]\w*)\s*[(<]")
+
+
+def _shipped_frontend_source() -> list[Path]:
+    """The .ts and .tsx the app ships: no tests, no test harness, no ambient declarations."""
+    return [
+        p
+        for p in sorted(FRONTEND_SRC.rglob("*.ts*"))
+        if ".test." not in p.name
+        and "test" not in p.relative_to(FRONTEND_SRC).parts
+        and not p.name.endswith(".d.ts")
+    ]
+
+
+def _query_failure_handles() -> tuple[dict[str, int], set[str]]:
+    """Read-failure handles per file, and every ``use*`` hook name the walk met.
+
+    Both binding spellings the tree uses (rule 147): the whole result (``const libraries =
+    useQuery(…)``, counted once per ``.error`` / ``.isError`` the same file goes on to read) and
+    the destructure (``const { isError } = useSafety()``), including a rename (``error:
+    vocabError``). Comments come out first, since several of them quote these very expressions.
+
+    It does NOT resolve a handle passed into a function or through a prop -- ``NotInScanPanel``
+    takes a plain ``error`` boolean from its parent, and the parent's own handle is what is
+    counted. That is the right end to count from: the parent is where the query lives.
+    """
+    per_file: dict[str, int] = {}
+    hooks: set[str] = set()
+    for path in _shipped_frontend_source():
+        text = _without_comments(path.read_text(encoding="utf-8"))
+        name = str(path.relative_to(REPO))
+        found = 0
+        for match in _OBJECT_BINDING.finditer(text):
+            binding, hook = match.group(1), match.group(2)
+            reads = [
+                a
+                for a in ("isError", "error")
+                if re.search(rf"\b{re.escape(binding)}\.{a}\b", text)
+            ]
+            if reads:
+                hooks.add(hook)
+                found += len(reads) if hook in _READ_HOOKS else 0
+        for match in _DESTRUCTURED_BINDING.finditer(text):
+            inner, hook = match.group(1), match.group(2)
+            for part in (p.strip() for p in inner.split(",")):
+                if not part:
+                    continue
+                key = part.split(":", 1)[0].strip()
+                if key in ("error", "isError"):
+                    hooks.add(hook)
+                    found += 1 if hook in _READ_HOOKS else 0
+        if found:
+            per_file[name] = found
+    return per_file, hooks
+
+
+def test_every_query_failure_branch_is_counted() -> None:
+    """A branch on a failed read is a decision, so a new one cannot arrive without one (#197).
+
+    React Query keeps the last good value through a failed refetch and raises the failure beside
+    it, so ``isError`` alone answers "did a read fail", never "is there still something to show".
+    Half the sites in this tree want the first question (a safety indicator reading unknown, which
+    is fail-closed) and half want the second (a panel keeping its content and saying it may be
+    stale). Both are correct; picking without noticing there is a choice is not, and three sweeps
+    running found sites the previous one missed.
+
+    **This pins the population, not the shape.** It cannot tell a divided branch from an undivided
+    one -- that would need the answer to a question only a human has -- so a file that swaps one
+    kind for the other reads green here. What it does is make a new branch, or a deleted one, land
+    as a failure with the classification comment above it in the message, where the previous gate
+    (a count of ``<Notice>`` call sites) was a different population entirely and agreed with
+    itself while disagreeing with the tree (rule 145).
+    """
+    per_file, hooks = _query_failure_handles()
+    unknown = sorted(hooks - _READ_HOOKS - _ACTION_HOOKS)
+    assert not unknown, (
+        "these hooks hand back an `error`/`isError` the walk has never seen, so it cannot say\n"
+        "whether they are reads or actions and will not guess:\n  " + "\n  ".join(unknown) + "\n"
+        "Add each to _READ_HOOKS (a read, whose failure leaves the last good value in hand) or\n"
+        "to _ACTION_HOOKS (a mutation, whose failure is an action's)."
+    )
+    assert per_file == _QUERY_FAILURE_HANDLES, (
+        "the query-failure population moved.\n"
+        f"expected: {_QUERY_FAILURE_HANDLES}\nfound:    {per_file}\n"
+        "A new one: decide which question it is asking before bumping the number here. If the\n"
+        "surface should KEEP its content through a failed refetch, test `error && !data` and pair\n"
+        "it with <StaleReadNotice what=... />, and pin both arms in a test: the never-loaded arm\n"
+        "is why the branch exists and a fix that only deletes `isError` breaks it. If it is a\n"
+        "safety indicator, reading unreadable as unknown is right and fail-closed; say so in a\n"
+        "comment beside it, the way the sites named above do."
+    )
+
+
 # Every sentence in the shipped app that says the word "reload", by the file that renders it.
 #
 # A reload discards whatever is typed, staged or selected, and there is no ``beforeunload``
