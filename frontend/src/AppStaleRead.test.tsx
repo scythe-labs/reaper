@@ -12,13 +12,14 @@
 // would pass a one-sided test while dropping a fresh install onto an empty Dashboard with no way
 // back to the wizard. The never-loaded case is the reason those arms were written.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthUser, CandidatePage, SetupStatus } from "./api";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN } from "./test/apiFixtures";
 import { testQueryClient } from "./test/queryClient";
+import { expectNoA11yViolations } from "./test/a11y";
 import { App } from "./App";
 
 // Rule 135: the mock answers everything the tree mounts, not only the gate under test. Rendering
@@ -169,6 +170,19 @@ function renderApp(): QueryClient {
 }
 
 describe("the setup gate through a failed refetch", () => {
+  // The only test that mounts the whole shell, so it is the only one that can answer for the
+  // landmarks: a screen reader user navigates a page by them, and a panel test cannot see them
+  // because they live above the panel. `pageLevel` turns the `region` rule back on here.
+  it("has no accessibility violations, landmarks included", async () => {
+    renderApp();
+    await screen.findByRole("navigation", { name: "Sections" });
+    // The audit is itself an await long enough for the shell's remaining reads to land, so it
+    // runs inside `act` or those arrivals are updates outside one (rule 136).
+    await act(async () => {
+      await expectNoA11yViolations(document.body, { pageLevel: true });
+    });
+  });
+
   it("keeps the Dashboard when a configured install's status read blinks", async () => {
     const queryClient = renderApp();
     expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();

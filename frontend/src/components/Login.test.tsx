@@ -7,6 +7,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { Login } from "./Login";
 
@@ -41,6 +42,18 @@ async function openSheet() {
 }
 
 describe("the local-account sheet", () => {
+  // This sheet is the only way into Reaper for an operator with no Plex account, and it is the
+  // first screen anyone meets. A username or password box a reader cannot name locks them out of
+  // the app with nothing to try.
+  // `pageLevel`, unlike the panel audits: the sign-in screen IS the whole page rather than a
+  // piece of one, so it has to answer for its own landmarks, and the signed-in shell's audit
+  // cannot answer for it. It had none at all until `auth-card` became a `main`.
+  it("has no accessibility violations", async () => {
+    await openSheet();
+    await screen.findByLabelText(/username/i);
+    await expectNoA11yViolations(document.body, { pageLevel: true });
+  });
+
   it("wraps Tab from the last control back to the first", async () => {
     const person = await openSheet();
     const username = screen.getByLabelText(/username/i);

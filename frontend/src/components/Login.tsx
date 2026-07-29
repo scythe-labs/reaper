@@ -299,7 +299,11 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
   };
 
   return (
-    <div className="auth-card">
+    // `main`, not a div: the sign-in screen is a whole page and had no landmark on it at all,
+    // so a screen reader user navigating by landmarks had nothing to jump to. Its twin below is
+    // the same fix (rule 72). Every rule for these two is written against the class, so this
+    // changes the accessibility tree and nothing on screen.
+    <main className="auth-card">
       <BrandBadge className="brand-badge" />
       <h1 className="brand-word">Recovery</h1>
       <p className="auth-tagline">Single-use admin access</p>
@@ -330,7 +334,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
           {busy ? "Redeeming…" : "Redeem recovery code"}
         </button>
       </form>
-    </div>
+    </main>
   );
 }
 
@@ -354,7 +358,7 @@ export function Login() {
       {onRecoverPath ? (
         <RecoveryCard onAuthed={onAuthed} />
       ) : (
-        <div className="auth-card">
+        <main className="auth-card">
           <BrandBadge className="brand-badge" />
           <h1 className="brand-word">Reaper</h1>
           <p className="auth-tagline">Explainable pruning for Plex</p>
@@ -374,7 +378,7 @@ export function Login() {
             Reaper can permanently delete media. Only the server’s owner is admitted. Authenticating
             with Plex is not enough.
           </p>
-        </div>
+        </main>
       )}
 
       <LocalSheet

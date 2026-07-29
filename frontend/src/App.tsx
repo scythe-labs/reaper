@@ -914,16 +914,26 @@ function Dashboard({ user }: { user: AuthUser }) {
         <UserMenu user={user} />
       </header>
 
-      <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
-      <ReapBar onView={(runId) => setReapSheetRun(runId)} />
-      {view === "review" && (
-        <ScanFreshness
-          snapshot={snapshot}
-          isPending={snapshotPending}
-          error={snapshotError}
-          onGoToJobs={() => goToSettingsPanel("jobs")}
-        />
-      )}
+      {/* These three speak for the whole app rather than for the view below, and they sat
+          between the header and `<main>`, which is to say inside no landmark at all. A screen
+          reader user moving by landmarks (the normal way to skim a page) reached the nav and
+          the main content and never these -- so "deletion is armed", a reap in flight, and a
+          stale scan were exactly the three facts that navigation could not reach. Naming the
+          section is what makes it a landmark; `.app` is plain block flow with no child or
+          sibling selectors, so the wrapper moves nothing on screen. Caught by the page-level
+          axe audit in `AppStaleRead.test.tsx`, which is the only test that mounts the shell. */}
+      <section className="app-status" aria-label="Status">
+        <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
+        <ReapBar onView={(runId) => setReapSheetRun(runId)} />
+        {view === "review" && (
+          <ScanFreshness
+            snapshot={snapshot}
+            isPending={snapshotPending}
+            error={snapshotError}
+            onGoToJobs={() => goToSettingsPanel("jobs")}
+          />
+        )}
+      </section>
 
       <main className={splitOpen ? "split" : ""}>
         {/* One boundary for every route: the queue below is already in this chunk, so only
