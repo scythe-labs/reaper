@@ -1091,3 +1091,85 @@ def test_the_select_name_matcher_rejects_what_it_claims_to_reject() -> None:
             _without_line_comments(f"<select\n  {comment}\n  value={{tz}}>").split()
         )
         assert not _select_is_named(stripped, ""), f"comment named the control: {comment}"
+
+
+# Test files that mount a tree and deliberately do not audit it, because what they render is not
+# an operator surface of its own. The first five are shared primitives, audited wherever they are
+# actually mounted -- auditing them alone would pin the same tree twice and, for a primitive that
+# needs a labelled parent, would report a defect the running app does not have. The rest drive
+# behavior (an announcement, a history entry, a focus move, a failed read) against whatever markup
+# is cheapest, so their trees are fixtures rather than screens.
+_A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
+    "components/ModalShell.test.tsx": "the shell every modal is audited through",
+    "components/Notice.test.tsx": "a primitive, audited in each panel that raises one",
+    "components/Poster.test.tsx": "a primitive, audited inside the queue rows",
+    "components/QuantityInput.test.tsx": "a primitive, audited inside the policy editor",
+    "components/StatusChip.test.tsx": "a primitive, audited inside the rows that carry it",
+    "announce.test.tsx": "live-region plumbing; the markup is a fixture",
+    "backnav.test.tsx": "history entries, not a screen",
+    "components/SettingsStaleRead.test.tsx": "a failed read's branch, audited in the panels",
+    "components/StaleReadSweep.test.tsx": "a failed read's branch, audited in the panels",
+    "focus.test.tsx": "focus moves, not a screen",
+}
+
+# The population the walk itself collects: every `*.test.tsx` under frontend/src that mounts
+# something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
+# that drops out of the walk is otherwise missing from both halves while the two numbers agree
+# (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
+_EXPECTED_RENDERING_TEST_FILES = 38
+
+
+def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
+    """A new panel must not ship unaudited just because nobody remembered (#231).
+
+    ``src/test/a11y.ts`` is the only layer that reads the tree the browser BUILT, so a name
+    assembled from props or a role that prunes its own children is visible to it and to nothing
+    else. Whether a surface carries one was a convention, and rule 147 is the standing answer
+    that prose cannot bind an author who never read it: a component could ship with a test that
+    mounts it, render a control with no accessible name, and leave every gate green.
+
+    So membership is total. Every rendering test file is audited, or named in one of the two maps
+    above, and a new one that is neither fails here with its own path in the message. The count of
+    the walk is pinned beside it, because a flag-shaped assertion cannot tell a member that
+    complies from one that dropped out of the walk (rule 145).
+    """
+    rendering: dict[str, int] = {}
+    for path in sorted(FRONTEND_SRC.rglob("*.test.tsx")):
+        body = path.read_text(encoding="utf-8")
+        if not re.search(r"\brender\(", body):
+            continue
+        rel = path.relative_to(FRONTEND_SRC).as_posix()
+        rendering[rel] = len(re.findall(r"\bexpectNoA11yViolations\(", body))
+
+    assert len(rendering) == _EXPECTED_RENDERING_TEST_FILES, (
+        f"expected {_EXPECTED_RENDERING_TEST_FILES} frontend test files that mount a tree, "
+        f"found {len(rendering)}.\nIf you ADDED or REMOVED one, bump "
+        "_EXPECTED_RENDERING_TEST_FILES. If you did not, a file dropped out of the walk and is "
+        "now missing from this gate AND from its own coverage."
+    )
+
+    named = _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN.keys()
+    unaccounted = sorted(f for f, audits in rendering.items() if not audits and f not in named)
+    assert not unaccounted, (
+        "these test files mount a tree, never audit it, and say nothing about why:\n"
+        + "\n".join(f"  {f}" for f in unaccounted)
+        + "\n\nAdd `await expectNoA11yViolations(container)` after the file's own arrival await "
+        "(a whole page takes `{ pageLevel: true }` so the region rule runs), or, if it renders "
+        "no operator surface of its own, add it to _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN with the "
+        "reason."
+    )
+
+    # The other direction: a map entry that has since gained an audit, or that names a file the
+    # walk no longer finds. Either way the map is now describing a tree that does not exist, and
+    # an exemption nobody can see the subject of is how a stale suppression outlives its reason.
+    settled = sorted(f for f in named if rendering.get(f))
+    assert not settled, (
+        "these files are exempted from the axe audit but now call it:\n"
+        + "\n".join(f"  {f}" for f in settled)
+        + "\n\nDrop them from _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN."
+    )
+    missing = sorted(f for f in named if f not in rendering)
+    assert not missing, (
+        "these files are named in an axe-audit map but no longer mount a tree:\n"
+        + "\n".join(f"  {f}" for f in missing)
+    )
