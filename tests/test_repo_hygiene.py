@@ -106,6 +106,102 @@ def test_rule_numbers_are_contiguous_and_unique() -> None:
     assert not gaps, f"rule numbers with no definition: {gaps}"
 
 
+def _rules_by_file() -> dict[str, set[int]]:
+    """Which rule numbers each ``.claude/rules/`` file actually defines."""
+    out: dict[str, set[int]] = {}
+    for path in INSTRUCTION_FILES:
+        if path.name == "CLAUDE.md":
+            continue
+        numbers: set[int] = set()
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = _RULE_DEF.match(line)
+            if match:
+                numbers.update(int(n) for n in re.findall(r"\d+", match.group(1)))
+        out[path.name] = numbers
+    return out
+
+
+def _expand(cell: str) -> set[int]:
+    """``1-6, 8, 22-23`` -> the set it names. Accepts hyphen or en dash."""
+    out: set[int] = set()
+    for part in cell.split(","):
+        bounds = re.findall(r"\d+", part)
+        if len(bounds) == 2:
+            out.update(range(int(bounds[0]), int(bounds[1]) + 1))
+        elif len(bounds) == 1:
+            out.add(int(bounds[0]))
+    return out
+
+
+def test_every_index_of_the_rules_matches_the_rules() -> None:
+    """Every restatement of "which rules live where" is checked against the files.
+
+    Rule 144: one fact about the app is normally written down in several places, and deriving
+    one of them does not make the rest safe. This is that fact for the rule corpus itself --
+    the count and the per-file ranges appear in CLAUDE.md's routing table, in each rule file's
+    own "Holds" line, and in the review skill. They drifted exactly as rule 144 predicts: the
+    skill claimed 133 blockers for 13 rules' worth of growth, in the same paragraph that tells
+    a reviewer not to restate the rules.
+
+    The failure message names every file to edit, because a test that only says "these
+    disagree" costs the next author the search that this test exists to spare them.
+    """
+    actual = _rules_by_file()
+    claude_md = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+    problems: list[str] = []
+
+    # 1. CLAUDE.md's routing table, one row per rule file.
+    row = re.compile(r"^\|\s*`\.claude/rules/([\w.-]+\.md)`\s*\|(.*)\|([^|]*)\|\s*$")
+    listed: set[str] = set()
+    for line in claude_md.splitlines():
+        match = row.match(line)
+        if not match:
+            continue
+        name, claimed = match.group(1), _expand(match.group(3))
+        listed.add(name)
+        if name not in actual:
+            problems.append(f"CLAUDE.md's table names {name}, which does not exist")
+        elif claimed != actual[name]:
+            problems.append(
+                f"CLAUDE.md's table row for {name} lists {sorted(claimed - actual[name])} "
+                f"it does not define and omits {sorted(actual[name] - claimed)}"
+            )
+    for name in sorted(set(actual) - listed):
+        problems.append(f".claude/rules/{name} exists but CLAUDE.md's table has no row for it")
+
+    # 2. Each rule file's own "Holds ..." line.
+    for path in INSTRUCTION_FILES:
+        if path.name == "CLAUDE.md":
+            continue
+        holds = re.search(r"Holds ([0-9,\u2013\-\s]+)\.", path.read_text(encoding="utf-8"))
+        if holds is None:
+            problems.append(f"{path.name} has no 'Holds ...' line naming the rules it carries")
+        elif _expand(holds.group(1)) != actual[path.name]:
+            problems.append(
+                f"{path.name}'s 'Holds' line disagrees with the rules it defines: "
+                f"claims {sorted(_expand(holds.group(1)) - actual[path.name])} extra, "
+                f"omits {sorted(actual[path.name] - _expand(holds.group(1)))}"
+            )
+
+    # 3. Any prose that states the total, anywhere an agent reads instructions.
+    total = len(_defined_rules())
+    counted = re.compile(r"(\d+)\s+(?:numbered\s+)?(?:blockers|rules)\b")
+    for path in [*INSTRUCTION_FILES, *sorted((REPO / ".claude" / "skills").rglob("*.md"))]:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in counted.finditer(line):
+                if int(match.group(1)) != total:
+                    rel = path.relative_to(REPO)
+                    problems.append(
+                        f"{rel}:{lineno} says {match.group(1)} rules; there are {total}"
+                    )
+
+    assert not problems, (
+        "the rule corpus and its indexes disagree:\n  "
+        + "\n  ".join(problems)
+        + f"\n\nThere are {total} rules. Fix every file named above, not just the first."
+    )
+
+
 def test_every_rule_citation_in_code_resolves() -> None:
     """A comment may only cite a rule that exists.
 

@@ -8,8 +8,8 @@ paths:
 
 # Test blockers
 
-Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the
-way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–137, 141, 145, 147.
+Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the way
+the existing suite does (`rule 88`, `rule 118`). Holds 37, 118, 119, 132, 133, 135–137, 141, 145, 147.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the
@@ -38,171 +38,91 @@ never rests on an environmental accident.**
 
 **132. Test infrastructure may not imply coverage that does not exist.** A fixture, helper, or
 `conftest.py` comment naming a function's poll loop reads as "this is covered" — so if that
-function has no test, either write one or stop naming it. This is rule 7/24's obligation
-applied to the suite itself: the fixture is the claim, the test is the citation.
+function has no test, either write one or stop naming it.
 
 **133. A test leaves no process-global state behind, and never rests on a clock production
 also samples.** Anything mutating process-global configuration (logging, env, registries)
-restores it, or the next xdist worker inherits it. An assertion that re-reads the wall clock
-production also reads passes every day except the one where it straddles a boundary: freeze
-the clock or assert a range, never sample twice and compare.
+restores it, or the next xdist worker inherits it. Re-reading the wall clock production also
+reads is rule 119's environmental accident on a timer: freeze the clock or assert a range,
+never sample twice and compare.
 
 **135. A module mock answers everything the tree under test reads, and a gap fails the run —
-because a warning cannot.** Replacing a module wholesale (`vi.mock("../api", () => ({ api:
-apiMock }))`) hands every consumer `undefined` for whatever the mock omits, including reads no
-test in the file names: a panel about scoring still mounts `useHoldsBackUnmeasured`, which
-fetches `["profile"]`. React Query answers a missing `queryFn` with an error state, so the tree
-renders its "we could not read it" fallback and the test passes against the fallback rather
-than the path it means to check — the review-queue and reap-plan suites were doing exactly that.
-`src/test/setup.ts` fails the test on it; `src/test/apiFixtures.ts` holds the payloads, chosen
-as the shipped defaults so adding one does not move what a passing test renders.
+because a warning cannot.** `vi.mock("../api", …)` hands every consumer `undefined` for what it
+omits, including reads no test in the file names; React Query renders that as a failed read, so
+the test passes against the fallback. `src/test/setup.ts` fails the run on it, and
+`src/test/apiFixtures.ts` holds the payloads as the shipped defaults, so adding one does not move
+what a passing test renders.
 
 **A mock gap hides from that gate when the read goes through an arrow.** The gate sees
-`queryFn: api.profile` handed `undefined`. It cannot see `queryFn: () => api.vocabularyValues(f)`,
+`queryFn: api.profile` handed `undefined`; it cannot see `queryFn: () => api.vocabularyValues(f)`,
 where the queryFn exists and throws inside — React Query files that as an ordinary rejection, the
-tree renders its failed-read branch, and nothing says a word. `SeasonList.test.tsx` was doing
-exactly this with the queue's genre and library filter values. When adding a module mock, read
-the tree's `queryFn`s, not just its hooks.
+tree renders its failed-read branch, and nothing says a word. So read the tree's `queryFn`s, not
+just its hooks.
 
-**136. A state update outside `act(...)` fails the run, with no exemption for the framework.**
-Such an update says the test asserted on a moment the component had already left: something it
-never awaited settled behind the assertions. There was briefly an exclusion here, for React
-Query's `setTimeout(0)` notification, on the reading that its timing belonged to the machine
-rather than the test — "a gate that reports the load average is worth less than no gate." That
-reading was wrong, and it is worth knowing why, because the shape recurs: **an exempted warning
-still printed**, so a green CI run carried an act warning nobody could act on, and the exemption
-turned a fixable defect into permanent noise. The tell was that it reproduced on the same single
-test five runs out of five. A race does not do that. Fail or say nothing; there is no third
-setting.
-
-Two causes were behind it, and each is a standing rule:
+**136. A state update outside `act(...)` fails the run, with no exemption for the framework**
+(`src/test/setup.ts`): the test asserted on a moment the component had already left.
 
 - **Test clients come from `testQueryClient()` (`src/test/queryClient.ts`), never `new
-  QueryClient`.** React Query's defaults retry failed reads and refetch on window focus, both
-  right in a browser and both async a test never asked for. `refetchOnWindowFocus` is the one
-  that bites: user-event's click fires real focus events, so a click on anything focusable
-  refetches every stale query and the result lands after the assertions, naming a component the
-  test never touched. All 31 hand-rolled clients had turned off `retry` and none had turned off
-  this.
-- **Import `userEvent` at the top of the file.** `await import("@testing-library/user-event")`
-  mid-test is a bare await outside `act`, and a fetch issued by `render()` lands in exactly that
-  gap. This was the last warning in the suite.
+  QueryClient`.** Its defaults retry and refetch on window focus; user-event's click fires real
+  focus events, so a click on anything focusable refetches every stale query, landing after the
+  assertions and naming a component the test never touched.
+- **Import `userEvent` at the top of the file.** A mid-test `await import(…)` is a bare await
+  outside `act` for a `render()` fetch to land in.
+- **Seed with `seedSettings()`** the settings a test does not vary: a mock alone answers a
+  microtask late, so a synchronous body asserts the pending panel. Never seed a key the test
+  *does* vary — seeded data is fresh, so a read it means to reject or stall is quietly answered.
+- **Measured and rejected:** `waitFor` around the assertions (returns on the first check),
+  seeding the query the test is ABOUT (its fetch is the point), a synchronous scheduler
+  (`notifyManager.setScheduler(cb => cb())`: more warnings, and the suite stops terminating).
+  Fix the async.
 
-Measured and rejected, so nobody spends the afternoon twice: wrapping the assertions in
-`waitFor` does NOT fix one of these — it returns on the first check, and an assertion that
-already passes never waits. Nor does seeding the query the test is ABOUT, whose fetch is the
-point. Nor does making the scheduler synchronous (`notifyManager.setScheduler(cb => cb())`),
-which is worse: more of these warnings, and the suite stops terminating. Fix the async.
-
-Seeding is a narrower lever: a tree reading settings the test does not vary gets them from
-`seedSettings()`, not a mock alone. A mocked read answers a microtask later, which for a
-synchronous test body is after every assertion it makes — it asserts the pending panel, not the
-one an operator sees. Never seed a key the test *does* vary: seeded data is fresh, so nothing
-fetches, and a suite that means to reject or stall that read would be quietly answered instead.
-
-**The second half is the general rule: a test may not report a problem as console output.**
-Vitest's console interception drops it entirely on some Node versions — on Node 26 a bare
-`console.error` inside a test prints nothing, while CI on Node 24 prints it — so 302 of these
-warnings accumulated behind a green suite, visible only in a log nobody reads. Anything a test
-needs to tell you must fail it. To read console output locally at all, run
-`npx vitest run <file> --disableConsoleIntercept`.
-
-`setup.ts` fails on three of these now, the third being **two siblings rendered with the same
-key**. It is the one where nothing on the page looks wrong: React 19 paints both children, so
-every assertion a test could make about them passes, and the only thing that ever said so was a
-console line. What is lost is the reconciliation guarantee rule 19 asks for — across a re-render
-React can no longer tell the two rows apart, and may keep the wrong one's state — which is
-exactly the class of defect no DOM assertion reaches. A test written to prove a key fix therefore
-could not discriminate before this gate existed, and would have read as a proof (rule 118).
+`setup.ts` fails a third thing, **two siblings sharing a key**: React 19 paints both, so no
+assertion catches it and rule 19's reconciliation guarantee is lost silently. Without the gate a
+test proving a key fix would read as a proof (rule 118). General form, in CLAUDE.md: a test with
+something to tell you must fail, never warn.
 
 **137. A test acts on a control only once the control can be acted on, because user-event
-reports "disabled" as success.** `selectOptions`, `upload` and `click` each return having
-dispatched nothing when the target is disabled — a bare `return` at the top of
-`utility/selectOptions.js`, no error, no warning — so a test that acts one turn early does
-*nothing at all* and then fails downstream, on the state its no-op never produced. That reads as
-a bug in the component.
-
-`PlexPanel`'s connection picker is the case that taught it: its options come from the fast, local
-status read, but the picker stays disabled until the slower plex.tv lookup answers, and both
-picker tests acted the instant the picker appeared. They passed only because the mocked lookup was
-an already-resolved promise. Put the answer one `setTimeout(0)` behind and both fail with "Unable
-to find an element with the text: Manual address" — exactly what CI printed, about one run in
-fourteen. The whole margin was a single event-loop turn, which a loaded machine hands out freely.
-
-So **wait for the control, not for the page**: `await waitFor(() => expect(control).toBeEnabled())`
-before acting, wherever a query's loading state disables it. Finding an element is not the same as
-the element being usable, and an `await findBy*` satisfied by markup a *different, faster* read
-rendered proves nothing about the one that enables it. A control whose label changes with the
-loading state ("Refresh"/"Refreshing…", "Scan library"/"Scanning…") gates itself and needs nothing
-extra; one whose accessible name holds still does not — a `<select>` is the usual shape, and
-`LogsPanel`'s level picker, disabled until its settings land, is the next one waiting.
-
-The same zero margin hides behind an awaited *action*: `await user.click(…)` resolves on the
-click, not on the read the click starts, so a synchronous query after it asserts on markup that
-has not arrived. `SeasonList`'s unknown-size test did exactly that, taking `getByRole("list")`
-straight after expanding a show.
-
-**Swept, so nobody need guess at the rest.** Hold every React Query notification back 200ms
-(`notifyManager.setScheduler((cb) => setTimeout(cb, 200))` in `src/test/setup.ts`) and make
-user-event throw instead of return at its three `isDisabled` short-circuits
-(`utility/selectOptions.js`, `utility/upload.js`, `system/pointer/mouse.js`), then run the suite:
-a test with no margin fails, and one acting on a disabled control says so. Those two were the
-only ones. Re-run it that way rather than reasoning about which awaits are load-bearing.
+reports "disabled" as success.** `click`, `selectOptions` and `upload` return having dispatched
+nothing when the target is disabled, with no error and no warning, so a test that acts one turn
+early does *nothing at all*, then fails downstream on a state its no-op never produced, reading as
+a component bug. So **wait for the control, not for the page**:
+`await waitFor(() => expect(control).toBeEnabled())` before acting, wherever a query's loading
+state disables it; an `await findBy*` satisfied by a faster read's markup proves nothing about the
+read that enables it. A control whose label changes with loading ("Refresh"/"Refreshing…") gates
+itself; one whose accessible name holds still does not, a `<select>` being the usual shape. Same
+zero margin behind an awaited *action*: `await user.click(…)` resolves on the click, not on the
+read it starts, so a synchronous query after it asserts on markup that has not arrived.
 
 **141. A fixture that pins the same value as the production default cannot prove the value was
-passed.** Where a function takes an argument that also has a default, a test supplying the
-default tests nothing about the wiring: an omitted argument and a correctly-passed one produce
-identical output, so the assertion passes either way. `backtest.run` scored every item against
-`score()`'s 365-day default instead of the operator's popularity window, and every backtest
-fixture in the suite pinned `window_days=365` — the same number — so 2,578 green tests could not
-see it. The bug was found by reading, not by running.
-
-So **choose fixture values that differ from the default, and sweep more than one.** A single
-non-default value proves the argument reaches the callee; a sweep proves the *right* one does,
-and catches a caller that passes a constant. Exclude the default from the sweep deliberately and
-say why, or it silently contributes a case that cannot fail.
-
-The same trap sits one level down, in how the assertion reads the value. Capturing it with
-`kwargs["name"]` makes an omission raise `KeyError`, which fails the test for the wrong reason:
-it pins *that an argument was passed*, not *which*. Read it with `.get` and assert on the value,
-so the failure names the span that was actually used. This is rule 118's "a test that cannot
-discriminate must never be left reading as a proof," applied to defaulted arguments rather than
-to interlock arms.
+passed.** An omission and a correct pass produce identical output, so the assertion holds either
+way: `backtest.run` used `score()`'s 365-day default while every fixture pinned that same 365,
+behind 2,578 green tests. So **choose fixture values that differ from the default, and sweep more
+than one.** One non-default value proves the argument reaches the callee; a sweep proves the
+*right* one does, and catches a caller passing a constant. Exclude the default from a sweep
+deliberately and say why, or it silently
+contributes a case that cannot fail. Read the captured value with `.get` and assert on the value,
+never `kwargs["name"]`: an omission there raises `KeyError`, failing for the wrong reason and
+pinning *that* an argument was passed rather than *which* (rule 118, for defaulted arguments).
 
 **145. A guard that SCANS the tree is proven against the population it claims to cover, not
-only against a mutation of one member it already found.** Rule 118's mutation test asks "does
-the assertion fire?" — break the thing, watch it go red. That is necessary and it is blind in
-one direction: it can only ever mutate a member the *matcher* already collected, so a member
-the matcher never saw is missing from both the guard and the proof, and the two failures hide
-each other perfectly. The `--no-proxy-headers` guard is the case. It was mutation-tested, went
-red on cue, and covered four of the five launches in the tree, because its regex wanted
-whitespace between `uvicorn` and `reaper.main:create_app` while an argv array spells that gap
-`", "` — so `.claude/launch.json`, the launch `CLAUDE.md` tells interactive sessions to use,
-was at once the one member it could not see and the only one still missing the flag. Its
-comment meanwhile promised that "a new invocation anywhere in the tree is covered the moment it
-is written." So **count what the scan collects and reconcile that number against the members
-you believe exist**, by hand, once — then **pin the count**, because the flag-shaped assertion
-cannot tell a member that complies from a member that dropped out of the walk, and reads green
-for both. A scanner also walks what no ignore file stops: `rglob` descends into gitignored
-agent worktrees, which are whole repo copies inside the repo root, so scope the walk to the
-checkout under test and match skips on the REPO-relative path, never on `path.parts` of the
-absolute one — the absolute form matches the worktree the suite is *running in* and silently
-empties the walk. Until that reconciliation is written down, a comment claiming tree-wide
-coverage is a guess wearing a test's clothes.
+only against a mutation of one member it already found.** A mutation test can only break a member
+the *matcher* already collected, so one it never saw is missing from both guard and proof: the
+`--no-proxy-headers` guard went red on cue while blind to the one launch site still missing the
+flag. So **count what the scan collects, reconcile that number by hand against the members you
+believe exist, then pin the count** — a flag-shaped assertion cannot tell a member that complies
+from one that dropped out of the walk. Scope the walk, too: `rglob`
+descends into gitignored agent worktrees, whole repo copies inside the repo root, so match skips
+on the REPO-relative path, never on `path.parts` of the absolute one, which matches the worktree
+the suite is *running in* and silently empties the walk.
 
 **147. A guard that scans SOURCE TEXT is bounded by the syntax it can parse, so it is proven
-against every FORM the tree spells the thing in, not only against every member it found.** Rule
-145 asks how many members the walk collected; this asks how many ways one member can be written.
-The hand-rolled-notice ban is the case. It matched `className=` followed immediately by a quote,
-which reads a literal and reads neither a ternary nor a template literal — both ordinary in this
-tree, 60 lines of it — so `ReapPlan`'s plan loader shipped mute past a green test, with a comment
-three lines above it describing the very defect it still had. **Its count could not catch that,
-because the count was of a different population than the ban:** it counted `<Notice>` call sites
-while the ban scanned `className` strings, so a site that was never converted is absent from both
-halves, and the two figures agree with each other while disagreeing with the tree. That is rule
-145 satisfied to the letter and defeated anyway. So **pin the count of the population the ban
-itself scans**, and before shipping a matcher, write down the spellings it accepts and run it
-against the ones it rejects — three `finditer` calls over the three forms cost a minute, and they
-are the whole difference between a ban and a ban-shaped comment. Prefer reading the whole
-attribute or call and then inspecting inside it, over anchoring on a delimiter that only one
-spelling puts there.
+against every FORM the tree spells the thing in, not only against every member the walk found.**
+The hand-rolled-notice ban matched `className=` followed immediately by a quote, reading a
+literal but neither a ternary nor a template literal — both ordinary here — so a plan loader
+shipped mute past a green test. Its count could not catch that: the count was of a different
+population than the ban — `<Notice>` call sites versus `className` strings — so a site never
+converted is absent from both halves, and the two figures agree while disagreeing with the tree.
+So **pin the count of the population the ban itself scans**, and before shipping a matcher write
+down the spellings it accepts and run it against the ones it rejects. Prefer reading the whole
+attribute or call and inspecting inside it, over anchoring on a delimiter that only one spelling
+puts there.

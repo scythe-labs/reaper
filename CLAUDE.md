@@ -20,17 +20,38 @@ to the scoped file that governs them and continue from 148.
 
 They live in `.claude/rules/`, scoped by `paths` frontmatter so each set loads when you read a
 file it governs — and since a file must be read before it can be edited, the rules for a file
-are always in context before you change it:
+are always in context before you change it. **The scoping is the budget**: a set that loads for
+work it does not govern is paid for on every unrelated session, so a cluster large enough to
+notice earns its own file.
 
 | File | Governs | Rules |
 | --- | --- | --- |
-| `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, auth, persistence | 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71, 73–78, 81–84, 87–117, 124–131, 140, 142–143 |
-| `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123, 138–139, 146 |
-| `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}`, `frontend/src/test/**` — test discipline | 37, 118–119, 132–133, 135–137, 141, 145, 147 |
+| `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, persistence | 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143 |
+| `.claude/rules/auth.md` | `src/reaper/auth/**`, `secrets.py`, `logbuffer.py`, `services/{backup,restore}.py`, `api/settings.py` — credentials, sessions, at-rest key material | 11, 12, 14, 74–76, 83, 84, 98–101, 125, 126, 130 |
+| `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, gating surfaces | 17–20, 36, 39–47, 51, 53, 54, 60–62, 66, 67, 69, 79, 80, 85, 86, 138, 139, 146 |
+| `.claude/rules/review-queue.md` | `ReviewQueue`, `OverrideControls`, `ShowPanel`, `SeasonList`, `reviewFate` — fate, overrides, the two-level spare | 48–50, 120–123 |
+| `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}`, `frontend/src/test/**` — test discipline | 37, 118, 119, 132, 133, 135–137, 141, 145, 147 |
 
 Eleven rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules
 overlap, the more specific one governs. Read the governing file before working in a tree you
 haven't touched this session.
+
+**This table, each file's own `Holds` line, and the count above are one fact written four
+times, so `test_every_index_of_the_rules_matches_the_rules` checks all of them against the
+files** and names every one that disagrees. It exists because they had already drifted: the
+review skill's count sat thirteen behind the corpus, in the very paragraph telling a reviewer
+not to restate the rules (rule 144).
+
+**A new rule earns its number, and most candidates do not.** The corpus grew 182 → 1,377 lines
+in thirteen days, and the largest single saving in it was deleting nothing: rules 127, 140, 142
+and 143 each described the same sweep at a different target, so five passes wrote five rules
+where four sentences under rule 72 say all of it. So before appending 148, in this order:
+**extend an existing rule** with your case as an instance if one covers the class — the numbers
+stay citable and the reader learns one pattern, not five; **write the gate instead** if the
+violation is greppable, because `test_repo_hygiene.py` catches an author who never read the
+rules and prose cannot; and only then **append**, to the scoped file that governs it, with the
+instruction first and the incident compressed to a clause. A rule that narrates the gate
+enforcing it is paying twice for one constraint.
 
 ## Golden rules
 
@@ -126,10 +147,15 @@ names a committed, runnable script (`frontend/scripts/gen-icons.mjs`,
 `scripts/policy_lab_extract.py`), and a drift test covers every generated artifact, not just
 one.
 
-**72. A hardening fix lands on every twin of the fixed function in the same change.** Before
-closing a fix to a copied pattern (paging loops, section resolution, error mapping), grep for
-the pattern's siblings and fix or explicitly defer each in writing. A "when next touched"
-deferral is honored the moment ANY commit touches the twin, not only when someone remembers.
+**72. A fix lands on every sibling of the thing you fixed, in the same change.** Grep for the
+siblings before closing, then fix or explicitly defer each *in writing*; a "when next touched"
+deferral is honored the moment ANY commit touches the sibling, not only when someone remembers.
+This rule is the general obligation, and on its own it covers a copied **function** (paging
+loops, section resolution, error mapping). Four backend rules say what "sibling" means for the
+other kinds of change: **127** an interlock whose docstring claims *every*, **140** a value you
+re-qualified, **142** a discriminator you typed, **143** a set whose membership you changed. The
+sweep is identical each time; only the thing being swept differs, which is why finding one of
+these usually means checking the other four.
 
 **134. A gate is judged by its exit code, never by the output you kept.** A pipeline exits with
 its LAST command's status, so `npm --prefix frontend run build | tail -4` reports `tail`'s
