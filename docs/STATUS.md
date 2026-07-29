@@ -133,16 +133,19 @@ Last verified against the code: 2026-07-26.
    still mounted with their text, which is the shape `Notice` had to abandon, and the middot
    sweep covered the standalone `.scales-dot` spans only — roughly fifty separators in running
    text still read out as "middle dot" between two facts, in sixteen files.
-   **The guard is the durable half.** Measured against the real pre-#132 tree,
-   `eslint-plugin-jsx-a11y` catches none of the filed bugs and costs 112 lockfile entries, an
-   `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not
-   installed. The gate is `test_repo_hygiene`'s ban on hand-rolled notices with the population
-   pinned, plus tests that reach controls by the name an operator can hear, plus a brace-aware
-   static scan pinning that all 19 shipped `<select>`s are named (**#180 closed**) — the third
-   layer, and the only one that covers a control no fixture mounts. `<select>` alone: an
-   `<input>` scan measured 94% false positives (17 of 18 unnamed ones sit inside a `<label>`),
-   and `<button>`'s defect class is an ambiguous-but-present name, which no scanner can see. No
-   new dependency.
+   **The guard is the durable half.** Re-measured, `eslint-plugin-jsx-a11y` still stays out: no
+   release since October 2024, a peer range capped at eslint 9 against the 10 in the lockfile,
+   116 lockfile entries, an `overrides` entry to survive `npm ci`, three audit advisories, and of
+   its 36 findings 15 are false because it cannot see through `<Switch>` to the `<input>` it
+   renders. **`axe-core` goes in instead**: one lockfile entry, no new advisory, dev-only and
+   absent from every bundle chunk. It reads the tree the browser built, so a name assembled from
+   props or a role that prunes its own children is visible to it and invisible to a source
+   scanner, which is where this project's a11y bugs actually lived. `src/test/a11y.ts` fails on
+   what it finds (rule 135); `a11y.test.tsx` proves it goes red naming the rule. It joins rather
+   than replaces the notice ban, the tests reaching controls by the name an operator can hear,
+   and the brace-aware scan pinning all 19 shipped `<select>`s named (**#180 closed**) — still the
+   only layer covering a control no fixture mounts, since an `<input>` scan measured 94% false
+   positives and `<button>`'s defect class is an ambiguous-but-present name no scanner sees.
 
 ## Decisions locked
 

@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
 import { testQueryClient } from "../test/queryClient";
+import { expectNoA11yViolations } from "../test/a11y";
 import { Announcer } from "../announce";
 import { ReapConfirm } from "./ReapConfirm";
 
@@ -115,6 +116,16 @@ beforeEach(() => {
 });
 
 describe("the execute gate", () => {
+  // This sheet is the last surface in front of the one route that deletes, so what a screen
+  // reader makes of it is a safety property: an operator who cannot hear why Reap is locked
+  // cannot tell a working gate from a broken button. axe reads the tree the browser built,
+  // so the phrase box and the trash warning are judged as rendered, not as written.
+  it("has no accessibility violations", async () => {
+    const { container } = renderSheet();
+    await screen.findByText(/Practice run passed/);
+    await expectNoA11yViolations(container);
+  });
+
   it("stays locked until the exact phrase is typed, then lights", async () => {
     const user = userEvent.setup();
     renderSheet();
