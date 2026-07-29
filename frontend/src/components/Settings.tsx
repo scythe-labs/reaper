@@ -1885,7 +1885,11 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
       : null;
   const flash = useJobFlash(runSync.isPending, syncResult);
 
-  const title = "Update Leaving Soon shelf";
+  // One declaration behind both the row heading and the button's spoken name, so they cannot
+  // drift apart (rule 144). The name has to carry the visible words "Update now" first, and
+  // `title` already opens with the verb, so pasting the two together says "Update" twice.
+  const shelf = "Leaving Soon shelf";
+  const title = `Update ${shelf}`;
   const desc =
     'Pushes the current countdown set to the Plex "Leaving Soon" shelf, so people get a heads-up before anything goes.';
 
@@ -1991,7 +1995,7 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
         <span className="slot-act">
           <button
             className="primary"
-            aria-label={running ? `Updating…, ${title}` : `Update now, ${title}`}
+            aria-label={running ? `Updating…, ${shelf}` : `Update now, ${shelf}`}
             onClick={() => runSync.mutate()}
             disabled={running}
           >

@@ -473,12 +473,14 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # notice that complies from one that dropped out of the walk, and reads green for both.
 #
 # 108, and it does not line up with the 109 hand-rolled sites this replaced -- the two figures
-# mean different things and are deliberately not derived from each other. The sweep landed 108:
-# the two draft-refusal notices were byte-identical twins in Settings and PolicyEditor, and both
-# now render through the single Notice inside ``SwitchConfirm`` (rule 18). Converting
-# ``ReapPlan``'s plan loader -- the one the sweep missed, because the ban could not parse a
-# ternary ``className`` -- took it to 109, and folding the rating card's hand copy of
-# ``WarnBlock`` back into the shared component took it down again.
+# mean different things and are deliberately not derived from each other. The 109 is a fact about
+# the past; this is a count of what is in the tree now, and several things moved it: the two
+# draft-refusal notices were byte-identical twins in Settings and PolicyEditor and now render
+# through the single Notice inside ``SwitchConfirm`` (rule 18); ``ReapPlan``'s plan loader was
+# missed by the sweep entirely, because the ban could not parse a ternary ``className``; and the
+# About, Jobs and Notifications panels each grew a second hand-rolled notice while this branch was
+# in flight, when their failed-read handling was split into a never-loaded case and a stale case.
+# Re-derive it by running the test, never by arithmetic on this comment.
 _EXPECTED_NOTICES = 108
 
 

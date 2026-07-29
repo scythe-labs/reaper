@@ -221,7 +221,7 @@ describe("the Leaving Soon row through a failed refetch", () => {
       last: null,
     });
     const queryClient = renderPanel("jobs");
-    expect(await screen.findByRole("button", { name: "Update now" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Update now/ })).toBeInTheDocument();
 
     // "Update now" invalidates exactly this key when it SUCCEEDS, so a blinked refetch here
     // follows a shelf update that worked -- and used to answer it by declaring the shelf unknown.
@@ -234,7 +234,7 @@ describe("the Leaving Soon row through a failed refetch", () => {
     expect(stale).toHaveClass("notice-warn");
     expect(screen.queryByText(NEVER_LOADED_SHELF)).toBeNull();
     // The row itself, with the action that just succeeded, is still on screen.
-    expect(screen.getByRole("button", { name: "Update now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Update now/ })).toBeEnabled();
     expect(screen.getByText("Runs after every scan")).toBeInTheDocument();
   });
 
