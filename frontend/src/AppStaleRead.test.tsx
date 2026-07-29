@@ -13,6 +13,7 @@
 // back to the wizard. The never-loaded case is the reason those arms were written.
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthUser, CandidatePage, SetupStatus } from "./api";
@@ -238,11 +239,36 @@ describe("the sign-in gate through a failed refetch", () => {
     const queryClient = renderApp();
     expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
 
-    // The normal signed-out answer. `setUnauthorizedHandler` writes `["me"] = null` rather than
-    // refetching (main.tsx), because answering a 401 with a request that 401s is a loop -- so a
-    // genuine session expiry arrives as DATA, not as an error, and the gate must still catch it.
-    // This is the case the deleted `isError ||` arm was mistaken for.
+    // A session that expired under an ordinary read. `setUnauthorizedHandler` writes
+    // `["me"] = null` rather than refetching (main.tsx), because answering a 401 with a request
+    // that 401s is a loop -- so that expiry arrives as DATA, not as an error, and the gate must
+    // still catch it. This is the case the deleted `isError ||` arm was mistaken for.
+    //
+    // It is every 401 EXCEPT one: `/api/auth/` is exempt from that handler, so this stands in for
+    // the reads that do write, and the sign-out below drives the path that does not.
     queryClient.setQueryData(["me"], null);
+
+    expect(await screen.findByText(/Sign in with Plex/)).toBeInTheDocument();
+    expect(dashboardNav()).toBeNull();
+  });
+
+  it("shows the login screen after a sign-out that worked", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
+
+    // The success path, not a failure: the session is gone server-side, so `/api/auth/me` 401s
+    // from here on. That path is exempt from the unauthorized handler (api.ts), so nothing writes
+    // `["me"] = null` for it -- a refetch simply errors while React Query still holds the user,
+    // and the gate reads a held user as signed in. Asking left the operator on their own
+    // dashboard until an unrelated poll happened to 401, so the sign-out writes the answer.
+    apiMock.logout.mockResolvedValue({ ok: true });
+    apiMock.me.mockRejectedValue(new Error("401"));
+
+    await user.click(screen.getByRole("button", { name: /owner/ }));
+    const out = screen.getByRole("button", { name: "Sign out" });
+    await waitFor(() => expect(out).toBeEnabled());
+    await user.click(out);
 
     expect(await screen.findByText(/Sign in with Plex/)).toBeInTheDocument();
     expect(dashboardNav()).toBeNull();

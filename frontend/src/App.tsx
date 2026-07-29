@@ -423,9 +423,16 @@ export function UserMenu({ user }: { user: AuthUser }) {
   // user still signed in and nothing to explain why.
   const signOut = useMutation({
     mutationFn: () => api.logout(),
-    // onSettled, not onSuccess: either way the gate must re-evaluate. On success /me now
-    // 401s and the login screen returns; on failure the refetch confirms we are still in.
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+    // A sign-out that WORKED is written, not asked about -- the same call `main.tsx` makes for
+    // every other 401, for the same reason. `/api/auth/me` is the one path exempt from the
+    // unauthorized handler (`noteAuthFailure`, api.ts), so refetching it here answers a dead
+    // session with a query ERROR while React Query still holds the last good user beside it, and
+    // the gate below reads that as still signed in. Asking left the operator on their own
+    // dashboard until an unrelated poll happened to 401.
+    onSuccess: () => queryClient.setQueryData(["me"], null),
+    // A failure is the opposite question, and the refetch is the right way to ask it: the session
+    // may well still be live, and the answer is whatever `/api/auth/me` says.
+    onError: () => void queryClient.invalidateQueries({ queryKey: ["me"] }),
   });
 
   // While the sign-out is running or has failed, the panel stays put. Disabling the focused
@@ -1033,12 +1040,18 @@ export function App() {
   // the message arrived, so it must outlive a route change, a Suspense fallback and a logout.
   //
   // `!user` alone, never `isError || !user` (#181). A read that never landed leaves `user`
-  // undefined and lands on Login by this same test, and a genuine 401 -- the normal signed-out
-  // answer -- is handled by writing `["me"] = null` (main.tsx), which lands here too. So the
+  // undefined and lands on Login by this same test, and a signed-out answer reaches the gate as
+  // DATA rather than as an error, because every 401 outside `/api/auth/` writes `["me"] = null`
+  // (`main.tsx`) and a sign-out that worked writes it directly (`signOut.onSuccess`). So the
   // `isError` arm only ever covered the TRANSIENT case: a refetch that failed while React Query
   // still held the signed-in user, answered by showing the login screen to somebody who is signed
-  // in. `signOut.onSettled` refetches this key, so a sign-out that failed on a flaky network
-  // signed the operator out of the UI anyway, which is the opposite of what that failure means.
+  // in. A sign-out that failed on a flaky network reached it and signed the operator out of the
+  // UI anyway, which is the opposite of what that failure means.
+  //
+  // What this test canNOT see is a 401 on `["me"]` itself: that path is exempt from the
+  // unauthorized handler, so it arrives as an error with the last good user still held. Every
+  // writer of this key therefore has to put the signed-out state IN, never refetch to discover
+  // it -- which is why the sign-out above writes rather than invalidates.
   return (
     <>
       <Announcer />
