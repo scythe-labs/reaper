@@ -35,8 +35,13 @@ after a save.
 
 **60. Interactive children of a keyboard-handling row stop Enter/Space propagation.** Any
 control nested inside a row or card with its own Enter/Space handler either stops propagation
-(the `SeasonStrip` guard is the model) or the container checks
-`e.target === e.currentTarget`. Adding a control to such a row without this is a blocker.
+or the container checks `e.target === e.currentTarget`. Adding a control to such a row without
+this is a blocker. **The better move is usually to have no such row**: the queue's cards were
+`role="button"` containers whose key handler cancelled every button inside them, and the three
+guards this rule was written for went away with the containers (#169). A card is now a plain
+element with a real control on its title (`components/CardOpen.tsx`), which needs no guard
+because there is nothing above the control to cancel it. Reach for this rule when a row must
+genuinely own a key, not as permission to build one.
 
 **79. A cache-invalidation helper claiming completeness is grep-verified against every query
 key, and a detail panel keyed on a row id is closed or re-resolved when its snapshot is
