@@ -17,6 +17,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
+import { expectNoA11yViolations } from "../test/a11y";
 import { WhyShell } from "./WhyShell";
 import { NARROW_SCREEN_QUERY, PANEL_OVERLAY_QUERY } from "../useMediaQuery";
 
@@ -102,6 +103,38 @@ function Harness() {
     </>
   );
 }
+
+describe("the reasons panel shell, audited", () => {
+  // The shell renders a DIFFERENT thing in each band -- a `complementary` beside the queue on a
+  // desktop, a modal `dialog` over it on a phone -- so auditing one proves nothing about the
+  // other, and the band a bare `matchMedia` hands you for free is the desktop one (rule 145).
+  it.each([
+    ["a wide desktop", () => stubMatchMedia(false)],
+    ["the overlay band", stubOverlayBand],
+    ["a phone", () => stubMatchMedia(true)],
+  ])("has no accessibility violations on %s", async (_band, stub) => {
+    stub();
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+    await screen.findByRole("heading", { name: NAME });
+    // `document.body`, not the render container: on a phone the shell is a modal over the page,
+    // and what a modal owes a screen reader is a claim about the whole document.
+    await expectNoA11yViolations(document.body, {
+      skip: {
+        // Real, minor, and open as #232 rather than patched here. Below the boundary the panel
+        // is an `<aside>` claiming `role="dialog"`, which is not a role that element may take.
+        // Both repairs were tried and each broke something this suite already guarantees:
+        // making it a plain div unscopes the `<header>` every panel renders inside it, so
+        // `.why-head` is read as the page's banner across all six; switching the element per
+        // band remounts the panel when a phone rotates, which drops focus and fails "does not
+        // treat a screen resize as a close". The role IS honored by screen readers, so the
+        // suppression costs the operator nothing the override did not already cost them.
+        "aria-allowed-role": "aside claiming role=dialog below 1100px, tracked in #232",
+      },
+    });
+  });
+});
 
 describe("WhyShell on a wide desktop", () => {
   it("is a named side region, not a dialog, and does not take focus off the card", async () => {

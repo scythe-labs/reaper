@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { FairnessReport, RequesterRow } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { Fairness, PersonCard } from "./Fairness";
 
@@ -180,6 +181,24 @@ describe("Fairness", () => {
     horizon_at: HORIZON,
     rows,
     ...over,
+  });
+
+  // The page an operator reads to decide whose files to delete, so it is audited with rows in it
+  // rather than in the loading state a bare mock hands you (rule 145). The failed read is driven
+  // too: it replaces the whole table with one paragraph, and rule 17/36 makes that branch as
+  // much a shipped surface as the table it stands in for.
+  it("has no accessibility violations once the requesters have landed", async () => {
+    apiMock.fairness.mockResolvedValue(report([row()]));
+    const { container } = renderWithClient(<Fairness />);
+    await screen.findByText(/marlow/);
+    await expectNoA11yViolations(container);
+  });
+
+  it("has none when the report could not be read", async () => {
+    apiMock.fairness.mockRejectedValue(new Error("unreachable"));
+    const { container } = renderWithClient(<Fairness />);
+    await screen.findByText(/Couldn't load Scales/i);
+    await expectNoA11yViolations(container);
   });
 
   it("says it is loading rather than rendering nothing", () => {

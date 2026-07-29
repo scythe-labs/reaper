@@ -11,6 +11,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN } from "./test/apiFixtures";
+import { expectNoA11yViolations } from "./test/a11y";
 import { testQueryClient } from "./test/queryClient";
 import {
   App,
@@ -478,10 +479,10 @@ describe("the authenticated app's heading outline", () => {
     apiMock.authContext.mockResolvedValue({ plex_configured: true, local_account: false });
   });
 
-  it("opens with an h1 naming the app", async () => {
-    // The whole authed shell, because the masthead is what is being asserted and it exists
-    // nowhere else. Every read the tree makes is answered, or rule 135's gate fails the run
-    // rather than letting a failed-read branch render as if it were the app.
+  /** The whole authed shell, because the masthead exists nowhere else. Every read the tree makes
+   *  is answered, or rule 135's gate fails the run rather than letting a failed-read branch
+   *  render as if it were the app. */
+  function mountTheShell() {
     apiMock.me.mockResolvedValue(user);
     apiMock.safety.mockResolvedValue(SAFETY);
     apiMock.setupStatus.mockResolvedValue({ complete: true, steps: [] });
@@ -499,12 +500,24 @@ describe("the authenticated app's heading outline", () => {
     apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
     apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
     apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: true, will_reap: 0, condemned_by: [] });
-    render(
+    return render(
       <QueryClientProvider client={testQueryClient()}>
         <App />
       </QueryClientProvider>,
     );
+  }
 
+  it("opens with an h1 naming the app", async () => {
+    mountTheShell();
     expect(await screen.findByRole("heading", { level: 1, name: "Reaper" })).toBeInTheDocument();
+  });
+
+  it("has no accessibility violations across the masthead, landmarks included", async () => {
+    // The section nav, the user menu and the status strip, which is the half of the shell no
+    // panel audit reaches. `pageLevel` because this IS the page: `region` only answers here and
+    // in the two sign-in screens, so the landmarks the shell owns are checked nowhere else.
+    mountTheShell();
+    await screen.findByRole("heading", { level: 1, name: "Reaper" });
+    await expectNoA11yViolations(document.body, { pageLevel: true });
   });
 });

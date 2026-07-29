@@ -8,6 +8,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { OverrideControls, OverrideMark } from "./OverrideControls";
 import { QueueSettingsContext, type QueueSettings } from "./queueSettings";
@@ -75,6 +76,32 @@ function DrawLive({ defaultSpareDays = 30, override = null }: DrawLiveProps) {
 type DrawLiveProps = { defaultSpareDays?: number; override?: "spare" | "reap" | null };
 
 const CARET = "Choose how long to keep it";
+
+describe("the control an operator decides with, audited", () => {
+  // Every resting state, because each draws different markup: an undecided pair, a lit Spare, and
+  // a Reap the engine cannot honor yet, which is the dashed-red held reap of rule 49. The state a
+  // bare `draw()` hands you for free is the undecided one (rule 145).
+  it.each([
+    ["undecided", null],
+    ["spared", "spare"],
+    ["reaped", "reap"],
+  ] as const)("has no accessibility violations when %s", async (_state, override) => {
+    const { container } = draw({ override }, 30);
+    await expectNoA11yViolations(container);
+  });
+
+  it("has none with the spare-length menu open, which is not in the render container", async () => {
+    // `document.body`, and that is the whole point of this case. The menu is the app's only
+    // `createPortal`, so it lands OUTSIDE the tree `render()` returns -- an audit scoped to
+    // `container` walks right past it and reports clean on a menu it never saw. It carries its
+    // own `role="group"` and its own Tab trap, which is exactly the markup worth auditing.
+    const user = userEvent.setup();
+    draw({}, 30);
+    await user.click(screen.getByRole("button", { name: CARET }));
+    await screen.findByRole("group", { name: "Spare this item for" });
+    await expectNoA11yViolations(document.body);
+  });
+});
 
 describe("the Spare button, undecided", () => {
   it("says what a press will do: ∞ and 'Spare' under a forever default", () => {

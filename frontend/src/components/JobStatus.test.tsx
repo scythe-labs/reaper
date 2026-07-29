@@ -7,11 +7,24 @@ import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Announcer } from "../announce";
+import { expectNoA11yViolations } from "../test/a11y";
 import { JobStatus, type JobFlash, useJobFlash } from "./JobStatus";
 
 const AT = "2026-07-24T03:30:00Z";
 
 describe("JobStatus resting states", () => {
+  // Both resting states, not just the happy one: the failed row is the one that adds a red dot
+  // and a reason, so it carries markup the succeeded row never renders (rule 145).
+  it("has no accessibility violations, whichever way the last run went", async () => {
+    for (const lastOk of [true, false]) {
+      const { container, unmount } = render(
+        <JobStatus running={false} runningLabel="" lastRunAt={AT} lastOk={lastOk} flash={null} />,
+      );
+      await expectNoA11yViolations(container);
+      unmount();
+    }
+  });
+
   it("shows a green dot and a last-run line for a job that succeeded", () => {
     const { container } = render(
       <JobStatus running={false} runningLabel="" lastRunAt={AT} lastOk={true} flash={null} />,
