@@ -828,13 +828,20 @@ function SeasonList({
   onSet,
   onClear,
   pending,
+  busyKey,
 }: {
   groupKey: string;
   selectedId: number | null;
   onOpen: (id: number) => void;
   onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
+  /** The whole show's wait: a list-wide write, or the show's own decision going out. Both cover
+   *  every season, so they still disable these rows. */
   pending: boolean;
+  /** The one row being written app-wide. A season writes its own `media_key`, so this is the
+   *  only way it can know the wait is its own (rule 72: `MovieCard` and the whole-show control
+   *  were already keyed, these rows were not). */
+  busyKey: string | null;
 }) {
   // One request per expanded show, and with "Expand seasons by default" on that is one per
   // drawn card -- unbounded as the render window grows, and fired all over again every time
@@ -954,7 +961,7 @@ function SeasonList({
                 override={season.override_own}
                 onSet={(d, sd) => onSet(season.media_key, d, sd)}
                 onClear={() => onClear(season.media_key)}
-                pending={pending}
+                pending={pending || busyKey === season.media_key}
                 hideReap={reapIsNoop(season)}
                 // Safe to pass the effective expiry beside `override_own`: a season with no
                 // decision of its own carries its SHOW's expiry here, but its button is not in
@@ -1098,6 +1105,7 @@ const ShowCard = memo(function ShowCard({
   onSet,
   onClear,
   pending,
+  busyKey,
 }: {
   group: Group;
   /** Whether the season list starts expanded, from the operator's General preference.
@@ -1113,6 +1121,10 @@ const ShowCard = memo(function ShowCard({
   onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
   pending: boolean;
+  /** The single row currently being written, app-wide, or null. This card's own controls read
+   *  `pending`; the season rows below need the key itself, because each writes its own
+   *  `media_key` and no boolean computed from the show's key can speak for them. */
+  busyKey: string | null;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   // The operator's "expand by default" preference may resolve a tick after this card first
@@ -1319,6 +1331,7 @@ const ShowCard = memo(function ShowCard({
           onSet={onSet}
           onClear={onClear}
           pending={pending}
+          busyKey={busyKey}
         />
       )}
     </article>
@@ -2404,6 +2417,11 @@ export function ReviewQueue({
                     onSet={onSet}
                     onClear={onClear}
                     pending={pendingFor(key)}
+                    // The season rows write their OWN keys, which this card's key can never
+                    // equal, so `pending` alone left them undimmed and pressable throughout
+                    // their own round trip. A scalar, not `pendingFor` itself: a fresh function
+                    // every render would defeat the memo on every card in the list.
+                    busyKey={busyKey}
                   />
                 ) : (
                   <MovieCard

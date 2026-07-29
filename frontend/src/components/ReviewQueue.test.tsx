@@ -1814,4 +1814,54 @@ describe("one row's write does not disable another row's controls", () => {
       await Promise.resolve();
     });
   });
+
+  // Scoping `pending` per row keyed it on the key each surface WRITES -- and the season rows
+  // inside a show card were handed the SHOW's boolean, which their own `media_key` can never
+  // equal. So the one row where a per-season keep-or-delete decision is made was the one row
+  // whose buttons stayed live through their own round trip, and a second press sent a second,
+  // contradicting decision (rule 72: `MovieCard` and the whole-show control were both keyed).
+  it("disables a season row's own controls while that season's write is in flight", async () => {
+    let settle: (v: unknown) => void = () => {};
+    apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:show:1",
+      title: "Example Show",
+      year: 2011,
+      poster_url: null,
+      summary: null,
+      size_bytes: 2 * 1024 ** 3,
+      unknown_size_seasons: 0,
+      reason: null,
+      library: null,
+      chip: null,
+      show_override: null,
+      show_spare_expires_at: null,
+      links: {},
+      show_status: null,
+      seasons: [season(1, "condemn"), season(2, "condemn")],
+    });
+    apiMock.override.mockImplementation(() => new Promise((r) => (settle = r)));
+    renderQueue();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "2 seasons" }));
+    const rows = within(await screen.findByRole("list")).getAllByRole("listitem");
+    const mine = within(rows[0]!).getByRole("button", { name: "Spare" });
+    const other = within(rows[1]!).getByRole("button", { name: "Spare" });
+    await user.click(mine);
+
+    // The acting row says it is acting, and cannot be asked a second time. `user-event` reports
+    // a click on a disabled control as success (rule 137), so the write count is what proves it.
+    expect(mine).toBeDisabled();
+    await user.click(mine);
+    expect(apiMock.override).toHaveBeenCalledTimes(1);
+    // The show's other season is not writing and stays pressable, which is the whole point of
+    // scoping the wait rather than restoring the old list-wide `pending`.
+    expect(other).toBeEnabled();
+
+    await act(async () => {
+      settle({});
+      await Promise.resolve();
+    });
+  });
 });

@@ -118,9 +118,11 @@ Last verified against the code: 2026-07-26.
    three rule lists and their Add composers, and both savebars. `OverrideControls` was the sharp
    one — `pending` was the OR of every in-flight override, so one row's spare disabled every
    row's buttons, and disabling the FOCUSED button is what made the `aria-pressed` flip (the
-   app's only confirmation that a spare worked) reach nobody. `pending` is now per row, and the
-   pressed button takes focus back when its own wait ends. **Still open in #173**: the backup
-   Restore, the Plex sign-in poll, the simulator and the Plex panel.
+   app's only confirmation that a spare worked) reach nobody. `pending` is now per row — keyed on
+   the key each surface WRITES, which for a season row is its own `media_key` and not its show's,
+   the one place the first pass got wrong — and the pressed button takes focus back when its own
+   wait ends. **Still open in #173**: the backup Restore, the Plex sign-in poll, the simulator and
+   the Plex panel.
    **The smaller gaps (#177, mostly landed)**: the authenticated app has an `h1` at last (every
    view opened at `h2`, so heading navigation had no root); the scan bar's and the simulator's
    progress fills carry `role="progressbar"`, which completes the sweep `ScanLine` started; the
