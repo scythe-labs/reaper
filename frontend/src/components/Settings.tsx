@@ -305,7 +305,18 @@ export function GeneralPanel({
       // The three neighbours above all announce; this one's entire success signal was the key
       // block unmounting and taking the pressed Confirm with it, which is an absence and cannot
       // be heard (#192's shape, missed in its sweep).
-      announce("API key removed. Nothing gets in on the header now.");
+      //
+      // It names the consequence, not the wire mechanism (#221). "Nothing gets in on the header
+      // now" was the one announcement here carrying a definite reference with no antecedent in
+      // its own sentence: "the header" resolved only against the help paragraph below, and an
+      // announcement is delivered through a live region, so it is HEARD ALONE and cannot borrow
+      // a referent from elsewhere on the page (rule 21). The wording is that paragraph's own
+      // phrase for what the key is for, so the two read alike (rule 144), and it follows the
+      // house pattern the Discord removal already sets a few hundred lines down: say what the
+      // operator loses, not what stops working on the wire.
+      announce(
+        "API key removed. Scripts and other apps can no longer use Reaper without signing in.",
+      );
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
   });
