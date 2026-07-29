@@ -75,7 +75,10 @@ const SCHEDULE: Schedule = {
 const NEVER_LOADED_ABOUT = /Couldn't load this page/;
 const NEVER_LOADED_JOBS = /Couldn't load the upkeep jobs/;
 const NEVER_LOADED_SHELF = /Couldn't load the shelf status/;
-// Anchored on the period, so it cannot be satisfied by the stale line's own "Reload to try again".
+// Anchored on the period: the two sentences open with the same eight words and only the
+// never-loaded one puts a full stop there, the stale line running on into "just now". It was
+// anchored to tell them apart while BOTH ended in "Reload to try again."; #153 took that clause
+// off the stale line, and the anchor is what still separates them.
 const NEVER_LOADED_DISCORD = /Couldn't check whether Discord is connected\. Reload/;
 
 // The shared sentence with any noun in it, for the negative assertions: no stale line at all.
@@ -95,7 +98,9 @@ const WHAT_HINT =
   "The stale line's noun is the `what` prop of StaleReadNotice.tsx, which owns the sentence. " +
   'Sibling call sites in Settings.tsx: AboutPanel ("these details"), JobsPanel ("these jobs"), ' +
   'LeavingSoonRow ("the shelf status"), NotificationsPanel ("whether Discord is connected"); ' +
-  "GeneralPanel, SecurityPanel, BackupPanel and PlexPanel.tsx take the default.";
+  'in PlexPanel.tsx: the library grid ("the library list") and the Leaving Soon group ("the ' +
+  'Leaving Soon settings"), pinned in PlexPanel.test.tsx. GeneralPanel, SecurityPanel, ' +
+  "BackupPanel and PlexPanel's own status read take the default.";
 
 // The scan row's schedule line, from the fixture's cron. It is rendered from the same held row
 // the upkeep rows below it use, so a blinked read must not blank it.

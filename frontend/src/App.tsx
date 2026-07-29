@@ -986,12 +986,21 @@ function Authed({ user }: { user: AuthUser }) {
     );
   }
 
-  // Treat an unreadable setup status as "setup still needed": if the status call errors we
-  // cannot prove the install is configured, and dropping a genuinely-fresh install onto an
-  // empty Dashboard (with no way back to the wizard) is the worse failure. The owner can
-  // still skip past it. Only a status we could read *and* that says complete lands on the
-  // Dashboard directly.
-  const needsSetup = isError || (setup !== undefined && !setup.complete);
+  // Treat an UNREAD setup status as "setup still needed": if the status call has never landed we
+  // cannot prove the install is configured, and dropping a genuinely-fresh install onto an empty
+  // Dashboard (with no way back to the wizard) is the worse failure. The owner can still skip
+  // past it.
+  //
+  // That argument stops applying the moment a status HAS landed, and the undivided `isError` it
+  // used to be went on applying it anyway. React Query keeps the last good value through a failed
+  // refetch and raises `isError` beside it, so a blinked read on a configured install rendered the
+  // setup wizard over the whole Dashboard -- the split #140 made in the settings panels, at the
+  // one gate that sits above everything (#181). Every trigger is an ordinary in-app action that
+  // invalidates `["setup"]`: linking or unlinking Plex, saving a service, saving general settings.
+  // The blast radius is why it is worth the divided test here: everything below unmounts,
+  // including Settings, whose unsaved-edits guard then never runs, because the unmount comes from
+  // above the panel holding the draft (rule 146).
+  const needsSetup = setup === undefined ? isError : !setup.complete;
   if (needsSetup && !skipped) {
     return (
       <Suspense fallback={<RouteLoading />}>
@@ -1010,11 +1019,7 @@ function Authed({ user }: { user: AuthUser }) {
 
 /** The gate. Nothing renders until we know who (if anyone) is signed in. */
 export function App() {
-  const {
-    data: user,
-    isLoading,
-    isError,
-  } = useQuery({
+  const { data: user, isLoading } = useQuery({
     queryKey: ["me"],
     queryFn: api.me,
     // A 401 is the normal logged-out state, not something to retry into a storm.
@@ -1026,6 +1031,14 @@ export function App() {
   // sibling of every branch instead of three copies of itself (rule 72). It has to sit above
   // the whole gate: a polite region only speaks reliably when it was already in the DOM before
   // the message arrived, so it must outlive a route change, a Suspense fallback and a logout.
+  //
+  // `!user` alone, never `isError || !user` (#181). A read that never landed leaves `user`
+  // undefined and lands on Login by this same test, and a genuine 401 -- the normal signed-out
+  // answer -- is handled by writing `["me"] = null` (main.tsx), which lands here too. So the
+  // `isError` arm only ever covered the TRANSIENT case: a refetch that failed while React Query
+  // still held the signed-in user, answered by showing the login screen to somebody who is signed
+  // in. `signOut.onSettled` refetches this key, so a sign-out that failed on a flaky network
+  // signed the operator out of the UI anyway, which is the opposite of what that failure means.
   return (
     <>
       <Announcer />
@@ -1036,7 +1049,7 @@ export function App() {
           <span className="spinner spinner-lg" aria-hidden="true" />
           <span className="sr-only">Loading Reaper…</span>
         </div>
-      ) : isError || !user ? (
+      ) : !user ? (
         <Login />
       ) : (
         <Authed user={user} />

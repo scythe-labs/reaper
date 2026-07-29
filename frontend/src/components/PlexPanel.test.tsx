@@ -562,3 +562,102 @@ describe("the certificate check", () => {
     expect(within(row as HTMLElement).getByRole("switch")).toBe(toggle);
   });
 });
+
+// The two groups below the connection form, driven through a failed refetch (#166).
+//
+// The panel's own status read got this split in #140; these two did not, so an undivided
+// `isError` traded the whole library grid, and separately both Leaving Soon switches, for one
+// error paragraph while React Query still held the last good answer. Every trigger is a success
+// path: `invalidateAllPlex` fires after a link, an unlink and a server switch, and returning to
+// the section past `staleTime` refetches on its own. Each is pinned in both directions, because
+// a fix that only deleted the `isError` arm would leave a genuinely-unread group claiming to be
+// empty rather than unread.
+describe("the groups below the form, through a failed refetch", () => {
+  /** A cold mount whose queryClient the test keeps, so it can invalidate one key by hand. */
+  function renderWithClient() {
+    apiMock.plexResources.mockResolvedValue({
+      source: "plex.tv",
+      servers: [
+        { name: "Example server", machine_identifier: "machine-1", current: true, connections: [] },
+      ],
+    });
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PlexPanel />
+      </QueryClientProvider>,
+    );
+    return queryClient;
+  }
+
+  const NEVER_LOADED_LIBS = /Couldn't load the library list/;
+  const NEVER_LOADED_SHELF = /Couldn't load the Leaving Soon settings/;
+  const STALE_LIBS = /Couldn't check the library list just now/;
+  const STALE_SHELF = /Couldn't check the Leaving Soon settings just now/;
+  // Rule 144: the noun is the `what` prop of StaleReadNotice, which owns the sentence. Deleting
+  // either `what` here leaves the loose form below green, so each is asserted by its own noun.
+  const WHAT_HINT =
+    "The stale line's noun is the `what` prop of StaleReadNotice.tsx, which owns the sentence. " +
+    'Sibling call sites: PlexPanel\'s own status read (the default, "these settings"), the ' +
+    'library grid ("the library list"), the Leaving Soon group ("the Leaving Soon settings"); ' +
+    "AboutPanel, JobsPanel, LeavingSoonRow and NotificationsPanel in Settings.tsx.";
+
+  it("keeps the library grid and its switches when the refetch fails", async () => {
+    const queryClient = renderWithClient();
+    const toggle = await screen.findByRole("switch", { name: "Let Reaper touch Movies" });
+
+    apiMock.plexLibraries.mockRejectedValue(new Error("boom"));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
+    });
+    await waitFor(() => expect(apiMock.plexLibraries).toHaveBeenCalledTimes(2));
+
+    const stale = await screen.findByText(STALE_LIBS);
+    expect(stale, WHAT_HINT).toHaveTextContent(STALE_LIBS);
+    expect(stale).toHaveClass("notice-warn");
+    // The claim that matters: the grid the sentence talks over is still drawn, and the switch is
+    // still operable. A library an operator cannot see is one they cannot turn off.
+    expect(screen.queryByText(NEVER_LOADED_LIBS)).toBeNull();
+    expect(screen.getByRole("switch", { name: "Let Reaper touch Movies" })).toBe(toggle);
+    expect(toggle).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Refresh libraries" })).toBeEnabled();
+  });
+
+  it("still says the library list never loaded when the first read is the one that fails", async () => {
+    apiMock.plexLibraries.mockRejectedValue(new Error("boom"));
+    renderWithClient();
+
+    expect(await screen.findByText(NEVER_LOADED_LIBS)).toBeInTheDocument();
+    // Nothing was ever held, so there is no grid for the stale line to be about.
+    expect(screen.queryByText(STALE_LIBS)).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Let Reaper touch Movies" })).toBeNull();
+  });
+
+  it("keeps both Leaving Soon switches when the refetch fails", async () => {
+    const queryClient = renderWithClient();
+    const shelf = await screen.findByRole("switch", { name: 'Show "Leaving Soon" in Plex' });
+
+    apiMock.leavingSoonSettings.mockRejectedValue(new Error("boom"));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] });
+    });
+    await waitFor(() => expect(apiMock.leavingSoonSettings).toHaveBeenCalledTimes(2));
+
+    const stale = await screen.findByText(STALE_SHELF);
+    expect(stale, WHAT_HINT).toHaveTextContent(STALE_SHELF);
+    expect(stale).toHaveClass("notice-warn");
+    expect(screen.queryByText(NEVER_LOADED_SHELF)).toBeNull();
+    // Including the one that decides whether Reaper writes to Plex before deletion is armed.
+    expect(screen.getByRole("switch", { name: 'Show "Leaving Soon" in Plex' })).toBe(shelf);
+    expect(screen.getByRole("switch", { name: "Update while read-only" })).toBeEnabled();
+  });
+
+  it("still says the shelf settings never loaded when the first read is the one that fails", async () => {
+    apiMock.leavingSoonSettings.mockRejectedValue(new Error("boom"));
+    renderWithClient();
+
+    expect(await screen.findByText(NEVER_LOADED_SHELF)).toBeInTheDocument();
+    expect(screen.queryByText(STALE_SHELF)).toBeNull();
+    expect(screen.queryByRole("switch", { name: 'Show "Leaving Soon" in Plex' })).toBeNull();
+  });
+});

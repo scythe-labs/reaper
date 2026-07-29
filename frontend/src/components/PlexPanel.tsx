@@ -773,12 +773,21 @@ export function PlexPanel({
             libraries you turn on. This doesn't change what gets scanned: scanning reads from Radarr
             and Sonarr.
           </p>
+          {/* Only when there is nothing to render, the same divided test the panel's own status
+              read settled on above (rule 72). An undivided `isError` traded the whole grid, every
+              per-library Switch and the Refresh button for one paragraph while React Query still
+              held the last good list, and `invalidateAllPlex` fires this on the success path of a
+              link, an unlink and a server switch (#166). The list is a read, not a draft, so what
+              is lost is smaller than the General panel's typed value -- but a switch the operator
+              cannot see is a library they cannot turn off, and the paragraph told them to reload,
+              which is not what a failed refetch asks for. */}
           {libraries.isPending || syncLibraries.isPending ? (
             <p className="muted">Loading libraries…</p>
-          ) : libraries.isError ? (
+          ) : libraries.isError && !libraries.data ? (
             <Notice tone="error">Couldn't load the library list. Reload to try again.</Notice>
           ) : (
             <>
+              {libraries.isError && <StaleReadNotice what="the library list" />}
               <div className="lib-head">
                 <span className="muted">
                   {count((libraries.data ?? []).length)}{" "}
@@ -826,55 +835,65 @@ export function PlexPanel({
             in Plex, so people get a heads-up before it goes: movies in your movie libraries,
             seasons in your TV libraries.
           </p>
+          {/* `!leavingSoon.data` alone: a read that never landed leaves it undefined and still
+              reaches the sentence below, so dropping the `isError ||` in front of it costs nothing
+              there and stops a failed REFETCH taking both switches off screen while the last good
+              answer is still held (#166, rule 72 with the library grid above). These two are the
+              shelf's on/off and its read-only override -- the switch that decides whether Reaper
+              writes to Plex before deletion is armed -- so blanking them hides a control the
+              operator came here to set. */}
           {leavingSoon.isPending ? (
             <p className="muted">Loading…</p>
-          ) : leavingSoon.isError || !leavingSoon.data ? (
+          ) : !leavingSoon.data ? (
             <Notice tone="error">
               Couldn't load the Leaving Soon settings. Reload to try again.
             </Notice>
           ) : (
-            <div className="set-rows">
-              {/* Both rows here carry a Switch and nothing else, so they release the control
+            <>
+              {leavingSoon.isError && <StaleReadNotice what="the Leaving Soon settings" />}
+              <div className="set-rows">
+                {/* Both rows here carry a Switch and nothing else, so they release the control
                   track (`.set-row-plain`). */}
-              <div className="set-row set-row-plain">
-                <span className="set-label">Show "Leaving Soon" in Plex</span>
-                <p className="help">
-                  Reaper keeps a Leaving Soon collection in each library you turned on above, and
-                  puts the matching label on everything in it. Items appear when they start counting
-                  down and drop off when they're spared or removed. Updates after every scan, or
-                  from the Jobs page.
-                </p>
-                <div className="set-control">
-                  <Switch
-                    checked={leavingSoon.data.enabled}
-                    disabled={saveLeavingSoon.isPending}
-                    ariaLabel='Show "Leaving Soon" in Plex'
-                    onChange={(enabled) => saveLeavingSoon.mutate({ enabled })}
-                  />
+                <div className="set-row set-row-plain">
+                  <span className="set-label">Show "Leaving Soon" in Plex</span>
+                  <p className="help">
+                    Reaper keeps a Leaving Soon collection in each library you turned on above, and
+                    puts the matching label on everything in it. Items appear when they start
+                    counting down and drop off when they're spared or removed. Updates after every
+                    scan, or from the Jobs page.
+                  </p>
+                  <div className="set-control">
+                    <Switch
+                      checked={leavingSoon.data.enabled}
+                      disabled={saveLeavingSoon.isPending}
+                      ariaLabel='Show "Leaving Soon" in Plex'
+                      onChange={(enabled) => saveLeavingSoon.mutate({ enabled })}
+                    />
+                  </div>
                 </div>
+                <div className="set-row set-row-plain">
+                  <span className="set-label">Update while read-only</span>
+                  <p className="help">
+                    Until deletion is on, Reaper writes nothing to Plex, including this shelf. Turn
+                    this on to let the warning appear while Reaper is still read-only. It can only
+                    manage the collection and label. It can never remove files.
+                  </p>
+                  <div className="set-control">
+                    <Switch
+                      checked={leavingSoon.data.allow_unarmed}
+                      disabled={saveLeavingSoon.isPending}
+                      ariaLabel="Update while read-only"
+                      onChange={(allow_unarmed) => saveLeavingSoon.mutate({ allow_unarmed })}
+                    />
+                  </div>
+                </div>
+                {lsStatus && (
+                  <div className="set-row set-status">
+                    <span>{lsStatus}</span>
+                  </div>
+                )}
               </div>
-              <div className="set-row set-row-plain">
-                <span className="set-label">Update while read-only</span>
-                <p className="help">
-                  Until deletion is on, Reaper writes nothing to Plex, including this shelf. Turn
-                  this on to let the warning appear while Reaper is still read-only. It can only
-                  manage the collection and label. It can never remove files.
-                </p>
-                <div className="set-control">
-                  <Switch
-                    checked={leavingSoon.data.allow_unarmed}
-                    disabled={saveLeavingSoon.isPending}
-                    ariaLabel="Update while read-only"
-                    onChange={(allow_unarmed) => saveLeavingSoon.mutate({ allow_unarmed })}
-                  />
-                </div>
-              </div>
-              {lsStatus && (
-                <div className="set-row set-status">
-                  <span>{lsStatus}</span>
-                </div>
-              )}
-            </div>
+            </>
           )}
           {saveLeavingSoon.error && <Notice tone="error">{saveLeavingSoon.error.message}</Notice>}
         </div>

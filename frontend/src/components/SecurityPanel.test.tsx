@@ -195,6 +195,12 @@ describe("what leaving this panel would lose", () => {
     const stale = await screen.findByText(/Couldn't check these settings just now/);
     expect(stale).toHaveClass("notice-warn");
     expect(dirty).toHaveBeenLastCalledWith(true);
+    // And it does NOT say to reload (#153). That line sat directly above these three boxes and
+    // named the one action that empties them: there is no `beforeunload` handler anywhere in
+    // `frontend/src`, so a reload took the typed password with no ask, from an operator doing what
+    // the page told them. The sentence lives in StaleReadNotice.tsx and is shared by seven panels,
+    // so this assertion moves with it (rule 144).
+    expect(stale).not.toHaveTextContent(/reload/i);
   });
 
   it("reports nothing when the first read never lands, because there is no form to lose", async () => {

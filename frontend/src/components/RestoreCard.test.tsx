@@ -245,10 +245,13 @@ describe("the backup panel's own read failing", () => {
     await waitFor(() => expect(apiMock.backupInfo.mock.calls.length).toBeGreaterThan(asked));
 
     expect(screen.queryByText(/Couldn't load this page/)).toBeNull();
-    expect(await screen.findByText(/Couldn't check these settings just now/)).toHaveClass(
-      "notice-warn",
-    );
+    const stale = await screen.findByText(/Couldn't check these settings just now/);
+    expect(stale).toHaveClass("notice-warn");
     expect(screen.getByLabelText(/admin password/i)).toHaveValue("a-password");
+    // And the line that replaced it does not repeat the advice (#153). It said "Reload to try
+    // again." above this staged archive and this typed password until then, which is the same
+    // orphaned-archive exit the comment above describes, reintroduced by the fix for it.
+    expect(stale).not.toHaveTextContent(/reload/i);
   });
 
   it("still says the page never loaded when the first read is the one that fails", async () => {

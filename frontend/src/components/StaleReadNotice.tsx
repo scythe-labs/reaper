@@ -23,11 +23,30 @@ import { Notice } from "./Notice";
  *  seventh, which is how a gap gets written down as future work and then reads as an assurance
  *  that the sweep is finished (rule 7/24). It is a count of what is wired today, not a promise.
  *
+ *  Panels, not surfaces: `PlexPanel` is one of the seven and carries this line at THREE places
+ *  (#166). Its status read took it in #140; its library grid and its Leaving Soon group were
+ *  still trading the whole grid, and both shelf switches, for an error paragraph over a list
+ *  React Query was still holding. A panel entering this set does not always do it once, so
+ *  finding one branch that tests a bare `isError` is a reason to read the rest of the file.
+ *
  *  Security is the one with a clock behind it: `useSafety` refetches every 15 seconds, so its
  *  form met this state without the operator doing anything at all. Backup is the one where the
  *  never-loaded sentence was actively harmful rather than merely wrong: it says to reload, and a
  *  reload does not run the restore card's unmount cleanup, so the staged archive is orphaned by
  *  an operator doing what the page told them.
+ *
+ *  **So this line does not say to reload, and offers no recovery step at all.** It said "Reload to
+ *  try again." for its whole life, which is the harm the paragraph above says was fixed by taking
+ *  the never-loaded sentence off Backup -- reintroduced by the line that replaced it, on more
+ *  panels than the original reached. It is the destructive advice precisely where there is
+ *  something to destroy: three typed password boxes on Security, a staged restore on Backup, a
+ *  pasted webhook on Notifications, a typed address on Plex and General. There is no
+ *  `beforeunload` handler anywhere in `frontend/src` (grep: zero), so a reload takes the draft
+ *  with no ask. Nothing honest was available to put in its place: `main.tsx` sets
+ *  `refetchOnWindowFocus: false` app-wide and only Security has an interval behind it, so a line
+ *  promising Reaper keeps trying would be false on six of the seven. A retry the operator can
+ *  press without losing the draft is the real answer and is not built; saying nothing beats
+ *  saying the one thing that costs them their work.
  *
  *  Three different reasons brought panels here, and they are worth keeping straight. The first
  *  four keep their surface to protect a DRAFT (rule 146). About and Jobs hold none, and keep
@@ -56,7 +75,7 @@ export function StaleReadNotice({
 }) {
   return (
     <Notice tone="warn" inline={inline}>
-      Couldn't check {what} just now, so what's below may be out of date. Reload to try again.
+      Couldn't check {what} just now, so what's below may be out of date.
     </Notice>
   );
 }
