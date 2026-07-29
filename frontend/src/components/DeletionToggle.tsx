@@ -92,7 +92,13 @@ export function DeletionToggle() {
   if (isError || !data) {
     return (
       <>
-        {toggle.isSuccess ? (
+        {/* Only a toggle that turned deletion OFF may claim read-only here. `isSuccess` alone
+            records that a toggle landed, not which way it went: after a successful ARM whose
+            follow-up read then failed, it painted the green "read-only" block over a host that
+            was armed -- the one always-visible surface saying the opposite of the truth, in the
+            reassuring direction (rule 144). `SafetyBanner` (App.tsx) already reads this state
+            correctly, and the two sit on screen together (rule 72). */}
+        {toggle.isSuccess && toggle.variables?.enabled === false ? (
           <div className="safety-state safe">
             <span className="banner-dot" aria-hidden="true" />
             <div>

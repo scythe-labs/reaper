@@ -155,4 +155,23 @@ describe("the arming password", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: /Turn on/i })).toHaveFocus());
   });
+
+  it("never claims read-only over a host it just armed", async () => {
+    // The arm lands, and the read that would confirm it fails -- a restarted server, a dropped
+    // session, or any later poll. `toggle.isSuccess` records only THAT a toggle succeeded, not
+    // which way it went, so the unknown branch painted its green "Reaper is read-only" over a
+    // host that is armed, while the live region a few nodes away said "Deletion is on."
+    const person = renderToggle();
+    await person.click(await screen.findByRole("button", { name: /Turn on/i }));
+    await person.type(screen.getByLabelText(/password/i), "a-password");
+    apiMock.safety.mockImplementation(() => Promise.reject(new Error("unreachable")));
+    await person.click(screen.getByRole("button", { name: /Confirm/i }));
+
+    // Unknown reads as unknown, in amber. The green claim is the one thing this state may
+    // never make, because it is the reassuring direction to be wrong in.
+    expect(await screen.findByText(/couldn't confirm whether deletion is on/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Reaper is read-only/i, { selector: "strong" }),
+    ).not.toBeInTheDocument();
+  });
 });
