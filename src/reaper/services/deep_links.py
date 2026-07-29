@@ -33,10 +33,20 @@ Route notes, verified against the apps' own web UIs:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from urllib.parse import quote, urlsplit
 
 from reaper.services.planner import MediaRef, PlanError
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateLink:
+    """One Plex row an abstain could not choose between, and the ways to open it."""
+
+    rating_key: int
+    plex: str | None = None
+    tautulli: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +64,10 @@ class DeepLinks:
     tmdb: str | None = None
     rotten_tomatoes: str | None = None
     trakt: str | None = None
+    match_candidates: tuple[CandidateLink, ...] = ()
+    """The rows an abstain was choosing between. ``plex``/``tautulli`` above are built
+    from the item's own rating key, which is null on exactly those items, so without
+    these the panel names a problem in Plex and offers no way to look at it."""
 
 
 def _base(url: str | None) -> str | None:
@@ -94,6 +108,7 @@ def build_links(
     imdb_id: str | None = None,
     media_type: str = "movie",
     title: str = "",
+    candidate_rating_keys: Sequence[int] = (),
 ) -> DeepLinks:
     """Assemble every link the coordinates allow. Pure; no I/O.
 
@@ -102,6 +117,11 @@ def build_links(
     multi-instance operator to the wrong app. ``media_type`` picks the movie-vs-tv
     route on Seerr and TMDb (a season row carries its show's ids, so both route to
     the show's page).
+
+    ``candidate_rating_keys`` are the Plex rows an abstain could not choose between. They
+    get the same two links the item's own key would have got, built through the same two
+    helpers, because an abstain is exactly the case where ``plex_rating_key`` is ``None``
+    and every link above it comes back empty.
     """
     try:
         ref = MediaRef.parse(media_key)
@@ -119,6 +139,17 @@ def build_links(
     tautulli_base = _base(tautulli_base_url)
     if tautulli_base and plex_rating_key is not None:
         tautulli = f"{tautulli_base}/info?rating_key={plex_rating_key}"
+
+    match_candidates = tuple(
+        CandidateLink(
+            rating_key=key,
+            plex=(
+                _plex_web_link(web, machine_identifier, key) if web and machine_identifier else None
+            ),
+            tautulli=f"{tautulli_base}/info?rating_key={key}" if tautulli_base else None,
+        )
+        for key in candidate_rating_keys
+    )
 
     tv = media_type != "movie"
 
@@ -158,5 +189,6 @@ def build_links(
         imdb=imdb,
         tmdb=tmdb,
         rotten_tomatoes=rotten_tomatoes,
+        match_candidates=match_candidates,
         trakt=trakt,
     )

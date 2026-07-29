@@ -41,6 +41,7 @@ from reaper.api import tags as api_tags
 from reaper.api.schemas import (
     AboutOut,
     CandidateDetail,
+    CandidateLinkOut,
     CandidateOut,
     ChipOut,
     ConditionIn,
@@ -673,7 +674,20 @@ def _contribution(entry: dict[str, Any]) -> float:
     return float(value) if isinstance(value, int | float) else 0.0
 
 
-def _primary_reason(exp: dict[str, Any] | None, verdict: str, score: int) -> str | None:
+def _managing_app(media_type: str) -> str:
+    """Which *arr manages this kind of item, for copy that names it.
+
+    Two stored media types, ``movie`` and ``season``, and Reaper only ever reaches a movie
+    through Radarr and a season through Sonarr, so this is total rather than a guess. Named
+    apps beat "the app that manages it" here because the operator has to go open one of
+    them to fix a disagreement, and the copy may as well say which.
+    """
+    return "Radarr" if media_type == "movie" else "Sonarr"
+
+
+def _primary_reason(
+    exp: dict[str, Any] | None, verdict: str, score: int, media_type: str = "movie"
+) -> str | None:
     """The single line the card shows: *why* Reaper judged this, not what it is about.
 
     A spared item leads with the protection that saved it; a reaped one with its strongest
@@ -713,6 +727,10 @@ def _primary_reason(exp: dict[str, Any] | None, verdict: str, score: int) -> str
         return "Kept to be safe: it couldn't be found in Plex."
     if status == "ambiguous":
         return "Kept to be safe: it looks like more than one thing in Plex."
+    if status == "conflicted":
+        app = _managing_app(media_type)
+        thing = "file" if media_type == "movie" else "show"
+        return f"Kept to be safe: Plex and {app} describe this {thing} differently."
     if status == MATCH_UNREADABLE:
         # The row records a match Reaper cannot read. That HOLDS a hand reap, so falling
         # through to the below-threshold line below stated the opposite of the decision in
@@ -848,7 +866,9 @@ def _kept_phrase(gate: str, detail: str) -> str:
     return "a protection applies"
 
 
-def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | None:
+def _chip(
+    exp: dict[str, Any] | None, verdict: str, score: int, media_type: str = "movie"
+) -> ChipOut | None:
     """The card's one short status chip -- Sanctuary and Limbo lanes only.
 
     Follows decide_verdict's own precedence (match trouble, then a deliberate
@@ -892,6 +912,13 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
             tone="quiet",
             text="Looks like two different things in Plex",
             why="it looks like two different things in Plex",
+        )
+    if status == "conflicted":
+        app = _managing_app(media_type)
+        return ChipOut(
+            tone="quiet",
+            text=f"Plex and {app} don't agree",
+            why=f"Plex and {app} don't agree about it",
         )
     if status == MATCH_UNREADABLE:
         return ChipOut(
@@ -1085,7 +1112,7 @@ def _candidate_out(
         video_resolution=r.video_resolution,
         library=r.library_title,
         dormant_for=_dormant_for(explanation),
-        reason=_primary_reason(explanation, r.verdict, r.score),
+        reason=_primary_reason(explanation, r.verdict, r.score, r.media_type),
         spared=override == "spare",
         override=override,
         override_own=override_own,
@@ -1100,7 +1127,7 @@ def _candidate_out(
         spare_expires_at=spare_exp.isoformat() if spare_exp is not None else None,
         spare_covers_until=_covers_until(r.media_key, override, decisions, expiries),
         show_spare_expires_at=show_spare_exp.isoformat() if show_spare_exp is not None else None,
-        chip=_chip(explanation, r.verdict, r.score),
+        chip=_chip(explanation, r.verdict, r.score, r.media_type),
         season_number=_season_number(r.media_key),
         group_seasons=group_seasons,
         show_status=r.show_status,
@@ -1159,6 +1186,10 @@ async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
         # A season row searches by its SHOW's title ("Example Show", not
         # "Example Show · Season 3") -- that is the page the rating describes.
         title=row.group_title or row.title,
+        # The rows an abstain could not choose between. Read through the one match thaw
+        # (rule 104) rather than a second copy of the same json.loads, so the links and the
+        # replay can never disagree about which rows the operator was shown.
+        candidate_rating_keys=_replayed_match(row).get("match_candidates", ()),
     )
     return LinksOut(
         plex=links.plex,
@@ -1170,6 +1201,10 @@ async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
         tmdb=links.tmdb,
         rotten_tomatoes=links.rotten_tomatoes,
         trakt=links.trakt,
+        match_candidates=[
+            CandidateLinkOut(rating_key=c.rating_key, plex=c.plex, tautulli=c.tautulli)
+            for c in links.match_candidates
+        ],
     )
 
 
@@ -1715,6 +1750,7 @@ def _replayed_match(row: Candidate) -> dict[str, Any]:
     if status is None and match.get("status") is not None:
         status = identity.MatchStatus.UNMATCHED
     merged = match.get("merged_rating_keys")
+    candidates = match.get("candidate_rating_keys")
     return {
         "match_status": status,
         "matched_by": _enum(identity.MatchedBy, match.get("by")),
@@ -1722,6 +1758,12 @@ def _replayed_match(row: Candidate) -> dict[str, Any]:
         "plex_rating_key": rk if isinstance(rk := match.get("rating_key"), int) else None,
         "merged_rating_keys": tuple(k for k in merged if isinstance(k, int))
         if isinstance(merged, list)
+        else (),
+        # Carried so a replay rebuilds the same match block the scan stored, rather than
+        # one whose links quietly went missing. Display only, so an unreadable value is
+        # simply empty -- there is no conservative direction for "which rows to offer".
+        "match_candidates": tuple(k for k in candidates if isinstance(k, int))
+        if isinstance(candidates, list)
         else (),
     }
 

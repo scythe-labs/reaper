@@ -117,14 +117,23 @@ class MatchStatus(enum.StrEnum):
     """Whether the item was confidently bound to a Plex row.
 
     The field the UI reads: on ``MATCHED`` it stays quiet (the panel just gets on with the
-    reasoning); on ``UNMATCHED`` / ``AMBIGUOUS`` it shows a plain "kept to be safe" notice,
-    and which of the two picks the wording ("we couldn't find this" vs "this looks like more
-    than one thing").
+    reasoning); on the other three it shows a plain "kept to be safe" notice, and which of
+    them picks the wording. All three keep the file; they differ only in what the operator
+    is told, and telling them the wrong one sends them to fix the wrong thing.
+
+    ``AMBIGUOUS`` and ``CONFLICTED`` are the pair that used to be one value. Ambiguous is
+    *multiplicity*: several Plex rows answer to this item and no corroborator narrowed them,
+    which is a library holding more than one copy. Conflicted is *disagreement*: each kind
+    of evidence found one plausible row and the kinds named different ones, which is Plex
+    and the app managing the file describing it differently, over a library that may well
+    hold exactly one copy. Reporting the second as the first is a false statement about the
+    operator's library and points them at a duplicate that is not there.
     """
 
     MATCHED = "matched"
     UNMATCHED = "unmatched"
     AMBIGUOUS = "ambiguous"
+    CONFLICTED = "conflicted"
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +637,17 @@ class Resolution:
     veto, the executor's played-since-approval interlock) must consult all of these keys,
     or a play made through the file's other listing would be invisible."""
 
+    candidate_rating_keys: tuple[int, ...] = ()
+    """The Plex rows this resolution was choosing between, when it refused to choose.
+
+    Set on ``AMBIGUOUS`` and ``CONFLICTED`` only, and only for display: nothing in the
+    verdict reads it, because the whole point of the abstain is that Reaper does not know
+    which of these the file is. The why-panel offers a Plex and a Tautulli link per key, so
+    an operator told "we could not tell which one this is" can open the rows in question and
+    fix the metadata, rather than reading a dead end. ``detail`` has always named these keys
+    inside a sentence; this is the same fact typed, since the sentence is jargon and rule 21
+    keeps it off the screen."""
+
     @classmethod
     def bound(
         cls, item: PlexItem, by: MatchedBy, detail: str, *, merged: tuple[int, ...] = ()
@@ -642,12 +662,36 @@ class Resolution:
         )
 
     @classmethod
-    def abstain(cls, detail: str) -> Resolution:
-        # Every abstain is "more than one possible match", i.e. AMBIGUOUS: a duplicate id
-        # the file name and size could not narrow, a duplicate basename, a cross-tier
-        # conflict, two id kinds naming different rows, or the folder and the exact size
-        # naming different copies.
-        return cls(rating_key=None, matched_by=None, detail=detail, status=MatchStatus.AMBIGUOUS)
+    def abstain(cls, detail: str, *, candidates: Iterable[int] = ()) -> Resolution:
+        """Several Plex rows answer to this item and nothing narrowed them: MULTIPLICITY.
+
+        A duplicate id the file name and size could not narrow, or a duplicate basename.
+        Use :meth:`conflicted` where the evidence *disagrees* instead -- the operator copy
+        keyed on these two says different things, and only one of them is true.
+        """
+        return cls(
+            rating_key=None,
+            matched_by=None,
+            detail=detail,
+            status=MatchStatus.AMBIGUOUS,
+            candidate_rating_keys=tuple(sorted(set(candidates))),
+        )
+
+    @classmethod
+    def conflicted(cls, detail: str, *, candidates: Iterable[int] = ()) -> Resolution:
+        """Each kind of evidence named a different row: DISAGREEMENT, not multiplicity.
+
+        Two id kinds naming different rows, or the id / file name / title tiers naming
+        different rows. Plex may well hold exactly one copy of this file; what is wrong is
+        that the apps describe it differently.
+        """
+        return cls(
+            rating_key=None,
+            matched_by=None,
+            detail=detail,
+            status=MatchStatus.CONFLICTED,
+            candidate_rating_keys=tuple(sorted(set(candidates))),
+        )
 
     @classmethod
     def unmatched(cls, detail: str = "No Plex item matched this title") -> Resolution:
@@ -1116,10 +1160,11 @@ def resolve(
             # confirms the bind.
             assert tier1_kind is not None
             if {tier1[0], *tier1[3]}.isdisjoint(hits):
-                return Resolution.abstain(
+                return Resolution.conflicted(
                     f"Kept: the {tier1_kind.upper()} id and the {kind.upper()} id "
                     f"{value} name different Plex items; the ids contradict each "
-                    "other, so neither is trusted"
+                    "other, so neither is trusted",
+                    candidates=(tier1[0], *tier1[3], *hits),
                 )
             continue
 
@@ -1152,7 +1197,8 @@ def resolve(
             if not narrowed:
                 return Resolution.abstain(
                     f"Kept: {kind.upper()} id {value} names {len(hits)} Plex items "
-                    f"(ambiguous), and {text}"
+                    f"(ambiguous), and {text}",
+                    candidates=hits,
                 )
             if len(narrowed) == 1:
                 tier1 = (
@@ -1191,7 +1237,8 @@ def resolve(
             tier2 = hits[0]
         elif len(hits) >= 2 and tier1 is None:
             return Resolution.abstain(
-                f"Kept: file name {basename!r} names {len(hits)} Plex items (ambiguous)"
+                f"Kept: file name {basename!r} names {len(hits)} Plex items (ambiguous)",
+                candidates=hits,
             )
 
     # -- Tier 3: title + year (the backstop) ---------------------------------
@@ -1215,7 +1262,9 @@ def resolve(
             parts.append(f"basename->{tier2}")
         if tier3 is not None:
             parts.append(f"title->{tier3}")
-        return Resolution.abstain("Kept: identifiers disagree (" + ", ".join(parts) + ")")
+        return Resolution.conflicted(
+            "Kept: identifiers disagree (" + ", ".join(parts) + ")", candidates=resolved
+        )
     if not resolved:
         return Resolution.unmatched()
 

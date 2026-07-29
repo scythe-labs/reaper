@@ -34,6 +34,7 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot
+from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import (
     ABSTAIN,
@@ -50,8 +51,14 @@ from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.main import create_app
-from reaper.services.condemned import reap_override_verdict_decoded
+from reaper.services.condemned import (
+    BAD_MATCH_STATES,
+    MATCH_UNREADABLE,
+    reap_override_verdict_decoded,
+)
 from reaper.services.season_pruning import PruneConflict
+from reaper.services.season_scan import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
+from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
 
 from ._auth import login
@@ -364,6 +371,38 @@ class TestChip:
         chip = _chip(_exp(50, match_status="ambiguous"), "abstain", 50)
         assert chip is not None
         assert (chip.tone, chip.text) == ("quiet", "Looks like two different things in Plex")
+
+    @pytest.mark.parametrize(
+        ("media_type", "app"), [("movie", "Radarr"), ("season", "Sonarr")], ids=["movie", "season"]
+    )
+    def test_a_conflicted_match_names_the_app_that_disagrees(
+        self, media_type: str, app: str
+    ) -> None:
+        """A disagreement is NOT a duplicate, and saying so sends the operator hunting for a
+        second copy that is not there. It gets its own chip, naming the app whose metadata
+        has to change -- which differs by media type, so both are pinned (rule 141: the
+        movie arm alone would pass on a hardcoded "Radarr")."""
+        chip = _chip(_exp(50, match_status="conflicted"), "abstain", 50, media_type)
+        assert chip is not None
+        assert (chip.tone, chip.text) == ("quiet", f"Plex and {app} don't agree")
+        assert chip.why == f"Plex and {app} don't agree about it"
+        # And it must not fall through to the multiplicity wording it used to share.
+        assert "more than one" not in chip.text
+        assert "two different things" not in chip.text
+
+    @pytest.mark.parametrize(
+        ("media_type", "expected"),
+        [
+            ("movie", "Kept to be safe: Plex and Radarr describe this file differently."),
+            ("season", "Kept to be safe: Plex and Sonarr describe this show differently."),
+        ],
+        ids=["movie", "season"],
+    )
+    def test_the_card_reason_for_a_conflicted_match(self, media_type: str, expected: str) -> None:
+        """The Reap-page line, swept with the chip (rule 72): both read the same status."""
+        assert _primary_reason(_exp(50, match_status="conflicted"), "abstain", 50, media_type) == (
+            expected
+        )
 
     def test_season_conflict_wants_eyes(self) -> None:
         """The keep-rule conflict is a deliberate left-for-you flag, not a plumbing
@@ -1179,3 +1218,66 @@ class TestGroupDetail:
         engine.dispose()
         with TestClient(create_app(settings)) as anonymous:
             assert anonymous.get("/api/groups/sonarr:5:42").status_code == 401
+
+
+class TestTheMatchStatusVocabulary:
+    """The status is produced in one place and read in six, across two trees.
+
+    Rule 144's shape: one fact about what happened to an item, written as a different
+    sentence on every surface that shows it. Adding ``CONFLICTED`` widened the gap rather
+    than closing it, because every ungenerated copy went on lumping it in with the wording
+    it was split off from. These pin the whole vocabulary instead of the member that
+    motivated the change.
+    """
+
+    def test_every_non_matched_status_holds_a_hand_reap(self) -> None:
+        """The one that fails OPEN if it drifts. ``BAD_MATCH_STATES`` was a hand-written
+        list of three, and a fourth status would have been reapable the moment it shipped:
+        Reaper refusing to say what a file is, while offering to delete it. Derived from
+        the enum now, so this asserts the derivation still covers the population."""
+        for status in identity.MatchStatus:
+            if status is identity.MatchStatus.MATCHED:
+                assert status.value not in BAD_MATCH_STATES
+            else:
+                assert status.value in BAD_MATCH_STATES, (
+                    f"{status.value!r} is a resolver outcome that is not a confident bind, so "
+                    "it must hold a hand reap. See condemned.BAD_MATCH_STATES."
+                )
+        assert MATCH_UNREADABLE in BAD_MATCH_STATES
+
+    @pytest.mark.parametrize(
+        "reasons",
+        [MOVIE_NO_KEY_REASONS, SEASON_NO_KEY_REASONS],
+        ids=["movie", "season"],
+    )
+    def test_every_status_has_its_own_no_key_reason(
+        self, reasons: dict[identity.MatchStatus | None, str]
+    ) -> None:
+        """Every non-matched status names its own cause, and no two share a string. A
+        missing entry falls back to the ``unmatched`` wording, which is a wrong DEFINITE
+        statement ("we couldn't find this in Plex") about an item Reaper did find."""
+        wanted = {s for s in identity.MatchStatus if s is not identity.MatchStatus.MATCHED}
+        assert set(reasons) == wanted
+        assert len(set(reasons.values())) == len(wanted), "two statuses share one reason"
+
+    def test_every_no_key_reason_has_operator_copy_in_the_panel(self) -> None:
+        """Rule 144, across the tree boundary. ``CAUSE_COPY`` turns each backend reason into
+        the sentence the owner reads; a key with no entry there renders the backend's raw
+        phrasing instead, which is how internal wording reaches the screen. The failure
+        message names the file to edit, because a comment asking the next author to remember
+        does nothing."""
+        panel = (
+            Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
+        ).read_text(encoding="utf-8")
+        cause_copy = panel.split("const CAUSE_COPY", 1)[1].split("};", 1)[0]
+        missing = [
+            reason
+            for reasons in (MOVIE_NO_KEY_REASONS, SEASON_NO_KEY_REASONS)
+            for reason in reasons.values()
+            if f'"{reason}"' not in cause_copy
+        ]
+        assert not missing, (
+            "these reasons reach the why-panel with no plain-language entry in CAUSE_COPY\n"
+            "(frontend/src/components/WhyPanel.tsx), so the box prints the raw backend\n"
+            "string at the owner:\n  " + "\n  ".join(missing)
+        )

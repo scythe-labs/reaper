@@ -32,6 +32,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.db.models import Candidate
+from reaper.engine.identity import MatchStatus
 from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
 from reaper.services import whitelist
 
@@ -40,10 +41,15 @@ from reaper.services import whitelist
 #: :func:`match_state` returns for a record it cannot read.
 MATCH_UNREADABLE = "unreadable"
 
-#: Match states that HOLD a hand reap. Unmatched and ambiguous are the two Plex reports
-#: meaning "we could not tie this to one thing"; unreadable is the same not-checked state
-#: arrived at differently, so it belongs with them.
-BAD_MATCH_STATES = frozenset({MATCH_UNREADABLE, "unmatched", "ambiguous"})
+#: Match states that HOLD a hand reap: every resolver outcome that is not a confident bind,
+#: plus :data:`MATCH_UNREADABLE`, which is the same "we could not tie this to one thing"
+#: arrived at differently. **Derived from the enum, never listed by hand** (rule 103): this
+#: set was written out once and a fourth status shipped later, which would have made every
+#: item carrying it reapable while the resolver was refusing to say what it was. Deriving it
+#: fails closed instead -- a new status holds a reap until someone deliberately excludes it.
+BAD_MATCH_STATES = frozenset(
+    {MATCH_UNREADABLE, *(s.value for s in MatchStatus if s is not MatchStatus.MATCHED)}
+)
 
 
 def match_state(explanation: Mapping[str, Any]) -> str | None:
@@ -57,10 +63,10 @@ def match_state(explanation: Mapping[str, Any]) -> str | None:
 
     Three answers, and the middle one is the whole point:
 
-    * a status Plex reported (``matched`` / ``unmatched`` / ``ambiguous``);
+    * a status the resolver recorded (:class:`~reaper.engine.identity.MatchStatus`);
     * :data:`MATCH_UNREADABLE`, when the block is THERE but is not an object. That is "we
-      cannot tell what this was tied to in Plex", the same not-checked state ``unmatched``
-      and ``ambiguous`` describe, and it holds a reap. Reading it as absent would be the
+      cannot tell what this was tied to in Plex", the same not-checked state every
+      non-matched status describes, and it holds a reap. Reading it as absent would be the
       inversion this codebase exists to avoid: evidence we could not read becoming
       evidence that nothing was wrong, which REMOVES a hold on a deletion (B-10, rule 96);
     * ``None``, when the block is genuinely absent (missing, or null). That stays

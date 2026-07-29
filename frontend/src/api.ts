@@ -265,10 +265,20 @@ export interface GateOutcome {
  *  shows a plain "kept to be safe" notice on the other two -- the only cases where the owner
  *  needs to know the file was kept because Reaper couldn't be sure what it was looking at. */
 export interface Match {
-  status: "matched" | "unmatched" | "ambiguous" | null;
+  /** `ambiguous` and `conflicted` are NOT interchangeable, and the panel must not treat
+   *  them as one: ambiguous is several Plex rows answering to this item (a library really
+   *  holding more than one copy), conflicted is each kind of evidence naming a DIFFERENT
+   *  single row (Plex and the *arr describing one file differently, over a library that may
+   *  hold exactly one copy). Saying the first when it is the second sends the owner hunting
+   *  for a duplicate that is not there. */
+  status: "matched" | "unmatched" | "ambiguous" | "conflicted" | null;
   /** For the audit log, not shown to the owner: "Bound by TMDB id 1001", etc. */
   detail: string | null;
   rating_key: number | null;
+  /** The Plex rows an abstain was choosing between, on `ambiguous` and `conflicted`. The
+   *  panel renders `links.match_candidates` rather than these numbers; they are here so a
+   *  reader can tell how many there were without following the links. */
+  candidate_rating_keys?: number[] | null;
 }
 
 /** A graded keep's contribution to the score -- points subtracted, and whether it could be
@@ -310,6 +320,15 @@ export interface Explanation {
  *  Plex, instance removed, a row from an older scan); the panel hides a missing link,
  *  never renders a broken one. At most one of radarr/sonarr is set. The rating-site
  *  links back the chips in the ratings row; rotten_tomatoes is a title search. */
+/** One Plex row an abstain could not choose between, with the ways to open it. Reaper
+ *  knows nothing about these rows but their keys, so the panel numbers them rather than
+ *  naming them. */
+export interface CandidateLink {
+  rating_key: number;
+  plex: string | null;
+  tautulli: string | null;
+}
+
 export interface Links {
   plex: string | null;
   tautulli: string | null;
@@ -320,6 +339,11 @@ export interface Links {
   tmdb: string | null;
   rotten_tomatoes: string | null;
   trakt: string | null;
+  /** The rows an abstain was choosing between; empty on every other item. `plex` and
+   *  `tautulli` above are built from the item's OWN rating key, which is null for exactly
+   *  these items, so without this the panel names a problem in Plex and offers no way to
+   *  open it. */
+  match_candidates?: CandidateLink[];
 }
 
 /** The external-ratings row. `imdb` is the same number the score used; the percentage

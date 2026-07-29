@@ -119,6 +119,14 @@ class MatchOut(BaseModel):
     """Every listing a merged bind covers, when one file is listed several times in Plex.
     Audit only; absent for a normal single-listing bind."""
 
+    candidate_rating_keys: list[int] | None = None
+    """The Plex rows an abstain was choosing between, on ``ambiguous`` and ``conflicted``.
+
+    Display only, and the reason the panel can offer a way out: without it the operator is
+    told Reaper could not tell which Plex row this is and given no link to any of them,
+    because ``rating_key`` (which every jump link is built from) is null on exactly these
+    rows. ``None`` on a bind, and on a record stored before this shipped."""
+
 
 class KeepContributionOut(BaseModel):
     """A graded keep's pull on the score. ``evaluated=False`` means the input was
@@ -220,6 +228,18 @@ class Explanation(BaseModel):
         return value if value is None or isinstance(value, dict) else None
 
 
+class CandidateLinkOut(BaseModel):
+    """One Plex row an abstain could not choose between, with the ways to open it.
+
+    ``rating_key`` is carried so the panel can label the entries apart without inventing
+    names for rows it knows nothing else about. Either link may be ``None`` when the
+    operator has not connected that app."""
+
+    rating_key: int
+    plex: str | None = None
+    tautulli: str | None = None
+
+
 class LinksOut(BaseModel):
     """Where this item can be opened. Each link is ``None`` when it cannot be built
     (unmatched in Plex, instance removed, a row scanned before the coordinates were
@@ -237,6 +257,12 @@ class LinksOut(BaseModel):
     tmdb: str | None = None
     rotten_tomatoes: str | None = None
     trakt: str | None = None
+    match_candidates: list[CandidateLinkOut] = []
+    """One entry per Plex row an abstain was choosing between, empty on every other row.
+
+    ``plex``/``tautulli`` above are built from the item's own rating key and are therefore
+    null for exactly these items, which left the operator reading "we couldn't tell which
+    one this is" with nothing to open. These are the rows in question."""
 
 
 class RatingsOut(BaseModel):

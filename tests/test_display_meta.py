@@ -172,6 +172,37 @@ class TestBuildLinks:
             "https://app.plex.tv/desktop/#!/server/abc123/details?key=%2Flibrary%2Fmetadata%2F555"
         )
 
+    def test_an_abstain_offers_a_link_to_each_row_it_could_not_choose_between(self) -> None:
+        """The whole point of carrying the candidate keys. An abstain has NO rating key of
+        its own, so every link built from one is ``None`` -- which left the panel naming a
+        problem in the operator's Plex and offering nothing to open. These are built through
+        the same two helpers, so they cannot drift from the item's own links."""
+        kwargs = {**self.KWARGS, "plex_rating_key": None, "candidate_rating_keys": [555, 777]}
+        links = build_links("radarr:2:1542", **kwargs)
+        assert links.plex is None and links.tautulli is None  # the state that motivated it
+        assert [c.rating_key for c in links.match_candidates] == [555, 777]
+        assert links.match_candidates[0].tautulli == "https://tautulli.example/info?rating_key=555"
+        assert links.match_candidates[1].tautulli == "https://tautulli.example/info?rating_key=777"
+        assert links.match_candidates[1].plex == (
+            "https://app.plex.tv/desktop/#!/server/abc123/details?key=%2Flibrary%2Fmetadata%2F777"
+        )
+
+    def test_a_candidate_link_is_dropped_per_app_the_operator_has_not_connected(self) -> None:
+        """A missing coordinate hides that one link, never renders a broken one, and never
+        takes the other app's link down with it."""
+        kwargs = {
+            **self.KWARGS,
+            "plex_rating_key": None,
+            "tautulli_base_url": None,
+            "candidate_rating_keys": [555],
+        }
+        [only] = build_links("radarr:2:1542", **kwargs).match_candidates
+        assert only.tautulli is None
+        assert only.plex is not None
+
+    def test_an_ordinary_bind_offers_no_candidates(self) -> None:
+        assert build_links("radarr:2:1542", **self.KWARGS).match_candidates == ()
+
     def test_the_plex_link_uses_web_for_a_self_hosted_address(self) -> None:
         # The plex.tv-hosted app serves the client under /desktop, but a Plex Media
         # Server serves its own copy under /web and 403s on /desktop. The path follows

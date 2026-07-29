@@ -180,6 +180,7 @@ class SeasonJudgment:
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
     match_status: identity.MatchStatus | None = None
+    match_candidates: tuple[int, ...] = ()
     # Show-level display metadata shared by every season row: the Sonarr web-route
     # coordinate, certification, episode runtime, and the frozen ratings row. A season
     # has none of its own; the show's stand in. Display only, never a verdict input.
@@ -235,6 +236,9 @@ class _SeriesWork:
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
     match_status: identity.MatchStatus | None = None
+    # The Plex rows an abstain was choosing between; empty on any bind. Display only, and
+    # shared by every season of the show, exactly like the three fields above it.
+    match_candidates: tuple[int, ...] = ()
     # The matched Plex show's imdb id, used as a fallback for the IMDb rating lookup when
     # Sonarr's series imdbId is missing or wrong (common for reality/recent shows).
     plex_imdb_id: str | None = None
@@ -499,6 +503,18 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
     )
 
 
+#: The show-side twin of ``snapshot._NO_KEY_REASONS``: why this season has no Plex rating
+#: key, one entry per non-matched resolver outcome. Same contract -- each value is a key
+#: into ``WhyPanel``'s ``CAUSE_COPY``, and ``test_repo_hygiene`` fails on one with no entry
+#: there. Kept beside its own builder rather than shared with the movie map because the
+#: subjects differ ("this season" against "this item", "this show" against "this title").
+_NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
+    identity.MatchStatus.UNMATCHED: "Plex has not matched this season",
+    identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this show",
+    identity.MatchStatus.CONFLICTED: "Plex and Sonarr describe this show differently",
+}
+
+
 def build_season_facts(
     *,
     title: str,
@@ -539,8 +555,11 @@ def build_season_facts(
     history to read, so its dormancy and popularity are ``Unknown`` -- and Unknown, run
     through the gates, abstains. A file we cannot see is never condemned.
     ``show_match_status`` picks the honest wording for that Unknown: an AMBIGUOUS show
-    (two Plex items share its id) is a different story from one Plex has no match for,
-    and the why-panel must not tell the owner the wrong one.
+    (two Plex items share its id) is a different story from one Plex has no match for, and
+    a CONFLICTED one (each kind of evidence named a different row, so Plex and Sonarr
+    describe the show differently) is a third. The why-panel must not tell the owner the
+    wrong one, so the wording comes from :data:`_NO_KEY_REASONS` rather than a ternary that
+    lumps every new outcome in with "not matched".
     """
     dormancy: Observation[float]
     recent: Observation[int]
@@ -548,11 +567,7 @@ def build_season_facts(
     streaming: Observation[bool]
 
     if plex_rating_key is None:
-        no_key_reason = (
-            "more than one Plex item matches this show"
-            if show_match_status is identity.MatchStatus.AMBIGUOUS
-            else "Plex has not matched this season"
-        )
+        no_key_reason = _NO_KEY_REASONS.get(show_match_status, "Plex has not matched this season")
         dormancy = Unknown(reason=no_key_reason, source="plex")
         recent = Unknown(reason=no_key_reason, source="plex")
         all_time = Unknown(reason=no_key_reason, source="plex")
@@ -1288,6 +1303,7 @@ async def gather(
         item.matched_by = resolution.matched_by
         item.match_detail = resolution.detail
         item.match_status = resolution.status
+        item.match_candidates = resolution.candidate_rating_keys
         item.plex_imdb_id = resolution.plex_item.ids.imdb if resolution.plex_item else None
         if resolution.plex_item is not None:
             # Show-level display metadata, inherited by every season row of the show.
@@ -1745,6 +1761,7 @@ def _judge_series(
                 matched_by=item.matched_by,
                 match_detail=item.match_detail,
                 match_status=item.match_status,
+                match_candidates=item.match_candidates,
                 title_slug=title_slug,
                 tmdb_id=show_tmdb_id,
                 imdb_id=show_imdb_id,

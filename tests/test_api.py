@@ -954,6 +954,8 @@ class TestPanelHeadFields:
             "tmdb": "https://www.themoviedb.org/movie/603",
             "rotten_tomatoes": "https://www.rottentomatoes.com/search?search=Example%20Movie",
             "trakt": "https://trakt.tv/search/imdb/tt0000001",
+            # Empty on a bound row: these are the rows an ABSTAIN could not choose between.
+            "match_candidates": [],
         }
         assert detail["ratings"] == {
             "imdb": 5.9,
@@ -1016,6 +1018,10 @@ class TestPanelHeadFields:
             "sonarr": None,
             "imdb": None,
             "tmdb": None,
+            # Empty here too, and for a different reason worth keeping apart: this row is
+            # UNMATCHED, so Reaper found nothing to offer. An ambiguous or conflicted row
+            # has candidates and does offer them (test_display_meta.TestBuildLinks).
+            "match_candidates": [],
             # A title always exists, so the RT search still works for an unmatched row.
             "rotten_tomatoes": "https://www.rottentomatoes.com/search?search=Unmatched",
             "trakt": None,

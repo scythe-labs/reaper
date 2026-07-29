@@ -187,6 +187,10 @@ class RawItem:
     # Every Plex listing the bind covers when the file is listed more than once (includes
     # plex_rating_key). Watch reads must consult all of them; empty for a normal bind.
     merged_rating_keys: tuple[int, ...] = ()
+    # The Plex rows an abstain was choosing between; empty on any bind. Display only -- it
+    # reaches the why-panel so the operator can open the rows Reaper could not choose
+    # between, and nothing in the verdict reads it.
+    match_candidates: tuple[int, ...] = ()
     # The matched Plex item's imdb id -- a fallback rating key when Radarr's imdbId is
     # missing or does not resolve in the IMDb dataset.
     plex_imdb_id: str | None = None
@@ -203,6 +207,18 @@ class RawItem:
     library: str | None = None
     plex_ratings: tuple[Rating, ...] = ()
     arr_ratings: tuple[Rating, ...] = ()
+
+
+#: Why this item has no Plex rating key, one entry per non-matched resolver outcome. Each
+#: value is a KEY into ``WhyPanel``'s ``CAUSE_COPY``, which turns it into the sentence the
+#: owner reads; a key with no entry there falls back to printing this string raw, so
+#: ``test_repo_hygiene`` fails on one. ``None`` (a record from before the field shipped)
+#: takes the unmatched wording, which is what it has always read as.
+_NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
+    identity.MatchStatus.UNMATCHED: "Plex has not matched this item",
+    identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this title",
+    identity.MatchStatus.CONFLICTED: "Plex and Radarr describe this file differently",
+}
 
 
 def build_facts(
@@ -224,16 +240,16 @@ def build_facts(
     those would have quietly condemned an item we know nothing about.
     """
     rating_key = item.plex_rating_key
-    # The two no-key states are DIFFERENT stories and the why-panel must not conflate
+    # The three no-key states are DIFFERENT stories and the why-panel must not conflate
     # them: "unmatched" means Plex has no such item as far as Reaper can tell; "ambiguous"
     # means Plex has MORE than one (a 1080p and a 4K copy sharing one TMDB id) and Reaper
-    # refused to guess whose watch history to read. Both keep the file; only the words
-    # shown to the owner differ.
-    no_key_reason = (
-        "more than one Plex item matches this title"
-        if item.match_status is identity.MatchStatus.AMBIGUOUS
-        else "Plex has not matched this item"
-    )
+    # refused to guess whose watch history to read; "conflicted" means each kind of evidence
+    # found ONE row and they were different rows, which is the two apps describing one file
+    # differently and is not a statement that Plex holds several copies. All three keep the
+    # file; only the words shown to the owner differ, and the wrong words send them to fix
+    # the wrong thing. Each string is a key into WhyPanel's CAUSE_COPY (rule 144); the
+    # repo-hygiene suite fails when one of them has no entry there.
+    no_key_reason = _NO_KEY_REASONS.get(item.match_status, "Plex has not matched this item")
 
     # --- dormancy -----------------------------------------------------------
     # THE derived field. "Days since last play" is null for exactly the items we care
@@ -948,6 +964,7 @@ async def scan(
             match_detail=item.match_detail,
             match_status=item.match_status,
             merged_rating_keys=item.merged_rating_keys,
+            match_candidates=item.match_candidates,
             override=whitelist.effective_override(item.media_key, override_map),
         )
         if verdict == "condemn":
@@ -1009,6 +1026,7 @@ async def scan(
             matched_by=judgment.matched_by,
             match_detail=judgment.match_detail,
             match_status=judgment.match_status,
+            match_candidates=judgment.match_candidates,
             extra_results=(judgment.guard_result,),
             override=whitelist.effective_override(judgment.media_key, override_map),
         )
@@ -1157,6 +1175,7 @@ def judge_facts(
     match_detail: str | None = None,
     match_status: identity.MatchStatus | None = None,
     merged_rating_keys: tuple[int, ...] = (),
+    match_candidates: tuple[int, ...] = (),
 ) -> PolicyJudgment:
     """Evaluate, score, round, decide, explain -- the whole judgment, storing nothing.
 
@@ -1201,6 +1220,7 @@ def judge_facts(
             match_detail=match_detail,
             match_status=match_status,
             merged_rating_keys=merged_rating_keys,
+            match_candidates=match_candidates,
         ),
     )
 
@@ -1254,6 +1274,7 @@ def _judge_item(
     match_detail: str | None = None,
     match_status: identity.MatchStatus | None = None,
     merged_rating_keys: tuple[int, ...] = (),
+    match_candidates: tuple[int, ...] = (),
     extra_results: Sequence[GateResult] = (),
     override: str | None = None,
 ) -> str:
@@ -1298,6 +1319,7 @@ def _judge_item(
         match_detail=match_detail,
         match_status=match_status,
         merged_rating_keys=merged_rating_keys,
+        match_candidates=match_candidates,
     )
 
     session.add(
@@ -1406,6 +1428,7 @@ def _explain(
     match_detail: str | None = None,
     match_status: identity.MatchStatus | None = None,
     merged_rating_keys: tuple[int, ...] = (),
+    match_candidates: tuple[int, ...] = (),
 ) -> str:
     """The why-panel.
 
@@ -1435,9 +1458,10 @@ def _explain(
             "threshold": policy.condemn_at,
             "coverage": round(item_score.coverage, 3),
             "match": {
-                # status is what the UI reads: "matched" -> stay quiet, "unmatched" /
-                # "ambiguous" -> a plain "kept to be safe" notice (the two differ only in
-                # wording). by/detail are kept for the audit log, not shown to the owner.
+                # status is what the UI reads: "matched" -> stay quiet, anything else -> a
+                # plain "kept to be safe" notice, worded per status (MatchStatus says what
+                # each one means, and they are not interchangeable). by/detail are kept for
+                # the audit log, not shown to the owner.
                 "status": match_status.value if match_status is not None else None,
                 "by": matched_by.value if matched_by is not None else None,
                 "detail": match_detail,
@@ -1446,6 +1470,11 @@ def _explain(
                 # Plex). The executor's live interlocks re-read THIS list, so the keys
                 # they protect are exactly the keys the owner was shown.
                 "merged_rating_keys": (list(merged_rating_keys) if merged_rating_keys else None),
+                # The rows an abstain was choosing between, so the panel can offer a link to
+                # each instead of naming a problem in Plex with no way to open it. Display
+                # only -- no verdict reads it, because not knowing which of these the file
+                # is, is the whole reason there is no rating_key.
+                "candidate_rating_keys": (list(match_candidates) if match_candidates else None),
             },
             "signals": [
                 {
@@ -1900,6 +1929,7 @@ def _raw_items(
                 match_detail=resolution.detail,
                 match_status=resolution.status,
                 merged_rating_keys=resolution.merged_rating_keys,
+                match_candidates=resolution.candidate_rating_keys,
                 plex_imdb_id=matched.ids.imdb if matched is not None else None,
                 genres=tuple(str(g) for g in (movie.get("genres") or []) if g),
                 quality=_movie_quality(movie),

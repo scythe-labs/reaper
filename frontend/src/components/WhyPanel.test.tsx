@@ -113,6 +113,7 @@ function detail(
       tmdb: null,
       rotten_tomatoes: null,
       trakt: null,
+      match_candidates: [],
     },
     explanation: {
       score: 55,
@@ -607,6 +608,84 @@ describe("the verdict headline", () => {
     expect(
       screen.getByText(/You asked to remove this, but it looks like more than one/i),
     ).toBeInTheDocument();
+  });
+
+  it("tells a disagreement apart from a duplicate, and names the app to go fix", () => {
+    // The two used to share one status and one sentence, so an operator whose Plex holds
+    // exactly one copy was sent hunting for a second. `media_type` picks the app: this
+    // fixture is a season, so Sonarr.
+    show(
+      detail(WORKED_ROWS, {
+        override: "reap",
+        override_effective: false,
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          match: { status: "conflicted", detail: null, rating_key: null },
+          protections_unknown: [fired("server_popularity", "could not check who watched it")],
+        },
+      }),
+    );
+    // Both surfaces say it, so each is asserted by its own distinguishing tail rather than
+    // the shared clause -- the ambiguous test above has the same shape.
+    expect(screen.getByText(/so we couldn't tell which Plex entry it is/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/You asked to remove this, but Plex and Sonarr describe this show/i),
+    ).toBeInTheDocument();
+    // The claim that was false: no surface may say this library holds several copies.
+    expect(screen.queryByText(/more than one thing/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/two different things/i)).not.toBeInTheDocument();
+  });
+
+  it("names Radarr on a movie, since the app to go fix differs by media type", () => {
+    // rule 141: the season fixture above would pass against a hardcoded "Sonarr".
+    show(
+      detail(WORKED_ROWS, {
+        media_type: "movie",
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          match: { status: "conflicted", detail: null, rating_key: null },
+        },
+      }),
+    );
+    expect(
+      screen.getByText(/Plex and Radarr describe this file differently, so we couldn't/i),
+    ).toBeInTheDocument();
+  });
+
+  it("offers a way into each Plex row it could not choose between", () => {
+    // Every other jump link on the panel is built from the item's own rating key, which is
+    // null on exactly these rows -- so before this the panel named a problem in Plex and
+    // gave no way to open it. Numbered, because Reaper knows nothing about these rows but
+    // their keys, and each number must pair the same row's two apps.
+    show(
+      detail(WORKED_ROWS, {
+        links: {
+          ...detail(WORKED_ROWS).links,
+          match_candidates: [
+            { rating_key: 555, plex: "https://plex.example/555", tautulli: "https://taut/555" },
+            { rating_key: 777, plex: "https://plex.example/777", tautulli: "https://taut/777" },
+          ],
+        },
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          match: { status: "ambiguous", detail: null, rating_key: null },
+        },
+      }),
+    );
+    expect(screen.getByText(/Reaper saw 2 possible matches/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Plex 1/ })).toHaveAttribute(
+      "href",
+      "https://plex.example/555",
+    );
+    expect(screen.getByRole("link", { name: /Tautulli 2/ })).toHaveAttribute(
+      "href",
+      "https://taut/777",
+    );
+  });
+
+  it("shows no candidate row on an item Reaper did tie to one Plex entry", () => {
+    show(detail(WORKED_ROWS));
+    expect(screen.queryByText(/possible matches/i)).not.toBeInTheDocument();
   });
 
   it("labels a hand spare as the owner's keep, not a Sanctuary", () => {

@@ -225,21 +225,70 @@ export function WhyHero({ posterUrl }: { posterUrl: string }) {
 
 /** Shown ONLY when Reaper could not confidently tie the item to a Plex entry -- the one match
  *  outcome the owner needs told, because it is *why* the file was kept. A clean match shows
- *  nothing at all. Two plain wordings, no jargon: nothing found in Plex, or more than one
- *  possible match. Reuses the shared amber `.notice-warn` tone, like every other "we could not
- *  look" state. */
-function KeptNotice({ match }: { match: Match | undefined }) {
+ *  nothing at all. Three plain wordings, no jargon, and they are NOT interchangeable: nothing
+ *  found in Plex; several Plex rows answering to it; or each kind of evidence naming a
+ *  different single row, which is the two apps describing one file differently and says
+ *  nothing about how many copies Plex holds. Reuses the shared amber `.notice-warn` tone, like
+ *  every other "we could not look" state.
+ *
+ *  Branches on the typed `status`, never on the wording (rule 92) -- and it is also why the
+ *  candidate links hang here rather than off the matching "Left for you to decide" box, whose
+ *  rows are grouped by a cause *string* and could only be picked out by substring. */
+function KeptNotice({
+  match,
+  links,
+  mediaType,
+}: {
+  match: Match | undefined;
+  links: Links;
+  mediaType: string;
+}) {
   if (!match || match.status === "matched" || match.status == null) return null;
 
+  const app = mediaType === "movie" ? "Radarr" : "Sonarr";
+  const thing = mediaType === "movie" ? "file" : "show";
   const reason =
     match.status === "ambiguous"
       ? "This looks like more than one thing in your Plex, so we couldn't tell which one it is."
-      : "We couldn't find this in your Plex, so there's no way to tell if anyone still watches it.";
+      : match.status === "conflicted"
+        ? `Plex and ${app} describe this ${thing} differently, so we couldn't tell which Plex ` +
+          "entry it is."
+        : "We couldn't find this in your Plex, so there's no way to tell if anyone still watches it.";
 
   return (
     <Notice tone="warn" className="kept-notice">
       <strong>Kept to be safe.</strong> {reason}
+      <MatchCandidates links={links} />
     </Notice>
+  );
+}
+
+/** The Plex rows Reaper was choosing between when it refused to choose.
+ *
+ *  Every other jump link on this panel is built from the item's own rating key, which is null
+ *  on exactly the rows this notice appears over -- so before this, the panel named a problem
+ *  in the owner's Plex and offered no way to open it. Reaper knows nothing about these rows
+ *  but their keys, so they are numbered rather than named; a single candidate drops the
+ *  number, since "Plex 1" alone reads as a label for something it is not. */
+function MatchCandidates({ links }: { links: Links }) {
+  const candidates = links.match_candidates ?? [];
+  if (candidates.length === 0) return null;
+  const numbered = candidates.length > 1;
+
+  return (
+    <span className="match-candidates">
+      <span className="match-candidates-lead">
+        Reaper saw {candidates.length} possible matches:
+      </span>
+      {candidates.map((candidate, i) => (
+        // The rating key: unique among siblings and a stable server id (rule 19), where the
+        // index would renumber every pill if the list ever reordered.
+        <span className="candidate-group" key={candidate.rating_key}>
+          <JumpPill href={candidate.plex} label={numbered ? `Plex ${i + 1}` : "Plex"} />
+          <JumpPill href={candidate.tautulli} label={numbered ? `Tautulli ${i + 1}` : "Tautulli"} />
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -348,6 +397,11 @@ function heldReapNote(item: CandidateDetail): string {
   const status = item.explanation.match?.status;
   if (status === "ambiguous") {
     return "You asked to remove this, but it looks like more than one thing in your Plex, so Reaper can't tell which file to remove.";
+  }
+  if (status === "conflicted") {
+    const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
+    const thing = item.media_type === "movie" ? "file" : "show";
+    return `You asked to remove this, but Plex and ${app} describe this ${thing} differently, so Reaper can't tell which file to remove.`;
   }
   if (status === "unmatched") {
     return "You asked to remove this, but Reaper couldn't find it in your Plex, so it can't tell which file to remove.";
@@ -842,6 +896,13 @@ const CAUSE_COPY: Record<string, string> = {
   "Plex has not matched this season": "This season couldn't be found in Plex.",
   "more than one Plex item matches this title": "This looks like more than one thing in Plex.",
   "more than one Plex item matches this show": "This show looks like more than one thing in Plex.",
+  // The disagreement pair. Generated nowhere: these are the exact strings snapshot.py and
+  // season_scan.py put in `_NO_KEY_REASONS`, and test_repo_hygiene fails when one of those
+  // has no entry here -- without which the box prints the backend's raw phrasing (rule 144).
+  "Plex and Radarr describe this file differently":
+    "Plex and Radarr describe this file differently.",
+  "Plex and Sonarr describe this show differently":
+    "Plex and Sonarr describe this show differently.",
   "no added-at date": "Plex didn't say when this was added.",
   "no added-at date for this season": "Plex didn't say when this season was added.",
   "could not read active sessions": "Reaper couldn't see what's playing right now.",
@@ -1012,7 +1073,7 @@ export function WhyPanel({
           (certification, ratings, synopsis) and reads as one unit, so splitting it with a
           notice buries the identity. Here the notice sits directly above the verdict it
           explains. Movies and seasons share this panel, so both orders move together. */}
-      <KeptNotice match={explanation.match} />
+      <KeptNotice match={explanation.match} links={item.links} mediaType={item.media_type} />
 
       {/* The scan's stored reasoning for this one would not read back. Say that plainly:
           the blocks below are empty because nothing could be read, not because nothing

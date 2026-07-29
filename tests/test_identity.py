@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from reaper.engine.identity import (
     ExternalIds,
     MatchedBy,
@@ -226,6 +228,9 @@ class TestAnAmbiguousIdNarrowedByFileName:
         assert res.rating_key is None
         assert res.status is MatchStatus.AMBIGUOUS
         assert "matches 2" in res.detail
+        # Genuine multiplicity keeps the wording it always had -- this is what CONFLICTED
+        # was split off FROM, so a change that reworded both would have said nothing new.
+        assert res.candidate_rating_keys == (100, 200)
 
     def test_one_of_three_copies_binds_and_two_of_three_abstains(self) -> None:
         index = PlexIndex.build(
@@ -1513,6 +1518,12 @@ class TestTheContradictionVeto:
         )
         assert res.rating_key is None
         assert "contradict" in res.detail.lower()
+        # The TYPE, not the sentence (rule 142). This branch is a disagreement -- one row
+        # per id kind, different rows -- so it must not report as several copies in Plex,
+        # which is what the owner used to be told. The keys go with it so the panel can
+        # offer a link to each of the two rows.
+        assert res.status is MatchStatus.CONFLICTED
+        assert res.candidate_rating_keys == (100, 200)
 
     def test_two_id_kinds_agreeing_bind_by_the_first(self) -> None:
         index = PlexIndex.build([_item(100, title="A Title", tmdb=1001, imdb="tt0000001")])
@@ -1592,6 +1603,8 @@ class TestTheContradictionVeto:
         )
         assert res.rating_key is None
         assert res.detail == "Kept: identifiers disagree (tmdb->100, basename->200)"
+        assert res.status is MatchStatus.CONFLICTED
+        assert res.candidate_rating_keys == (100, 200)
 
     def test_a_file_name_naming_the_bound_row_confirms_the_id(self) -> None:
         """The healthy shape: the id and the file name name the same listing. The
@@ -1673,6 +1686,10 @@ class TestAShowsImdbIdCrossChecksItsTvdbBind:
         )
         assert res.rating_key is None
         assert "contradict" in res.detail.lower()
+        # rule 72: the show ladder reaches the same branch, so it carries the same status
+        # and the same candidates.
+        assert res.status is MatchStatus.CONFLICTED
+        assert res.candidate_rating_keys == (100, 200)
 
     def test_an_agreeing_imdb_id_confirms_the_tvdb_bind(self) -> None:
         index = PlexIndex.build([_item(300, title="Example Show", tvdb=2001, imdb="tt0000042")])
@@ -2231,3 +2248,111 @@ class TestLibraryForPath:
 
     def test_segment_comparison_ignores_separators_and_case(self) -> None:
         assert library_for_path("/TV/Example", {"/tv/": "TV"}) == "TV"
+
+
+class TestTheAbstainVocabulary:
+    """Every ``abstain`` in :func:`resolve` is one of two stories, and they are not the same.
+
+    MULTIPLICITY: several Plex rows answer to this item, so the library really does hold
+    more than one copy. DISAGREEMENT: each kind of evidence found ONE row and they were
+    different rows, which is Plex and the *arr describing one file differently over a
+    library that may hold exactly one copy. Both keep the file. Only one of them is true
+    about the number of copies, and for a year every surface said that one.
+
+    Written as a table from the four call sites rather than transcribed off the branch
+    structure (rule 119), so a fifth abstain added without a status is a failure here.
+    """
+
+    @pytest.mark.parametrize(
+        ("name", "resolve", "expected", "candidates"),
+        [
+            (
+                "an id naming several rows nothing narrowed",
+                lambda index: resolve_movie(
+                    ids=ExternalIds.of(tmdb=1001),
+                    title=None,
+                    year=None,
+                    file_basename=None,
+                    index=index,
+                ),
+                MatchStatus.AMBIGUOUS,
+                (100, 200),
+            ),
+            (
+                "a file name naming several rows",
+                lambda index: resolve_movie(
+                    ids=ExternalIds(),
+                    title=None,
+                    year=None,
+                    file_basename="shared.mkv",
+                    index=index,
+                ),
+                MatchStatus.AMBIGUOUS,
+                (300, 400),
+            ),
+            (
+                "two id kinds naming different rows",
+                lambda index: resolve_movie(
+                    ids=ExternalIds.of(tmdb=2002, imdb="tt0000500"),
+                    title=None,
+                    year=None,
+                    file_basename=None,
+                    index=index,
+                ),
+                MatchStatus.CONFLICTED,
+                (500, 600),
+            ),
+            (
+                "the id and the file name naming different rows",
+                lambda index: resolve_movie(
+                    ids=ExternalIds.of(tmdb=3003),
+                    title=None,
+                    year=None,
+                    file_basename="seven hundred.mkv",
+                    index=index,
+                ),
+                MatchStatus.CONFLICTED,
+                (700, 800),
+            ),
+        ],
+        ids=["dup-id", "dup-basename", "id-vs-id", "id-vs-name"],
+    )
+    def test_each_abstain_reports_its_own_kind(
+        self,
+        name: str,
+        resolve: object,
+        expected: MatchStatus,
+        candidates: tuple[int, ...],
+    ) -> None:
+        index = PlexIndex.build(
+            [
+                # Multiplicity: one id over two rows, and one file name over two others.
+                _item(100, title="Dup Id A", year=2020, tmdb=1001),
+                _item(200, title="Dup Id B", year=2020, tmdb=1001),
+                _item(300, title="Dup Name A", year=2020, basename="shared.mkv"),
+                _item(400, title="Dup Name B", year=2020, basename="shared.mkv"),
+                # Disagreement: two id kinds apart, then an id and a file name apart.
+                _item(500, title="Id Clash A", year=2020, tmdb=2002),
+                _item(600, title="Id Clash B", year=2020, imdb="tt0000500"),
+                _item(700, title="Tier Clash A", year=2020, tmdb=3003),
+                _item(800, title="Tier Clash B", year=2020, basename="seven hundred.mkv"),
+            ]
+        )
+        res = resolve(index)  # type: ignore[operator]
+        assert res.rating_key is None, name
+        assert res.status is expected, name
+        assert res.candidate_rating_keys == candidates, name
+
+    def test_a_bind_carries_no_candidates(self) -> None:
+        """The field is set only where Reaper refused to choose. A clean bind offering
+        "possible matches" would put a links row under a notice that never renders."""
+        index = PlexIndex.build([_item(100, title="Example Movie", year=2020, tmdb=1001)])
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename=None,
+            index=index,
+        )
+        assert res.status is MatchStatus.MATCHED
+        assert res.candidate_rating_keys == ()

@@ -702,6 +702,29 @@ a:hover {
   color: var(--unknown);
 }
 
+/* The Plex rows an abstain could not choose between, under a hairline inside that notice.
+   Its own row rather than trailing the sentence: these are actions, and a pill wrapped into
+   running text reads as emphasis. The rule is the amber at low alpha so it separates without
+   introducing a second border color inside a bordered box. */
+.match-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid color-mix(in srgb, var(--unknown) 32%, transparent);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+/* Each row's two pills stay together when the row wraps -- "Plex 2" and "Tautulli 2" name
+   the same Plex entry, and splitting them across lines pairs each with the wrong number. */
+.candidate-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .error {
   color: var(--condemn);
   font-size: 0.88rem;
