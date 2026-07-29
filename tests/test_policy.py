@@ -2195,3 +2195,150 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         )
 
         assert self._hold_warnings(floored) == []
+
+
+class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
+    """The FIFTH member of the family, and the one that was deferred rather than written (#224).
+
+    ``season_pruning._detect_conflicts`` compares two ALL-TIME season watcher counts. A season
+    the mirror does not reach back to the arrival of reports a lower bound, and more history can
+    always lift a lower bound above anything, so every prunable season of such a show conflicts
+    against every kept season whatever either count says. ``auto_approvable`` goes False and
+    automatic TV pruning is inert on that show until the mirror catches up.
+
+    ``test_a_short_mirror_holds_every_prunable_season_of_an_old_show`` pins that half in
+    ``test_season_pruning``. This class pins the other half, which did not exist: the page said
+    nothing at all. Driven on the shipped TV policy at a 1200-day reach against a 2000-day-old
+    show, ``inspect`` returned no warning while every prunable season came back held.
+
+    The deferral this replaces called it "the one member with no control behind it ... no setting
+    the operator can reach". ``flag_keep_conflicts`` is a switch on this same editor, so that was
+    false as written; ``test_the_detector_being_off_silences_it`` is the discriminator. What is
+    true is narrower and is why no remedy names that switch: turning it off is the delete-more
+    direction, so this family will not recommend it, and rendering beside it is as far as the
+    prime directive goes.
+    """
+
+    #: The shipped floor is 1095 and dormancy is clamped to the mirror, so under it every item is
+    #: kept on age alone and this family is correctly silent. 30 keeps the reach clear of it, so
+    #: the conflict detector is what binds.
+    DORMANCY = 30
+
+    def _tv(self, **overrides: object) -> PolicyBody:
+        base: dict[str, object] = {
+            "media_type": "tv",
+            "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
+            # The 90-day reach these tests use spans this hold, so the mid-binge lane is
+            # establishable and quiet. Left at the shipped 180 it would hold every season on
+            # disk, `prunable` would be empty, and it would silence this branch by design
+            # (`test_the_mid_binge_hold_silences_it`) -- so every assertion here would be
+            # reading that guard rather than the one under test (rule 141's shape).
+            "in_progress_hold_days": 30,
+        }
+        return _policy(**{**base, **overrides})
+
+    def _conflict_warnings(
+        self, body: PolicyBody, reach: float | None = 90.0
+    ) -> list[PolicyWarning]:
+        return [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=reach)
+            if w.field == "flag_keep_conflicts"
+        ]
+
+    def test_the_lane_is_flagged(self) -> None:
+        [flagged] = self._conflict_warnings(self._tv())
+
+        # `warn`, not `danger`: the outcome is that Reaper removes LESS, the keep direction.
+        assert flagged.severity == "warn"
+
+    def test_it_names_the_set_rather_than_claiming_an_empty_list(self) -> None:
+        """The span this turns on is each item's AGE, which ``inspect`` is never handed.
+
+        Same reason the ``watchers_all_time`` branch names its set: handed one reach and no
+        arrival dates, "nothing will be flagged" would be false in the reassuring direction for
+        a library the mirror covers outright (rules 7/24, 144).
+        """
+        [flagged] = self._conflict_warnings(self._tv())
+
+        assert flagged.message.startswith("Seasons of shows added before your watch history")
+        assert "Nothing will be flagged" not in flagged.message
+        assert "No TV season will be flagged" not in flagged.message
+
+    def test_it_says_where_the_held_shows_go(self) -> None:
+        """They are not lost, and a warning that did not say so would read far worse than the
+        truth. Every conflict carries ``shortfall``, so ``season_scan.guard_result`` marks each
+        as a comparison Reaper did not make and the show waits in "Needs a look", where a hand
+        reap still condemns it. That is the string the switch's own help text one row up already
+        puts on the operator's screen (rule 144)."""
+        [flagged] = self._conflict_warnings(self._tv())
+
+        assert '"Needs a look"' in flagged.message
+
+    def test_the_detector_being_off_silences_it(self) -> None:
+        """The control the deferral said did not exist.
+
+        ``plan_series_prune`` takes ``flag_keep_conflicts`` and returns no conflicts at all when
+        it is off (``season_pruning`` line 494), so the keep rule is simply followed and there is
+        no hold to explain. This is what makes the branch above a reading of the switch rather
+        than a sentence that fires for every TV operator forever.
+        """
+        assert self._conflict_warnings(self._tv(flag_keep_conflicts=False)) == []
+        # The discriminator: same policy with it on IS claimed, so the silence is the switch
+        # being read and not the branch having gone quiet for some other reason.
+        assert len(self._conflict_warnings(self._tv(flag_keep_conflicts=True))) == 1
+
+    def test_the_movies_policy_never_speaks(self) -> None:
+        """Movies have no seasons and never reach ``_detect_conflicts``, so a warning here would
+        name a control the movie editor does not render (rule 25)."""
+        assert self._conflict_warnings(_policy()) == []
+
+    def test_a_caller_that_cannot_read_the_mirror_stays_quiet(self) -> None:
+        """``requests_app_configured``'s posture: a guess would tell an operator their history is
+        too shallow when it is fine."""
+        assert self._conflict_warnings(self._tv(), reach=None) == []
+
+    def test_the_dormancy_floor_silences_it(self) -> None:
+        """The fifth lane takes the same guard as the other four, for the same reason: under the
+        floor every item is kept on age alone, so this decides nothing and the #217 branch is the
+        voice that speaks there instead. The two cannot stack."""
+        floored = self._tv(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),))
+
+        assert self._conflict_warnings(floored, reach=90.0) == []
+
+    def test_the_mid_binge_hold_silences_it(self) -> None:
+        """Rule 143's shape, not tidiness: that guard drains the set this one is defined over.
+
+        Where the mirror cannot establish the mid-binge hold, ``plan_series_prune`` holds every
+        season ON DISK, so ``prunable`` is empty, ``_detect_conflicts`` iterates nothing, and
+        this lane is never reached. Naming it there would assert a cause that is not operative,
+        beside a branch already claiming the strictly stronger "no TV season will be flagged" --
+        and two "wait for it to build up" paragraphs is the stacking #134 took out of this
+        family.
+        """
+        held = self._tv(in_progress_hold_days=180)  # 90-day reach cannot span it
+        fields = [w.field for w in inspect(held, ProfileSettings(), history_reach_days=90.0)]
+
+        assert "in_progress_hold_days" in fields
+        assert "flag_keep_conflicts" not in fields
+
+        # The discriminator: switch that guard OFF and the set is no longer drained, so this
+        # lane is live again and speaks. Without this the assertion above would also hold if the
+        # branch had simply stopped firing.
+        assert (
+            self._conflict_warnings(self._tv(in_progress_hold_days=180, keep_in_progress=False))
+            != []
+        )
+
+    def test_the_shipped_tv_policy_is_no_longer_silent_on_a_deep_mirror(self) -> None:
+        """The reported state, driven on the shipped policy with nothing lowered.
+
+        1200 days clears the shipped 1095-day floor, spans the 365-day popularity window and the
+        180-day mid-binge hold, and carries no ``watchers_all_time`` rule or graded keep, so all
+        four siblings and the #217 root warning are correctly silent. That is precisely the state
+        in which ``inspect`` used to return NOTHING while every prunable season of any show older
+        than the mirror came back held.
+        """
+        warnings = inspect(DEFAULT_TV_POLICY, ProfileSettings(), history_reach_days=1200.0)
+
+        assert [w.field for w in warnings] == ["flag_keep_conflicts"]

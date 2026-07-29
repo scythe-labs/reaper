@@ -1594,15 +1594,21 @@ def inspect(
     # keeps one derivation of "does the mirror span the hold" (rule 104); it moved to
     # ``engine.gates`` beside its two siblings so this could ask it without an engine module
     # importing a service.
-    if (
+    #
+    # Hoisted, because the fifth member below is guarded on its negation and the two must read
+    # one derivation of "is the mid-binge guard holding the whole disk" rather than two copies
+    # of the predicate call (rule 104).
+    mid_binge_holds_everything = (
         body.media_type == "tv"
         and body.keep_in_progress
         and history_reach_days is not None
-        and reach_clears_dormancy
         and not progress_is_establishable(
             reach_days=int(history_reach_days), hold_days=body.in_progress_hold_days
         )
-    ):
+    )
+    # The reach is re-tested rather than left to the flag: narrowing does not survive being
+    # folded into a bool, and the branch body builds a ``Known`` off it.
+    if mid_binge_holds_everything and reach_clears_dormancy and history_reach_days is not None:
         if body.in_progress_hold_days <= 0:
             # No number to compare a reach against, so no shortfall sentence exists to
             # borrow. The editor's own help text under this control already says a 0 keeps
@@ -1634,6 +1640,69 @@ def inspect(
                 message=(
                     f"No TV season will be flagged for removal. {cause}, so it can't tell "
                     f"who is partway through a show and holds every season. {remedy}"
+                ),
+            )
+        )
+
+    # The FIFTH member of the family, and the one that was deferred rather than written
+    # (issue #224). ``services.season_pruning._detect_conflicts`` compares two ALL-TIME season
+    # watcher counts, so a season the mirror does not reach back to the arrival of reports a
+    # lower bound, and more history can always lift a lower bound above anything. Every
+    # prunable season of such a show therefore conflicts against every kept season whatever
+    # either count says, ``auto_approvable`` goes False, and automatic TV pruning is inert on
+    # that show until the mirror catches up.
+    #
+    # Driven on the shipped TV policy at a 1200-day reach -- deep enough that all four warnings
+    # above and the #217 floor warning are correctly silent -- against a show 2000 days old:
+    # ``inspect`` returned NO warning at all while every prunable season came back held. That
+    # is the silent lane, and it is why this is a branch rather than a reworded deferral.
+    #
+    # The deferral it replaces said this was "the one member with no control behind it ... no
+    # setting the operator can reach". That was wrong on its own terms: ``flag_keep_conflicts``
+    # is a switch on this same editor ("Ask me first when a removal looks unusual"), and off
+    # means the keep rule is simply followed. What is true is narrower and is why no remedy
+    # naming that switch appears below: turning it off is the DELETE-MORE direction, on two
+    # numbers Reaper knows are wrong, so this family will not recommend it. The switch carries
+    # that option in its own help text, and this warning renders beside it, which is as close
+    # to offering it as the prime directive allows.
+    #
+    # It names the AFFECTED SET rather than claiming an empty list, exactly as the
+    # ``watchers_all_time`` branch above does and for the identical reason: the span this turns
+    # on is each item's age, and ``inspect`` is handed one reach and never a list of arrival
+    # dates. "Nothing will be flagged" would be false in the reassuring direction for a library
+    # the mirror covers outright (rules 7/24). It also says where those shows go, because they
+    # are not lost: every conflict carries ``shortfall``, so ``season_scan.guard_result`` marks
+    # each as a comparison Reaper did not make and the show waits in "Needs a look", where a
+    # hand reap still condemns it. That is the string already on the operator's screen, from
+    # the switch's own help text one row up (rule 144).
+    #
+    # The dormancy guard applies for the reason it does on all four above: under the floor
+    # every item is kept on age alone, this decides nothing, and the #217 branch is the voice
+    # that speaks there instead. The two cannot stack.
+    #
+    # It is silenced by the MID-BINGE hold as well, which is rule 143's shape rather than a
+    # tidiness choice. Where that guard cannot be established ``plan_series_prune`` holds every
+    # season ON DISK, so ``prunable`` is empty, ``_detect_conflicts`` iterates nothing, and this
+    # lane is never reached at all -- naming it there would assert a cause that is not operative
+    # while the branch above already claims the strictly stronger "no TV season will be flagged".
+    # Two "wait for it to build up" sentences in adjacent paragraphs is also exactly the stacking
+    # #134 removed from this family.
+    if (
+        body.media_type == "tv"
+        and body.flag_keep_conflicts
+        and history_reach_days is not None
+        and reach_clears_dormancy
+        and not mid_binge_holds_everything
+    ):
+        warnings.append(
+            PolicyWarning(
+                field="flag_keep_conflicts",
+                severity="warn",
+                message=(
+                    "Seasons of shows added before your watch history starts won't be removed "
+                    "automatically. Reaper compares how many people watched each season, and "
+                    "it can't count plays from before your history begins, so it marks those "
+                    'shows "Needs a look" instead of guessing. Wait for it to build up.'
                 ),
             )
         )

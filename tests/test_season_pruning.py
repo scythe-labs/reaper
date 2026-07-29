@@ -13,7 +13,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from reaper.clients.sonarr_stats import SeasonStats
-from reaper.engine.gates import progress_is_establishable
+from reaper.engine.gates import GateId, progress_is_establishable
+from reaper.engine.policy import (
+    GateSetting,
+    PolicyBody,
+    ProfileSettings,
+    SignalSetting,
+    inspect,
+)
+from reaper.engine.signals import SignalId
 from reaper.services.season_pruning import (
     _because,
     active_progress,
@@ -670,6 +678,50 @@ class TestATruncatedMirrorCannotClearTheConflict:
         assert all(c.shortfall == SHORT for c in plan.conflicts)
         # And no message asserts a count off a mirror that cannot support one.
         assert not any("0 people watched" in c.message for c in plan.conflicts)
+
+    def test_the_policy_page_now_speaks_for_the_hold_this_test_pins(self) -> None:
+        """The other half of #224, tied to this test so neither can drift alone.
+
+        The sibling above proves the scan holds every prunable season of a show older than the
+        mirror. That was true and the policy editor said NOTHING about it, which is the whole
+        of #224: an operator saw an empty automatic lane, no warning, and no way to learn their
+        watch history was the cause.
+
+        ``policy.inspect``'s warning asserts a behavior of THIS module, across a module
+        boundary, so it is the shape rule 144 warns about: a sentence that reads as
+        demonstrably correct while vouching for a consistency nothing checks. If
+        ``_detect_conflicts`` ever stops degenerating this way, the sibling above goes red and
+        so does this, rather than leaving a warning that quietly became a lie. That is why the
+        pin lives here beside the behavior and not only in ``test_policy``.
+        """
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 6)],
+            keep_last=2,
+            keep_first_season=False,
+            watchers_by_season=dict.fromkeys(range(1, 6), 0),
+            shortfall_by_season=dict.fromkeys(range(1, 6), SHORT),
+        )
+        # The state the warning describes: nothing removable without a human.
+        assert plan.auto_approvable is False
+        assert plan.prunable and not any(
+            p not in {c.pruned_season for c in plan.conflicts} for p in plan.prunable
+        )
+
+        # And the editor says so, on a TV policy whose reach clears the dormancy floor so every
+        # other member of the family is correctly silent.
+        body = PolicyBody(
+            media_type="tv",
+            condemn_at=70,
+            gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=30),),
+            signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=100, saturate_at=730),),
+            # Spanned by the 90-day reach below, so the mid-binge guard is establishable. At
+            # the shipped 180 that guard holds every season on disk instead, which drains
+            # `prunable` and correctly silences the warning under test.
+            in_progress_hold_days=30,
+        )
+        spoken = [w.field for w in inspect(body, ProfileSettings(), history_reach_days=90.0)]
+        assert "flag_keep_conflicts" in spoken
 
     def test_a_truncated_count_that_already_out_ranks_an_answered_one_still_compares(
         self,

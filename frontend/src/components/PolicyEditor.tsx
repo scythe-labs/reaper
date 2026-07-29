@@ -781,7 +781,16 @@ const ANCHORS = [
   { id: "condemn_at", fields: ["condemn_at"] },
   { id: "gates", fields: ["gates.server_popularity.window_days"], prefix: "gates." },
   { id: "keep_rating_rules", fields: ["keep_rating_rules"], guard: "ratingGate" },
-  { id: "keep_last", fields: ["keep_last_seasons", "keep_last_scope"], guard: "tv" },
+  // `flag_keep_conflicts` rides this anchor rather than earning its own: this block is the
+  // last thing in the season card, directly under that switch's row, so the warning about
+  // shows older than the watch mirror (#224) already renders beside the control its help text
+  // offers as the other way out. Its only mount condition is `tv`, the same one, so one guard
+  // still names it exactly.
+  {
+    id: "keep_last",
+    fields: ["keep_last_seasons", "keep_last_scope", "flag_keep_conflicts"],
+    guard: "tv",
+  },
   // Its block sits inside the mid-binge row but OUTSIDE that row's `keep_in_progress`
   // subtree, so `tv` is the only mount condition it has and one guard names it exactly.
   //
@@ -1822,6 +1831,12 @@ export function PolicyEditor({
                   <Switch
                     checked={draft.flag_keep_conflicts}
                     onChange={(flag_keep_conflicts) => update({ flag_keep_conflicts })}
+                    // The warning about shows older than the watch mirror (#224) is anchored
+                    // here, and this is the control it is about. Scoped to its own field so
+                    // this switch does not also speak the seasons box's complaint.
+                    describedBy={warningsDescribing("keep_last", warningsAt("keep_last"), [
+                      "flag_keep_conflicts",
+                    ])}
                   />
                   <span className="rule-name">Ask me first when a removal looks unusual</span>
                 </label>

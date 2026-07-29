@@ -820,6 +820,10 @@ describe("PolicyEditor warning anchors", () => {
       controls: {
         keep_last_seasons: "Newest seasons to always keep",
         keep_last_scope: "Keep-last scope",
+        // The switch is the third, and it is bound rather than left to the card: the warning
+        // it carries (#224) has no remedy this family will recommend, so the one control it
+        // can point at is the one whose own help text offers the other way out.
+        flag_keep_conflicts: "Ask me first when a removal looks unusual",
       },
     },
     {
