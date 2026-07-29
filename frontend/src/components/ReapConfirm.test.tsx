@@ -446,6 +446,53 @@ describe("what a screen reader hears while a reap runs", () => {
     expect(spoken()).toContain("deletion is off");
   });
 
+  it("never says deletion is off about a switch it could not read", async () => {
+    // `armed` is `destructive_enabled === true`, so a failed read collapses into "off" -- and
+    // the spoken stage said so as a definite fact, on the last screen before files go, while
+    // the block on screen kept all three states apart. The reassuring direction to be wrong in.
+    apiMock.safety.mockImplementation(() => Promise.reject(new Error("unreachable")));
+    renderWithAnnouncer();
+
+    await screen.findByText(/couldn't confirm whether deletion is on/i);
+    expect(spoken()).toContain("couldn't confirm whether deletion is on");
+    expect(spoken()).not.toContain("deletion is off");
+  });
+
+  it("does not send the operator to a phrase box another reap is holding shut", async () => {
+    // A dry run claims no slot, so the practice run passes while someone else's reap holds the
+    // one execute slot. The screen says to come back later and renders NO phrase field; the
+    // announcement told them to type one. Worse, `say` dedupes on the sentence, so the correct
+    // line was then swallowed as a repeat when the field finally arrived -- instruction at the
+    // moment they cannot act, silence at the moment they can.
+    const elsewhere = status({ running: true, run_id: 99, phase: "reaping", total: 1 });
+    apiMock.reapStatus.mockResolvedValue(elsewhere);
+    renderWithAnnouncer(elsewhere);
+
+    await screen.findByText(/Another reap is running/);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(spoken()).toContain("Another reap is running");
+    expect(spoken()).not.toContain("Type the confirmation phrase");
+  });
+
+  it("leaves focus on the Plex-trash consent that is holding Reap disabled", async () => {
+    // The notice renders ABOVE the phrase field and its checkbox is what keeps Reap dark.
+    // Jumping the operator into the box hides both the disclosure and the reason the button
+    // will not light: they type the exact phrase, find Reap dead, and are never told why.
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 40,
+      sections_unreadable: 0,
+      empties_after_scan: false,
+    });
+    renderWithAnnouncer();
+
+    const input = await screen.findByRole("textbox");
+    expect(input).not.toHaveFocus();
+    // And the thing they need is still ahead of them in reading order.
+    const consent = screen.getByRole("checkbox");
+    expect(consent.compareDocumentPosition(input)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it("states the progress as a progressbar, in words rather than a bare number", async () => {
     const half = status({ running: true, run_id: run.id, phase: "reaping", done: 2, total: 4 });
     apiMock.reapStatus.mockResolvedValue(half);

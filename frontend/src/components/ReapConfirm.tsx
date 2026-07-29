@@ -184,11 +184,15 @@ export function ReapConfirm({
   // in, on a poll rather than on anything they did, so nothing carries them to it. Focus goes
   // there when it mounts: it is the only thing the stage asks for, and this is the last gate
   // before files are deleted.
+  // Not while the Plex-trash consent is still outstanding: that notice renders ABOVE the phrase
+  // field and `trashOk` is holding Reap disabled, so jumping the operator over it hides both the
+  // disclosure and the reason Reap will not light. Left alone, a reader moving down the dialog
+  // meets the notice in document order, which is what happened before this focus move existed.
   const phraseRef = useRef<HTMLInputElement>(null);
   const armStage = dryClean && !running && !report && !failed && !otherRunning && armed;
   useEffect(() => {
-    if (armStage) phraseRef.current?.focus();
-  }, [armStage]);
+    if (armStage && trashOk) phraseRef.current?.focus();
+  }, [armStage, trashOk]);
 
   // The dialog's purpose changes when the run ends -- from "confirm this" to "read what
   // happened" -- so focus moves to the outcome rather than leaving the operator standing on a
@@ -227,11 +231,38 @@ export function ReapConfirm({
     if (running)
       return say(stopping ? "Stopping after the current one." : `${tenth * 10}% deleted.`);
     if (!dryClean) return;
+    // From here the spoken stage reads the SAME gates the screen does, rather than re-deriving a
+    // weaker version of them (rule 144). Both divergences were real: another reap holding the
+    // slot renders that notice and NO phrase field, so the old code told the operator to type one
+    // that was not there -- and `say`'s dedupe then swallowed the correct sentence as a repeat
+    // when the field finally arrived, leaving silence at the only moment they could act.
+    if (otherRunning)
+      return say("Another reap is running. Wait for it to finish, then reopen this to reap.");
+    // Three states, never one definite claim -- the same three the arm block below shows. `armed`
+    // is `destructive_enabled === true`, so a switch nobody could read collapses into "off", and
+    // saying that out loud is the reassuring direction to be wrong in, on the last screen before
+    // files go.
+    if (safety.isPending) return;
+    if (safety.isError || !safety.data)
+      return say("Practice run passed, but Reaper couldn't confirm whether deletion is on.");
     if (!armed) return say("Practice run passed, but deletion is off, so nothing can be reaped.");
     // `pct` is deliberately absent from the deps: `tenth` is the throttle, and depending on the
     // percent would re-run this on every poll to re-derive the same sentence.
     say("Practice run passed. Type the confirmation phrase to reap.");
-  }, [failed, report, running, stopping, tenth, dryClean, armed, say]);
+  }, [
+    failed,
+    report,
+    running,
+    stopping,
+    tenth,
+    dryClean,
+    armed,
+    otherRunning,
+    safety.isPending,
+    safety.isError,
+    safety.data,
+    say,
+  ]);
 
   return (
     <ModalShell title={`Reap ${souls(run.item_count)}`} onClose={onClose} className="reap-confirm">
