@@ -23,12 +23,21 @@ import { useEffect, type RefObject } from "react";
  *  took focus, on a desktop, closing while the operator is typing somewhere else, must leave
  *  them where they are. */
 export function useDialogFocus(panelRef: RefObject<HTMLElement | null>, active = true) {
+  // The two jobs are split across two effects on purpose, and the ORDER matters both ways.
+  //
+  // This one is declared first so it reads `document.activeElement` before the second can move
+  // it: capture the invoker after the panel has taken focus and the invoker IS the panel, so
+  // closing would hand focus to a node that is going away.
+  //
+  // Its deps are `[]` (bar the stable ref) because this cleanup means CLOSED. Keying it on
+  // `active` as well ran the close-restore whenever the flag merely flipped -- the viewport
+  // crossing the panel's media query, which is a phone being rotated -- and yanked focus out of
+  // a panel that was still on screen, back to the card behind it.
   useEffect(() => {
     // Read the ref into a local: on unmount React may detach it before this cleanup runs, and
     // the cleanup needs to know whether focus was still inside the panel that is going away.
     const panel = panelRef.current;
     const invoker = document.activeElement;
-    if (active) panel?.focus();
     return () => {
       if (!(invoker instanceof HTMLElement) || !invoker.isConnected) return;
       const held =
@@ -37,6 +46,14 @@ export function useDialogFocus(panelRef: RefObject<HTMLElement | null>, active =
         (panel != null && panel.contains(document.activeElement));
       if (held) invoker.focus();
     };
+  }, [panelRef]);
+
+  // Focus in, and re-enter if the surface becomes active later: a panel the operator opened on a
+  // wide screen and then narrowed into a full-screen sheet is covering the app from that moment,
+  // so it takes focus from that moment. Going the other way it simply stops trapping and leaves
+  // focus where the operator has it -- there is nothing to hand back to while it is still open.
+  useEffect(() => {
+    if (active) panelRef.current?.focus();
   }, [active, panelRef]);
 }
 

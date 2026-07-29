@@ -84,6 +84,20 @@ export function OverrideControls({
   const [menuAt, setMenuAt] = useState<MenuPos | null>(null);
   const caretRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+  // Picking a length and clearing a spare each close the menu AND start a mutation, and the two
+  // land in ONE batched commit -- so `pending` has already disabled the caret (below) by the time
+  // `useDialogFocus`'s restore runs in the later passive phase, and `.focus()` on a disabled
+  // button is a silent no-op. Focus fell to <body> on the menu's two most common exits, the next
+  // Tab restarting above the whole queue: the exact failure this control was rewritten to remove,
+  // on the press that KEEPS a file. Re-issue the restore once the mutation settles and the caret
+  // can hold focus again. Escape and the outside click need none of this -- they start no
+  // mutation, so the caret is still enabled when the hook's own restore fires.
+  const returnToCaret = useRef(false);
+  useEffect(() => {
+    if (pending || !returnToCaret.current) return;
+    returnToCaret.current = false;
+    caretRef.current?.focus();
+  }, [pending]);
   // Back closes the open length menu before it does anything else (only the one open menu has a
   // non-null position, so only it registers).
   useBackGuard(menuAt !== null, () => setMenuAt(null));
@@ -244,12 +258,14 @@ export function OverrideControls({
           defaultDays={defaultDays}
           triggerRef={caretRef}
           onPick={(spareDays) => {
+            returnToCaret.current = true;
             setMenuAt(null);
             onSet("spare", spareDays);
           }}
           onClear={
             spared
               ? () => {
+                  returnToCaret.current = true;
                   setMenuAt(null);
                   onClear();
                 }
@@ -311,8 +327,13 @@ function SpareMenu({
   // The portal is why this is not optional. Rendered at the end of <body>, the menu's items sit
   // nowhere near the caret in the Tab order, so opening it and pressing Tab used to walk on to
   // the next control INSIDE the card while the menu hung open beside it, its own rows reachable
-  // only by tabbing through the remainder of the page. Focus goes in, Tab stays in, and it comes
-  // back to the caret on every exit -- pick, Escape, or an outside click.
+  // only by tabbing through the remainder of the page. Focus goes in, and Tab stays in.
+  //
+  // It hands focus back from here only on the exits that start no mutation: Escape, and Back. A
+  // pick and a Clear disable the caret in the same commit that closes the menu, so their restore
+  // cannot run from here at all -- `returnToCaret` in OverrideControls re-issues it once the
+  // mutation settles. An outside click deliberately restores nothing: the click is the operator
+  // saying where they want to be, which is the same reading the filter popovers take.
   useDialogFocus(ref);
   const [custom, setCustom] = useState(false);
   // Held as free text so the box types and clears naturally; clamped to [1, 3650] only when
@@ -342,7 +363,13 @@ function SpareMenu({
       if (!ref.current?.contains(t) && !triggerRef.current?.contains(t)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // This menu is the newest layer, so it consumes the press. `document` bubbles on to
+      // `window`, where the `.why` panel's Escape sits (WhyShell), and without this one press
+      // closed the menu AND the reasoning panel it was opened from. The filter popovers in
+      // ReviewQueue stop the same key for the same reason (rule 72).
+      e.stopPropagation();
+      onClose();
     };
     const onScroll = () => {
       // While the Custom-length input is open, ignore scroll: on a phone the virtual keyboard

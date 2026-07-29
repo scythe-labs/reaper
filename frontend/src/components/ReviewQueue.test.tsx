@@ -16,6 +16,7 @@ import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api"
 import { DEFAULT_GENERAL } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { NARROW_SCREEN_QUERY } from "../useMediaQuery";
+import { filtersKey } from "./queueFilters";
 import { shouldExpandSeasons } from "./queueSettings";
 import {
   compactSpan,
@@ -170,6 +171,19 @@ class NoopObserver {
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+/** The queue REMEMBERS its filters (`saveFilters` -> window.localStorage, keyed per tab), so a
+ *  test that adds one hands it to every test after it in this file: the next render starts with a
+ *  chip already on the toolbar and one fewer dimension addable, which reads as a component bug in
+ *  whichever test trips first (rule 133). Drop that one key, not the whole store -- the season
+ *  expansion preference lives there too and the tests around it seed it themselves. */
+function forgetFilters(verdict: Verdict = "condemn") {
+  try {
+    window.localStorage.removeItem(filtersKey(verdict));
+  } catch {
+    // Same reading as production: an unavailable store simply never remembered anything.
+  }
+}
 
 beforeEach(() => {
   vi.stubGlobal("IntersectionObserver", NoopObserver);
@@ -1489,6 +1503,11 @@ describe("switching tabs", () => {
 // and every option its own Tab stop, which is not the listbox pattern at all. A listbox is
 // ANNOUNCED as an arrow-key widget, so the role told an operator to press keys that did nothing.
 describe("the filter popovers' keyboard contract", () => {
+  // These add filters on purpose, and the queue remembers them. Runs even on a failing test.
+  // Wrapped, not passed bare: vitest hands the hook its test context, which would arrive as the
+  // `verdict` and clear a key spelled after an object.
+  afterEach(() => forgetFilters());
+
   it("hands focus back to the trigger when Escape closes the ＋ Filter menu", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     const user = userEvent.setup();
@@ -1504,6 +1523,50 @@ describe("the filter popovers' keyboard contract", () => {
     expect(screen.queryByRole("list", { name: "Add a filter" })).not.toBeInTheDocument();
     // Without this the next Tab restarts at the top of the document, above the whole queue.
     expect(trigger).toHaveFocus();
+  });
+
+  it("consumes Escape rather than letting an open reasons panel close too", async () => {
+    // The popover's Escape sits on `document`, which bubbles on to `window`, where an open `.why`
+    // panel's own Escape sits (WhyShell) -- and the queue and that panel are on screen together in
+    // split view. One press must not close both layers (rule 72: the spare-length menu stops the
+    // same key for the same reason).
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+
+    await user.click(screen.getByRole("button", { name: "Filter" }));
+    const onWindow = vi.fn();
+    window.addEventListener("keydown", onWindow);
+    await user.keyboard("{Escape}");
+    window.removeEventListener("keydown", onWindow);
+
+    expect(screen.queryByRole("list", { name: "Add a filter" })).not.toBeInTheDocument();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it("moves focus to the new chip when the last filter takes the ＋ Filter button with it", async () => {
+    // The button renders only while something is still addable, so adding the LAST dimension
+    // unmounts the very control the focus return aims at: `.focus()` lands on a node React removes
+    // in the next commit and the operator is dropped on <body>. The chip the press just created is
+    // the successor. Escape's exit above cannot catch this -- it never removes the trigger.
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+
+    // Add every addable dimension, whatever the vocabulary leaves addable, until the button goes.
+    for (;;) {
+      const trigger = screen.queryByRole("button", { name: "Filter" });
+      if (trigger === null) break;
+      await user.click(trigger);
+      const menu = screen.getByRole("list", { name: "Add a filter" });
+      await user.click(within(menu).getAllByRole("button")[0]!);
+    }
+
+    const focused = document.activeElement as HTMLElement;
+    expect(focused).not.toBe(document.body);
+    expect(focused.className).toContain("fchip-body");
   });
 
   it("promises no ARIA menu or listbox contract, and says what it controls instead", async () => {

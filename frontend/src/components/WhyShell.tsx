@@ -8,10 +8,18 @@
 // It is a dialog on a phone and a side panel on a desktop, and that is not a detail: index.css
 // makes `main.split .why` a right-hand sheet at 1100px and `inset: 0; z-index: 50` at 900px, so
 // under 900px this covers the entire application. Claiming `role="dialog"` at every width would
-// be false on a wide screen, where the panel sits beside the list and both are usable; not
-// claiming it on a phone leaves a screen reader browsing the covered page underneath. So the
+// be false above 1100px, where the panel really does sit beside the list and both are usable;
+// not claiming it on a phone leaves a screen reader browsing the covered page underneath. So the
 // dialog contract is conditional on NARROW_SCREEN_QUERY -- the same boundary the CSS uses, read
 // from the one declaration both sides share (rule 67).
+//
+// KNOWN GAP, issue #184: those two widths are not the same number. The panel starts overlaying
+// the list at 1100px, not 900px, so between 901px and 1100px it floats over the right of the
+// cards while this treats it as a side panel -- no focus move, no Tab trap, and the covered cards
+// still in the Tab order with their Spare and Reap. Do not read the paragraph above as saying
+// that band is handled; it is #171 surviving in 200px of width. The fix is a second constant for
+// the 1100px block rather than moving this one, whose 900 is the stored meaning of the operator's
+// Mobile/Desktop choice.
 //
 // Escape lives here too. It used to live in three places and be missing from a fourth: App's
 // review-view key handler covered the two panels reachable from the queue, ScalesPanel and
@@ -52,9 +60,12 @@ export function WhyShell({
 }: {
   /** The id the panel's own `<h2>` carries. That heading IS the panel's accessible name, so it
    *  is pointed at rather than copied into an `aria-label`: a duplicate string is one more
-   *  place for the spoken name and the visible one to drift apart (rule 144). Every panel is
-   *  pinned to its name by a test, which is what stops a seventh from passing an id it never
-   *  renders. */
+   *  place for the spoken name and the visible one to drift apart (rule 144). Each of the six
+   *  is pinned to its name by a test -- six hand-written tests, one per panel, which is a
+   *  record of the six and NOT a gate on a seventh: nothing fails if a new call site passes an
+   *  id it never renders, and the panel is then unnamed on a phone. Turning this into a gate
+   *  means enumerating the `<WhyShell` call sites and asserting each has such a test, the shape
+   *  `test_repo_hygiene.py` uses on the other side of the tree (rule 145). */
   headingId: string;
   onClose: () => void;
   children: ReactNode;
@@ -64,9 +75,15 @@ export function WhyShell({
 
   useDialogFocus(panelRef, modal);
 
-  // Escape closes. A modal, if one is up, owns the key first -- and unlike App's old handler
-  // this does NOT bail when the press comes from a text box, because the panel contains its own
-  // fields and Escape from inside one used to do nothing at all.
+  // Escape closes. A modal, if one is up, owns the key first.
+  //
+  // The listener is on `window`, so it hears every press on the page, and Escape already means
+  // something inside a text box: it clears a `type="search"` field natively. The queue's search
+  // box sits beside this panel in split view, so an unscoped handler closed the reasoning the
+  // operator was reading when they only meant to clear their search. App's old handler bailed on
+  // INPUT/TEXTAREA/SELECT for exactly that reason and this one keeps the bail -- scoped, so a
+  // field the panel itself owns still closes it. (None of the six render one today; the scope is
+  // what lets a seventh, and what keeps this honest about which presses are ours.)
   const modalOpen = useModalOpen();
   const closeRef = useRef(onClose);
   useEffect(() => {
@@ -76,6 +93,11 @@ export function WhyShell({
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.metaKey || e.ctrlKey || e.altKey) return;
       if (modalOpen) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const inAField =
+        tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable;
+      if (inAField && !panelRef.current?.contains(target)) return;
       closeRef.current();
     };
     window.addEventListener("keydown", onKey);

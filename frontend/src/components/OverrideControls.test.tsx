@@ -4,8 +4,9 @@
 // The bug that motivated it: a 90-day spare under a Forever default left the button reading
 // "∞ Spared" -- the wrong glyph, and no sign of when the spare ends.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "../test/queryClient";
 import { OverrideControls, OverrideMark } from "./OverrideControls";
@@ -40,6 +41,40 @@ function draw(props: Partial<Parameters<typeof OverrideControls>[0]> = {}, defau
 
 /** The ∞ the forever spare wears. Both glyphs are aria-hidden, so they never reach a name. */
 const forever = (c: HTMLElement) => c.querySelector(".infinity") !== null;
+
+/** `draw` above passes a constant `pending`, which is the one thing no real caller does: every
+ *  one of them threads it from the override mutation (`ReviewQueue`, `WhyPanel`, `ShowPanel`), so
+ *  a press that sets a spare disables the control it came from IN THE SAME COMMIT, then settles a
+ *  moment later. That is the whole shape of the bug the focus return has to survive, and a fixed
+ *  `pending={false}` hides it -- the menu's exits all look like they restore focus. */
+function DrawLive({ defaultSpareDays = 30, override = null }: DrawLiveProps) {
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    if (!pending) return;
+    const id = setTimeout(() => setPending(false), 0);
+    return () => clearTimeout(id);
+  }, [pending]);
+  const shared: QueueSettings = {
+    defaultSpareDays,
+    unmeasured: { holdsBack: true, isPending: false, isError: false },
+  };
+  return (
+    <QueryClientProvider client={testQueryClient()}>
+      <QueueSettingsContext.Provider value={shared}>
+        <OverrideControls
+          override={override}
+          spareExpiresAt={null}
+          onSet={() => setPending(true)}
+          onClear={() => setPending(true)}
+          pending={pending}
+        />
+      </QueueSettingsContext.Provider>
+    </QueryClientProvider>
+  );
+}
+type DrawLiveProps = { defaultSpareDays?: number; override?: "spare" | "reap" | null };
+
+const CARET = "Choose how long to keep it";
 
 describe("the Spare button, undecided", () => {
   it("says what a press will do: ∞ and 'Spare' under a forever default", () => {
@@ -204,14 +239,64 @@ describe("the spare-length menu's keyboard reach", () => {
     expect(screen.getByRole("group", { name: "Spare this item for" })).toHaveFocus();
   });
 
-  it("hands focus back to the caret when it closes", async () => {
+  it("hands focus back to the caret on Escape, which starts no mutation", async () => {
     const user = userEvent.setup();
     draw({}, 30);
-    const caret = screen.getByRole("button", { name: "Choose how long to keep it" });
+    const caret = screen.getByRole("button", { name: CARET });
     await user.click(caret);
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("group", { name: "Spare this item for" })).not.toBeInTheDocument();
     expect(caret).toHaveFocus();
+  });
+
+  // The exits above and below are NOT the same exit. Escape and Back leave the control untouched,
+  // so the hook's own restore lands. A pick and a Clear each start a mutation, and `pending`
+  // disables the caret in the same batched commit that closes the menu -- so the restore fires at
+  // a disabled button, `.focus()` silently does nothing, and the operator who just decided to KEEP
+  // a file is left on <body> with the next Tab restarting above the whole queue. This suite once
+  // covered only Escape, and was green while the two commonest exits were broken.
+  it("hands focus back to the caret after a pick, once the mutation settles", async () => {
+    const user = userEvent.setup();
+    render(<DrawLive />);
+    const caret = screen.getByRole("button", { name: CARET });
+    await user.click(caret);
+
+    // The default row wears a "Default" tag, so its name is not the bare label.
+    await user.click(screen.getByRole("button", { name: /^30 days/ }));
+
+    expect(screen.queryByRole("group", { name: "Spare this item for" })).not.toBeInTheDocument();
+    await waitFor(() => expect(caret).toBeEnabled());
+    expect(caret).toHaveFocus();
+  });
+
+  it("hands focus back to the caret after Clear this spare", async () => {
+    const user = userEvent.setup();
+    render(<DrawLive override="spare" />);
+    const caret = screen.getByRole("button", { name: CARET });
+    await user.click(caret);
+
+    await user.click(screen.getByRole("button", { name: "Clear this spare" }));
+
+    await waitFor(() => expect(caret).toBeEnabled());
+    expect(caret).toHaveFocus();
+  });
+
+  it("consumes Escape rather than letting the panel behind it close too", async () => {
+    // This menu is opened from inside a `.why` panel's own footer, and WhyShell's Escape sits on
+    // `window` -- which `document` bubbles on to. Without the menu consuming the key, one press
+    // closed the menu AND took away the reasoning the operator was reading (rule 72: the filter
+    // popovers in ReviewQueue stop the same key for the same reason).
+    const user = userEvent.setup();
+    draw({}, 30);
+    await user.click(screen.getByRole("button", { name: CARET }));
+
+    const onWindow = vi.fn();
+    window.addEventListener("keydown", onWindow);
+    await user.keyboard("{Escape}");
+    window.removeEventListener("keydown", onWindow);
+
+    expect(screen.queryByRole("group", { name: "Spare this item for" })).not.toBeInTheDocument();
+    expect(onWindow).not.toHaveBeenCalled();
   });
 
   it("keeps Tab inside itself while it is open", async () => {

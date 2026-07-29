@@ -22,6 +22,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1392,6 +1393,19 @@ export function ReviewQueue({
     setOpenMenu(null);
     menuTriggerRef.current?.focus();
   };
+  // Where focus goes after a pick that takes its own trigger away with it. The ＋ Filter button
+  // renders only while something is still addable, so adding the LAST dimension unmounts the very
+  // button `closeMenu` hands focus back to: `.focus()` lands on a node React removes in the next
+  // commit and focus falls to <body>, which is the failure this plumbing exists to prevent. The
+  // chip the pick just created is the honest successor, and it does not exist until that commit,
+  // so the focus waits for one.
+  const focusChip = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const id = focusChip.current;
+    if (id === null) return;
+    focusChip.current = null;
+    document.querySelector<HTMLButtonElement>(`.fchip-body[data-dim="${id}"]`)?.focus();
+  });
   // Back closes an open filter popover, then the reap-confirm sheet, before leaving the app.
   useBackGuard(openMenu !== null, closeMenu);
   useBackGuard(reapRun !== null, () => setReapRun(null));
@@ -1418,6 +1432,11 @@ export function ReviewQueue({
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // The popover is the newest layer, so it consumes the press: `document` bubbles on to
+      // `window`, where an open `.why` panel's Escape sits (WhyShell), and the queue and that
+      // panel are on screen together in split view. The spare-length menu stops the same key for
+      // the same reason (rule 72).
+      e.stopPropagation();
       setOpenMenu(null);
       menuTriggerRef.current?.focus();
     };
@@ -2134,6 +2153,9 @@ export function ReviewQueue({
                         type="button"
                         className="filter-mi"
                         onClick={() => {
+                          // The last addable one takes the ＋ Filter button with it, so name the
+                          // chip this press is about to create as where focus should land.
+                          if (addableDimensions.length === 1) focusChip.current = d.id;
                           setFilters((f) => d.set(f, d.options[0]!.value));
                           closeMenu();
                         }}
@@ -2232,6 +2254,9 @@ export function ReviewQueue({
                     <button
                       type="button"
                       className="fchip-body"
+                      // The handle `focusChip` above finds this chip by, when the press that
+                      // created it also removed the ＋ Filter button focus would have gone back to.
+                      data-dim={d.id}
                       title={`Filter: ${d.label}`}
                       aria-expanded={openMenu === d.id}
                       aria-controls={openMenu === d.id ? `${menuIdBase}-${d.id}` : undefined}

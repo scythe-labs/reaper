@@ -7,7 +7,7 @@
 //
 // jsdom has no `matchMedia`, so `useMediaQuery` reports false and an unstubbed test sees the
 // wide screen. `stubMatchMedia(true)` is the phone.
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
@@ -27,6 +27,29 @@ function stubMatchMedia(matches: boolean) {
   }));
 }
 
+/** The same, but the `change` listeners can be fired -- so a test can cross the boundary while a
+ *  panel is open, which is what rotating a phone into landscape does. Returns the crossing. */
+function stubCrossableMatchMedia(initial: boolean): (next: boolean) => void {
+  const listeners = new Set<() => void>();
+  const state = { matches: initial };
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    get matches() {
+      return state.matches;
+    },
+    media: query,
+    onchange: null,
+    addEventListener: (_: string, cb: () => void) => void listeners.add(cb),
+    removeEventListener: (_: string, cb: () => void) => void listeners.delete(cb),
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }));
+  return (next: boolean) => {
+    state.matches = next;
+    listeners.forEach((cb) => cb());
+  };
+}
+
 // Rule 133: a stub left standing is inherited by the next test in the file.
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -40,6 +63,8 @@ function Harness() {
     <>
       <button onClick={() => setOpen(true)}>Open the panel</button>
       <button onClick={() => setOpen(false)}>Close from outside</button>
+      {/* Stands in for the queue's search box, which sits beside the panel in split view. */}
+      <input type="search" aria-label="A box outside the panel" />
       {open && (
         <WhyShell headingId="why-heading" onClose={() => setOpen(false)}>
           <header className="why-head">
@@ -143,5 +168,68 @@ describe("WhyShell Escape", () => {
     await user.keyboard("{Escape}");
 
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  });
+
+  it("leaves a field the panel does not own alone", async () => {
+    // The listener is on `window`, so it hears the whole page, and Escape already means something
+    // in a text box -- it clears a `type="search"` field natively. The queue's search box sits
+    // beside this panel in split view, so an unscoped handler shut the reasoning the operator was
+    // reading when they only meant to clear their search. That is why the bail above is scoped
+    // rather than dropped.
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+
+    const outsideBox = screen.getByRole("searchbox", { name: "A box outside the panel" });
+    await user.click(outsideBox);
+    await user.keyboard("{Escape}");
+
+    expect(screen.getByRole("complementary", { name: NAME })).toBeInTheDocument();
+  });
+
+  it("still closes on a press that is not in any field", async () => {
+    // The scope must not turn into "never close": a press with focus on a button, or nowhere at
+    // all, is still the operator dismissing the panel.
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+
+    await user.click(screen.getByRole("button", { name: "A control inside the panel" }));
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  });
+});
+
+describe("WhyShell across the boundary", () => {
+  it("does not treat a screen resize as a close", async () => {
+    // `active` was an effect dependency, so flipping it re-ran the effect -- and the cleanup of
+    // that effect is the CLOSE-restore. Crossing 900px with the panel open therefore handed focus
+    // back to the card behind a panel that was still on screen: a rotated phone, mid-read.
+    const cross = stubCrossableMatchMedia(true);
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+
+    const inside = screen.getByRole("button", { name: "A control inside the panel" });
+    inside.focus();
+    act(() => cross(false));
+
+    expect(screen.getByRole("complementary", { name: NAME })).toBeInTheDocument();
+    expect(inside).toHaveFocus();
+  });
+
+  it("takes focus when a panel already open becomes a full-screen sheet", async () => {
+    // The other direction is not symmetrical: the panel is covering the application from that
+    // moment, so it owes the operator the same entry it would have owed on open.
+    const cross = stubCrossableMatchMedia(false);
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Open the panel" }));
+    expect(screen.getByRole("button", { name: "Open the panel" })).toHaveFocus();
+
+    act(() => cross(true));
+
+    expect(screen.getByRole("dialog", { name: NAME })).toHaveFocus();
   });
 });
