@@ -150,7 +150,7 @@ verification in this file, and reporting a gate green on a pipe's exit code is a
 about the work.
 
 **144. Generating one copy of an operator-facing claim raises the risk on every copy you did
-not generate.** Rule 72 sweeps twins of a *function* and rule 103 guards a *list* mirroring a
+not generate.** Rule 72 sweeps siblings of a *function* and rule 103 guards a *list* mirroring a
 declaration; this is the same obligation for a *sentence*. One fact about what the app does is
 normally stated in several places — a help paragraph, an API description, the error body that
 fires when it is enforced — each written by someone reading a different one. Deriving one from
