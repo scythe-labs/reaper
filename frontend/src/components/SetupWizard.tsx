@@ -66,7 +66,13 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   // App.tsx routes an unreadable setup status here on the promise that Skip still works.
   if (!setup) {
     return (
-      <div className="setup">
+      // `main`, not a div, on both branches: this screen replaces the whole app shell, so its
+      // landmarks are the only ones on the page -- and it had none, which is the same defect
+      // `Login` carried (rule 72), on the one screen a new operator cannot skip past without
+      // first finding the Skip button. `.setup` is `max-width`/`margin`/`padding` only, with
+      // no child or sibling selectors, so this changes the accessibility tree and nothing on
+      // screen. The `pageLevel` audit below turns `region` on and pins it.
+      <main className="setup">
         <div className="setup-head">
           <h1>{isError ? "Welcome to Reaper" : "Setting things up…"}</h1>
           <button className="ghost" onClick={onSkip}>
@@ -78,12 +84,12 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
             Couldn't check the setup state. You can skip to the app and finish from Settings.
           </Notice>
         )}
-      </div>
+      </main>
     );
   }
 
   return (
-    <div className="setup">
+    <main className="setup">
       <div className="setup-head">
         <div className="brand">
           <BrandMark className="brand-mark" />
@@ -176,6 +182,6 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
       )}
       {scanError && <Notice tone="error">The scan hit a problem: {scanError}</Notice>}
       {scanMsg && <p className="muted setup-scanmsg">{scanMsg}</p>}
-    </div>
+    </main>
   );
 }

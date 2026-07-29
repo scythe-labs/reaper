@@ -132,4 +132,22 @@ describe("the recovery card", () => {
     expect(note.textContent).not.toContain("to its log");
     window.history.pushState({}, "", "/");
   });
+
+  it("has no accessibility violations, landmarks included", async () => {
+    // The twin of the sign-in card's `main`, and the half that nothing pinned: reverting only
+    // this one back to a `div` left every test in this file green. A locked-out operator
+    // reaches this screen and no other, so its landmarks are the only ones on the page and the
+    // sheet audit above cannot answer for them (rule 72, rule 118).
+    window.history.pushState({}, "", "/recover");
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Login />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText(/Reaper printed a recovery code/);
+    await expectNoA11yViolations(document.body, { pageLevel: true });
+    window.history.pushState({}, "", "/");
+  });
 });
