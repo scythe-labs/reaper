@@ -101,70 +101,52 @@ Last verified against the code: 2026-07-26.
    furniture rather than a reaction. #155's two draft-refusal twins collapsed into one
    `SwitchConfirm` that also moves focus, keyed on a nonce because a repeat press changes no
    state and an effect watching the value would not re-fire. A number with a fixed unit now
-   carries that unit (#176), as the box's *description* rather than folded into its name: it
-   points at the suffix already on screen, so the word exists once and cannot drift, and the eleven
-   call sites whose name already says the unit do not stutter it. **And success is audible
-   (#175)**, which failure already was: Reaper signalled a save, an add or a connect by something
-   *disappearing* — the savebar unmounting under the focused button, the modal closing, the
-   composer's boxes emptying — and an absence cannot be perceived by ear, so a save and a dead
-   button were the same event. `announce()` (`announce.tsx`) speaks into a region mounted once
-   above every route; it is two alternating regions because saving twice must say so twice, and a
-   text node that does not change is not announced. `TestBadge` and the job flash chip carry a
-   word for pass/fail rather than a glyph and a color. **And a refusal now says which box it is
-   about (#174)**: `aria-invalid` and `aria-describedby` appeared zero times app-wide, so a
-   control that would not save had no route to the sentence explaining it. `WarnBlock` emits the
-   id `fb87ecb` deferred, `warningsDescribing()` names both ends of the association, and severity
-   moved out of the color into a word in `Notice` — `notice-error` against `notice-warn` was the
-   whole difference between "this blocks you" and "this is advice". Bound at the three policy
-   anchors with one owning control, and at the hex, webhook, password, ramp and external-URL
-   boxes; the five anchors that warn about a *list* are deliberately left with ids only, since
-   binding every child reads the whole card at each of them. **The `.why` panels are landed
-   too**, and the app-wide sweep behind that fix found six of them rather than the four the issue
-   named — `WhyPanelFallback` and `ScalesPanelFallback` render the same `<aside className="why">`,
-   and the second carried no Escape handler at all, so a Scales panel stuck loading or failed
-   could not be dismissed from the keyboard. All six now render one `WhyShell` that owns the
-   dialog contract, conditional on `NARROW_SCREEN_QUERY` because the panel is a genuine
-   split-view side panel above it and covers the whole application below it: claiming
-   `role="dialog"` at every width would be false on a desktop. That boundary is the 900px one,
-   but the panel starts overlaying the list at 1100px, so 200px of width still gets an overlay
-   with no focus containment — #171 surviving in a band, filed as **#184**. Escape moved into the
-   shell from the three places that had it. It keeps App's `INPUT/TEXTAREA/SELECT` bail, scoped
-   to fields the panel does not own: unscoped, a press meant to clear the queue's search box shut
-   the reasoning panel beside it. The popovers that sit over a panel — the spare-length menu and
-   the two filter menus — stop the key rather than letting both layers close on one press.
-   **The menus are landed too**, following the precedent `UserMenu` set: the spare-length menu,
-   the ＋ Filter menu and the filter chips' value picker all claimed `role="menu"`/`menuitem` or
-   `role="listbox"`/`option`, and implemented no part of either contract — no arrow keys, no
-   roving focus, no `aria-activedescendant`, every option its own Tab stop. A listbox is
-   *announced* as an arrow-key widget, so the role told operators to press keys that did nothing.
-   All three are now plain disclosures that keep what they promise, each with `aria-controls` and
-   a focus return to its trigger; the chip picker states which value is in force with
-   `aria-current`, the app's existing idiom. The spare menu needed more than the other two
-   because it is portaled to `<body>`: its rows sat nowhere near the caret in the Tab order, so
-   pressing Tab walked on into the card while the menu hung open beside it. It now takes focus
-   and keeps Tab inside itself. **Handing focus back is the half that is easy to get wrong, and
-   both menus got it wrong first:** a control disabled or unmounted by the very press that closes
-   the menu cannot receive focus, so `.focus()` silently does nothing and the operator lands on
-   `<body>`. The spare caret disables itself while its own mutation is in flight, so the restore
-   waits for that to settle; the ＋ Filter button is removed outright by adding the last addable
-   filter, so focus goes to the chip that press created. An outside click restores nothing, on
-   purpose. Scales' "Not in the last scan"
-   tile lost an `aria-expanded` that pointed at a panel App renders in a different subtree.
-   What is filed rather than fixed is still larger: the review queue's cards are `role="button"`,
-   which makes every chip, reason and score inside them presentational; the deletion path
-   announces nothing at any stage, arming through progress to the final report; and **116
-   controls unmount or disable themselves on their own press**, dropping focus to `<body>` — the
-   app-wide count behind #173, against the ~20 sites that issue lists. **The guard is the durable
-   half.** Measured against the real pre-#132 tree,
-   `eslint-plugin-jsx-a11y` catches none of the three filed bugs — its
-   `control-has-associated-label` counts `<option>` text as a `<select>`'s label, which is the
-   operator's complaint verbatim — and it costs 112 lockfile entries, an `overrides` entry to
-   survive `npm ci` on eslint 10, and two new audit advisories. So it is not installed. The gate
-   is `test_repo_hygiene`'s ban on hand-rolled notices with the population pinned, plus tests
-   that reach controls by the name an operator can hear. No new dependency. The ban reads the
-   whole `className` value, literal or expression: its first form anchored on a quote straight
-   after `className=`, so a ternary and a template literal were both unreadable to it, and the
-   sweep's own count of 109 was short by the one notice written that way — `ReapPlan`'s plan
+   carries that unit (#176) as the box's *description*, pointing at the suffix already on screen,
+   so the word exists once and cannot drift and the eleven call sites whose name already says the
+   unit do not stutter it. **Success is audible (#175)**, which failure already was: Reaper
+   signalled a save, an add or a connect by something *disappearing* — the savebar unmounting
+   under the focused button, the modal closing, the composer's boxes emptying — and an absence
+   cannot be perceived by ear, so a save and a dead button were the same event. `announce()`
+   (`announce.tsx`) speaks into a region mounted once above every route; it is two alternating
+   regions because saving twice must say so twice, and a text node that does not change is not
+   announced. **A refusal says which box it is about (#174)**: `aria-invalid` and
+   `aria-describedby` appeared zero times app-wide, so a control that would not save had no route
+   to the sentence explaining it. `WarnBlock` emits the id `fb87ecb` deferred,
+   `warningsDescribing()` names both ends of the association, and severity moved out of the color
+   into a word in `Notice`. Bound at the three policy anchors, and at the hex, webhook, password,
+   ramp and external-URL boxes; the five anchors that warn about a *list* keep ids only, since
+   binding every child reads the whole card at each of them. `TestBadge` and the job flash chip
+   carry a word for pass/fail rather than a glyph and a color, but neither sits in a live region:
+   read when reached, not announced. **The `.why` panels are landed too**, and that sweep found
+   six rather than the four the issue named. All six now render one `WhyShell` owning the dialog
+   contract, conditional on `NARROW_SCREEN_QUERY` because the panel is a genuine split-view side
+   panel above it and covers the application below it. That boundary is 900px but the panel
+   starts overlaying at 1100px, so 200px of width still gets an overlay with no focus containment
+   — #171 surviving in a band, filed as **#184**. Escape moved into the shell, keeping App's
+   `INPUT/TEXTAREA/SELECT` bail scoped to fields the panel does not own; popovers over a panel
+   stop the key rather than letting both layers close on one press. **The menus are landed too**:
+   the spare-length menu, the ＋ Filter menu and the filter chips' value picker each claimed
+   `role="menu"` or `role="listbox"` and implemented neither contract, so the role told operators
+   to press arrow keys that did nothing. All three are now plain disclosures with `aria-controls`
+   and a focus return to their trigger; the chip picker marks the value in force with
+   `aria-current`, and the portaled spare menu takes focus and keeps Tab inside itself. Each
+   return is aimed at a control that survives the press closing the menu — the spare caret waits
+   for its own mutation to settle, the ＋ Filter button hands off to the chip its press created —
+   since a disabled or unmounted target drops focus to `<body>`. An outside click restores
+   nothing, on purpose. Scales' "Not in the last scan" tile lost an `aria-expanded` pointing at a
+   panel App renders in a different subtree.
+   What is filed rather than fixed is still larger: the review queue's cards
+   are `role="button"`, which makes every chip, reason and score inside them presentational; the
+   deletion path announces nothing at any stage; a connection test and a hand-run job still say
+   their result to no one; and **116 controls unmount or disable themselves on their own press**,
+   dropping focus to `<body>` — the app-wide count behind #173, against the ~20 sites that issue
+   lists. **The guard is the durable half.** Measured against the real pre-#132 tree,
+   `eslint-plugin-jsx-a11y` catches none of the three filed bugs and costs 112 lockfile entries,
+   an `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not
+   installed. The gate is `test_repo_hygiene`'s ban on hand-rolled notices with the population
+   pinned, plus tests that reach controls by the name an operator can hear. No new dependency.
+   The ban reads the whole `className` value, literal or expression: its first form missed a
+   ternary and a template literal, so the sweep's own count was short by `ReapPlan`'s plan
    loader, which shipped mute while the test read green (rule 145).
 
 ## Decisions locked
