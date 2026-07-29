@@ -993,9 +993,11 @@ def _protect_blocks_on_reach(cond: ConditionSpec) -> ReachSpan | None:
     failing (issue #168). The two routing sites now match member by member and mypy holds
     them (``fields.reach_shortfall``, the lean loop). The membership tests cannot be closed
     that way, because each one carries copy written for its own span: a third member simply
-    gets no warning, which is silence rather than a wrong answer.
+    gets no warning, which is silence rather than a wrong answer. The condemn-lane sum is the
+    fifth site and the exception to that: its totals are PRINTED, so a span it does not know
+    about under-reports a rendered count instead of going quiet.
     ``tests.test_policy.TestEveryReachSpanIsRoutedByName`` is what fails when the set
-    changes, and it names every site that has to grow a branch.
+    changes, and it names all five sites that have to grow a branch.
 
     It answers with the SPAN rather than a yes for one of them, because the two spans need
     different world-facts to decide whether the shortfall is live and the caller has to tell

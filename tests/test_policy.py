@@ -1464,19 +1464,25 @@ class TestRestoringALostRatingBar:
 
 
 class TestEveryReachSpanIsRoutedByName:
-    """A new ``ReachSpan`` member has to be handled at four sites, and this is the alarm.
+    """A new ``ReachSpan`` member has to be handled at five sites, and this is the alarm.
 
     Two of them ROUTE, and both now match member by member behind ``assert_never``:
     ``fields.reach_shortfall`` picks which bound the mirror is measured against, and
     ``inspect``'s lean loop files a graded keep under the span that blocks it. mypy fails
     on those first, so this test is for the author who skips that gate -- and for its own
-    failure message, which is the one place all four sites are written down.
+    failure message, which is the one place all five sites are written down.
 
-    The other two are membership tests, one per warning: an owner protect rule on the
-    window (``owner_protect_on_window``) and the all-time rule below it. Each carries copy
+    Two more are membership tests, one per warning: an owner protect rule on the window
+    (``owner_protect_on_window``) and the all-time rule below it. Each carries copy
     written for its own span, so neither can be generated from the set. A third member
     there is silence rather than a wrong answer, which is why they are named here instead
     of guarded in code.
+
+    The fifth is ``inspect``'s condemn-lane sum, and it is the one that argument does NOT
+    cover: it decides which weights are withheld, and both figures it withholds are printed
+    to the operator. A span it does not know about is left out of a rendered count, so the
+    warning under-reports the points to move or goes quiet on a list that really is empty --
+    a wrong number in the reassuring direction, not silence (rules 103, 145).
 
     Rule 103's drift guard, and it was absent. Issue #168's probe measured what that cost:
     a third member added locally took ``reach_shortfall``'s ``else``, answered
@@ -1488,13 +1494,15 @@ class TestEveryReachSpanIsRoutedByName:
 
     def test_the_two_spans_every_consumer_handles_are_the_two_that_exist(self) -> None:
         assert set(ReachSpan) == {ReachSpan.POPULARITY_WINDOW, ReachSpan.ITEM_LIFETIME}, (
-            "A ReachSpan member was added or removed. Four sites decide what a span means "
+            "A ReachSpan member was added or removed. Five sites decide what a span means "
             "and none of them can infer it: fields.reach_shortfall (which bound the mirror "
             "is measured against), policy.inspect's lean loop (which span a graded keep's "
-            "discount is charged to), and inspect's two protect membership tests "
+            "discount is charged to), inspect's two protect membership tests "
             "(owner_protect_on_window, and the ITEM_LIFETIME branch under it), each of "
-            "which needs operator copy written for that span. Handle all four, then update "
-            "this test."
+            "which needs operator copy written for that span, and inspect's condemn-lane "
+            "sum (which weights are withheld), whose totals are printed to the operator so "
+            "a missed span under-reports a number rather than going silent. Handle all "
+            "five, then update this test."
         )
 
 
