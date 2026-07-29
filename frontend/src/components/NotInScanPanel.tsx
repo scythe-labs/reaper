@@ -12,6 +12,7 @@ import { useModalOpen } from "../backnav";
 import { count } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
 import { WhyClose } from "./WhyPanel";
+import { Notice } from "./Notice";
 
 export function NotInScanPanel({
   items,
@@ -71,10 +72,10 @@ export function NotInScanPanel({
       {isPending ? (
         <p className="scales-foot muted">Loading…</p>
       ) : error ? (
-        <p className="notice notice-error">
+        <Notice tone="error">
           Reaper couldn't read the last scan, so it can't say which requests were left out. Reload
           the page to try again.
-        </p>
+        </Notice>
       ) : items.length === 0 ? (
         <p className="scales-foot">Every available request is in the last scan.</p>
       ) : (

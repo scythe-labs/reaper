@@ -14,6 +14,7 @@ import { count, since } from "../format";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Switch } from "./Switch";
+import { Notice } from "./Notice";
 
 const MANUAL_CONNECTION = "__manual__";
 
@@ -426,7 +427,7 @@ export function PlexPanel({
     return (
       <div className="panel">
         <h2>Plex</h2>
-        <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
+        <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>
       </div>
     );
   }
@@ -552,11 +553,11 @@ export function PlexPanel({
                 ) : (
                   <>
                     {linkedServerMissing && (
-                      <p className="notice notice-warn">
+                      <Notice tone="warn">
                         Plex's list came back without the server Reaper uses
                         {data?.name ? `, ${data.name}` : ""}. Nothing has changed. Refresh to look
                         again; the server and connection stay as they are until it is back.
-                      </p>
+                      </Notice>
                     )}
                     <select
                       value={currentServer?.machine_identifier ?? ""}
@@ -698,9 +699,9 @@ export function PlexPanel({
               />
             </div>
             {!verifyCert && (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 Reaper will accept this server's certificate without checking who issued it.
-              </p>
+              </Notice>
             )}
           </div>
 
@@ -749,9 +750,9 @@ export function PlexPanel({
           </div>
         </div>
 
-        {connError && <p className="notice notice-error">{connError}</p>}
-        {webUrlError && <p className="notice notice-error">{webUrlError}</p>}
-        {plexError && <p className="notice notice-error">{plexError}</p>}
+        {connError && <Notice tone="error">{connError}</Notice>}
+        {webUrlError && <Notice tone="error">{webUrlError}</Notice>}
+        {plexError && <Notice tone="error">{plexError}</Notice>}
         {message && <p className="muted">{message}</p>}
       </div>
 
@@ -766,9 +767,7 @@ export function PlexPanel({
           {libraries.isPending || syncLibraries.isPending ? (
             <p className="muted">Loading libraries…</p>
           ) : libraries.isError ? (
-            <p className="notice notice-error">
-              Couldn't load the library list. Reload to try again.
-            </p>
+            <Notice tone="error">Couldn't load the library list. Reload to try again.</Notice>
           ) : (
             <>
               <div className="lib-head">
@@ -801,9 +800,9 @@ export function PlexPanel({
                 ))}
               </div>
               {(saveLibraries.error || syncLibraries.error) && (
-                <p className="notice notice-error">
+                <Notice tone="error">
                   {(saveLibraries.error ?? syncLibraries.error)?.message}
-                </p>
+                </Notice>
               )}
             </>
           )}
@@ -821,9 +820,9 @@ export function PlexPanel({
           {leavingSoon.isPending ? (
             <p className="muted">Loading…</p>
           ) : leavingSoon.isError || !leavingSoon.data ? (
-            <p className="notice notice-error">
+            <Notice tone="error">
               Couldn't load the Leaving Soon settings. Reload to try again.
-            </p>
+            </Notice>
           ) : (
             <div className="set-rows">
               {/* Both rows here carry a Switch and nothing else, so they release the control
@@ -868,9 +867,7 @@ export function PlexPanel({
               )}
             </div>
           )}
-          {saveLeavingSoon.error && (
-            <p className="notice notice-error">{saveLeavingSoon.error.message}</p>
-          )}
+          {saveLeavingSoon.error && <Notice tone="error">{saveLeavingSoon.error.message}</Notice>}
         </div>
       )}
 

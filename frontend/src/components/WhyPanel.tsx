@@ -33,6 +33,7 @@ import { useOverrideMutations } from "../useOverrideMutations";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { reapIsNoop } from "./reviewFate";
+import { Notice } from "./Notice";
 
 /** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
  *  rule's own name, and its row wears the "Your rule" tag. */
@@ -256,9 +257,9 @@ function KeptNotice({ match }: { match: Match | undefined }) {
       : "We couldn't find this in your Plex, so there's no way to tell if anyone still watches it.";
 
   return (
-    <p className="notice notice-warn kept-notice">
+    <Notice tone="warn" className="kept-notice">
       <strong>Kept to be safe.</strong> {reason}
-    </p>
+    </Notice>
   );
 }
 
@@ -1038,10 +1039,10 @@ export function WhyPanel({
           protected it, and an empty panel alone would read as the second. Same amber
           `.notice-warn` every other "we could not check" uses. */}
       {item.explanation_unreadable && (
-        <p className="notice notice-warn">
+        <Notice tone="warn">
           Reaper couldn't read why it judged this one, so the reasons below are missing. Run a scan
           to rebuild them. Nothing is removed on a reason Reaper can't show.
-        </p>
+        </Notice>
       )}
 
       <Verdict item={item} />
@@ -1114,10 +1115,10 @@ export function WhyPanel({
           reapable then, and promising otherwise here is worse than saying nothing. The
           plain reason only, never which source was asked or when. */}
       {item.size_bytes === null && holdsBack && (
-        <p className="notice notice-warn">
+        <Notice tone="warn">
           Held back: size unknown. Sonarr and Radarr had none, so Reaper can't tell what removing
           this would free, and won't remove it.
-        </p>
+        </Notice>
       )}
 
       {/* Decide without leaving the reasoning. Sticky, so the buttons stay in reach at

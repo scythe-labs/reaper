@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type ScheduledJob, type Snapshot } from "../api";
 import { bytes, count, totalBytes } from "../format";
 import { JobStatus, useJobFlash } from "./JobStatus";
+import { Notice } from "./Notice";
 
 //: Friendly names for the scan's internal phases, so the status line reads in English.
 //  Exported because the first-run wizard shows the same progress line; one table keeps
@@ -220,22 +221,22 @@ export function ScanRow({
         )}
 
         {start.error && (
-          <p className="notice notice-error notice-inline">
+          <Notice tone="error" inline>
             The scan didn't start: {start.error.message}
-          </p>
+          </Notice>
         )}
         {status?.error && (
-          <p className="notice notice-error notice-inline">
+          <Notice tone="error" inline>
             The scan hit a problem: {status.error}
-          </p>
+          </Notice>
         )}
 
         {snapshot?.degraded && (
-          <p className="notice notice-warn">
+          <Notice tone="warn">
             <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason} You can
             still look at it, but Reaper won't act on it. A scan that missed a source could show a
             list that looks complete when it isn't.
-          </p>
+          </Notice>
         )}
       </div>
 

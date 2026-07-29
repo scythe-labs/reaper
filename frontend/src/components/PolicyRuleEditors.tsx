@@ -28,6 +28,7 @@ import {
   useTypedNumber,
 } from "./QuantityInput";
 import { Segmented } from "./Segmented";
+import { Notice } from "./Notice";
 
 // remove. (Most of these fields are filtered out of the remove vocabulary today because a
 // built-in signal covers them; the map stays complete so a future field just works.)
@@ -385,10 +386,10 @@ export function RemoveRulesEditor({
           which is the wrong lesson to take from a failed fetch: say what happened instead, and
           drop the form rather than offer a dropdown with nothing in it. */}
       {condemnVocabError ? (
-        <p className="notice notice-error">
+        <Notice tone="error">
           Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
           now. Reload to try again. The rules you've already added are unaffected.
-        </p>
+        </Notice>
       ) : (
         <>
           <div className="condition-add">
@@ -651,10 +652,10 @@ export function KeepRulesEditor({
       {/* Same reason as the remove editor: a form with an empty dropdown looks like a feature
           with nothing behind it, so name the failure and drop the form. */}
       {vocabError ? (
-        <p className="notice notice-error">
+        <Notice tone="error">
           Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
           now. Reload to try again. The rules you've already added are unaffected.
-        </p>
+        </Notice>
       ) : (
         <>
           <div className="rules-add">

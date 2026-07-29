@@ -43,6 +43,8 @@ import { Segmented } from "./Segmented";
 import { KINDS, kindLabel, ServiceModal, TestBadge } from "./ServiceModal";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Switch } from "./Switch";
+import { Notice } from "./Notice";
+import { SwitchConfirm } from "./SwitchConfirm";
 
 // The Plex panel moved to its own file; SetupWizard imports it from here, so the name
 // stays available at this path.
@@ -366,9 +368,7 @@ export function GeneralPanel({
   // failed refetch keeps the form on the last good values; this is for a load that never
   // landed one.
   if (!data) {
-    return (
-      <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
-    );
+    return <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>;
   }
 
   // The current zone may not be in the browser's list (an older engine, or a server-only
@@ -762,7 +762,7 @@ export function GeneralPanel({
             </div>
           </div>
         </div>
-        {keyError && <p className="notice notice-error">{keyError}</p>}
+        {keyError && <Notice tone="error">{keyError}</Notice>}
       </div>
 
       <div className="set-group">
@@ -815,9 +815,7 @@ export function GeneralPanel({
       {/* Only when there is no bar to put it in. A control that saves on the spot fails with
           nothing unsaved, so its refusal has nowhere else to go; a refused BAR save renders
           inside the bar instead, beside the fields it just refused to write. */}
-      {save.error && pending.length === 0 && (
-        <p className="notice notice-error">{save.error.message}</p>
-      )}
+      {save.error && pending.length === 0 && <Notice tone="error">{save.error.message}</Notice>}
 
       {/* The one save affordance on this panel (rule 43), the same bar the policy editor uses:
           it names what is unsaved, saves all of it in one press, and offers Discard. Rendered
@@ -847,7 +845,7 @@ export function GeneralPanel({
               belief that all six fields went in. The bar is sticky, so a notice outside it
               renders at the document foot -- off screen for anyone editing the top group,
               which is where five of these six fields are. */}
-          {save.error && <p className="notice notice-error">{save.error.message}</p>}
+          {save.error && <Notice tone="error">{save.error.message}</Notice>}
         </div>
       )}
     </div>
@@ -910,11 +908,11 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
           )}
         </div>
         {(remove.error ?? testSaved.error) && (
-          <p className="notice notice-error notice-inline">
+          <Notice tone="error" inline>
             {remove.error
               ? `This service wasn't removed: ${remove.error.message}`
               : `The test didn't run: ${testSaved.error?.message}`}
-          </p>
+          </Notice>
         )}
       </div>
       {/* Each button carries the instance it acts on. A tester with two Sonarr, two Radarr and a
@@ -993,7 +991,7 @@ export function ServicesPanel() {
       <p className="blurb">
         The apps Reaper reads from. It only ever reads. Nothing here can delete a file.
       </p>
-      {error && <p className="notice notice-error">{(error as Error).message}</p>}
+      {error && <Notice tone="error">{(error as Error).message}</Notice>}
       {isPending && <p className="muted">Loading…</p>}
       {data &&
         KINDS.map((k) => {
@@ -1084,7 +1082,7 @@ function BackupPanel({
           not run the unmount cleanup -- so following this panel's own advice was the one exit that
           orphaned the archive. */}
       {isError && !data && (
-        <p className="notice notice-error">Couldn't load this page. Reload to try again.</p>
+        <Notice tone="error">Couldn't load this page. Reload to try again.</Notice>
       )}
       {isError && data && <StaleReadNotice />}
       {data && (
@@ -1107,17 +1105,17 @@ function BackupPanel({
                 {busy ? "Preparing…" : "Download backup"}
               </button>
             </div>
-            {error && <p className="notice notice-error">The download didn't start: {error}</p>}
+            {error && <Notice tone="error">The download didn't start: {error}</Notice>}
             {!data.key_in_backup && (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 Your encryption key is set through the environment, so it is not inside this backup.
                 Keep that key with the file, or a restore cannot read your saved credentials.
-              </p>
+              </Notice>
             )}
-            <p className="notice notice-warn">
+            <Notice tone="warn">
               This file can unlock your Plex and Sonarr/Radarr credentials. Keep it as safe as a
               password.
-            </p>
+            </Notice>
           </section>
 
           {/* Rule 146's second claim, for this panel: the card is what holds the staged backup and
@@ -1322,7 +1320,7 @@ function RestoreCard({
     return (
       <section className="rules-card">
         <h3>Restore from a backup</h3>
-        <div className="notice notice-warn restore-armed">
+        <Notice tone="warn" className="restore-armed" as="div">
           <span>
             <strong>A restore is ready.</strong> Restart Reaper's container to finish. Nothing has
             changed yet.
@@ -1330,7 +1328,7 @@ function RestoreCard({
           <button type="button" className="link" onClick={() => void cancel()} disabled={busy}>
             Cancel restore
           </button>
-        </div>
+        </Notice>
       </section>
     );
   }
@@ -1413,11 +1411,11 @@ function RestoreCard({
           </div>
 
           {!summary.key_in_backup && (
-            <p className="notice notice-warn">
+            <Notice tone="warn">
               This backup doesn't include the encryption key. Set REAPER_SECRET_KEY on this server
               to the value it was saved with, or your saved credentials can't be read after the
               restore.
-            </p>
+            </Notice>
           )}
 
           <label className="field-sm restore-pw">
@@ -1449,14 +1447,14 @@ function RestoreCard({
             Restoring takes effect the next time the container restarts. Nothing changes until then.
           </p>
 
-          <p className="notice notice-warn">
+          <Notice tone="warn">
             Restoring replaces your current decisions and settings. There is no undo, so download a
             backup first.
-          </p>
+          </Notice>
         </>
       )}
 
-      {error && <p className="notice notice-error">The restore didn't start: {error}</p>}
+      {error && <Notice tone="error">The restore didn't start: {error}</Notice>}
     </section>
   );
 }
@@ -1478,7 +1476,7 @@ function AboutPanel() {
           unreachable. Not window focus, which `main.tsx` turns off app-wide and only `useSafety`
           asks back, and not an invalidation: nothing in the app invalidates `["about"]`. */}
       {isError && !data && (
-        <p className="notice notice-error">Couldn't load this page. Reload to try again.</p>
+        <Notice tone="error">Couldn't load this page. Reload to try again.</Notice>
       )}
       {isError && data && <StaleReadNotice what="these details" />}
       {data && (
@@ -1744,8 +1742,8 @@ function ScheduleModal({
           </label>
         )}
 
-        {turningOff && meta.offWarning && <p className="notice notice-warn">{meta.offWarning}</p>}
-        {error && <p className="notice notice-error">{error}</p>}
+        {turningOff && meta.offWarning && <Notice tone="warn">{meta.offWarning}</Notice>}
+        {error && <Notice tone="error">{error}</Notice>}
 
         <div className="add-actions">
           <span className="flex-spacer" />
@@ -1811,9 +1809,9 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
         />
         <div className="jobrow-sched">{maintenanceScheduleText(job)}</div>
         {run.error && (
-          <p className="notice notice-error notice-inline">
+          <Notice tone="error" inline>
             The job didn't start: {run.error.message}
-          </p>
+          </Notice>
         )}
       </div>
       {/* The Jobs page stacks this row once per server-returned job, above the scan row and the
@@ -1898,9 +1896,9 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
         <div className="jobrow-main">
           <div className="jobrow-title">{title}</div>
           <div className="jobrow-desc">{desc}</div>
-          <p className="notice notice-error notice-inline">
+          <Notice tone="error" inline>
             Couldn't load the shelf status. Reload to try again.
-          </p>
+          </Notice>
         </div>
       </div>
     );
@@ -1966,9 +1964,9 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
           </button>
         </div>
         {runSync.error && (
-          <p className="notice notice-error notice-inline">
+          <Notice tone="error" inline>
             The shelves didn't update: {runSync.error.message}
-          </p>
+          </Notice>
         )}
       </div>
       <div className="jobrow-actions">
@@ -2038,7 +2036,7 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
           plain block flow, so DOM order is reading order: sat after `.set-rows` it pointed at the
           schedule editor and nothing else. Every other call site puts it over its content. */}
       {schedule.isError && !schedule.data && (
-        <p className="notice notice-error">Couldn't load the upkeep jobs. Reload to try again.</p>
+        <Notice tone="error">Couldn't load the upkeep jobs. Reload to try again.</Notice>
       )}
       {schedule.isError && schedule.data && <StaleReadNotice what="these jobs" />}
 
@@ -2197,9 +2195,9 @@ function NotificationsPanel({
       {isPending ? (
         <p className="muted">Checking whether Discord is connected…</p>
       ) : isError && !data ? (
-        <p className="notice notice-error">
+        <Notice tone="error">
           Couldn't check whether Discord is connected. Reload to try again.
-        </p>
+        </Notice>
       ) : (
         <>
           {isError && <StaleReadNotice what="whether Discord is connected" />}
@@ -2277,12 +2275,12 @@ function NotificationsPanel({
         <TestBadge result={test} />
       </div>
       {badFormat && (
-        <p className="notice notice-error">
+        <Notice tone="error">
           That doesn't look like a Discord webhook URL. Paste the full
           https://discord.com/api/webhooks/… URL from the channel's integration settings.
-        </p>
+        </Notice>
       )}
-      {error && <p className="notice notice-error">{error}</p>}
+      {error && <Notice tone="error">{error}</Notice>}
     </div>
   );
 }
@@ -2438,7 +2436,7 @@ function AdminPasswordForm({
             {msg && <span className="muted">{msg}</span>}
           </div>
         </form>
-        {errorNode && <p className="notice notice-error">{errorNode}</p>}
+        {errorNode && <Notice tone="error">{errorNode}</Notice>}
       </div>
     </div>
   );
@@ -2473,7 +2471,7 @@ export function SecurityPanel({
     return (
       <div className="panel">
         <h2>Security</h2>
-        <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
+        <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>
       </div>
     );
   }
@@ -2521,6 +2519,10 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   const [securityDirty, setSecurityDirty] = useState(false);
   const [backupDirty, setBackupDirty] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<Panel | null>(null);
+  // Bumped on every refused press so `SwitchConfirm` can move focus even when the press changed
+  // no state at all -- pressing the same section twice sets `pendingSwitch` to the value it
+  // already holds, which React treats as nothing happening (see SwitchConfirm.tsx).
+  const [switchNonce, setSwitchNonce] = useState(0);
 
   const dirtyPanels: Partial<Record<Panel, boolean>> = {
     general: generalDirty,
@@ -2543,6 +2545,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
     if (next === panel) return;
     if (leavingDirty) {
       setPendingSwitch(next);
+      setSwitchNonce((n) => n + 1);
       return;
     }
     setPendingSwitch(null);
@@ -2600,24 +2603,19 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
           is an uploaded file, not a setting, and switching does not merely forget it -- the card
           cancels the staged upload on its way out. */}
       {pendingSwitch !== null && (
-        <div className="notice notice-warn">
-          {panel === "backup"
-            ? `The backup file you chose isn't restored yet. Switching to ${pendingLabel} drops it.`
-            : `You have unsaved ${leavingLabel} settings. Switching to ${pendingLabel} discards them.`}{" "}
-          <button
-            type="button"
-            className="danger"
-            onClick={() => {
-              setPendingSwitch(null);
-              setPanel(pendingSwitch);
-            }}
-          >
-            Discard and switch
-          </button>{" "}
-          <button type="button" className="ghost" onClick={() => setPendingSwitch(null)}>
-            Keep editing
-          </button>
-        </div>
+        <SwitchConfirm
+          nonce={switchNonce}
+          message={
+            panel === "backup"
+              ? `The backup file you chose isn't restored yet. Switching to ${pendingLabel} drops it.`
+              : `You have unsaved ${leavingLabel} settings. Switching to ${pendingLabel} discards them.`
+          }
+          onDiscard={() => {
+            setPendingSwitch(null);
+            setPanel(pendingSwitch);
+          }}
+          onKeep={() => setPendingSwitch(null)}
+        />
       )}
       <div className="settings-body">
         {panel === "general" && <GeneralPanel onDirtyChange={setGeneralDirty} />}

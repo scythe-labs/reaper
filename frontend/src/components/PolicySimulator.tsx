@@ -11,6 +11,7 @@
 import type { ProfileSettings, Simulation } from "../api";
 import { bytes, count, totalBytes } from "../format";
 import { GATE_META, titleCase } from "./policyMeta";
+import { Notice } from "./Notice";
 
 /** The histogram, with the threshold drawn across it.
  *
@@ -99,7 +100,7 @@ export function StaleNotice({
           </button>
         </>
       )}
-      {startError && <p className="notice notice-error">The scan didn't start: {startError}</p>}
+      {startError && <Notice tone="error">The scan didn't start: {startError}</Notice>}
     </div>
   );
 }

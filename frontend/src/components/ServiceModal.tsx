@@ -19,6 +19,7 @@ import { Fragment, useEffect, useState, type RefObject } from "react";
 import { api, type Instance, type InstanceTest, type SeerrService } from "../api";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
+import { Notice } from "./Notice";
 
 export const KINDS: {
   value: string;
@@ -482,10 +483,10 @@ export function ServiceModal({
               <span>Check the server's certificate</span>
             </label>
             {!verifyCert && (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 Reaper will accept this server's certificate without checking who issued it. Only
                 use this for a server you run yourself, like one with a self-signed certificate.
-              </p>
+              </Notice>
             )}
           </>
         )}
@@ -535,10 +536,10 @@ export function ServiceModal({
             {rootFolders.isPending ? (
               <p className="help">Reading this instance's folders…</p>
             ) : rootFolders.error ? (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 Reaper couldn't read this instance's folders. Test the connection above, then reopen
                 this to map them.
-              </p>
+              </Notice>
             ) : rootFolders.data && rootFolders.data.length > 0 ? (
               <>
                 <div className="plex-map-grid">
@@ -574,9 +575,7 @@ export function ServiceModal({
                     re-sync a list that is already there. The empty sentence is only for a list
                     we genuinely read and found empty. */}
                 {plexLibraries.error ? (
-                  <p className="notice notice-warn">
-                    Reaper couldn't read your Plex libraries. Try again.
-                  </p>
+                  <Notice tone="warn">Reaper couldn't read your Plex libraries. Try again.</Notice>
                 ) : !plexLibraries.isPending && libOptions.length === 0 ? (
                   <p className="help">
                     No Plex libraries yet. Sync them in Plex settings first, then pick one per
@@ -602,10 +601,10 @@ export function ServiceModal({
             {seerrServices.isPending ? (
               <p className="help">Reading this portal's services…</p>
             ) : seerrServices.error ? (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 Reaper couldn't read this portal's services. Test the connection above (this needs
                 an admin key), then reopen this to map them.
-              </p>
+              </Notice>
             ) : seerrServices.data && seerrServices.data.length > 0 ? (
               <>
                 <div className="plex-map-grid">
@@ -649,9 +648,9 @@ export function ServiceModal({
                 {/* Same trap as the library picker above: a failed fetch leaves every
                     `instanceOptions` empty, and "none yet" would be a claim we never checked. */}
                 {arrInstances.error ? (
-                  <p className="notice notice-warn">
+                  <Notice tone="warn">
                     Reaper couldn't read your Sonarr and Radarr connections. Try again.
-                  </p>
+                  </Notice>
                 ) : !arrInstances.isPending &&
                   seerrServices.data.every((s) => instanceOptions(s.kind).length === 0) ? (
                   <p className="help">
@@ -678,7 +677,7 @@ export function ServiceModal({
           </label>
         )}
         {meta && <p className="help">{meta.hint}</p>}
-        {error && <p className="notice notice-error">{error}</p>}
+        {error && <Notice tone="error">{error}</Notice>}
         {test && (
           <div className="instance-status">
             <TestBadge result={test} />

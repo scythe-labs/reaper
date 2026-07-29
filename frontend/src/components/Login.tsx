@@ -15,6 +15,7 @@ import { api, ApiError, type AuthContext, type PlexPoll } from "../api";
 import { trapTab } from "./ModalShell";
 import { BrandBadge } from "../brand/BrandBadge";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
+import { Notice } from "./Notice";
 
 function PlexGlyph() {
   return (
@@ -135,7 +136,7 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
         <PlexGlyph />
         {setup ? "Sign in with Plex to set up Reaper" : "Sign in with Plex"}
       </button>
-      {phase === "error" && <p className="notice notice-error">{error}</p>}
+      {phase === "error" && <Notice tone="error">{error}</Notice>}
     </>
   );
 }
@@ -230,11 +231,11 @@ function LocalSheet({
         </p>
 
         {noLocalYet ? (
-          <p className="notice notice-warn">
+          <Notice tone="warn">
             No local account exists yet. Create one on the host with{" "}
             <code>reaper-admin create-admin --username &lt;name&gt;</code>, or sign in with Plex
             above.
-          </p>
+          </Notice>
         ) : (
           <form onSubmit={submit} className="local-form">
             <label className="field">
@@ -259,7 +260,7 @@ function LocalSheet({
                 onChange={(e) => setPassword(e.target.value)}
               />
             </label>
-            {error && <p className="notice notice-error">{error}</p>}
+            {error && <Notice tone="error">{error}</Notice>}
             <div className="sheet-actions">
               <button type="button" className="ghost" onClick={onClose}>
                 Back
@@ -324,7 +325,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
             placeholder="Paste the code from the log"
           />
         </label>
-        {error && <p className="notice notice-error">{error}</p>}
+        {error && <Notice tone="error">{error}</Notice>}
         <button type="submit" className="primary btn-block" disabled={busy || !code.trim()}>
           {busy ? "Redeeming…" : "Redeem recovery code"}
         </button>

@@ -57,6 +57,8 @@ import { Outcome, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { Switch } from "./Switch";
+import { Notice } from "./Notice";
+import { SwitchConfirm } from "./SwitchConfirm";
 
 /** "1095 days" said the way a person would: "3 years". */
 export function humanDays(days: number): string {
@@ -147,7 +149,14 @@ function WarnBlock({ warnings }: { warnings: PolicyWarning[] }) {
   return (
     <>
       {warnings.map((w, i) => (
-        <p
+        // `standing`, not announced: these re-render on every debounced validate as the
+        // operator types, so an alert per keystroke would talk over them continuously. The
+        // right mechanism here is `aria-describedby` from each field to its own warning,
+        // which needs an id WarnBlock does not emit yet; filed rather than half-done.
+        <Notice
+          tone={w.severity === "danger" ? "error" : "warn"}
+          inline
+          standing
           // Field and message do not separate these. Two protect conditions on the same
           // movie-only field in a TV policy produce byte-identical warnings, because the
           // producer has no name to put in them -- `ConditionSpec` carries a field, an
@@ -155,10 +164,9 @@ function WarnBlock({ warnings }: { warnings: PolicyWarning[] }) {
           // already-filtered list is the only thing left that differs, and it is stable
           // across a render since the list is derived, never reordered (rule 19).
           key={`${w.field}:${w.message}:${i}`}
-          className={`notice notice-inline ${w.severity === "danger" ? "notice-error" : "notice-warn"}`}
         >
           {w.message}
-        </p>
+        </Notice>
       ))}
     </>
   );
@@ -500,12 +508,16 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
           </span>
         )}
       </span>
+      {/* `standing`: this is a live readout of the points meter directly above it, and its
+          numbers change on every step of a weight slider. Announced, it would talk over the
+          operator continuously for the whole of a drag. What they are owed at the moment it
+          matters is a Save that says why it is disabled, which the savebar carries. */}
       {left !== 0 && (
-        <span className="notice notice-error budget-notice">
+        <Notice tone="error" className="budget-notice" as="span" standing>
           {left < 0
             ? `Your rules add up to ${total} points. Take ${-left} away before saving.`
             : `Your rules add up to ${total} points. Give out the other ${left} before saving.`}
-        </span>
+        </Notice>
       )}
     </span>
   );
@@ -955,6 +967,9 @@ export function PolicyEditor({
   // those edits away -- so it waits here for the same two-step confirm the rest of the
   // app uses (never a native confirm()).
   const [pendingSwitch, setPendingSwitch] = useState<"movie" | "tv" | null>(null);
+  // See SwitchConfirm.tsx: a repeat press of the same segment changes no state, so focus is
+  // keyed on this rather than on `pendingSwitch`.
+  const [switchNonce, setSwitchNonce] = useState(0);
 
   // The notice only exists because there are edits to lose, so it goes when they do -- by
   // Discard, or by a Save that stores them. It used to survive both, still warning that a
@@ -1061,9 +1076,7 @@ export function PolicyEditor({
   // leave the whole workspace saying "Loading…" for good. Say what happened instead.
   if (!draft) {
     if (policyFailed) {
-      return (
-        <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
-      );
+      return <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>;
     }
     return <p className="muted">Loading…</p>;
   }
@@ -1114,6 +1127,7 @@ export function PolicyEditor({
     if (next === mediaType) return;
     if (dirty) {
       setPendingSwitch(next);
+      setSwitchNonce((n) => n + 1);
     } else {
       setPendingSwitch(null);
       setMediaType(next);
@@ -1256,35 +1270,29 @@ export function PolicyEditor({
         {/* A recovery notice renders on the load it explains, so it hangs off the response
             flag alone and no dirty gate, disclosure or savebar can hide it. */}
         {saved?.fell_back && (
-          <div className="notice notice-error">
+          <Notice tone="error" as="div">
             Your saved policy couldn't be read, so this shows the starting one instead. Nothing has
             changed on your server. Check the values below, then save to replace it.
-          </div>
+          </Notice>
         )}
         {saved?.rating_rules_restored && (
-          <div className="notice notice-warn">
+          <Notice tone="warn" as="div">
             Keep well-rated titles had stopped keeping anything. Your saved rating is back below,
             unsaved. Reaper won't remove anything until you check it and save.
-          </div>
+          </Notice>
         )}
         {pendingSwitch !== null && (
-          <div className="notice notice-warn">
-            You have unsaved {kind} policy changes. Switching to{" "}
-            {pendingSwitch === "tv" ? "TV" : "Movies"} discards them.{" "}
-            <button
-              type="button"
-              className="danger"
-              onClick={() => {
-                setPendingSwitch(null);
-                setMediaType(pendingSwitch);
-              }}
-            >
-              Discard and switch
-            </button>{" "}
-            <button type="button" className="ghost" onClick={() => setPendingSwitch(null)}>
-              Keep editing
-            </button>
-          </div>
+          <SwitchConfirm
+            nonce={switchNonce}
+            message={`You have unsaved ${kind} policy changes. Switching to ${
+              pendingSwitch === "tv" ? "TV" : "Movies"
+            } discards them.`}
+            onDiscard={() => {
+              setPendingSwitch(null);
+              setMediaType(pendingSwitch);
+            }}
+            onKeep={() => setPendingSwitch(null)}
+          />
         )}
 
         <nav className="settings-nav policy-rail" aria-label="Policy sections">
@@ -1715,17 +1723,17 @@ export function PolicyEditor({
 
         {/* A validation failure is an ERROR (red): this policy cannot be saved as-is. */}
         {invalidMessage && (
-          <p className="notice notice-error">
+          <Notice tone="error">
             <strong>Can't save this:</strong> {invalidMessage}
-          </p>
+          </Notice>
         )}
         {/* The check itself failing is AMBER, and it does not lock Save: the server
             checks the policy again on save either way. */}
         {validatorDown && (
-          <p className="notice notice-warn">
+          <Notice tone="warn">
             Couldn't check this draft just now, so any problem with it can't be shown here. You can
             still save: the server checks it again when you do.
-          </p>
+          </Notice>
         )}
         {/* Warnings live beside their controls; only one no anchor claims lands here. */}
         <WarnBlock warnings={unanchoredWarnings} />
@@ -1756,17 +1764,15 @@ export function PolicyEditor({
         {/* Recovery notice: hangs off the response flag alone, so no dirty gate or disclosure
             can hide it (mirrors the policy recovery notice above). */}
         {savedPace?.settings_recovered && (
-          <p className="notice notice-error">
+          <Notice tone="error">
             Your saved caps and grace couldn't be read, so these show the starting ones. Nothing has
             changed on your server, but a scan won't remove anything until you check these and save.
-          </p>
+          </Notice>
         )}
 
         {pace === null ? (
           paceFailed ? (
-            <p className="notice notice-error">
-              Couldn't load these settings. Reload to try again.
-            </p>
+            <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>
           ) : (
             <p className="muted">Loading…</p>
           )
@@ -1784,10 +1790,10 @@ export function PolicyEditor({
               deletion password. Turn off for a big first cleanup, back on for routine runs.
             </p>
             {!pace.caps_enabled && (
-              <p className="notice notice-warn notice-inline">
+              <Notice tone="warn" inline>
                 No cap on run size. A run can remove everything you've approved at once. Deletion
                 still needs the password and your approval of the list.
-              </p>
+              </Notice>
             )}
 
             {/* The four caps as a 2x2 matrix: titles / disk freed down the side, per run /
@@ -1927,10 +1933,10 @@ export function PolicyEditor({
                   the button is simply disabled and the notice beside the cause already says
                   why, so a line here would be the bar's third sentence on one subject. */}
               {policyBlocked && willSavePace && (
-                <span className="notice notice-warn budget-notice">
+                <Notice tone="warn" className="budget-notice" as="span">
                   Save writes pace and limits only. Your {kind} policy can't go with it until{" "}
                   {policyHeldBecause}.
-                </span>
+                </Notice>
               )}
               {/* The rescale recovery. Rendered here, beside Save, because it is about
                   what you are about to write -- and from the response FLAGS, not the
@@ -1939,11 +1945,11 @@ export function PolicyEditor({
                   recovery renders at the top of the page instead, unconditionally, so no
                   gate can hide it. */}
               {saved?.needs_save && !saved.fell_back && (
-                <span className="notice notice-warn budget-notice">
+                <Notice tone="warn" className="budget-notice" as="span">
                   Your points have been spread to add up to 100. Nothing has changed on your server
                   yet. Each rule keeps the same share it had, so your scores stay where they are.
                   Review and save.
-                </span>
+                </Notice>
               )}
               {dirty && <PointsBudget builtIn={builtInWeight} yours={yourWeight} />}
             </span>
@@ -1970,8 +1976,8 @@ export function PolicyEditor({
             >
               {saving ? "Saving…" : "Save changes"}
             </button>
-            {save.error && <p className="notice notice-error">{save.error.message}</p>}
-            {savePace.error && <p className="notice notice-error">{savePace.error.message}</p>}
+            {save.error && <Notice tone="error">{save.error.message}</Notice>}
+            {savePace.error && <Notice tone="error">{savePace.error.message}</Notice>}
           </div>
         )}
       </div>

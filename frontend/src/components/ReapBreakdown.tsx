@@ -13,6 +13,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type SignalCount } from "../api";
 import { bytes, count } from "../format";
 import { useHoldsBackUnmeasured } from "./queueSettings";
+import { Notice } from "./Notice";
 
 // Built-in signals read as a policy question in the editor ("How long it's gone
 // unwatched"); here they name the reason a title was condemned, so they get their own
@@ -103,10 +104,10 @@ export function ReapBreakdown({
   // in the amber tone, rather than rendering an empty ledger.
   if (isError || !data) {
     return (
-      <p className="notice notice-warn">
+      <Notice tone="warn">
         Couldn't load what a reap would remove. Reaper just can't show it right now. Reload to try
         again.
-      </p>
+      </Notice>
     );
   }
 
@@ -161,11 +162,11 @@ export function ReapBreakdown({
 
       {allowanceUnknown ? (
         <>
-          <p className="notice notice-warn">
+          <Notice tone="warn">
             Reaper couldn't check your unknown-size allowance, so it can't say how many titles this
             reap removes. {plural(data.will_reap_unknown, "title", "titles")} on the list can't be
             measured. Reload to try again.
-          </p>
+          </Notice>
           <Reasons rows={data.condemned_by} anchor={data.policy_condemned} />
         </>
       ) : reapCount === 0 ? (
@@ -229,7 +230,7 @@ export function ReapBreakdown({
           has to do something (scan) for these to move -- not the informational `.rb-line` the
           held reaps use, which only points at Review. */}
       {data.spares_expired > 0 && (
-        <p className="notice notice-warn">
+        <Notice tone="warn">
           {/* Titles, not spares: the server counts the rows a scan would hand back, and one
               whole-show spare can be holding five condemned seasons. Calling those "5 spares"
               named a thing the operator has one of (rule 21). */}
@@ -246,12 +247,12 @@ export function ReapBreakdown({
           >
             {scanning ? "Scanning…" : startScan.isPending ? "Starting…" : "Scan now"}
           </button>
-        </p>
+        </Notice>
       )}
       {/* Its own notice in the shared error tone, not red text inside the warning above:
           every action failure in the app reads the same way (rule 42). */}
       {data.spares_expired > 0 && startScan.isError && (
-        <p className="notice notice-error">The scan didn't start. Try again.</p>
+        <Notice tone="error">The scan didn't start. Try again.</Notice>
       )}
       {data.hand_reaped_held > 0 && (
         <div className="rb-line">

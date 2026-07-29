@@ -14,6 +14,7 @@ import { api } from "../api";
 import { phaseLabel } from "./ScanBar";
 import { BrandMark } from "../brand/BrandMark";
 import { PlexPanel, ServicesPanel } from "./Settings";
+import { Notice } from "./Notice";
 
 // The tick is the only thing that says whether a step is finished, so it carries the state
 // as text too: color and a glyph alone leave a screen reader hearing the step with no
@@ -73,9 +74,9 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
           </button>
         </div>
         {isError && (
-          <p className="notice notice-error">
+          <Notice tone="error">
             Couldn't check the setup state. You can skip to the app and finish from Settings.
-          </p>
+          </Notice>
         )}
       </div>
     );
@@ -171,9 +172,9 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
         )}
       </div>
       {firstScan.error && (
-        <p className="notice notice-error">The scan didn't start: {firstScan.error.message}</p>
+        <Notice tone="error">The scan didn't start: {firstScan.error.message}</Notice>
       )}
-      {scanError && <p className="notice notice-error">The scan hit a problem: {scanError}</p>}
+      {scanError && <Notice tone="error">The scan hit a problem: {scanError}</Notice>}
       {scanMsg && <p className="muted setup-scanmsg">{scanMsg}</p>}
     </div>
   );

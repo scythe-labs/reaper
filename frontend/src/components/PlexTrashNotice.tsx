@@ -2,6 +2,8 @@
 //
 // The one warning that Plex's trash holds records this reap never touched.
 
+import { Notice } from "./Notice";
+
 /** Warns that emptying Plex's trash takes more than this reap deletes.
  *
  * One component for both surfaces so the wording cannot drift: the plan summary shows it
@@ -25,7 +27,7 @@ export function PlexTrashNotice({
 }) {
   const items = known === 1 ? "1 item" : `${known} items`;
   return (
-    <p className="notice notice-warn">
+    <Notice tone="warn">
       {known > 0 ? (
         <>
           <strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash
@@ -46,6 +48,6 @@ export function PlexTrashNotice({
           <span>I understand, continue anyway</span>
         </label>
       )}
-    </p>
+    </Notice>
   );
 }

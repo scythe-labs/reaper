@@ -93,18 +93,25 @@ Last verified against the code: 2026-07-26.
    violation.
 6. **The screen-reader sweep is partly landed.** #132 and #147 were each one nameless control
    found by hand, and each hand sweep afterwards missed a sibling, so the third pass audited the
-   whole frontend rather than the file named in the issue. Landed so far: every control that
-   could not be told apart by ear now names itself. What is filed rather than fixed is bigger
-   than what landed, and the notice vocabulary is the largest piece of it — 109 hand-rolled
-   sites against **zero** live regions app-wide. Also: the review queue's cards are `role="button"`,
-   which makes every chip, reason and score inside them presentational; the deletion path
-   announces nothing at any stage, arming through progress to the final report; the four `.why`
-   panels are full-screen dialogs under 900px with no dialog semantics; and two menus promise a
-   keyboard contract they never implemented. **The guard is the durable half**: measured against
-   the real pre-#132 tree, `eslint-plugin-jsx-a11y` catches none of the three filed bugs — its
+   whole frontend rather than the file named in the issue. Landed: every control that could not
+   be told apart by ear now names itself, and **the app can speak at all** — there were 109
+   hand-rolled `.notice` blocks against seven live regions app-wide, none of which was a notice,
+   so nothing Reaper said after a press was ever announced. All of them now render through one
+   `Notice` that owns `role="alert"`; `standing` is the declared opt-out for text that is page
+   furniture rather than a reaction. #155's two draft-refusal twins collapsed into one
+   `SwitchConfirm` that also moves focus, keyed on a nonce because a repeat press changes no
+   state and an effect watching the value would not re-fire. What is filed rather than fixed is
+   still larger: the review queue's cards are `role="button"`, which makes every chip, reason and
+   score inside them presentational; the deletion path announces nothing at any stage, arming
+   through progress to the final report; the four `.why` panels are full-screen dialogs under
+   900px with no dialog semantics; and two menus promise a keyboard contract they never
+   implemented. **The guard is the durable half.** Measured against the real pre-#132 tree,
+   `eslint-plugin-jsx-a11y` catches none of the three filed bugs — its
    `control-has-associated-label` counts `<option>` text as a `<select>`'s label, which is the
-   operator's complaint verbatim — so the gate is a render-time accessible-name census plus a
-   static scan, and no new dependency.
+   operator's complaint verbatim — and it costs 112 lockfile entries, an `overrides` entry to
+   survive `npm ci` on eslint 10, and two new audit advisories. So it is not installed. The gate
+   is `test_repo_hygiene`'s ban on hand-rolled notices with the population pinned, plus tests
+   that reach controls by the name an operator can hear. No new dependency.
 
 ## Decisions locked
 

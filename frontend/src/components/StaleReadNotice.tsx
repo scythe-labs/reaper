@@ -2,6 +2,8 @@
 //
 // The one line a settings panel shows when its own read failed but its form is still up.
 
+import { Notice } from "./Notice";
+
 /** Says the values on screen may be out of date, for a panel whose read failed after a good load.
  *
  *  A settings panel only trades its form for "couldn't load these settings" when NOTHING ever
@@ -53,8 +55,8 @@ export function StaleReadNotice({
   inline?: boolean;
 }) {
   return (
-    <p className={inline ? "notice notice-warn notice-inline" : "notice notice-warn"}>
+    <Notice tone="warn" inline={inline}>
       Couldn't check {what} just now, so what's below may be out of date. Reload to try again.
-    </p>
+    </Notice>
   );
 }

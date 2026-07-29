@@ -19,6 +19,7 @@ import { type KeyboardEvent } from "react";
 import { api, type RequesterRow } from "../api";
 import { bytes, count } from "../format";
 import { type WatchReach, mirrorNote, reachIsMeasured, watchReach } from "./watchReach";
+import { Notice } from "./Notice";
 
 /** The circular-arrow refresh glyph, in the app's 16-grid inline-SVG house style. */
 function RefreshIcon() {
@@ -245,7 +246,7 @@ export function Fairness({
         </p>
       </div>
 
-      {error && <p className="notice notice-error">Couldn't load Scales: {error.message}</p>}
+      {error && <Notice tone="error">Couldn't load Scales: {error.message}</Notice>}
       {isPending && (
         <div className="fair-loading" role="status" aria-live="polite">
           <span className="spinner spinner-xl" aria-hidden="true" />

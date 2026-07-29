@@ -31,6 +31,7 @@ import { usePageScrollLock } from "./pageScrollLock";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useSafety } from "./useSafety";
 import { useScanSettled } from "./useScanSettled";
+import { Notice } from "./components/Notice";
 
 // The review queue is the landing view and stays in the first chunk. Every other route is
 // its own, fetched the first time it is opened: the whole app used to ship as one 551 kB
@@ -305,9 +306,9 @@ function ReapBar({ onView }: { onView: (runId: number) => void }) {
       {/* A Stop that failed must say so. Swallowed, it reads as a run that is halting while
           it keeps deleting -- and this is the only Stop on every screen but the sheet. */}
       {stop.error && (
-        <p className="notice notice-error reap-bar-error">
+        <Notice tone="error" className="reap-bar-error">
           Reaper couldn't stop the reap: {stop.error.message}
-        </p>
+        </Notice>
       )}
       <span className="reap-bar-fill" style={{ width: `${pct}%` }} />
     </div>
@@ -335,11 +336,11 @@ function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => voi
         {isPending ? (
           <p className="help">Loading the reap…</p>
         ) : (
-          <p className="notice notice-error">
+          <Notice tone="error">
             {error instanceof ApiError && error.status === 404
               ? "That reap is no longer available."
               : "Reaper couldn't load this reap. Reload the page to try again."}
-          </p>
+          </Notice>
         )}
       </div>
     </ModalShell>
@@ -382,10 +383,10 @@ export function ScanFreshness({
       );
     }
     return (
-      <p className="notice notice-error scan-freshness">
+      <Notice tone="error" className="scan-freshness">
         Couldn't read the last scan, so Reaper can't say how old this queue is. Reload the page to
         try again.
-      </p>
+      </Notice>
     );
   }
   return (
@@ -494,7 +495,9 @@ export function UserMenu({ user }: { user: AuthUser }) {
             {signOut.isPending ? "Signing out…" : "Sign out"}
           </button>
           {signOut.isError && (
-            <p className="notice notice-error notice-inline">Couldn't sign you out. Try again.</p>
+            <Notice tone="error" inline>
+              Couldn't sign you out. Try again.
+            </Notice>
           )}
         </div>
       )}
@@ -515,10 +518,10 @@ function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => v
           <header className="why-head">
             <h2>Something went wrong</h2>
           </header>
-          <p className="notice notice-error">
+          <Notice tone="error">
             Couldn't load the reasons for this item. The item itself is unaffected. Close this panel
             and click the item to try again.
-          </p>
+          </Notice>
         </>
       ) : (
         <div className="why-loading" role="status" aria-live="polite">

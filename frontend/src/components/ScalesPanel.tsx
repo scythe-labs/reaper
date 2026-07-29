@@ -15,6 +15,7 @@ import { bytes, count, date, itemBytes } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
 import { WhyClose } from "./WhyPanel";
+import { Notice } from "./Notice";
 
 function initial(name: string): string {
   const c = name.trim()[0];
@@ -411,9 +412,9 @@ export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClos
           <header className="why-head">
             <h2>Something went wrong</h2>
           </header>
-          <p className="notice notice-error">
+          <Notice tone="error">
             Couldn't load this person's requests. Close this panel and click the card to try again.
-          </p>
+          </Notice>
         </>
       ) : (
         <div className="why-loading" role="status" aria-live="polite">

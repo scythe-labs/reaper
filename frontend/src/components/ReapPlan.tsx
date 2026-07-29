@@ -21,6 +21,7 @@ import { useSafety } from "../useSafety";
 import { PlexTrashNotice } from "./PlexTrashNotice";
 import { ReapBreakdown } from "./ReapBreakdown";
 import { ReapConfirm } from "./ReapConfirm";
+import { Notice } from "./Notice";
 
 /** A stored run state, in the words the rest of the app uses for it. "Stopped", never
  *  "aborted" -- one word for one mechanism, the same as the reap bar and the report above
@@ -244,16 +245,16 @@ export function ReapPlan({
       </p>
 
       {degraded && (
-        <p className="notice notice-warn">
+        <Notice tone="warn">
           <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You can
           still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and
           scan again.
-        </p>
+        </Notice>
       )}
 
       <ReapBreakdown onGoToPlexSettings={onGoToPlexSettings} onGoToReview={onGoToReview} />
 
-      {plan.error && <p className="notice notice-error">{plan.error.message}</p>}
+      {plan.error && <Notice tone="error">{plan.error.message}</Notice>}
 
       {/* A plan is asked for but not in hand. Never render nothing here: the whole block below
           -- phrase, count, Execute, steps -- hangs off this one query, so a failed fetch used to
@@ -280,12 +281,12 @@ export function ReapPlan({
             {/* The plan is smaller than the queue implied, and this is where the owner
                 finds out. Silence here reads as "that was everything". */}
             {run.held_back_unknown_size > 0 && (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 {souls(run.held_back_unknown_size)}{" "}
                 {run.held_back_unknown_size === 1 ? "is" : "are"} held back. Reaper couldn't measure{" "}
                 {run.held_back_unknown_size === 1 ? "its" : "their"} size, so it won't delete{" "}
                 {run.held_back_unknown_size === 1 ? "it" : "them"}.
-              </p>
+              </Notice>
             )}
             {/* Informational here, and acknowledged in the sheet. Execute only opens the
                 sheet, so nothing irreversible is one click from this row. */}
@@ -293,15 +294,15 @@ export function ReapPlan({
               <PlexTrashNotice known={planTrash.known} unreadable={planTrash.unreadable} />
             )}
             {staleRun && (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 This plan came from an older scan, so it can list titles you have since protected.{" "}
                 <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
                   Build a new plan
                 </button>
-              </p>
+              </Notice>
             )}
             {staleUnknown && (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 {snapshot.isPending ? (
                   "Checking whether this plan came from the latest scan…"
                 ) : (
@@ -316,7 +317,7 @@ export function ReapPlan({
                     </button>
                   </>
                 )}
-              </p>
+              </Notice>
             )}
             <button onClick={() => dry.mutate(run.id)} disabled={dry.isPending}>
               {dry.isPending ? "Checking…" : "Practice run"}
@@ -348,7 +349,7 @@ export function ReapPlan({
               </span>
             )}
           </div>
-          {dry.error && <p className="notice notice-error">{dry.error.message}</p>}
+          {dry.error && <Notice tone="error">{dry.error.message}</Notice>}
           {report && <Report report={report} />}
           <Steps run={run} />
         </>

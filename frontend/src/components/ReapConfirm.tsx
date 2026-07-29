@@ -27,6 +27,7 @@ import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
 import { ModalShell } from "./ModalShell";
 import { PlexTrashNotice } from "./PlexTrashNotice";
+import { Notice } from "./Notice";
 
 export function ReapConfirm({
   run: openedWith,
@@ -181,11 +182,11 @@ export function ReapConfirm({
           the files go, and the count above is smaller than the queue's for a reason the
           owner is entitled to know while deciding. */}
       {run.held_back_unknown_size > 0 && (
-        <p className="notice notice-warn">
+        <Notice tone="warn">
           {souls(run.held_back_unknown_size)} {run.held_back_unknown_size === 1 ? "is" : "are"} held
           back. Reaper couldn't measure {run.held_back_unknown_size === 1 ? "its" : "their"} size,
           so it won't delete {run.held_back_unknown_size === 1 ? "it" : "them"}.
-        </p>
+        </Notice>
       )}
 
       {/* Stage 1 — the practice run ("dry run" is still the API's and the executor's word for
@@ -199,9 +200,9 @@ export function ReapConfirm({
             <p className="blurb">Checking every safety stop with a practice run…</p>
           )}
           {dry.error && (
-            <p className="notice notice-error">
+            <Notice tone="error">
               The practice run failed, so nothing can be executed: {dry.error.message}
-            </p>
+            </Notice>
           )}
           {dryReport?.dry_run && dryReport.state === "aborted" && (
             <div className="sim sim-info">
@@ -222,9 +223,9 @@ export function ReapConfirm({
       {/* Another reap holds the single slot: say so, rather than lighting a Reap button the
           server would refuse. */}
       {!running && !report && !failed && otherRunning && (
-        <p className="notice notice-warn">
+        <Notice tone="warn">
           Another reap is running. Wait for it to finish, then reopen this to reap.
-        </p>
+        </Notice>
       )}
 
       {/* Plex's trash takes more than this reap deletes, so say so before the phrase field
@@ -250,10 +251,10 @@ export function ReapConfirm({
             safety.isPending ? (
               <p className="reap-disarmed">Checking whether deletion is on…</p>
             ) : safety.isError || !safety.data ? (
-              <p className="notice notice-warn">
+              <Notice tone="warn">
                 Reaper couldn't confirm whether deletion is on, so nothing can be reaped from here.
                 Check <em>Policy → Deletion</em>, then reload this page.
-              </p>
+              </Notice>
             ) : (
               <p className="reap-disarmed">
                 Deletion is <strong>off</strong>. Turn it on in <em>Policy → Deletion</em> (it asks
@@ -276,7 +277,7 @@ export function ReapConfirm({
               />
             </>
           )}
-          {exec.error && <p className="notice notice-error">{exec.error.message}</p>}
+          {exec.error && <Notice tone="error">{exec.error.message}</Notice>}
           <div className="reap-confirm-actions">
             <button className="ghost" onClick={onClose} disabled={exec.isPending}>
               Cancel
@@ -306,7 +307,7 @@ export function ReapConfirm({
               <div className="prog-fill" style={{ width: `${pct}%` }} />
             </div>
           </div>
-          {stop.error && <p className="notice notice-error">{stop.error.message}</p>}
+          {stop.error && <Notice tone="error">{stop.error.message}</Notice>}
           <div className="reap-confirm-actions">
             <span className={`reap-running ${stopping ? "stopping" : "deleting"}`}>
               <span className="spinner" aria-hidden="true" />
@@ -328,11 +329,11 @@ export function ReapConfirm({
           server refuses just as silently. What was removed is on the reap bar's report. */}
       {failed && (
         <div className="reap-arm">
-          <p className="notice notice-error">
+          <Notice tone="error">
             <strong>The reap stopped on a problem.</strong>{" "}
             {status?.error ?? "Reaper couldn't say what went wrong."} Anything already removed is
             gone; check the Review queue after the next scan.
-          </p>
+          </Notice>
           <div className="reap-confirm-actions">
             <button className="primary" onClick={onClose}>
               Done

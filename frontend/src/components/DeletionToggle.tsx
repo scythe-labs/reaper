@@ -12,6 +12,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api";
 import { useSafety } from "../useSafety";
+import { Notice } from "./Notice";
 
 export function DeletionToggle() {
   const queryClient = useQueryClient();
@@ -60,9 +61,9 @@ export function DeletionToggle() {
             </div>
           </div>
         ) : (
-          <p className="notice notice-warn">
+          <Notice tone="warn">
             Reaper couldn't confirm whether deletion is on. Until it can, treat it as on.
-          </p>
+          </Notice>
         )}
         <div className="safety-row">
           <div>
@@ -80,7 +81,7 @@ export function DeletionToggle() {
             {toggle.isPending ? "Turning off…" : "Turn off"}
           </button>
         </div>
-        {error && <p className="notice notice-error">{error}</p>}
+        {error && <Notice tone="error">{error}</Notice>}
       </>
     );
   }
@@ -156,7 +157,7 @@ export function DeletionToggle() {
           </button>
         )}
       </div>
-      {error && <p className="notice notice-error">{error}</p>}
+      {error && <Notice tone="error">{error}</Notice>}
     </>
   );
 }

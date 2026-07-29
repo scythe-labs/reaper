@@ -467,3 +467,71 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
         if heading.match(line)
     ]
     assert not offenders, "the rules live in .claude/rules/, not in docs/:\n" + "\n".join(offenders)
+
+
+# Every notice the app renders, counted once. Rule 145: the assertion below cannot tell a
+# notice that complies from one that dropped out of the walk, and reads green for both.
+#
+# 108, not the 109 hand-rolled sites this replaced: the two draft-refusal notices were
+# byte-identical twins in Settings and PolicyEditor, and both now render through the single
+# Notice inside ``SwitchConfirm`` (rule 18). The two figures mean different things and are
+# deliberately not derived from each other.
+_EXPECTED_NOTICES = 108
+
+
+def _shipped_tsx() -> list[Path]:
+    """The .tsx the app actually ships: no tests, no test harness."""
+    return [
+        p
+        for p in FRONTEND_SRC.rglob("*.tsx")
+        if ".test." not in p.name and "test" not in p.relative_to(FRONTEND_SRC).parts
+    ]
+
+
+def test_every_notice_goes_through_the_one_component_that_announces_it() -> None:
+    """A hand-rolled ``.notice`` is a notice no screen reader will read out (#155).
+
+    There were 109 of these written by hand and seven live regions in the whole frontend, and
+    not one of the seven was a notice. Nothing the app said after an operator pressed something
+    -- a failed save, a refused switch, a wrong password on the control that arms deletion --
+    was announced at all. ``Notice`` owns ``role="alert"`` so the answer is written once
+    (rule 18); this is what stops the 110th copy being written by hand and shipping mute.
+
+    Rule 144 is why the *count* is here rather than only the ban: the number 109 appears in
+    issue #155, in ``Notice.tsx``'s own docblock and in ``Notice.test.tsx``. Deriving it in one
+    place and leaving the others to drift is the failure that rule describes, so the message
+    below names them.
+    """
+    component = FRONTEND_SRC / "components" / "Notice.tsx"
+    # The bare ``notice`` token, not a substring of one: ``budget-notice`` and ``kept-notice``
+    # are layout classes that ride ON a Notice via its ``className`` prop, and a ``\bnotice\b``
+    # match counts them as offenders because the hyphen is a word boundary.
+    classes = re.compile(r'className=\{?["`]([^"`}]*)["`]')
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in _shipped_tsx()
+        if p != component
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        for m in classes.finditer(_strip_prose(line))
+        if "notice" in m.group(1).split()
+    ]
+    assert not offenders, (
+        "these write a .notice class by hand, so they render with no role and are silent to a\n"
+        "screen reader. Use <Notice tone=...>, which carries role=alert; pass `standing` only\n"
+        "for text that is part of the page rather than a reaction to something:\n"
+        + "\n".join(offenders)
+    )
+
+    used = sum(
+        len(re.findall(r"<Notice[\s/>]", p.read_text(encoding="utf-8")))
+        for p in _shipped_tsx()
+        if p != component
+    )
+    assert used == _EXPECTED_NOTICES, (
+        f"expected {_EXPECTED_NOTICES} <Notice> call sites, found {used}.\n"
+        "If you ADDED or REMOVED a notice, bump _EXPECTED_NOTICES. Do NOT touch the 109 in\n"
+        "Notice.tsx's docblock and Notice.test.tsx: that is how many hand-rolled notices this\n"
+        "replaced, a fact about the past, not a count of what is here now (rule 144).\n"
+        "If you added nothing, one dropped out of the walk: the ban above passes happily on\n"
+        "a notice it can no longer see."
+    )

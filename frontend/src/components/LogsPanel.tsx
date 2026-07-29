@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type LogLine } from "../api";
 import { count } from "../format";
 import { Switch } from "./Switch";
+import { Notice } from "./Notice";
 
 const LEVEL_RANK: Record<string, number> = {
   DEBUG: 10,
@@ -175,12 +176,12 @@ export function LogsPanel() {
       {logs.isPending && lines.length === 0 ? (
         <p className="muted">Loading the log…</p>
       ) : logs.isError && lines.length === 0 ? (
-        <p className="notice notice-error">
+        <Notice tone="error">
           Couldn't load the log.{" "}
           <button className="ghost sm" onClick={() => void logs.refetch()}>
             Try again
           </button>
-        </p>
+        </Notice>
       ) : (
         <div
           className={wrap ? "log-console log-wrap" : "log-console"}
@@ -209,7 +210,7 @@ export function LogsPanel() {
           nothing is retrying and saying so would be a lie. In that state the operator gets
           the same Try again button the empty-log branch above offers. */}
       {logs.isError && lines.length > 0 && (
-        <p className="notice notice-error">
+        <Notice tone="error">
           {live ? (
             "Couldn't load new lines. Reaper is trying again."
           ) : (
@@ -220,7 +221,7 @@ export function LogsPanel() {
               </button>
             </>
           )}
-        </p>
+        </Notice>
       )}
 
       <div className="set-group log-level-group">
@@ -266,9 +267,9 @@ export function LogsPanel() {
             </div>
           </div>
         </div>
-        {setLevel.error && <p className="notice notice-error">{setLevel.error.message}</p>}
+        {setLevel.error && <Notice tone="error">{setLevel.error.message}</Notice>}
         {download.error && (
-          <p className="notice notice-error">The download didn't start: {download.error.message}</p>
+          <Notice tone="error">The download didn't start: {download.error.message}</Notice>
         )}
       </div>
     </div>
