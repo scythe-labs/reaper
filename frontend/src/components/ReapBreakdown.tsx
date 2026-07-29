@@ -172,10 +172,12 @@ export function ReapBreakdown({
 
       {allowanceUnknown ? (
         <>
+          {/* No reload advice (#195): this renders on the Reap page, above a plan the operator
+              may have spent a queue's worth of Spare and Reap decisions arriving at. */}
           <Notice tone="warn">
             Reaper couldn't check your unknown-size allowance, so it can't say how many titles this
             reap removes. {plural(data.will_reap_unknown, "title", "titles")} on the list can't be
-            measured. Reload to try again.
+            measured.
           </Notice>
           <Reasons rows={data.condemned_by} anchor={data.policy_condemned} />
         </>

@@ -660,6 +660,89 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
     )
 
 
+# Every sentence in the shipped app that says the word "reload", by the file that renders it.
+#
+# A reload discards whatever is typed, staged or selected, and there is no ``beforeunload``
+# handler anywhere in ``frontend/src`` to ask first -- so this advice is destructive exactly where
+# there is something to destroy. #153 took it off the shared ``StaleReadNotice``; #195 took it off
+# the eight hand-written siblings that render while a draft, a pasted secret or a bulk selection is
+# on screen. What is left is here so the next one has to be classified rather than typed.
+#
+# Per file, and every entry is a deliberate keep:
+#   App.tsx (1)              the reap sheet's loader. Not in #195's enumeration; see the note below
+#   Fairness.tsx (1)         NOT advice: the Refresh button's ``title``, "Reload requests and
+#                            watch history". It is in the walk because the walk is of a word, and
+#                            dropping it by hand is how a matcher starts lying about its own scope
+#   NotInScanPanel.tsx (1)   a read-only panel with no draft, and now only on the arm where the
+#                            list never landed (#190)
+#   PlexPanel.tsx (1)        the panel's own never-loaded status read
+#   PolicyEditor.tsx (1)     the policy's never-loaded branch, above no form
+#   ReapBreakdown.tsx (1)    the ledger's refusal, which is undivided on purpose (#190)
+#   ReapConfirm.tsx (1)      the not-armed branch, before the confirmation box exists
+#   ReapPlan.tsx (1)         the plan loader. Not in #195's enumeration; see the note below
+#   Settings.tsx (6)         six never-loaded branches, each above a form that never rendered
+#
+# **#195's enumeration was not the whole population**, which is why this counts rather than
+# trusting the issue: it named 8 to fix and 9 to leave, called that 15, and did not reach the reap
+# sheet, the plan loader, the ledger refusal or this panel at all. Those four are kept here as a
+# question, not as a settled answer -- a reload from any of them drops a bulk selection made in
+# the queue underneath, which nobody has demonstrated (#225).
+_RELOAD_ADVICE = {
+    "frontend/src/App.tsx": 1,
+    "frontend/src/components/Fairness.tsx": 1,
+    "frontend/src/components/NotInScanPanel.tsx": 1,
+    "frontend/src/components/PlexPanel.tsx": 1,
+    "frontend/src/components/PolicyEditor.tsx": 1,
+    "frontend/src/components/ReapBreakdown.tsx": 1,
+    "frontend/src/components/ReapConfirm.tsx": 1,
+    "frontend/src/components/ReapPlan.tsx": 1,
+    "frontend/src/components/Settings.tsx": 6,
+}
+
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+
+
+def _without_comments(text: str) -> str:
+    """``text`` with every block comment and every ``//`` run to end-of-line removed.
+
+    Block comments first, because a ``{/* … */}`` in JSX wraps over many lines and none of the
+    inner ones start with a marker a per-line skip could see -- which is the shape most of this
+    tree's explanatory comments have, and several of them discuss reloads at length.
+    """
+    return _without_line_comments(_BLOCK_COMMENT.sub("", text))
+
+
+def test_the_reload_advice_population_is_pinned_per_file() -> None:
+    """Telling an operator to reload throws away their draft, so each one is deliberate (#195).
+
+    Matches the bare word ``reload``, case-insensitively, in what is left of a shipped ``.tsx``
+    once comments are gone. Deliberately looser than the sentence it is about (rule 147): the tree
+    spells the advice three ways -- "Reload to try again.", "Reload the page to try again." and
+    "then reload this page." -- and the second of those WRAPS across two source lines in
+    ``NotInScanPanel``, so a per-line match on the full phrase would have missed it. A word cannot
+    wrap. The cost is that the walk also collects a Refresh button's tooltip, which is listed
+    above rather than filtered out, because a matcher that quietly drops what does not fit stops
+    being a count of anything.
+
+    What this proves is that no site GAINED the advice and none of the fixed ones got it back. It
+    says nothing about which branch inside a file renders it, so a file swapping one keep for a new
+    one reads green here: the per-branch claims are pinned in the component tests.
+    """
+    found: dict[str, int] = {}
+    for path in _shipped_tsx():
+        n = len(re.findall(r"(?i)\breload", _without_comments(path.read_text(encoding="utf-8"))))
+        if n:
+            found[str(path.relative_to(REPO))] = n
+    assert found == _RELOAD_ADVICE, (
+        "the reload-advice population moved.\n"
+        f"expected: {_RELOAD_ADVICE}\nfound:    {found}\n"
+        "A new one: say what is on screen when it renders, and drop it if anything there is a\n"
+        "draft, a staged file, a pasted secret or a selection -- a reload takes all four with no\n"
+        "ask, since `frontend/src` has no `beforeunload` handler (grep: zero). Then add it here\n"
+        "with that reasoning. One that went away: drop its entry."
+    )
+
+
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).

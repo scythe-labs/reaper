@@ -2289,15 +2289,17 @@ function NotificationsPanel({
           derived from that very answer, each of them acting as though it HAD been checked: the
           "leave blank to keep the current webhook" placeholder, an enabled Remove, and a Send
           test that fires at the stored webhook. The same sentence also rendered over the opposite
-          form when the FIRST read failed, so the two states could not be told apart. It matters
-          twice over here, because the advice it gives is to reload, and a reload throws away a
-          pasted webhook that is a secret and is never shown again once stored. */}
+          form when the FIRST read failed, so the two states could not be told apart.
+
+          Neither branch says to reload (#195). The panel has no early return, so the webhook box
+          below is on screen in EVERY branch, and what is typed into it is a secret Reaper stores
+          encrypted and never shows again -- a reload costs the operator a value they have to go
+          back to Discord for, and nothing anywhere in `frontend/src` asks first. That is the same
+          harm #153 took off the shared line; this sentence is hand-written, so it kept it. */}
       {isPending ? (
         <p className="muted">Checking whether Discord is connected…</p>
       ) : isError && !data ? (
-        <Notice tone="error">
-          Couldn't check whether Discord is connected. Reload to try again.
-        </Notice>
+        <Notice tone="error">Couldn't check whether Discord is connected.</Notice>
       ) : (
         <>
           {isError && <StaleReadNotice what="whether Discord is connected" />}

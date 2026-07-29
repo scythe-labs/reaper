@@ -1903,7 +1903,9 @@ export function PolicyEditor({
 
         {pace === null ? (
           paceFailed ? (
-            <Notice tone="error">Couldn't load these settings. Reload to try again.</Notice>
+            // No reload advice (#195): this sits inside an editor whose savebar may be holding
+            // unsaved policy edits, and a reload takes them with no ask.
+            <Notice tone="error">Couldn't load these settings.</Notice>
           ) : (
             <p className="muted">Loading…</p>
           )

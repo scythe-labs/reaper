@@ -75,11 +75,13 @@ const SCHEDULE: Schedule = {
 const NEVER_LOADED_ABOUT = /Couldn't load this page/;
 const NEVER_LOADED_JOBS = /Couldn't load the upkeep jobs/;
 const NEVER_LOADED_SHELF = /Couldn't load the shelf status/;
-// Anchored on the period: the two sentences open with the same eight words and only the
-// never-loaded one puts a full stop there, the stale line running on into "just now". It was
-// anchored to tell them apart while BOTH ended in "Reload to try again."; #153 took that clause
-// off the stale line, and the anchor is what still separates them.
-const NEVER_LOADED_DISCORD = /Couldn't check whether Discord is connected\. Reload/;
+// Anchored on the period, which is now the WHOLE difference: the two sentences open with the
+// same eight words and only the never-loaded one puts a full stop there, the stale line running
+// on into "just now". It was anchored on ". Reload" while BOTH said to reload; #153 took that
+// clause off the stale line and #195 took it off this one, since the webhook box below is on
+// screen in every branch and a reload costs a pasted secret. The period is what still separates
+// them, and a `$` would not: RTL matches on the element's whole text.
+const NEVER_LOADED_DISCORD = /Couldn't check whether Discord is connected\./;
 
 // The shared sentence with any noun in it, for the negative assertions: no stale line at all.
 const STALE_ANY = /Couldn't check .* just now/;

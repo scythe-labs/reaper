@@ -414,11 +414,16 @@ export function RemoveRulesEditor({
           refetches every key, so an undivided error took the whole add-rule form away while the
           list behind it was still in hand (#190). The vocabulary is a fixed server-defined list,
           not the operator's own data, so a held copy needs no staleness line: what a rule can
-          look at does not change under them mid-session. */}
+          look at does not change under them mid-session.
+
+          It no longer says to reload either (#195), because it said so in the sentence before
+          promising the rules already added were unaffected: those rules are unsaved draft state
+          (`PolicyEditor` binds `onCondemn` to its own `update`), so the advice destroyed exactly
+          what the next clause called safe. "Still here" is the honest half. */}
       {condemnVocabError && !condemnVocab ? (
         <Notice tone="error">
           Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
-          now. Reload to try again. The rules you've already added are unaffected.
+          now. The rules you've already added are still here.
         </Notice>
       ) : (
         <>
@@ -748,7 +753,7 @@ export function KeepRulesEditor({
       {vocabError && !vocab ? (
         <Notice tone="error">
           Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
-          now. Reload to try again. The rules you've already added are unaffected.
+          now. The rules you've already added are still here.
         </Notice>
       ) : (
         <>

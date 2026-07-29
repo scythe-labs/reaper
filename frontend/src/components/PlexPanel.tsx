@@ -784,7 +784,7 @@ export function PlexPanel({
           {libraries.isPending || syncLibraries.isPending ? (
             <p className="muted">Loading libraries…</p>
           ) : libraries.isError && !libraries.data ? (
-            <Notice tone="error">Couldn't load the library list. Reload to try again.</Notice>
+            <Notice tone="error">Couldn't load the library list.</Notice>
           ) : (
             <>
               {libraries.isError && <StaleReadNotice what="the library list" />}
@@ -845,9 +845,7 @@ export function PlexPanel({
           {leavingSoon.isPending ? (
             <p className="muted">Loading…</p>
           ) : !leavingSoon.data ? (
-            <Notice tone="error">
-              Couldn't load the Leaving Soon settings. Reload to try again.
-            </Notice>
+            <Notice tone="error">Couldn't load the Leaving Soon settings.</Notice>
           ) : (
             <>
               {leavingSoon.isError && <StaleReadNotice what="the Leaving Soon settings" />}

@@ -425,10 +425,13 @@ export function ScanFreshness({
         </p>
       );
     }
+    // No "reload to try again" (#195): this line renders above a working review queue, where
+    // `selected` is component state -- only the filters persist -- so a reload drops a bulk
+    // selection that "Select everything matching" may have walked thousands of rows to build,
+    // and nothing anywhere in the app asks first.
     return (
       <Notice tone="error" className="scan-freshness">
-        Couldn't read the last scan, so Reaper can't say how old this queue is. Reload the page to
-        try again.
+        Couldn't read the last scan, so Reaper can't say how old this queue is.
       </Notice>
     );
   }
