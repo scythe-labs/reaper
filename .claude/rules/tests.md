@@ -9,7 +9,7 @@ paths:
 # Test blockers
 
 Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the
-way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–137, 141, 145.
+way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–137, 141, 145, 147.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the
@@ -189,3 +189,20 @@ checkout under test and match skips on the REPO-relative path, never on `path.pa
 absolute one — the absolute form matches the worktree the suite is *running in* and silently
 empties the walk. Until that reconciliation is written down, a comment claiming tree-wide
 coverage is a guess wearing a test's clothes.
+
+**147. A guard that scans SOURCE TEXT is bounded by the syntax it can parse, so it is proven
+against every FORM the tree spells the thing in, not only against every member it found.** Rule
+145 asks how many members the walk collected; this asks how many ways one member can be written.
+The hand-rolled-notice ban is the case. It matched `className=` followed immediately by a quote,
+which reads a literal and reads neither a ternary nor a template literal — both ordinary in this
+tree, 60 lines of it — so `ReapPlan`'s plan loader shipped mute past a green test, with a comment
+three lines above it describing the very defect it still had. **Its count could not catch that,
+because the count was of a different population than the ban:** it counted `<Notice>` call sites
+while the ban scanned `className` strings, so a site that was never converted is absent from both
+halves, and the two figures agree with each other while disagreeing with the tree. That is rule
+145 satisfied to the letter and defeated anyway. So **pin the count of the population the ban
+itself scans**, and before shipping a matcher, write down the spellings it accepts and run it
+against the ones it rejects — three `finditer` calls over the three forms cost a minute, and they
+are the whole difference between a ban and a ban-shaped comment. Prefer reading the whole
+attribute or call and then inspecting inside it, over anchoring on a delimiter that only one
+spelling puts there.

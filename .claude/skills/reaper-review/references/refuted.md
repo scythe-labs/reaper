@@ -1156,3 +1156,45 @@ does not exist and in fact points the other way, and three lanes measured the qu
 opening the line they credited with solving it. **A candidate's "someone already does this" clause is
 a claim like any other and is the cheapest one in the entry to check** — it is one file open, and
 being wrong about it inverts the recommendation.
+
+## Refuted at `b752eff` (2026-07-28, reviewing PR #179, the app-wide screen-reader sweep)
+
+Two lanes ran on the sweep — `safety` (`DeletionToggle`, `ReapConfirm`, and the arming path) and
+`diff` (the other twenty frontend files plus the new hygiene guard). Seven findings survived and
+were fixed on the branch; these twenty did not. Most of them are the same question asked of the
+new `Notice`: *does converting 109 hand-rolled paragraphs into one `role="alert"` component make
+the app talk over itself?* The answer was almost always no, and the reasons are worth keeping,
+because the next pass will ask it again.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| safety | `role="alert"` on `PlexTrashNotice` hides or breaks the acknowledgment checkbox gating `trashOk` | `alert` is a live-region subclass of `section`, not in ARIA's presentational-children set, so descendants stay exposed and focusable. The checkbox is unchanged and still reachable. |
+| safety | Ticking the trash checkbox re-announces the whole warning, via `role="alert"`'s implicit `aria-atomic` | React sets `node.checked` as a property on a controlled checkbox; there is no attribute mutation for a live-region observer to see. Could not demonstrate, so refuted by default. |
+| safety | `ReapBreakdown`'s "Scan now" label inside a `role="alert"` re-reads the expired-spares paragraph on every transition | A label change following an operator press IS a discrete state change, which is what an alert is for. `Notice`'s `standing` criterion covers continuous re-render as you type, not this. |
+| safety | Same for `ReapPlan`'s `staleRun` / `staleUnknown` notices, whose "Build a new plan" button flips `disabled` | Same reason. |
+| safety | `SwitchConfirm` puts the `danger` "Discard and switch" first in tab order, right after a new focus move | DOM order is preserved verbatim from both pre-existing copies, focus lands on the notice `div` rather than a button so no single Enter reaches Discard, and the policy savebar also puts Discard first — there is no safe-first ordering here to violate. |
+| safety | `useSafety` erroring on a poll remounts and re-announces `DeletionToggle`'s warn notice | `status` stays `"error"` across a background refetch, so the notice never unmounts, and its text is static. |
+| safety | `Notice`'s `{...rest}` spread lets a caller override `role` | `role` is emitted before the spread, and is not in the props type; `rest` can only carry `ref`, `tabIndex` and `id`. |
+| diff | `role="alert"` spam from polled queries (`ScanBar` `status?.error`, the `LogsPanel` error line, `ReapBreakdown`) | `aria-live` fires on DOM mutation, and React does not rewrite an unchanged text node, so a poll returning the same string re-announces nothing. |
+| diff | `PolicyEditor`'s savebar notice is not `standing` while its `PointsBudget` twin is | `policyHeldBecause` is one of two fixed strings, so it does not churn on a slider drag; it mounts once per crossing. Correctly an alert. |
+| diff | `SwitchConfirm`'s nonce can fail to re-fire, or collide | Both call sites early-return on `next === current` *before* the dirty check, then unconditionally `setSwitchNonce(n => n + 1)`, so every refused press increments. `Notice.test.tsx`'s repeat-press case pins it. |
+| diff | The `used` count double-counts `<Notice` occurrences appearing in comments | Measured the walk directly: 108 across 22 files, exactly the constant, and no shipped `.tsx` mentions `<Notice` in prose. |
+| diff | Duplicate DOM ids added inside a `.map(`, from the new `aria-describedby` wiring | The diff adds no `id=` at all. The tree's only literal id is `reap-phrase`, and it is not in a list. |
+| diff | `.sr-only` hides content from assistive tech | Uses the clip idiom (`position:absolute`, 1px box, `overflow:hidden`, `clip-path: inset(50%)`), not `display:none`. The comment's claim that it matches `.view-label` holds; the only difference is an added `border: 0`. |
+| diff | `aria-hidden="true"` on `.accent-preview` traps a focusable element | Its only children are a `<span>`, a `disabled` button and an `<a tabIndex={-1}>`. Nothing focusable remains inside. |
+| diff | The `role="group"` comment claims parity with `Segmented` that `Segmented` does not have | `Segmented.tsx:24` does use `role="group"` with `aria-label`. The claim is accurate. |
+| diff | `docs/STATUS.md` breaks the hygiene line cap, or rule 21's em-dash ban | The file is 164 lines, and rule 21 is scoped to operator-facing copy, not developer docs. |
+| diff | `PlexTrashNotice` now nests block content inside a `<p>` | Its children are `<strong>`, `<span>` and a `<label>` wrapping a checkbox — all phrasing content — and the element was already a `<p>`. |
+| diff | Class-order change in the `WarnBlock` / `RatingFloorRow` / `PointsBudget` conversions changes styling | `class` is an unordered set; specificity is unaffected and the emitted class sets are identical. (Raised independently by both lanes.) |
+| diff | The `ACCENT_PRESETS` restructure breaks `aria-pressed` | `accent.toLowerCase() === c.value` compares against the same lowercase hex literals the old `=== c` did. |
+| diff | The `ReviewQueue` season-row `aria-label` masks its nested Spare/Reap buttons | `role="button"` already made those children presentational before this change; the residual is issue #169, already filed. |
+
+**The lesson worth carrying is about the test that was ported, not about a candidate.** `dev`'s
+`renders both of two warnings that are byte-identical` asserts that two copies paint. Under React
+19 both children of a colliding key *do* paint — React logs and continues — so that assertion
+passes over the exact defect it was written for, and it was passing over it on `dev` too. Counting
+rendered copies is not a proof of a key fix. What makes it one is reading the console call and
+failing on it (rule 135), which is what the branch's version now does and what took it red on the
+old key. **When a test is ported from another branch to satisfy "the fix ships with its test,"
+mutate it there before trusting it** — an inherited test carries an inherited blind spot, and it
+arrives wearing the authority of already having been reviewed.
