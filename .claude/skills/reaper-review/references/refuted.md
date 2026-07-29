@@ -154,3 +154,61 @@ drops coverage under the floor and `decide_verdict` abstains on exactly the seco
 sentence itself lists. Measured with the gate off, a 60-day floor and a 90-day reach:
 `unwatched 40 / few_watchers 60` gives coverage 0.40 against 0.50. "Nothing sets `blocked`" was
 true and never sufficient.
+
+## PR 208 — the CONFLICTED split and the retired spine rows (refuted at `bbfe930`)
+
+**`services/library_index.py:build_index` — retirement breaks a merged bind.** A retired row is
+by definition unenriched, so it carries no ids, no basename and no `files`; it can never enter
+tier 1, tier 2, or a `_narrow_among_id_hits` twin group. Retirement can only ever remove a tier-3
+title+year candidate.
+
+**`services/library_index.py:build_index` — retirement corrupts `fresh`, shifts `added_at`, or
+shrinks watch history.** Retired keys are absent from `plex_items` by definition, so they cannot
+re-enter through `fresh`; every surviving row still takes `added_at` from its own spine row; and
+`_watch_stats` keys on `{i.plex_rating_key for i in items}`, never on the index. The `PlexIndex`
+is consumed only by `resolve_movie`/`resolve_show` and two log-only helpers, so no gate, signal,
+planner or executor path reads it.
+
+**`services/library_index.py:_sweep` — `swept` true on a failed sweep.** Both the `plex is None`
+and the `except PlexError` arms return `False` explicitly, and both are pinned by tests.
+
+**`engine/identity.py:Resolution.candidate_rating_keys` — reaches a verdict.** Writers are
+`_explain`; readers are `_replayed_match`, `deep_links.build_links` and `WhyPanel.MatchCandidates`.
+Zero occurrences in `verdict.py`, `gates.py`, `signals.py`, `planner.py`, `executor.py`.
+`fairness._match_candidates` is an unrelated symbol (Seerr request binding).
+
+**`engine/identity.py:resolve` — an abstain mislabeled as conflicted.** Only four non-bind sites
+exist; the two multiplicity cases keep `abstain`, the two disagreement cases take `conflicted`,
+and all four pass `candidates`. `Resolution.unmatched()` correctly carries none.
+
+**`api/routes.py:_primary_reason` / `_chip` — the defaulted `media_type` names the wrong app.**
+The only production call sites are both in `_candidate_out` and both pass `r.media_type`. Every
+other caller is a test, and `Candidate.media_type` is only ever `"movie"` or `"season"`, so
+`_managing_app` is total.
+
+**`api/schemas.py:LinksOut` / `api.ts:Links` — shape disagreement across the wire.** Pydantic
+always serializes `candidate_rating_keys` and `match_candidates`, so the TS optionals are
+supersets; the `[]` default is deep-copied, so no shared-mutable bug. A record stored before the
+field shipped reads `None` -> `()` -> `[]` -> the component returns null. No crash, no wrong
+default.
+
+**`WhyPanel.tsx:MatchCandidates` — "Plex 1" and "Tautulli 1" can stop pairing the same row.**
+The number comes from the candidate array index, not the rendered pill position, and both link
+builders read *item-wide* coordinates, so a missing app blanks that app for every candidate at
+once. The hypothesized "Plex 1, Plex 2, Tautulli 2" cannot occur.
+
+**`WhyPanel.tsx:MatchCandidates` — invalid DOM from `<span display:flex>` inside `<Notice>`.**
+`Notice` defaults to `as="p"`; `<span>`/`<a>` are phrasing content and legal in `<p>`, and React
+constructs the DOM rather than parsing it. `.candidate-group`'s `inline-flex` is an atomic box
+that cannot split across a wrap, so the CSS comment's pairing claim is implemented.
+
+**`index.css:.match-candidates-lead` — an unstyled class.** It inherits `color`/`font-size` from
+`.match-candidates`. An unstyled hook is not a defect.
+
+**`api.ts:Match.candidate_rating_keys` — declared and never read.** Documented in place as an
+audit field for whoever reads the response; rule 64 governs removing a surface, not adding an
+unused wire field.
+
+**`routes.py:_deep_links` — "the links and the replay can never disagree".** Implemented: both
+readers are literally `_replayed_match(row)`, one derivation, rule 104 satisfied. The unreadable
+branch omits the key and `_deep_links` uses `.get(..., ())`.
