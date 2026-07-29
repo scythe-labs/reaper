@@ -54,7 +54,19 @@ const run = {
   approved_manifest_hash: "m",
   approved_by: "owner",
   approved_at: "2026-01-01T00:00:00+00:00",
-  steps: [],
+  // Two steps, because `item_count` is 2: a run carrying a count with no steps under it is a
+  // plan the planner cannot build, and the page renders `steps` unconditionally, so an empty
+  // one drew a `<thead>` over an empty `<tbody>` -- a headers-only data table, which axe files
+  // as undecided rather than as a failure. The audit below was certifying that shape.
+  steps: [
+    { media_key: "m:1", ordinal: 0, kind: "delete_files", state: "planned", is_canary: true },
+    { media_key: "m:2", ordinal: 1, kind: "delete_files", state: "planned", is_canary: false },
+  ].map((step) => ({
+    ...step,
+    method: "DELETE",
+    path: `/api/v3/movie/${step.ordinal}`,
+    body: null,
+  })),
 } as Run;
 
 const snapshot: Snapshot = {
@@ -112,7 +124,13 @@ describe("ReapPlan staleness", () => {
       will_reap_bytes: 1024 ** 3,
       will_reap_unknown: 0,
       movies: 2,
+      // Both `_unknown` shares are required, and omitting them is invisible: `ReapBreakdown`
+      // subtracts them from the totals beside it, so `undefined` rendered "NaN movies · NaN TV
+      // seasons" behind ten passing tests. Rule 135, reached through the arrow the mock hands
+      // React Query rather than through a missing method.
+      movies_unknown: 0,
       seasons: 0,
+      seasons_unknown: 0,
       condemned_by: [],
     });
     apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
