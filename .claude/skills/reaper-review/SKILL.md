@@ -55,7 +55,7 @@ a pass.
 | Lane | Scope |
 | --- | --- |
 | `diff` | the changed lines themselves, and what they reach. The baseline pass — it runs for any code change, alongside whatever else fired. |
-| `safety` | `engine/{gates,verdict,signals,policy}.py`, `services/{executor,planner,snapshot,season_pruning}.py`, both transport guards (`clients/base.py`'s `GuardedTransport` and its `GuardedSession` twin in `clients/plex.py` — rule 72 means a fix to one is reviewed against the other), the execute route at `api/runs.py:399`, and the arming UI. Spans both trees on purpose. |
+| `safety` | `engine/{gates,verdict,signals,policy}.py`, `services/{executor,planner,snapshot,season_pruning}.py`, both transport guards (`clients/base.py`'s `GuardedTransport` and its `GuardedSession` sibling in `clients/plex.py` — rule 72 means a fix to one is reviewed against any other), the execute route at `api/runs.py:399`, and the arming UI. Spans both trees on purpose. |
 | `seam` | route ↔ `api/schemas.py` ↔ frontend client method ↔ props ↔ query keys, for every surface the change touches. |
 | `backend` | `src/reaper/**`, `alembic/**` |
 | `frontend` | `frontend/src/**` |
@@ -193,7 +193,7 @@ be closed by the same edit, they are one issue.
 | --- | --- |
 | tier 1–2 | one issue each — each earns its own commit, and each is individually worth doing |
 | tier 3–4 | grouped by shared root cause, or by shared file and theme; the body lists each as a checklist item |
-| twins under rule 72 (the same defect in sibling functions) | always **one** issue, because the rule requires them fixed together |
+| siblings under rule 72 (the same defect in sibling functions) | always **one** issue, because the rule requires them fixed together |
 
 **An unproven candidate is filed too, as a question rather than as a defect.** It does not go
 in a reference file and it does not stay in `.claude/review-findings/`, which is gitignored
