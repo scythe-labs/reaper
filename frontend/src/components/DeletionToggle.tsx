@@ -7,9 +7,18 @@
 // password; turning it OFF never does, because the off direction can only make Reaper
 // safer. This is safety UI, so it never renders nothing: while the state is unknown it
 // says so, in the amber "we could not look" tone, never in a way that reads as safe.
+//
+// **It says which way it went, out loud.** This switch decides whether Reaper may remove
+// anything at all, and it signalled the outcome the way the rest of the app used to: the form
+// unmounted and a `<strong>` in an unfocused subtree rewrote itself. Focus fell to `<body>`,
+// nothing was announced, and an operator driving by ear could not tell whether they had just
+// armed the app to delete their library (#170). Both directions now `announce()`, and focus
+// goes back to the button that opened the form on both of its exits -- the confirm and the
+// cancel -- because the form takes the focused element with it when it goes.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { announce } from "../announce";
 import { api } from "../api";
 import { useSafety } from "../useSafety";
 import { Notice } from "./Notice";
@@ -20,6 +29,26 @@ export function DeletionToggle() {
   const [confirming, setConfirming] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Whichever button is holding the row's action slot -- "Turn on…" before, "Turn off" after.
+  // One ref for both, because it is one control position: what the operator wants back is the
+  // place they left, and after arming that place says the opposite thing.
+  const rowButtonRef = useRef<HTMLButtonElement>(null);
+  // Set when the password form is about to go and focus has to follow it somewhere. Read in the
+  // effect below rather than acted on inline, because the button does not exist until the commit
+  // that unmounts the form has landed, and `.focus()` on a node that is not there is a silent
+  // no-op -- the exact shape that leaves focus on `<body>`.
+  const returnToRow = useRef(false);
+  useEffect(() => {
+    if (!returnToRow.current || confirming) return;
+    returnToRow.current = false;
+    rowButtonRef.current?.focus();
+  }, [confirming]);
+  /** Close the password form and put the operator back on the button that opened it. */
+  const closeForm = () => {
+    returnToRow.current = true;
+    setConfirming(false);
+    setPassword("");
+  };
 
   // ["safety"] is the whole list: it is the one query that carries whether deletion is on,
   // and every surface that gates on it (this switch, the app banner, the Reap page's
@@ -32,10 +61,20 @@ export function DeletionToggle() {
   const toggle = useMutation({
     mutationFn: (vars: { enabled: boolean; password?: string }) =>
       api.setDeletion(vars.enabled, vars.password),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       setPassword("");
       setConfirming(false);
       setError(null);
+      // The same two sentences the state block above shows, said out loud (rule 144: one fact,
+      // and the visible copy is a few lines up, so keep them reading alike). Announced from the
+      // settled mutation, never at issuance (rule 85) -- this is the switch that decides whether
+      // Reaper may delete, so a premature "on" would be the worst possible thing to be wrong
+      // about.
+      announce(vars.enabled ? "Deletion is on." : "Deletion is off. Reaper is read-only.");
+      // Arming happens from the password form, which unmounts on success and takes the focused
+      // Confirm button with it. Without this, focus lands on `<body>` and the next Tab restarts
+      // at the top of the page.
+      if (vars.enabled) returnToRow.current = true;
       refresh();
     },
     onError: (e: Error) => setError(e.message),
@@ -108,7 +147,11 @@ export function DeletionToggle() {
           </p>
         </div>
         {on ? (
-          <button className="ghost danger" onClick={() => toggle.mutate({ enabled: false })}>
+          <button
+            ref={rowButtonRef}
+            className="ghost danger"
+            onClick={() => toggle.mutate({ enabled: false })}
+          >
             Turn off
           </button>
         ) : !data.has_password ? (
@@ -140,19 +183,12 @@ export function DeletionToggle() {
             {/* Cancel drops the typed password with the form. Closing the form alone left the
                 admin password sitting in component state for as long as this panel stayed
                 mounted, and refilled the field the next time it was opened (S-5). */}
-            <button
-              type="button"
-              className="ghost sm"
-              onClick={() => {
-                setConfirming(false);
-                setPassword("");
-              }}
-            >
+            <button type="button" className="ghost sm" onClick={closeForm}>
               Cancel
             </button>
           </form>
         ) : (
-          <button className="primary" onClick={() => setConfirming(true)}>
+          <button ref={rowButtonRef} className="primary" onClick={() => setConfirming(true)}>
             Turn on…
           </button>
         )}

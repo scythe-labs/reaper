@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
 import { testQueryClient } from "../test/queryClient";
+import { Announcer } from "../announce";
 import { ReapConfirm } from "./ReapConfirm";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -388,5 +389,173 @@ describe("the execute gate", () => {
     await screen.findByText(/1 soul reclaimed/);
     expect(screen.getByText("A Film")).toBeInTheDocument();
     expect(screen.getByText(/Nobody was watching it right now/)).toBeInTheDocument();
+  });
+});
+
+// Everything below is #170: this sheet is the one surface in the app that starts a deletion,
+// and it went from open to finished without saying a word. `ModalShell` announces the dialog
+// once, and from there the body mutated on a poll -- practice run, then the typed-phrase field
+// arriving, then progress, then a report -- with no live region and no focus move anywhere in
+// the file.
+describe("what a screen reader hears while a reap runs", () => {
+  /** What the app's polite region is holding. `Announcer` lives at the app root and this sheet
+   *  renders without it, so the assertions read the store through a region mounted beside it --
+   *  the same thing an operator would hear, and the only way to see it from here. */
+  function spoken(): string {
+    return screen
+      .getAllByRole("status")
+      .map((r) => r.textContent)
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  function renderWithAnnouncer(seedStatus?: ReapStatus) {
+    const queryClient = testQueryClient();
+    if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);
+    const utils = render(
+      <QueryClientProvider client={queryClient}>
+        <Announcer />
+        <ReapConfirm run={run} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    return { ...utils, queryClient };
+  }
+
+  it("says the practice run passed and what to do next", async () => {
+    renderWithAnnouncer();
+
+    await screen.findByText(/Practice run passed/);
+    expect(spoken()).toContain("Type the confirmation phrase");
+  });
+
+  it("puts the operator in the phrase box when it appears", async () => {
+    // The box arrives part-way through a dialog they are already standing in, on the practice
+    // run settling rather than on anything they did. Nothing carried them to it, and it is the
+    // last gate before files are deleted.
+    renderWithAnnouncer();
+
+    const input = await screen.findByRole("textbox");
+    expect(input).toHaveFocus();
+  });
+
+  it("says deletion is off rather than leaving the missing box unexplained", async () => {
+    apiMock.safety.mockResolvedValue({ destructive_enabled: false });
+    renderWithAnnouncer();
+
+    await screen.findByText(/Deletion is/);
+    expect(spoken()).toContain("deletion is off");
+  });
+
+  it("states the progress as a progressbar, in words rather than a bare number", async () => {
+    const half = status({ running: true, run_id: run.id, phase: "reaping", done: 2, total: 4 });
+    apiMock.reapStatus.mockResolvedValue(half);
+    renderWithAnnouncer(half);
+
+    const bar = await screen.findByRole("progressbar", { name: "Reaping" });
+    expect(bar).toHaveAttribute("aria-valuenow", "50");
+    expect(bar).toHaveAttribute("aria-valuetext", "50%, 2 of 4 removed");
+  });
+
+  it("announces progress in tenths, not once per item", async () => {
+    // The status polls every second. A sentence per item on a run of hundreds would hold the
+    // app's one polite region for the length of the run, so nothing else could be heard.
+    const at = (done: number, total: number) =>
+      status({ running: true, run_id: run.id, phase: "reaping", done, total });
+    apiMock.reapStatus.mockResolvedValue(at(0, 100));
+    const { queryClient } = renderWithAnnouncer(at(0, 100));
+    await screen.findByRole("progressbar", { name: "Reaping" });
+
+    const heard: string[] = [];
+    for (const done of [1, 2, 3, 4, 5]) {
+      act(() => void queryClient.setQueryData(["reapStatus"], at(done, 100)));
+      heard.push(spoken());
+    }
+    // Five items, all inside the first tenth: one sentence, not five.
+    expect(new Set(heard).size).toBe(1);
+    expect(heard[0]).toContain("0% deleted");
+
+    // Crossing into the next tenth does speak. `findByText` and not a synchronous read: the
+    // announcer holds each sentence for its turn before the next may replace it, so this
+    // arrives a beat later by design (announce.tsx).
+    act(() => void queryClient.setQueryData(["reapStatus"], at(10, 100)));
+    expect(await screen.findByText("10% deleted.")).toBeInTheDocument();
+  });
+
+  it("moves focus to the outcome when the run ends, because the dialog's job has changed", async () => {
+    const { queryClient } = renderWithAnnouncer();
+    await screen.findByRole("textbox");
+
+    act(() => {
+      queryClient.setQueryData(
+        ["reapStatus"],
+        status({
+          run_id: run.id,
+          phase: "complete",
+          deleted_items: 1,
+          deleted_bytes: 1024 ** 3,
+          report: report({ dry_run: false, would_delete_items: 1, deleted_bytes: 1024 ** 3 }),
+        }),
+      );
+    });
+
+    const outcome = (await screen.findByText(/1 soul reclaimed/)).closest(".reap-result");
+    expect(outcome).toHaveFocus();
+  });
+
+  it("moves focus to the failure, which is the only account of files already gone", async () => {
+    // Rendered on a healthy sheet and failed underneath the operator, which is the shape that
+    // matters: the run raised while they stood in the confirm stage.
+    const { queryClient } = renderWithAnnouncer();
+    await screen.findByRole("textbox");
+
+    act(
+      () =>
+        void queryClient.setQueryData(
+          ["reapStatus"],
+          status({
+            run_id: run.id,
+            phase: "error",
+            error: "Deletion was switched off mid-run.",
+          }),
+        ),
+    );
+
+    const block = (await screen.findByText(/The reap stopped on a problem/)).closest(".reap-arm");
+    expect(block).toHaveFocus();
+  });
+
+  it("tells a pass from a fail in the report, where the glyph alone cannot", async () => {
+    // ✓ and ✗ are both silent on NVDA at its default symbol level, so the two lines read out
+    // identically -- in the report for a run that has just deleted files.
+    const done = status({
+      run_id: run.id,
+      phase: "complete",
+      deleted_items: 1,
+      report: report({
+        dry_run: false,
+        outcomes: [
+          {
+            media_key: "radarr:1:1",
+            title: "A Film",
+            kind: "radarr_delete",
+            state: "verified",
+            detail: "deleted",
+            checks: [
+              { label: "Nobody was watching it right now", ok: true },
+              { label: "It was played since you approved it", ok: false },
+            ],
+          },
+        ],
+      }),
+    });
+    apiMock.reapStatus.mockResolvedValue(done);
+    renderWithAnnouncer(done);
+
+    const passed = await screen.findByText(/Nobody was watching it right now/);
+    expect(passed.closest("li")).toHaveTextContent("Passed: Nobody was watching it right now");
+    const failedCheck = screen.getByText(/It was played since you approved it/);
+    expect(failedCheck.closest("li")).toHaveTextContent(
+      "Failed: It was played since you approved it",
+    );
   });
 });

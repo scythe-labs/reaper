@@ -7,6 +7,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "../test/queryClient";
+import { Announcer } from "../announce";
 import { DeletionToggle } from "./DeletionToggle";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -22,6 +23,8 @@ function renderToggle() {
   const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
+      {/* App mounts this once above every route; the switch speaks into it (#170). */}
+      <Announcer />
       <DeletionToggle />
     </QueryClientProvider>,
   );
@@ -61,7 +64,13 @@ describe("when the safety state can't be read", () => {
   it("confirms the result, since the banner above still cannot", async () => {
     const person = renderToggle();
     await person.click(await screen.findByRole("button", { name: "Turn off" }));
-    expect(await screen.findByText(/Reaper is read-only/i)).toBeInTheDocument();
+    // On screen, and said out loud (#170). Both, because this branch is reached exactly when
+    // the state could not be read, so the confirmation IS the operator's only answer -- and an
+    // operator driving by ear had none of it.
+    expect(await screen.findByText(/Reaper is read-only/i, { selector: "strong" })).toBeVisible();
+    expect(
+      await screen.findByText(/Reaper is read-only/i, { selector: ".sr-only" }),
+    ).toBeInTheDocument();
   });
 
   it("renders a failed Turn off instead of swallowing it", async () => {
@@ -99,5 +108,51 @@ describe("the arming password", () => {
 
     await person.click(await screen.findByRole("button", { name: /Turn on/i }));
     expect(screen.getByLabelText(/password/i)).toHaveValue("");
+  });
+
+  // #170: this switch decides whether Reaper may remove anything at all, and it used to signal
+  // the outcome the way the rest of the app once did -- the form unmounted, a `<strong>` in an
+  // unfocused subtree rewrote itself, and focus fell to `<body>`. An operator driving by ear
+  // could not tell whether they had just armed the app to delete their library.
+  it("says out loud that deletion is on", async () => {
+    const person = renderToggle();
+    await person.click(await screen.findByRole("button", { name: /Turn on/i }));
+    await person.type(screen.getByLabelText(/password/i), "a-password");
+    // Arming flips the state the switch reads, so the row it comes back to says "Turn off".
+    apiMock.safety.mockResolvedValue({
+      destructive_enabled: true,
+      has_password: true,
+      note: null,
+    });
+    await person.click(screen.getByRole("button", { name: /Confirm/i }));
+
+    expect(
+      await screen.findByText("Deletion is on.", { selector: ".sr-only" }),
+    ).toBeInTheDocument();
+  });
+
+  it("puts the operator back on the row's button after arming, not on the body", async () => {
+    const person = renderToggle();
+    await person.click(await screen.findByRole("button", { name: /Turn on/i }));
+    await person.type(screen.getByLabelText(/password/i), "a-password");
+    apiMock.safety.mockResolvedValue({
+      destructive_enabled: true,
+      has_password: true,
+      note: null,
+    });
+    await person.click(screen.getByRole("button", { name: /Confirm/i }));
+
+    // The row's action slot, whichever direction it now offers. Focus on `<body>` here means
+    // the next Tab restarts at the top of the whole settings page.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Turn off/i })).toHaveFocus());
+  });
+
+  it("puts the operator back on Turn on… after cancelling", async () => {
+    const person = renderToggle();
+    const open = await screen.findByRole("button", { name: /Turn on/i });
+    await person.click(open);
+    await person.click(screen.getByRole("button", { name: /Cancel/i }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /Turn on/i })).toHaveFocus());
   });
 });

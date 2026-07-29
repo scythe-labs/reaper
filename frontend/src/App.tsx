@@ -12,7 +12,7 @@ import {
   useState,
 } from "react";
 import { applyAccent } from "./accent";
-import { Announcer } from "./announce";
+import { announce, Announcer } from "./announce";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
 import { Login } from "./components/Login";
@@ -196,8 +196,19 @@ function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
  *  from the request that started it, so this bar (and Stop) survive navigating away and a tab
  *  reload -- it re-attaches by polling the shared status. Not a safety surface (the always-on
  *  one is SafetyBanner), so it shows nothing when idle. Stop is graceful: the run halts after
- *  the item in flight and still tidies Plex, and deletion stays armed. */
-function ReapBar({ onView }: { onView: (runId: number) => void }) {
+ *  the item in flight and still tidies Plex, and deletion stays armed.
+ *
+ *  It mounts, runs and reaches its end -- "Reap failed." included -- and used to do all of it
+ *  in silence, which on most screens made it the only sign of a deletion and the only Stop
+ *  (#170). It now announces the run's end, and its fill carries `role="progressbar"` the way
+ *  `ScanLine` below already did (rule 72). The RUNNING ticks are deliberately not announced
+ *  here: the reap sheet throttles and speaks them, and a bar that spoke too would say
+ *  everything twice for anyone with the sheet open.
+ *
+ *  Exported for its tests, the way `ScanLine` and `WhyPanelFallback` below are: what it owes an
+ *  operator is a property of this component, and reaching it through the whole authed `App`
+ *  tree would test the login gate instead. */
+export function ReapBar({ onView }: { onView: (runId: number) => void }) {
   const queryClient = useQueryClient();
   const [dismissed, setDismissed] = useState<number | null>(null);
   // Idle still polls, slowly. A reap can be started from a phone or a second tab, and this
@@ -230,6 +241,17 @@ function ReapBar({ onView }: { onView: (runId: number) => void }) {
     }
     if (ranRef.current !== status.run_id || settledRef.current === status.run_id) return;
     settledRef.current = status.run_id;
+    // Say how it ended. The same edge, for the same reason: a run that finished before this tab
+    // opened must not be announced as news. The sentence carries the outcome first and the
+    // figures after, matching the bar's own text below (rule 144), and it is said HERE rather
+    // than in the reap sheet because this bar cannot be unmounted out of the way -- the sheet is
+    // meant to be closed mid-run, and an operator who closed it would otherwise hear nothing at
+    // all about a deletion finishing.
+    announce(
+      status.phase === "error"
+        ? `Reap failed. ${souls(status.deleted_items)} removed before it stopped.`
+        : `${status.phase === "aborted" ? "Reap stopped." : "Reap finished."} ${souls(status.deleted_items)} removed, ${bytes(status.deleted_bytes)} freed.`,
+    );
     // ["run"] as well as ["runs"]: the plan surface reads one run by id, and that key does
     // not match the list's.
     for (const key of [
@@ -280,7 +302,19 @@ function ReapBar({ onView }: { onView: (runId: number) => void }) {
 
   const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
   return (
-    <div className="reap-bar">
+    <div
+      className="reap-bar"
+      // The fill is a `<span>` with an inline width and nothing else -- a picture of a number.
+      // The role goes on the bar rather than the fill because the fill is decoration painted
+      // over it; `aria-valuetext` says what a person would say, so a reader is not left reading
+      // out "62" (`ScanLine` is the twin, rule 72).
+      role="progressbar"
+      aria-label="Reaping"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      aria-valuetext={`${pct}%, ${count(status.done)} of ${count(status.total)} removed`}
+    >
       <span className="banner-dot" aria-hidden="true" />
       <span className="reap-bar-text">
         {status.stopping ? (

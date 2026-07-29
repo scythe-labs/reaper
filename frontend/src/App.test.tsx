@@ -11,12 +11,27 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "./test/queryClient";
-import { App, ScanFreshness, ScanLine, SectionNav, UserMenu, WhyPanelFallback } from "./App";
-import { announce } from "./announce";
+import {
+  App,
+  ReapBar,
+  ScanFreshness,
+  ScanLine,
+  SectionNav,
+  UserMenu,
+  WhyPanelFallback,
+} from "./App";
+import { announce, Announcer } from "./announce";
 import { ApiError, type AuthUser, type Safety, type Snapshot } from "./api";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { logout: vi.fn(), safety: vi.fn(), me: vi.fn(), authContext: vi.fn() },
+  apiMock: {
+    logout: vi.fn(),
+    safety: vi.fn(),
+    me: vi.fn(),
+    authContext: vi.fn(),
+    reapStatus: vi.fn(),
+    stopRun: vi.fn(),
+  },
 }));
 
 // Partial mock: ApiError and the types stay real, because ScanFreshness branches on a real
@@ -309,5 +324,119 @@ describe("the announcer's mount point", () => {
     await waitFor(() => expect(regions()).toHaveLength(2));
     act(() => announce("Settings saved."));
     expect(regions().map((n) => n.textContent)).toContain("Settings saved.");
+  });
+});
+
+describe("the app-wide reap bar", () => {
+  // The one Stop on every screen but the reap sheet, and the only sign of a deletion once the
+  // sheet is closed -- which is what it is designed for. It mounted, ran and reached its end,
+  // "Reap failed." included, in total silence (#170).
+  const idle = {
+    running: false,
+    run_id: null,
+    stopping: false,
+    phase: "idle",
+    done: 0,
+    total: 0,
+    deleted_items: 0,
+    deleted_bytes: 0,
+    skipped: 0,
+    title: "",
+    error: null,
+    report: null,
+  };
+  const runningAt = (done: number, total: number) => ({
+    ...idle,
+    running: true,
+    run_id: 7,
+    phase: "reaping",
+    done,
+    total,
+  });
+
+  function renderBar() {
+    const queryClient = testQueryClient();
+    queryClient.setQueryData(["reapStatus"], runningAt(1, 4));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Announcer />
+        <ReapBar onView={() => {}} />
+      </QueryClientProvider>,
+    );
+    return queryClient;
+  }
+
+  beforeEach(() => {
+    apiMock.reapStatus.mockResolvedValue(runningAt(1, 4));
+  });
+
+  it("states its progress as a progressbar, in words rather than a bare number", async () => {
+    renderBar();
+
+    const bar = await screen.findByRole("progressbar", { name: "Reaping" });
+    expect(bar).toHaveAttribute("aria-valuenow", "25");
+    expect(bar).toHaveAttribute("aria-valuetext", "25%, 1 of 4 removed");
+  });
+
+  it("says out loud that the reap finished, and how much went", async () => {
+    const queryClient = renderBar();
+    await screen.findByRole("progressbar", { name: "Reaping" });
+
+    act(
+      () =>
+        void queryClient.setQueryData(["reapStatus"], {
+          ...idle,
+          run_id: 7,
+          phase: "complete",
+          deleted_items: 4,
+          deleted_bytes: 4 * 1024 ** 3,
+        }),
+    );
+
+    expect(await screen.findByText(/Reap finished\. 4 souls removed/)).toBeInTheDocument();
+  });
+
+  it("says out loud that a reap FAILED, which is the state that matters most", async () => {
+    const queryClient = renderBar();
+    await screen.findByRole("progressbar", { name: "Reaping" });
+
+    act(
+      () =>
+        void queryClient.setQueryData(["reapStatus"], {
+          ...idle,
+          run_id: 7,
+          phase: "error",
+          error: "Deletion was switched off mid-run.",
+          deleted_items: 2,
+        }),
+    );
+
+    expect(
+      await screen.findByText(/Reap failed\. 2 souls removed before it stopped/),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about a run that ended before this tab was open", async () => {
+    // News, not a recap. A page opened onto a finished run must not announce it as if it had
+    // just happened -- the same running-to-ended edge the cache invalidation keys on.
+    const queryClient = testQueryClient();
+    const finished = {
+      ...idle,
+      run_id: 7,
+      phase: "complete",
+      deleted_items: 4,
+      deleted_bytes: 4 * 1024 ** 3,
+    };
+    apiMock.reapStatus.mockResolvedValue(finished);
+    queryClient.setQueryData(["reapStatus"], finished);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Announcer />
+        <ReapBar onView={() => {}} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText(/Reaped\./);
+    expect(screen.queryByText(/Reap finished\./)).not.toBeInTheDocument();
   });
 });

@@ -18,9 +18,20 @@
 // anything — the run keeps going, the app-wide reap bar carries the count and Stop to every
 // screen, and reopening shows the report. Stop is graceful: the run halts after the item in
 // flight and still tidies Plex for what was removed.
+//
+// **Every stage says itself out loud, and none of them did.** `ModalShell` announces the dialog
+// once at open, and from that instant the body mutated on a poll and said nothing: practice run
+// pending, then passed, then the arm block and the typed-phrase field APPEARING, then progress,
+// then the report. The operator was asked to type a content-bound phrase into a box they were
+// never told had arrived, and a run that deleted their files finished in silence (#170). The
+// stages now `announce()` and the phrase field takes focus when it mounts; the progress bar
+// carries `role="progressbar"` with an `aria-valuetext` a person would say, and its ticks are
+// throttled to phase changes and tenths, never per item — a run of 400 files polling every
+// second would otherwise talk over everything else in the app.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { announce } from "../announce";
 import { ApiError, api, type ReapStatus, type Run, type RunReport } from "../api";
 import { bytes, count, souls } from "../format";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
@@ -169,6 +180,59 @@ export function ReapConfirm({
     armed && dryClean && phraseOk && trashOk && !exec.isPending && !running && !failed;
   const pct = status && status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
 
+  // The typed-phrase field appears part-way through a dialog the operator is already standing
+  // in, on a poll rather than on anything they did, so nothing carries them to it. Focus goes
+  // there when it mounts: it is the only thing the stage asks for, and this is the last gate
+  // before files are deleted.
+  const phraseRef = useRef<HTMLInputElement>(null);
+  const armStage = dryClean && !running && !report && !failed && !otherRunning && armed;
+  useEffect(() => {
+    if (armStage) phraseRef.current?.focus();
+  }, [armStage]);
+
+  // The dialog's purpose changes when the run ends -- from "confirm this" to "read what
+  // happened" -- so focus moves to the outcome rather than leaving the operator standing on a
+  // stage that is no longer on screen.
+  const outcomeRef = useRef<HTMLDivElement>(null);
+  const ended = !!report || failed;
+  useEffect(() => {
+    if (ended) outcomeRef.current?.focus();
+  }, [ended]);
+
+  // What the run has said so far, so a poll that changes nothing says nothing. `null` until the
+  // first announcement, which is what keeps a sheet REOPENED onto a finished run from
+  // announcing a report the operator has already heard once.
+  const spokenRef = useRef<string | null>(null);
+  // `useCallback` with no dependencies, so the effect below can name it honestly in its own
+  // deps rather than reaching for a disable directive: everything it reads is a ref.
+  const say = useCallback((line: string) => {
+    if (spokenRef.current === line) return;
+    spokenRef.current = line;
+    announce(line);
+  }, []);
+  // Stage announcements, in the order an operator meets them. Tenths and not percent: the
+  // status polls every second, so a per-item or per-percent line on a run of hundreds would
+  // hold the app's one polite region for the length of the run. `Math.floor(pct / 10)` makes
+  // "40% deleted." at most ten sentences whatever the run's size.
+  //
+  // The run's END is deliberately NOT here. `ReapBar` announces it, and that bar is mounted on
+  // every screen where this sheet is only mounted while the operator has it open -- so the bar
+  // is the one that always fires, and a copy here would say it twice to anyone still standing
+  // in the sheet (rule 144: one fact, one place that states it). What this owns is the stages
+  // the bar cannot see: the practice run, the phrase field arriving, and the progress ticks,
+  // which belong to the surface the operator opened to watch them.
+  const tenth = Math.floor(pct / 10);
+  useEffect(() => {
+    if (report || failed) return;
+    if (running)
+      return say(stopping ? "Stopping after the current one." : `${tenth * 10}% deleted.`);
+    if (!dryClean) return;
+    if (!armed) return say("Practice run passed, but deletion is off, so nothing can be reaped.");
+    // `pct` is deliberately absent from the deps: `tenth` is the throttle, and depending on the
+    // percent would re-run this on every poll to re-derive the same sentence.
+    say("Practice run passed. Type the confirmation phrase to reap.");
+  }, [failed, report, running, stopping, tenth, dryClean, armed, say]);
+
   return (
     <ModalShell title={`Reap ${souls(run.item_count)}`} onClose={onClose} className="reap-confirm">
       <p className="reap-confirm-phrase">{run.confirmation_phrase}</p>
@@ -213,8 +277,10 @@ export function ReapConfirm({
           )}
           {dryClean && (
             <p className="dry-ok">
-              <span className="gate-mark">✓</span> Practice run passed: the plan is sound, and it
-              sent nothing.
+              <span className="gate-mark" aria-hidden="true">
+                ✓
+              </span>{" "}
+              Practice run passed: the plan is sound, and it sent nothing.
             </p>
           )}
         </>
@@ -267,6 +333,7 @@ export function ReapConfirm({
                 Type <code>{run.confirmation_phrase}</code> to confirm:
               </label>
               <input
+                ref={phraseRef}
                 id="reap-phrase"
                 className="reap-confirm-input"
                 autoComplete="off"
@@ -303,7 +370,20 @@ export function ReapConfirm({
                 {status.skipped > 0 && ` · ${count(status.skipped)} spared`}
               </span>
             </div>
-            <div className="prog-track">
+            {/* A bare `<div>` with an inline width is a picture of a number and nothing else.
+                `aria-valuetext` carries the counts a person would actually say, rather than
+                leaving a reader to read out "62". A progressbar is not a live region, so this
+                is read when the operator asks for it -- the announcing is throttled separately,
+                above (`ScanLine` in App.tsx is the same shape, rule 72). */}
+            <div
+              className="prog-track"
+              role="progressbar"
+              aria-label="Reaping"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={pct}
+              aria-valuetext={`${pct}%, ${count(status.done)} of ${count(status.total)} removed`}
+            >
               <div className="prog-fill" style={{ width: `${pct}%` }} />
             </div>
           </div>
@@ -328,7 +408,9 @@ export function ReapConfirm({
           thing on offer is Done: re-arming the phrase here would invite a second execute the
           server refuses just as silently. What was removed is on the reap bar's report. */}
       {failed && (
-        <div className="reap-arm">
+        // Focus lands here when the run ends: the dialog has stopped being a confirmation and
+        // become the only account of what happened to files that are already gone.
+        <div className="reap-arm" ref={outcomeRef} tabIndex={-1}>
           <Notice tone="error">
             <strong>The reap stopped on a problem.</strong>{" "}
             {status?.error ?? "Reaper couldn't say what went wrong."} Anything already removed is
@@ -344,7 +426,9 @@ export function ReapConfirm({
 
       {/* Result — the after-action checklist, from the finished run's status. */}
       {report && (
-        <div className="reap-result">
+        // Same move as the failure branch above: the run is over, and this is what the operator
+        // is here for now.
+        <div className="reap-result" ref={outcomeRef} tabIndex={-1}>
           <div className="reap-tally">
             <strong className="reap-souls">{souls(report.would_delete_items)} reclaimed</strong>
             <span className="muted">
@@ -369,9 +453,16 @@ export function ReapConfirm({
               <li key={o.media_key} className={`reap-item state-${o.state}`}>
                 <span className="reap-item-title">{o.title || o.media_key}</span>
                 <ul className="reap-checks">
+                  {/* Pass and fail were a glyph and a color, and NVDA at its default symbol
+                      level speaks neither ✓ nor ✗ -- so the two lines read out identically, in
+                      the report for a run that has just deleted files. The word carries it and
+                      the glyph goes decorative (the same split `Notice` makes for its tone). */}
                   {o.checks.map((c, i) => (
                     <li key={i} className={c.ok ? "check-ok" : "check-bad"}>
-                      <span className="gate-mark">{c.ok ? "✓" : "✗"}</span>
+                      <span className="gate-mark" aria-hidden="true">
+                        {c.ok ? "✓" : "✗"}
+                      </span>
+                      <span className="sr-only">{c.ok ? "Passed: " : "Failed: "}</span>
                       {c.label}
                     </li>
                   ))}

@@ -101,6 +101,15 @@ Last verified against the code: 2026-07-26.
    focus back to their trigger; and the queue's four cards are plain containers opening through
    one shared `CardOpen`, so a screen reader reads past the title into the evidence and no button
    nests inside another (**#169 closed**).
+   **The deletion path speaks at every stage (#170 closed)**, and used to speak at none: arming,
+   the practice run, the phrase box arriving, progress, and the end of a run that deleted files
+   were all silent, with focus falling to `<body>` at each unmount. Both progress fills carry
+   `role="progressbar"` with an `aria-valuetext` a person would say; the ✓/✗ in the after-action
+   report carry the word, since NVDA speaks neither glyph and pass and fail read alike; ticks are
+   throttled to tenths; and the run's END is announced by `ReapBar` alone, which cannot be
+   unmounted, rather than by the sheet the operator is invited to close. **#193 closed with it**:
+   `announce()` queues rather than overwrites, because a sentence blanked inside one Blink
+   serialization batch produces no accessibility event at all (`docs/LEARNINGS.md`).
    **The guard is the durable half.** Measured against the real pre-#132 tree,
    `eslint-plugin-jsx-a11y` catches none of the filed bugs and costs 112 lockfile entries, an
    `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not
