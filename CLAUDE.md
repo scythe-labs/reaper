@@ -36,22 +36,16 @@ Eleven rules bind every file and stay here, under *Rules that apply everywhere*.
 overlap, the more specific one governs. Read the governing file before working in a tree you
 haven't touched this session.
 
-**This table, each file's own `Holds` line, and the count above are one fact written four
-times, so `test_every_index_of_the_rules_matches_the_rules` checks all of them against the
-files** and names every one that disagrees. It exists because they had already drifted: the
-review skill's count sat thirteen behind the corpus, in the very paragraph telling a reviewer
-not to restate the rules (rule 144).
+This table, each file's `Holds` line, and the count are one fact written four times, so
+`test_every_index_of_the_rules_matches_the_rules` checks all of them and names each one that
+disagrees. They had already drifted (rule 144).
 
-**A new rule earns its number, and most candidates do not.** The corpus grew 182 → 1,377 lines
-in thirteen days, and the largest single saving in it was deleting nothing: rules 127, 140, 142
-and 143 each described the same sweep at a different target, so five passes wrote five rules
-where four sentences under rule 72 say all of it. So before appending 148, in this order:
-**extend an existing rule** with your case as an instance if one covers the class — the numbers
-stay citable and the reader learns one pattern, not five; **write the gate instead** if the
-violation is greppable, because `test_repo_hygiene.py` catches an author who never read the
-rules and prose cannot; and only then **append**, to the scoped file that governs it, with the
-instruction first and the incident compressed to a clause. A rule that narrates the gate
-enforcing it is paying twice for one constraint.
+**A new rule earns its number, and most candidates do not.** Before appending 148, in order:
+**extend an existing rule** if one covers the class — rules 127, 140, 142 and 143 each described
+rule 72's sweep at a different target, five rules where four instances do it; **write the gate
+instead** if the violation is greppable, since `test_repo_hygiene.py` binds an author who never
+read the rules and prose cannot; then **append**, instruction first, incident cut to a clause. A
+rule narrating the gate that enforces it pays twice for one constraint.
 
 ## Golden rules
 
