@@ -212,8 +212,8 @@ class RawItem:
 #: Why this item has no Plex rating key, one entry per non-matched resolver outcome. Each
 #: value is a KEY into ``WhyPanel``'s ``CAUSE_COPY``, which turns it into the sentence the
 #: owner reads; a key with no entry there falls back to printing this string raw, so
-#: ``test_repo_hygiene`` fails on one. ``None`` (a record from before the field shipped)
-#: takes the unmatched wording, which is what it has always read as.
+#: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one. ``None`` (a record
+#: from before the field shipped) takes the unmatched wording, which it has always read as.
 _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
     identity.MatchStatus.UNMATCHED: "Plex has not matched this item",
     identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this title",
@@ -247,8 +247,8 @@ def build_facts(
     # found ONE row and they were different rows, which is the two apps describing one file
     # differently and is not a statement that Plex holds several copies. All three keep the
     # file; only the words shown to the owner differ, and the wrong words send them to fix
-    # the wrong thing. Each string is a key into WhyPanel's CAUSE_COPY (rule 144); the
-    # repo-hygiene suite fails when one of them has no entry there.
+    # the wrong thing. Each string is a key into WhyPanel's CAUSE_COPY (rule 144);
+    # test_review_chips.py::TestTheMatchStatusVocabulary fails when one has no entry there.
     no_key_reason = _NO_KEY_REASONS.get(item.match_status, "Plex has not matched this item")
 
     # --- dormancy -----------------------------------------------------------

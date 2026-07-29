@@ -505,7 +505,8 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
 
 #: The show-side twin of ``snapshot._NO_KEY_REASONS``: why this season has no Plex rating
 #: key, one entry per non-matched resolver outcome. Same contract -- each value is a key
-#: into ``WhyPanel``'s ``CAUSE_COPY``, and ``test_repo_hygiene`` fails on one with no entry
+#: into ``WhyPanel``'s ``CAUSE_COPY``, and
+#: ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one with no entry
 #: there. Kept beside its own builder rather than shared with the movie map because the
 #: subjects differ ("this season" against "this item", "this show" against "this title").
 _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {

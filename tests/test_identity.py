@@ -9,6 +9,8 @@ Every case here is a way a wrong bind could delete the right file for the wrong 
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -2260,8 +2262,43 @@ class TestTheAbstainVocabulary:
     about the number of copies, and for a year every surface said that one.
 
     Written as a table from the four call sites rather than transcribed off the branch
-    structure (rule 119), so a fifth abstain added without a status is a failure here.
+    structure (rule 119). The table alone cannot see a FIFTH call site, though -- it drives
+    the four it names and passes whatever else exists -- so
+    :meth:`test_the_table_covers_every_abstain_in_resolve` pins the count of the population
+    it claims to cover (rule 145).
     """
+
+    #: The two spellings the count below scans for. Both constructors are called as
+    #: ``Resolution.<name>(`` inside :func:`resolve` and nowhere else in the module; the
+    #: ``cls(...)`` bodies of the classmethods themselves do not match, which is what keeps
+    #: the count equal to the number of call sites rather than call sites plus definitions
+    #: (rule 147 -- a source scan is bounded by the spellings it accepts, so they are written
+    #: down here and asserted against the tree below).
+    _ABSTAIN_CALLS: ClassVar[tuple[str, ...]] = ("Resolution.abstain(", "Resolution.conflicted(")
+
+    def test_the_table_covers_every_abstain_in_resolve(self) -> None:
+        """A fifth abstain arm added to ``resolve`` fails HERE, which the table cannot do.
+
+        The table drives four resolutions and asserts the status of each; a new arm calling
+        ``Resolution.abstain`` where it should call ``conflicted`` adds a fifth case nothing
+        drives, and every operator surface then tells the owner their library holds a
+        duplicate that is not there -- the defect this whole class exists over. Counting the
+        call sites is what makes the omission visible: a member the table never collected is
+        otherwise missing from both the guard and its proof.
+        """
+        source = (
+            Path(__file__).resolve().parents[1] / "src" / "reaper" / "engine" / "identity.py"
+        ).read_text(encoding="utf-8")
+        found = sum(source.count(call) for call in self._ABSTAIN_CALLS)
+        cases = len(
+            self.test_each_abstain_reports_its_own_kind.pytestmark[0].args[1]  # type: ignore[attr-defined]
+        )
+        assert found == cases, (
+            f"identity.resolve has {found} abstain/conflicted call sites and the table above "
+            f"drives {cases}. Add the new one to the table with the status it must report, or "
+            "an abstain wording no test covers ships to the why-panel, the card reason and "
+            "the chip at once. See tests/test_identity.py::TestTheAbstainVocabulary."
+        )
 
     @pytest.mark.parametrize(
         ("name", "resolve", "expected", "candidates"),
