@@ -107,9 +107,13 @@ Last verified against the code: 2026-07-26.
    could not be dismissed from the keyboard. All six now render one `WhyShell` that owns the
    dialog contract, conditional on `NARROW_SCREEN_QUERY` because the panel is a genuine
    split-view side panel above it and covers the whole application below it: claiming
-   `role="dialog"` at every width would be false on a desktop. Escape moved into the shell from
-   the three places that had it, which also fixed it firing from inside the panel's own fields —
-   App's handler bailed on `INPUT/TEXTAREA/SELECT`, a bail `j`/`k` need and Escape does not.
+   `role="dialog"` at every width would be false on a desktop. That boundary is the 900px one,
+   but the panel starts overlaying the list at 1100px, so 200px of width still gets an overlay
+   with no focus containment — #171 surviving in a band, filed as **#184**. Escape moved into the
+   shell from the three places that had it. It keeps App's `INPUT/TEXTAREA/SELECT` bail, scoped
+   to fields the panel does not own: unscoped, a press meant to clear the queue's search box shut
+   the reasoning panel beside it. The popovers that sit over a panel — the spare-length menu and
+   the two filter menus — stop the key rather than letting both layers close on one press.
    **The menus are landed too**, following the precedent `UserMenu` set: the spare-length menu,
    the ＋ Filter menu and the filter chips' value picker all claimed `role="menu"`/`menuitem` or
    `role="listbox"`/`option`, and implemented no part of either contract — no arrow keys, no
@@ -119,8 +123,14 @@ Last verified against the code: 2026-07-26.
    a focus return to its trigger; the chip picker states which value is in force with
    `aria-current`, the app's existing idiom. The spare menu needed more than the other two
    because it is portaled to `<body>`: its rows sat nowhere near the caret in the Tab order, so
-   pressing Tab walked on into the card while the menu hung open beside it. It now takes focus,
-   keeps Tab inside itself, and hands focus back on every exit. Scales' "Not in the last scan"
+   pressing Tab walked on into the card while the menu hung open beside it. It now takes focus
+   and keeps Tab inside itself. **Handing focus back is the half that is easy to get wrong, and
+   both menus got it wrong first:** a control disabled or unmounted by the very press that closes
+   the menu cannot receive focus, so `.focus()` silently does nothing and the operator lands on
+   `<body>`. The spare caret disables itself while its own mutation is in flight, so the restore
+   waits for that to settle; the ＋ Filter button is removed outright by adding the last addable
+   filter, so focus goes to the chip that press created. An outside click restores nothing, on
+   purpose. Scales' "Not in the last scan"
    tile lost an `aria-expanded` that pointed at a panel App renders in a different subtree.
    What is filed rather than fixed is still larger: the review queue's cards are `role="button"`,
    which makes every chip, reason and score inside them presentational; the deletion path
