@@ -1121,7 +1121,10 @@ function BackupPanel({
                 Keep that key with the file, or a restore cannot read your saved credentials.
               </Notice>
             )}
-            <Notice tone="warn">
+            {/* `standing`: this sits under the download button whenever the panel is open. It
+                is not a reaction to anything, so an alert would cut the reader off mid-heading
+                on every visit to Backup, with text that never changed. */}
+            <Notice tone="warn" standing>
               This file can unlock your Plex and Sonarr/Radarr credentials. Keep it as safe as a
               password.
             </Notice>
@@ -1456,7 +1459,9 @@ function RestoreCard({
             Restoring takes effect the next time the container restarts. Nothing changes until then.
           </p>
 
-          <Notice tone="warn">
+          {/* `standing`, same as the download warning above: part of the restore card whenever
+              it is on screen, not a reply to a press. */}
+          <Notice tone="warn" standing>
             Restoring replaces your current decisions and settings. There is no undo, so download a
             backup first.
           </Notice>

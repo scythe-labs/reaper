@@ -122,4 +122,21 @@ describe("the confirm that refuses a switch away from unsaved edits", () => {
     await user.click(rail);
     expect(screen.getByRole("alert")).toHaveFocus();
   });
+
+  it("hands focus back to the control that was pressed when the refusal closes", async () => {
+    // Moving focus in is a loan. Dropped on the way out, `activeElement` is `<body>` and the
+    // next Tab starts at the masthead, so the operator walks the whole section rail back to the
+    // field they were editing -- the exact cost this component was added to remove.
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    const rail = screen.getByRole("button", { name: "Security" });
+    await user.click(rail);
+    expect(screen.getByRole("alert")).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(rail).toHaveFocus();
+  });
 });

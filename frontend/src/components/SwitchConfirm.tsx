@@ -37,6 +37,22 @@ export function SwitchConfirm({
 }) {
   const ref = useRef<HTMLElement>(null);
 
+  // Declared BEFORE the focus move below, because effects run in declaration order and this one
+  // has to read `activeElement` while it is still the control that was pressed.
+  //
+  // Taking focus is only half a loan. When the notice unmounts -- Keep editing, or the switch
+  // going through -- the focused node goes with it and `activeElement` falls back to `<body>`,
+  // so the next Tab starts at the masthead and the operator walks the user menu and the whole
+  // section rail back to the field they were editing. That is the cost this component exists to
+  // remove, paid on the way out instead of the way in. Guarded on `contains`, because Discard
+  // can take the trigger with it, and focusing a detached node silently does nothing.
+  useEffect(() => {
+    const trigger = document.activeElement;
+    return () => {
+      if (trigger instanceof HTMLElement && document.contains(trigger)) trigger.focus();
+    };
+  }, []);
+
   useEffect(() => {
     ref.current?.focus();
   }, [nonce]);
