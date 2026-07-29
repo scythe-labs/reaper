@@ -228,7 +228,30 @@ describe("the Leaving Soon row through a failed refetch", () => {
       last: null,
     });
     const queryClient = renderPanel("jobs");
-    expect(await screen.findByRole("button", { name: /^Update now/ })).toBeInTheDocument();
+    // Settle the state this button's EXISTENCE depends on before reaching for it (#228, the
+    // twin of #149). `findByRole` with a name matcher re-computes accessible names across the
+    // whole Settings tree on every 50ms poll -- the most expensive query Testing Library has --
+    // and here it had to cover the shelf read landing as well, on one 1000ms budget. It lost
+    // that race on a loaded CI runner, on commits touching nothing in this tree, and the dumped
+    // DOM showed the panel still on "Loading the upkeep jobs…" with this row on "Loading…".
+    //
+    // "Runs after every scan" is the cheap text the enabled branch renders, so waiting on it
+    // settles the same read and takes the button synchronously once it holds. Measured idle,
+    // detection falls from 18.2ms mean / 87.5ms worst to 4.5ms / 6.3ms; it is the worst case
+    // that loses on a busy runner. It also pins the branch, in rule 141's shape: the row's OFF
+    // branch draws a disabled "Update now" too, so the old wait held either way and the ON
+    // branch it means to set up was proven by nothing until the `toBeEnabled` at the end.
+    //
+    // Not a timeout bump on purpose: that hides the next regression in this chain instead of
+    // pinning it.
+    //
+    // Rule 137's margin sweep does NOT find this one, which is worth knowing before reaching
+    // for it: holding every React Query notification back 200ms, and again at 500ms, left all
+    // ten tests here green, because the reads still land inside the budget -- what runs out is
+    // the budget spent LOOKING between them. The sweep amplifies notification latency; this
+    // failure is query cost under a starved CPU. Timing the wait itself is what showed it.
+    await screen.findByText("Runs after every scan");
+    expect(screen.getByRole("button", { name: /^Update now/ })).toBeInTheDocument();
 
     // "Update now" invalidates exactly this key when it SUCCEEDS, so a blinked refetch here
     // follows a shelf update that worked -- and used to answer it by declaring the shelf unknown.
