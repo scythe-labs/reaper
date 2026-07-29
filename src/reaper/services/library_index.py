@@ -24,6 +24,33 @@ it returns that the spine did not list is appended as its own row, carrying Plex
 own added-at (there is no Tautulli value to preserve for a row Tautulli has not
 listed yet).
 
+**The cache lags in both directions, and the other one is the dangerous one.** A
+rating key the spine still lists that the sweep did NOT return is an item Plex no
+longer has -- re-matched, replaced, or deleted -- and admitting it builds a phantom
+into the index: a stale title, year and added-at, with no ids and no file name,
+because there was nothing to enrich it from. Carrying no ids and no basename it can
+only ever act through the resolver's tier 3 (title + year), where it does real harm
+twice. It VETOES a good bind, by naming a different row than the file name did, which
+abstains and tells the operator Plex holds several copies of a file it holds one copy
+of. Worse, it ORIGINATES a bind: with no id hit and a file name the real row does not
+carry (an ordinary *arr rename), title + year is the last tier standing, and the item
+binds to a rating key Plex 404s. That reads as *matched*, so the fact layer takes its
+affirmative branch -- ``watchers_window.get(rating_key, 0)`` is ``Known(0)``, a
+measurement rather than ``Unknown``, and dormancy anchors on the phantom's stale
+added-at. Nobody can have watched a row that does not exist, so a live file collects
+maximum condemn pressure at full coverage from an item that is gone. So a spine row
+the sweep did not return is dropped, and the item resolves unmatched instead, which
+keeps it.
+
+That drop is gated on the sweep having actually *spoken*: a failed sweep and an
+unconfigured Plex both return an empty map, and reading "not in the sweep" as "not in
+Plex" there would retire the entire library on the strength of a read that never
+happened (rule 2). Both leave the old behavior in place -- the snapshot is degraded
+and un-executable in the failure case anyway. The sweep and the spine are filtered on
+the same section keys, so when the sweep did speak the two cover the same libraries
+and the difference is real; a large gap means they disagree about *scope* rather than
+about a handful of retired items, and that degrades.
+
 A plexapi sweep that fails **degrades** the snapshot (rule 2: never let the id
 signal vanish and silently fall the whole library back to title-only) and leaves
 ids empty, so items still match by title+year but no run may execute against the
@@ -65,6 +92,14 @@ log = structlog.get_logger(__name__)
 #: it cannot collide with a real Tautulli field.
 _SPINE_LIBRARY = "_reaper_library"
 
+#: How much of the spine may be retired as "Plex no longer has this" before the scan stops
+#: believing the two reads covered the same libraries. A stale Tautulli cache retires a
+#: handful of items; a section the sweep never walked retires all of it, and every item in
+#: that library would then resolve unmatched with nothing announcing why. Both bounds must
+#: be passed, so a tiny library cannot degrade on a single retired row.
+_RETIRED_DEGRADE_SHARE = 0.1
+_RETIRED_DEGRADE_FLOOR = 20
+
 
 def _as_year(value: Any) -> int | None:
     """A row's release year, or ``None`` -- used only to disambiguate duplicate titles.
@@ -95,18 +130,28 @@ async def build_index(
     item's enrichment (it then resolves unmatched and is kept), never adds condemnation.
     """
 
-    async def _sweep() -> dict[int, identity.PlexItem]:
+    async def _sweep() -> tuple[dict[int, identity.PlexItem], bool]:
+        """The sweep's items, and whether it *spoke* for the scoped sections.
+
+        The flag is not ``bool(items)``: a genuinely empty library and a sweep that never
+        ran both return an empty map, and only the first of them licenses the caller to
+        read "absent from the sweep" as "Plex does not have this" (see the module
+        docstring). A failed or unconfigured sweep says nothing, so it retires nothing.
+        """
         if plex is None:
-            return {}
+            return {}, False
         try:
-            return await plex.library_guid_index(
-                section_type=section_type, allowed_sections=allowed_sections
+            return (
+                await plex.library_guid_index(
+                    section_type=section_type, allowed_sections=allowed_sections
+                ),
+                True,
             )
         except PlexError as exc:
             degrade(
                 f"Plex GUID sweep failed ({exc}): id matching unavailable, snapshot un-executable"
             )
-            return {}
+            return {}, False
 
     async def _spine() -> list[Mapping[str, Any]]:
         try:
@@ -185,12 +230,13 @@ async def build_index(
     # are complete, so matching is unharmed, but a title whose ratings went missing is one
     # the rating bar can no longer keep, and a withdrawn protection degrades (rule 28).
     with collecting_incomplete_reads() as incomplete:
-        plex_items, spine_rows = await gather_reaped(_sweep(), _spine())
+        (plex_items, swept), spine_rows = await gather_reaped(_sweep(), _spine())
     for reason in incomplete:
         degrade(f"{reason}. Nothing may be deleted from this scan.")
 
     items: list[identity.PlexItem] = []
     unusable = 0
+    retired = 0
     for row in spine_rows:
         # A row with no rating key -- or one that is not a number -- cannot become a
         # candidate's join (its rating_key read would fail), so it is dropped, identically
@@ -210,6 +256,13 @@ async def build_index(
             unusable += 1
             continue
         enriched = plex_items.get(rating_key)
+        if enriched is None and swept:
+            # Tautulli still lists it; Plex, asked directly over the same sections, does
+            # not. The item is gone, and a row for it would be a phantom the title tier
+            # can bind a live file to (see the module docstring). Dropping it resolves
+            # that file unmatched, which keeps it.
+            retired += 1
+            continue
         items.append(
             identity.PlexItem(
                 rating_key=rating_key,
@@ -243,6 +296,17 @@ async def build_index(
             "id, so they could not be matched and nothing may be deleted from this scan"
         )
 
+    if retired > _RETIRED_DEGRADE_FLOOR and retired > _RETIRED_DEGRADE_SHARE * len(spine_rows):
+        # Past this much, "Tautulli is a little behind" stops explaining it: the likelier
+        # story is a library the sweep never walked, and every item in it just became
+        # unjudgeable. Keeping the file is still the outcome, but a scan that quietly
+        # decided it can see nothing is worse than one that says so.
+        degrade(
+            f"{retired} items in Tautulli's library list are no longer in Plex, so the two "
+            "don't line up and nothing may be deleted from this scan. Refreshing the "
+            "libraries in Tautulli usually fixes it."
+        )
+
     # Items Plex has that the Tautulli cache has not listed yet (fresh additions).
     spine_keys = {item.rating_key for item in items}
     fresh = [row for rk, row in plex_items.items() if rk not in spine_keys]
@@ -259,11 +323,13 @@ async def build_index(
             allowed_sections=sorted(allowed_sections) if allowed_sections else None,
             spine_rows=len(spine_rows),
             swept=len(plex_items),
+            retired=retired,
         )
     else:
         # The denominator for every "why didn't my item match" question, and per scan (once
-        # or twice), not per item, so it is safe at info. A large ``fresh`` count means the
-        # Tautulli spine is lagging Plex -- items present in Plex it has not listed yet.
+        # or twice), not per item, so it is safe at info. The spine lags Plex in both
+        # directions: ``fresh`` counts items Plex has that it has not listed yet, ``retired``
+        # items it still lists that Plex no longer has.
         log.info(
             "library_index.built",
             section_type=section_type,
@@ -271,5 +337,6 @@ async def build_index(
             swept=len(plex_items),
             items=len(items),
             fresh=len(fresh),
+            retired=retired,
         )
     return identity.PlexIndex.build(items)

@@ -1628,6 +1628,49 @@ Resolved by dropping the pinning offer from the README, `docker-compose.yml` and
 template rather than by widening the keep pattern, which would retain roughly one image per
 commit with no bound. Whoever reconsiders that is changing registry policy, not docs.
 
+## The Tautulli library cache lags Plex in BOTH directions (2026-07-29)
+
+The Plex index a scan matches against is a union: Tautulli's cached `get_library_media_info`
+listing (the spine, which alone gives rating_key / title / year / added_at cheaply) enriched
+by a plexapi sweep. The lag we knew about was one-way — an item added to Plex since Tautulli's
+last library refresh is missing from the listing — and the builder handles it by appending any
+sweep row the spine did not list.
+
+The other direction was never named, and it is the dangerous one. **Measured on a live
+library**: a movie re-identified in Radarr, where the spine still lists the *retired* rating
+key under the *arr's current title and year, `/library/metadata/<key>` on Plex itself returns
+404, and the row Plex actually holds is absent from the spine entirely — it enters only
+through the sweep. So one file, two index rows, one of which does not exist.
+
+The shape of the harm follows from what a spine-only row carries. It has a title, a year and
+an added-at, and no ids and no file name, because there was nothing to enrich it from. That is
+exactly the shape the resolver's title+year tier binds on, and nothing else can reach it. Two
+outcomes, and the second is worse than the one that was reported:
+
+* **It vetoes a good bind.** The file name names the real row, the phantom's title names
+  itself, the tiers disagree and the item abstains. Kept — but the operator is told Plex holds
+  more than one copy of a file it holds one copy of.
+* **It originates a bind.** With no id hit and a file name the real row does not carry (an
+  ordinary *arr rename), title+year is the last tier standing. The item binds a rating key
+  Plex 404s and reads as *matched*, so the fact layer takes its affirmative branch:
+  `watchers_window.get(rating_key, 0)` is `Known(0)` — a measurement, not `Unknown` — and
+  dormancy anchors on the phantom's stale added-at. Nobody can have watched a row that does
+  not exist, so a live file collects maximum condemn pressure at full coverage from an item
+  that is gone, with every watch-history protection reporting checked-and-did-not-fire.
+
+Proportions on that library, for calibration rather than alarm: 14 of ~[redacted] items abstained
+as ambiguous, of which 1 was the disagreement shape. The spine held ~[redacted] movie rows. So the
+veto arm is rare; the originating arm is invisible from the queue by construction, since a
+phantom bind produces an ordinary-looking condemned row.
+
+The negative result worth recording: **"absent from the sweep" is not by itself evidence of
+anything.** A failed sweep and an unconfigured Plex both return an empty map, so the prune has
+to be gated on the sweep having actually spoken, or a transient Plex error retires the whole
+library. Dropping a row is the keep direction (the item resolves unmatched), so the change
+cannot over-condemn — but it can blind a library, which is why a gap past 10% of the spine
+degrades the snapshot instead: at that size the likelier story is a section the sweep never
+walked, not a stale cache.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

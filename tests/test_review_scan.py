@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from sqlalchemy import text
@@ -39,6 +40,7 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.ratings import Rating, RatingSource
 from reaper.services import history_sync
+from reaper.services.season_scan import build_tv_index
 from reaper.services.snapshot import (
     _fold_merged_watch_stats,
     _insert_first_flags,
@@ -281,13 +283,14 @@ class TestTheMovieJoinAtTheScanLane:
 
 
 class _FakeTautulli:
-    """The minimum of the Tautulli client that ``build_movie_index`` touches."""
+    """The minimum of the Tautulli client the index builders touch."""
 
-    def __init__(self, rows: list[dict[str, object]]) -> None:
+    def __init__(self, rows: list[dict[str, object]], section_type: str = "movie") -> None:
         self._rows = rows
+        self._section_type = section_type
 
     async def libraries(self) -> list[dict[str, object]]:
-        return [{"section_type": "movie", "section_id": 1}]
+        return [{"section_type": self._section_type, "section_id": 1}]
 
     async def library_media_info(
         self, section_id: int, *, start: int = 0, length: int = 1000, **_: object
@@ -423,6 +426,190 @@ class TestBuildMovieIndex:
         )
         assert reasons == []
         assert index.by_rating_key[100].ids.empty
+
+
+class TestRetiredSpineRows:
+    """A rating key the Tautulli cache still lists that Plex no longer has.
+
+    It reaches the index carrying a title and a year and nothing else, which is exactly
+    the shape tier 3 binds on, so it can attach a live file to an item that is gone.
+    """
+
+    #: The phantom: still in Tautulli's listing, absent from the sweep. Its title and year
+    #: are the *arr's, which is what lets it win the title tier.
+    _RETIRED: ClassVar[dict[str, object]] = {
+        "rating_key": 100,
+        "title": "Example",
+        "year": 2020,
+        "added_at": "1500000000",
+    }
+    #: The item Plex actually holds for that file. A different title, so only its file name
+    #: or its ids can reach it.
+    _REAL = identity.PlexItem(
+        rating_key=300,
+        title="Example Alternate Cut",
+        year=1996,
+        added_at=from_epoch("1700000000"),
+        ids=identity.ExternalIds.of(tmdb=3003),
+        file_basename="example (2020).mkv",
+    )
+
+    async def test_a_row_plex_no_longer_has_cannot_bind_a_live_file(self) -> None:
+        """The condemn-side reach. With the *arr's file renamed, nothing reaches the real
+        row, and before this fix title+year bound the file to the retired key -- which
+        reads as MATCHED, so watchers came back Known(0) and dormancy anchored on the
+        phantom's stale added-at. Unmatched is the right answer, and it keeps the file."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            _FakePlexSweep({300: self._REAL}),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert 100 not in index.by_rating_key
+        res = identity.resolve_movie(
+            ids=identity.ExternalIds.of(tmdb=9009),  # names nothing in Plex
+            title="Example",
+            year=2020,
+            file_basename="Example (2020) Bluray-1080p.mkv",  # the *arr renamed it
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is identity.MatchStatus.UNMATCHED
+        assert reasons == []  # one retired row is an ordinary stale cache, not a failure
+
+    async def test_a_row_plex_no_longer_has_cannot_veto_a_good_bind(self) -> None:
+        """The keep-side reach, and the one an operator sees: the file name named the real
+        row, the phantom's title named itself, the two disagreed and the item abstained as
+        'more than one thing in your Plex' over a library holding exactly one copy."""
+        index = await build_movie_index(
+            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            _FakePlexSweep({300: self._REAL}),  # type: ignore[arg-type]
+            degrade=lambda _r: None,
+        )
+        res = identity.resolve_movie(
+            ids=identity.ExternalIds.of(tmdb=9009),
+            title="Example",
+            year=2020,
+            file_basename="example (2020).mkv",  # still names the real row
+            index=index,
+        )
+        assert res.rating_key == 300
+        assert res.status is identity.MatchStatus.MATCHED
+
+    async def test_a_failed_sweep_retires_nothing(self) -> None:
+        """rule 2. A sweep that raised returns the same empty map a genuinely empty library
+        does, and reading it as 'Plex has none of these' would retire the whole library on a
+        read that never happened. The pre-fix behavior stands, and the snapshot degrades."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            _FakePlexBrokenSweep(),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert 100 in index.by_rating_key
+        assert reasons and "GUID sweep failed" in reasons[0]
+
+    async def test_no_plex_configured_retires_nothing(self) -> None:
+        """The other silent-empty: nothing swept because nothing was asked."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            None,
+            degrade=reasons.append,
+        )
+        assert 100 in index.by_rating_key
+        assert reasons == []
+
+    async def test_the_show_index_retires_the_same_rows(self) -> None:
+        """rule 72. ``build_tv_index`` is a thin wrapper over the same builder, so the prune
+        reaches shows for free -- but the resolver above it does not: a show binds on tvdb
+        and a FOLDER name, never a file size, so there is one less corroborator between a
+        phantom and a live series. Both arms, on the show ladder."""
+        retired_show = {
+            "rating_key": 100,
+            "title": "Example Show",
+            "year": 2020,
+            "added_at": "1500000000",
+        }
+        real_show = identity.PlexItem(
+            rating_key=300,
+            title="Example Show Under Another Name",
+            year=2020,
+            added_at=from_epoch("1700000000"),
+            ids=identity.ExternalIds.of(tvdb=7007),
+            file_basename="example show",
+        )
+        index = await build_tv_index(
+            _FakeTautulli([retired_show], section_type="show"),  # type: ignore[arg-type]
+            _FakePlexSweep({300: real_show}),  # type: ignore[arg-type]
+            degrade=lambda _r: None,
+        )
+        assert 100 not in index.by_rating_key
+
+        # The folder still names the real show: it binds, where the phantom's title would
+        # have contradicted it and abstained.
+        bound = identity.resolve_show(
+            ids=identity.ExternalIds.of(tvdb=9009),  # names nothing in Plex
+            title="Example Show",
+            year=2020,
+            file_basename="Example Show",
+            index=index,
+        )
+        assert (bound.rating_key, bound.status) == (300, identity.MatchStatus.MATCHED)
+
+        # Sonarr's folder was renamed, so nothing reaches the real show. Unmatched keeps
+        # every season; binding the phantom would have handed them all a dead rating key.
+        stranded = identity.resolve_show(
+            ids=identity.ExternalIds.of(tvdb=9009),
+            title="Example Show",
+            year=2020,
+            file_basename="Example Show (2020) [tvdb-9009]",
+            index=index,
+        )
+        assert stranded.rating_key is None
+        assert stranded.status is identity.MatchStatus.UNMATCHED
+
+    @pytest.mark.parametrize(
+        ("total", "retired", "degrades"),
+        [
+            (400, 41, True),  # past both bounds: floor 20, share 40
+            (400, 40, False),  # past the floor, exactly AT the share
+            (100, 15, False),  # past the share (10), under the floor
+            (1000, 50, False),  # past the floor, well under the share (100)
+            (400, 400, True),  # a section the sweep never walked
+        ],
+    )
+    async def test_a_large_gap_degrades_and_a_small_one_does_not(
+        self, total: int, retired: int, degrades: bool
+    ) -> None:
+        """A stale cache retires a handful; a library the sweep never walked retires all of
+        it, and every item in it would resolve unmatched with nothing saying why. Both
+        bounds must be passed, so a small library cannot degrade on one retired row."""
+        rows = [
+            {"rating_key": k, "title": f"Example {k}", "year": 2020, "added_at": "1500000000"}
+            for k in range(total)
+        ]
+        swept = {
+            k: identity.PlexItem(
+                rating_key=k,
+                title=f"Example {k}",
+                year=2020,
+                added_at=from_epoch("1700000000"),
+                ids=identity.ExternalIds.of(tmdb=5000 + k),
+            )
+            for k in range(retired, total)
+        }
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli(rows),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert len(index.by_rating_key) == total - retired
+        gap = [r for r in reasons if "no longer in Plex" in r]
+        assert bool(gap) is degrades
+        if degrades:
+            assert str(retired) in gap[0]
 
 
 # ---------------------------------------------------------------------------
