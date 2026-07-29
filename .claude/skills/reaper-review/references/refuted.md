@@ -213,3 +213,11 @@ unused wire field.
 **`routes.py:_deep_links` — "the links and the replay can never disagree".** Implemented: both
 readers are literally `_replayed_match(row)`, one derivation, rule 104 satisfied. The unreadable
 branch omits the key and `_deep_links` uses `.get(..., ())`.
+
+**`PolicyEditor.tsx:WarningAnchor.guard` — a single `WarningGuard` cannot express a `WarnBlock`
+nested under two mount conditions (issue #200).** The premise is false: `keep_rating_rules` is
+already that anchor. Its block at `:529` sits inside `{gate.enabled && (` at `:478`, and the
+whole `RatingFloorRow` is conditionally mounted by the IIFE at `:1587-1590`. It is expressible
+because `:957` folds both into one boolean — `some((g) => g.gate === "rating_floor" &&
+g.enabled)`. A conjunction fits one guard, so the type limit does not bind and the fold is the
+idiom. Widening `guard` to a set and composing the walk's page states buys nothing over it.
