@@ -46,10 +46,16 @@ import { Notice } from "./Notice";
  *  pasted webhook on Notifications, a typed address on Plex and General. There is no
  *  `beforeunload` handler anywhere in `frontend/src` (grep: zero), so a reload takes the draft
  *  with no ask. Nothing honest was available to put in its place: `main.tsx` sets
- *  `refetchOnWindowFocus: false` app-wide and only Security has an interval behind it, so a line
- *  promising Reaper keeps trying would be false on six of the seven. A retry the operator can
- *  press without losing the draft is the real answer and is not built; saying nothing beats
- *  saying the one thing that costs them their work.
+ *  `refetchOnWindowFocus: false` app-wide, and the only interval anywhere behind one of these
+ *  reads is Security's, which runs always (`useSafety`, 15s), and Jobs', which runs only while a
+ *  job is running (`Settings.tsx`, 1500ms) -- so a line promising Reaper keeps trying would be
+ *  false on most callers and, on Jobs, false exactly half the time, which is worse than plainly
+ *  wrong. (The flat "only Security has an interval" this used to say was simply untrue; the
+ *  conclusion it was arguing for still holds. #196.) A retry the operator can press without
+ *  losing the draft is the real answer and is not built INTO THIS LINE -- three exist elsewhere
+ *  in the tree, two inside a failure notice (`LogsPanel`) and one beside a failure line
+ *  (`PlexPanel`'s server list), so the pattern is available to a caller that wants it. Saying
+ *  nothing beats saying the one thing that costs them their work.
  *
  *  Three different reasons brought panels here, and they are worth keeping straight. The first
  *  four keep their surface to protect a DRAFT (rule 146). About and Jobs hold none, and keep

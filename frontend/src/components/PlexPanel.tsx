@@ -776,11 +776,17 @@ export function PlexPanel({
           {/* Only when there is nothing to render, the same divided test the panel's own status
               read settled on above (rule 72). An undivided `isError` traded the whole grid, every
               per-library Switch and the Refresh button for one paragraph while React Query still
-              held the last good list, and `invalidateAllPlex` fires this on the success path of a
-              link, an unlink and a server switch (#166). The list is a read, not a draft, so what
-              is lost is smaller than the General panel's typed value -- but a switch the operator
-              cannot see is a library they cannot turn off, and the paragraph told them to reload,
-              which is not what a failed refetch asks for. */}
+              held the last good list (#166).
+
+              Two ordinary things reach it. `invalidateAllPlex` invalidates this key, and it has
+              exactly ONE caller, `switchServer.onSuccess` -- the comment here used to name three,
+              adding a link and an unlink it does not fire on (#196). A link reaches the branch by
+              a different route: this query is `enabled: linked`, so linking mounts the read for
+              the first time, and a failure there is the never-loaded arm rather than this one.
+
+              The list is a read, not a draft, so what is lost is smaller than the General panel's
+              typed value -- but a switch the operator cannot see is a library they cannot turn
+              off. */}
           {libraries.isPending || syncLibraries.isPending ? (
             <p className="muted">Loading libraries…</p>
           ) : libraries.isError && !libraries.data ? (

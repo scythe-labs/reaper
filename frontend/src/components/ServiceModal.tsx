@@ -399,9 +399,16 @@ export function ServiceModal({
         if (apiKey) body.api_key = apiKey; // blank keeps the stored key
         if (ssl) body.verify_tls = verifyCert; // over plain http the setting is moot; keep it stored
         if (isArr) body.add_import_exclusion = addExclusion;
-        // Only send the map when we have the authoritative folder list: build it from the
-        // current folders (dropping any stale ones) and their non-empty picks. If the folders
-        // could not be read, omit it entirely so the stored map is preserved, never cleared.
+        // Send the map only when a folder list has been read: build it from the folders in hand
+        // (dropping any stale ones) and their non-empty picks. A list that NEVER landed leaves
+        // `.data` undefined, and the map is then omitted entirely so the stored one survives.
+        //
+        // That is the whole of what this guard does, and the sentence here used to claim more:
+        // "if the folders could not be read, omit it entirely" reads as covering a failure, and
+        // this tests `.data`, not `.error`. A refetch that fails keeps the last good list, so the
+        // map is still rebuilt from it -- correct while the *arr's folders have not changed, and a
+        // silent drop of any stored entry whose folder is missing from the stale list when they
+        // have (#196 for the comment, #204 for the guard).
         if (mapEditable && rootFolders.data) {
           const map: Record<string, string> = {};
           for (const f of rootFolders.data) {
@@ -410,9 +417,8 @@ export function ServiceModal({
           }
           body.plex_library_map = map;
         }
-        // Same contract for the Seerr service map: send it only when the service list was read,
-        // dropping unset services; omit entirely when it could not be read, so the stored map
-        // is preserved rather than cleared.
+        // Same contract, and the same limit, for the Seerr service map: sent when a service list
+        // has been read, dropping unset services; omitted only when none ever landed.
         if (seerrMapEditable && seerrServices.data) {
           const map: Record<string, number> = {};
           for (const s of seerrServices.data) {

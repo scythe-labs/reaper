@@ -568,10 +568,10 @@ describe("the certificate check", () => {
 // The panel's own status read got this split in #140; these two did not, so an undivided
 // `isError` traded the whole library grid, and separately both Leaving Soon switches, for one
 // error paragraph while React Query still held the last good answer. Every trigger is a success
-// path: `invalidateAllPlex` fires after a link, an unlink and a server switch, and returning to
-// the section past `staleTime` refetches on its own. Each is pinned in both directions, because
-// a fix that only deleted the `isError` arm would leave a genuinely-unread group claiming to be
-// empty rather than unread.
+// path: `invalidateAllPlex` fires after a server switch -- its one caller, not the three this
+// comment used to name (#196) -- and returning to the section past `staleTime` refetches on its
+// own. Each is pinned in both directions, because a fix that only deleted the `isError` arm would
+// leave a genuinely-unread group claiming to be empty rather than unread.
 describe("the groups below the form, through a failed refetch", () => {
   /** A cold mount whose queryClient the test keeps, so it can invalidate one key by hand. */
   function renderWithClient() {
