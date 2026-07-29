@@ -15,18 +15,21 @@ import { Notice } from "./Notice";
  *  the panel then presents state it knows is stale as current. Rule 17/36 wants both the pending
  *  and the failed read handled explicitly, so this is what the failed one says.
  *
- *  One component for every panel, so the wording cannot drift (rule 144). SEVEN keep their
- *  surface through a failed refetch and say so with this line: `GeneralPanel`, `PlexPanel`,
- *  `SecurityPanel`, `BackupPanel`, `AboutPanel`, `JobsPanel` and `NotificationsPanel`, plus the
- *  Leaving Soon row inside Jobs. An eighth that starts doing so takes this line with it, rather
- *  than writing its own. The count stood at six here while `NotificationsPanel` already was the
- *  seventh, which is how a gap gets written down as future work and then reads as an assurance
- *  that the sweep is finished (rule 7/24). It is a count of what is wired today, not a promise.
+ *  One component for every surface, so the wording cannot drift (rule 144). It began as a
+ *  settings line and is not one any more: #190 brought the review queue, the expanded season
+ *  list, the Scales board, the not-in-the-last-scan panel, the services list and the service
+ *  editor's two mapping grids here too. A surface that starts keeping its content takes this
+ *  line with it rather than writing its own.
  *
- *  Panels, not surfaces: `PlexPanel` is one of the seven and carries this line at THREE places
- *  (#166). Its status read took it in #140; its library grid and its Leaving Soon group were
- *  still trading the whole grid, and both shelf switches, for an error paragraph over a list
- *  React Query was still holding. A panel entering this set does not always do it once, so
+ *  **No count lives in this comment**, deliberately: one did, and it stood at six while
+ *  `NotificationsPanel` already was the seventh, which is how a gap gets written down as future
+ *  work and then reads as an assurance that the sweep is finished (rule 7/24). Grep for the
+ *  component to see who calls it.
+ *
+ *  Surfaces, not files: `PlexPanel` carries this line at THREE places (#166) and `ServiceModal`
+ *  at four. `PlexPanel`'s status read took it in #140; its library grid and its Leaving Soon
+ *  group were still trading the whole grid, and both shelf switches, for an error paragraph over
+ *  a list React Query was still holding. A file entering this set does not always do it once, so
  *  finding one branch that tests a bare `isError` is a reason to read the rest of the file.
  *
  *  Security is the one with a clock behind it: `useSafety` refetches every 15 seconds, so its
@@ -75,7 +78,18 @@ export function StaleReadNotice({
 }) {
   return (
     <Notice tone="warn" inline={inline}>
-      Couldn't check {what} just now, so what's below may be out of date.
+      {staleReadLine(what)}
     </Notice>
   );
+}
+
+/** The sentence itself, for the two surfaces that cannot carry a `.notice`.
+ *
+ *  The review queue's expanded season list speaks in `.season-list-note` lines, the grammar its
+ *  own loading and failed states already use, and rule 42 keeps the review surfaces out of
+ *  `.notice` — so those two would otherwise hand-write this claim, which is the drift rule 144
+ *  describes. The wording lives here and the presentation varies; a caller that CAN render a
+ *  notice uses the component above rather than this. */
+export function staleReadLine(what: string) {
+  return `Couldn't check ${what} just now, so what's below may be out of date.`;
 }

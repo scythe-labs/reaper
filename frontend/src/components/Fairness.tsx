@@ -20,6 +20,7 @@ import { bytes, count } from "../format";
 import { CardOpen } from "./CardOpen";
 import { type WatchReach, mirrorNote, reachIsMeasured, watchReach } from "./watchReach";
 import { Notice } from "./Notice";
+import { StaleReadNotice } from "./StaleReadNotice";
 
 /** The circular-arrow refresh glyph, in the app's 16-grid inline-SVG house style. */
 function RefreshIcon() {
@@ -243,7 +244,11 @@ export function Fairness({
         </p>
       </div>
 
-      {error && <Notice tone="error">Couldn't load Scales: {error.message}</Notice>}
+      {/* Divided, and without the exception string rule 21 forbids. The board is refetched by
+          the Refresh button above and by every override, so this sat over a fully drawn board
+          saying the read had failed (#190). */}
+      {error && !data && <Notice tone="error">Couldn't load Scales.</Notice>}
+      {error && data && <StaleReadNotice what="Scales" />}
       {isPending && (
         <div className="fair-loading" role="status" aria-live="polite">
           <span className="spinner spinner-xl" aria-hidden="true" />

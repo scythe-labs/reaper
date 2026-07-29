@@ -94,6 +94,7 @@ import {
   type Fate,
 } from "./reviewFate";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
+import { staleReadLine, StaleReadNotice } from "./StaleReadNotice";
 
 //: How many cards to *render* at a time. A tab can hold thousands, so we draw a screenful and
 //  reveal more as you scroll -- keeping the DOM (and the lazy poster fetches) small.
@@ -856,10 +857,16 @@ function SeasonList({
 
   // The list is an always-visible surface once expanded: say "loading" and "failed"
   // out loud rather than rendering nothing under an open chevron.
+  //
+  // `!data` alone, never `error || !data`: ["group", …] is override-aware, so sparing ONE season
+  // refetches it, and an undivided `error` traded every season row -- each with its own Spare and
+  // Reap -- for one red line while React Query still held the last good list (#190). A failed
+  // refetch says so above the rows instead, in the list's own note grammar (rule 42 keeps
+  // `.notice` out of the review surfaces).
   if (isPending) {
     return <p className="season-list-note muted">Loading seasons…</p>;
   }
-  if (error || !data) {
+  if (!data) {
     return (
       <p className="season-list-note error">
         Couldn't load the seasons. Collapse and expand to try again.
@@ -878,6 +885,7 @@ function SeasonList({
   const showOverride = data.show_override;
   return (
     <>
+      {error && <p className="season-list-note stale">{staleReadLine("the seasons")}</p>}
       {showOverride && (
         <ShowInheritBanner
           override={showOverride}
@@ -2362,7 +2370,12 @@ export function ReviewQueue({
           </div>
         )}
 
-        {error && <p className="error">{error.message}</p>}
+        {/* Divided, and in plain language. The raw `error.message` was an exception string over
+            a fully drawn queue: it broke rule 21 on its own, and it said the read had failed
+            directly above the rows it had read (#190). Which one shows turns on whether anything
+            ever landed -- `data` is undefined only then. */}
+        {error && !data && <p className="error">Couldn't load your review queue.</p>}
+        {error && data && <StaleReadNotice what="the queue" />}
         {isPending && <p className="muted">Loading…</p>}
 
         {data && data.length === 0 && !filtering && <p className="empty">{tab.empty}</p>}

@@ -407,8 +407,15 @@ export function RemoveRulesEditor({
 
       {/* An empty picker beside no explanation reads as "there is nothing to configure here",
           which is the wrong lesson to take from a failed fetch: say what happened instead, and
-          drop the form rather than offer a dropdown with nothing in it. */}
-      {condemnVocabError ? (
+          drop the form rather than offer a dropdown with nothing in it.
+
+          Only when the picker would BE empty, though. React Query keeps the last good vocabulary
+          through a failed refetch, and `SetupWizard` fires a bare `invalidateQueries()` that
+          refetches every key, so an undivided error took the whole add-rule form away while the
+          list behind it was still in hand (#190). The vocabulary is a fixed server-defined list,
+          not the operator's own data, so a held copy needs no staleness line: what a rule can
+          look at does not change under them mid-session. */}
+      {condemnVocabError && !condemnVocab ? (
         <Notice tone="error">
           Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
           now. Reload to try again. The rules you've already added are unaffected.
@@ -735,9 +742,10 @@ export function KeepRulesEditor({
         </div>
       )}
 
-      {/* Same reason as the remove editor: a form with an empty dropdown looks like a feature
-          with nothing behind it, so name the failure and drop the form. */}
-      {vocabError ? (
+      {/* Same reason as the remove editor, divided the same way (rule 72): a form with an empty
+          dropdown looks like a feature with nothing behind it, so name the failure and drop the
+          form -- but only when the dropdown really would be empty. */}
+      {vocabError && !vocab ? (
         <Notice tone="error">
           Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
           now. Reload to try again. The rules you've already added are unaffected.

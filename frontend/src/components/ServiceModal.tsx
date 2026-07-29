@@ -21,6 +21,7 @@ import { api, type Instance, type InstanceTest, type SeerrService } from "../api
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
+import { StaleReadNotice } from "./StaleReadNotice";
 
 export const KINDS: {
   value: string;
@@ -603,15 +604,19 @@ export function ServiceModal({
         {mapEditable && (
           <div className="field-sm plex-map">
             <span className="field-label">Plex libraries</span>
+            {/* Divided on whether the folder list ever landed: any refetch while the modal is
+                open reaches this, and an undivided error traded the whole mapping grid for one
+                warning while React Query still held the folders (#190). */}
             {rootFolders.isPending ? (
               <p className="help">Reading this instance's folders…</p>
-            ) : rootFolders.error ? (
+            ) : rootFolders.error && !rootFolders.data ? (
               <Notice tone="warn">
                 Reaper couldn't read this instance's folders. Test the connection above, then reopen
                 this to map them.
               </Notice>
             ) : rootFolders.data && rootFolders.data.length > 0 ? (
               <>
+                {rootFolders.error && <StaleReadNotice what="this instance's folders" />}
                 <div className="plex-map-grid">
                   {rootFolders.data.map((f) => (
                     <Fragment key={f.path}>
@@ -643,8 +648,16 @@ export function ServiceModal({
                 {/* A failed fetch also empties `libOptions`, and "no libraries yet" would then
                     state as fact something we never learned -- and send the operator off to
                     re-sync a list that is already there. The empty sentence is only for a list
-                    we genuinely read and found empty. */}
-                {plexLibraries.error ? (
+                    we genuinely read and found empty.
+
+                    `libOptions.length === 0` is what tells the two failures apart: a refetch that
+                    fails with the libraries still held leaves every picker above populated, and
+                    "couldn't read your Plex libraries" printed there sat beside a working list
+                    (#190). Said as staleness instead, which is what it is. */}
+                {plexLibraries.error && libOptions.length > 0 && (
+                  <StaleReadNotice what="your Plex libraries" />
+                )}
+                {plexLibraries.error && libOptions.length === 0 ? (
                   <Notice tone="warn">Reaper couldn't read your Plex libraries. Try again.</Notice>
                 ) : !plexLibraries.isPending && libOptions.length === 0 ? (
                   <p className="help">
@@ -668,15 +681,17 @@ export function ServiceModal({
         {seerrMapEditable && (
           <div className="field-sm plex-map">
             <span className="field-label">Requested-by instances</span>
+            {/* Divided exactly as the folder grid above (rule 72). */}
             {seerrServices.isPending ? (
               <p className="help">Reading this portal's services…</p>
-            ) : seerrServices.error ? (
+            ) : seerrServices.error && !seerrServices.data ? (
               <Notice tone="warn">
                 Reaper couldn't read this portal's services. Test the connection above (this needs
                 an admin key), then reopen this to map them.
               </Notice>
             ) : seerrServices.data && seerrServices.data.length > 0 ? (
               <>
+                {seerrServices.error && <StaleReadNotice what="this portal's services" />}
                 <div className="plex-map-grid">
                   {seerrServices.data.map((s) => (
                     <Fragment key={svcKey(s)}>
@@ -716,8 +731,15 @@ export function ServiceModal({
                   ))}
                 </div>
                 {/* Same trap as the library picker above: a failed fetch leaves every
-                    `instanceOptions` empty, and "none yet" would be a claim we never checked. */}
-                {arrInstances.error ? (
+                    `instanceOptions` empty, and "none yet" would be a claim we never checked --
+                    and divided the same way, so a refetch that fails with the connections still
+                    held reads as stale rather than as unreadable beside populated pickers. */}
+                {arrInstances.error &&
+                  seerrServices.data.some((s) => instanceOptions(s.kind).length > 0) && (
+                    <StaleReadNotice what="your Sonarr and Radarr connections" />
+                  )}
+                {arrInstances.error &&
+                seerrServices.data.every((s) => instanceOptions(s.kind).length === 0) ? (
                   <Notice tone="warn">
                     Reaper couldn't read your Sonarr and Radarr connections. Try again.
                   </Notice>

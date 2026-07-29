@@ -1050,8 +1050,8 @@ function Authed({ user }: { user: AuthUser }) {
   // one gate that sits above everything (#181). Every trigger is an ordinary in-app action that
   // invalidates `["setup"]`: linking or unlinking Plex, saving a service, saving general settings.
   //
-  // Both gates keep their surface WITHOUT a `StaleReadNotice`, which the seven panels always pair
-  // with it, and the departure is deliberate rather than an eighth site nobody swept: these two
+  // Both gates keep their surface WITHOUT a `StaleReadNotice`, which every surface that keeps
+  // its content pairs with it, and the departure is deliberate rather than a site nobody swept: these two
   // reads route, they do not render. Nothing on the Dashboard is derived from `setup.complete`,
   // and a stale `["me"]` at worst shows a yesterday's username in the menu, so an app-wide amber
   // banner would state a staleness the operator cannot see the effect of (rule 21).

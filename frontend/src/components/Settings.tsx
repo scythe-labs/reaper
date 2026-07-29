@@ -1055,7 +1055,12 @@ export function ServicesPanel() {
       <p className="blurb">
         The apps Reaper reads from. It only ever reads. Nothing here can delete a file.
       </p>
-      {error && <Notice tone="error">{(error as Error).message}</Notice>}
+      {/* The one Settings panel #140 did not reach. A raw exception string over the full service
+          list broke rule 21 on its own, and said the read had failed above the connections it
+          had read (#190): saving or removing an instance invalidates ["instances"], so an
+          ordinary edit reaches it. */}
+      {error && !data && <Notice tone="error">Couldn't load your connections.</Notice>}
+      {error && data && <StaleReadNotice what="your connections" />}
       {isPending && <p className="muted">Loading…</p>}
       {data &&
         KINDS.map((k) => {

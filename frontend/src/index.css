@@ -6340,6 +6340,12 @@ button.sm {
   font-size: 0.85rem;
 }
 
+/* The stale-read line, above rows that are still drawn: the app's "we could not look" amber
+   (--unknown), never the red of `.error` beside it, which means the list is not there. */
+.season-list-note.stale {
+  color: var(--unknown);
+}
+
 .season-size {
   color: var(--muted);
   font-size: 0.84rem;

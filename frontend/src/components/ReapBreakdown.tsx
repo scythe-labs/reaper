@@ -102,6 +102,16 @@ export function ReapBreakdown({
   if (isPending) return <p className="muted">Loading…</p>;
   // An unreadable breakdown must never look like "nothing to reap": say we couldn't look,
   // in the amber tone, rather than rendering an empty ledger.
+  //
+  // Undivided on purpose, and the one site in the #190 sweep that stays that way. Everywhere
+  // else a failed refetch keeps the last good value and says it may be out of date, because what
+  // is held beats nothing. What is held HERE is a set of delete counts, and ["reap-breakdown"]
+  // is override-aware, so one Spare click refetches it: keeping the old ledger would state how
+  // many titles this reap removes at the moment the operator changed that number. `PolicyEditor`
+  // settles the same question the same way for the simulator's column ("a stale count shown as
+  // current is exactly what this column must never do"), so refusing is the consistent answer
+  // rather than an unswept branch. `isPending` is handled above, so this arm is reached WITH a
+  // value in hand and drops it deliberately.
   if (isError || !data) {
     return (
       <Notice tone="warn">
