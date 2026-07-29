@@ -98,6 +98,26 @@ export function OverrideControls({
     returnToCaret.current = false;
     caretRef.current?.focus();
   }, [pending]);
+  // The same failure on the buttons themselves, and the reason the `aria-pressed` flip below --
+  // the app's only announcement that a spare succeeded -- reached nobody. Pressing Spare starts
+  // a write, `pending` disables the button that was pressed, and disabling the focused element
+  // drops focus to `<body>` in every major browser. By the time the state settled and the flip
+  // happened there was no focused element to announce it, on the press that KEEPS a file (#173).
+  //
+  // Scoping `pending` to the row's own write (`pendingFor` in ReviewQueue) does not fix this on
+  // its own -- it is the acting row whose button disables -- so the press is remembered and
+  // focus re-issued the moment the wait ends, the shape `returnToCaret` above already uses.
+  const pressed_ = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (pending || pressed_.current === null) return;
+    const target = pressed_.current;
+    pressed_.current = null;
+    // Only if the operator has not moved on. A restore is not a yank: focus fell to `<body>`
+    // because we disabled the button, so `<body>` (or nothing) is exactly the state to repair.
+    if (document.activeElement === document.body || document.activeElement === null) {
+      target.focus();
+    }
+  }, [pending]);
   // Back closes the open length menu before it does anything else (only the one open menu has a
   // non-null position, so only it registers).
   useBackGuard(menuAt !== null, () => setMenuAt(null));
@@ -165,11 +185,13 @@ export function OverrideControls({
 
   const clickSpare = (e: ReactMouseEvent) => {
     e.stopPropagation();
+    pressed_.current = e.currentTarget as HTMLButtonElement;
     // Expired presses through to a NEW spare rather than clearing the spent one (see above).
     pressed ? onClear() : onSet("spare", defaultDays);
   };
   const clickReap = (e: ReactMouseEvent) => {
     e.stopPropagation();
+    pressed_.current = e.currentTarget as HTMLButtonElement;
     override === "reap" ? onClear() : onSet("reap");
   };
 

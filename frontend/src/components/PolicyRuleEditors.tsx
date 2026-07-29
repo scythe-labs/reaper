@@ -15,9 +15,10 @@
 
 // The ramp phrasing per field, offered as an extra choice in the condition dropdown.
 // Curated: a phrase exists only where more-of-the-number honestly means more reason to
-import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
+import { type CSSProperties, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { announce } from "../announce";
+import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { api, type Condition, type CustomCondemn, type GradedKeep, type VocabField } from "../api";
 import { FIELD_TO_GATE, FIELD_TO_SIGNAL, humanDays, OP_LABELS } from "./PolicyEditor";
 import { usePopoverShift } from "./popoverFit";
@@ -353,9 +354,17 @@ export function RemoveRulesEditor({
     // actually added one: the guard above returns silently, so a no-op press and a successful
     // one were the same event to a reader.
     announce("Rule added.");
+    // Picking the field again is where the operator continues, and clearing it below is what
+    // unmounts the Add button they just pressed -- so without this the press that ADDS a rule
+    // also drops focus to `<body>` (#173).
+    fieldRef.current?.focus();
     setRField("");
     setRValue("");
   };
+  // Removing a rule destroys the button holding focus. Focus goes to the next rule's Remove,
+  // or to the field picker once the list is empty (#173).
+  const fieldRef = useRef<HTMLSelectElement>(null);
+  const rules = useRemovalFocus(fieldRef);
 
   return (
     <div className="rules-card">
@@ -366,7 +375,7 @@ export function RemoveRulesEditor({
       </p>
 
       {condemn.length > 0 && (
-        <div className="rules-table">
+        <div className="rules-table" ref={rules.ref as RefObject<HTMLDivElement>}>
           {condemn.map((r, i) => (
             <div className="rules-row rules-row-simple" key={`c-${r.name}-${i}`}>
               <span className="rules-rule">{describeCondemn(r, condemnAll)}</span>
@@ -381,9 +390,13 @@ export function RemoveRulesEditor({
                   in the sibling `.rules-rule` that no control referenced -- so pressing the
                   wrong one silently deletes a different rule. */}
               <button
+                {...REMOVES_ITS_ROW}
                 className="ghost sm"
                 aria-label={`Remove rule: ${describeCondemn(r, condemnAll)}`}
-                onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}
+                onClick={() => {
+                  rules.removing(i);
+                  onCondemn(condemn.filter((_, j) => j !== i));
+                }}
               >
                 Remove
               </button>
@@ -403,7 +416,12 @@ export function RemoveRulesEditor({
       ) : (
         <>
           <div className="condition-add">
-            <select value={rField} aria-label="Field" onChange={(e) => setRField(e.target.value)}>
+            <select
+              ref={fieldRef}
+              value={rField}
+              aria-label="Field"
+              onChange={(e) => setRField(e.target.value)}
+            >
               <option value="">when…</option>
               {condemnFields.map((f) => (
                 <option key={f.key} value={f.key}>
@@ -606,6 +624,8 @@ export function KeepRulesEditor({
     ]);
     // Same silence as the condemn composer's Add, on the same guard (rule 72).
     announce("Rule added.");
+    // And the same focus drop: clearing the field below unmounts the Add button.
+    hardFieldRef.current?.focus();
     setHField("");
     setHValue("");
   };
@@ -632,9 +652,17 @@ export function KeepRulesEditor({
     ]);
     // And the third (rule 72).
     announce("Rule added.");
+    leanFieldRef.current?.focus();
     setLField("");
     setLAt("");
   };
+  const hardFieldRef = useRef<HTMLSelectElement>(null);
+  const leanFieldRef = useRef<HTMLSelectElement>(null);
+  // ONE list for focus purposes even though it is two arrays: both render into the same
+  // `.rules-table`, so the position a removed row leaves behind is its position in the
+  // combined run. A lean rule at index `i` therefore aims at `conditions.length + i`.
+  // The fallback is the composer's field picker, whichever strength is showing.
+  const rows = useRemovalFocus(strength === "hard" ? hardFieldRef : leanFieldRef);
 
   return (
     <div className="rules-card">
@@ -646,7 +674,7 @@ export function KeepRulesEditor({
       </p>
 
       {(conditions.length > 0 || keeps.length > 0) && (
-        <div className="rules-table">
+        <div className="rules-table" ref={rows.ref as RefObject<HTMLDivElement>}>
           {conditions.map((c, i) => (
             <div className="rules-row rules-row-simple" key={`h-${c.field}-${c.op}-${i}`}>
               <span className="rules-rule">
@@ -655,9 +683,13 @@ export function KeepRulesEditor({
               </span>
               <span className="rules-weight-keep">kept outright</span>
               <button
+                {...REMOVES_ITS_ROW}
                 className="ghost sm"
                 aria-label={`Remove rule: keeps it, always, ${describeCondition(c, allFields)}`}
-                onClick={() => onConditions(conditions.filter((_, j) => j !== i))}
+                onClick={() => {
+                  rows.removing(i);
+                  onConditions(conditions.filter((_, j) => j !== i));
+                }}
               >
                 Remove
               </button>
@@ -676,6 +708,7 @@ export function KeepRulesEditor({
                   lowers the score, up to −{k.max_discount} points
                 </span>
                 <button
+                  {...REMOVES_ITS_ROW}
                   className="ghost sm"
                   // The whole visible sentence, not just the field. Two lean rules on one
                   // field are a supported setup -- `addLean` runs the name through
@@ -685,7 +718,10 @@ export function KeepRulesEditor({
                   aria-label={`Remove rule: leans, ${f?.label ?? k.field}, the ${
                     k.direction === "low_keeps" ? "less" : "more"
                   }, the safer, full effect at ${rampValue(f, k.saturate_at)}`}
-                  onClick={() => onKeeps(keeps.filter((_, j) => j !== i))}
+                  onClick={() => {
+                    rows.removing(conditions.length + i);
+                    onKeeps(keeps.filter((_, j) => j !== i));
+                  }}
                 >
                   Remove
                 </button>
@@ -718,6 +754,7 @@ export function KeepRulesEditor({
             {strength === "hard" ? (
               <div className="condition-add">
                 <select
+                  ref={hardFieldRef}
                   value={hField}
                   aria-label="Field"
                   onChange={(e) => setHField(e.target.value)}
@@ -770,6 +807,7 @@ export function KeepRulesEditor({
             ) : (
               <div className="condition-add">
                 <select
+                  ref={leanFieldRef}
                   value={lField}
                   aria-label="Field"
                   onChange={(e) => setLField(e.target.value)}

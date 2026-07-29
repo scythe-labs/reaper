@@ -41,6 +41,7 @@ import {
   type Verdict,
 } from "../api";
 import { useBackGuard } from "../backnav";
+import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
@@ -186,7 +187,7 @@ function FilterChip({
   return (
     <span className="filter-chip">
       {label}
-      <button type="button" aria-label={clearLabel} onClick={onClear}>
+      <button {...REMOVES_ITS_ROW} type="button" aria-label={clearLabel} onClick={onClear}>
         ×
       </button>
     </span>
@@ -1399,6 +1400,12 @@ export function ReviewQueue({
   // chip the pick just created is the honest successor, and it does not exist until that commit,
   // so the focus waits for one.
   const focusChip = useRef<string | null>(null);
+  // The other direction: removing a chip destroys the × holding focus, so the operator lands on
+  // `<body>` and the next Tab restarts above the toolbar (#173). Focus goes to the next chip's
+  // ×, or to the ＋ Filter button once the row is empty -- which always exists after a removal,
+  // since removing a filter is exactly what makes that dimension addable again.
+  const addFilterRef = useRef<HTMLButtonElement>(null);
+  const chips = useRemovalFocus(addFilterRef);
   useLayoutEffect(() => {
     const id = focusChip.current;
     if (id === null) return;
@@ -1602,14 +1609,35 @@ export function ReviewQueue({
     },
     onSuccess: (run) => setReapRun(run),
   });
-  const pending =
-    setOverride.isPending ||
-    clearOverride.isPending ||
+  // A write that covers the WHOLE list, so nothing anywhere may be pressed while it is in
+  // flight. The single-row writes are deliberately not here (see `pendingFor`).
+  const blocking =
     bulk.isPending ||
     reapNow.isPending ||
     // Acting while the rest of the list is still arriving would act on part of what the
     // operator asked for, under a button that says "everything matching".
     selectEverything.isPending;
+  // Which single row is being written, if any. One mutation instance serves every row, so the
+  // key it is carrying is the row that owns the wait.
+  const busyKey = setOverride.isPending
+    ? setOverride.variables.key
+    : clearOverride.isPending
+      ? clearOverride.variables
+      : null;
+  /** Whether THIS row's controls are disabled, which used to be whether ANY row's were.
+   *
+   *  Disabling the focused element drops focus to `<body>` in every major browser, and the
+   *  `aria-pressed` flip on the Spare button is the app's only announcement that a spare
+   *  succeeded -- so by the time the state settled there was no focused element to announce it,
+   *  and the press that KEEPS a file confirmed itself to nobody (#173). Scoping the wait to the
+   *  row doing the writing restores that for free, and it was never right anyway: one row's
+   *  in-flight spare has nothing to say about another row's Reap. */
+  const pendingFor = (key: string) => blocking || busyKey === key;
+  /** Anything at all is writing. The bulk bar reads this rather than `pendingFor`, because a
+   *  bulk action covers the whole selection and must not fire over a single row's write in
+   *  flight; so does the memo that keeps the toolbar up while something is settling. What
+   *  changed is only that the ROWS stopped reading it. */
+  const pending = blocking || busyKey !== null;
 
   // Stable, so a memoized card is not re-rendered by a handler that is merely a new function.
   // React Query's `mutate` is itself stable across renders, so these never change identity.
@@ -2136,6 +2164,7 @@ export function ReviewQueue({
             <span className="filter-anchor">
               <button
                 type="button"
+                ref={addFilterRef}
                 className={`add-filter ${openMenu === "add" ? "open" : ""}`}
                 aria-expanded={openMenu === "add"}
                 aria-controls={openMenu === "add" ? `${menuIdBase}-add` : undefined}
@@ -2233,18 +2262,20 @@ export function ReviewQueue({
           dimension (click to change its value, × to remove). A stacked combination is visible
           at a glance. Sort is not a chip: it hides nothing. */}
         {filtering && (
-          <div className="active-filters">
+          <div className="active-filters" ref={chips.ref as RefObject<HTMLDivElement>}>
             {search && (
               <FilterChip
                 label={<>&ldquo;{search}&rdquo;</>}
                 clearLabel={`Stop searching for ${search}`}
                 onClear={() => {
+                  // Always index 0: the search chip is rendered first in the row.
+                  chips.removing(0);
                   setSearchInput("");
                   setSearch("");
                 }}
               />
             )}
-            {activeDimensions.map((d) => {
+            {activeDimensions.map((d, chipIndex) => {
               const current = d.value(filters);
               const label = d.options.find((o) => o.value === current)?.label ?? current;
               return (
@@ -2268,10 +2299,13 @@ export function ReviewQueue({
                       <CaretIcon />
                     </button>
                     <button
+                      {...REMOVES_ITS_ROW}
                       type="button"
                       className="fchip-x"
                       aria-label={`Remove the ${d.label} filter`}
                       onClick={() => {
+                        // Offset by the search chip, which shares this row and is drawn first.
+                        chips.removing(chipIndex + (search ? 1 : 0));
                         setFilters((f) => d.set(f, d.defaultValue));
                         setOpenMenu((m) => (m === d.id ? null : m));
                       }}
@@ -2369,7 +2403,7 @@ export function ReviewQueue({
                     onOpenGroup={onSelectGroup}
                     onSet={onSet}
                     onClear={onClear}
-                    pending={pending}
+                    pending={pendingFor(key)}
                   />
                 ) : (
                   <MovieCard
@@ -2381,7 +2415,7 @@ export function ReviewQueue({
                     onOpen={onSelect}
                     onSet={onSet}
                     onClear={onClear}
-                    pending={pending}
+                    pending={pendingFor(group.items[0]!.media_key)}
                     // The ITEM's own verdict, through the one shared test -- never the tab's.
                     // Lane membership is the effective verdict, so a movie sits on Condemned
                     // with a stored abstain and an honored hand reap: Reap must stay, and a

@@ -21,6 +21,7 @@ import {
 } from "react";
 import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { announce } from "../announce";
+import { useSavebarFocus } from "../focus";
 import {
   api,
   type ExpandSeasonsMode,
@@ -159,6 +160,11 @@ export function GeneralPanel({
 } = {}) {
   const queryClient = useQueryClient();
   const general = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
+  // Save and Discard both unmount the bar holding the pressed button (#173), the twin of the
+  // policy editor's (rule 72). Declared ABOVE every early return, which is rule 146's shape:
+  // this panel returns a loading line and a failure notice before the form exists, and a hook
+  // below either is a different hook order on those renders.
+  const bar = useSavebarFocus();
 
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -402,6 +408,7 @@ export function GeneralPanel({
       : allTimeZones();
 
   const discardDrafts = () => {
+    bar.leaving();
     setName(data.application_name);
     setUrl(data.application_url ?? "");
     setTz(data.timezone);
@@ -417,7 +424,9 @@ export function GeneralPanel({
 
   return (
     <div className="panel">
-      <h2>General</h2>
+      <h2 ref={bar.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
+        General
+      </h2>
       <p className="muted">How this Reaper presents itself, and how other tools may talk to it.</p>
 
       {/* Same obligation as the twin in `PlexPanel` (rule 72): the `!data` branch above keeps the
@@ -866,7 +875,10 @@ export function GeneralPanel({
           <button
             className="primary"
             disabled={save.isPending || accentBlocks}
-            onClick={() => save.mutate(Object.assign({}, ...pending.map((p) => p.patch)))}
+            onClick={() => {
+              bar.leaving();
+              save.mutate(Object.assign({}, ...pending.map((p) => p.patch)));
+            }}
           >
             {save.isPending ? "Saving…" : "Save changes"}
           </button>

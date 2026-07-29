@@ -9,7 +9,7 @@
 //   - nothing else can be pressed while a bulk write is in flight.
 // The compact dormancy span is pinned here too: it rewrites a string the server writes.
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
@@ -1764,5 +1764,54 @@ describe("the filter popovers' keyboard contract", () => {
     expect(within(picker).queryAllByRole("option")).toHaveLength(0);
     // Which value is in force is still stated -- as `aria-current`, which promises no arrow keys.
     expect(screen.getByRole("button", { name: "Movies", current: true })).toBeInTheDocument();
+  });
+});
+
+describe("one row's write does not disable another row's controls", () => {
+  // `pending` was the OR of every in-flight override mutation, so a spare on ANY row disabled
+  // the Spare and Reap on ALL of them. Disabling the focused element drops focus to `<body>` in
+  // every major browser, and the `aria-pressed` flip on Spare is the app's only announcement
+  // that a spare succeeded -- so by the time the state settled there was no focused element to
+  // announce it, and the press that KEEPS a file confirmed itself to nobody (#173).
+  it("keeps the pressed row's own button focused, so its aria-pressed flip is announced", async () => {
+    let settle: (v: unknown) => void = () => {};
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
+    apiMock.override.mockImplementation(() => new Promise((r) => (settle = r)));
+    renderQueue();
+    const user = userEvent.setup();
+
+    const spares = await screen.findAllByRole("button", { name: "Spare" });
+    const mine = spares[0]!;
+    mine.focus();
+    await user.click(mine);
+
+    // Disabling the pressed button is what drops focus to `<body>`, and the row's own write is
+    // exactly when that happens -- so scoping `pending` per row does not cover this case and
+    // `OverrideControls` re-issues the focus when its own wait ends.
+    await act(async () => {
+      settle({});
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mine).toHaveAttribute("aria-pressed", "true"));
+    // Standing on the control whose state just changed, which is what makes the flip audible.
+    expect(mine).toHaveFocus();
+  });
+
+  it("leaves the OTHER row's controls pressable while one row is writing", async () => {
+    let settle: (v: unknown) => void = () => {};
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
+    apiMock.override.mockImplementation(() => new Promise((r) => (settle = r)));
+    renderQueue();
+    const user = userEvent.setup();
+
+    const spares = await screen.findAllByRole("button", { name: "Spare" });
+    await user.click(spares[0]!);
+
+    // One row's in-flight spare has nothing to say about another row's decision.
+    expect(spares[1]!).toBeEnabled();
+    await act(async () => {
+      settle({});
+      await Promise.resolve();
+    });
   });
 });

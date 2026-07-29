@@ -25,7 +25,7 @@
 //   3. the deletion switch (its own password-gated call).
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   api,
   ApiError,
@@ -39,6 +39,7 @@ import {
   type SignalSetting,
 } from "../api";
 import { announce } from "../announce";
+import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
 import { useDocs } from "../docs/DocsContext";
 import { bytes, count } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
@@ -96,18 +97,32 @@ function KeepTagsEditor({
     if (t && !tags.includes(t)) onTags([...tags, t]);
     setInput("");
   };
+  // Removing a chip destroys the button holding focus, so without this the operator lands on
+  // `<body>` and the next Tab restarts above the whole ~1,900-line policy form -- three times
+  // over for three tags (#173). Focus goes to the next chip's ×, or to the add box once the
+  // last one is gone.
+  const addRef = useRef<HTMLInputElement>(null);
+  const chips = useRemovalFocus(addRef);
   return (
     <div className="keep-tags">
-      <div className="tag-chips">
-        {tags.map((t) => (
+      <div className="tag-chips" ref={chips.ref as RefObject<HTMLDivElement>}>
+        {tags.map((t, i) => (
           <span key={t} className="tag-chip">
             {t}
-            <button onClick={() => onTags(tags.filter((x) => x !== t))} aria-label={`Remove ${t}`}>
+            <button
+              {...REMOVES_ITS_ROW}
+              onClick={() => {
+                chips.removing(i);
+                onTags(tags.filter((x) => x !== t));
+              }}
+              aria-label={`Remove ${t}`}
+            >
               ×
             </button>
           </span>
         ))}
         <input
+          ref={addRef}
           // A placeholder is a name of last resort, so this box was announcing itself as the
           // example text inside it and lost even that the moment anything was typed. Same
           // defect #136 fixed on the Plex panel's address pair.
@@ -815,6 +830,10 @@ export function PolicyEditor({
   focus?: { section: PolicySectionId; nonce: number } | null;
 }) {
   const queryClient = useQueryClient();
+  // Save and Discard both unmount the bar holding the pressed button (#173). Declared here,
+  // above the `if (!draft)` return further down, because a hook below an early return is a
+  // different hook order on the renders that take it (rule 146).
+  const bar = useSavebarFocus();
   // Movies and TV are tuned separately -- keep-last-N seasons and season rank only make
   // sense for TV -- so this toggle picks which policy you are editing.
   const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
@@ -1293,7 +1312,9 @@ export function PolicyEditor({
               <span className={`kind-badge kind-${mediaType === "tv" ? "sonarr" : "radarr"}`}>
                 {mediaType === "tv" ? "Sonarr" : "Radarr"}
               </span>
-              <h2>{mediaType === "tv" ? "TV policy" : "Movies policy"}</h2>
+              <h2 ref={bar.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
+                {mediaType === "tv" ? "TV policy" : "Movies policy"}
+              </h2>
             </div>
             <p className="blurb pc-sub">
               {mediaType === "tv"
@@ -2046,6 +2067,7 @@ export function PolicyEditor({
             <button
               className="ghost"
               onClick={() => {
+                bar.leaving();
                 if (dirty) setDraft(saved?.body ?? null);
                 if (paceDirty) setPace(savedPace ?? null);
                 // Discard is the larger silence of the two: up to fifty controls revert at
@@ -2062,6 +2084,7 @@ export function PolicyEditor({
               // pace and limits hostage (PR-7); the line above says which half is waiting.
               disabled={(!willSavePolicy && !willSavePace) || saving}
               onClick={() => {
+                bar.leaving();
                 // Two independent saves; each failure renders its own notice below. The
                 // blocked half is skipped, never sent for the server to refuse.
                 if (willSavePolicy) save.mutate(draft);

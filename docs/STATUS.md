@@ -113,6 +113,14 @@ Last verified against the code: 2026-07-26.
    **A connection test and a hand-run job say their result out loud (#192 closed)** — the three
    test mutations and `useJobFlash`, each through one shared sentence the badge and the chip also
    render, so what is spoken and what is read cannot drift.
+   **A control that removes its own row hands focus on (#173, partly landed)**: `useRemovalFocus`
+   and `useSavebarFocus` (`focus.ts`) cover the keep-tag chips, the queue's filter chips, the
+   three rule lists and their Add composers, and both savebars. `OverrideControls` was the sharp
+   one — `pending` was the OR of every in-flight override, so one row's spare disabled every
+   row's buttons, and disabling the FOCUSED button is what made the `aria-pressed` flip (the
+   app's only confirmation that a spare worked) reach nobody. `pending` is now per row, and the
+   pressed button takes focus back when its own wait ends. **Still open in #173**: the backup
+   Restore, the Plex sign-in poll, the simulator and the Plex panel.
    **The guard is the durable half.** Measured against the real pre-#132 tree,
    `eslint-plugin-jsx-a11y` catches none of the filed bugs and costs 112 lockfile entries, an
    `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not
