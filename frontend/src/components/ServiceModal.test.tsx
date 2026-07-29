@@ -9,6 +9,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Instance, PlexLibrary, RootFolder, SeerrService } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { Announcer } from "../announce";
 import { ServiceModal } from "./ServiceModal";
@@ -102,6 +103,18 @@ function selectForFolder(path: string): HTMLSelectElement {
 }
 
 describe("ServiceModal HD/4K library map", () => {
+  // Each root folder is paired with a Plex library by its own select, and pairing one wrong
+  // points Reaper's watch history at the wrong library. Every select has to say which folder it
+  // belongs to, or the operator picks in the dark.
+  it("has no accessibility violations", async () => {
+    renderModal(sonarr(), [
+      { path: "/tv", suggested_library: "TV" },
+      { path: "/tv-4k", suggested_library: "TV 4K" },
+    ]);
+    await waitFor(() => expect(selectForFolder("/tv-4k").value).toBe("TV 4K"));
+    await expectNoA11yViolations();
+  });
+
   it("prefills a folder with its suggested library, tagged 'suggested'", async () => {
     renderModal(sonarr(), [
       { path: "/tv", suggested_library: "TV" },

@@ -8,6 +8,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Run, Snapshot } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_PROFILE, IDLE_SCAN } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { ReapPlan } from "./ReapPlan";
@@ -115,6 +116,14 @@ describe("ReapPlan staleness", () => {
       condemned_by: [],
     });
     apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
+  });
+
+  // The plan summary carries Execute and, beside it, the warning that the plan came from an
+  // older scan. An operator who does not hear that warning runs a list their library no longer
+  // agrees with.
+  it("has no accessibility violations", async () => {
+    const { container } = await buildPlan();
+    await expectNoA11yViolations(container);
   });
 
   it("says nothing when the plan came from the newest scan", async () => {

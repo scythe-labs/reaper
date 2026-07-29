@@ -8,6 +8,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Group, Links, Verdict } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { ShowPanel } from "./ShowPanel";
@@ -110,6 +111,15 @@ beforeEach(() => {
 });
 
 describe("the show panel's whole-show buttons", () => {
+  // One press here decides every season of a show at once, so this panel removes the most files
+  // per click in the app. An operator who cannot hear which of the two buttons they are on reaps
+  // a whole show meaning to keep it.
+  it("has no accessibility violations", async () => {
+    const { container } = renderPanel(group([season(1, "condemn"), season(2, "protect")]));
+    await screen.findByRole("button", { name: "Spare" });
+    await expectNoA11yViolations(container);
+  });
+
   it("offers both Spare and Reap for a part-condemned show", () => {
     renderPanel(group([season(1, "condemn"), season(2, "protect")]));
     expect(screen.getByRole("button", { name: "Spare" })).toBeInTheDocument();

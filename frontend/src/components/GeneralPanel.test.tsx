@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
 import type { GeneralSettings } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { GeneralPanel } from "./Settings";
 
@@ -104,6 +105,16 @@ const saveChanges = () => screen.getByRole("button", { name: "Save changes" });
 const bar = () => document.querySelector(".savebar");
 
 describe("the save bar", () => {
+  // Every field on this panel is saved by one bar, so a box the operator cannot identify is a box
+  // they type into and then send with the rest. The spare length alone decides how long a file
+  // survives a scan.
+  it("has no accessibility violations", async () => {
+    renderPanel();
+    const name = await screen.findByLabelText("Application name");
+    await waitFor(() => expect(name).toHaveValue(STORED.application_name));
+    await expectNoA11yViolations();
+  });
+
   it("never reports a draft for the frame before the boxes are seeded", async () => {
     // #139. The bar flashing was the visible half; this is the half that mattered. `hasDrafts`
     // is reported up to `Settings` through `onDirtyChange`, so for that one commit the panel

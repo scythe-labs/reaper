@@ -6,10 +6,11 @@
 // click left the removal lane over budget with Save disabled. Each test here fails if
 // either fix is reverted.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import type { WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
 import { PolicyEditor, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
@@ -175,6 +176,19 @@ function renderEditor(
 }
 
 describe("a policy that couldn't be read", () => {
+  // The rules that condemn files are written here, on the longest form in the app: thresholds,
+  // weights, and protections, many of them a number beside a switch. A control that reads out as
+  // its neighbor is how an operator sets a threshold they never meant to set.
+  it("has no accessibility violations", async () => {
+    const { container } = renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    // The page is stitched from seven reads, and the rule editors and the deletion switch settle
+    // without changing anything a query can wait on. axe reads the DOM directly, so it has to be
+    // the settled one (rule 136).
+    await act(async () => {});
+    await expectNoA11yViolations(container);
+  });
+
   it("says so on the load it happened, with nothing else dirty", async () => {
     // fell_back and needs_save are mutually exclusive on the server: a body that could
     // not be read at all never carries needs_save. The notice used to live inside the

@@ -5,6 +5,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { UnmatchedRequest } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { NotInScanPanel } from "./NotInScanPanel";
 import { UnmatchedList } from "./UnmatchedList";
 
@@ -24,6 +25,24 @@ function u(over: Partial<UnmatchedRequest> = {}): UnmatchedRequest {
 }
 
 describe("NotInScanPanel", () => {
+  // This panel is the only place a request the scan skipped is named. Nothing here is clickable,
+  // so if a reader loses the headings that group the reasons, the operator hears a flat list of
+  // titles and no reason any of them were left out.
+  it("has no accessibility violations", async () => {
+    const { container } = render(
+      <NotInScanPanel
+        items={[
+          u({ title: "New Arrival", reason: "after_scan" }),
+          u({ title: "Kept Show", reason: "set_aside", media_type: "tv" }),
+          u({ title: null, reason: "no_id" }),
+        ]}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByText(/added since the last scan/i);
+    await expectNoA11yViolations(container);
+  });
+
   it("groups the requests under their reason, each with its own heading", () => {
     render(
       <NotInScanPanel

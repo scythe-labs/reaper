@@ -8,6 +8,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Chip, Group, ShowStatus, Verdict } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { ReviewQueue } from "./ReviewQueue";
@@ -206,6 +207,37 @@ describe("the show card", () => {
 });
 
 describe("the all-seasons list", () => {
+  // Every row here carries its own Spare and Reap for one season of one show. A row whose buttons
+  // a reader cannot tie back to their season number is how an operator reaps season 2 while
+  // meaning to reap season 3.
+  it("has no accessibility violations", async () => {
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:5:42",
+      title: "Example Show",
+      year: 2012,
+      poster_url: null,
+      summary: null,
+      size_bytes: 3 * 1024 ** 3,
+      unknown_size_seasons: 0,
+      reason: null,
+      library: null,
+      chip: limboSeason.chip,
+      show_override: null,
+      show_spare_expires_at: null,
+      links: {} as Group["links"],
+      show_status: null,
+      seasons: [
+        season(1, 1, "protect", 34, { tone: "kept", text: "Kept · someone is partway through" }),
+        season(2, 2, "condemn", 88, null),
+        limboSeason,
+      ],
+    } as Group);
+    const { container } = renderQueue();
+    await expandSeasons();
+    await screen.findByText("Kept · someone is partway through");
+    await expectNoA11yViolations(container);
+  });
+
   it("says it failed rather than sitting silent under an open chevron", async () => {
     apiMock.group.mockRejectedValue(new Error("boom"));
     renderQueue();

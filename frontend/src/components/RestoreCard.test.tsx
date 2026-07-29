@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { Settings } from "./Settings";
 
@@ -74,6 +75,15 @@ beforeEach(() => {
 });
 
 describe("the admin password on the restore card", () => {
+  // A restore replaces the whole database, and this card takes the admin password that authorizes
+  // it. An operator who cannot find the password box has an archive already uploaded and no way
+  // to finish or undo it.
+  it("has no accessibility violations", async () => {
+    renderBackupPanel();
+    await stage("a.reaper");
+    await expectNoA11yViolations();
+  });
+
   it("is gone after a confirm that failed", async () => {
     // S-5. A wrong password is the likeliest reason to land here, and leaving it in the box
     // to be retried is how it stays in state; the field clears the way a sign-in form does.

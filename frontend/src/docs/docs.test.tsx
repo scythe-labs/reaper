@@ -7,6 +7,7 @@ import { render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { GATE_META } from "../components/policyMeta";
+import { expectNoA11yViolations } from "../test/a11y";
 import { docSections } from "./blocks";
 import { understandingPolicy } from "./content/understandingPolicy";
 import { DocBody } from "./DocBody";
@@ -101,6 +102,23 @@ describe("DocBody", () => {
 });
 
 describe("DocsModal", () => {
+  // These pages are where an operator goes to find out what Reaper will do before they let it
+  // delete anything. It is a long read with its own index and jump list, so a dialog with no
+  // name, or headings out of order, leaves them unable to move around it.
+  it("has no accessibility violations", async () => {
+    const { container } = render(
+      <DocsModal
+        docId="understanding-policy"
+        anchor={undefined}
+        nonce={1}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+    await screen.findByRole("heading", { level: 1, name: "Understanding policy" });
+    await expectNoA11yViolations(container);
+  });
+
   it("shows the asked-for doc, the index, and its section list", () => {
     render(
       <DocsModal

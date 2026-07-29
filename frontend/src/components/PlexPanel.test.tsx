@@ -8,6 +8,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlexResourceConnection, PlexStatus } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { PlexPanel } from "./PlexPanel";
 
@@ -122,6 +123,15 @@ afterEach(() => {
 });
 
 describe("the connection picker", () => {
+  // Plex is where Reaper reads what has been watched, so a wrong address here starves every
+  // signal that argues for keeping a file. The picker and the boxes beside it have to be
+  // tellable apart by ear, which is what an operator driving this panel is doing.
+  it("has no accessibility violations", async () => {
+    const { container } = renderPanel();
+    await usableConnectionSelect();
+    await expectNoA11yViolations(container);
+  });
+
   it("reopens the editor for an address that was typed by hand", async () => {
     const user = userEvent.setup();
     renderPanel();

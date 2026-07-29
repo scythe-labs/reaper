@@ -13,6 +13,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { NARROW_SCREEN_QUERY } from "../useMediaQuery";
@@ -200,6 +201,15 @@ beforeEach(() => {
 });
 
 describe("keeping the list in step with the latest scan", () => {
+  // Every keep-or-remove decision is made on these cards, one at a time. What a reader makes of a
+  // card is the whole of what an operator knows before they accept the verdict on it.
+  it("has no accessibility violations", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
+    const { container } = renderQueue();
+    await screen.findByText("Example Movie 1");
+    await expectNoA11yViolations(container);
+  });
+
   it("confirms a quiet refresh with a toast only once the swap has landed", async () => {
     // This view loads snapshot 1; the newest completed scan is snapshot 2, so the list is a scan
     // behind. Idle at the top (jsdom scrollY 0, nothing open or selected): it refreshes quietly,

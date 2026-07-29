@@ -12,6 +12,7 @@
 // It fails rather than warns, for the reason the whole of setup.ts fails rather than warns
 // (rule 135): vitest drops console output on some Node versions, so a warning is invisible
 // exactly where someone could act on it.
+import { act } from "@testing-library/react";
 import axe from "axe-core";
 
 // jsdom builds a DOM but never lays it out or paints it, so every rule that needs geometry
@@ -27,9 +28,19 @@ const NEEDS_A_REAL_BROWSER = [
   "target-size",
 ];
 
+// Rules a panel cannot satisfy on its own, because what satisfies them is the shell ABOVE it.
+// `region` wants every node inside a landmark, and the landmark is `App`'s `<main>`/`<nav>`/
+// `<header>` -- so mounting `SecurityPanel` alone reports a defect the running app does not
+// have. Suppressing it everywhere would then cover the one tree where it IS answerable, so it
+// is off by default and back on for `pageLevel` callers; `AppStaleRead.test.tsx` renders the
+// whole shell and is where it actually runs.
+const ANSWERED_BY_THE_APP_SHELL = ["region"];
+
 export type A11yOptions = {
   /** Rules to skip for this call, each with the reason it cannot apply. */
   skip?: Record<string, string>;
+  /** True when the tree under test is the whole app shell, not a panel inside it. */
+  pageLevel?: boolean;
 };
 
 /** Audits `container` and returns axe's violations, worst first. */
@@ -37,12 +48,32 @@ export async function findA11yViolations(
   container: HTMLElement = document.body,
   options: A11yOptions = {},
 ): Promise<axe.Result[]> {
-  const skipped = [...NEEDS_A_REAL_BROWSER, ...Object.keys(options.skip ?? {})];
-  const results = await axe.run(container, {
-    rules: Object.fromEntries(skipped.map((id) => [id, { enabled: false }])),
-    // The tags axe itself maps to WCAG 2.1 A and AA, plus its best-practice set. Anything
-    // outside them is advisory and would make this gate argue about taste.
-    runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] },
+  const skipped = [
+    ...NEEDS_A_REAL_BROWSER,
+    ...(options.pageLevel ? [] : ANSWERED_BY_THE_APP_SHELL),
+    ...Object.keys(options.skip ?? {}),
+  ];
+  // The audit runs INSIDE `act`, and that is not tidiness: it is the longest await most of
+  // these tests contain, so every read still in flight when it starts lands during it. Outside
+  // `act` those arrivals are state updates outside one, which `setup.ts` fails the test for
+  // (rule 136) -- naming components the test never touched, so the failure reads as a bug in
+  // the tree rather than in the wait. Doing it here means no caller has to know that.
+  let results!: axe.AxeResults;
+  await act(async () => {
+    results = await axe.run(container, {
+      rules: Object.fromEntries(skipped.map((id) => [id, { enabled: false }])),
+      // The tags axe itself maps to WCAG 2.1 A and AA, plus its best-practice set. Anything
+      // outside them is advisory and would make this gate argue about taste.
+      runOnly: {
+        type: "tag",
+        values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"],
+      },
+      // Only the violations are ever read, and collecting the other three result sets means
+      // building a node report for every passing element on the page. On the settings panel
+      // that was the difference between 5.1s -- over vitest's 5s default, so the test failed
+      // as a timeout rather than on anything it found -- and well under a second.
+      resultTypes: ["violations"],
+    });
   });
   const order = { critical: 0, serious: 1, moderate: 2, minor: 3 } as const;
   return [...results.violations].sort(

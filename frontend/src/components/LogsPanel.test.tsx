@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { LogsPanel } from "./LogsPanel";
 
@@ -43,6 +44,15 @@ describe("LogsPanel", () => {
     apiMock.logs.mockResolvedValue(page(1));
     apiMock.downloadLogs.mockReset();
     apiMock.downloadLogs.mockResolvedValue(undefined);
+  });
+
+  // This is where an operator goes when a scan or a reap went wrong, and the level filter and
+  // the follow switch are the only controls on it. A filter a screen reader cannot name leaves
+  // them scrolling raw lines for the one that explains what happened.
+  it("has no accessibility violations", async () => {
+    renderPanel();
+    await screen.findByText("a line");
+    await expectNoA11yViolations();
   });
 
   it("offers no level that filters exactly what the one above it does", () => {

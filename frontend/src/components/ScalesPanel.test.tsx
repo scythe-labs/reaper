@@ -6,6 +6,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { PersonDetail, PersonTitle } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { ScalesPanel, ScalesPanelFallback } from "./ScalesPanel";
 
 const GB = 1024 ** 3;
@@ -61,6 +62,22 @@ function detail(over: Partial<PersonDetail> = {}): PersonDetail {
 }
 
 describe("ScalesPanel", () => {
+  // This drawer is read while deciding whose requests to remove, and every figure on it belongs
+  // to a real person. A quota line or title row a reader drops takes part of their story away
+  // before the operator judges it.
+  it("has no accessibility violations", async () => {
+    const { container } = render(
+      <ScalesPanel
+        detail={detail()}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", { name: "marlow" });
+    await expectNoA11yViolations(container);
+  });
+
   it("names the person and their request count", () => {
     render(
       <ScalesPanel

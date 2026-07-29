@@ -11,6 +11,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type CandidateDetail, type GateOutcome, type SignalContribution } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { WhyPanel, allocateShares } from "./WhyPanel";
@@ -205,6 +206,15 @@ describe("allocateShares", () => {
 });
 
 describe("the scoring receipt", () => {
+  // This is the explanation an operator reads before overruling a verdict, and it is mostly
+  // numbers sitting beside the reason that earned them. A share read out without its row proves
+  // nothing, which is the one thing this panel exists to do.
+  it("has no accessibility violations", async () => {
+    const { container } = show(detail(WORKED_ROWS));
+    await screen.findByRole("heading", { name: "Pushed to remove" });
+    await expectNoA11yViolations(container);
+  });
+
   it("shows each row's share, adding up to the group total", () => {
     show(detail(WORKED_ROWS));
 

@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { SecurityPanel } from "./Settings";
 
@@ -40,6 +41,16 @@ describe("the admin password form", () => {
     apiMock.safety.mockReset();
     apiMock.setAdminPassword.mockReset();
     apiMock.setAdminPassword.mockResolvedValue({ ok: true });
+  });
+
+  // This password arms deletion and is the way back in after a lockout, and the form says why
+  // Save is off through the boxes' own descriptions. A box that loses its name or its
+  // description leaves the operator with a gray button and no reason for it.
+  it("has no accessibility violations", async () => {
+    apiMock.safety.mockResolvedValue({ has_password: false });
+    renderPanel();
+    await screen.findByLabelText(/^new password$/i);
+    await expectNoA11yViolations();
   });
 
   it("says the password is too short, with a live count, and keeps Save off", async () => {

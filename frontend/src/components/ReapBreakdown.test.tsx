@@ -7,6 +7,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReapBreakdown as Breakdown, ScanStatus } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { ReapBreakdown } from "./ReapBreakdown";
 
@@ -90,6 +91,15 @@ beforeEach(() => {
 });
 
 describe("the ledger", () => {
+  // This is the count an operator checks before reaping: what the policy condemned, what they
+  // changed by hand, and how many files are actually going. A figure read out without the label
+  // beside it is a number with no meaning, on the page that decides how much gets deleted.
+  it("has no accessibility violations", async () => {
+    const { container } = renderBreakdown();
+    await screen.findByText("Condemned by your policy");
+    await expectNoA11yViolations(container);
+  });
+
   it("shows the policy verdict, the hand changes, and the net", async () => {
     renderBreakdown();
     expect(await screen.findByText("Condemned by your policy")).toBeInTheDocument();
