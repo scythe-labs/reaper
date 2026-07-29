@@ -1336,6 +1336,14 @@ def inspect(
     # The dormancy guard still applies for the same reason it does above -- under the floor
     # every item is kept on age alone, so this rule is deciding nothing and its remedy would
     # move no verdict.
+    #
+    # Removing the rule is the ONLY remedy, and the "wait for it to build up" this used to lead
+    # with was false for the same reason it would be on the season branch at the foot of this
+    # function (rule 72): on an ``ITEM_LIFETIME`` span the reach and the item's age both advance
+    # one day per day, so the shortfall holds exactly while ``added_at < horizon`` and no amount
+    # of waiting moves it. It survived because it reads as harmless boilerplate beside a remedy
+    # that does work, which is precisely how an operator ends up taking the half that never
+    # resolves.
     if (
         ReachSpan.ITEM_LIFETIME in protect_spans
         and history_reach_days is not None
@@ -1349,8 +1357,8 @@ def inspect(
                     "Titles added before your watch history starts won't be flagged for "
                     "removal. Your keep rule counts everyone who has ever watched a title, and "
                     "Reaper can't count plays from before your history begins, so it holds "
-                    "those titles instead of guessing. Wait for it to build up, or remove that "
-                    "rule."
+                    "those titles instead of guessing. Remove that rule if you want them "
+                    "judged."
                 ),
             )
         )
@@ -1546,11 +1554,22 @@ def inspect(
         )
         if not cause:
             said = said[:1].upper() + said[1:]
+        # "Wait for it to build up" is offered only where a WINDOW keep is one of the
+        # contributors, which is the rule-72 sweep of the two branches that lead on the same
+        # "added before your watch history starts" sentence. A window shortfall clears as the
+        # mirror deepens, and clearing it drops those keeps out of ``window_keeps`` entirely,
+        # which is what can bring the total back under the headroom. An ``ITEM_LIFETIME`` keep
+        # never leaves this list: the reach and the item's age advance together, so waiting moves
+        # nothing and only the remedy below can. Where the contributors are lifetime keeps alone,
+        # the remedy leads and is capitalized for it.
+        move = f"Wait for it to build up, or {remedy}." if window_keeps else f"{remedy}."
+        if not window_keeps:
+            move = move[:1].upper() + move[1:]
         warnings.append(
             PolicyWarning(
                 field="graded_keeps",
                 severity="warn",
-                message=f"{scope} {said} Wait for it to build up, or {remedy}.",
+                message=f"{scope} {said} {move}",
             )
         )
 
@@ -1687,6 +1706,17 @@ def inspect(
     # while the branch above already claims the strictly stronger "no TV season will be flagged".
     # Two "wait for it to build up" sentences in adjacent paragraphs is also exactly the stacking
     # #134 removed from this family.
+    #
+    # It carries NO remedy, and the "wait for it to build up" every other member of this family
+    # ends on would be a false one here. Those four turn on a FIXED span -- a popularity window,
+    # a hold in days, the dormancy floor -- so a deepening mirror does eventually cover it. This
+    # one turns on each item's own AGE, and both sides advance one day per day:
+    # ``history_reach_days`` is ``(now - horizon).days`` and the item's age is
+    # ``(now - added_at).days``, so the shortfall holds exactly while ``added_at < horizon``, a
+    # comparison of two fixed instants that waiting cannot move. Telling the operator to wait
+    # would be telling them to do nothing forever (rules 7/24, 21). The sentence instead ends on
+    # where those shows go, which is true and is the only move that exists.
+    #
     if (
         body.media_type == "tv"
         and body.flag_keep_conflicts
@@ -1702,7 +1732,7 @@ def inspect(
                     "Seasons of shows added before your watch history starts won't be removed "
                     "automatically. Reaper compares how many people watched each season, and "
                     "it can't count plays from before your history begins, so it marks those "
-                    'shows "Needs a look" instead of guessing. Wait for it to build up.'
+                    'shows "Needs a look" instead of guessing.'
                 ),
             )
         )

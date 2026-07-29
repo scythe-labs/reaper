@@ -1573,6 +1573,20 @@ class TestTheOtherReachShortfallLanes:
         assert flagged.message.startswith("Titles added before your watch history starts")
         assert "Nothing will be flagged" not in flagged.message
 
+    def test_it_does_not_tell_the_operator_to_wait_for_a_span_that_never_closes(self) -> None:
+        """The remedy has to be one the operator can actually reach the end of.
+
+        This lane's span is each item's AGE, and the reach grows at exactly the rate the age
+        does, so the shortfall holds while ``added_at < horizon`` however long anyone waits. The
+        clause survived here because it sat beside a remedy that does work, which is how an
+        operator ends up taking the half that never resolves (rules 7/24, 21, 72). The season
+        branch at the foot of ``inspect`` is the sibling, and carries no remedy at all.
+        """
+        [flagged] = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
+
+        assert "Wait for it to build up" not in flagged.message
+        assert flagged.message.endswith("Remove that rule if you want them judged.")
+
     def test_the_op_decides_it_here_exactly_as_it_does_on_the_window(self) -> None:
         """``lte`` leaves an item already over the bar settled, so it stays condemnable.
 
@@ -1788,6 +1802,33 @@ class TestTheOtherReachShortfallLanes:
         assert flagged.message.startswith("Titles added before your watch history starts")
         assert "Nothing will be flagged" not in flagged.message
         assert '"recent" and "ever"' in flagged.message
+
+    def test_a_lifetime_keep_alone_is_not_told_to_wait(self) -> None:
+        """ "Wait for it to build up" is false on an ``ITEM_LIFETIME`` span, so it is not offered.
+
+        The reach is ``(now - horizon).days`` and an item's age is ``(now - added_at).days``, so
+        both advance one day per day and the shortfall holds exactly while ``added_at < horizon``.
+        Waiting cannot move a comparison of two fixed instants. The four members of this family
+        that DO say it turn on a fixed span -- a window, a hold, the dormancy floor -- which a
+        deepening mirror really does cover (rules 7/24, 21, 72).
+        """
+        body = _policy(graded_keeps=self._lean("watchers_all_time", 40).graded_keeps)
+        [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
+
+        assert "Wait for it to build up" not in flagged.message
+        # The remedy that does work still leads, and reads as a sentence.
+        assert flagged.message.endswith("Set it to 30 points or less.")
+
+    def test_a_window_keep_in_the_set_is_still_told_to_wait(self) -> None:
+        """The discriminator for the test above, and why this is a condition rather than a
+        deletion. A window shortfall clears as the mirror deepens, and clearing it drops those
+        keeps out of the contributor list entirely, which is what can bring the total back under
+        the headroom. So the clause is true exactly while a window keep is contributing.
+        """
+        body = _policy(graded_keeps=self._lean("recent_watchers", 40).graded_keeps)
+        [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
+
+        assert "Wait for it to build up, or set it to 30 points or less." in flagged.message
 
     def test_a_threshold_with_no_headroom_names_a_move_the_editor_accepts(self) -> None:
         """``condemn_at`` may be 100, which is the cautious direction, and ``max_discount`` is
@@ -2329,6 +2370,20 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
             self._conflict_warnings(self._tv(in_progress_hold_days=180, keep_in_progress=False))
             != []
         )
+
+    def test_it_offers_no_remedy_rather_than_one_that_never_resolves(self) -> None:
+        """Every other member of this family ends on "wait for it to build up". Here that would
+        be false: the span is each item's AGE, and ``history_reach_days`` is ``(now - horizon)``
+        while the age is ``(now - added_at)``, so both advance a day per day and the shortfall
+        holds exactly while ``added_at < horizon``. Waiting moves neither instant. The sentence
+        ends on where those shows go instead, which is true and is the only move there is: the
+        one control behind this lane is the switch itself, and turning it off is the delete-more
+        direction on two numbers Reaper knows are wrong (rules 7/24, 21).
+        """
+        [flagged] = self._conflict_warnings(self._tv())
+
+        assert "Wait for it to build up" not in flagged.message
+        assert flagged.message.endswith('marks those shows "Needs a look" instead of guessing.')
 
     def test_the_shipped_tv_policy_is_no_longer_silent_on_a_deep_mirror(self) -> None:
         """The reported state, driven on the shipped policy with nothing lowered.
