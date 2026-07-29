@@ -40,6 +40,7 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.ratings import Rating, RatingSource
 from reaper.services import history_sync
+from reaper.services.library_index import _RETIRED_DEGRADE_FLOOR, _RETIRED_DEGRADE_SHARE
 from reaper.services.season_scan import build_tv_index
 from reaper.services.snapshot import (
     _fold_merged_watch_stats,
@@ -296,6 +297,34 @@ class _FakeTautulli:
         self, section_id: int, *, start: int = 0, length: int = 1000, **_: object
     ) -> dict[str, object]:
         return {"data": self._rows if start == 0 else []}
+
+
+class _SectionedTautulli:
+    """The same client across SEVERAL libraries, keyed by section id.
+
+    ``_FakeTautulli`` reports one section, which is the shape that cannot exercise a
+    per-library bound: with a single bucket the share is the overall share, so a test built
+    on it passes whether the count is bucketed or not.
+    """
+
+    def __init__(self, sections: dict[int, list[dict[str, object]]], section_type: str = "movie"):
+        self._sections = sections
+        self._section_type = section_type
+
+    async def libraries(self) -> list[dict[str, object]]:
+        return [
+            {
+                "section_type": self._section_type,
+                "section_id": sid,
+                "section_name": f"Library {sid}",
+            }
+            for sid in self._sections
+        ]
+
+    async def library_media_info(
+        self, section_id: int, *, start: int = 0, length: int = 1000, **_: object
+    ) -> dict[str, object]:
+        return {"data": self._sections.get(section_id, []) if start == 0 else []}
 
 
 class _FakePlexSweep:
@@ -610,6 +639,88 @@ class TestRetiredSpineRows:
         assert bool(gap) is degrades
         if degrades:
             assert str(retired) in gap[0]
+
+    async def test_one_library_vanishing_whole_degrades_beside_a_healthy_one(self) -> None:
+        """The case the share exists for, and the one a single overall share cannot see.
+
+        A small library the sweep cannot reach (a restricted share, a section removed and
+        re-created under a new key) retires whole, while a large healthy one keeps the
+        overall ratio down: 150 of 2,150 is past the floor but under 10% of the total, so
+        one global share reports nothing and every item in that library silently resolves
+        unmatched. Bucketed per section, the vanished library is 100% of its own spine and
+        the scan says so.
+        """
+        healthy = [
+            {"rating_key": k, "title": f"Example {k}", "year": 2020, "added_at": "1500000000"}
+            for k in range(2000)
+        ]
+        vanished = [
+            {"rating_key": k, "title": f"Example {k}", "year": 2020, "added_at": "1500000000"}
+            for k in range(5000, 5150)
+        ]
+        # Only the healthy section's rows come back from the sweep.
+        swept = {
+            k: identity.PlexItem(
+                rating_key=k,
+                title=f"Example {k}",
+                year=2020,
+                added_at=from_epoch("1700000000"),
+                ids=identity.ExternalIds.of(tmdb=5000 + k),
+            )
+            for k in range(2000)
+        }
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _SectionedTautulli({1: healthy, 2: vanished}),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert len(index.by_rating_key) == 2000
+        gap = [r for r in reasons if "no longer in Plex" in r]
+        assert gap, "a library that vanished whole must be announced, not averaged away"
+        assert "150" in gap[0]
+        # The bound it slips past when the share is measured over every section at once.
+        assert _RETIRED_DEGRADE_SHARE * (len(healthy) + len(vanished)) > 150
+
+    async def test_a_stale_row_in_each_of_many_libraries_does_not_degrade(self) -> None:
+        """The other side, so the per-section share cannot pass by degrading on anything.
+
+        A handful of rows lagging in each of several libraries is an ordinary stale cache,
+        not a scope mismatch. Each section is well under its own share, so nothing fires
+        even though the total clears the floor.
+        """
+        sections: dict[int, list[dict[str, object]]] = {}
+        swept: dict[int, identity.PlexItem] = {}
+        for section in range(6):
+            base = section * 1000
+            rows = [
+                {
+                    "rating_key": base + k,
+                    "title": f"Example {base + k}",
+                    "year": 2020,
+                    "added_at": "1500000000",
+                }
+                for k in range(200)
+            ]
+            sections[section + 1] = rows
+            # Five stale rows per section: 5 of 200 is under the 10% share, 30 total is
+            # over the floor of 20.
+            for k in range(5, 200):
+                swept[base + k] = identity.PlexItem(
+                    rating_key=base + k,
+                    title=f"Example {base + k}",
+                    year=2020,
+                    added_at=from_epoch("1700000000"),
+                    ids=identity.ExternalIds.of(tmdb=90000 + base + k),
+                )
+        reasons: list[str] = []
+        await build_movie_index(
+            _SectionedTautulli(sections),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert _RETIRED_DEGRADE_FLOOR < 30, "the total must clear the floor, or this proves nothing"
+        assert [r for r in reasons if "no longer in Plex" in r] == []
 
 
 # ---------------------------------------------------------------------------

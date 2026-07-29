@@ -46,10 +46,13 @@ That drop is gated on the sweep having actually *spoken*: a failed sweep and an
 unconfigured Plex both return an empty map, and reading "not in the sweep" as "not in
 Plex" there would retire the entire library on the strength of a read that never
 happened (rule 2). Both leave the old behavior in place -- the snapshot is degraded
-and un-executable in the failure case anyway. The sweep and the spine are filtered on
-the same section keys, so when the sweep did speak the two cover the same libraries
-and the difference is real; a large gap means they disagree about *scope* rather than
-about a handful of retired items, and that degrades.
+and un-executable in the failure case anyway. Both reads are filtered on the same
+``allowed_sections`` set, but that is where the guarantee stops: the spine enumerates
+Tautulli's cached library list and the sweep enumerates Plex's live sections, so the two
+can still disagree about which libraries exist. A large gap means they disagree about
+*scope* rather than about a handful of retired items, and that degrades -- measured per
+library, since a small section vanishing whole is the case worth catching and an overall
+share hides it behind the big healthy ones.
 
 A plexapi sweep that fails **degrades** the snapshot (rule 2: never let the id
 signal vanish and silently fall the whole library back to title-only) and leaves
@@ -73,6 +76,7 @@ response Reaper did not write could otherwise throw straight through
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -92,11 +96,24 @@ log = structlog.get_logger(__name__)
 #: it cannot collide with a real Tautulli field.
 _SPINE_LIBRARY = "_reaper_library"
 
+#: The same stamp for the section's *id*, which is what the retirement share is bucketed on.
+#: Keyed on the id and not on ``_SPINE_LIBRARY``'s title (rule 63): two libraries may share a
+#: display name, and merging their buckets would hide a whole vanished section inside a
+#: healthy same-named one -- the very failure the per-section share exists to catch.
+_SPINE_SECTION = "_reaper_section_id"
+
 #: How much of the spine may be retired as "Plex no longer has this" before the scan stops
 #: believing the two reads covered the same libraries. A stale Tautulli cache retires a
 #: handful of items; a section the sweep never walked retires all of it, and every item in
 #: that library would then resolve unmatched with nothing announcing why. Both bounds must
 #: be passed, so a tiny library cannot degrade on a single retired row.
+#:
+#: **The share is measured PER SECTION, against that section's own spine rows.** Measured
+#: across every section of the type it cannot deliver the case it exists for: a 150-row
+#: library beside a 2,000-row one can vanish whole (150 > the floor, 150 < 10% of 2,150) and
+#: report nothing, which is exactly "a section the sweep never walked" going unannounced. The
+#: floor stays global, because one stale row in each of twenty libraries really is a lagging
+#: cache and not a scope mismatch.
 _RETIRED_DEGRADE_SHARE = 0.1
 _RETIRED_DEGRADE_FLOOR = 20
 
@@ -213,7 +230,10 @@ async def build_index(
                 # silently truncating the library.
                 usable = [row for row in rows if isinstance(row, Mapping)]
                 malformed += len(rows) - len(usable)
-                collected.extend({**row, _SPINE_LIBRARY: section_name} for row in usable)
+                collected.extend(
+                    {**row, _SPINE_LIBRARY: section_name, _SPINE_SECTION: section_id}
+                    for row in usable
+                )
                 if len(rows) < 1000:
                     break
                 start += 1000
@@ -237,6 +257,12 @@ async def build_index(
     items: list[identity.PlexItem] = []
     unusable = 0
     retired = 0
+    # Retired and considered rows per section, so the share below is measured against the
+    # library the rows came from. ``considered`` counts only rows that reached the enrichment
+    # look-up, so rows already dropped for a missing or unusable id cannot inflate the
+    # denominator and hold the degrade back.
+    retired_by_section: dict[object, int] = defaultdict(int)
+    considered_by_section: dict[object, int] = defaultdict(int)
     for row in spine_rows:
         # A row with no rating key -- or one that is not a number -- cannot become a
         # candidate's join (its rating_key read would fail), so it is dropped, identically
@@ -255,6 +281,7 @@ async def build_index(
         except (TypeError, ValueError):
             unusable += 1
             continue
+        considered_by_section[row.get(_SPINE_SECTION)] += 1
         enriched = plex_items.get(rating_key)
         if enriched is None and swept:
             # Tautulli still lists it; Plex, asked directly over the same sections, does
@@ -262,6 +289,7 @@ async def build_index(
             # can bind a live file to (see the module docstring). Dropping it resolves
             # that file unmatched, which keeps it.
             retired += 1
+            retired_by_section[row.get(_SPINE_SECTION)] += 1
             continue
         items.append(
             identity.PlexItem(
@@ -296,11 +324,16 @@ async def build_index(
             "id, so they could not be matched and nothing may be deleted from this scan"
         )
 
-    if retired > _RETIRED_DEGRADE_FLOOR and retired > _RETIRED_DEGRADE_SHARE * len(spine_rows):
-        # Past this much, "Tautulli is a little behind" stops explaining it: the likelier
-        # story is a library the sweep never walked, and every item in it just became
-        # unjudgeable. Keeping the file is still the outcome, but a scan that quietly
-        # decided it can see nothing is worse than one that says so.
+    # Past the floor AND past the share of ANY ONE library, "Tautulli is a little behind"
+    # stops explaining it: the likelier story is a library the sweep never walked, and every
+    # item in it just became unjudgeable. Keeping the file is still the outcome, but a scan
+    # that quietly decided it can see nothing is worse than one that says so. Any-section
+    # rather than overall, so a small library vanishing whole beside a large healthy one is
+    # announced instead of being averaged away.
+    if retired > _RETIRED_DEGRADE_FLOOR and any(
+        count > _RETIRED_DEGRADE_SHARE * considered_by_section[section]
+        for section, count in retired_by_section.items()
+    ):
         degrade(
             f"{retired} items in Tautulli's library list are no longer in Plex, so the two "
             "don't line up and nothing may be deleted from this scan. Refreshing the "
