@@ -6,6 +6,7 @@
 import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { Announcer } from "../announce";
 import { JobStatus, type JobFlash, useJobFlash } from "./JobStatus";
 
 const AT = "2026-07-24T03:30:00Z";
@@ -160,5 +161,65 @@ describe("useJobFlash", () => {
       vi.advanceTimersByTime(4300);
     });
     expect(container.querySelector(".spin")).not.toBeNull();
+  });
+});
+
+describe("what a screen reader hears when a job finishes", () => {
+  // The chip was a 4.2-second window in no live region, so pressing "Run now" on an upkeep job
+  // reported its outcome to an operator only if they happened to navigate onto the chip inside
+  // that window -- which, for a job they just started, is nobody (#192).
+  function Harness({ running, result }: { running: boolean; result: JobFlash | null }) {
+    const flash = useJobFlash(running, result);
+    return (
+      <>
+        <Announcer />
+        <JobStatus
+          running={running}
+          runningLabel="Running…"
+          lastRunAt={null}
+          lastOk={null}
+          flash={flash}
+        />
+      </>
+    );
+  }
+
+  const spoken = (c: HTMLElement) =>
+    [...c.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+
+  it("says a hand-run job finished", () => {
+    const { container, rerender } = render(
+      <Harness running={true} result={{ ok: true, text: "Ratings refreshed" }} />,
+    );
+    act(() =>
+      rerender(<Harness running={false} result={{ ok: true, text: "Ratings refreshed" }} />),
+    );
+
+    expect(spoken(container)).toBe("Finished: Ratings refreshed");
+  });
+
+  it("says a hand-run job FAILED, in the same words the chip shows", () => {
+    const { container, rerender } = render(
+      <Harness running={true} result={{ ok: false, text: "Couldn't reach Sonarr" }} />,
+    );
+    act(() =>
+      rerender(<Harness running={false} result={{ ok: false, text: "Couldn't reach Sonarr" }} />),
+    );
+
+    // One wording, two surfaces (rule 144): what is spoken and what the chip renders for a
+    // reader are the same string, so neither can be reworded out from under the other.
+    expect(spoken(container)).toBe("Failed: Couldn't reach Sonarr");
+    expect(container.querySelector(".flash-chip")?.textContent).toContain(
+      "Failed: ✕ Couldn't reach Sonarr",
+    );
+  });
+
+  it("says nothing for a page loaded onto a job that already finished", () => {
+    // News, not a recap -- the same edge the flash itself keys on.
+    const { container } = render(
+      <Harness running={false} result={{ ok: true, text: "Ratings refreshed" }} />,
+    );
+
+    expect(spoken(container)).toBe("");
   });
 });

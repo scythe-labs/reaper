@@ -62,6 +62,29 @@ export function kindLabel(kind: string): string {
   return KINDS.find((k) => k.value === kind)?.label ?? kind;
 }
 
+/** What a connection test SAYS, written once because two surfaces state it.
+ *
+ *  `TestBadge` renders it for whoever navigates onto the badge, and every test mutation
+ *  announces it for whoever does not (#192). Deriving both from here is rule 144's whole point:
+ *  one fact, and the copy that is spoken cannot drift away from the copy that is read.
+ *
+ *  `detail` is already a whole sentence from the server ("Connected to Sonarr.", or an explained
+ *  failure), so the lead is the only thing added -- for the reason it was added to the badge in
+ *  the first place, that "Couldn't reach it" read as a result rather than as a failure.
+ *
+ *  The one deliberate difference from the badge: the version is spoken as "version 4.0.1" where
+ *  the badge shows "(v4.0.1)". A reader voices a bare "v" as a letter. */
+export function testSentence(result: InstanceTest): string {
+  return `${testLead(result.ok)}: ${result.detail}${
+    result.version ? ` (version ${result.version})` : ""
+  }`;
+}
+
+/** The word in front of a test's own detail, in both surfaces' hands. */
+function testLead(ok: boolean): string {
+  return ok ? "Passed" : "Failed";
+}
+
 /** A small inline pill reporting the result of a connection test. */
 export function TestBadge({ result }: { result: InstanceTest | null }) {
   if (!result) return null;
@@ -69,16 +92,14 @@ export function TestBadge({ result }: { result: InstanceTest | null }) {
     <span className={`test-badge ${result.ok ? "ok" : "bad"}`}>
       {/* Whether Reaper reached your Sonarr used to be a glyph and a color and nothing else:
           "✓" and "✗" are read the same way by a reader at its default symbol level, so the
-          detail line that follows ("Reached", or the error) was the only difference, and
-          "Couldn't reach it" read as a result rather than a failure. A word carries it now,
-          which is the 1.4.1 half: color was doing the work alone.
+          detail line that follows ("Reached", or the error) was the only difference. A word
+          carries it now, which is the 1.4.1 half: color was doing the work alone.
 
-          It does NOT announce, and no comment here should imply otherwise. This badge has no
-          live-region ancestor at any of its five render sites, and the failing path does not
-          speak by another route either -- `instances.py` never raises, so an unreachable host
-          arrives as ok=False through `onSuccess` and never reaches the shared error notice. The
-          word is read when the operator arrives at it, and 4.1.3 stays open. */}
-      <span className="sr-only">{result.ok ? "Passed: " : "Failed: "}</span>
+          The badge still sits in no live region, and it does not need to: the three test
+          mutations announce `testSentence` at the moment the result settles, which is 4.1.3's
+          actual shape (#192). Announcing from HERE instead would fire on every re-render of a
+          result the operator has already heard. */}
+      <span className="sr-only">{testLead(result.ok)}: </span>
       <span aria-hidden="true">{result.ok ? "✓ " : "✗ "}</span>
       {result.detail}
       {result.version && ` (v${result.version})`}
@@ -347,7 +368,14 @@ export function ServiceModal({
         api_key: apiKey,
         verify_tls: ssl ? verifyCert : true,
       }),
-    onSuccess: setTest,
+    // Whether Reaper can reach the Sonarr it deletes THROUGH is worth hearing, which is what
+    // makes this more than cosmetic. `instances.py` never raises for a failed test, so an
+    // unreachable host arrives as a 200 with `ok=False` and never reaches the shared error
+    // notice -- the badge was the only report, and it announced nothing (#192).
+    onSuccess: (r) => {
+      setTest(r);
+      announce(testSentence(r));
+    },
     onError: (e: Error) => setError(e.message),
   });
 

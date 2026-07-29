@@ -110,6 +110,9 @@ Last verified against the code: 2026-07-26.
    unmounted, rather than by the sheet the operator is invited to close. **#193 closed with it**:
    `announce()` queues rather than overwrites, because a sentence blanked inside one Blink
    serialization batch produces no accessibility event at all (`docs/LEARNINGS.md`).
+   **A connection test and a hand-run job say their result out loud (#192 closed)** — the three
+   test mutations and `useJobFlash`, each through one shared sentence the badge and the chip also
+   render, so what is spoken and what is read cannot drift.
    **The guard is the durable half.** Measured against the real pre-#132 tree,
    `eslint-plugin-jsx-a11y` catches none of the filed bugs and costs 112 lockfile entries, an
    `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not

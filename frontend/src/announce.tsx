@@ -126,6 +126,14 @@ function drain(): void {
  *  `onSuccess` callback rather than a render. */
 export function announce(text: string): void {
   if (text === "") return;
+  // Nothing is mounted to hear it, so nothing can be said -- the same principle the unsubscribe
+  // above applies, at the other end. Without it a sentence said while no region exists sits in
+  // the store and surfaces in the NEXT mount, which is the logged-out operator hearing "Policy
+  // saved." on the way back in. `Announcer` is a sibling of every branch at the app root
+  // (App.tsx, pinned by its own tests), so no shipped call site can precede it; what this
+  // actually keeps clean is a component driven in isolation, where it is one test's message
+  // read as the next test's.
+  if (listeners.size === 0) return;
   pending.push(text);
   if (drainTimer === null) drain();
 }

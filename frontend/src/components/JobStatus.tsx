@@ -1,12 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
+import { announce } from "../announce";
 import { date, since, time } from "../format";
 
 /** The short-lived confirmation shown for a few seconds after a job finishes by hand. */
 export interface JobFlash {
   ok: boolean;
   text: string;
+}
+
+/** What a finished job's flash SAYS, written once because two surfaces state it: the chip
+ *  renders it, and `useJobFlash` announces it at the transition (#192, rule 144). The chip
+ *  otherwise reached only an operator who happened to navigate onto it inside its 4.2-second
+ *  window, which for a job they pressed Run now on is nobody. */
+export function flashSentence(flash: JobFlash): string {
+  return `${flashLead(flash.ok)}: ${flash.text}`;
+}
+
+/** The word in front of a flash's own text, in both surfaces' hands. */
+function flashLead(ok: boolean): string {
+  return ok ? "Finished" : "Failed";
 }
 
 /** How long the manual-run confirmation lingers before the line settles back. */
@@ -38,6 +52,10 @@ export function useJobFlash(running: boolean, result: JobFlash | null): JobFlash
   useEffect(() => {
     if (wasRunning.current && !running && latest.current) {
       setFlash(latest.current);
+      // Said at the same moment it is shown, and only on a transition this mount watched --
+      // so a page loaded onto a just-finished job announces nothing, exactly as it flashes
+      // nothing. All three job rows and the scan bar reach this one line.
+      announce(flashSentence(latest.current));
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setFlash(null), FLASH_MS);
     } else if (!wasRunning.current && running) {
@@ -91,12 +109,12 @@ export function JobStatus({
       <div className={`jobrow-last ${flash.ok ? "is-flash" : "is-flash-fail"}`}>
         <span className="flash-chip">
           {/* The glyph is hidden and the class is a color, so whether the job worked was
-              carried by nothing a reader can voice. The word is read when reached, not
-              announced: this chip sits in no live region, and it unmounts after FLASH_MS.
-              What survives it is the resting line below, which spells a failure out in words
-              and is where the result is recovered from -- so the chip is the convenience, not
-              the only copy. */}
-          <span className="sr-only">{flash.ok ? "Finished: " : "Failed: "}</span>
+              carried by nothing a reader can voice. `flashSentence` is both halves of the
+              answer -- this renders it, and `useJobFlash` announces the same string at the
+              transition, so what is read and what is spoken cannot drift (#192, rule 144).
+              What survives the 4.2-second window either way is the resting line below, which
+              spells a failure out in words and is where the result is recovered from. */}
+          <span className="sr-only">{flashLead(flash.ok)}: </span>
           <span className="check" aria-hidden="true">
             {flash.ok ? "✓" : "✕"}
           </span>{" "}

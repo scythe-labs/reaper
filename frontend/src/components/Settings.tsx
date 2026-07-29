@@ -41,7 +41,7 @@ import { PlexPanel } from "./PlexPanel";
 import { FixedQuantity } from "./QuantityInput";
 import { ScanRow } from "./ScanBar";
 import { Segmented } from "./Segmented";
-import { KINDS, kindLabel, ServiceModal, TestBadge } from "./ServiceModal";
+import { KINDS, kindLabel, ServiceModal, TestBadge, testSentence } from "./ServiceModal";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
@@ -900,8 +900,11 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
 
   const testSaved = useMutation({
     mutationFn: () => api.testSavedInstance(instance.id),
+    // Announced, like the modal's own test and the webhook's below -- three siblings of one
+    // result that reached nobody by ear (#192, rule 72). `testSentence` is the one wording.
     onSuccess: (r) => {
       setTest(r);
+      announce(testSentence(r));
       invalidate();
     },
   });
@@ -2194,7 +2197,10 @@ function NotificationsPanel({
     // Test the URL typed in the box (the one about to be saved) if there is one; otherwise
     // test the already-stored webhook, so a saved channel can be verified without re-pasting.
     mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
-    onSuccess: setTest,
+    onSuccess: (r) => {
+      setTest(r);
+      announce(testSentence(r));
+    },
     onError: (e: Error) => setError(e.message),
   });
   const remove = useMutation({

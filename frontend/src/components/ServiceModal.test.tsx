@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Instance, PlexLibrary, RootFolder, SeerrService } from "../api";
 import { testQueryClient } from "../test/queryClient";
+import { Announcer } from "../announce";
 import { ServiceModal } from "./ServiceModal";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -380,5 +381,68 @@ describe("ServiceModal while a save is in flight", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     await userEvent.keyboard("{Escape}");
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("what a screen reader hears when a connection is tested", () => {
+  // Press "Test connection" and the result rendered as a badge that sat in no live region, at
+  // any of its five sites -- so an operator using a reader learned the outcome only if they
+  // happened to navigate onto it. The failure path did not speak by another route either:
+  // `instances.py` never raises for a failed test, so an unreachable host arrives as a 200 with
+  // `ok=False` through `onSuccess` and never reaches the shared error notice (#192). Whether
+  // Reaper can reach the Sonarr it deletes THROUGH is worth hearing.
+  const spoken = () =>
+    [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+
+  /** The ADD form, because "Test connection" is only offered there -- a saved instance is
+   *  tested from its Settings row instead, through `testSavedInstance`, the rule 72 sibling
+   *  that got the same call. */
+  async function renderWithAnnouncer() {
+    apiMock.instanceRootFolders.mockResolvedValue([]);
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Announcer />
+        <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    // The label wraps the scheme span too, so the spoken name is "Hostname or IP http://".
+    await user.type(screen.getByLabelText(/Hostname or IP/), "10.0.0.5");
+    await user.type(screen.getByLabelText(/^API key$/), "k");
+    return user;
+  }
+
+  it("says a connection was reached, and which version", async () => {
+    apiMock.testInstance.mockResolvedValue({
+      ok: true,
+      detail: "Connected to Sonarr.",
+      version: "4.0.1",
+    });
+    const user = await renderWithAnnouncer();
+
+    await user.click(await screen.findByRole("button", { name: /Test connection/i }));
+
+    // "version 4.0.1" spelled out, where the badge shows "(v4.0.1)": a reader voices a bare
+    // "v" as a letter. The only deliberate difference between the two copies.
+    await waitFor(() => expect(spoken()).toBe("Passed: Connected to Sonarr. (version 4.0.1)"));
+  });
+
+  it("says a connection FAILED, which arrives as an ordinary 200", async () => {
+    apiMock.testInstance.mockResolvedValue({
+      ok: false,
+      detail: "Couldn't reach it. Check the address.",
+      version: null,
+    });
+    const user = await renderWithAnnouncer();
+
+    await user.click(await screen.findByRole("button", { name: /Test connection/i }));
+
+    await waitFor(() => expect(spoken()).toBe("Failed: Couldn't reach it. Check the address."));
+    // The same string the badge renders for a reader who does navigate to it (rule 144).
+    expect(document.querySelector(".test-badge")?.textContent).toContain(
+      "Failed: ✗ Couldn't reach it. Check the address.",
+    );
   });
 });
