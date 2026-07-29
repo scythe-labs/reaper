@@ -8,13 +8,12 @@
 // Spare/Reap footer: this panel decides nothing, it explains. Each title row still opens
 // its real card in Review, exactly like the old reclaimable chips did.
 
-import { useEffect, useState } from "react";
+import { useId, useState } from "react";
 import type { PersonDetail, PersonTitle, QuotaLine } from "../api";
-import { useModalOpen } from "../backnav";
 import { bytes, count, date, itemBytes } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
-import { WhyClose } from "./WhyPanel";
+import { WhyShell } from "./WhyShell";
 import { Notice } from "./Notice";
 
 function initial(name: string): string {
@@ -81,8 +80,8 @@ function LimitChip({ label, line }: { label: string; line: QuotaLine }) {
  *  could be built ({base_url}/users/{id}); plain text otherwise, never a dead link. Follows
  *  the app's title-link idiom: text at rest, an accent underline on hover, a small outbound
  *  arrow so the link is discoverable. */
-function ProfileName({ name, href }: { name: string; href: string | null }) {
-  if (!href) return <h2>{name}</h2>;
+function ProfileName({ id, name, href }: { id: string; name: string; href: string | null }) {
+  if (!href) return <h2 id={id}>{name}</h2>;
   return (
     <a
       className="scales-name-link"
@@ -91,7 +90,7 @@ function ProfileName({ name, href }: { name: string; href: string | null }) {
       rel="noopener noreferrer"
       title="Open this person in the request portal"
     >
-      <h2>{name}</h2>
+      <h2 id={id}>{name}</h2>
       <svg
         className="scales-ext"
         viewBox="0 0 16 16"
@@ -213,18 +212,7 @@ export function ScalesPanel({
   onOpenItem: (candidateId: number) => void;
   onOpenGroup: (key: string) => void;
 }) {
-  // Escape closes, matching the why-panel. A modal, if one is ever up, owns the key first.
-  const modalOpen = useModalOpen();
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (modalOpen) return;
-      onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, modalOpen]);
-
+  const headingId = useId();
   const granted = detail.gb_granted_bytes;
   const reclaim = detail.reclaimable_bytes;
   const used = Math.max(0, granted - reclaim);
@@ -254,15 +242,14 @@ export function ScalesPanel({
   const showLimits = detail.quota !== null || detail.seerr_total !== null;
 
   return (
-    <aside className="why">
-      <WhyClose onClose={onClose} />
+    <WhyShell headingId={headingId} onClose={onClose}>
       <header className="why-head">
         <div className="scales-head-id">
           <span className="fair-avatar" aria-hidden="true">
             {initial(detail.name)}
           </span>
           <div>
-            <ProfileName name={detail.name} href={detail.profile_url} />
+            <ProfileName id={headingId} name={detail.name} href={detail.profile_url} />
             <p className="why-sub muted">
               {count(detail.requests_in_scan)} requests in the last scan
               {detail.not_in_scan > 0 && `, ${count(detail.not_in_scan)} not in it`}
@@ -395,7 +382,7 @@ export function ScalesPanel({
           <UnmatchedList items={detail.unmatched} excludeName={detail.name} />
         </section>
       )}
-    </aside>
+    </WhyShell>
   );
 }
 
@@ -404,13 +391,13 @@ export function ScalesPanel({
  *  hang; and it keeps its own close, or a failed fetch would strand the reader in split view.
  *  Mirrors the why-panel's fallback. */
 export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
+  const headingId = useId();
   return (
-    <aside className="why">
-      <WhyClose onClose={onClose} />
+    <WhyShell headingId={headingId} onClose={onClose}>
       {error ? (
         <>
           <header className="why-head">
-            <h2>Something went wrong</h2>
+            <h2 id={headingId}>Something went wrong</h2>
           </header>
           <Notice tone="error">
             Couldn't load this person's requests. Close this panel and click the card to try again.
@@ -419,9 +406,13 @@ export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClos
       ) : (
         <div className="why-loading" role="status" aria-live="polite">
           <span className="spinner spinner-lg" aria-hidden="true" />
-          <p className="why-loading-lead">Gathering their requests…</p>
+          {/* The loading branch has no heading to point at, so the lead carries the name. A
+              panel named "Gathering their requests…" is what is true at that moment. */}
+          <p className="why-loading-lead" id={headingId}>
+            Gathering their requests…
+          </p>
         </div>
       )}
-    </aside>
+    </WhyShell>
   );
 }

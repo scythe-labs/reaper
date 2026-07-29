@@ -11,7 +11,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "./test/queryClient";
-import { ScanFreshness, ScanLine, SectionNav, UserMenu } from "./App";
+import { ScanFreshness, ScanLine, SectionNav, UserMenu, WhyPanelFallback } from "./App";
 import { ApiError, type AuthUser, type Safety, type Snapshot } from "./api";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: { logout: vi.fn(), safety: vi.fn() } }));
@@ -230,5 +230,29 @@ describe("SectionNav", () => {
     apiMock.safety.mockReturnValue(new Promise(() => {}));
     const { container } = renderNav();
     expect(container.querySelector(".view-armed")).not.toBeInTheDocument();
+  });
+});
+
+// The why panel's loading/error column is one of the six surfaces rendering WhyShell, so it owes
+// the same contract as the panel it stands in for: a name, and an Escape that works. Its loading
+// branch has no heading, so the lead line carries the name.
+describe("WhyPanelFallback", () => {
+  it("names its failure branch", () => {
+    render(<WhyPanelFallback error onClose={vi.fn()} />);
+    expect(screen.getByRole("complementary", { name: "Something went wrong" })).toBeInTheDocument();
+  });
+
+  it("names its loading branch from the lead, having no heading to point at", () => {
+    render(<WhyPanelFallback error={false} onClose={vi.fn()} />);
+    expect(
+      screen.getByRole("complementary", { name: "Fetching what Reaper saw\u2026" }),
+    ).toBeInTheDocument();
+  });
+
+  it("closes on Escape while it is still loading", async () => {
+    const onClose = vi.fn();
+    render(<WhyPanelFallback error={false} onClose={onClose} />);
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

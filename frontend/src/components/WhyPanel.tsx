@@ -18,7 +18,7 @@
 // And it renders for PROTECTED items too, showing the score it is overriding. A tool
 // that only explains its deletions cannot be trusted about its keeps.
 
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import {
   type CandidateDetail,
   type GateOutcome,
@@ -33,6 +33,7 @@ import { useOverrideMutations } from "../useOverrideMutations";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { reapIsNoop } from "./reviewFate";
+import { WhyShell } from "./WhyShell";
 import { Notice } from "./Notice";
 
 /** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
@@ -219,27 +220,6 @@ export function WhyHero({ posterUrl }: { posterUrl: string }) {
       />
       <div className="why-hero-fade" aria-hidden="true" />
     </div>
-  );
-}
-
-/** Every `.why` panel's close: a media-sheet disc floated over the hero art (see .why-close),
- *  never a boxed glyph in the title row, where it read as a stray form control. A stroked X to
- *  match the panel's round-capped glyphs, and NOT the scythe: closing is not reaping. Over a
- *  title with no art it rests on the surface top-right the same way. Render it FIRST in each
- *  panel so it is the panel's first tab stop; z-index clears the hero art and fade. One
- *  component so the four panels never drift (rule 18). */
-export function WhyClose({ onClose }: { onClose: () => void }) {
-  return (
-    <button type="button" className="why-close" onClick={onClose} aria-label="Close">
-      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true">
-        <path
-          d="M4 4l8 8M12 4l-8 8"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    </button>
   );
 }
 
@@ -949,12 +929,12 @@ export function WhyPanel({
   // A card-side read: an unknown allowance answers "held back", which is the safe thing to
   // be wrong about beside a size cell that already says the size is unknown.
   const holdsBack = useHoldsBackUnmeasured().holdsBack;
+  const headingId = useId();
 
   const mediaLabel = item.media_type === "season" ? "TV season" : item.media_type;
 
   return (
-    <aside className="why">
-      <WhyClose onClose={onClose} />
+    <WhyShell headingId={headingId} onClose={onClose}>
       {item.poster_url && <WhyHero posterUrl={item.poster_url} />}
 
       {/* A season's reasoning is one level down from its show: offer the way back up. */}
@@ -970,7 +950,7 @@ export function WhyPanel({
 
       <header className="why-head">
         <div>
-          <h2>
+          <h2 id={headingId}>
             {/* The title itself opens the item in Plex when it can; a title Reaper
                 couldn't match stays plain text rather than linking somewhere wrong. */}
             {item.links.plex ? (
@@ -1155,6 +1135,6 @@ export function WhyPanel({
           )}
         </div>
       </div>
-    </aside>
+    </WhyShell>
   );
 }

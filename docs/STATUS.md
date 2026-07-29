@@ -100,12 +100,22 @@ Last verified against the code: 2026-07-26.
    `Notice` that owns `role="alert"`; `standing` is the declared opt-out for text that is page
    furniture rather than a reaction. #155's two draft-refusal twins collapsed into one
    `SwitchConfirm` that also moves focus, keyed on a nonce because a repeat press changes no
-   state and an effect watching the value would not re-fire. What is filed rather than fixed is
-   still larger: the review queue's cards are `role="button"`, which makes every chip, reason and
-   score inside them presentational; the deletion path announces nothing at any stage, arming
-   through progress to the final report; the four `.why` panels are full-screen dialogs under
-   900px with no dialog semantics; and two menus promise a keyboard contract they never
-   implemented. **The guard is the durable half.** Measured against the real pre-#132 tree,
+   state and an effect watching the value would not re-fire. **The `.why` panels are landed
+   too**, and the app-wide sweep behind that fix found six of them rather than the four the issue
+   named — `WhyPanelFallback` and `ScalesPanelFallback` render the same `<aside className="why">`,
+   and the second carried no Escape handler at all, so a Scales panel stuck loading or failed
+   could not be dismissed from the keyboard. All six now render one `WhyShell` that owns the
+   dialog contract, conditional on `NARROW_SCREEN_QUERY` because the panel is a genuine
+   split-view side panel above it and covers the whole application below it: claiming
+   `role="dialog"` at every width would be false on a desktop. Escape moved into the shell from
+   the three places that had it, which also fixed it firing from inside the panel's own fields —
+   App's handler bailed on `INPUT/TEXTAREA/SELECT`, a bail `j`/`k` need and Escape does not.
+   What is filed rather than fixed is still larger: the review queue's cards are `role="button"`,
+   which makes every chip, reason and score inside them presentational; the deletion path
+   announces nothing at any stage, arming through progress to the final report; two menus promise
+   a keyboard contract they never implemented; and **116 controls unmount or disable themselves
+   on their own press**, dropping focus to `<body>` — the app-wide count behind #173, against the
+   ~20 sites that issue lists. **The guard is the durable half.** Measured against the real pre-#132 tree,
    `eslint-plugin-jsx-a11y` catches none of the three filed bugs — its
    `control-has-associated-label` counts `<option>` text as a `<select>`'s label, which is the
    operator's complaint verbatim — and it costs 112 lockfile entries, an `overrides` entry to

@@ -856,3 +856,15 @@ describe("the season footer's own-vs-show decision", () => {
     expect(api.clearOverride).toHaveBeenCalledWith("sonarr:1:2:3");
   });
 });
+
+// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes from
+// its own <h2> rather than a second copy of the title in an aria-label (rule 144). One of these
+// per panel: six surfaces render WhyShell, and the name is the one part of the contract the shell
+// cannot supply for them. The fallbacks are included because they are two of the six -- and the
+// loading branch has no heading at all, so its lead line carries the name instead.
+describe("the why panel's accessible name", () => {
+  it("names itself from the title it is explaining", () => {
+    show(detail([]));
+    expect(screen.getByRole("complementary", { name: /Example Show/ })).toBeInTheDocument();
+  });
+});

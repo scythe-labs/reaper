@@ -6,12 +6,11 @@
 // idiom. Its body is the shared UnmatchedList: every not-in-scan request across everyone,
 // grouped by why. It decides nothing.
 
-import { useEffect } from "react";
+import { useId } from "react";
 import type { UnmatchedRequest } from "../api";
-import { useModalOpen } from "../backnav";
 import { count } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
-import { WhyClose } from "./WhyPanel";
+import { WhyShell } from "./WhyShell";
 import { Notice } from "./Notice";
 
 export function NotInScanPanel({
@@ -28,17 +27,7 @@ export function NotInScanPanel({
   error?: boolean;
   onClose: () => void;
 }) {
-  // Escape closes, matching the why-panel; a modal, if one is up, owns the key first.
-  const modalOpen = useModalOpen();
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (modalOpen) return;
-      onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, modalOpen]);
+  const headingId = useId();
 
   // The card counts requests; the panel merges co-requesters into one row per title. Reconcile
   // the two out loud so a smaller row count never reads as "some are missing".
@@ -60,11 +49,10 @@ export function NotInScanPanel({
         : `${lead} Here is each one, and why.`;
 
   return (
-    <aside className="why">
-      <WhyClose onClose={onClose} />
+    <WhyShell headingId={headingId} onClose={onClose}>
       <header className="why-head">
         <div>
-          <h2>Not in the last scan</h2>
+          <h2 id={headingId}>Not in the last scan</h2>
           <p className="why-sub muted">{sub}</p>
         </div>
       </header>
@@ -83,6 +71,6 @@ export function NotInScanPanel({
           <UnmatchedList items={items} />
         </div>
       )}
-    </aside>
+    </WhyShell>
   );
 }

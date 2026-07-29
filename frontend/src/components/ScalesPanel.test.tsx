@@ -6,7 +6,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { PersonDetail, PersonTitle } from "../api";
-import { ScalesPanel } from "./ScalesPanel";
+import { ScalesPanel, ScalesPanelFallback } from "./ScalesPanel";
 
 const GB = 1024 ** 3;
 
@@ -371,5 +371,45 @@ describe("ScalesPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /close/i }));
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes from
+// its own <h2> rather than a second copy of the title in an aria-label (rule 144). One of these
+// per panel: six surfaces render WhyShell, and the name is the one part of the contract the shell
+// cannot supply for them. The fallbacks are included because they are two of the six -- and the
+// loading branch has no heading at all, so its lead line carries the name instead.
+describe("the Scales panel's accessible name", () => {
+  it("names itself from the person it is about", () => {
+    render(
+      <ScalesPanel
+        detail={detail()}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("complementary", { name: "marlow" })).toBeInTheDocument();
+  });
+
+  it("names its failure branch, which is a panel in its own right", () => {
+    render(<ScalesPanelFallback error onClose={vi.fn()} />);
+    expect(screen.getByRole("complementary", { name: "Something went wrong" })).toBeInTheDocument();
+  });
+
+  it("names its loading branch from the lead, having no heading to point at", () => {
+    render(<ScalesPanelFallback error={false} onClose={vi.fn()} />);
+    expect(
+      screen.getByRole("complementary", { name: "Gathering their requests\u2026" }),
+    ).toBeInTheDocument();
+  });
+
+  // It carried no Escape handler of its own: ScalesPanel had one, its fallback never got the
+  // copy, so a panel stuck loading or failed could not be dismissed from the keyboard at all.
+  it("closes on Escape while it is still loading", async () => {
+    const onClose = vi.fn();
+    render(<ScalesPanelFallback error={false} onClose={onClose} />);
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

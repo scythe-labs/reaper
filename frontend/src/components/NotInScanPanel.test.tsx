@@ -102,3 +102,14 @@ describe("UnmatchedList", () => {
     expect(screen.getByText("Odd One")).toBeInTheDocument();
   });
 });
+
+// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes from
+// its own <h2> rather than a second copy of the title in an aria-label (rule 144). One of these
+// per panel: six surfaces render WhyShell, and the name is the one part of the contract the shell
+// cannot supply for them.
+describe("the not-in-scan panel's accessible name", () => {
+  it("names itself from its own heading", () => {
+    render(<NotInScanPanel items={[u()]} onClose={vi.fn()} />);
+    expect(screen.getByRole("complementary", { name: "Not in the last scan" })).toBeInTheDocument();
+  });
+});

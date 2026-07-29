@@ -6,6 +6,7 @@ import {
   type ReactElement,
   Suspense,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -24,7 +25,8 @@ import { ScalesPanel, ScalesPanelFallback } from "./components/ScalesPanel";
 import { BrandMark } from "./brand/BrandMark";
 import type { Panel } from "./components/Settings";
 import { ShowPanel } from "./components/ShowPanel";
-import { WhyClose, WhyPanel } from "./components/WhyPanel";
+import { WhyPanel } from "./components/WhyPanel";
+import { WhyShell } from "./components/WhyShell";
 import { DocsProvider } from "./docs/DocsContext";
 import { bytes, count, date, souls } from "./format";
 import { usePageScrollLock } from "./pageScrollLock";
@@ -509,14 +511,14 @@ export function UserMenu({ user }: { user: AuthUser }) {
  *  be loaded at all. The column is already reserved the moment an item is selected, so
  *  leaving it blank would read as "the app hung"; and it must keep its own close button,
  *  or a failed fetch would strand the reader in split view. */
-function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
+export function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
+  const headingId = useId();
   return (
-    <aside className="why">
-      <WhyClose onClose={onClose} />
+    <WhyShell headingId={headingId} onClose={onClose}>
       {error ? (
         <>
           <header className="why-head">
-            <h2>Something went wrong</h2>
+            <h2 id={headingId}>Something went wrong</h2>
           </header>
           <Notice tone="error">
             Couldn't load the reasons for this item. The item itself is unaffected. Close this panel
@@ -526,10 +528,13 @@ function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => v
       ) : (
         <div className="why-loading" role="status" aria-live="polite">
           <span className="spinner spinner-lg" aria-hidden="true" />
-          <p className="why-loading-lead">Fetching what Reaper saw…</p>
+          {/* No heading in this branch, so the lead carries the panel's name. */}
+          <p className="why-loading-lead" id={headingId}>
+            Fetching what Reaper saw…
+          </p>
         </div>
       )}
-    </aside>
+    </WhyShell>
   );
 }
 
@@ -776,7 +781,10 @@ function Dashboard({ user }: { user: AuthUser }) {
   useEffect(() => {
     if (view !== "review" || !hasSelection) return;
     const onKey = (e: KeyboardEvent) => {
-      // Browser and OS shortcuts keep their meaning, and typing in a field is typing.
+      // Browser and OS shortcuts keep their meaning, and typing in a field is typing: `j` and
+      // `k` are letters before they are queue steps. Escape used to be caught here too and
+      // took this same bail with it, so Escape from inside one of the panel's own fields did
+      // nothing at all. It belongs to the panel, and `WhyShell` owns it for all six of them.
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
@@ -787,10 +795,6 @@ function Dashboard({ user }: { user: AuthUser }) {
       // behind it must not move underneath. Read from state (ModalShell says so on mount),
       // not probed for in the DOM on every keypress (H-2).
       if (modalOpen) return;
-      if (e.key === "Escape") {
-        setSelected(null);
-        return;
-      }
       const delta =
         e.key === "ArrowDown" || e.key === "j" ? 1 : e.key === "ArrowUp" || e.key === "k" ? -1 : 0;
       if (delta === 0) return;

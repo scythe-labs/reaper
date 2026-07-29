@@ -25,12 +25,8 @@
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { useModalLayer } from "../backnav";
+import { FOCUSABLE, useDialogFocus } from "../focus";
 import { usePageScrollLock } from "../pageScrollLock";
-
-/** Everything a browser will put in the Tab order, in document order. */
-export const FOCUSABLE =
-  "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), " +
-  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** Tab containment for one dialog panel: wrap from the last control back to the first and
  *  vice versa, so the still-rendered page behind it never takes focus.
@@ -87,14 +83,10 @@ export function ModalShell({
 
   // Focus in on open, and back to whatever opened us on close. The panel itself takes
   // the initial focus (tabIndex -1) so the reading starts at the dialog's name rather
-  // than partway down its controls.
-  useEffect(() => {
-    const invoker = document.activeElement;
-    panelRef.current?.focus();
-    return () => {
-      if (invoker instanceof HTMLElement && invoker.isConnected) invoker.focus();
-    };
-  }, []);
+  // than partway down its controls. A modal is always the active case, so this passes no
+  // flag; the `.why` panels share the hook and pass the media query, being a dialog only
+  // on a phone (see `useDialogFocus`).
+  useDialogFocus(panelRef);
 
   // Hold the page still behind the scrim, so scrolling stays inside the panel.
   usePageScrollLock(true);

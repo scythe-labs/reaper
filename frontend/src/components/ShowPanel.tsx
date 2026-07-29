@@ -8,13 +8,15 @@
 // wording lives here, under the show it belongs to, not on the card). Clicking a season
 // hands off to that season's complete reasoning.
 
+import { useId } from "react";
 import type { Candidate, Group } from "../api";
 import { itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { handFate, showReapIsNoop } from "./reviewFate";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
-import { JumpPill, Synopsis, WhyClose, WhyHero } from "./WhyPanel";
+import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
+import { WhyShell } from "./WhyShell";
 
 /** The one pill a season row wears. The owner's hand decision replaces the scan chip
  *  (solid means "you chose this"); a reap the engine can't honor yet reads dashed red and
@@ -55,15 +57,15 @@ export function ShowPanel({
   // dead toggle. A season overridden on its own keeps its mark in the strip and its row.
   const { setOverride, clearOverride } = useOverrideMutations();
   const showOverride = group.show_override;
+  const headingId = useId();
 
   return (
-    <aside className="why">
-      <WhyClose onClose={onClose} />
+    <WhyShell headingId={headingId} onClose={onClose}>
       {group.poster_url && <WhyHero posterUrl={group.poster_url} />}
 
       <header className="why-head">
         <div>
-          <h2>
+          <h2 id={headingId}>
             {group.links.plex ? (
               <a
                 className="title-link"
@@ -156,6 +158,6 @@ export function ShowPanel({
           )}
         </div>
       </div>
-    </aside>
+    </WhyShell>
   );
 }
