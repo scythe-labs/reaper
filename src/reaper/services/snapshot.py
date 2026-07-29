@@ -1847,7 +1847,12 @@ def _raw_items(
                 ids, plex_index, identity.MOVIE_ID_PRIORITY
             ):
                 mapped_lib_hits.add(plex_library)
-            elif resolution.status is identity.MatchStatus.AMBIGUOUS:
+            elif resolution.status in identity.ABSTAIN_STATUSES:
+                # Both abstains, not AMBIGUOUS alone (rule 143): CONFLICTED was split out of
+                # it and carries the same evidence about the map. The operator declared which
+                # library this root folder lands in and no copy the ids named is there, which
+                # is the mapping being wrong whether the rows were several or merely
+                # contradictory.
                 stale_map_misses.setdefault(plex_library, str(movie.get("title") or ""))
         matched = resolution.plex_item
         if resolution.rating_key is None:

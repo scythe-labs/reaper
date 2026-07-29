@@ -1297,7 +1297,8 @@ async def gather(
                 ids, tv_index, identity.SHOW_ID_PRIORITY
             ):
                 mapped_lib_hits.add(key)
-            elif resolution.status is identity.MatchStatus.AMBIGUOUS:
+            elif resolution.status in identity.ABSTAIN_STATUSES:
+                # Both abstains, not AMBIGUOUS alone -- the movie twin's reasoning, rule 143.
                 stale_map_misses.setdefault(key, str(series.get("title") or ""))
         item.show_rating_key = resolution.rating_key
         item.matched_by = resolution.matched_by

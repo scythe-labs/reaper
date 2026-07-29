@@ -136,6 +136,14 @@ class MatchStatus(enum.StrEnum):
     CONFLICTED = "conflicted"
 
 
+#: The two outcomes where Reaper found candidate rows and refused to choose between them, as
+#: opposed to ``UNMATCHED``, where it found none. Anything reasoning about "the ids named
+#: something and we could not settle it" reads THIS rather than naming a member (rule 143):
+#: ``CONFLICTED`` was split out of ``AMBIGUOUS``, and every consumer still spelling one member
+#: silently stopped covering half its population the day the split landed.
+ABSTAIN_STATUSES = frozenset({MatchStatus.AMBIGUOUS, MatchStatus.CONFLICTED})
+
+
 # ---------------------------------------------------------------------------
 # Identifier hygiene -- a sentinel is "no id", and "no id" never matches.
 # ---------------------------------------------------------------------------
