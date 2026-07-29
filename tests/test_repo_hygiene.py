@@ -658,3 +658,82 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
         "If you added nothing, one dropped out of the walk: the ban above passes happily on\n"
         "a notice it can no longer see."
     )
+
+
+# Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
+# count once carried past were #147's library pickers, which shipped nameless; they have names
+# now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
+_EXPECTED_SELECTS = 19
+
+
+def _shipped_selects() -> list[tuple[Path, int, str]]:
+    """Every ``<select>`` opening tag in shipped .tsx, as (path, line, tag text).
+
+    **Brace-aware, and that is the whole implementation.** Every other check in this file is a
+    per-line regex, and here that shape is catastrophically wrong: measured against the tree,
+    only 3 of the named selects put ``aria-label`` on the same line as the tag. JSX wraps, and a
+    picker with a handler and three attributes always wraps. A per-line matcher would report
+    sixteen false offenders, be deleted within the week, and take the two real ones with it.
+
+    So the walk goes from ``<select`` to the first ``>`` at brace depth 0 -- past every
+    ``onChange={(e) => ...}`` whose own ``>`` and ``}`` sit inside the attribute -- and hands
+    back the whole tag to be inspected as one string. That is rule 147: prefer reading the whole
+    attribute or call over anchoring on a delimiter one spelling happens to put there.
+    """
+    found: list[tuple[Path, int, str]] = []
+    for path in _shipped_tsx():
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"<select\b", text):
+            i, depth = match.end(), 0
+            while i < len(text):
+                char = text[i]
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                elif char == ">" and depth == 0:
+                    break
+                i += 1
+            tag = " ".join(text[match.start() : i + 1].split())
+            # The bare word ``<select>`` inside a comment is prose about a select, not one:
+            # three sites in the tree talk about the element, and a scan that counts them
+            # reports permanent offenders nobody can fix. A real one always carries at least a
+            # `value` or a `defaultValue`, so an attribute-free tag is never markup here.
+            if tag == "<select>":
+                continue
+            found.append((path, text[: match.start()].count("\n") + 1, tag))
+    return found
+
+
+def test_every_select_says_what_it_is_for() -> None:
+    """A ``<select>`` with no name is a control a screen reader can only call "combo box".
+
+    The component tests reach controls by the name an operator can hear, which is the right
+    shape and is blind in one specific way: a control on a branch no fixture mounts is missing
+    from the walk and from the count alike, and the two absences hide each other. A static scan
+    closes that for ``<select>`` specifically, where the defect is *absence* of a name and a
+    scanner can see absence (#180).
+
+    **Why ``<select>`` and not every control.** Measured: a static ``<input>`` scan is 43 shipped
+    inputs, 25 named, 18 unnamed -- and 17 of the 18 are inside a ``<label>`` wrapper and
+    perfectly correct. 94% false positives, so that gate would be noise. ``<button>`` is worse
+    still, because its defect class is an *ambiguous but present* name, which no scanner can
+    see. This one is a two-line result set that went to zero when #147 landed and stays there.
+    """
+    selects = _shipped_selects()
+    assert len(selects) == _EXPECTED_SELECTS, (
+        f"expected {_EXPECTED_SELECTS} shipped <select> elements, found {len(selects)}:\n"
+        + "\n".join(f"  {p.relative_to(REPO)}:{n}" for p, n, _ in selects)
+        + "\n\nIf you ADDED or REMOVED one, bump _EXPECTED_SELECTS. If you did not, one dropped\n"
+        "out of the walk -- and the assertion below passes happily on a select it cannot see."
+    )
+    unnamed = [
+        f"{path.relative_to(REPO)}:{lineno} -> {tag}"
+        for path, lineno, tag in selects
+        if not re.search(r"\baria-label(?:ledby)?=|\bid=", tag)
+    ]
+    assert not unnamed, (
+        "every <select> needs a name a screen reader can say -- aria-label, aria-labelledby, or\n"
+        "an id a <label htmlFor> points at. Without one it is announced as an unlabeled combo\n"
+        "box, and the operator has to guess which row it belongs to:\n" + "\n".join(unnamed)
+    )

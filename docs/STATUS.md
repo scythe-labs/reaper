@@ -117,7 +117,12 @@ Last verified against the code: 2026-07-26.
    `eslint-plugin-jsx-a11y` catches none of the filed bugs and costs 112 lockfile entries, an
    `overrides` entry to survive `npm ci` on eslint 10, and two audit advisories, so it is not
    installed. The gate is `test_repo_hygiene`'s ban on hand-rolled notices with the population
-   pinned, plus tests that reach controls by the name an operator can hear. No new dependency.
+   pinned, plus tests that reach controls by the name an operator can hear, plus a brace-aware
+   static scan pinning that all 19 shipped `<select>`s are named (**#180 closed**) — the third
+   layer, and the only one that covers a control no fixture mounts. `<select>` alone: an
+   `<input>` scan measured 94% false positives (17 of 18 unnamed ones sit inside a `<label>`),
+   and `<button>`'s defect class is an ambiguous-but-present name, which no scanner can see. No
+   new dependency.
 
 ## Decisions locked
 
