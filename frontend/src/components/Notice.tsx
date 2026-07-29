@@ -38,7 +38,8 @@ export function Notice({
   ...rest
 }: {
   /** `error` for something that failed or could not be read; `warn` for a caution. Picks the
-   *  color, and nothing else: both tones are announced the same way. */
+   *  color AND the lead a reader hears ("Problem: " / "Warning: ", below), so it is a claim
+   *  about severity rather than a style choice: pick `warn` for a caution, never for amber. */
   tone: NoticeTone;
   /** True when this text is part of the page rather than a reaction to something, so it must
    *  NOT interrupt. Say why in a comment at the call site. */

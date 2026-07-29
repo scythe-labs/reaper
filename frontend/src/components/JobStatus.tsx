@@ -91,8 +91,11 @@ export function JobStatus({
       <div className={`jobrow-last ${flash.ok ? "is-flash" : "is-flash-fail"}`}>
         <span className="flash-chip">
           {/* The glyph is hidden and the class is a color, so whether the job worked was
-              carried by nothing a reader can voice -- and the chip is gone again in 4.2
-              seconds, so there is no going back for it. */}
+              carried by nothing a reader can voice. The word is read when reached, not
+              announced: this chip sits in no live region, and it unmounts after FLASH_MS.
+              What survives it is the resting line below, which spells a failure out in words
+              and is where the result is recovered from -- so the chip is the convenience, not
+              the only copy. */}
           <span className="sr-only">{flash.ok ? "Finished: " : "Failed: "}</span>
           <span className="check" aria-hidden="true">
             {flash.ok ? "✓" : "✕"}

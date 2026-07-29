@@ -70,8 +70,14 @@ export function TestBadge({ result }: { result: InstanceTest | null }) {
       {/* Whether Reaper reached your Sonarr used to be a glyph and a color and nothing else:
           "✓" and "✗" are read the same way by a reader at its default symbol level, so the
           detail line that follows ("Reached", or the error) was the only difference, and
-          "Couldn't reach it" read as a result rather than a failure. A word carries it now.
-          Failing 1.4.1 as well as 4.1.3 -- color was doing the same work alone. */}
+          "Couldn't reach it" read as a result rather than a failure. A word carries it now,
+          which is the 1.4.1 half: color was doing the work alone.
+
+          It does NOT announce, and no comment here should imply otherwise. This badge has no
+          live-region ancestor at any of its five render sites, and the failing path does not
+          speak by another route either -- `instances.py` never raises, so an unreachable host
+          arrives as ok=False through `onSuccess` and never reaches the shared error notice. The
+          word is read when the operator arrives at it, and 4.1.3 stays open. */}
       <span className="sr-only">{result.ok ? "Passed: " : "Failed: "}</span>
       <span aria-hidden="true">{result.ok ? "✓ " : "✗ "}</span>
       {result.detail}
