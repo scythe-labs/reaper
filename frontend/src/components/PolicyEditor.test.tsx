@@ -646,10 +646,13 @@ describe("the gate that counts recent watchers", () => {
         {
           field: "protect_conditions",
           severity: "warn",
+          // Verbatim from `policy.inspect`'s gate-off arm (rule 144): this is a payload the
+          // anchor test hands in, so a drifted copy here reads as the shipped sentence
+          // without failing anything.
           message:
-            "Nothing will be flagged for removal. Your keep rule counts who watched a title " +
-            "in the last year, and your watch history only goes back 3 months. Wait for it to " +
-            "build up, or remove that rule.",
+            'Nothing will be flagged for removal. Your keep rule on "People who watched it ' +
+            'recently" counts the last year, and your watch history only goes back 3 months. ' +
+            "Wait for it to build up, or remove that rule.",
         },
       ],
     );

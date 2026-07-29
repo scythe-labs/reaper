@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from reaper.api.schemas import GateSettingIn
 from reaper.engine import policy as policy_module
-from reaper.engine.fields import Op, ReachSpan
+from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
 from reaper.engine.gates import (
     POLICY_AUTHORABLE_GATES,
     Facts,
@@ -752,10 +752,84 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert flagged[0].severity == "warn"
         assert "Nothing will be flagged for removal" in flagged[0].message
         # The span they never set, named, and the remedy that does not need the hidden box.
-        assert "in the last year" in flagged[0].message
+        assert "the last year" in flagged[0].message
         assert "remove that rule" in flagged[0].message
         # And nothing on the window control, which is not on the page to be fixed.
         assert self._window_warnings(self._owner_rule_only(), reach=90.0) == []
+
+    def _two_rules_on_the_same_field(self) -> PolicyBody:
+        """Two keep rules on the same count, which nothing refuses.
+
+        ``PolicyRuleEditors``' ``addHard`` appends unconditionally and filters candidate
+        fields only by the enabled gate, and ``PolicyBody`` validates the pair -- so this
+        is a policy an operator can build in the editor, not a hand-edited row.
+        """
+        base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
+        return _policy(
+            gates=(GateSetting(**{**base, "enabled": False}),),  # type: ignore[arg-type]
+            protect_conditions=(
+                ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),
+                ConditionSpec(field="recent_watchers", op=Op.GTE, value=5),
+            ),
+        )
+
+    def test_the_blocking_rule_is_named_rather_than_left_to_be_guessed(self) -> None:
+        """ "Remove that rule" has to say which one, and the old message did not.
+
+        The field is named from the registry the editor renders from, so the operator is
+        given the string already on the card in front of them (rule 144). Without it the
+        only discriminator was "counts who watched a title in the last year", and the span
+        half of that is unreachable: this branch fires precisely when the window control is
+        not rendered, so nothing on the page carries the year. The field half was no better
+        beside a "People who have ever watched it" rule, which also counts who watched a
+        title (issue #157).
+        """
+        [flagged] = self._rule_warnings(self._owner_rule_only(), reach=90.0)
+
+        assert f'"{RECENT_WATCHERS.label}"' in flagged.message
+        # The label is the registry's, not a second spelling of it: the editor renders this
+        # exact string through GET /api/vocabulary, so a copy here would drift from the card.
+        assert RECENT_WATCHERS.label == "People who watched it recently"
+
+    def test_two_rules_on_one_field_are_counted_and_the_remedy_goes_plural(self) -> None:
+        """A singular remedy is factually wrong once a second rule blocks on the same span.
+
+        Removing one of a pair leaves the warning byte-identical while a live protection is
+        gone, and nothing tells the operator the pick was wrong. So the count is what makes
+        the remedy honest, and it is the count of rules BLOCKING, not of protect conditions:
+        the discriminator below adds a rule the shortfall does not block and the message
+        stays singular.
+        """
+        [flagged] = self._rule_warnings(self._two_rules_on_the_same_field(), reach=90.0)
+
+        assert "Your 2 keep rules" in flagged.message
+        assert "remove them." in flagged.message
+        assert "remove that rule" not in flagged.message
+
+    def test_a_rule_the_shortfall_does_not_block_is_left_out_of_the_count(self) -> None:
+        """The count ranges over the rules that are blocking, never over the rule list.
+
+        A ``size_bytes`` rule reads a fact the mirror does not bound and an ``lte`` rule on
+        the same count keeps an already-earned outcome (``fields._survives_more_history``),
+        so neither is holding anything back. Counting either would tell the operator to
+        remove one of two rules when only one of them is the problem -- the same wrong-pick
+        failure the naming clause exists to prevent, one step further on.
+        """
+        base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
+        with_bystanders = _policy(
+            gates=(GateSetting(**{**base, "enabled": False}),),  # type: ignore[arg-type]
+            protect_conditions=(
+                ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),
+                ConditionSpec(field="recent_watchers", op=Op.LTE, value=9),
+                ConditionSpec(field="size_bytes", op=Op.GTE, value=1),
+            ),
+        )
+
+        [flagged] = self._rule_warnings(with_bystanders, reach=90.0)
+
+        assert "Your keep rule on" in flagged.message
+        assert "remove that rule." in flagged.message
+        assert "2 keep rules" not in flagged.message
 
     def test_the_fallback_window_is_silent_with_no_rule_reading_it(self) -> None:
         """The gate off and no owner rule on a watcher count is the ordinary case: the

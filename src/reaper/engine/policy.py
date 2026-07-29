@@ -1178,10 +1178,17 @@ def inspect(
     reach_clears_dormancy = dormancy_floor is None or (
         history_reach_days is not None and history_reach_days >= dormancy_floor.threshold
     )
-    protect_spans = {
-        span for c in body.protect_conditions if (span := _protect_blocks_on_reach(c)) is not None
-    }
-    owner_protect_on_window = ReachSpan.POPULARITY_WINDOW in protect_spans
+    # Kept as pairs rather than reduced straight to a set: the gate-off message below has to
+    # name the rules doing the blocking and count them, and a set of spans cannot say which
+    # conditions produced it (issue #157).
+    blocking = [
+        (c, span)
+        for c in body.protect_conditions
+        if (span := _protect_blocks_on_reach(c)) is not None
+    ]
+    protect_spans = {span for _, span in blocking}
+    window_blockers = [c for c, span in blocking if span is ReachSpan.POPULARITY_WINDOW]
+    owner_protect_on_window = bool(window_blockers)
     # Derived once and read by both lanes below (rule 104). The protect lane additionally
     # requires a reader on the window, which is what ``short`` adds; the lean lane does not,
     # because a graded keep on a window field is discounted whether the gate is on or off.
@@ -1227,11 +1234,33 @@ def inspect(
             # the protection they would have to switch back on to expose the window is
             # deliberately NOT done -- its label lives in ``frontend`` (``policyMeta.ts``)
             # and a second spelling here would drift from it (rule 144).
+            #
+            # The rule is NAMED, and counted, because neither was safe to leave implicit
+            # (issue #157). Two rules on the same field are constructible -- ``addHard``
+            # appends unconditionally and ``PolicyBody`` validates the pair -- so a singular
+            # "remove that rule" was factually wrong there: removing one leaves the warning
+            # byte-identical while a live protection is gone, with nothing saying the pick
+            # was wrong. And "counts who watched a title" is not a discriminator when the
+            # card beside it reads "People who have ever watched it", which also counts who
+            # watched a title; the only thing telling them apart was the window, which is
+            # unrendered here by this branch's own premise.
+            #
+            # The label comes from the registry the editor renders from -- backend-owned,
+            # served verbatim through ``GET /api/vocabulary`` to ``describeCondition`` -- so
+            # this names the string already on the operator's screen rather than a second
+            # spelling of it (rule 144). Distinct labels joined, so a span that ever gains a
+            # second field does not silently name one of them.
             field = "protect_conditions"
+            labels = _join_and(
+                list(dict.fromkeys(f'"{BY_KEY[c.field].label}"' for c in window_blockers))
+            )
+            many = len(window_blockers) > 1
+            subject = f"Your {len(window_blockers)} keep rules" if many else "Your keep rule"
+            counts = "count" if many else "counts"
             message = (
-                "Nothing will be flagged for removal. Your keep rule counts who watched a "
-                f"title in the last {window_text}, and {short}. Wait for it to build up, or "
-                "remove that rule."
+                f"Nothing will be flagged for removal. {subject} on {labels} {counts} the "
+                f"last {window_text}, and {short}. Wait for it to build up, or remove "
+                f"{'them' if many else 'that rule'}."
             )
         warnings.append(PolicyWarning(field=field, severity="warn", message=message))
 
