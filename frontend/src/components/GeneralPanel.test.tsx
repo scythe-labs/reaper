@@ -16,7 +16,12 @@ import { testQueryClient } from "../test/queryClient";
 import { GeneralPanel } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { general: vi.fn(), saveGeneral: vi.fn(), revealApiKey: vi.fn() },
+  apiMock: {
+    general: vi.fn(),
+    saveGeneral: vi.fn(),
+    revealApiKey: vi.fn(),
+    generateApiKey: vi.fn(),
+  },
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -494,6 +499,64 @@ describe("what the panel reports to the section rail", () => {
 
     expect(await screen.findByText(/Couldn't load these settings/)).toBeInTheDocument();
     expect(bar()).toBeNull();
+  });
+});
+
+// Generating REPLACES whatever key the server holds, immediately and with no undo, which is why
+// Replace is a two-step confirm. The one-click Generate rendered on a CACHED `api_key_set: false`
+// -- 30-second staleTime, no refetch on focus, nothing evicting it -- so a key made from another
+// tab, a phone or by another admin left this panel offering a one-click revoke of a live key, with
+// none of the confirmation its own design says the act needs (#203).
+//
+// The button proves the absence now instead of assuming it, so all three answers to "is there a
+// key" are pinned here. Only the first one generates on one press: the other two are the states
+// where the page cannot show that nothing is about to be destroyed.
+describe("the Generate API key button", () => {
+  const generate = () => screen.findByRole("button", { name: "Generate API key" });
+
+  beforeEach(() => {
+    apiMock.generateApiKey.mockResolvedValue({ key: "generated-key" });
+  });
+
+  it("generates on one press when it has just checked and there is no key", async () => {
+    // The ordinary first run. A danger confirm here would be its own false claim: nothing is
+    // being replaced, and the page has just confirmed that.
+    const user = renderPanel();
+    await user.click(await generate());
+
+    await waitFor(() => expect(apiMock.generateApiKey).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Confirm generate" })).toBeNull();
+  });
+
+  it("asks first when it cannot check, then generates on the confirmed press", async () => {
+    const user = renderPanel();
+    const button = await generate();
+
+    // The re-read fails, so nothing here can prove there is no key to destroy.
+    apiMock.general.mockRejectedValue(new Error("boom"));
+    await user.click(button);
+
+    const confirm = await screen.findByRole("button", { name: "Confirm generate" });
+    expect(apiMock.generateApiKey).not.toHaveBeenCalled();
+    expect(screen.getByText(/Couldn't check for an existing key/)).toBeInTheDocument();
+
+    // The second press is the operator saying they accept replacing one they cannot see.
+    await user.click(confirm);
+    await waitFor(() => expect(apiMock.generateApiKey).toHaveBeenCalledTimes(1));
+  });
+
+  it("refuses and offers Replace when the re-read turns up a key the page did not know about", async () => {
+    const user = renderPanel();
+    const button = await generate();
+
+    // Another admin, another tab, a phone. This is the press that used to revoke it.
+    apiMock.general.mockResolvedValue({ ...STORED, api_key_set: true });
+    await user.click(button);
+
+    await waitFor(() => expect(screen.getByText(/A key already exists/)).toBeInTheDocument());
+    expect(apiMock.generateApiKey).not.toHaveBeenCalled();
+    // And the row is now the key-present one, so the two-step Replace is what is on offer.
+    expect(screen.getByRole("button", { name: "Replace…" })).toBeInTheDocument();
   });
 });
 

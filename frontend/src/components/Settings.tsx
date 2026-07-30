@@ -270,6 +270,43 @@ export function GeneralPanel({
     onError: (e: Error) => setKeyError(e.message),
   });
 
+  // Generating REPLACES whatever key the server holds, the moment it returns and with no undo,
+  // which is why Replace two branches down is a two-step confirm reading "The old key stops
+  // working immediately". The bare one-click Generate renders on `api_key_set === false` -- and
+  // that is a CACHED answer: `["general-settings"]` has a 30-second staleTime,
+  // `refetchOnWindowFocus` is off app-wide, and nothing else evicts it, so a key made from
+  // another tab, a phone, or by another admin left this panel offering a one-click revoke of a
+  // live key with none of the confirmation its own design says the action needs (#203).
+  //
+  // So this proves the absence rather than assuming it: re-read, and only a FRESH "no key"
+  // generates straight away. That keeps the first-run flow at one click, which matters -- the
+  // honest reading of a page parked for a minute is "I don't know yet", not "this is dangerous",
+  // and putting a danger confirm in front of every setup is its own false claim. Neither other
+  // answer generates:
+  //   - a key exists: the row has already re-rendered into its key-present layout, Replace and
+  //     all, on the fresh data. Say so and stop.
+  //   - the re-read failed: nothing is provable, so fall back to the confirm. Rule 53's class --
+  //     a control whose gate is derived from a value that went stale -- for a destructive button
+  //     rather than a rendered limit.
+  const requestGenerate = async () => {
+    setKeyError(null);
+    if (confirmReplace) {
+      generate.mutate();
+      return;
+    }
+    const fresh = await general.refetch();
+    if (fresh.isError) {
+      setConfirmReplace(true);
+      setKeyError("Couldn't check for an existing key. Confirming replaces one if it's there.");
+      return;
+    }
+    if (fresh.data?.api_key_set) {
+      setKeyError("A key already exists. Use Replace to make a new one.");
+      return;
+    }
+    generate.mutate();
+  };
+
   const copyKey = async () => {
     let key = revealedKey;
     if (key === null) {
@@ -784,11 +821,26 @@ export function GeneralPanel({
                     </button>
                   )}
                 </>
+              ) : confirmReplace ? (
+                /* Reached only when the re-read in `requestGenerate` could not answer, so this
+                   panel cannot prove there is no key to destroy. Same two-step shape as Replace
+                   above, because it is the same act with a worse-known target; the notice under
+                   the group says why it is being asked. */
+                <>
+                  <button
+                    className="danger"
+                    disabled={generate.isPending}
+                    onClick={() => generate.mutate()}
+                  >
+                    Confirm generate
+                  </button>
+                  <button onClick={() => setConfirmReplace(false)}>Cancel</button>
+                </>
               ) : (
                 <button
                   className="primary"
                   disabled={generate.isPending}
-                  onClick={() => generate.mutate()}
+                  onClick={() => void requestGenerate()}
                 >
                   {generate.isPending ? "Generating…" : "Generate API key"}
                 </button>
