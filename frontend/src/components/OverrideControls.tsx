@@ -356,7 +356,19 @@ function SpareMenu({
   // cannot run from here at all -- `returnToCaret` in OverrideControls re-issues it once the
   // mutation settles. An outside click deliberately restores nothing: the click is the operator
   // saying where they want to be, which is the same reading the filter popovers take.
-  useDialogFocus(ref);
+  // Focus lands on the FIRST DAY ROW, not on the container. On iOS a `role="group"` with children
+  // is never a `UIAccessibilityElement` (WebKit's `determineIsAccessibilityElement`), so focusing
+  // the container put the VoiceOver cursor nowhere at all and a swipe-right from the caret walked
+  // the panel BEHIND this menu -- the menu's own rows reachable only by swiping to the end of the
+  // page, since the portal puts them last in reading order (#206). Landing on a real button is the
+  // APG Menu Button pattern and costs nothing on the platforms that were already fine.
+  //
+  // The two rejected repairs, both verified worse: portaling into `.why` would move the stacking
+  // and scroll behavior this menu depends on, and `role="menu"` promises arrow-key navigation this
+  // never implemented AND is skipped outright by TalkBack (`browser_accessibility_android.cc`
+  // returns false for `kMenu` in `IsInterestingOnAndroid`), which works today.
+  const firstRow = useRef<HTMLButtonElement>(null);
+  useDialogFocus(ref, true, firstRow);
   const [custom, setCustom] = useState(false);
   // Held as free text so the box types and clears naturally; clamped to [1, 3650] only when
   // Spare is pressed, never mid-keystroke (which would snap a half-typed number).
@@ -437,8 +449,14 @@ function SpareMenu({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="dur-head">Spare for…</div>
-      {dayRows.map((d) => (
-        <button key={d} type="button" className="dur-mi" onClick={() => onPick(d)}>
+      {dayRows.map((d, i) => (
+        <button
+          key={d}
+          type="button"
+          className="dur-mi"
+          ref={i === 0 ? firstRow : undefined}
+          onClick={() => onPick(d)}
+        >
           <span className="mi-glyph">
             <ClockGlyph />
           </span>

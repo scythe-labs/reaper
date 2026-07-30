@@ -21,8 +21,22 @@ import { useEffect, useRef, type RefObject } from "react";
  *  a restore and a yank. Focus returns to the invoker only if this surface still holds it (or
  *  it has already fallen to `<body>`, which is what an unmount looks like). A panel that never
  *  took focus, on a desktop, closing while the operator is typing somewhere else, must leave
- *  them where they are. */
-export function useDialogFocus(panelRef: RefObject<HTMLElement | null>, active = true) {
+ *  them where they are.
+ *
+ *  `entry` says which element inside the surface takes focus, for the surfaces whose container
+ *  cannot take it. On iOS a `role="group"` WITH CHILDREN is never a `UIAccessibilityElement`
+ *  (WebKit's `determineIsAccessibilityElement`, and a committed layout test), so focusing the
+ *  spare-length menu's container put the VoiceOver cursor nowhere and a swipe walked the panel
+ *  BEHIND the menu instead of its own rows (#206). `tabIndex={-1}` is not what fails there, and
+ *  neither is the portal, so the fix is to land on a real control -- the APG Menu Button pattern.
+ *  Default is the container, which is right for a dialog and is what the other two callers keep.
+ *  The close-restore is unaffected either way: `entry` is inside the panel, so the `contains`
+ *  check below still recognizes the surface as holding focus. */
+export function useDialogFocus(
+  panelRef: RefObject<HTMLElement | null>,
+  active = true,
+  entry?: RefObject<HTMLElement | null>,
+) {
   // The two jobs are split across two effects on purpose, and the ORDER matters both ways.
   //
   // This one is declared first so it reads `document.activeElement` before the second can move
@@ -53,8 +67,10 @@ export function useDialogFocus(panelRef: RefObject<HTMLElement | null>, active =
   // so it takes focus from that moment. Going the other way it simply stops trapping and leaves
   // focus where the operator has it -- there is nothing to hand back to while it is still open.
   useEffect(() => {
-    if (active) panelRef.current?.focus();
-  }, [active, panelRef]);
+    // Falls back to the panel when the named entry is not on screen, so a surface whose entry is
+    // conditional still gets focus rather than leaving it on `<body>`.
+    if (active) (entry?.current ?? panelRef.current)?.focus();
+  }, [active, panelRef, entry]);
 }
 
 /** Everything a browser will put in the Tab order, in document order.

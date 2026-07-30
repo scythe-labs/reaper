@@ -259,11 +259,32 @@ describe("the resting mark", () => {
 // to walk on to the next control INSIDE the card, leaving the menu's own rows reachable only by
 // tabbing through the remainder of the page -- on the control that decides how long a file is kept.
 describe("the spare-length menu's keyboard reach", () => {
-  it("takes focus when it opens, since the portal puts it out of Tab's reach", async () => {
+  it("takes focus on its first row when it opens, since the portal puts it out of Tab's reach", async () => {
+    // The row, NOT the group that wraps it. On iOS a `role="group"` with children is never a
+    // `UIAccessibilityElement` (WebKit's `determineIsAccessibilityElement`), so focusing the
+    // container left the VoiceOver cursor with nowhere to be and a swipe-right from the caret
+    // walked the panel BEHIND this menu -- its own rows reachable only by swiping to the end of
+    // the page, since the portal renders them last (#206). A real control is the APG Menu Button
+    // pattern and costs the platforms that were already fine nothing.
+    //
+    // `dayRows` sorts low to high, so 30 leads for a default of 30 and for one of 90 alike; the
+    // second case is what proves this tracks the first ROW rather than the default.
     const user = userEvent.setup();
     draw({}, 30);
     await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
-    expect(screen.getByRole("group", { name: "Spare this item for" })).toHaveFocus();
+
+    expect(screen.getByRole("group", { name: "Spare this item for" })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: /^30 days/ })).toHaveFocus();
+  });
+
+  it("leads with the lowest row even when the operator's default is not it", async () => {
+    // Rule 145: the first row is a position, and a fixture whose default happens to BE the first
+    // row cannot tell that from a hook that focuses the default.
+    const user = userEvent.setup();
+    draw({}, 90);
+    await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+
+    expect(screen.getByRole("button", { name: /^30 days/ })).toHaveFocus();
   });
 
   it("hands focus back to the caret on Escape, which starts no mutation", async () => {
