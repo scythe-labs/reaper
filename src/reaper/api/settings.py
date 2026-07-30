@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api import tags as api_tags
@@ -42,7 +42,7 @@ from reaper.clients.plextv import PlexConnection, PlexTvClient, connection_ident
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import AppSetting, InstanceKind, PlexServer
+from reaper.db.models import AppSetting, InstanceKind, PlexServer, Snapshot, WatchHighWater
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import (
     admin_password,
@@ -304,6 +304,18 @@ class PlexLibraryOut(BaseModel):
     kind: str
     """``"movie"`` or ``"show"``."""
     enabled: bool
+
+
+class WatchEvidenceOut(BaseModel):
+    """What Reaper has recorded about how much each title has been watched."""
+
+    titles: int
+    """How many titles hold a record."""
+    held_back: int | None = None
+    """How many items the LAST scan held back because their plays stopped being readable.
+    ``None`` when no scan has recorded it -- either none has run, or the newest one predates
+    the count. Never rendered as zero: a scan that did not count is not a scan that counted
+    none (rule 93)."""
 
 
 class WatchEvidenceResetOut(BaseModel):
@@ -1032,6 +1044,25 @@ async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
         await session.commit()
     log.info("plex.libraries_synced", count=len(merged))
     return result
+
+
+@router.get("/watch-evidence", tags=[api_tags.PLEX])
+async def get_watch_evidence(request: Request) -> WatchEvidenceOut:
+    """How many titles hold a watch record, and how many the last scan held back.
+
+    The second number is the one that answers "do I need to press this": a nonzero count is
+    titles Reaper is refusing to judge because their plays stopped being readable.
+    """
+    async with _factory(request)() as session:
+        titles = int(
+            (await session.execute(select(func.count()).select_from(WatchHighWater))).scalar() or 0
+        )
+        held_back = (
+            await session.execute(
+                select(Snapshot.watch_blind_items).order_by(Snapshot.id.desc()).limit(1)
+            )
+        ).scalar()
+    return WatchEvidenceOut(titles=titles, held_back=held_back)
 
 
 @router.post("/watch-evidence/reset", tags=[api_tags.PLEX])

@@ -10,7 +10,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
-import { api, type PlexLinkPoll, type PlexResourceConnection } from "../api";
+import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence } from "../api";
 import { count, since } from "../format";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 import { StaleReadNotice } from "./StaleReadNotice";
@@ -65,6 +65,23 @@ function seedManual(uri: string): { host: string; port: string; ssl: boolean } {
   }
 }
 
+/** The watch-record status line: what Reaper holds, and whether it is holding anything back.
+ *
+ *  `held_back === null` is "no scan has recorded it", which is NOT zero, so it says nothing
+ *  about held-back items rather than claiming none (rule 93). Zero is a real answer and is
+ *  reported plainly, because "none right now" is exactly what tells an operator to leave this
+ *  control alone. */
+function watchEvidenceStatus(evidence: WatchEvidence): string {
+  const titles = evidence.titles === 1 ? "1 title" : `${evidence.titles.toLocaleString()} titles`;
+  if (evidence.held_back === null) return `Holding a record for ${titles}.`;
+  if (evidence.held_back === 0) {
+    return `Holding a record for ${titles}. Nothing is held back right now.`;
+  }
+  const held =
+    evidence.held_back === 1 ? "1 item is" : `${evidence.held_back.toLocaleString()} items are`;
+  return `Holding a record for ${titles}. ${held} held back right now.`;
+}
+
 export function PlexPanel({
   /** Called whenever this panel gains or loses an unsaved draft, so the section rail can hold a
    *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
@@ -85,6 +102,12 @@ export function PlexPanel({
   // Failures get their own state so they render as an error, not as gray status text
   // that reads like "Linked to ...". Info stays in `message`.
   const [plexError, setPlexError] = useState<string | null>(null);
+  // The two-step on the watch-record reset: armed, then how many the last press discarded.
+  // A two-step in place rather than a native confirm(), which ignores the app's theme and
+  // typography, and rather than a typed phrase, which this does not earn: it deletes no file
+  // and the next scan rebuilds the record.
+  const [forgetting, setForgetting] = useState(false);
+  const [forgotten, setForgotten] = useState<number | null>(null);
   // The web-address box mirrors the saved value and follows it when a save (or another
   // tab) changes it; typing diverges the two until Save or a refetch reconciles them.
   const [webUrl, setWebUrl] = useState("");
@@ -147,6 +170,9 @@ export function PlexPanel({
     void queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
     void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] });
     void queryClient.invalidateQueries({ queryKey: ["plexTrash"] });
+    // Both of its numbers are about the linked server: the marks are keyed on items only
+    // this server holds, and the held-back count came from a scan of it.
+    void queryClient.invalidateQueries({ queryKey: ["watch-evidence"] });
   };
 
   const saveWebUrl = useMutation({
@@ -377,6 +403,25 @@ export function PlexPanel({
     else enabled.delete(key);
     saveLibraries.mutate([...enabled]);
   };
+
+  // --- recorded watch history ----------------------------------------------------
+
+  const watchEvidence = useQuery({
+    queryKey: ["watch-evidence"],
+    queryFn: api.watchEvidence,
+    enabled: linked,
+  });
+  const forgetWatchEvidence = useMutation({
+    mutationFn: api.resetWatchEvidence,
+    onSuccess: (result) => {
+      setForgetting(false);
+      setForgotten(result.forgotten);
+      // Refetch rather than patch: the reset moves `titles` to zero, but `held_back` is a
+      // property of the LAST SCAN and does not change until the next one runs. Writing the
+      // pair by hand here would have to restate that, and would be the place it drifts.
+      void queryClient.invalidateQueries({ queryKey: ["watch-evidence"] });
+    },
+  });
 
   // --- Leaving Soon --------------------------------------------------------------
 
@@ -872,6 +917,90 @@ export function PlexPanel({
                   {(saveLibraries.error ?? syncLibraries.error)?.message}
                 </Notice>
               )}
+            </>
+          )}
+        </div>
+      )}
+
+      {linked && (
+        <div className="set-group">
+          <h3>Watch history</h3>
+          <p className="group-blurb">
+            Plex gives every item a number, and issues a new one when a file leaves a library and
+            comes back. Plays recorded before that stay under the old number.
+          </p>
+          {/* Same shape as the two groups around it: a failed read keeps the last good answer
+              on screen and says so, rather than blanking a control the operator came here for
+              (rule 17/36, and rule 72 with the library grid and the shelf switches). */}
+          {watchEvidence.isPending ? (
+            <p className="muted">Loading…</p>
+          ) : !watchEvidence.data ? (
+            <Notice tone="error">Couldn't load the watch history record.</Notice>
+          ) : (
+            <>
+              {watchEvidence.isError && <StaleReadNotice what="the watch history record" />}
+              <div className="set-rows">
+                <div className="set-row set-row-plain">
+                  <span className="set-label">Recorded watch history</span>
+                  <p className="help">
+                    Reaper holds back a title whose plays stop being readable. After a library
+                    rebuild that can be every title at once. Forget the record to start from what
+                    Plex holds now.
+                  </p>
+                  <div className="set-control">
+                    {forgetting ? (
+                      <>
+                        <button
+                          className="danger"
+                          disabled={forgetWatchEvidence.isPending}
+                          onClick={() => forgetWatchEvidence.mutate()}
+                        >
+                          Confirm forget
+                        </button>
+                        <button
+                          disabled={forgetWatchEvidence.isPending}
+                          onClick={() => setForgetting(false)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="ghost"
+                        title="Reaper starts from what Plex holds now"
+                        onClick={() => {
+                          setForgotten(null);
+                          setForgetting(true);
+                        }}
+                      >
+                        Forget…
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="set-row set-status">
+                  {forgotten !== null
+                    ? `Forgotten for ${forgotten.toLocaleString()} ${
+                        forgotten === 1 ? "title" : "titles"
+                      }.`
+                    : watchEvidenceStatus(watchEvidence.data)}
+                </div>
+              </div>
+              {forgetWatchEvidence.error && (
+                <Notice tone="error">
+                  Couldn't forget the record. Nothing changed. Try again.
+                </Notice>
+              )}
+              {/* `standing`: it is always on screen, so it must not announce itself as an
+                  alert every time this panel renders. */}
+              <Notice tone="warn" standing>
+                A title that really was watched will score as never watched until you repair its
+                history in Tautulli.
+              </Notice>
+              <p className="group-hint muted">
+                Tautulli only moves old plays to the new number when you use its Fix Metadata
+                screen.
+              </p>
             </>
           )}
         </div>

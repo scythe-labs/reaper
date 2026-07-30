@@ -19,6 +19,8 @@ const { apiMock } = vi.hoisted(() => ({
     plexLibraries: vi.fn(),
     syncPlexLibraries: vi.fn(),
     setPlexLibraries: vi.fn(),
+    watchEvidence: vi.fn(),
+    resetWatchEvidence: vi.fn(),
     leavingSoonSettings: vi.fn(),
     setLeavingSoonSettings: vi.fn(),
     syncLeavingSoon: vi.fn(),
@@ -107,6 +109,8 @@ beforeEach(() => {
   ]);
   apiMock.syncPlexLibraries.mockResolvedValue([]);
   apiMock.setPlexLibraries.mockResolvedValue([]);
+  apiMock.watchEvidence.mockResolvedValue({ titles: 0, held_back: 0 });
+  apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 0 });
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,
@@ -324,6 +328,7 @@ describe("changing which server is linked", () => {
     ["plex-libraries"],
     ["leaving-soon-settings"],
     ["plexTrash"],
+    ["watch-evidence"],
   ];
 
   /** A mount whose invalidations the test can read back. The spy calls THROUGH, so the panel
@@ -727,6 +732,116 @@ describe("the certificate check", () => {
 // directions since, so the callers are now pinned by name in "changing which server is linked"
 // below rather than counted in prose. Each group is pinned in both directions, because a fix that
 // only deleted the `isError` arm would leave a genuinely-unread group claiming to be empty rather
+// The watch-record reset. Reaper holds back a title whose measured plays have fallen to zero,
+// which is right until the cause is a rebuilt library -- then it is every watched title at once
+// and nothing is reapable. This is the way out, so it has to be reachable, has to say what it
+// will do, and must not be reachable by one stray click.
+describe("forgetting the recorded watch history", () => {
+  function renderPanel() {
+    apiMock.plexResources.mockResolvedValue({
+      source: "plex.tv",
+      servers: [
+        { name: "Example server", machine_identifier: "machine-1", current: true, connections: [] },
+      ],
+    });
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PlexPanel />
+      </QueryClientProvider>,
+    );
+    return queryClient;
+  }
+
+  it("takes two presses, and sends nothing on the first", async () => {
+    const user = userEvent.setup();
+    apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
+    renderPanel();
+
+    const open = await screen.findByRole("button", { name: "Forget…" });
+    await user.click(open);
+
+    // Armed, and still nothing sent: the whole point of the second press.
+    expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
+    const confirm = screen.getByRole("button", { name: "Confirm forget" });
+    expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();
+
+    await user.click(confirm);
+    expect(apiMock.resetWatchEvidence).toHaveBeenCalledTimes(1);
+  });
+
+  it("stands down on Cancel without sending anything", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "Forget…" })).toBeEnabled();
+  });
+
+  it("says how many it forgot", async () => {
+    const user = userEvent.setup();
+    apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
+    apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 1284 });
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
+
+    expect(await screen.findByText("Forgotten for 1,284 titles.")).toBeInTheDocument();
+  });
+
+  it("reports a failure and says nothing changed", async () => {
+    const user = userEvent.setup();
+    apiMock.resetWatchEvidence.mockRejectedValue(new Error("boom"));
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
+
+    const failure = await screen.findByText(/Couldn't forget the record/);
+    expect(failure).toHaveClass("notice-error");
+    // "Nothing changed" is the load-bearing half: an operator who reads a bare failure does not
+    // know whether to press again.
+    expect(failure).toHaveTextContent("Nothing changed.");
+  });
+
+  // The status line, whose job is to answer "do I need to press this at all". Three readings,
+  // and the null one is the reason this is a table: a scan that never counted is not a scan that
+  // counted none (rule 93), so it must not render as "nothing is held back".
+  it.each([
+    [
+      { titles: 1284, held_back: 3 },
+      "Holding a record for 1,284 titles. 3 items are held back right now.",
+    ],
+    [
+      { titles: 1284, held_back: 1 },
+      "Holding a record for 1,284 titles. 1 item is held back right now.",
+    ],
+    [
+      { titles: 1284, held_back: 0 },
+      "Holding a record for 1,284 titles. Nothing is held back right now.",
+    ],
+    [{ titles: 1284, held_back: null }, "Holding a record for 1,284 titles."],
+    [{ titles: 1, held_back: 0 }, "Holding a record for 1 title. Nothing is held back right now."],
+  ])("reads %o as its own sentence", async (evidence, expected) => {
+    apiMock.watchEvidence.mockResolvedValue(evidence);
+    renderPanel();
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+  });
+
+  it("warns that a watched title will score as unwatched until Tautulli is repaired", async () => {
+    renderPanel();
+    // The honest cost of pressing it. A reset that reads as free is the one an operator presses
+    // without repairing the source, and then every re-added title is condemnable on false zeros.
+    const warning = await screen.findByText(/score as never watched/);
+    expect(warning).toHaveClass("notice-warn");
+    expect(warning).toHaveTextContent("repair its history in Tautulli");
+  });
+});
+
 // than unread.
 describe("the groups below the form, through a failed refetch", () => {
   /** A cold mount whose queryClient the test keeps, so it can invalidate one key by hand. */
@@ -748,8 +863,10 @@ describe("the groups below the form, through a failed refetch", () => {
 
   const NEVER_LOADED_LIBS = /Couldn't load the library list/;
   const NEVER_LOADED_SHELF = /Couldn't load the Leaving Soon settings/;
+  const NEVER_LOADED_WATCH = /Couldn't load the watch history record/;
   const STALE_LIBS = /Couldn't check the library list just now/;
   const STALE_SHELF = /Couldn't check the Leaving Soon settings just now/;
+  const STALE_WATCH = /Couldn't check the watch history record just now/;
   // Rule 144: the noun is the `what` prop of StaleReadNotice, which owns the sentence. Deleting
   // either `what` here leaves the loose form below green, so each is asserted by its own noun.
   const WHAT_HINT =
@@ -783,6 +900,36 @@ describe("the groups below the form, through a failed refetch", () => {
     expect(screen.getByRole("switch", { name: "Let Reaper touch Movies" })).toBe(toggle);
     expect(toggle).toBeEnabled();
     expect(screen.getByRole("button", { name: "Refresh libraries" })).toBeEnabled();
+  });
+
+  it("keeps the watch-history control when the refetch fails", async () => {
+    const queryClient = renderWithClient();
+    await screen.findByRole("button", { name: "Forget…" });
+
+    apiMock.watchEvidence.mockRejectedValue(new Error("boom"));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["watch-evidence"] });
+    });
+    await waitFor(() => expect(apiMock.watchEvidence).toHaveBeenCalledTimes(2));
+
+    const stale = await screen.findByText(STALE_WATCH);
+    expect(stale, WHAT_HINT).toHaveTextContent(STALE_WATCH);
+    expect(stale).toHaveClass("notice-warn");
+    // The claim that matters: this is the way out of a library-wide hold, so a failed refetch
+    // must not take it off screen while the last good answer is still in hand.
+    expect(screen.queryByText(NEVER_LOADED_WATCH)).toBeNull();
+    expect(screen.getByRole("button", { name: "Forget…" })).toBeEnabled();
+  });
+
+  it("still says the watch record never loaded when the first read is the one that fails", async () => {
+    apiMock.watchEvidence.mockRejectedValue(new Error("boom"));
+    renderWithClient();
+
+    expect(await screen.findByText(NEVER_LOADED_WATCH)).toBeInTheDocument();
+    // Nothing was ever held, so there is no control for the stale line to be about, and offering
+    // a reset whose current state we could not read would be a button with no stated effect.
+    expect(screen.queryByText(STALE_WATCH)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();
   });
 
   it("still says the library list never loaded when the first read is the one that fails", async () => {

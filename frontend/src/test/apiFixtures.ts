@@ -13,7 +13,7 @@
 // held back), seasons collapsed, spares kept forever. A test that cares about any of these sets
 // its own value -- these exist so a test that does NOT care never has to think about them.
 import type { QueryClient } from "@tanstack/react-query";
-import type { GeneralSettings, ProfileSettings, ScanStatus } from "../api";
+import type { GeneralSettings, ProfileSettings, ScanStatus, WatchEvidence } from "../api";
 
 export const DEFAULT_PROFILE: ProfileSettings = {
   max_items_per_run: 10,
@@ -36,6 +36,11 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   proxy_trust_enabled: false,
   trusted_proxies: [],
 };
+
+/** No watch record held, and the last scan held nothing back: the state a fresh install
+ *  is in, and the one that renders the Plex panel's watch-history group at rest. Picked so
+ *  a tree that was silently rendering the failed read keeps rendering the same thing. */
+export const DEFAULT_WATCH_EVIDENCE: WatchEvidence = { titles: 0, held_back: 0 };
 
 /** Nothing running -- the shape `api.scanStatus` returns between scans. */
 export const IDLE_SCAN: ScanStatus = {

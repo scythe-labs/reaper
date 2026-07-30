@@ -17,7 +17,12 @@ import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthUser, CandidatePage, SetupStatus } from "./api";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN } from "./test/apiFixtures";
+import {
+  DEFAULT_GENERAL,
+  DEFAULT_PROFILE,
+  DEFAULT_WATCH_EVIDENCE,
+  IDLE_SCAN,
+} from "./test/apiFixtures";
 import { testQueryClient } from "./test/queryClient";
 import { expectNoA11yViolations } from "./test/a11y";
 import { App } from "./App";
@@ -47,6 +52,7 @@ const { apiMock } = vi.hoisted(() => ({
     plexStatus: vi.fn(),
     plexResources: vi.fn(),
     plexLibraries: vi.fn(),
+    watchEvidence: vi.fn(),
     leavingSoonSettings: vi.fn(),
     // Mutations. Never called on a render, but a missing name is still a hole in the module.
     logout: vi.fn(),
@@ -152,6 +158,7 @@ beforeEach(() => {
   });
   apiMock.plexResources.mockResolvedValue({ source: "plex.tv", servers: [], owner_username: null });
   apiMock.plexLibraries.mockResolvedValue([]);
+  apiMock.watchEvidence.mockResolvedValue(DEFAULT_WATCH_EVIDENCE);
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,

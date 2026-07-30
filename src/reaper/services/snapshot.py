@@ -1030,6 +1030,9 @@ async def scan(
             # reason on its facts; the reading is carried out here only so both lanes' marks
             # are raised in one write below.
             watch_readings[judgment.media_key] = judgment.watch_reading
+        if judgment.watch_blind_reason is not None:
+            # Counted from the decision the TV lane already made, never re-derived here.
+            watch_blind += 1
         size_sources[_size_bucket(judgment.size_source)] += 1
         if judgment.size_source is None:
             log.info(
@@ -1114,12 +1117,16 @@ async def scan(
     # reading cannot lower it, and the next scan therefore asks the same question against the
     # same evidence instead of quietly accepting zero as the new truth.
     await watch_evidence.record(session, watch_readings, now=now)
+    # Stored so Settings can say how many items the last scan held back for this reason,
+    # which is the one number that tells an operator whether they need the reset at all.
+    # Always written, zero included: a scan that counted none is a different fact from a
+    # snapshot that never counted, which stays NULL.
+    snapshot.watch_blind_items = watch_blind
     if watch_blind:
         log.warning(
             "scan.watch_history_unreadable_total",
-            media_type="movie",
             items=watch_blind,
-            of=len(items),
+            of=total,
         )
 
     score_ms = round((time.monotonic() - score_started) * 1000)

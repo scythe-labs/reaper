@@ -174,6 +174,11 @@ class SeasonJudgment:
     the high-water marks. ``None`` when the season resolved to no Plex key, which is not the
     same as zero: an unmatched season was never looked up, and recording a zero for it would
     hold its true mark down and stop the check ever firing for it (rule 93)."""
+
+    watch_blind_reason: str | None = None
+    """Set when this season's watch history stopped being readable, and already applied to
+    ``facts``. Carried so the caller can COUNT it without deciding it a second time: one
+    decision, made where the marks are compared, read everywhere else."""
     # Display fields, carried onto the candidate. A season's poster/blurb/year are the
     # show's; ``group_key``/``group_title`` collapse every season under one show row in the
     # review queue. None of them affect the verdict.
@@ -1810,6 +1815,7 @@ def _judge_series(
                 facts=facts,
                 guard_result=guard_result(plan, n),
                 watch_reading=reading,
+                watch_blind_reason=season_blind,
                 year=show_year,
                 summary=show_summary,
                 requested_by=season_requester_name,

@@ -981,8 +981,11 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # Then 109: the service form's malformed-external-URL complaint became a notice of its own beside
 # the box it is about, instead of a sentence written into the form's shared error slot 150 lines
 # below it, which is where a failed save and a failed connection test also land (#174, rule 42).
+# Then 112: the Plex panel's watch-history group added three at once, which is one group's full
+# set -- a never-loaded error, an action failure, and a standing warning that says what pressing
+# the control costs.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 109
+_EXPECTED_NOTICES = 112
 
 
 def _shipped_tsx() -> list[Path]:
@@ -1095,7 +1098,7 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
     "frontend/src/components/LogsPanel.tsx": 1,
-    "frontend/src/components/PlexPanel.tsx": 4,
+    "frontend/src/components/PlexPanel.tsx": 5,
     "frontend/src/components/PolicyEditor.tsx": 4,
     "frontend/src/components/PolicyRuleEditors.tsx": 2,
     "frontend/src/components/ReapBreakdown.tsx": 2,

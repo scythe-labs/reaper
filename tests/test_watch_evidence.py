@@ -24,9 +24,6 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.main import create_app
-from tests._auth import login
-
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -35,9 +32,11 @@ from reaper.db.models import WatchHighWater
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Known, Unknown
+from reaper.main import create_app
 from reaper.services import lists, season_scan, watch_evidence
 from reaper.services.snapshot import RawItem, ScanContext, build_facts
 from reaper.services.watch_evidence import Mark, Reading, went_blind
+from tests._auth import login
 
 # Whole seconds. ``UtcTimestamp`` stores epoch seconds (``db.types.EpochDateTime``), so a
 # microsecond here would survive in memory and not in the row, and every round-trip

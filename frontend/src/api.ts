@@ -747,6 +747,16 @@ export interface LeavingSoonResult {
   problems: string[];
 }
 
+export interface WatchEvidence {
+  /** How many titles Reaper holds a watch record for. */
+  titles: number;
+  /** How many items the LAST scan held back because their plays stopped being readable.
+   *  `null` when no scan has recorded it, either because none has run or because the newest
+   *  one predates the count. Render that as "not recorded", never as zero: a scan that did
+   *  not count is not a scan that counted none. */
+  held_back: number | null;
+}
+
 export interface LeavingSoonSettings {
   enabled: boolean;
   allow_unarmed: boolean;
@@ -1444,6 +1454,9 @@ export const api = {
   syncPlexLibraries: () => post<PlexLibrary[]>("/api/settings/plex/libraries/sync", {}),
   setPlexLibraries: (enabled_keys: number[]) =>
     put<PlexLibrary[]>("/api/settings/plex/libraries", { enabled_keys }),
+
+  watchEvidence: () => request<WatchEvidence>("/api/settings/watch-evidence"),
+  resetWatchEvidence: () => post<{ forgotten: number }>("/api/settings/watch-evidence/reset", {}),
 
   leavingSoonSettings: () => request<LeavingSoonSettings>("/api/settings/leaving-soon"),
   setLeavingSoonSettings: (body: { enabled?: boolean; allow_unarmed?: boolean }) =>

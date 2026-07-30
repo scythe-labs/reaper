@@ -9,7 +9,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
-import { DEFAULT_GENERAL, seedSettings } from "../test/apiFixtures";
+import { DEFAULT_GENERAL, DEFAULT_WATCH_EVIDENCE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { PANELS as DECLARED_PANELS, Settings } from "./Settings";
 
@@ -27,6 +27,7 @@ const { apiMock } = vi.hoisted(() => ({
     plexLibraries: vi.fn(),
     syncPlexLibraries: vi.fn(),
     setPlexLibraries: vi.fn(),
+    watchEvidence: vi.fn(),
     leavingSoonSettings: vi.fn(),
     setLeavingSoonSettings: vi.fn(),
     syncLeavingSoon: vi.fn(),
@@ -109,6 +110,7 @@ beforeEach(() => {
   });
   apiMock.plexResources.mockResolvedValue({ source: "plex.tv", servers: [] });
   apiMock.plexLibraries.mockResolvedValue([]);
+  apiMock.watchEvidence.mockResolvedValue(DEFAULT_WATCH_EVIDENCE);
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,
