@@ -249,6 +249,7 @@ async def _run_out(
                 body=json.loads(s.body_json) if s.body_json else None,
                 state=s.state.value,
                 is_canary=s.ordinal == 0,
+                error=s.error,
             )
             for s in steps
         ],

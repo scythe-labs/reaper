@@ -589,6 +589,17 @@ class ActionStepOut(BaseModel):
     state: str
     is_canary: bool
 
+    error: str | None = None
+    """Why this step failed or was skipped, as the executor recorded it. ``None`` on a step
+    that has not run or that succeeded.
+
+    Already operator copy: ``_fail`` and ``_skip`` write ONE sentence and use it for both this
+    column and ``StepOutcome.detail``, which the after-action report already shows. The
+    difference is only that this one is durable -- the report lives in memory on ``app.state``,
+    so before this a restart left the table saying a step failed with nothing saying why, while
+    the reason sat in the row the whole time (#260). Never add a message here that is not
+    already fit for the operator to read (rule 21)."""
+
 
 class RunOut(BaseModel):
     """A planned or executed reap run: the durable record of what Reaper would do."""

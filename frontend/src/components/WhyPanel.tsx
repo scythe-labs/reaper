@@ -273,6 +273,37 @@ function KeptNotice({
   );
 }
 
+/** How many Plex listings this one file answers to, when it answers to more than one.
+ *
+ *  Quiet and neutral, on the shared `.chip` base with the other facts on this line (rule 18, so
+ *  no new CSS): how many times a file is listed is a fact about the library, never an argument
+ *  for its fate. Silent below two, which covers both the ordinary single-listing bind (the
+ *  server sends null) and a record stored before the field shipped -- "Listed 1 time" on every
+ *  item would be noise, and this line is scanned.
+ *
+ *  Worth a chip at all because the count is load-bearing on the deletion path: the executor
+ *  re-reads `merged_rating_keys`, so a watch on ANY of these listings counts for the file and
+ *  all of them go together. The operator was told none of that before (#260). The chip carries
+ *  the number and the `title` carries that consequence, which is the same split `LibraryChip`
+ *  already uses.
+ *
+ *  NOT on `ShowPanel` (rule 72): its group has no `match` record, so there is no count to read
+ *  there. Carrying it over is a backend change (a merged count on the group payload) and is
+ *  deferred rather than half-done -- a season panel silently omitting a fact the movie panel
+ *  states would be worse than both being quiet. */
+export function MergedListingChip({ match }: { match: Match | undefined }) {
+  const listings = match?.merged_rating_keys?.length ?? 0;
+  if (listings < 2) return null;
+  return (
+    <span
+      className="chip"
+      title={`Listed ${listings} times in your Plex. A watch on any of them counts, and all ${listings} go together.`}
+    >
+      Listed {listings}&times;
+    </span>
+  );
+}
+
 /** The Plex rows Reaper was choosing between when it refused to choose.
  *
  *  Every other jump link on this panel is built from the item's own rating key, which is null
@@ -1107,6 +1138,9 @@ export function WhyPanel({
             {/* The Plex library the file lives in -- same quiet chip as the cards, so movies
                 and seasons read the same. */}
             <LibraryChip library={item.library} />
+            {/* Next to the library, because both answer "where does this file live in Plex".
+                Silent on the ordinary single-listing bind. */}
+            <MergedListingChip match={explanation.match} />
             {/* All three states here: the panel is where you came to find out. The card
                 stays quiet about a show that is still going. */}
             <ShowStatusChip status={item.show_status} />

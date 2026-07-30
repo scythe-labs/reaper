@@ -81,7 +81,17 @@ function Steps({ run }: { run: Run }) {
                 </code>
                 {step.body && <code className="step-body">{JSON.stringify(step.body)}</code>}
               </td>
-              <td className="muted">{step.state}</td>
+              {/* The stored reason sits under the state it explains, not in a column of its
+                  own: this table already has a wider minimum than a phone (see .table-scroll
+                  above) and a fifth column would push it further, for a cell that is empty on
+                  every step that went fine. `error` is already operator copy -- the executor
+                  writes one sentence and shows the same one live -- so the only thing new here
+                  is that it survives a restart, which is exactly when the live copy is gone
+                  and the table used to say "failed" and nothing else (#260). */}
+              <td className="muted">
+                {step.state}
+                {step.error && <span className="step-why">{step.error}</span>}
+              </td>
             </tr>
           ))}
         </tbody>

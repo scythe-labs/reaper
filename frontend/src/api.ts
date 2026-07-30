@@ -272,9 +272,20 @@ export interface Match {
    *  hold exactly one copy). Saying the first when it is the second sends the owner hunting
    *  for a duplicate that is not there. */
   status: "matched" | "unmatched" | "ambiguous" | "conflicted" | null;
+  /** Which kind of evidence bound this item, e.g. `tmdb`. Audit vocabulary, so it is declared
+   *  here and deliberately not rendered: rule 21 keeps id kinds off the panel. It is typed so
+   *  the next reader of this file finds it instead of re-discovering the drift (#260).
+   *  Optional like `candidate_rating_keys` below, which the server also always sends: these
+   *  are the fields no component reads, so fixtures are not made to carry them. */
+  by?: string | null;
   /** For the audit log, not shown to the owner: "Bound by TMDB id 1001", etc. */
   detail: string | null;
   rating_key: number | null;
+  /** Every Plex listing a merged bind covers, when one file is listed several times. Null on
+   *  an ordinary single-listing bind, and on a record stored before this shipped. Load-bearing
+   *  on the deletion path -- the executor re-reads this list, so the listings are protected
+   *  together -- which is why the panel says the count out loud. */
+  merged_rating_keys?: number[] | null;
   /** The Plex rows an abstain was choosing between, on `ambiguous` and `conflicted`. The
    *  panel renders `links.match_candidates` rather than these numbers; they are here so a
    *  reader can tell how many there were without following the links. */
@@ -569,6 +580,11 @@ export interface ActionStep {
   body: Record<string, unknown> | null;
   state: string;
   is_canary: boolean;
+  /** Why this step failed or was skipped, as the executor recorded it. Null on a step that
+   *  has not run or that succeeded. Already operator copy: the executor writes one sentence
+   *  and uses it both here and in the after-action report, and the report is the half that
+   *  does not survive a restart. */
+  error: string | null;
 }
 
 export interface Run {

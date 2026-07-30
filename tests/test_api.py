@@ -26,6 +26,7 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import (
+    ActionStep,
     Candidate,
     FirstFlagged,
     Instance,
@@ -33,6 +34,7 @@ from reaper.db.models import (
     PlexServer,
     Profile,
     Snapshot,
+    StepState,
 )
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.policy import (
@@ -379,6 +381,42 @@ class TestTheRunsApi:
         assert step["body"] == {"deleteFiles": True, "addImportExclusion": True}
         # No credential is ever in a journalled step.
         assert "api_key" not in json.dumps(step).lower()
+
+    def test_a_failed_step_reads_back_why_it_failed(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The journal's reason survives the process that wrote it (#260).
+
+        `action_step.error` was durable and on no response schema, so the live reason lived
+        only in memory on `app.state`: a restart left the plan table saying a step failed and
+        nothing saying why, while the row held the sentence the whole time. This drives that
+        exact shape -- the state and the reason are written straight to the row, then read
+        back over HTTP through a response built from nothing but the database.
+
+        The reason is already operator copy; the executor writes one sentence and uses it for
+        this column and for the live report both.
+        """
+        run = client.post("/api/runs").json()
+        reason = "Radarr accepted the delete; not confirmed. Reaper could not reach it again."
+
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        with Session(engine) as session:
+            step = session.execute(
+                select(ActionStep).where(ActionStep.run_id == run["id"])
+            ).scalar_one()
+            step.state = StepState.FAILED
+            step.error = reason
+            session.commit()
+
+        read_back = client.get(f"/api/runs/{run['id']}").json()["steps"][0]
+        assert read_back["state"] == "failed"
+        assert read_back["error"] == reason
+
+    def test_a_step_that_has_not_run_carries_no_reason(self, client: TestClient) -> None:
+        """The other direction, so the field above cannot pass by always being populated:
+        a freshly planned step has nothing to explain and says nothing."""
+        run = client.post("/api/runs").json()
+        assert run["steps"][0]["error"] is None
 
     def test_a_dry_run_walks_the_plan_and_deletes_nothing(self, client: TestClient) -> None:
         run = client.post("/api/runs").json()

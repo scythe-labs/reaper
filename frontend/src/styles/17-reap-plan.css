@@ -61,6 +61,19 @@
   margin-left: 0.4rem;
   color: var(--muted);
 }
+/* Why a step failed or was skipped, under the state it explains. A block so it takes its own
+   line rather than running on from the state word, and capped in `ch` because the State column
+   is the narrowest in the table: left to the column it would set the table's width from one
+   long sentence and push the whole thing sideways. `overflow-wrap` because the sentence can
+   carry a title or a path the operator did not choose (rule 139). */
+.step-why {
+  display: block;
+  margin-top: 0.25rem;
+  max-width: 34ch;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 .canary-tag {
   margin-left: 0.4rem;
   font-size: 0.65rem;

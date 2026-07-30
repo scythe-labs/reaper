@@ -11,7 +11,13 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type CandidateDetail, type GateOutcome, type SignalContribution } from "../api";
+import {
+  api,
+  type CandidateDetail,
+  type GateOutcome,
+  type Match,
+  type SignalContribution,
+} from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
@@ -1003,6 +1009,51 @@ describe("the season footer's own-vs-show decision", () => {
     await user.click(screen.getByRole("button", { name: /Reaping/ }));
     // The season key, never the show key -- the whole-show spare is untouched.
     expect(api.clearOverride).toHaveBeenCalledWith("sonarr:1:2:3");
+  });
+});
+
+// One file listed several times in Plex (#260). `merged_rating_keys` was populated, crossed the
+// wire, and the TS `Match` type never declared it, so no component could read it -- while the
+// executor re-reads the same list, meaning every listing really is protected together and the
+// operator was told none of it.
+//
+// The count is deliberately absent below two, and the two silent cases are different: the server
+// sends `null` on an ordinary single-listing bind, and a record stored before the field shipped
+// has no key at all. Both must draw nothing, because "Listed 1 time" on every item in the library
+// is noise on a line that is scanned rather than read.
+describe("the merged-listing count", () => {
+  const withMatch = (match: Partial<Match>) =>
+    detail(WORKED_ROWS, {
+      explanation: {
+        ...detail(WORKED_ROWS).explanation,
+        match: { status: "matched", detail: null, rating_key: 900, ...match },
+      },
+    });
+
+  it("says how many listings a merged bind covers", () => {
+    show(withMatch({ merged_rating_keys: [900, 901, 902] }));
+    const chip = screen.getByText(/Listed 3/);
+    expect(chip).toBeInTheDocument();
+    // The consequence rides on the title, the way `LibraryChip` carries its library name: the
+    // number alone does not say that a watch on any listing counts for the file.
+    expect(chip).toHaveAttribute("title", expect.stringMatching(/go together/i));
+  });
+
+  it("stays quiet on an ordinary single-listing bind", () => {
+    show(withMatch({ merged_rating_keys: null }));
+    expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
+  });
+
+  it("stays quiet on a record stored before the field shipped", () => {
+    // The key is absent entirely, not null -- which is the shape an older row really has, and
+    // a different code path from the one above (rule 142's three-state).
+    show(withMatch({}));
+    expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
+  });
+
+  it("stays quiet on a single merged key, which says nothing worth a chip", () => {
+    show(withMatch({ merged_rating_keys: [900] }));
+    expect(screen.queryByText(/^Listed /)).not.toBeInTheDocument();
   });
 });
 

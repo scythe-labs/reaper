@@ -66,6 +66,10 @@ const run = {
     method: "DELETE",
     path: `/api/v3/movie/${step.ordinal}`,
     body: null,
+    // A planned step has not run, so it has nothing to explain. The failure shape is driven
+    // separately below rather than from here, so this fixture keeps covering the ordinary
+    // plan where no row carries a reason.
+    error: null,
   })),
 } as Run;
 
@@ -186,6 +190,31 @@ describe("the plan the page is showing", () => {
     });
     apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: false });
     apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
+  });
+
+  it("says why a step failed, on a plan reloaded after the run that failed it", async () => {
+    // #260: `error` is durable and the live report is not, so this is the state a restart
+    // leaves -- the run is read back from the database alone. Before, the row said "failed"
+    // and the operator had no way to reach the reason at all.
+    const reason = "Radarr accepted the delete; not confirmed. Reaper could not reach it again.";
+    const failed = {
+      ...run,
+      state: "completed",
+      steps: [{ ...run.steps[0]!, state: "failed", error: reason }, run.steps[1]!],
+    } as Run;
+    apiMock.createRun.mockResolvedValue(failed);
+    apiMock.run.mockResolvedValue(failed);
+
+    await buildPlan();
+
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+  });
+
+  it("leaves the reason out of a step that has not run", async () => {
+    // The other direction, so the assertion above cannot pass by rendering a reason on every
+    // row: the ordinary planned fixture carries `error: null` and draws nothing.
+    const { container } = await buildPlan();
+    expect(container.querySelector(".step-why")).toBeNull();
   });
 
   it("stops offering Execute once the run it shows has been spent", async () => {
