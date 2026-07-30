@@ -47,8 +47,10 @@ load-bearing:
    returns the same ``rating_key`` and ``media_index`` for the fallback.
 3. Each season row carries its OWN ``added_at`` -- the date that season's files landed,
    not the show's -- so a season backfilled into an old show reads as recently arrived.
-   Dormancy is floored on this; a season whose ``added_at`` cannot be read is
-   Unknown-dormant and therefore abstains, never condemned off the show's old date.
+   Dormancy is floored on this, never on the show's old date. A season whose ``added_at``
+   cannot be read is still judged when it has a play, because dormancy IS days since the
+   last play (``engine.dormancy.reference_instant``); only a season with neither a play nor
+   an arrival date has nothing to measure from, and that one is Unknown-dormant and abstains.
 
 All are the documented shapes, but "documented" is not "verified", so the ambiguity policy
 and each fact are isolated in pure functions with fail-closed defaults rather than trusted
