@@ -893,11 +893,17 @@ describe("forgetting the recorded watch history", () => {
     const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
+        {/* `announce()` returns early when no region is listening, so without this the
+            sentence below is dropped and the test passes against silence. */}
+        <Announcer />
         <PlexPanel />
       </QueryClientProvider>,
     );
     return queryClient;
   }
+
+  const spoken = () =>
+    [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
 
   const PASSWORD = "correct-horse-battery";
 
@@ -970,7 +976,13 @@ describe("forgetting the recorded watch history", () => {
     // The second sentence is load-bearing: the stored candidates are frozen snapshot data, so
     // the queue does not move until the next scan. Without it the operator reads the unchanged
     // queue as "that did not work" and reaches for the policy next, which does cost files.
-    const status = await screen.findByText(/Forgotten for 1,284 titles/);
+    //
+    // Scoped to the visible row, because this sentence is on screen TWICE on purpose -- the live
+    // region says the same words (rule 144, pinned separately below), and an unscoped match
+    // finds both and throws.
+    const status = await screen.findByText(/Forgotten for 1,284 titles/, {
+      selector: ".set-status",
+    });
     expect(status).toHaveTextContent("The next scan uses what Plex holds now.");
   });
 
@@ -1027,6 +1039,42 @@ describe("forgetting the recorded watch history", () => {
   // protection from every title at once, so there is no direction here that is safe to offer on
   // a guess. `DeletionToggle` keeps its OFF direction live on an unreadable safety read because
   // that one can only make Reaper safer; this row has no such half.
+  // Both exits unmount the form and take the pressed button with them, so focus falls to
+  // `<body>` and the next Tab restarts at the top of the page. The successor is the button that
+  // opened the form, which is back in that slot by the next commit. Same handoff the two Saves
+  // on this panel make, through the same hook (rule 72).
+  it.each([
+    ["Confirm forget", "success"],
+    ["Cancel", "standing down"],
+  ])("hands focus back to Forget… after %s", async (press) => {
+    const user = userEvent.setup();
+    apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 3 });
+    renderPanel();
+
+    await arm(user);
+    await user.click(screen.getByRole("button", { name: press }));
+
+    const reopen = await screen.findByRole("button", { name: "Forget…" });
+    await waitFor(() => expect(reopen).toHaveFocus());
+  });
+
+  it("says how many it forgot out loud, not only on screen", async () => {
+    const user = userEvent.setup();
+    apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 1284 });
+    renderPanel();
+
+    await arm(user);
+    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
+
+    // The status line is the only thing that moves, and it sits in an unfocused subtree. Reads
+    // the same as the visible sentence (rule 144).
+    await waitFor(() =>
+      expect(spoken()).toContain(
+        "Forgotten for 1,284 titles. The next scan uses what Plex holds now.",
+      ),
+    );
+  });
+
   it("offers nothing to press until an admin password is set", async () => {
     apiMock.safety.mockResolvedValue({
       destructive_enabled: false,

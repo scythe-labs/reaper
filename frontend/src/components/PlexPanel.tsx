@@ -468,17 +468,35 @@ export function PlexPanel({
   // gates on it reads it there: a second copy of one fact is the copy that goes wrong (rule
   // 144). It is the same flag `DeletionToggle` branches on for the same reason.
   const safety = useSafety();
+  // Both exits from the confirm form unmount it and take the focused button with them, so focus
+  // would fall to `<body>` and the next Tab would restart at the top of the page. The successor
+  // is the button that opened the form, which is back in that slot by the next commit -- the
+  // same handoff the two Saves above make, through the same hook (rule 72).
+  const afterForget = useSuccessorFocus();
   const forgetWatchEvidence = useMutation({
     mutationFn: api.resetWatchEvidence,
     // The typed password is dropped on the way out on BOTH exits, success and refusal alike.
     // Holding it would leave the admin password sitting in component state for as long as the
     // panel stays mounted and refill the box on the next open, which is the shape S-5 was filed
     // for; `RestoreCard` clears on a refusal for the same reason.
+    //
+    // A refusal keeps the form, so it hands focus to nobody: the Confirm the operator pressed is
+    // still on screen, still holding focus, with the error beside it.
     onError: () => setForgetPassword(""),
     onSuccess: (result) => {
       setForgetting(false);
       setForgetPassword("");
       setForgotten(result.forgotten);
+      afterForget.arriving();
+      // The status line's own sentence, said out loud, because it is the only thing that moves
+      // and it sits in an unfocused subtree (rule 144: one fact, and the visible copy is a few
+      // lines down, so keep the two reading alike). From the settled mutation, never at
+      // issuance (rule 85).
+      announce(
+        `Forgotten for ${result.forgotten.toLocaleString()} ${
+          result.forgotten === 1 ? "title" : "titles"
+        }. The next scan uses what Plex holds now.`,
+      );
       // Refetch rather than patch: the reset moves `titles` to zero, but `held_back` is a
       // property of the LAST SCAN and does not change until the next one runs. Writing the
       // pair by hand here would have to restate that, and would be the place it drifts.
@@ -1078,6 +1096,7 @@ export function PlexPanel({
                           type="button"
                           disabled={forgetWatchEvidence.isPending}
                           onClick={() => {
+                            afterForget.arriving();
                             setForgetting(false);
                             setForgetPassword("");
                           }}
@@ -1087,6 +1106,7 @@ export function PlexPanel({
                       </form>
                     ) : (
                       <button
+                        ref={afterForget.ref as RefObject<HTMLButtonElement>}
                         className="ghost"
                         title="Reaper starts from what Plex holds now"
                         onClick={() => {
