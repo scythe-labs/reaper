@@ -2025,6 +2025,50 @@ on `incomplete` as well as on `violations` — an undecided rule is not a passin
 ambiguous-but-present, which no scanner can judge. A brace-aware scan over `<select>` elements
 was kept, because that population is small, enumerable, and pinned by count.
 
+## A Plex rating key moves, and Tautulli's history does not follow it (2026-07-30)
+
+Reaper reads its watch mirror by the rating key an item carries *now*. Whether that is safe
+turns on two questions, both answered here rather than assumed.
+
+- **Tautulli never remaps a historical rating key on its own.** Across the whole source tree,
+  the only code that rewrites one is `datafactory.update_metadata` /
+  `update_metadata_details`, and it is reachable from exactly two places: the "Fix Metadata"
+  button on the item info page, and the API command of the same name. No scheduled job calls
+  it (the eleven are update check, DB optimize, two backups, server URLs, Plex update check,
+  refresh users, refresh libraries, server response, websocket ping, token expiry), and
+  neither does any websocket handler or library refresh. Tautulli's own maintainer ships a
+  **standalone script** for the repair, which is the strongest evidence it is not automatic.
+- **Playing the item does not fix it either.** `activity_handler.process` compares a guid, but
+  `last_guid` comes from the *temp session* row and the re-read is gated to live TV: it decides
+  "same item, keep this session" versus "force-stop and start a new one".
+  `activity_processor.write_session_history` writes the new play under the *current* key and
+  consults guid only to set `reference_id` for grouping, looking back **one day** per user, so
+  it will not even group a re-added item's new plays with its pre-removal ones.
+
+⇒ A re-added file's earlier plays stay filed under the old key indefinitely, and re-syncing
+cannot help: the mirror is faithfully copying rows that are themselves stale.
+
+**Why the fix is not "key the mirror on the guid".** Measured against a live library: live movie
+items outnumber their distinct guids, and **about one guid in twenty-five sits on more than one
+live rating key** — the same title held twice, HD and [redacted]. A guid does not identify one item, so a
+guid-keyed mirror would pool two separate candidates' plays. `media_key` does separate them:
+of 21 titles present twice, all 21 carry two distinct `media_key`s *and* two distinct rating
+keys. History rows do carry a guid (100% of a 5,000-row window, from
+`session_history_metadata.guid`), and they are almost all `plex://`, so the ids cannot be
+parsed out of them without Plex's side anyway.
+
+**A negative result, and its limit.** Across 31 stored snapshots no `media_key` changed its
+`plex_rating_key` — 0 of [redacted] movies and 0 of [redacted] seasons. That is not evidence the
+mechanism is rare: those snapshots span **6.7 days** and every `reap_run` in that window is
+still `PLANNED`, so nothing was ever deleted and no file ever came back. The window contains
+none of the trigger.
+
+⇒ Hence the shape of the guard: not a remap, which would have to trust a key Plex may have
+reissued to something else, but the one invariant that needs no key at all. All-time watch
+evidence cannot fall, so a count that drops to zero (or a last play that moves earlier) is a
+transition no library can perform, and the honest answer is `Unknown` rather than a measured
+zero. A never-watched item reads zero on every scan, so it never trips it.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

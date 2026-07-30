@@ -88,7 +88,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource, merge_by_source
-from reaper.services import library_index, lists, requested_by
+from reaper.services import library_index, lists, requested_by, watch_evidence
 from reaper.services.display_meta import build_ratings_json, dataset_lookup
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.season_pruning import (
@@ -169,6 +169,11 @@ class SeasonJudgment:
 
     facts: Facts
     guard_result: GateResult
+    watch_reading: watch_evidence.Reading | None = None
+    """What this scan measured for the season's watch history, for the caller to fold into
+    the high-water marks. ``None`` when the season resolved to no Plex key, which is not the
+    same as zero: an unmatched season was never looked up, and recording a zero for it would
+    hold its true mark down and stop the check ever firing for it (rule 93)."""
     # Display fields, carried onto the candidate. A season's poster/blurb/year are the
     # show's; ``group_key``/``group_title`` collapse every season under one show row in the
     # review queue. None of them affect the verdict.
@@ -554,6 +559,13 @@ def build_season_facts(
     show_ended: Observation[bool] = _UNSET_OBS,
     genres: Observation[str] = _UNSET_OBS,
     show_match_status: identity.MatchStatus | None = None,
+    # Set when this season measured fewer plays than it has measured before, which a
+    # library cannot do -- see ``services.watch_evidence``. The season's history is read by
+    # its Plex ``parent_rating_key``, and a re-added season carries a new one while its
+    # earlier plays stay filed under the old, so "no rows" is ambiguous between churn and a
+    # season nobody watched. When set, dormancy and both watcher counts below are Unknown
+    # instead of a measured zero, exactly as on the movie path (rule 72).
+    watch_blind_reason: str | None = None,
 ) -> Facts:
     """Assemble one season's evidence, with the same Unknown-discipline as the movie path.
 
@@ -611,7 +623,13 @@ def build_season_facts(
         # added_at is missing, whatever history it holds. Only the both-missing arm matches
         # it: a season with neither a play nor an added-at goes Unknown -- which protects --
         # exactly as a movie with no added-at date does.
-        if last_played is not None:
+        if watch_blind_reason is not None:
+            # Before either measurable arm, and for the same reason as the movie path: a
+            # re-added season carries a fresh added_at, so the arm below would measure a
+            # confident, tiny dormancy off the one input that still looks readable when the
+            # plays behind it are not.
+            dormancy = Unknown(reason=watch_blind_reason, source="tautulli")
+        elif last_played is not None:
             reference = reference_instant(
                 last_played=last_played, added_at=last_played, horizon=horizon
             )
@@ -634,8 +652,12 @@ def build_season_facts(
                 plex_rating_key=plex_rating_key,
             )
             dormancy = Unknown(reason="no added-at date for this season", source="tautulli")
-        recent = Known(value=watchers_window or 0, source="tautulli")
-        all_time = Known(value=watchers_all_time or 0, source="tautulli")
+        if watch_blind_reason is not None:
+            recent = Unknown(reason=watch_blind_reason, source="tautulli")
+            all_time = Unknown(reason=watch_blind_reason, source="tautulli")
+        else:
+            recent = Known(value=watchers_window or 0, source="tautulli")
+            all_time = Known(value=watchers_all_time or 0, source="tautulli")
         if activity_degraded:
             streaming = Unknown(reason="could not read active sessions", source="tautulli")
         else:
@@ -1123,6 +1145,12 @@ async def gather(
     flag_keep_conflicts: bool = True,
     membership_index: lists.MembershipIndex | None = None,
     allowed_sections: set[int] | None = None,
+    # The most watch evidence ever measured for each item, read once by the caller (which
+    # holds the session; this task does not). Handed in whole rather than filtered because a
+    # season ``media_key`` is derived here, so there is nothing to filter on until it is too
+    # late. Empty is the honest default: no marks means nothing can have fallen, so no
+    # season is ever flagged on the strength of a map that was not supplied.
+    watch_marks: Mapping[str, watch_evidence.Mark] | None = None,
 ) -> list[SeasonJudgment]:
     """Gather the seasons of every show with content on disk, ready to judge.
 
@@ -1523,6 +1551,7 @@ async def gather(
                 ratings=ratings,
                 ratings_degraded=ratings_degraded,
                 membership_index=membership_index,
+                watch_marks=watch_marks or {},
             )
         )
 
@@ -1558,6 +1587,7 @@ def _judge_series(
     # shipped policy has, and 0 means the hold never expires -- so every caller that omitted
     # it was exercising an unbounded claim the mirror cannot support (rule 141).
     in_progress_hold_days: int = 180,
+    watch_marks: Mapping[str, watch_evidence.Mark] | None = None,
     keep_specials: bool = True,
     protect_incomplete_seasons: bool = True,
     flag_keep_conflicts: bool = True,
@@ -1707,11 +1737,26 @@ def _judge_series(
             if request_index is not None
             else Unknown(reason="requests not loaded", source="seerr")
         )
+        # A season's history is read by its own Plex key, so the same fall this scan can
+        # detect for a movie is detectable here, against the same marks (rule 72).
+        reading = watch_evidence.reading_for(plex_key, stats.watchers_all_time, stats.last_played)
+        season_blind = (
+            watch_evidence.went_blind((watch_marks or {}).get(media_key), reading)
+            if reading is not None
+            else None
+        )
+        if season_blind is not None:
+            log.warning(
+                "scan.watch_history_unreadable",
+                media_key=media_key,
+                media_type="season",
+            )
         facts = build_season_facts(
             title=title,
             season=season,
             rank=ranks.get(n),
             plex_rating_key=plex_key,
+            watch_blind_reason=season_blind,
             season_added_at=in_plex.added_at if in_plex else None,
             horizon=horizon,
             reach_days=reach_days,
@@ -1764,6 +1809,7 @@ def _judge_series(
                 size_source=SizeSource.SONARR if season.size_on_disk is not None else None,
                 facts=facts,
                 guard_result=guard_result(plan, n),
+                watch_reading=reading,
                 year=show_year,
                 summary=show_summary,
                 requested_by=season_requester_name,

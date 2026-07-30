@@ -583,6 +583,47 @@ class FirstFlagged(Base):
     last_seen_condemned_at: Mapped[UtcTimestamp]
 
 
+class WatchHighWater(Base):
+    """The most watch evidence Reaper has ever measured for an item.
+
+    A Plex rating key is not stable. Let a file go away and come back and Plex issues a
+    NEW one, while Tautulli keeps every earlier play filed under the old one -- verified
+    against Tautulli's source: only ``update_metadata_details``, reached by a human
+    clicking "Fix Metadata", ever moves them, and no scheduled task calls it. Reaper reads
+    the mirror by the key the item carries *now*, so those plays go invisible and the item
+    reads as never watched, which is maximum condemn pressure on a title somebody watched.
+
+    Nothing in the read path can tell that apart from a genuinely unwatched item: both are
+    simply "no rows for this key". So the high-water mark is kept here instead. All-time
+    watch evidence can only grow -- the mirror never deletes, and a Tautulli prune is
+    caught separately by ``history_sync._check_regression`` -- so a count that falls to
+    zero from a positive one is a transition no library can make, and that is the signal.
+    ``services.watch_evidence`` does the comparing.
+
+    Outside the snapshot lifecycle, and that is the whole point: comparing against only
+    the previous snapshot would let the FIRST blind scan write zero as the new baseline,
+    after which 0 -> 0 is no longer a fall and the blindness is never noticeable again.
+
+    Keyed by the stable ``media_key``, never the Plex rating key -- which is the thing
+    that moved.
+    """
+
+    __tablename__ = "watch_high_water"
+
+    media_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    watchers_all_time: Mapped[int] = mapped_column(Integer, default=0)
+    """The largest all-time distinct-watcher count ever measured for this item. Only ever
+    raised, so it survives a scan that read the item blind."""
+
+    last_played_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """The latest play ever measured. ``NULL`` means no play has ever been seen, which is
+    the ordinary state of a never-watched item and never fires the check."""
+
+    updated_at: Mapped[UtcTimestamp]
+    """When the mark last moved. Diagnostic only: nothing reads it to make a decision."""
+
+
 class WhitelistEntry(Base):
     """An item the owner spared by hand -- "never reap this", from the review queue.
 

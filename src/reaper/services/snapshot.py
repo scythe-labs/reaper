@@ -70,6 +70,7 @@ from reaper.services import (
     lists,
     requested_by,
     season_scan,
+    watch_evidence,
     whitelist,
 )
 from reaper.services.condemned import reap_override_verdict
@@ -232,12 +233,21 @@ def build_facts(
     watchers_all_time: dict[int, int],
     whitelisted: set[str],
     request_index: requested_by.RequestIndex | None = None,
+    watch_blind_reason: str | None = None,
 ) -> Facts:
     """Assemble one item's evidence.
 
     Note how often ``Unknown`` appears. Every one of them is a place where a naive
     implementation would have written ``0``, ``[]`` or ``False`` -- and every one of
     those would have quietly condemned an item we know nothing about.
+
+    ``watch_blind_reason`` is one more of them, and it is the only one the item's own
+    evidence cannot reveal: set when ``services.watch_evidence`` finds this item measured
+    fewer plays than it has measured before, which a library cannot do. The mirror is read
+    by the rating key the item carries now, and a re-added file carries a new one while its
+    earlier plays stay filed under the old, so "no rows" is ambiguous between churn and a
+    genuinely unwatched item. When it is set, dormancy and both watcher counts are Unknown
+    rather than a measured zero.
     """
     rating_key = item.plex_rating_key
     # The three no-key states are DIFFERENT stories and the why-panel must not conflate
@@ -258,6 +268,11 @@ def build_facts(
     dormancy: Observation[float]
     if rating_key is None:
         dormancy = Unknown(reason=no_key_reason, source="plex")
+    elif watch_blind_reason is not None:
+        # Checked BEFORE added_at, because a re-added file has a fresh added_at and would
+        # otherwise measure a confident, tiny dormancy off it -- the one input that still
+        # looks readable when the plays behind it are not.
+        dormancy = Unknown(reason=watch_blind_reason, source="tautulli")
     elif item.added_at is None:
         # Matched to Plex, but Plex reports no arrival date. This lane takes Unknown on that
         # alone -- not because nothing could be measured: `last_played` is in scope right
@@ -292,6 +307,9 @@ def build_facts(
     if rating_key is None:
         recent = Unknown(reason=no_key_reason, source="plex")
         all_time = Unknown(reason=no_key_reason, source="plex")
+    elif watch_blind_reason is not None:
+        recent = Unknown(reason=watch_blind_reason, source="tautulli")
+        all_time = Unknown(reason=watch_blind_reason, source="tautulli")
     else:
         recent = Known(value=watchers_window.get(rating_key, 0), source="tautulli")
         all_time = Known(value=watchers_all_time.get(rating_key, 0), source="tautulli")
@@ -660,10 +678,14 @@ async def scan(
     # seasons to Plex, and reads their watch history from the same local mirror. A
     # movie-only deployment (no Sonarr) skips it entirely.
     season_task: asyncio.Task[list[season_scan.SeasonJudgment]] | None = None
+    # Read before the TV task is spawned, because that task holds no session of its own and
+    # its season keys do not exist yet. Serves both lanes: one read per scan, not per item.
+    watch_marks = await watch_evidence.recall_all(session)
     if sonarrs:
         season_task = _spawn(
             season_scan.gather(
                 engine,
+                watch_marks=watch_marks,
                 sonarrs=sonarrs,
                 tautulli=tautulli,
                 plex=plex,
@@ -880,6 +902,8 @@ async def scan(
     # judging every movie and season -- kept apart from the source-read wall above so a
     # slow scan is attributable to a source or to scoring, never lumped into one number.
     score_started = time.monotonic()
+    watch_readings: dict[str, watch_evidence.Reading] = {}
+    watch_blind = 0
     for index, item in enumerate(items):
         if index % 100 == 0:
             emit(Progress("scoring", index, total, item.title))
@@ -887,6 +911,22 @@ async def scan(
             # the loop would hold the event loop for the whole scoring phase -- freezing
             # the very progress endpoint the emit above feeds.
             await asyncio.sleep(0)
+
+        reading = watch_evidence.reading_for(item.plex_rating_key, watchers_all_time, last_played)
+        blind_reason: str | None = None
+        if reading is not None:
+            watch_readings[item.media_key] = reading
+            blind_reason = watch_evidence.went_blind(watch_marks.get(item.media_key), reading)
+            if blind_reason is not None:
+                watch_blind += 1
+                # Per item, because a count alone cannot be chased down, and this one asks
+                # the operator to go look at Tautulli. The media_key is an internal
+                # coordinate, never a title or a path.
+                log.warning(
+                    "scan.watch_history_unreadable",
+                    media_key=item.media_key,
+                    media_type=item.media_type,
+                )
 
         facts = build_facts(
             item,
@@ -898,6 +938,7 @@ async def scan(
             watchers_all_time=watchers_all_time,
             whitelisted=tag_only_whitelist,
             request_index=request_index,
+            watch_blind_reason=blind_reason,
         )
         movie_size_source = SizeSource.RADARR if item.size_bytes is not None else None
         size_sources[_size_bucket(movie_size_source)] += 1
@@ -984,6 +1025,11 @@ async def scan(
         if offset % 100 == 0:
             emit(Progress("scoring", len(items) + offset, total, judgment.title))
             await asyncio.sleep(0)  # keep the event loop live; see the movie loop above
+        if judgment.watch_reading is not None:
+            # The TV lane already decided blindness against these same marks and put the
+            # reason on its facts; the reading is carried out here only so both lanes' marks
+            # are raised in one write below.
+            watch_readings[judgment.media_key] = judgment.watch_reading
         size_sources[_size_bucket(judgment.size_source)] += 1
         if judgment.size_source is None:
             log.info(
@@ -1063,6 +1109,19 @@ async def scan(
         await record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
 
     await session.flush()
+    # Raise every item's mark to cover what this scan measured, both lanes in one write.
+    # Written even for the items just flagged blind: the mark only ever rises, so a blind
+    # reading cannot lower it, and the next scan therefore asks the same question against the
+    # same evidence instead of quietly accepting zero as the new truth.
+    await watch_evidence.record(session, watch_readings, now=now)
+    if watch_blind:
+        log.warning(
+            "scan.watch_history_unreadable_total",
+            media_type="movie",
+            items=watch_blind,
+            of=len(items),
+        )
+
     score_ms = round((time.monotonic() - score_started) * 1000)
     emit(Progress("done", total, total, f"{condemned} candidates"))
 
