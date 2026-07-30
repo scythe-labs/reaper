@@ -210,6 +210,30 @@ async def season_shape(request: Request) -> SeasonShapeOut:
     return SeasonShapeOut(total_shows=len(rows), season_counts=counts)
 
 
+# A release year sitting at the end of a search term, with or without parentheses and with
+# whatever separator someone typed between it and the title. The queue prints the year in its own
+# span beside the title ("Freaky Tales 2025"), Scales prints it the same way, and the operator
+# reads one string and types it back -- so the year has to be understood, not matched literally
+# against a title column that never held it.
+_TRAILING_YEAR = re.compile(r"[\s,·-]*\(?(?P<year>(?:1[89]|20|21)\d{2})\)?\s*$")
+
+
+def _split_search_year(term: str) -> tuple[str, int | None]:
+    """Split a trailing release year off a search term, or leave the term whole.
+
+    Returns ``(stem, year)``. The year is only split off when something is left in front of
+    it: a bare ``2025`` or ``1917`` is a title the operator is searching for, not a filter,
+    and splitting it would answer with every item from that year instead.
+    """
+    match = _TRAILING_YEAR.search(term)
+    if match is None:
+        return term, None
+    stem = term[: match.start()].strip()
+    if not stem:
+        return term, None
+    return stem, int(match["year"])
+
+
 @router.get("/candidates", tags=[api_tags.REVIEW])
 async def list_candidates(
     request: Request,
@@ -242,7 +266,11 @@ async def list_candidates(
     within equal keys, so a show's seasons never scatter across a page boundary.
 
     Filters **stack** (they are ANDed), and each only narrows the frozen snapshot, never
-    re-decides it: ``search`` matches the title or the show name, ``media_type`` keeps
+    re-decides it: ``search`` matches the title or the show name, and understands a release
+    year on the end of either ("Example Alpha 1979", or with parentheses) -- the queue prints
+    the year beside the title, so it is part of what the operator reads and types back. A
+    search that is *only* a year stays a plain text match, so a title named after a year is
+    still findable. ``media_type`` keeps
     movies or seasons, ``requested`` keeps only what someone asked for through Seerr
     (``yes``), only what nobody asked for (``no``), or everything (``any``), ``genre``
     keeps rows whose stored genre list contains the given term exactly, ``library`` keeps
@@ -275,10 +303,21 @@ async def list_candidates(
             lane = or_(lane, Candidate.media_key.in_(moved_in))
         conditions.append(lane)
         if search and search.strip():
-            pattern = f"%{search.strip()}%"
-            conditions.append(
-                or_(Candidate.title.ilike(pattern), Candidate.group_title.ilike(pattern))
-            )
+            term = search.strip()
+
+            def matches(text_: str) -> ColumnElement[bool]:
+                pattern = f"%{text_}%"
+                return or_(Candidate.title.ilike(pattern), Candidate.group_title.ilike(pattern))
+
+            stem, year = _split_search_year(term)
+            if year is None:
+                conditions.append(matches(term))
+            else:
+                # Either reading of the number, never one or the other: "Blade Runner 2049" is a
+                # title that ends in a year it was not released in, and "Freaky Tales 2025" is a
+                # title beside its year. Trying the whole string first keeps the first kind
+                # findable, and the stem-plus-year arm makes the second kind work at all.
+                conditions.append(or_(matches(term), and_(Candidate.year == year, matches(stem))))
         if media_type:
             conditions.append(Candidate.media_type == media_type)
         if library and library.strip():

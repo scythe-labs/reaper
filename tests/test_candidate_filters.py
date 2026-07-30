@@ -135,6 +135,19 @@ class TestFilters:
         rows = client.get("/api/candidates?verdict=condemn&search=alpha").json()
         assert _titles(rows) == {"Example Alpha"}
 
+    def test_search_understands_a_year_typed_after_the_title(self, client: TestClient) -> None:
+        # The queue prints the year in its own span beside the title, so the operator reads
+        # "Example Alpha 1979" as one string and types it back. It used to match nothing: the
+        # year lives in its own column and was never in `title`.
+        for term in ("Example Alpha 1979", "Example Alpha (1979)", "alpha 1979"):
+            rows = client.get(f"/api/candidates?verdict=condemn&search={term}").json()
+            assert _titles(rows) == {"Example Alpha"}, term
+
+    def test_search_with_the_wrong_year_finds_nothing(self, client: TestClient) -> None:
+        # The year narrows; it is not decoration. Example Alpha is 1979.
+        rows = client.get("/api/candidates?verdict=condemn&search=Example Alpha 1980").json()
+        assert rows == []
+
     def test_search_also_matches_the_show_name(self, client: TestClient) -> None:
         # "mid" matches the show name, carried on the season row's group_title.
         rows = client.get("/api/candidates?verdict=condemn&search=mid").json()
@@ -376,3 +389,83 @@ class TestSort:
         # Newest first; the season carries no year and sorts last. Example Zulu (1995) is spared by
         # hand and rides the Kept lane, so Example Alpha now leads the condemned lane.
         assert [r["title"] for r in rows] == ["Example Alpha", "Example Mid · Season 5"]
+
+
+class TestYearInSearch:
+    """A release year typed after a title narrows the search instead of matching nothing.
+
+    The queue prints the year in its own span beside the title, and Scales prints it the same
+    way, so the operator reads "Example Delta 2049" as one string and types it back. The year
+    lives in its own column and was never inside ``title``, so every such search used to come
+    back empty.
+
+    Two rows the fixture below is built to tell apart, because a number on the end of a title
+    has two readings and the predicate has to try both:
+
+    * **Example Delta 2049**, released 2017 -- the number is part of the *name*. Only the
+      whole-string arm finds it; the stem-plus-year arm asks for year 2049 and it is 2017.
+    * **Example Echo**, released 2049 -- the number is the *year*. Only the stem-plus-year arm
+      finds it; the whole string is not in its title.
+
+    Either arm alone leaves one of them unfindable by the exact string the UI prints.
+    """
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            snap = Snapshot(
+                created_at=now, policy_hash="b" * 64, horizon_at=now, item_count=2, degraded=False
+            )
+            session.add(snap)
+            session.flush()
+            session.add_all(
+                [
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:20",
+                        title="Example Delta 2049",
+                        year=2017,
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:21",
+                        title="Example Echo",
+                        year=2049,
+                    ),
+                ]
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def _found(self, client: TestClient, term: str) -> set[str]:
+        return _titles(client.get("/api/candidates", params={"search": term}).json())
+
+    def test_a_title_ending_in_a_year_it_predates_is_findable_by_its_whole_name(
+        self, client: TestClient
+    ) -> None:
+        assert self._found(client, "Example Delta 2049") == {"Example Delta 2049"}
+
+    def test_a_year_typed_after_a_title_narrows_to_that_year(self, client: TestClient) -> None:
+        assert self._found(client, "Example Echo 2049") == {"Example Echo"}
+        # Parentheses and a bare space are the two ways the year is printed across the app.
+        assert self._found(client, "Example Echo (2049)") == {"Example Echo"}
+        # And it narrows: the same title with the wrong year is not a near miss, it is a miss.
+        assert self._found(client, "Example Echo 2017") == set()
+
+    def test_the_year_can_come_from_either_column(self, client: TestClient) -> None:
+        # "Example Delta" is 2017, so the stem-plus-year arm finds it by its real year even
+        # though its title ends in a different one.
+        assert self._found(client, "Example Delta 2017") == {"Example Delta 2049"}
+
+    def test_a_year_alone_stays_a_plain_text_search(self, client: TestClient) -> None:
+        # Splitting a bare year off would leave an empty stem matching every row, so a search
+        # for a title *named* after a year would answer with the whole of that year's library.
+        # Delta has 2049 in its name and comes back; Echo merely came out that year and does not.
+        assert self._found(client, "2049") == {"Example Delta 2049"}
