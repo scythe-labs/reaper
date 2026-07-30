@@ -36,7 +36,7 @@ from reaper.main import create_app
 from reaper.services import lists, season_scan, watch_evidence
 from reaper.services.snapshot import RawItem, ScanContext, build_facts
 from reaper.services.watch_evidence import Mark, Reading, went_blind
-from tests._auth import TEST_PASSWORD, login
+from tests._auth import TEST_PASSWORD, clear_admin_password, login
 
 # Whole seconds. ``UtcTimestamp`` stores epoch seconds (``db.types.EpochDateTime``), so a
 # microsecond here would survive in memory and not in the row, and every round-trip
@@ -350,20 +350,6 @@ def _marks_held(client: TestClient) -> int:
     return int(held)
 
 
-def _clear_admin_password(client: TestClient) -> None:
-    """Leave the signed-in session standing, but with no admin password behind it.
-
-    The state a Plex-only install is in: the owner claimed the server over OAuth and never set
-    one. Nulling the hash rather than deleting the row keeps the cookie valid, because
-    resolving a session never touches ``password_hash`` -- so this isolates "no password set"
-    from "not signed in", which are different refusals.
-    """
-    engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
-    with engine.begin() as conn:
-        conn.execute(text("UPDATE app_user SET password_hash = NULL"))
-    engine.dispose()
-
-
 class TestTheStartFreshRoute:
     """The escape hatch. Rebuild a library without repairing its history and every watched
     title reads zero at once, so every one is held back and nothing is reapable. Correct, and
@@ -415,7 +401,7 @@ class TestTheStartFreshRoute:
         to guess at a password that does not exist. Same sentence shape as arming deletion and
         confirming a restore, naming this action (rule 72)."""
         _seed_marks(client, "radarr:1:5")
-        _clear_admin_password(client)
+        clear_admin_password(client)
 
         refused = client.post("/api/settings/watch-evidence/reset", json={"password": ""})
         assert refused.status_code == 400, refused.text

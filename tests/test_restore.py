@@ -34,7 +34,7 @@ from reaper.db.base import Base
 from reaper.main import create_app
 from reaper.services import restore
 from reaper.services.restore import RestoreError
-from tests._auth import TEST_PASSWORD, login
+from tests._auth import TEST_PASSWORD, clear_admin_password, login
 
 # A revision this build actually ships, so the schema gate accepts it. Iteration order of
 # the frozenset is unimportant: any shipped revision is one boot's migrations can serve.
@@ -476,6 +476,26 @@ class TestApi:
             "/api/settings/backup/restore/confirm", json={"password": "not-the-password"}
         )
         assert response.status_code == 403, response.text
+        assert client.get("/api/settings/backup").json()["restore_armed"] is False
+
+    def test_with_no_admin_password_set_confirm_points_at_the_password_step(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Not a 403: a Plex-only install has nothing to type, so "that didn't match" would
+        send the operator to guess at a password that does not exist. The archive stays
+        staged and un-armed, which is the state they can still cancel out of.
+
+        Sibling of the same pair on arming deletion and on the watch-record reset (rule 72).
+        """
+        archive = _make_archive(tmp_path / "up.reaper").read_bytes()
+        client.post("/api/settings/backup/restore/prepare", content=archive)
+        clear_admin_password(client)
+
+        refused = client.post("/api/settings/backup/restore/confirm", json={"password": ""})
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["detail"] == (
+            "Set an admin password first. It's what confirms a restore."
+        )
         assert client.get("/api/settings/backup").json()["restore_armed"] is False
 
     def test_cancel_disarms_a_staged_restore(self, client: TestClient, tmp_path: Path) -> None:

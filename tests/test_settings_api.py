@@ -30,7 +30,7 @@ from reaper.db.models import InstanceKind
 from reaper.main import create_app
 from reaper.services import instances as instances_service
 
-from ._auth import TEST_PASSWORD, login
+from ._auth import TEST_PASSWORD, clear_admin_password, login
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -683,6 +683,24 @@ class TestSafety:
             "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
         )
         assert armed.status_code == 200, armed.text
+
+    def test_with_no_admin_password_set_arming_points_at_the_password_step(
+        self, client: TestClient
+    ) -> None:
+        """Not a 403: a Plex-only install has nothing to type, so "that didn't match" would
+        send the operator to guess at a password that does not exist. Deletion stays off.
+
+        One of three routes refusing this way, and the last of the three to get a test for it
+        (rule 72): the restore confirm and the watch-record reset carry the same pair.
+        """
+        clear_admin_password(client)
+
+        refused = client.put("/api/settings/safety", json={"enabled": True, "password": ""})
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["detail"] == (
+            "Set an admin password first. It's what confirms turning deletion on."
+        )
+        assert client.get("/api/settings/safety").json()["destructive_enabled"] is False
 
     def test_repeated_wrong_arming_passwords_are_locked_out(self, client: TestClient) -> None:
         """Arming is a password-guessing surface: past the threshold, further attempts
