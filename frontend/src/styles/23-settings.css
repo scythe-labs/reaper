@@ -382,7 +382,9 @@ button.danger:hover:not(:disabled) {
   border-radius: 999px;
   white-space: nowrap;
 }
-/* A muted 4K marker on a Seerr service, so its HD twin at the same address reads apart. */
+/* The muted markers on a Seerr service row -- what it asks for ("TV"/"Movies") and, where the
+   portal draws one, "4K" -- so two services sharing a name read apart. Both wear this one pill;
+   a row can show either, or both. */
 .pl-tag {
   margin-left: 0.4rem;
   font-size: 0.62rem;

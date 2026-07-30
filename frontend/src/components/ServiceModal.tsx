@@ -63,6 +63,16 @@ export function kindLabel(kind: string): string {
   return KINDS.find((k) => k.value === kind)?.label ?? kind;
 }
 
+/** What media a Seerr service asks for, in a person's words rather than the stored key.
+ *
+ *  Written once because two surfaces state it: the tag in the row's `.pl-root` cell, and the
+ *  spoken name on that row's picker. Both are the operator's only way to tell a portal's TV
+ *  service from its Movies one when the two share a name, so a drift between them would leave
+ *  one audience right and the other wrong (rule 144, and the same shape as `testSays` below). */
+export function serviceKindLabel(kind: SeerrService["kind"]): string {
+  return kind === "sonarr" ? "TV" : "Movies";
+}
+
 /** What a connection test SAYS, written once because two surfaces state it.
  *
  *  `TestBadge` renders it for whoever navigates onto the badge, and every test mutation
@@ -784,24 +794,28 @@ export function ServiceModal({
                 <div className="plex-map-grid">
                   {seerrServices.data.map((s) => (
                     <Fragment key={svcKey(s)}>
+                      {/* Every part of `svcKey` (kind + id) that a person can see has to be on
+                          this cell, because the name alone does not identify the row: a portal
+                          numbers and names its Sonarr and Radarr lists independently, so one can
+                          hold a TV and a Movies service both called "Media". The kind rides
+                          beside the name the way the 4K marker already does, and in that order --
+                          what the service is, then which copy of it (#165). */}
                       <div className="pl-root">
                         {s.name}
+                        <span className="pl-tag">{serviceKindLabel(s.kind)}</span>
                         {s.is_4k && <span className="pl-tag">4K</span>}
                       </div>
                       <div className="pl-pick">
                         <select
                           className={`pl-select${serviceMap[svcKey(s)] ? "" : " unset"}`}
-                          // Same reason as the library picker above. The 4K tag is part of the
-                          // visible name here, so it is part of the spoken one too -- a portal
-                          // can carry two services that differ only by it. The row's identity
-                          // is `svcKey` (kind + id), and the name has to carry every part of it
-                          // that can differ: the two lists are numbered and named independently,
-                          // so one portal can hold a TV and a Movies service both called "Media"
-                          // and the tag alone would leave those two rows sharing a name. Said in
-                          // words rather than as the stored kind, per rule 21.
-                          aria-label={`Connection for ${s.name}${s.is_4k ? " 4K" : ""}, ${
-                            s.kind === "sonarr" ? "TV" : "Movies"
-                          }`}
+                          // Same reason as the library picker above, and the spoken name carries
+                          // exactly what the cell beside it shows: both tags distinguish rows a
+                          // shared name would otherwise merge, so both belong here too. Said in
+                          // words rather than as the stored kind, per rule 21, and taken from
+                          // `serviceKindLabel` so the two spellings cannot drift (rule 144).
+                          aria-label={`Connection for ${s.name}${s.is_4k ? " 4K" : ""}, ${serviceKindLabel(
+                            s.kind,
+                          )}`}
                           value={String(serviceMap[svcKey(s)] ?? "")}
                           onChange={(e) => setServiceInstance(svcKey(s), e.target.value)}
                         >

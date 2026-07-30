@@ -315,11 +315,20 @@ function renderSeerrModal(
   else apiMock.instances.mockResolvedValue(arrs);
   apiMock.updateInstance.mockResolvedValue(instance);
   const queryClient = testQueryClient();
-  render(
+  return render(
     <QueryClientProvider client={queryClient}>
       <ServiceModal kind="seerr" instance={instance} onClose={vi.fn()} />
     </QueryClientProvider>,
   );
+}
+
+/** What each service row SHOWS, in document order.
+ *
+ *  Read off the cell rather than through `getByText`, because the question is what the whole
+ *  cell says: a tag the operator needs is one that changes this string, and a `getByText` for
+ *  the bare name would pass on a row rendering the name alone -- which is the defect (#165). */
+function visibleServiceRows(container: HTMLElement): string[] {
+  return [...container.querySelectorAll(".pl-root")].map((c) => c.textContent ?? "");
 }
 
 /** The instance select for one service row, found by that row's service name and media kind. */
@@ -394,7 +403,7 @@ describe("ServiceModal multi-Seerr service map", () => {
     // #147 on this grid. A portal routinely carries an HD and a 4K service under one name,
     // so the tag is the only thing telling those two rows apart -- it has to be spoken, not
     // just shown.
-    renderSeerrModal(seerr(), [
+    const { container } = renderSeerrModal(seerr(), [
       { service_id: 2, kind: "sonarr", name: "Main TV", is_4k: false, suggested_instance_id: 3 },
       { service_id: 5, kind: "sonarr", name: "Main TV", is_4k: true, suggested_instance_id: null },
     ]);
@@ -404,8 +413,7 @@ describe("ServiceModal multi-Seerr service map", () => {
     expect(screen.queryAllByRole("combobox", { name: "" })).toHaveLength(0);
     // As on the folder grid: both helpers reach these selects by their spoken name, so the
     // visible cell they are derived from is otherwise unobserved. Rule 118.
-    expect(screen.getAllByText("Main TV")).toHaveLength(2);
-    expect(screen.getByText("4K")).toBeInTheDocument();
+    expect(visibleServiceRows(container)).toEqual(["Main TVTV", "Main TVTV4K"]);
   });
 
   it("names a TV and a Movies service apart when the portal gives them one name", async () => {
@@ -422,6 +430,40 @@ describe("ServiceModal multi-Seerr service map", () => {
     const named = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label"));
     expect(named).toEqual(["Connection for Media, TV", "Connection for Media, Movies"]);
     expect(new Set(named).size).toBe(named.length);
+  });
+
+  it("shows the media kind on the row, not only in its spoken name", async () => {
+    // #165, the sighted half of the test above. The name was announced with its kind and drawn
+    // without one, so a screen reader could tell the portal's TV service from its Movies one and
+    // an operator reading the grid could not -- and the row they pick decides which connection
+    // Reaper deletes a request's copy through. Both tags are pinned together because they are
+    // one cell: a fix that drew the kind and dropped 4K would trade one collision for another.
+    const { container } = renderSeerrModal(seerr(), [
+      { service_id: 0, kind: "sonarr", name: "Media", is_4k: false, suggested_instance_id: 3 },
+      { service_id: 0, kind: "radarr", name: "Media", is_4k: false, suggested_instance_id: 7 },
+      { service_id: 1, kind: "radarr", name: "Media", is_4k: true, suggested_instance_id: null },
+    ]);
+    await waitFor(() => expect(selectForService("Media", "TV").value).toBe("3"));
+    const rows = visibleServiceRows(container);
+    expect(rows).toEqual(["MediaTV", "MediaMovies", "MediaMovies4K"]);
+    // The point of the tags: three rows the portal named identically now read apart.
+    expect(new Set(rows).size).toBe(rows.length);
+  });
+
+  it("says the media kind the same way to both audiences", async () => {
+    // Rule 144: the visible tag and the spoken name state one fact, and a drift between them
+    // leaves one audience reading a row the other cannot. Driven through both kinds, because a
+    // helper hardcoded to either spelling reads correct on the kind it was written for.
+    const { container } = renderSeerrModal(seerr(), [
+      { service_id: 0, kind: "sonarr", name: "Media", is_4k: false, suggested_instance_id: 3 },
+      { service_id: 0, kind: "radarr", name: "Media", is_4k: false, suggested_instance_id: 7 },
+    ]);
+    await waitFor(() => expect(selectForService("Media", "TV").value).toBe("3"));
+    const tags = [...container.querySelectorAll(".pl-root .pl-tag")].map((t) => t.textContent);
+    expect(tags).toEqual(["TV", "Movies"]);
+    // Every tag drawn is a word the picker beside it also speaks, so neither can move alone.
+    const spoken = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label") ?? "");
+    tags.forEach((tag, i) => expect(spoken[i]).toBe(`Connection for Media, ${tag}`));
   });
 
   it("shows a notice, not an empty list, when the services can't be read", async () => {
