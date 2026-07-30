@@ -1433,6 +1433,20 @@ past the right edge. Measured in WebKit against the real page at a range of widt
   past an edge that cannot be scrolled to) reached from inside a control rather than from the
   page. Any check for this needs to measure a `select` against its **widest option**, not
   against its own rendered text, which is by then already the truncated one.
+- **Following that instruction to the service modal's mapping pickers, the clip turned out to be
+  total, not partial.** `.plex-map-grid` is `minmax(0, max-content) minmax(0, 1fr)`: the folder
+  path takes the width it needs and the picker takes the remainder. Measured against the shipped
+  stylesheets at a 390px phone panel, the remainder is **41.4px** — the control's own border,
+  padding and arrow, and **not one character** of the chosen library, against the 186.2px that
+  name needs. Two libraries sharing a prefix do not read alike there; they read as nothing at
+  all, on the screen that decides which folder Reaper matches to which library. Stacking the grid
+  below 640px gives the picker the whole row (220.1px) and the names come back.
+  **The generalizable part: `minmax(0, ...)` on a track does not make its content shrink
+  gracefully, it makes the failure invisible.** It buys the page out of overflow by pushing the
+  loss inside the control, and when that control is a `<select>` there is no wrap to fall back on
+  and no scroll to reach — so an overflow count reads 0 while the value is gone. Pair the floor
+  with a check that the `1fr` neighbor of a `max-content` track still has room for its own widest
+  content, or the two rules cancel: one hides what the other would have caught.
 - **Font boosting is testable in a simulator and invisible to headless WebKit.** Turning the
   phone landscape put one notice in two type sizes, which is WebKit's text autosizing scaling
   a block by *that block's* own width. Headless desktop WebKit implements neither the bug nor

@@ -395,6 +395,31 @@ button.danger:hover:not(:disabled) {
   border-radius: 999px;
   vertical-align: middle;
 }
+/* Below the width the modal stops getting its full 560px, the two columns above stop fitting:
+   the folder path takes what it needs and the picker takes the remainder, and a native <select>
+   cannot wrap, so the remainder is what the operator gets to read. Measured on a 390px phone,
+   the shipped two-column form leaves the picker 41.4px -- its own border, padding and arrow, and
+   not one character of the chosen library -- so two libraries sharing a prefix render as the
+   same empty control on the screen that decides which folder Reaper matches to which library
+   (#250). One column gives the picker the whole row (220.1px measured, against the 186.2px that
+   name needs). Rule 139 says wrap rather than truncate and has no reach inside a <select>, so
+   this does not make a long enough title safe; it takes the demonstrated collision off every
+   width a phone actually has.
+
+   640px is the breakpoint this file already collapses its two-column forms at, and for the
+   reason stated there: on a phone a two-column form is too cramped to read a value that came
+   from somewhere else. Stacked, the path has to stay glued to its OWN picker, or the pairing
+   the grid exists to state is the thing that goes ambiguous -- hence the tight row gap and the
+   space moved between pairs instead. */
+@media (max-width: 640px) {
+  .plex-map-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.2rem;
+  }
+  .plex-map-grid > .pl-root:not(:first-child) {
+    margin-top: 0.6rem;
+  }
+}
 
 /* plex */
 /* The Jobs page: one row per job inside a .set-rows card. Left is what it is, its stats and

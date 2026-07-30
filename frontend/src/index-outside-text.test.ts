@@ -99,10 +99,30 @@ const SITES: Site[] = [
   {
     // The grid around this is not a row of its own: `.plex-map-grid` renders no text, and floors
     // its folder column at `minmax(0, max-content)` precisely so this cell can shrink and wrap.
+    // Under 640px that grid stacks and this cell heads its own picker, which is a margin and
+    // nothing else -- listed because a selector that reaches this element and is NOT listed is
+    // the hole limit two above names, not because that block does anything yet (#250).
     what: "a root folder's filesystem path, and a Seerr service's name",
-    selectors: [".pl-root"],
+    selectors: [".pl-root", ".plex-map-grid > .pl-root:not(:first-child)"],
     classInTsx: "pl-root",
     seenIn: ["components/ServiceModal.tsx"],
+  },
+  {
+    what:
+      "the chosen Plex library, and the chosen Sonarr or Radarr connection -- both of them " +
+      "names the operator gave something on another server, shown at rest in the picker",
+    selectors: [".field-sm select", ".pl-pick .pl-select", ".pl-select.unset"],
+    classInTsx: "pl-select",
+    seenIn: ["components/ServiceModal.tsx"],
+    exempt:
+      "a native <select> cannot wrap: the closed control clips its selected option to its own " +
+      "width, and no property reaches inside it. So this is the one shape in the table where " +
+      "rule 139's own remedy does not exist, and truncation is not a choice being made here. " +
+      "What CAN be fixed is the width the control is left with, and that is what moved: the " +
+      "grid stacks below 640px so the picker gets the whole row instead of the remainder after " +
+      "a long folder path (measured on a 390px phone: 41.4px before, not one character of the " +
+      "library legible; 220.1px after). A title longer than a full-width picker still clips. " +
+      "#250",
   },
   {
     what: "the name of the backup file the operator dropped or picked",
@@ -412,16 +432,19 @@ describe("the stylesheet: text the operator did not choose", () => {
   it("walks the population it claims to, and says how big that is", () => {
     // Rule 145: a flag-shaped assertion cannot tell a member that complies from one that fell out
     // of the walk, so the size of the walk is pinned by hand. Reconciled against the table above:
-    // 10 sites that already carried the fix, 11 from #219, 5 from #220 (one of them exempt).
-    expect(SITES.length).toBe(26);
-    expect(SITES.filter((s) => s.exempt).length).toBe(1);
-    // And the blocks those 26 sites actually resolve to. Twenty-two sites resolve to one block
-    // each; the other four are `.about-kv dd` (its own, plus a margin under 560px), the requested
+    // 10 sites that already carried the fix, 11 from #219, 5 from #220 (one of them exempt), and
+    // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for).
+    expect(SITES.length).toBe(27);
+    expect(SITES.filter((s) => s.exempt).length).toBe(2);
+    // And the blocks those 27 sites actually resolve to. Twenty-two sites resolve to one block
+    // each; the other five are `.about-kv dd` (its own, plus a margin under 560px), the requested
     // chip (`.chip`, its own, and the rule it shares with `.lib-chip`), `.lib-chip` (its own and
-    // that shared rule again), and the unnumbered season (the base and the modifier). If this
-    // moves, a selector joined or left a row -- check it was meant to, then update the number.
+    // that shared rule again), the unnumbered season (the base and the modifier), and `.pl-root`
+    // (its own, plus the stacked-grid margin under 640px) -- and `.pl-select`, which is three:
+    // the control standard every `.field-sm` box rides, its own width rule, and the unset tint.
+    // If this moves, a selector joined or left a row -- check it was meant to, then update it.
     const blocks = SITES.reduce((n, s) => n + matchesOf(s).length, 0);
-    expect(blocks).toBe(31);
+    expect(blocks).toBe(35);
   });
 });
 
