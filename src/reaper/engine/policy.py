@@ -1453,12 +1453,18 @@ def inspect(
     # in the reassuring direction (rule 144). ``fields.can_add_pressure_under_a_shortfall``
     # is that discrimination, asked rather than restated (rule 104).
     #
-    # What this still does NOT claim is the partial case: where the remaining weight can
-    # reach the threshold, an ``lte`` rule abstains exactly the titles nobody watched
-    # recently, a set ``inspect`` cannot size from one reach. That is issue #215, and it is
-    # filed rather than guessed at here.
+    # Where the remaining weight CAN still reach the threshold the list is genuinely not
+    # empty, so no "nothing will be flagged" claim is available -- and an ``lte`` rule is
+    # then abstaining exactly the titles nobody watched recently while the popular ones it
+    # was never meant to flag are judged normally. That is the second tier below (issue
+    # #215): it names the set, as the ``ITEM_LIFETIME`` branch does, because ``inspect``
+    # cannot size it from one reach.
     withheld = 0
     never_earned = 0
+    # Only for the plural of the second tier below, which names no rule and so needs nothing
+    # but the count. Rules are not named there for the reason the window branch gives above:
+    # two rules on one field are constructible, so a singular reads as a wrong instruction.
+    never_earned_rules = 0
     # Kept apart from the totals so the anchor below can weigh the two cards against each
     # other. The built-in slider is the only reach-bounded signal, so this IS the signals
     # card's share; everything else in the totals comes from the custom-rules card.
@@ -1480,6 +1486,7 @@ def inspect(
                 withheld += condemn.weight
             elif not can_add_pressure_under_a_shortfall(condemn.op):
                 never_earned += condemn.weight
+                never_earned_rules += 1
     if withheld > 0 or never_earned > 0:
         # The best any item can do once that weight is gone. The denominator is pinned at
         # ``MAX_SCORE`` (``_weights_total_one_hundred``), so a weight IS its share, and the
@@ -1522,6 +1529,52 @@ def inspect(
                     ),
                 )
             )
+        else:
+            # The PARTIAL case, the other half of issue #215: the list is not empty, and the
+            # titles missing from it are exactly the ones the rule was written to find.
+            #
+            # ``covered`` above is the item ABOVE the bar. Under ``lte`` that item keeps the
+            # boolean weight in coverage -- ``_survives_more_history`` blocks only the outcome
+            # more history could overturn, and a count already past the bar can only rise --
+            # while the item AT OR UNDER it is blocked and loses the weight from coverage too.
+            # Its score ceiling is ``ceiling`` either way, since no item can earn that weight
+            # at all, so the two differ in coverage alone. That is the whole asymmetry, and it
+            # is why one policy hands back a full list of popular titles and none of the
+            # unwatched ones.
+            #
+            # Sized the same way as the branch above rather than from a distribution:
+            # ``inspect`` is handed one reach and never a list of watcher counts, so the set is
+            # NAMED, as the ``ITEM_LIFETIME`` branch names its own. With no boolean rule
+            # ``held_covered`` is ``covered`` and this reads ``condemn`` exactly as
+            # ``best_case`` did, so the guard is the arithmetic and not a second condition.
+            held_covered = covered - never_earned
+            held_case = decide_verdict(
+                protected=False,
+                blocked=False,
+                score=ceiling,
+                coverage_bp=round(held_covered / MAX_SCORE * 10_000),
+                condemn_at=body.condemn_at,
+                coverage_floor_bp=body.coverage_floor_bp,
+            )
+            if held_case != "condemn":
+                many = never_earned_rules > 1
+                warnings.append(
+                    PolicyWarning(
+                        # The rules are the only thing that can move, and they are all on the
+                        # one card, so this needs none of the weighing the branch above does.
+                        field="custom_condemn",
+                        severity="warn",
+                        message=(
+                            f"Your removal {'rules' if many else 'rule'} won't flag the titles "
+                            f"{'they were' if many else 'it was'} written to find. "
+                            f"{'They count' if many else 'It counts'} who watched a title in "
+                            f"the last {humanize_window(window_days)}, and {window_short}, so "
+                            "Reaper holds those titles back instead of guessing. Wait for it "
+                            "to build up, or remove "
+                            f"{'those rules' if many else 'that rule'}."
+                        ),
+                    )
+                )
 
     # The lean lane, which the comment above used to name as a known gap. A graded keep takes
     # its FULL ``max_discount`` on a shortfall, on every item it reaches, with no

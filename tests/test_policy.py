@@ -2301,6 +2301,91 @@ class TestTheCondemnLanesCoverage:
         neither = _policy(**self._gate_off(signals=_split(80, 20)))
         assert self._condemn_warnings(neither) == []
 
+    def _partial(self, op: Op, floor_bp: int) -> PolicyBody:
+        """The split where the two items part company, with the op and the floor as the
+        variables. No weight on ``FEW_WATCHERS``, so the boolean rule is the whole shortfall:
+        every item's score ceiling is 80, over the threshold of 70, and the only thing left
+        that can separate them is coverage."""
+        return _policy(
+            **self._gate_off(
+                coverage_floor_bp=floor_bp,
+                signals=(
+                    SignalSetting(signal=SignalId.UNWATCHED, weight=70, saturate_at=730),
+                    SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
+                ),
+                custom_condemn=(
+                    BooleanCondemnSpec(
+                        name="hardly watched",
+                        field="recent_watchers",
+                        op=op,
+                        value=1,
+                        weight=20,
+                    ),
+                ),
+            )
+        )
+
+    def test_a_rule_for_unwatched_titles_abstains_exactly_those_titles(self) -> None:
+        """Issue #215's partial case: the list is not empty, and what is missing from it is
+        precisely what the operator wrote the rule to find.
+
+        Under ``lte`` an item ABOVE the bar keeps the rule's weight in coverage, because a
+        count already past the bar can only rise and ``_survives_more_history`` blocks only
+        the outcome more history could overturn. The item AT OR UNDER it is blocked and loses
+        that weight from coverage as well. Both ceilings are 80, so at a floor of 0.90 the
+        popular title is judged on coverage 1.00 and the unwatched one abstains on 0.80. The
+        removal list comes back full of the titles the rule was never meant to flag.
+        """
+        [flagged] = self._condemn_warnings(self._partial(Op.LTE, floor_bp=9000))
+
+        assert flagged.field == "custom_condemn"
+        assert flagged.severity == "warn"
+        assert flagged.message.startswith("Your removal rule won't flag the titles it was written")
+        # The other tier's claim, which is false here and must not be borrowed: this list has
+        # titles in it.
+        assert "Nothing will be flagged" not in flagged.message
+
+    def test_the_partial_case_is_read_off_the_floor_and_not_off_the_rule(self) -> None:
+        """The discriminator, swept across the boundary the coverage floor actually sets.
+
+        Same rule and same weights every time. The blocked item's coverage is 0.80, so the
+        two verdicts part company only once the floor is above that, and below it the rule
+        costs those titles nothing a warning should mention. Firing on the rule's mere
+        presence would put a notice on the shipped floor of 0.50, where nothing is wrong.
+        """
+        # At and under the blocked item's own coverage, both items condemn. 5000 is the
+        # shipped default and is swept deliberately: it is the case an operator is most
+        # likely to be in, and the one a rule-shaped check would get wrong (rule 141).
+        for floor_bp in (5000, 7500, 8000):
+            assert self._condemn_warnings(self._partial(Op.LTE, floor_bp)) == []
+
+        # One basis point past it, the unwatched titles drop off the list.
+        assert len(self._condemn_warnings(self._partial(Op.LTE, floor_bp=8001))) == 1
+
+    def test_a_rule_that_can_still_fire_leaves_its_own_candidates_judged(self) -> None:
+        """The op discriminator again, on the second tier this time (rule 72).
+
+        Under ``gte`` the blocked outcome is the one that does NOT match, so an item over the
+        bar is settled by the truncated count and earns the weight in full. Nothing is
+        withheld from anybody's coverage, both items are judged alike, and a warning here
+        would be rule 144's reassuring direction pointed the other way: it would send the
+        operator to delete a rule that is working.
+        """
+        assert self._condemn_warnings(self._partial(Op.GTE, floor_bp=9000)) == []
+
+    def test_the_two_tiers_never_both_fire(self) -> None:
+        """They make opposite claims about the same list, so exactly one may be on the page.
+
+        The measured #215 split empties the list outright, which is the first tier's claim;
+        the split above leaves it populated, which is the second's. Anchored on the message
+        rather than the count, because both tiers can land on ``custom_condemn``.
+        """
+        empty = self._condemn_warnings(self._boolean(Op.LTE))
+        partial = self._condemn_warnings(self._partial(Op.LTE, floor_bp=9000))
+
+        assert [w.message.startswith("Nothing will be flagged") for w in empty] == [True]
+        assert [w.message.startswith("Nothing will be flagged") for w in partial] == [False]
+
     def test_the_shipped_movie_policy_is_not_flagged(self) -> None:
         """The population this must not fire on. ``FEW_WATCHERS`` carries 20 of the shipped
         100, which leaves 80 against a threshold of 70 and a floor of 0.50, so a title is
