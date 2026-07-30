@@ -945,6 +945,25 @@ class TestTheCacheIsRebuiltNotMigrated:
 
 
 class TestSeasonWatchStats:
+    async def test_a_never_synced_cache_reads_as_no_plays(self, tmp_path: Path) -> None:
+        """The schema guard both siblings carry (rule 72), against the state needing it.
+
+        The `cache_engine` fixture runs `ensure_schema` itself, so every other test in this
+        class meets a table that already exists; this one takes a raw cache. Without the
+        guard the read raises `no such table: watch_event`, nothing catches it, and the whole
+        scan aborts on a technical string (rule 21) instead of reading no plays -- which is
+        the fail-closed answer, since no plays leaves dormancy Unknown and Unknown protects.
+        """
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
+        engine = create_cache_engine(settings)
+        try:
+            stats = await season_scan.season_watch_stats(engine, {701}, window_days=365)
+        finally:
+            await engine.dispose()
+        assert stats.last_played == {}
+        assert stats.watchers_all_time == {}
+        assert stats.watchers_window == {}
+
     async def test_plays_aggregate_by_season(self, cache_engine: AsyncEngine) -> None:
         await _episode(cache_engine, season_key=701, user_id=1)
         await _episode(cache_engine, season_key=701, user_id=2)

@@ -88,7 +88,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource, merge_by_source
-from reaper.services import library_index, lists, requested_by, watch_evidence
+from reaper.services import history_sync, library_index, lists, requested_by, watch_evidence
 from reaper.services.display_meta import build_ratings_json, dataset_lookup
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.season_pruning import (
@@ -861,6 +861,14 @@ async def season_watch_stats(
     stats = SeasonWatchStats()
     if not season_keys:
         return stats
+
+    # The cache is rebuildable and may be empty on a fresh install. Ensure the table exists so
+    # a never-synced cache reads as "no plays" (which leaves dormancy Unknown, and Unknown
+    # protects) rather than crashing the scan with 'no such table'. Both siblings reading this
+    # mirror carry the same guard -- `snapshot._watch_stats` and `fairness._evidence_index`
+    # (rule 72). Today the season task always runs after `scan()` has touched the mirror, so
+    # the table exists; this does not depend on that ordering holding.
+    await history_sync.ensure_schema(engine)
 
     # Unclamped by the horizon, like the movie twin (`snapshot._watch_stats`): the clamp
     # would move no count, because `watch_event` itself begins at the horizon. That is also
