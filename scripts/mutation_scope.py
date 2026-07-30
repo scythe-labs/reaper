@@ -196,7 +196,8 @@ def generate(source: str, zone: Zone) -> list[Mutant]:
                     kind=kind,
                 )
             )
-    return out + statement_deletions(source, spans, len(out))
+    out += statement_deletions(source, spans, len(out))
+    return out + guard_deletions(source, spans, len(out))
 
 
 def statement_deletions(
@@ -226,6 +227,90 @@ def statement_deletions(
                 original=raw.strip(),
                 replacement="pass",
                 kind="delete-statement",
+            )
+        )
+    return out
+
+
+def _spliceable_header(node: ast.If) -> bool:
+    """Whether ``if <test>:`` fits on the one line the splice can rewrite."""
+    return node.test.lineno == node.lineno and node.test.end_lineno == node.test.lineno
+
+
+def skipped_guards(source: str, spans: dict[str, tuple[int, int]]) -> dict[str, list[int]]:
+    """Branches the operator below cannot make dead, grouped by the reason, so `main` says so.
+
+    The two spellings it rejects (rule 147). A **wrapped** ``if`` header cannot take a
+    byte-precise single-line splice; a **ternary** is a branch this operator was simply not
+    written for. Token swaps still reach inside both tests, so neither is wholly unmutated --
+    what is missing is specifically the delete-this-guard edit.
+
+    Reporting the count is the whole point: "27 guards mutated" printed beside a silent 11
+    skipped reads as a complete sweep, which is the claim shape this runner exists to
+    distrust. A bound the tool declines to mention is the same silent cap the guard operator
+    was added to remove.
+    """
+    wrapped: list[int] = []
+    ternary: list[int] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.If) and owner(spans, node.lineno) is not None:
+            if not _spliceable_header(node):
+                wrapped.append(node.lineno)
+        elif isinstance(node, ast.IfExp) and owner(spans, node.lineno) is not None:
+            ternary.append(node.lineno)
+    return {
+        "if header wrapped across lines": sorted(wrapped),
+        "ternary, which this operator does not rewrite": sorted(ternary),
+    }
+
+
+def guard_deletions(source: str, spans: dict[str, tuple[int, int]], start_id: int) -> list[Mutant]:
+    """Make one branch dead: ``if <test>:`` becomes ``if (<test>) and False:``.
+
+    The operator the rest of the set could not express. Token swaps need a token with an
+    opposite, and the deletion above walks assignments only, so a guard on ``isinstance`` or
+    ``in`` produced nothing at all -- and a function holding no mutable token reported exactly
+    like one whose mutants all died. That blind spot covered the shape this codebase is most
+    about: rule 2's fail-closed guards parse and type-check after the edit, so nothing else
+    catches their removal either.
+
+    Two choices worth keeping. **The test is still evaluated**, rather than replaced by
+    ``False`` outright, so a walrus (``if blocked := _blocked(...)``) still binds its name and
+    the mutant fails on the missing branch instead of a ``NameError`` two lines down --
+    reporting the guard as undefended for the right reason. And the parentheses are not
+    cosmetic: ``if a or b:`` spliced without them binds as ``a or (b and False)``, which is
+    still live down the ``a`` arm and would report a killed guard as surviving.
+
+    Single-line ``if`` headers only, like every other operator here, because the splice is
+    byte precise: a test wrapped across lines is skipped rather than half-rewritten, and a
+    ternary is left alone. `skipped_guards` groups both and `main` prints them -- 77 of the 78
+    ``if``s in the shipped zones are covered, beside 10 ternaries that are not.
+    """
+    lines = source.splitlines()
+    out: list[Mutant] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not _spliceable_header(node):
+            continue
+        fn = owner(spans, node.lineno)
+        if fn is None:
+            continue
+        end_col = test.end_col_offset
+        if end_col is None:
+            continue
+        original = lines[node.lineno - 1][test.col_offset : end_col]
+        out.append(
+            Mutant(
+                ident=f"m{start_id + len(out):03d}",
+                func=fn,
+                line=node.lineno,
+                col=test.col_offset,
+                end_col=end_col,
+                original=original,
+                replacement=f"({original}) and False",
+                kind="delete-guard",
             )
         )
     return out
@@ -989,6 +1074,10 @@ ZONES: dict[str, Zone] = {
             "tests/test_policy.py",
             "tests/test_facts_codec.py",
             "tests/test_override_truth.py",
+            # The only file that kills a deletion of either `RatingFloorGate` guard. Without
+            # it the zone reported two survivors the full suite fails on, and a false
+            # survivor costs a reader the trust the real ones need.
+            "tests/test_policy_permutations.py",
         ),
         probe=GATES_PROBE,
     ),
@@ -1047,6 +1136,29 @@ def probe(zone: Zone, workdir: Path, timeout: float) -> dict[str, object] | str:
     return loaded
 
 
+@dataclass
+class FunctionTally:
+    generated: int = 0
+    status: dict[str, int] = field(default_factory=dict)
+
+
+def tally(zone: Zone, mutants: list[Mutant]) -> dict[str, FunctionTally]:
+    """Per-function counts, keyed on the functions the ZONE declares.
+
+    Counting the mutants instead would drop a function that generated none, and a function
+    missing from the report reads exactly like one whose mutants all died -- the flag-shaped
+    coverage claim of rule 145, in the tool built to find it. A zero here says the run tried
+    nothing at all in that function, which is a different answer from "defended" and has to
+    look like one.
+    """
+    rows = {fn: FunctionTally() for fn in zone.functions}
+    for m in mutants:
+        row = rows.setdefault(m.func, FunctionTally())
+        row.generated += 1
+        row.status[m.status] = row.status.get(m.status, 0) + 1
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--zone", choices=sorted(ZONES), default=DEFAULT_ZONE)
@@ -1071,6 +1183,11 @@ def main() -> int:
     mutants = generate(original, zone)
     workers = max(1, min(args.workers, len(mutants) or 1))
     print(f"zone {name}: {len(mutants)} mutants across {len(zone.functions)} targets", flush=True)
+    skipped = skipped_guards(original, func_spans(original, zone.functions, zone.module))
+    for why, lines in skipped.items():
+        if lines:
+            at = ", ".join(str(n) for n in lines)
+            print(f"  {len(lines)} branch(es) the guard operator cannot delete -- {why}: {at}")
 
     pool = Path(tempfile.mkdtemp(prefix=f"mutation-{name}-"))
     started = time.time()
@@ -1152,21 +1269,29 @@ def main() -> int:
         # The real tree is only ever read: mutants are written into the worker copies.
         assert (REPO / zone.module).read_text() == original, "the source under test changed"
 
+    per_function = tally(zone, mutants)
     report.write_text(
         json.dumps(
-            [
-                {
-                    "id": m.ident,
-                    "func": m.func,
-                    "line": m.line,
-                    "kind": m.kind,
-                    "from": m.original,
-                    "to": m.replacement,
-                    "status": m.status,
-                    "direction": m.direction,
-                }
-                for m in mutants
-            ],
+            {
+                "zone": name,
+                "functions": {
+                    fn: {"generated": t.generated, "status": t.status}
+                    for fn, t in per_function.items()
+                },
+                "mutants": [
+                    {
+                        "id": m.ident,
+                        "func": m.func,
+                        "line": m.line,
+                        "kind": m.kind,
+                        "from": m.original,
+                        "to": m.replacement,
+                        "status": m.status,
+                        "direction": m.direction,
+                    }
+                    for m in mutants
+                ],
+            },
             indent=2,
         )
         + "\n"
@@ -1175,6 +1300,15 @@ def main() -> int:
     counts: dict[str, int] = {}
     for m in mutants:
         counts[m.status] = counts.get(m.status, 0) + 1
+    print("\n== per function ==")
+    width = max(len(f) for f in zone.functions)
+    for fn in zone.functions:
+        row = per_function[fn]
+        if not row.generated:
+            print(f"  {fn:<{width}}  0 mutants -- nothing was tried here")
+            continue
+        verdict = ", ".join(f"{n} {status}" for status, n in sorted(row.status.items()))
+        print(f"  {fn:<{width}}  {row.generated} mutants: {verdict}")
     print("\n== summary ==")
     for status in sorted(counts):
         print(f"  {status}: {counts[status]}")

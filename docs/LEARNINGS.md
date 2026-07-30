@@ -2196,6 +2196,74 @@ it, which is why `testTimeout` moved to 15000 ms in the same change. Of that aud
 is the 418-option time-zone `<select>` (axe over 418 options is 177 ms against 38 ms over one), so
 trimming the tree would not have bought the margin either.
 
+## The operator set could not express a guard deletion, so a clean zone meant less than it read (2026-07-30)
+
+Three zones had run clean, and the reason was partly that no operator in the set could write the
+edit that matters most here. Token swaps need a token with an opposite and the statement operator
+walks assignments only, so a guard on `isinstance` or `in` generated **nothing at all** — 23 of
+the 78 `if`s inside the four zones' functions produced zero mutants. The report had no third
+state for "nothing was tried," so a function holding no mutable token printed exactly like one
+whose mutants all died.
+
+**The fix is one more byte-precise splice**: rewrite `if <test>:` as `if (<test>) and False:`.
+Two details are load-bearing. Leaving the test *evaluated* keeps a walrus binding alive
+(`if blocked := _blocked(...)`), so the mutant fails on the missing branch rather than on a
+`NameError` two lines down — it reports the guard as undefended for the right reason. And the
+parentheses are not cosmetic: `if a or b:` spliced without them binds as `a or (b and False)`,
+still live down the `a` arm, which would report a killed guard as surviving.
+
+**It covers 77 of the 78, and the runner now says so.** A test wrapped across lines is the one
+spelling the splice rejects (rule 147); there is exactly one, in `ratings.py`. Printing the count
+is the point — "27 guards mutated" beside a silent 1 skipped reads as a complete sweep.
+
+**The gates zone, re-run: 81 mutants to 108, and 102 killed / 6 survived.** Five of the six
+survivors were reachable only by the new operator. Sorted by the predicate this zone has used
+since its first run — *does the result still hold the file?*
+
+| survivor | what deleting the guard did | direction |
+| --- | --- | --- |
+| `CuratedListGate` PROTECT branch | "on a protected list" becomes "Not on any protected list" | **withdraws a protection** |
+| `RatingFloorGate` no-rules-configured | the whole sentence becomes `"."` | operator copy |
+| `RatingFloorGate` partial-clear branch | the "cleared one bar, not the others" sentence is lost | operator copy |
+| `RatingRule.describe_bar` percentage arm | a percentage bar renders in the other word order | operator copy |
+| `MinDormancyGate` non-`Known` arm | raises `AttributeError` instead of protecting | defense in depth |
+| `progress_is_establishable` `<= 0` → `== 0` | nothing, absent a negative hold | equivalent |
+
+**The one that matters is the first, and it is the shape the zone was built to find.** Nothing
+in 3,000 tests drove a curated-list *hit*, so the branch that fires the protection was free to
+stop firing — a protection withdrawn library-wide behind a green suite. The three copy survivors
+do not change any file's fate; they degrade the sentence explaining it, which is rule 21's floor
+rather than rule 2's. Recording direction is what keeps those two findings in different rows.
+
+**A zero now reads as a zero.** The per-function table is keyed on the functions the *zone*
+declares rather than on the mutants generated, so `evaluate_all` prints `0 mutants -- nothing was
+tried here` instead of dropping out of the report and reading as defended. That is rule 145's
+flag-shaped coverage claim, and it was living in the tool written to catch it.
+
+**A hand-listed test corpus errs toward false survivors.** The gates zone omitted
+`test_policy_permutations.py`, the only file that kills a deletion of either `RatingFloorGate`
+fail-closed guard: the zone called both survivors while the full suite failed on both. A false
+survivor is expensive out of proportion to its count, because it costs the reader the trust the
+real ones need.
+
+**What the fail-closed guards themselves cost to defend: one test.** All seven `gates._blocked`
+call sites now die, against five that survived the entire suite before. The property that was
+supposed to cover them reads `for result in evaluation.results: if result.blocked:`, so deleting
+a guard yields *fewer* blocked results and the conditional over the smaller set still holds —
+green, while the gate stopped failing closed. Rule 118's case exactly: where the sweep upstream
+cannot discriminate a branch, drive the interlock directly. The table of guards is reconciled
+against the source by AST, so a gate that gains a guard fails until it gains a case.
+
+**The rule 72 sweep off that fix came back clean, which is worth recording as a negative.** The
+seven other places in `src/` that construct a result with `blocked=True` were each flipped to
+`False` against the full suite: six failed it. The seventh,
+`condemned.reap_override_verdict_decoded`'s unreadable-explanation arm, survives and is an
+**equivalent mutant** — the same call passes `safety_protected=True`, which returns `protect`
+whatever `blocked` says. It is defense in depth and earns no test (rule 118: a test that cannot
+discriminate must not read as a proof). Third time a survivor here has turned out to be a
+redundant guard rather than a gap, and the check that settles it costs one call to
+`decide_verdict` with both values.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
