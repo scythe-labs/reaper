@@ -26,8 +26,8 @@ import { Notice } from "./Notice";
  *  work and then reads as an assurance that the sweep is finished (rule 7/24). Grep for the
  *  component to see who calls it.
  *
- *  Surfaces, not files: `PlexPanel` carries this line at THREE places (#166) and `ServiceModal`
- *  at four. `PlexPanel`'s status read took it in #140; its library grid and its Leaving Soon
+ *  Surfaces, not files: `PlexPanel` carries this line at several places (#166) and so does
+ *  `ServiceModal`. `PlexPanel`'s status read took it in #140; its library grid and its Leaving Soon
  *  group were still trading the whole grid, and both shelf switches, for an error paragraph over
  *  a list React Query was still holding. A file entering this set does not always do it once, so
  *  finding one branch that tests a bare `isError` is a reason to read the rest of the file.
