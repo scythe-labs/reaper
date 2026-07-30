@@ -276,7 +276,7 @@ export function ReapBreakdown({
           {plural(data.hand_reaped_held, "reap you marked is", "reaps you marked are")} on hold, so
           this reap won't remove {data.hand_reaped_held === 1 ? "it" : "them"} yet.{" "}
           <button className="link" onClick={onGoToReview}>
-            See Review →
+            See Review <span aria-hidden="true">→</span>
           </button>
         </div>
       )}
@@ -302,7 +302,7 @@ export function ReapBreakdown({
       <div className="rb-line">
         To spare a title or change a decision, open the{" "}
         <button className="link" onClick={onGoToReview}>
-          Review queue →
+          Review queue <span aria-hidden="true">→</span>
         </button>
       </div>
     </div>

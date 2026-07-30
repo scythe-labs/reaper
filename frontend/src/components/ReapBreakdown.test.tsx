@@ -321,3 +321,19 @@ describe("the pointers off the page", () => {
     await waitFor(() => expect(onReview).toHaveBeenCalledTimes(1));
   });
 });
+
+describe("the arrows drawn on the pointers off this page", () => {
+  // The glyph sat INSIDE the button's text, so it landed in the accessible name and a reader said
+  // the punctuation as part of the control: "See Review right arrow" (#177). Hidden, not removed
+  // -- it is drawn exactly as before.
+  //
+  // `toHaveAccessibleName` with the whole string, never a substring matcher: /Review queue/ was
+  // already satisfied by the broken name and is what let this sit here.
+  it("keeps them out of what a reader calls the control", async () => {
+    renderBreakdown();
+
+    expect(await screen.findByRole("button", { name: /Review queue/ })).toHaveAccessibleName(
+      "Review queue",
+    );
+  });
+});

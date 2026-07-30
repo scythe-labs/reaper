@@ -40,6 +40,7 @@ import {
   type SortKey,
   type Verdict,
 } from "../api";
+import { announce } from "../announce";
 import { useBackGuard } from "../backnav";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
@@ -98,6 +99,15 @@ import { staleReadLine, StaleReadNotice } from "./StaleReadNotice";
 
 //: How many cards to *render* at a time. A tab can hold thousands, so we draw a screenful and
 //  reveal more as you scroll -- keeping the DOM (and the lazy poster fetches) small.
+/** What the two scan-freshness surfaces say, in one place because each is said twice now: once
+ *  on screen and once into the shared live region. Neither had a voice before -- both were bare
+ *  `role="status"` nodes mounted with their own text, which several readers never announce -- and
+ *  a hand-copied sentence in the announcement would be a second copy of an operator-facing claim
+ *  free to drift from the one on screen (rule 144). */
+const NUDGE_NEWER_SCAN = "A newer scan just finished";
+const NUDGE_VIEWING_PREVIOUS = "You're viewing the previous scan.";
+const TOAST_CAUGHT_UP = "Updated to the latest scan.";
+
 const PAGE = 40;
 
 //: How many candidates to *fetch* per request. The server pages the query (the review queue of
@@ -1723,6 +1733,12 @@ export function ReviewQueue({
   useEffect(() => {
     if (toastTick === 0) return;
     setToastOn(true);
+    // Said through the shared region rather than left to the toast's own markup. A `role="status"`
+    // node mounted in the same commit as its text is unreliably announced -- several readers only
+    // watch regions that were already there -- which is the bug `Notice` reached for `role="alert"`
+    // to avoid, and it is why this toast was silent while looking correct (#177). The words are
+    // the toast's own, so the ear and the eye get the same sentence (rule 144).
+    announce(TOAST_CAUGHT_UP);
     const id = window.setTimeout(() => setToastOn(false), 2600);
     return () => window.clearTimeout(id);
   }, [toastTick]);
@@ -1735,6 +1751,18 @@ export function ReviewQueue({
     onSilentRefresh,
     onSilentCaughtUp: () => setToastTick((n) => n + 1),
   });
+  // The nudge's own voice. It appears when a scan lands under an open review, which is a change
+  // the operator did not make to a page whose every number just moved -- so it is exactly the
+  // event a reader has to hear, and the surface announcing it was the one that could not.
+  // Fired on the EDGE the bar goes up, not on every render it is up for, or a re-render would
+  // repeat it -- and the bar is sticky, so it stays up across a lot of them.
+  const nudgeUp = freshness.showBar;
+  const nudgeWasUp = useRef(false);
+  useEffect(() => {
+    if (nudgeUp && !nudgeWasUp.current) announce(`${NUDGE_NEWER_SCAN}. ${NUDGE_VIEWING_PREVIOUS}`);
+    nudgeWasUp.current = nudgeUp;
+  }, [nudgeUp]);
+
   const showLatest = () => {
     // Close an open why-panel first: its candidate id is from the snapshot being replaced, so a
     // refetch could only return a stale row. The show panel is keyed on a stable group key and
@@ -2103,12 +2131,16 @@ export function ReviewQueue({
         {/* A scan finished under an open review. Sticky, so it stays in reach however far the
           reviewer has scrolled; derived from the list being behind, so it clears itself the
           moment any refetch pulls the newer snapshot. */}
+        {/* No `role="status"` here any more. It was mounted in the same commit as its text, which
+            several readers do not announce at all, so the role read as correct and said nothing --
+            and it wrapped two focusable buttons, which a live region should not. The sentence is
+            spoken through the shared region instead, from the effect below. */}
         {freshness.showBar && (
-          <div className="scan-nudge" role="status">
+          <div className="scan-nudge">
             <span className="nudge-dot" aria-hidden="true" />
             <span className="nudge-text">
-              <b>A newer scan just finished</b>
-              <span>You're viewing the previous scan.</span>
+              <b>{NUDGE_NEWER_SCAN}</b>
+              <span>{NUDGE_VIEWING_PREVIOUS}</span>
             </span>
             <span className="nudge-actions">
               <button type="button" className="primary sm" onClick={showLatest}>
@@ -2139,8 +2171,9 @@ export function ReviewQueue({
             One scan behind. <span className="scan-behind-cta">Show latest</span>
           </button>
         )}
+        {/* Same as the nudge above (rule 72): the role is gone and the sentence is announced. */}
         {toastOn && (
-          <div className="scan-toast" role="status">
+          <div className="scan-toast">
             <span className="scan-toast-check" aria-hidden="true">
               <svg viewBox="0 0 16 16" width="15" height="15">
                 <path
@@ -2153,7 +2186,7 @@ export function ReviewQueue({
                 />
               </svg>
             </span>
-            <span className="scan-toast-msg">Updated to the latest scan.</span>
+            <span className="scan-toast-msg">{TOAST_CAUGHT_UP}</span>
           </div>
         )}
 

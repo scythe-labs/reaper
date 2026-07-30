@@ -15,8 +15,9 @@
 // in the same commit as its text is unreliably announced -- several readers only watch regions
 // that were already there -- so `role="status"` on a conditionally-rendered node reads as
 // correct and stays silent. `role="alert"` is announced on insertion, which is the shape these
-// call sites actually have. The two existing bare `role="status"` nodes in `ReviewQueue` have
-// this bug today and are not this component's to fix.
+// call sites actually have. The two bare `role="status"` nodes in `ReviewQueue` had exactly this
+// bug; they were not this component's to fix and were fixed the other way, by dropping the role
+// and speaking through the shared region in `announce.tsx` (#177).
 //
 // `standing` is the opt-out, for a notice that is part of the page whenever some condition holds
 // rather than a reaction to anything -- most importantly one that re-renders as the operator

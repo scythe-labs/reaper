@@ -219,7 +219,9 @@ export function Fairness({
       <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>
       <span className="fair-stat-lbl">Not in the last scan</span>
       <span className="fair-stat-sub">requested since, or filtered out</span>
-      <span className="fair-stat-more">See what these are ›</span>
+      <span className="fair-stat-more">
+        See what these are <span aria-hidden="true">›</span>
+      </span>
     </button>
   );
 

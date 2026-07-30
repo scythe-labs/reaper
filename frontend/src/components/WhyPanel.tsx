@@ -57,7 +57,7 @@ export function JumpPill({ href, label }: { href: string | null; label: string }
   if (!href) return null;
   return (
     <a className="jump-pill" href={href} target="_blank" rel="noopener noreferrer">
-      {label} ↗
+      {label} <span aria-hidden="true">↗</span>
     </a>
   );
 }

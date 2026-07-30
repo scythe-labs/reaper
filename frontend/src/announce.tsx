@@ -14,10 +14,11 @@
 // **The region pre-exists its messages, and that is the whole reason it is a module.** A polite
 // region inserted into the DOM in the same commit as its text is unreliably announced -- several
 // readers only watch regions that were already there -- which is exactly why `Notice` had to
-// reach for `role="alert"` instead, and why the two bare `role="status"` toasts in `ReviewQueue`
-// are silent today. Mounting one region once, above every route, is the shape that makes
-// `polite` work. Polite and not assertive: a save that worked must not cut off whatever the
-// operator is reading.
+// reach for `role="alert"` instead. `ReviewQueue`'s scan nudge and catch-up toast were the two
+// nodes with that bug: bare `role="status"`, mounted with their own text, correct-looking and
+// mute. They now drop the role and speak through here instead (#177). Mounting one region once,
+// above every route, is the shape that makes `polite` work. Polite and not assertive: a save that
+// worked must not cut off whatever the operator is reading.
 //
 // **Why two regions.** Saying the same sentence twice is two announcements, and a text node that
 // does not change is not announced -- the second save would be as silent as the bug this

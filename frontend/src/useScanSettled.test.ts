@@ -9,6 +9,7 @@ import { renderHook } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { Announcer } from "./announce";
 import { testQueryClient } from "./test/queryClient";
 import { SCAN_SETTLED_KEYS, useScanSettled } from "./useScanSettled";
 
@@ -19,8 +20,11 @@ function harness() {
     invalidated.push(JSON.stringify(filters?.queryKey));
     return Promise.resolve();
   });
+  // `Announcer` inside the wrapper because `announce()` returns early when no region is
+  // listening -- without it the hook's sentence is dropped and a test about it passes against
+  // silence. The app mounts it above every route, so this is the shipped arrangement.
   const wrapper = ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client }, children);
+    createElement(QueryClientProvider, { client }, createElement(Announcer), children);
   const view = renderHook(({ scanning }) => useScanSettled(scanning), {
     initialProps: { scanning: false },
     wrapper,
@@ -68,5 +72,42 @@ describe("useScanSettled", () => {
     view.rerender({ scanning: false });
 
     expect(invalidated.length).toBe(afterFirst);
+  });
+});
+
+describe("what a background scan tells an operator using a screen reader", () => {
+  // Thirteen caches go stale at once here, which is most of the numbers in the app moving -- and
+  // the trigger can be the scheduler, another device, or another tab, so there is no press to
+  // hang a sentence on and no control that changed. The transition was entirely visual (#177).
+  const spoken = () =>
+    [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+
+  it("says the numbers moved, on the same edge the refresh fires on", () => {
+    const { view } = harness();
+
+    view.rerender({ scanning: true });
+    expect(spoken()).toBe("");
+
+    view.rerender({ scanning: false });
+
+    expect(spoken()).toContain("A scan finished.");
+  });
+
+  it("says nothing on a mount that arrives after the scan already ended", () => {
+    // Same edge discipline the invalidation keeps: a navigation must not announce a scan that
+    // finished before this hook existed.
+    harness();
+
+    expect(spoken()).toBe("");
+  });
+
+  it("names no count, because the refetches it just triggered have not landed", () => {
+    // A figure said here would be the PREVIOUS scan's -- this hook marks caches stale and never
+    // reads them (rule 85). The sentence is deliberately about the change, not about a number.
+    const { view } = harness();
+    view.rerender({ scanning: true });
+    view.rerender({ scanning: false });
+
+    expect(spoken()).not.toMatch(/\d/);
   });
 });

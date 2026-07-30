@@ -941,7 +941,7 @@ export function GeneralPanel({
             </p>
             <div className="set-control">
               <a className="btn-link" href="/api/docs" target="_blank" rel="noreferrer">
-                Open the API reference ↗
+                Open the API reference <span aria-hidden="true">↗</span>
               </a>
             </div>
           </div>

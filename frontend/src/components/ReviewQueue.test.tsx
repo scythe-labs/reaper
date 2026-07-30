@@ -12,6 +12,7 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Announcer } from "../announce";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL } from "../test/apiFixtures";
@@ -1873,5 +1874,54 @@ describe("one row's write does not disable another row's controls", () => {
       settle({});
       await Promise.resolve();
     });
+  });
+});
+
+describe("what a reviewer hears when a scan lands under an open review", () => {
+  // The nudge and the catch-up toast were bare `role="status"` nodes mounted in the same commit as
+  // their own text. Several readers only watch regions that were already there, so both looked
+  // correct and said nothing -- the bug `Notice` reached for `role="alert"` to avoid. The role is
+  // gone (it was also wrapping two focusable buttons) and the sentence goes through the shared
+  // region instead (#177).
+  const spoken = () =>
+    [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+
+  function renderWithAnnouncer() {
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Announcer />
+        <ReviewQueue
+          verdict="condemn"
+          onVerdictChange={() => {}}
+          selectedId={null}
+          selectedGroupKey={null}
+          onSelect={() => {}}
+          onSelectGroup={() => {}}
+          latestScanSnapshotId={2}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("says a newer scan finished, in the nudge's own words", async () => {
+    renderWithAnnouncer();
+
+    await screen.findByText("A newer scan just finished");
+
+    await waitFor(() => expect(spoken()).toContain("A newer scan just finished."));
+    expect(spoken()).toContain("You're viewing the previous scan.");
+  });
+
+  it("does not leave a live-region role on a node mounted with its text", async () => {
+    // The role is what made this read as solved. Pinned by absence, with the reason in the
+    // comment above, so re-adding it fails here rather than shipping a second silent region.
+    renderWithAnnouncer();
+    await screen.findByText("A newer scan just finished");
+
+    expect(document.querySelector(".scan-nudge")).not.toBeNull();
+    expect(document.querySelector('.scan-nudge[role="status"]')).toBeNull();
+    expect(document.querySelector('.scan-toast[role="status"]')).toBeNull();
   });
 });
