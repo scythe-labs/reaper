@@ -749,10 +749,18 @@ class Executor:
         # library's size while purging another's trash (rule 6/57).
         self._affected_sections: set[int] = set()
         # The trash interlock's inputs: each section's item count BEFORE anything was
-        # deleted, and how many Plex entries this run removed under each section. The
+        # deleted, and WHICH Plex listings this run removed under each section. The
         # purge runs only when a section shrank by no more than what we deleted there.
+        #
+        # The listings are held as a set of rating keys rather than a running count,
+        # because two candidates can name the SAME listing: two *arr instances holding one
+        # tmdb id each bind to a single merged Plex item (engine/identity.py binds on one
+        # unambiguous hit), and nothing dedups candidates by rating key. Summing per
+        # candidate charged that one listing twice, so the allowance grew by one per
+        # collision while the section's own count could only ever fall by one -- widening
+        # the single bound on how much of a section-wide purge may be someone else's.
         self._section_pre_counts: dict[int, int] = {}
-        self._deleted_by_section: dict[int, int] = {}
+        self._deleted_by_section: dict[int, set[int]] = {}
         # Section key -> title, filled as sections are read, so the log lines an operator
         # reads still name the library rather than a number.
         self._section_titles: dict[int, str] = {}
@@ -1811,11 +1819,13 @@ class Executor:
         # stops a stale entry lingering, and it must fire even when the exclusion check
         # failed (the file is still gone). Best-effort: never affects the item's verdict.
         # A merged bind lists this one file under several rating keys, so the purge's
-        # count-delta gate is told how many Plex entries this delete removes.
+        # count-delta gate is told WHICH Plex listings this delete removes. Handing over
+        # the keys rather than their count is what lets the gate dedup a listing two
+        # candidates both bound to (see ``_deleted_by_section``).
         if assume_removed:
             await self._best_effort_refresh(
                 str(movie.get("path") or movie.get("folderName") or ""),
-                plex_entries=len(self._equivalent_keys(delete.candidate)) or 1,
+                plex_keys=self._equivalent_keys(delete.candidate),
             )
 
         if not (excluded and proven_gone):
@@ -2129,14 +2139,14 @@ class Executor:
         # whole-series scope rather than skipping the refresh, since a stale entry is
         # cosmetic and Plex will notice on its own scheduled scan either way.
         #
-        # ``plex_entries=0``, deliberately: a TV section counts SHOWS, and pruning a season
-        # of a multi-season show removes no show from it. Passing 1 (what this did) granted
-        # the trash purge an allowance of one section entry per season pruned, so a run
-        # pruning N seasons authorized a shrink of up to N shows on the most dangerous call
-        # in the application -- a shrink that could only have come from something OTHER than
-        # this run, since our own prunes move that count by zero. The comment here already
-        # said the gate should decline; now it does, because zero expected entries fails the
-        # ``expected <= 0`` guard in ``_trash_delta_is_ours``.
+        # No ``plex_keys``, deliberately: a TV section counts SHOWS, and pruning a season
+        # of a multi-season show removes no show from it. Passing one (what this did)
+        # granted the trash purge an allowance of one section entry per season pruned, so a
+        # run pruning N seasons authorized a shrink of up to N shows on the most dangerous
+        # call in the application -- a shrink that could only have come from something OTHER
+        # than this run, since our own prunes move that count by zero. The comment here
+        # already said the gate should decline; now it does, because an empty key set fails
+        # the ``expected <= 0`` guard in ``_trash_delta_is_ours``.
         #
         # Pruning a show's LAST season may well drop the show, and that purge is declined
         # too. That is the cost, and it is the right way round: a lingering "unavailable"
@@ -2154,7 +2164,7 @@ class Executor:
         # common parent that escapes the series folder is discarded rather than used.
         if scoped and series_path and not _path_within(scoped, series_path):
             scoped = ""
-        await self._best_effort_refresh(scoped or series_path, plex_entries=0)
+        await self._best_effort_refresh(scoped or series_path, plex_keys=())
 
         await self._mark_verified(delete_step, {"deleted_file_ids": file_ids, "remaining": 0})
         return StepOutcome(
@@ -2200,23 +2210,28 @@ class Executor:
             except Exception as exc:
                 log.warning("reap.section_count_unreadable", section=section.title, error=str(exc))
 
-    async def _best_effort_refresh(self, arr_path: str, *, plex_entries: int = 1) -> None:
+    async def _best_effort_refresh(self, arr_path: str, *, plex_keys: Sequence[int]) -> None:
         """Nudge Plex to rescan the deleted item's directory. Never fatal.
 
         Fires whenever the file is gone, so Plex learns the item is missing. When the
         *arr path sits inside a Plex section location, the refresh is path-scoped -- it can
         only affect items *under that path*, never the whole library, which is what makes
         the end-of-run trash purge safe. The refreshed section is remembered for that
-        purge, along with ``plex_entries`` -- how many Plex listings this delete removes
-        (a merged bind lists one file more than once) -- which feeds the purge's
-        count-delta gate. When the path cannot be mapped it does nothing and says so; the
-        file is already gone and Plex will notice on its next scheduled scan regardless.
+        purge, along with ``plex_keys`` -- WHICH Plex listings this delete removes (a
+        merged bind lists one file under several) -- which feeds the purge's count-delta
+        gate. When the path cannot be mapped it does nothing and says so; the file is
+        already gone and Plex will notice on its next scheduled scan regardless.
 
-        ``plex_entries=0`` is a real and meaningful value: this delete removes no entry
+        The keys are unioned into the section's set rather than counted, so a listing two
+        candidates both name contributes one allowance and not two (see
+        ``_deleted_by_section``). Under-counting is impossible in the other direction: one
+        rating key is one section entry.
+
+        An empty ``plex_keys`` is a real and meaningful value: this delete removes no entry
         from the section's own count, so it grants the purge NO allowance and the
-        count-delta gate declines for that section. A season prune of a show passes zero
-        for exactly that reason (a TV section counts shows), which is why this floors at
-        zero rather than at one.
+        count-delta gate declines for that section. A season prune of a show passes nothing
+        for exactly that reason (a TV section counts shows). There is no default, so a new
+        caller must state which listings it removes rather than inheriting an allowance.
         """
         gateway = self._gateway
         if gateway is None or gateway.plex is None or not arr_path:
@@ -2230,9 +2245,7 @@ class Executor:
                         with declared_mutation():
                             await gateway.plex.refresh_path(section.key, arr_path)
                         self._affected_sections.add(section.key)
-                        self._deleted_by_section[section.key] = self._deleted_by_section.get(
-                            section.key, 0
-                        ) + max(0, plex_entries)
+                        self._deleted_by_section.setdefault(section.key, set()).update(plex_keys)
                         return
             log.info("reap.refresh_unmapped", arr_path=arr_path)
         except Exception as exc:
@@ -2259,10 +2272,10 @@ class Executor:
           in (``_common_parent``) -- so the only items Plex could have *freshly* trashed are
           the ones under the paths we deleted. Reaper never triggers a whole-section scan.
         * **The count-delta gate** (``_trash_delta_is_ours``). The section must have shrunk
-          since the pre-delete baseline, and by no more than the entries this run deleted
-          under it. A larger shrink means something else -- a mount flap on the Plex host, a
-          nightly scan -- trashed items that are NOT ours, and purging would destroy their
-          library records (watch states, collection membership).
+          since the pre-delete baseline, and by no more than the distinct Plex listings this
+          run deleted under it. A larger shrink means something else -- a mount flap on the
+          Plex host, a nightly scan -- trashed items that are NOT ours, and purging would
+          destroy their library records (watch states, collection membership).
 
         **What these do NOT cover, stated plainly because the purge is section-wide.**
         ``empty_trash`` is ``PUT /library/sections/{key}/emptyTrash``: it empties that
@@ -2288,7 +2301,7 @@ class Executor:
 
         for section_key in sorted(self._affected_sections):
             title = self._section_title(section_key)
-            if self._deleted_by_section.get(section_key, 0) <= 0:
+            if not self._deleted_by_section.get(section_key):
                 # Declined here rather than inside the gate, so a section whose count this
                 # run cannot move does not first pay the settle wait. A TV-only run reaches
                 # this for every section it touched (a TV section counts shows), and waiting
@@ -2323,15 +2336,18 @@ class Executor:
         """Did this section shrink by what this run deleted under it, and no more?
 
         The confirmation the purge requires: ``pre - post`` must be at least 1 (Plex has
-        actually noticed a removal) and at most the number of entries we deleted there. A
-        shrink of zero means Plex has not confirmed OUR deletes either -- perhaps trashed
+        actually noticed a removal) and at most the number of DISTINCT Plex listings we
+        deleted there -- distinct because one listing two candidates both bound to can only
+        move the section's count by one, however many candidates named it
+        (``_deleted_by_section``). A shrink of zero means Plex has not confirmed OUR
+        deletes either -- perhaps trashed
         items still count toward the section size on this server -- and purging without
         confirmation is exactly the mistake this gate exists to prevent, so it refuses and
         the trash is left to the owner or to Plex's own maintenance. Never raises.
         """
         title = self._section_title(section_key)
         pre = self._section_pre_counts.get(section_key)
-        expected = self._deleted_by_section.get(section_key, 0)
+        expected = len(self._deleted_by_section.get(section_key, ()))
         if expected <= 0:
             # Nothing this run deleted changes this section's own item count, so there is no
             # allowance to compare a shrink against and the purge is declined. The ordinary

@@ -2384,6 +2384,57 @@ class TestPlexCleanup:
         assert plex.refreshed == [("Movies", "/movies/Worthless")]
         assert plex.emptied == []
 
+    async def test_two_copies_of_one_title_grant_the_purge_one_allowance_between_them(
+        self, session: AsyncSession
+    ) -> None:
+        """Two *arr instances holding the same movie bind to ONE merged Plex listing, so
+        the section's own count can only ever fall by one when both copies go. Counting the
+        allowance per candidate charged that single listing twice and let a shrink of two
+        through -- and the second entry could only have come from something other than this
+        run, which is the mass loss this gate exists to refuse. The allowance is now the
+        DISTINCT listings removed, so two candidates on rating key 700 grant one."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 700), ("radarr:2:1", 1 * GB, 700)]
+        )
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 98]})
+        gateway = _gateway(
+            radarr={
+                1: FakeRadarr(path="/movies/Worthless"),
+                2: FakeRadarr(path="/movies/Worthless 4K"),
+            },
+            plex=plex,
+        )
+
+        report = await _real(session, run, gateway)
+
+        assert report.deleted_items == 2  # both copies really went
+        assert plex.emptied == []  # but the section lost one entry too many
+
+    async def test_two_titles_of_their_own_still_earn_an_allowance_each(
+        self, session: AsyncSession
+    ) -> None:
+        """The other side of the boundary above, so deduping the allowance cannot be
+        mistaken for capping it at one: two candidates on their OWN Plex listings remove
+        two entries, the section falls by exactly two, and the purge goes ahead."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 700), ("radarr:2:1", 1 * GB, 701)]
+        )
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 98]})
+        gateway = _gateway(
+            radarr={
+                1: FakeRadarr(path="/movies/Worthless"),
+                2: FakeRadarr(path="/movies/Worthless Two"),
+            },
+            plex=plex,
+        )
+
+        report = await _real(session, run, gateway)
+
+        assert report.deleted_items == 2
+        assert plex.emptied == ["Movies"]
+
     async def test_a_sibling_section_sharing_a_path_prefix_is_never_claimed(
         self, session: AsyncSession
     ) -> None:
