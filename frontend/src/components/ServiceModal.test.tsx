@@ -457,6 +457,31 @@ describe("ServiceModal while a save is in flight", () => {
   });
 });
 
+describe("what a screen reader calls the host box", () => {
+  // The scheme is drawn as a prefix fused inside the field's box, and the <label> wrapped it, so
+  // the box announced as "Hostname or IP http colon slash slash": the operator heard punctuation
+  // where the field's job should have been (#214).
+  //
+  // `toHaveAccessibleName`, not `getByLabelText`, because the accessible name is the thing under
+  // test and only the name computation honors `aria-hidden`. A substring lookup is what let this
+  // sit here in the first place -- /Hostname or IP/ matched happily either way.
+  const hostBox = () => screen.getByLabelText(/Hostname or IP/);
+
+  it("names it for what goes in it, not for the scheme drawn beside it", async () => {
+    renderModal(sonarr(), []);
+    expect(hostBox()).toHaveAccessibleName("Hostname or IP");
+  });
+
+  it("keeps that name with SSL on, where the prefix is a different string", async () => {
+    // Both branches of the prefix driven, since the name must not depend on which one renders
+    // (rule 145). The toggle is the control that states the scheme in words, and it is reachable.
+    renderModal(sonarr({ base_url: "https://10.0.0.5:8989" }), []);
+    const toggle = screen.getByRole("switch", { name: /Use SSL/i });
+    expect(toggle).toBeChecked();
+    expect(hostBox()).toHaveAccessibleName("Hostname or IP");
+  });
+});
+
 describe("what a screen reader hears when a connection is tested", () => {
   // Press "Test connection" and the result rendered as a badge that sat in no live region, at
   // any of its five sites -- so an operator using a reader learned the outcome only if they
@@ -481,7 +506,6 @@ describe("what a screen reader hears when a connection is tested", () => {
       </QueryClientProvider>,
     );
     const user = userEvent.setup();
-    // The label wraps the scheme span too, so the spoken name is "Hostname or IP http://".
     await user.type(screen.getByLabelText(/Hostname or IP/), "10.0.0.5");
     await user.type(screen.getByLabelText(/^API key$/), "k");
     return user;

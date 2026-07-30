@@ -529,7 +529,14 @@ export function ServiceModal({
           <label className="field-sm">
             <span className="field-label">Hostname or IP</span>
             <span className="url-join">
-              <span className="url-scheme">{ssl ? "https://" : "http://"}</span>
+              {/* The scheme is a fused prefix, not part of the box's name: the label wraps it, so
+                  a reader announced this field as "Hostname or IP http colon slash slash" and the
+                  operator heard punctuation where the box's job should have been (#214). Hidden
+                  from the name only -- it is drawn as before, and the "Use SSL" switch below is
+                  the control that states and changes it, in words. */}
+              <span className="url-scheme" aria-hidden="true">
+                {ssl ? "https://" : "http://"}
+              </span>
               <input
                 value={host}
                 onChange={(e) => onHostChange(e.target.value)}
