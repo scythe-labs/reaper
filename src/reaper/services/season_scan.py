@@ -879,6 +879,10 @@ async def season_watch_stats(
     # `snapshot._fold_merged_watch_stats` / `fairness._distinct_episodes` inherit it by running
     # after a guarded sibling over a subset of its keys. `backtest._plays` and
     # `calibration.derive` do NOT have it, and have no route, CLI or schedule reaching them.
+    # Deferred rather than swept (rule 72, issue #283) for a reason worth writing down: both
+    # sit in `engine/`, which imports nothing from `services/`, so the one-line fix its four
+    # siblings took is not available there. Whoever wires a backtest route calls this from the
+    # route, where the layering allows it; docs/STATUS.md open item 3 carries that obligation.
     # Today the season task also always runs after `scan()` has touched the mirror, so the
     # table exists; this does not depend on that ordering holding.
     await history_sync.ensure_schema(engine)
