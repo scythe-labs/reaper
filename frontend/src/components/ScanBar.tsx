@@ -199,8 +199,8 @@ export function ScanRow({
 
         {snapshot && !scanning && (
           <div className="jobrow-meta">
-            {count(snapshot.item_count)} items &middot; <strong>{count(snapshot.condemned)}</strong>{" "}
-            would be removed, freeing{" "}
+            {count(snapshot.item_count)} items, <strong>{count(snapshot.condemned)}</strong> would
+            be removed, freeing{" "}
             <strong>{totalBytes(snapshot.reclaimable_bytes, snapshot.unknown_size_items)}</strong>
           </div>
         )}

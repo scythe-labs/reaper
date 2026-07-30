@@ -109,6 +109,114 @@ def test_no_source_file_holds_an_invisible_control_character() -> None:
     )
 
 
+# A middot written as anything except itself. Every one of these renders as the character, and
+# not one of them is visible to ``grep '·'`` -- which is the entire reason this gate exists.
+# The escape forms are pinned to their exact digit counts (``\u`` takes four, ``\U`` eight), so
+# an ordinary escape that merely opens with those digits -- a four-digit U+B7C1 -- is not
+# collected.
+_MIDDOT_IN_DISGUISE = re.compile(
+    r"&middot;|&#0*183;|&#x0*b7;|\\u00b7|\\U000000b7|\\u\{0*b7\}|\\xb7|\\N\{MIDDLE DOT\}",
+    re.IGNORECASE,
+)
+# The CSS spelling has no ``u``: ``content: "\B7"``, up to four leading zeros. Scoped to
+# stylesheets because the same shape is ``\b`` (a word boundary) followed by a 7 in a Python
+# regex, and a gate with a false positive is a gate someone deletes.
+_MIDDOT_CSS_ESCAPE = re.compile(r"\\0*b7(?![0-9a-f])", re.IGNORECASE)
+
+
+def _middot_in_disguise(path: Path, line: str) -> bool:
+    """Whether ``line`` writes a middot as something other than the character itself."""
+    if _MIDDOT_IN_DISGUISE.search(line):
+        return True
+    return path.suffix == ".css" and _MIDDOT_CSS_ESCAPE.search(line) is not None
+
+
+def test_a_middot_is_written_as_itself_everywhere() -> None:
+    """A character spelled as an entity or an escape is invisible to the sweep that removes it.
+
+    Rule 21 stopped blessing the middot as a separator between two facts: a reader either voices
+    it ("40 titles *middle dot* 1.2 TB freed") or drops it and runs the two facts together, so
+    the separator is a comma now. The sweep that converted 49 of them (#177) matched the literal
+    character -- and four sites spelling it ``&middot;`` plus one spelling it ``\\u00b7`` came
+    through untouched, still separating two facts in running text on the scan bar, the show panel
+    and the why panel (#299). They were not missed by judgment. They were unreadable to the tool.
+
+    So this does not police what a middot MEANS -- rule 21 owns that, and a decorative one is
+    still fine where it carries ``aria-hidden``. It polices the one thing a matcher can settle:
+    that the tree spells the character exactly one way, so the next person's ``grep '·'`` sees
+    every site there is. That is rule 147 turned on its own population: the guard against a
+    source-text scan being bounded by the syntax it can parse is to leave the tree only one
+    syntax to parse.
+    """
+    # ``index.html`` joins the usual walk because the named entity is HTML's OWN spelling, so the
+    # one hand-written HTML file here is the likeliest place for it and sits outside every other
+    # scan in this module. This file itself drops out: its tables below hold every spelling.
+    index_html = REPO / "frontend" / "index.html"
+    scanned = [p for p in (*_source_files_to_scan(), index_html) if p != SELF]
+    # A zero-offender assertion passes just as happily over an empty walk, which is how a
+    # mis-rooted glob hides (rule 145). The frontend is the half the defect shipped in.
+    assert any(p.suffix == ".tsx" for p in scanned), "the walk reached no components at all"
+
+    offenders = [
+        f"{path.relative_to(REPO).as_posix()}:{lineno} -> {line.strip()}"
+        for path in scanned
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _middot_in_disguise(path, line)
+    ]
+    assert not offenders, (
+        "a middot written as an entity or an escape, which no grep for the character can find --\n"
+        "write it as · so the next sweep of rule 21's separator ban can see it (#299):\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_middot_spelling_matcher_reads_every_spelling_it_claims() -> None:
+    """Rule 147: the ban above is bounded by what its regex can parse, so prove the parse.
+
+    The accepted list is every form that renders as a middot; the two that actually shipped are
+    the first of the entities and the first of the escapes. The rejects are the near misses that
+    must stay out -- above all the literal character, which is the spelling the ban is steering
+    the tree TOWARD and would be an absurd thing to fire on.
+    """
+    css = Path("x.css")
+    ts = Path("x.tsx")
+    accepted = [
+        (ts, "TV show &middot; {seasonLabel}"),
+        (ts, "TV show &MIDDOT; {seasonLabel}"),
+        (ts, "items &#183; more"),
+        (ts, "items &#0183; more"),
+        (ts, "items &#xB7; more"),
+        (ts, "items &#x00b7; more"),
+        (ts, "` \\u00b7 your threshold is ${n}`"),
+        (ts, "` \\u00B7 `"),
+        (ts, r'"\u{b7}"'),
+        (ts, r'"\xb7"'),
+        (Path("x.py"), r'"\N{MIDDLE DOT}"'),
+        (Path("x.py"), r'"\U000000b7"'),
+        (css, r'content: "\B7";'),
+        (css, r'content: "\0000b7";'),
+    ]
+    rejected = [
+        # The spelling the ban wants. Firing on this would ban the character outright.
+        (ts, 'Keeps it, always<span aria-hidden="true"> · </span>'),
+        # A four-digit escape that merely opens with b7, and a hex color that has no backslash.
+        (ts, '"\\uB7C1"'),
+        (ts, "color: #00b7ff;"),
+        # A decimal entity whose digits continue past 183.
+        (ts, "&#1830;"),
+        # The CSS form is scoped to stylesheets: this is a word boundary in a Python regex.
+        (Path("x.py"), r're.compile(r"\b7\b")'),
+    ]
+    missed = [line for path, line in accepted if not _middot_in_disguise(path, line)]
+    assert not missed, "the matcher cannot read spellings the ban claims to cover:\n" + "\n".join(
+        missed
+    )
+    false_positives = [line for path, line in rejected if _middot_in_disguise(path, line)]
+    assert not false_positives, (
+        "the matcher collects lines that do not hide a middot:\n" + "\n".join(false_positives)
+    )
+
+
 # A rule definition opens a line as ``**12.`` or ``**3 / 22.``
 _RULE_DEF = re.compile(r"^\*\*(\d+(?:\s*/\s*\d+)*)\.\s")
 # A citation in code: "rule 28", "rules 4/71", "rule #2".

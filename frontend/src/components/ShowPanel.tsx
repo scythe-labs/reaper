@@ -88,8 +88,7 @@ export function ShowPanel({
             )}
           </h2>
           <p className="muted why-sub">
-            TV show &middot; {seasonLabel} &middot;{" "}
-            {totalBytes(group.size_bytes, group.unknown_size_seasons)}
+            TV show, {seasonLabel}, {totalBytes(group.size_bytes, group.unknown_size_seasons)}
             {/* The Plex library the show lives in -- the same quiet chip the card carries. */}
             <LibraryChip library={group.library} />
             {/* Named here as well as on the card: the card is where you notice a show has

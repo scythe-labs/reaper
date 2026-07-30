@@ -585,7 +585,7 @@ function Verdict({ item }: { item: CandidateDetail }) {
         <span className="muted">
           /100
           {typeof explanation.threshold === "number" &&
-            ` \u00b7 your threshold is ${explanation.threshold}`}
+            `, your threshold is ${explanation.threshold}`}
         </span>
       </div>
       {look.note && <p className="verdict-note">{look.note}</p>}
@@ -1152,7 +1152,7 @@ export function WhyPanel({
             )}
           </h2>
           <p className="muted why-sub">
-            {itemBytes(item.size_bytes)} &middot; {mediaLabel}
+            {itemBytes(item.size_bytes)}, {mediaLabel}
             {/* The Plex library the file lives in -- same quiet chip as the cards, so movies
                 and seasons read the same. */}
             <LibraryChip library={item.library} />
