@@ -1205,6 +1205,7 @@ class TestGatherEndToEnd:
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
+            watch_marks={},
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1269,6 +1270,7 @@ class TestGatherEndToEnd:
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
+            watch_marks={},
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1325,6 +1327,7 @@ class TestGatherEndToEnd:
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
+            watch_marks={},
         )
 
         by_key = {j.media_key: j for j in judgments}
@@ -1370,6 +1373,7 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             keep_in_progress=False,
+            watch_marks={},
         )
         assert sonarr.episodes_called == []  # the fan-out was skipped
         assert "sonarr:1:42:3" in {j.media_key for j in off}  # seasons still resolve
@@ -1390,6 +1394,7 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             keep_in_progress=True,
+            watch_marks={},
         )
         assert sonarr_on.episodes_called == [42]
 
@@ -1474,6 +1479,7 @@ class TestGatherEndToEnd:
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
+            watch_marks={},
         )
 
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:56:3")
@@ -1573,6 +1579,7 @@ class TestGatherEndToEnd:
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
+            watch_marks={},
         )
 
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:55:3")
@@ -1654,6 +1661,7 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
             membership_index=index,
+            watch_marks={},
         )
 
         assert judgments, "the show's seasons must still be gathered"
@@ -1692,6 +1700,7 @@ class TestGatherEndToEnd:
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
+            watch_marks={},
         )
         pruned = next(j for j in judgments if j.media_key == "sonarr:1:7:3")
         assert pruned.plex_rating_key is None
@@ -1729,6 +1738,7 @@ class TestGatherEndToEnd:
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
+            watch_marks={},
         )
         # Both content-bearing seasons appear, each protected by a guard (never condemned).
         assert {j.media_key for j in judgments} == {"sonarr:1:9:1", "sonarr:1:9:2"}
@@ -1764,6 +1774,7 @@ class TestGatherEndToEnd:
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
+                watch_marks={},
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -1808,6 +1819,7 @@ class TestGatherEndToEnd:
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
+                watch_marks={},
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -1857,6 +1869,7 @@ class TestGatherEndToEnd:
                 in_progress_hold_days=200,
                 whitelisted=set(),
                 degrade=degrade,
+                watch_marks={},
             )
 
         deep = await _run(400)
@@ -1914,6 +1927,7 @@ class TestGatherEndToEnd:
                 window_days=365,
                 whitelisted=set(),
                 degrade=degrade,
+                watch_marks={},
             )
         decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
         assert len(decisions) == 1
@@ -1949,6 +1963,7 @@ class TestGatherEndToEnd:
             window_days=365,
             whitelisted=set(),
             degrade=degrade,
+            watch_marks={},
         )
         assert judgments == []
         assert any("sonarr" in r and "unreachable" in r for r in reasons)

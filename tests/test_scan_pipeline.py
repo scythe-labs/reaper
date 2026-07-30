@@ -27,11 +27,19 @@ from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import FirstFlagged, SizeSource, WhitelistEntry
+from reaper.db.models import FirstFlagged, SizeSource, WatchHighWater, WhitelistEntry
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.observation import Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
-from reaper.services import app_settings, history_sync, lists, profiles, season_scan
+from reaper.services import (
+    app_settings,
+    history_sync,
+    lists,
+    profiles,
+    season_pruning,
+    season_scan,
+    watch_evidence,
+)
 from reaper.services.condemned import reap_is_effective
 from reaper.services.scan_runner import _allowed_sections, build_gates
 from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, candidates, scan
@@ -1751,3 +1759,138 @@ class TestKeepHistoryCoverage:
         reasons = captured.get("extra_degrade_reasons")
         assert reasons, "an unrecorded user must hand the scan a degradation reason"
         assert any("user-two" in r for r in reasons)
+
+
+class TestTheWatchBlindnessGuardThroughAWholeScan:
+    """The guard end to end, because every other test for it calls a function directly.
+
+    Deleting all four of the scan's handoffs -- ``watch_marks`` into ``season_scan.gather``,
+    ``watch_blind_reason`` into ``build_facts``, the ``watch_evidence.record`` call and the
+    ``watch_blind_items`` assignment -- once left the whole suite green, so the guard was
+    proven as a function and unproven as a feature (rule 118). ``mypy`` now refuses the first
+    one; these pin the rest, on both lanes, by the only thing an operator would notice: an item
+    that condemned on a false zero stops condemning.
+
+    The two items are the ones ``TestScanPipelineEndToEnd`` asserts condemn, so the flip is
+    against a verdict this suite already pins in the other direction.
+    """
+
+    async def _scan(self, session: AsyncSession, cache_engine: AsyncEngine) -> Any:
+        return await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[
+                season_scan.SonarrSource(
+                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                )
+            ],
+            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                movies=_movie_spine(), shows=_show_spine(), children=_show_children()
+            ),
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+    async def _prepare(self, cache_engine: AsyncEngine) -> None:
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+
+    async def test_a_mark_the_mirror_can_no_longer_support_stops_the_condemn(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        # An earlier scan measured three watchers for the dormant movie and two for the
+        # dormant season. The mirror holds no plays under either item's current Plex key, so
+        # both read zero now -- a fall no library can perform.
+        await self._prepare(cache_engine)
+        session.add_all(
+            [
+                WatchHighWater(media_key="radarr:1:1", watchers_all_time=3, updated_at=utcnow()),
+                WatchHighWater(media_key="sonarr:1:42:2", watchers_all_time=2, updated_at=utcnow()),
+            ]
+        )
+        await session.flush()
+
+        snapshot = await self._scan(session, cache_engine)
+        await session.commit()
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+
+        # Both condemn in TestScanPipelineEndToEnd, on the same fixtures, with no mark.
+        assert rows["radarr:1:1"].verdict == "abstain"
+        assert rows["sonarr:1:42:2"].verdict != "condemn"
+        # The operator is told why, in the stored explanation the why-panel reads.
+        assert watch_evidence.BLIND_REASON in (rows["radarr:1:1"].explanation_json or "")
+        assert watch_evidence.BLIND_REASON in (rows["sonarr:1:42:2"].explanation_json or "")
+        # And the count Settings reads is the count of what actually happened. Two items
+        # went blind; the third season held below is collateral and is NOT counted, because
+        # its own plays read fine.
+        assert snapshot.watch_blind_items == 2
+
+    async def test_a_blind_season_holds_the_sibling_a_viewer_is_about_to_watch(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The sharp end, and the reason the blind reason is decided before the roll-up.
+
+        Season 3's own plays are perfectly readable, so it takes no ``Unknown`` of its own and
+        scores and condemns at full confidence. What it loses when season 2 goes blind is the
+        mid-binge guard: the viewer's place in the show is read from the same mirror, so a
+        viewer who finished season 2 leaves no trace, ``active_progress`` expires them, and the
+        season they were about to watch becomes prunable. A protection that fires and does not
+        protect (rule 140).
+        """
+        await self._prepare(cache_engine)
+        session.add(
+            WatchHighWater(media_key="sonarr:1:42:2", watchers_all_time=2, updated_at=utcnow())
+        )
+        await session.flush()
+
+        snapshot = await self._scan(session, cache_engine)
+        await session.commit()
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+
+        # Season 3 condemns in TestScanPipelineEndToEnd on these same fixtures.
+        assert rows["sonarr:1:42:3"].verdict != "condemn"
+        # Held for the honest reason, which names neither a short mirror nor a cause it did
+        # not establish: the two unanswerable reasons are separate strings for that reason.
+        explanation = rows["sonarr:1:42:3"].explanation_json or ""
+        assert season_pruning.PROGRESS_UNREADABLE_REASON in explanation
+        assert season_pruning.PROGRESS_UNESTABLISHABLE_REASON not in explanation
+        # Collateral, not blind: only the season whose own plays vanished is counted.
+        assert snapshot.watch_blind_items == 1
+
+    async def test_the_blind_scan_leaves_the_mark_standing(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        # The property that makes the guard survive its own first firing. If this scan wrote
+        # its zero over the mark, the NEXT scan would see 0 -> 0, call it honest, and condemn
+        # on the same false evidence -- with nothing left anywhere to notice.
+        await self._prepare(cache_engine)
+        session.add(
+            WatchHighWater(media_key="radarr:1:1", watchers_all_time=3, updated_at=utcnow())
+        )
+        await session.flush()
+
+        await self._scan(session, cache_engine)
+        await session.commit()
+
+        marks = await watch_evidence.recall_all(session)
+        assert marks["radarr:1:1"].watchers_all_time == 3
+
+    async def test_a_scan_with_no_marks_condemns_and_counts_none(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        # The other side, and the one that keeps the feature usable: with nothing to fall
+        # from, every item reads honestly and the count is a real zero, not a NULL.
+        await self._prepare(cache_engine)
+
+        snapshot = await self._scan(session, cache_engine)
+        await session.commit()
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+
+        assert rows["radarr:1:1"].verdict == "condemn"
+        assert rows["sonarr:1:42:2"].verdict == "condemn"
+        assert snapshot.watch_blind_items == 0

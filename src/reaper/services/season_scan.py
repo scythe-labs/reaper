@@ -1153,9 +1153,12 @@ async def gather(
     # The most watch evidence ever measured for each item, read once by the caller (which
     # holds the session; this task does not). Handed in whole rather than filtered because a
     # season ``media_key`` is derived here, so there is nothing to filter on until it is too
-    # late. Empty is the honest default: no marks means nothing can have fallen, so no
-    # season is ever flagged on the strength of a map that was not supplied.
-    watch_marks: Mapping[str, watch_evidence.Mark] | None = None,
+    # late. An empty map is honest -- no marks means nothing can have fallen -- which is
+    # exactly why this is REQUIRED and carries no default: omitting it is byte-identical to a
+    # first scan, so the TV half of the guard would cover no season at all while the code, the
+    # log line and the Settings panel all still read as live. mypy is the gate that catches the
+    # omission, because no test can (rule 118).
+    watch_marks: Mapping[str, watch_evidence.Mark],
 ) -> list[SeasonJudgment]:
     """Gather the seasons of every show with content on disk, ready to judge.
 
@@ -1556,7 +1559,7 @@ async def gather(
                 ratings=ratings,
                 ratings_degraded=ratings_degraded,
                 membership_index=membership_index,
-                watch_marks=watch_marks or {},
+                watch_marks=watch_marks,
             )
         )
 
@@ -1592,7 +1595,10 @@ def _judge_series(
     # shipped policy has, and 0 means the hold never expires -- so every caller that omitted
     # it was exercising an unbounded claim the mirror cannot support (rule 141).
     in_progress_hold_days: int = 180,
-    watch_marks: Mapping[str, watch_evidence.Mark] | None = None,
+    # Required for the same reason as on ``gather`` above, and it is the same class of defect
+    # rule 141 records one parameter up: a default that silently exercises a claim the caller
+    # never made. Here the default disabled a protection outright.
+    watch_marks: Mapping[str, watch_evidence.Mark],
     keep_specials: bool = True,
     protect_incomplete_seasons: bool = True,
     flag_keep_conflicts: bool = True,
@@ -1645,6 +1651,31 @@ def _judge_series(
     # keep-rule conflict detector both need per-user and per-season watcher counts that
     # only exist after the Plex resolution and the mirror read.
     key_to_number = {s.rating_key: n for n, s in item.seasons_in_plex.items()}
+    # Decided BEFORE the roll-up, not after, because everything below reads the same mirror
+    # this answers a question about (rule 140). A season whose plays went unreadable does not
+    # only mis-score itself: its viewer's place in the show disappears from
+    # `_progress_by_user`, and its own watcher count reads as a measured zero to the conflict
+    # detector. Both of those decide the fate of OTHER seasons, which take no `Unknown` of
+    # their own and would condemn at full confidence on evidence that moved.
+    blind_by_season: dict[int, str | None] = {}
+    for season in item.seasons:
+        in_plex_for_blind = item.seasons_in_plex.get(season.season_number)
+        blind_reading = watch_evidence.reading_for(
+            in_plex_for_blind.rating_key if in_plex_for_blind is not None else None,
+            stats.watchers_all_time,
+            stats.last_played,
+        )
+        blind_by_season[season.season_number] = (
+            watch_evidence.went_blind(
+                watch_marks.get(
+                    season_media_key(item.source.instance_id, series_id, season.season_number)
+                ),
+                blind_reading,
+            )
+            if blind_reading is not None
+            else None
+        )
+    show_watch_unreadable = any(reason is not None for reason in blind_by_season.values())
     # Expire abandoned viewers before the guard sees them: a place in the show is held
     # only while its viewer stayed active within the policy's hold window. The helper
     # keeps every viewer whose last-watched time cannot be read, and 0 disables expiry.
@@ -1675,8 +1706,15 @@ def _judge_series(
     reach = Known(value=float(reach_days), source="tautulli")
     for season in item.seasons:
         in_plex = item.seasons_in_plex.get(season.season_number)
+        # A blind season joins the never-resolved one as None. `0` here would assert
+        # "resolved, and nobody watched it" about a season whose plays are simply filed
+        # elsewhere, which is the affirmative measurement rule 93 forbids -- and the detector
+        # would then compare a real count against that zero and find no conflict where one is
+        # exactly what the operator needs to see.
         watchers_by_season[season.season_number] = (
-            stats.watchers_all_time.get(in_plex.rating_key, 0) if in_plex is not None else None
+            stats.watchers_all_time.get(in_plex.rating_key, 0)
+            if in_plex is not None and blind_by_season.get(season.season_number) is None
+            else None
         )
         added_at = in_plex.added_at if in_plex is not None else None
         # Measured from this season's OWN arrival, never the show's: a season backfilled
@@ -1707,6 +1745,13 @@ def _judge_series(
         progress_established=progress_is_establishable(
             reach_days=reach_days, hold_days=in_progress_hold_days
         ),
+        # The same guard's other blind spot, and the reason the check above is not enough: the
+        # mirror can span the hold perfectly and still not hold the rows, because they are
+        # filed under a rating key the season no longer carries. `active_progress` keeps a
+        # viewer whose last-watched time is unreadable, but this viewer is not unreadable, they
+        # are missing, and there is nobody to keep -- the exact sentence
+        # `gates.progress_is_establishable` uses about a short mirror (rule 140).
+        progress_unreadable=show_watch_unreadable,
         keep_specials=keep_specials,
         protect_incomplete=protect_incomplete_seasons,
         flag_keep_conflicts=flag_keep_conflicts,
@@ -1743,13 +1788,12 @@ def _judge_series(
             else Unknown(reason="requests not loaded", source="seerr")
         )
         # A season's history is read by its own Plex key, so the same fall this scan can
-        # detect for a movie is detectable here, against the same marks (rule 72).
+        # detect for a movie is detectable here, against the same marks (rule 72). Decided
+        # above, before the show roll-up, and only read here: one decision per season, so the
+        # facts, the count handed to the conflict detector and the mid-binge hold cannot
+        # disagree about which seasons went blind.
         reading = watch_evidence.reading_for(plex_key, stats.watchers_all_time, stats.last_played)
-        season_blind = (
-            watch_evidence.went_blind((watch_marks or {}).get(media_key), reading)
-            if reading is not None
-            else None
-        )
+        season_blind = blind_by_season.get(n)
         if season_blind is not None:
             log.warning(
                 "scan.watch_history_unreadable",
