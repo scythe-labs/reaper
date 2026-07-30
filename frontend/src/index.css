@@ -1171,6 +1171,9 @@ button.link:hover:not(:disabled) {
   color: var(--text);
   font-size: 0.9rem;
   font-weight: 550;
+  /* The server's name comes from plex.tv, and a <button> does not take the page's wrapping the
+     way surrounding text does, so it declares the break opportunity itself (rule 139). */
+  overflow-wrap: anywhere;
   cursor: pointer;
   transition:
     border-color 0.15s var(--ease),
@@ -1955,6 +1958,12 @@ tbody tr.selected {
 .why-close + .why-head {
   padding-right: 2rem;
 }
+/* The panel's title is the same media title the queue card carries in .card-title, and takes the
+   same break opportunity (rule 139, rule 72). Here it matters more: the panel clips, so a title
+   that paints past its box leaves a tail no scroll reaches. */
+.why-head h2 {
+  overflow-wrap: anywhere;
+}
 .why-head p {
   margin: 0.15rem 0 0;
   font-size: 0.82rem;
@@ -2301,6 +2310,9 @@ a.rating-chip:hover {
   min-width: 4.2rem;
 }
 .signal-detail {
+  /* Names the rule that argued the keep, exactly as its twin .sig-detail below does, and takes
+     the same break opportunity (rule 139, rule 72). */
+  overflow-wrap: anywhere;
   flex: 1;
 }
 
@@ -2489,6 +2501,11 @@ a.rating-chip:hover {
 }
 .gate-mark {
   font-weight: 700;
+}
+/* What a protection said, which on the "could not check" branch quotes an upstream error from
+   someone else's server and routinely carries a URL (rule 139). */
+.gate-detail {
+  overflow-wrap: anywhere;
 }
 
 .gates-fired li {
@@ -3463,6 +3480,9 @@ a.rating-chip:hover {
   gap: 0.6rem;
   padding: 0.22rem 0;
   border-bottom: 1px solid var(--border);
+  /* The title is a media title from the server (rule 139); the score beside it is app text
+     short enough that inheriting this changes nothing about it. */
+  overflow-wrap: anywhere;
 }
 .sim-examples li:last-child {
   border-bottom: none;
@@ -4373,6 +4393,11 @@ a.rating-chip:hover {
   font-size: 0.82rem;
   padding: 0.15rem 0;
 }
+/* The executor's own words for one item. The same shape as .plan-steps code above and needs the
+   same treatment, in a different subtree so that rule does not reach it (rule 139, rule 72). */
+.dryrun-outcomes li code {
+  overflow-wrap: anywhere;
+}
 .dryrun-outcomes .gate-mark {
   color: var(--protect);
 }
@@ -4949,6 +4974,10 @@ a.rating-chip:hover {
   text-transform: none;
   letter-spacing: -0.01em;
   color: var(--text);
+  /* A media title from the server, on a .card that clips: without this its tail is unreachable
+     (rule 139). The .card-open button inside forwards this by `inherit`, so the control and the
+     heading wrap alike. */
+  overflow-wrap: anywhere;
 }
 .card-year {
   color: var(--muted);
@@ -6583,6 +6612,9 @@ button.danger:hover:not(:disabled) {
 .test-badge {
   font-size: 0.8rem;
   font-weight: 500;
+  /* A failed connection test quotes the upstream error, which usually contains the URL it tried.
+     .instance-url on the same card already wraps; this is its sibling line (rule 139, rule 72). */
+  overflow-wrap: anywhere;
 }
 .test-badge.ok {
   color: var(--protect);
@@ -6790,6 +6822,9 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+  /* The scan's live line carries status.detail, which is the library or path it is reading right
+     now (ScanBar's runLabel) -- a file system string, so rule 139 applies. */
+  overflow-wrap: anywhere;
 }
 .jobrow-link {
   margin: 0.3rem 0 0;
@@ -7468,6 +7503,9 @@ button.danger:hover:not(:disabled) {
   padding: 0.65rem 0.85rem;
   font-weight: 600;
   font-size: 0.9rem;
+  /* The library's name is whatever the operator called it in Plex, in a fixed grid track that
+     cannot widen to hold it (rule 139). */
+  overflow-wrap: anywhere;
 }
 .lib-card .lib-kind {
   display: block;
@@ -8353,6 +8391,9 @@ button.danger:hover:not(:disabled) {
   display: block;
   font-weight: 600;
   margin-bottom: 0.35rem;
+  /* The title, or the media key when there is no title -- a machine key with nothing to break
+     on, on the screen that confirms a deletion (rule 139). */
+  overflow-wrap: anywhere;
 }
 .reap-checks {
   list-style: none;
