@@ -38,14 +38,6 @@ function row(over: Partial<RequesterRow> = {}): RequesterRow {
     played_by_them: 30,
     reclaimable_items: 3,
     reclaimable_bytes: 13 * GB,
-    reclaimable: [
-      { title: "The Long Shoreline", size_bytes: 6 * GB, item_id: 101, group_key: null },
-      { title: "Nightferry", size_bytes: 4 * GB, item_id: 102, group_key: null },
-      { title: "Paper Harbor", size_bytes: 3 * GB, item_id: 103, group_key: null },
-    ],
-    seerr_total: 88,
-    movie_at_limit: false,
-    tv_at_limit: false,
     ...over,
   };
 }
@@ -72,7 +64,7 @@ describe("PersonCard", () => {
     const onSelect = vi.fn();
     render(
       <PersonCard
-        row={row({ reclaimable_items: 0, reclaimable_bytes: 0, reclaimable: [] })}
+        row={row({ reclaimable_items: 0, reclaimable_bytes: 0 })}
         selected={false}
         onSelect={onSelect}
         horizonAt={HORIZON}

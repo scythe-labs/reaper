@@ -1044,19 +1044,6 @@ class PlexTrashOut(BaseModel):
     executor's trash interlock never gets a say. ``None`` when it could not be read."""
 
 
-class ReclaimableTitleOut(BaseModel):
-    """A reclaimable title on a requester's row: title, the disk it holds, and how to open
-    it. Every entry is condemned by the last scan, so the verdict is implicit. Exactly one
-    of ``item_id`` / ``group_key`` is set -- a movie or season opens its own card, a show
-    opens its group."""
-
-    title: str
-    size_bytes: int | None = None
-    """``None`` when nothing about the title is measured; the chip says "size unknown"."""
-    item_id: int | None = None
-    group_key: str | None = None
-
-
 class RequesterRowOut(BaseModel):
     """One person's row in Scales."""
 
@@ -1079,14 +1066,6 @@ class RequesterRowOut(BaseModel):
     played_by_them: int
     reclaimable_items: int
     reclaimable_bytes: int
-    reclaimable: list[ReclaimableTitleOut]
-    seerr_total: int | None = None
-    """Lifetime requests in Seerr, summed across portals. None when the user list could not
-    be read. Distinct from ``requests_made`` (what the last scan still has)."""
-    movie_at_limit: bool = False
-    tv_at_limit: bool = False
-    """Whether this person is at their movie / series request cap right now (independent:
-    the two limits have their own windows and units, and are never merged)."""
 
 
 class UnmatchedRequestOut(BaseModel):

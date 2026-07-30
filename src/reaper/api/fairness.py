@@ -11,9 +11,10 @@ watches from the mirror. It still requires **Seerr** (who requested what) and a 
 **Tautulli** (without a watch mirror every title would read as never-played) -- if either is
 missing it says so with a 400 rather than returning a report that looks complete.
 
-Seerr's own request counts and per-type limits are folded in best-effort (``services.
-fairness._enrich_accounts``): a portal whose user list is unreadable drops those extras,
-never the whole report.
+Seerr's own request counts and per-type limits are read for ONE person at a time, when the
+drawer opens them (``services.fairness._enrich_accounts``), and best-effort: a portal whose
+user list is unreadable drops those extras, never the whole panel. The board itself reads no
+account data, so opening Scales costs no per-person quota calls.
 """
 
 from __future__ import annotations
@@ -30,7 +31,6 @@ from reaper.api.schemas import (
     PersonQuotaOut,
     PersonTitleOut,
     QuotaLineOut,
-    ReclaimableTitleOut,
     RequesterRowOut,
     UnmatchedRequestOut,
 )
@@ -169,20 +169,6 @@ def _row_out(row: fairness.RequesterRow) -> RequesterRowOut:
         played_by_them=row.played_by_them,
         reclaimable_items=row.reclaimable_items,
         reclaimable_bytes=row.reclaimable_bytes,
-        # Capped for transport: the count above stays exact, the list is the heaviest
-        # 25 (sorted in the service) so the view can name a few and say "+N more".
-        reclaimable=[
-            ReclaimableTitleOut(
-                title=t.title,
-                size_bytes=t.size_bytes,
-                item_id=t.item_id,
-                group_key=t.group_key,
-            )
-            for t in row.reclaimable[:25]
-        ],
-        seerr_total=row.seerr_total,
-        movie_at_limit=row.movie_at_limit,
-        tv_at_limit=row.tv_at_limit,
     )
 
 

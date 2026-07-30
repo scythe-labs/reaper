@@ -131,22 +131,6 @@ class CandidateInfo:
     per-person panel proxies it through ``/api/poster``, exactly like the review card."""
 
 
-@dataclass(frozen=True)
-class ReclaimableTitle:
-    """One reclaimable title on a requester's row: what it is, the disk it holds, and how to
-    open it. Every entry is condemned by the last scan, so the verdict is implicit.
-
-    Exactly one of ``item_id`` / ``group_key`` is set: a movie or a single season opens its
-    own card (``item_id``); a show with condemned seasons opens the show (``group_key``)."""
-
-    title: str
-    size_bytes: int | None
-    """The condemned disk this title holds, or ``None`` when nothing about it is measured --
-    the chip then says *size unknown* rather than a false ``0 B``."""
-    item_id: int | None
-    group_key: str | None
-
-
 #: Why a requested title is not in the last scan. Each is a distinct thing to tell the
 #: operator, so they are separated rather than lumped under one "not in scan" count.
 UNMATCHED_AFTER_SCAN = "after_scan"
@@ -216,16 +200,6 @@ class RequesterRow:
     """Titles they requested that the last scan condemns. Sizes may overlap across
     co-requesters; the report total dedupes, these per-person figures deliberately do not
     (it is 'disk you asked for that is now expendable', per person)."""
-    reclaimable: list[ReclaimableTitle] = field(default_factory=list)
-    seerr_total: int | None = None
-    """Lifetime requests across every portal this person has an account on (Seerr's own
-    ``requestCount``, summed). ``None`` when the user list could not be read. Display only,
-    and deliberately distinct from ``requests_made`` (what the scan still has)."""
-    movie_at_limit: bool = False
-    tv_at_limit: bool = False
-    """Whether this person is at their movie / series request cap on ANY portal right now
-    (Seerr's live ``restricted`` flag, OR-ed across portals). The two are independent: the
-    windows and units differ per type, so they are never merged into one 'quota' state."""
 
 
 @dataclass(frozen=True)
@@ -604,26 +578,14 @@ def roll_up(
 
             scoped_condemned = [c for c in scoped if c.effective_condemn]
             if scoped_condemned:
-                # Sum only what is measured; ``None`` when nothing in the scoped condemned set is
-                # measured (the chip then says "size unknown"), matching the byte total.
-                measured = [c.size_bytes for c in scoped_condemned if c.size_bytes is not None]
-                recl_size: int | None = sum(measured) if measured else None
+                # Sum only what is measured, so an unsizable item adds nothing to the byte
+                # total while still counting toward the item count.
                 row.reclaimable_items += 1
-                row.reclaimable_bytes += recl_size or 0
-                display = scoped_condemned[0].group_title or scoped_condemned[0].title
-                if len(scoped) == 1:
-                    # A movie or a lone requested season: open its own card.
-                    row.reclaimable.append(
-                        ReclaimableTitle(display, recl_size, scoped_condemned[0].candidate_id, None)
-                    )
-                else:
-                    # Several requested seasons: open the show, whose group carries them.
-                    gk = next((c.group_key for c in scoped_condemned if c.group_key), None)
-                    row.reclaimable.append(ReclaimableTitle(display, recl_size, None, gk))
+                row.reclaimable_bytes += sum(
+                    c.size_bytes for c in scoped_condemned if c.size_bytes is not None
+                )
 
     ordered = sorted(rows.values(), key=lambda r: r.gb_granted_bytes, reverse=True)
-    for row in ordered:
-        row.reclaimable.sort(key=lambda t: t.size_bytes or 0, reverse=True)
 
     # The not-in-scan list and its count come from the one shared classifier, so the card's
     # count is exactly the requests behind the panel's rows (rule 30).
@@ -1050,17 +1012,12 @@ async def build_report(
 
     report = roll_up(requests, candidates, evidence, horizon=horizon, snapshot_at=snapshot_at)
 
-    # Enrich the board with Seerr account data (lifetime request counts and live per-type
-    # caps) for the people actually shown -- a bounded set, so the quota calls are bounded
-    # too. Best-effort: if Seerr's user list is unreadable the rows simply carry no totals,
-    # never a blocked page.
-    accounts = await _enrich_accounts(seerrs, {row.plex_id for row in report.rows})
-    for row in report.rows:
-        acct = accounts.get(row.plex_id) if row.plex_id is not None else None
-        if acct is not None:
-            row.seerr_total = acct.seerr_total
-            row.movie_at_limit = acct.movie.at_limit
-            row.tv_at_limit = acct.tv.at_limit
+    # The board deliberately reads no Seerr *account* data. It used to fold in lifetime
+    # request counts and live per-type caps for every person shown, which cost one user list
+    # plus one quota call per person per portal, uncached, on every load -- and nothing on the
+    # card has rendered those numbers since the chips came off. The drawer still shows them
+    # for the one person it opens (``build_person_detail`` calls ``_enrich_accounts``), which
+    # is where the cost is worth paying.
 
     # Name the not-in-scan titles for the panel. Bounded by the not-in-scan count, and only
     # paid on a report that has some -- most loads pay nothing.
@@ -1071,7 +1028,6 @@ async def build_report(
         requests=len(requests),
         candidates=len(candidates),
         keys_with_history=len(evidence),
-        accounts=len(accounts),
         not_in_scan=report.not_in_scan,
     )
     return report

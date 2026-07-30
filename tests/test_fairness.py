@@ -40,7 +40,6 @@ from reaper.services.fairness import (
     UNMATCHED_NO_ID,
     UNMATCHED_SET_ASIDE,
     CandidateInfo,
-    ReclaimableTitle,
     WatchEvidence,
     roll_up,
 )
@@ -156,9 +155,6 @@ class TestRollUp:
         assert row.played_by_them == 0
         assert row.reclaimable_items == 1
         assert row.reclaimable_bytes == 8 * GB
-        assert row.reclaimable == [
-            ReclaimableTitle(title="Dead Weight", size_bytes=8 * GB, item_id=7, group_key=None)
-        ]
         assert report.total_reclaimable_items == 1
         assert report.total_reclaimable_bytes == 8 * GB
 
@@ -270,9 +266,6 @@ class TestRollUp:
         # Granted is the whole show; reclaimable is only the condemned season.
         assert row.gb_granted_bytes == 7 * GB
         assert row.reclaimable_bytes == 3 * GB
-        assert row.reclaimable == [
-            ReclaimableTitle(title="A Show", size_bytes=3 * GB, item_id=None, group_key="tv:7")
-        ]
 
     def test_rows_are_ordered_by_disk_granted(self) -> None:
         reqs = [
@@ -456,9 +449,6 @@ class TestRollUp:
             {},
         )
         (row,) = report.rows
-        assert row.reclaimable == [
-            ReclaimableTitle(title="Unsized", size_bytes=None, item_id=7, group_key=None)
-        ]
         assert row.reclaimable_bytes == 0
         assert report.total_reclaimable_bytes == 0
         assert report.total_reclaimable_items == 1
@@ -481,7 +471,6 @@ class TestOverrideAwareReclaimable:
         assert row.gb_granted_bytes == 8 * GB
         assert row.reclaimable_items == 0
         assert row.reclaimable_bytes == 0
-        assert row.reclaimable == []
         assert report.total_reclaimable_items == 0
         assert report.total_reclaimable_bytes == 0
 
@@ -618,9 +607,6 @@ class TestSeasonScopedAttribution:
         assert by_name["Alice"].reclaimable_bytes == 4 * GB
         assert by_name["Bob"].gb_granted_bytes == 6 * GB
         assert by_name["Bob"].reclaimable_bytes == 6 * GB
-        # A lone requested season opens its own card, not the show group.
-        assert by_name["Alice"].reclaimable[0].item_id == 1
-        assert by_name["Alice"].reclaimable[0].group_key is None
         # The deduped report total still covers the whole matched show's condemned seasons.
         assert report.total_reclaimable_bytes == 10 * GB
         assert report.total_reclaimable_items == 1
@@ -1080,12 +1066,28 @@ class TestEnrichAccounts:
         assert out == {}
 
 
-class TestBuildReportEnriches:
-    async def test_rows_carry_the_seerr_total_and_which_limit_is_hit(
+class TestBuildReportReadsNoAccounts:
+    async def test_the_board_asks_the_portal_for_no_account_data(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
+        """Issue #259: the board used to fold in every shown person's lifetime request count
+        and live caps, which cost one user list plus one quota call per person per portal on
+        every Scales load -- and no card has rendered those numbers since the chips came off.
+        The drawer still pays it for the one person it opens (``TestEnrichAccounts``), so this
+        pins the board alone. A re-added enrichment fails here rather than going unnoticed."""
         factory, cache = report_env
-        portal = _FakeSeerr(
+        calls: list[str] = []
+
+        class _CountingSeerr(_FakeSeerr):
+            async def users(self, *, take: int = 100) -> list[SeerrUser]:
+                calls.append("users")
+                return await super().users(take=take)
+
+            async def quota(self, user_id: int) -> UserQuota:
+                calls.append("quota")
+                return await super().quota(user_id)
+
+        portal = _CountingSeerr(
             [_req(plex_id=1, name="Alice", tmdb=1)],
             users=[_user(seerr_id=1, plex_id=1, name="Alice", count=169)],
             quotas={1: UserQuota(movie=_q(1, 14, True), tv=_UNLIMITED)},
@@ -1095,14 +1097,13 @@ class TestBuildReportEnriches:
             seerrs=[portal],  # type: ignore[list-item]
             cache_engine=cache,
         )
-        (row,) = report.rows
-        assert row.seerr_total == 169
-        assert row.movie_at_limit is True and row.tv_at_limit is False
+        assert len(report.rows) == 1
+        assert calls == []
 
-    async def test_unreadable_accounts_leave_totals_none_not_a_blocked_page(
+    async def test_an_unreadable_user_list_cannot_block_the_board(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
     ) -> None:
-        # Requests read fine; the user list does not. The board still renders, minus totals.
+        # Requests read fine; the user list is down. The board never asks it, so it renders.
         factory, cache = report_env
 
         class _RequestsOnly(_FakeSeerr):
@@ -1116,7 +1117,7 @@ class TestBuildReportEnriches:
             cache_engine=cache,
         )
         (row,) = report.rows
-        assert row.seerr_total is None and row.movie_at_limit is False
+        assert row.name == "Alice"
 
 
 class TestBuildPersonDetail:

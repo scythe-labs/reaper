@@ -845,17 +845,6 @@ export interface LogsPage {
   files_kept: number;
 }
 
-/** A reclaimable title on a requester's row: what it is, the disk it holds, and how to open
- *  it. Every entry is condemned by the last scan, so the verdict is implicit. Exactly one of
- *  `item_id` / `group_key` is set: a movie or season opens its own card, a show its group. */
-export interface ReclaimableTitle {
-  title: string;
-  /** `null` when nothing about the title is measured; the chip then reads "size unknown". */
-  size_bytes: number | null;
-  item_id: number | null;
-  group_key: string | null;
-}
-
 export interface RequesterRow {
   /** The cross-portal person key (`plex:{id}` when linked, else `local:{portal}:{id}`):
    *  stable, always present, and unique across portals, so cards key on it, not the name. */
@@ -870,16 +859,6 @@ export interface RequesterRow {
   played_by_them: number;
   reclaimable_items: number;
   reclaimable_bytes: number;
-  /** The heaviest reclaimable titles behind `reclaimable_items` (capped at 25 server-side);
-   *  `reclaimable_items` stays the exact count. */
-  reclaimable: ReclaimableTitle[];
-  /** Lifetime requests across every portal this person has an account on; `null` when the
-   *  Seerr user list could not be read. Display only. */
-  seerr_total: number | null;
-  /** At their movie / series request limit on any portal right now. Independent: the two
-   *  types have their own windows and units. */
-  movie_at_limit: boolean;
-  tv_at_limit: boolean;
 }
 
 /** One media type's request limit for a person. `limit` null is unlimited; the window

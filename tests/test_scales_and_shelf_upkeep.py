@@ -201,7 +201,6 @@ class TestOneTitleReachedTwoWays:
         assert row.requests_made == 1
         assert row.gb_granted_bytes == 5 * GB
         assert row.reclaimable_items == 1
-        assert len(row.reclaimable) == 1
 
     def test_the_row_still_agrees_with_the_report_total(self) -> None:
         """The half that was always right, pinned so the fix converges on it rather than
