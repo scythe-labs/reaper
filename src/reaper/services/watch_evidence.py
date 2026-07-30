@@ -23,6 +23,17 @@ time*, has undergone a transition no library can perform. Something changed unde
 read, and the honest answer is ``Unknown`` -- which blocks the gate and takes the full keep
 discount (rule 93) -- not a measured zero.
 
+**One fall a library CAN perform, so the invariant above is not quite unconditional.**
+``snapshot._fold_merged_watch_stats`` overwrites a canonical item's counts with the union over
+every Plex listing merged into it, so a title held twice (a 1080p and a 4K copy sharing a tmdb
+id) carries both listings' watchers. Remove the duplicate listing, or let Plex re-match so the
+bind is no longer ``MERGED_LISTINGS``, and the next scan reads the canonical key alone: a
+genuine fall, with no key churn behind it. It reads as blind and the mark cannot be lowered, so
+that title stays held until the operator discards the record. Keep direction, so no file is at
+risk, and it is stated here rather than worked around because the fix -- recording under the
+union of ``merged_rating_keys`` -- would key the mark on a group whose membership is exactly
+what changed.
+
 **Why the mark outlives the snapshots.** Comparing against the previous snapshot alone
 would let the first blind scan write zero as the new baseline; after that 0 -> 0 is not a
 fall and nothing ever notices again. ``WatchHighWater`` is therefore keyed on the durable
@@ -61,12 +72,17 @@ from reaper.db.models import WatchHighWater
 
 log = structlog.get_logger(__name__)
 
-#: Rows per upsert in :func:`record`, matching ``record_first_flagged_bulk`` and
-#: ``snapshot._WATCH_KEY_CHUNK``. Each row binds four variables, so a library-sized write in
-#: one statement overflows SQLite's variable ceiling and aborts the scan (rule 94). The read
-#: side needs no companion constant: :func:`recall_all` takes the whole table and binds
-#: nothing.
-_CHUNK = 500
+#: Rows per upsert in :func:`record`. A library-sized write in one statement overflows
+#: SQLite's variable ceiling and aborts the scan, after every item has been judged (rule 94).
+#:
+#: The sibling to match is ``snapshot._insert_first_flags``, the other multi-row INSERT, which
+#: chunks at 300 rows of three bound values "to stay under SQLite's historical 999-variable
+#: limit". Four values a row puts this at 800, under the same bound. It is deliberately NOT
+#: 500: ``record_first_flagged_bulk`` and ``snapshot._WATCH_KEY_CHUNK`` are 500 because they
+#: chunk a ``WHERE ... IN`` at one variable per key, so 500 there is 500 variables and 500 here
+#: would be 2,000. The read side needs no companion constant at all: :func:`recall_all` takes
+#: the whole table and binds nothing.
+_CHUNK = 200
 
 #: What the operator is told when the check fires. One string for both branches, because
 #: they mean one thing: we measured plays for this title before and cannot see them now.
