@@ -36,6 +36,12 @@ npm --prefix frontend run dev                                                   
 Vite proxies `/api` → 8420. `.env`/`.env.local` auto-load (seed vars); seeding is
 idempotent by `(kind, name)`, so it won't duplicate configured instances.
 
+**Both files resolve against the cwd**, so a manual boot from a worktree reads neither and
+falls back to `data/secret.key` — a different key than the one that `data/` was encrypted
+under. If stored credentials won't decrypt, do NOT re-enter them: that overwrites the good
+ciphertext under the wrong key. Boot with `scripts/dev-local.sh`, which loads the dotenv
+beside the data dir it serves.
+
 ## Log in (no need to touch a real account)
 
 Mint a throwaway local admin; it prints a generated password once:

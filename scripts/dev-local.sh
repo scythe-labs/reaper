@@ -14,7 +14,9 @@
 #
 # Data: by default the shared real DB in the MAIN checkout's data/ (derived from git, so no
 # path is baked in), which is what gives you real review-queue cards. Override with
-# REAPER_DATA_DIR=/some/dir to point elsewhere (e.g. a disposable copy).
+# REAPER_DATA_DIR=/some/dir to point elsewhere (e.g. a disposable copy). The .env / .env.local
+# beside THAT data dir are loaded and exported, because they carry the key it was encrypted
+# under -- a worktree has neither of its own, and the wrong key loses credentials (#286).
 #
 # Usage:
 #   scripts/dev-local.sh [up]     start both, wait for health, print URLs   (default)
@@ -105,6 +107,30 @@ elif [ -f "$MAIN_ROOT/data/reaper.db" ]; then
 else
   DATA_DIR="$REPO/data"
 fi
+
+# The dotenv file follows the DATA dir, never the code tree, because what it carries is the key
+# that decrypts that data. `src/reaper/config.py` resolves `env_file=(".env", ".env.local")`
+# against the process cwd, and both are gitignored -- so a worktree has neither, REAPER_SECRET_KEY
+# goes unset, and `secrets.resolve_secret_key` finds a real `data/secret.key` and returns it: a
+# DIFFERENT key from the one that database was encrypted under. Nothing warns, because a genuinely
+# missing key is a first run and this looks like neither. Every scan then aborts on a stored
+# credential, and the natural repair -- re-entering it in the UI -- encrypts under the wrong key
+# and overwrites the good ciphertext, so the credentials are lost for the main checkout too (#286).
+#
+# Exporting is what makes it stick: a real environment variable beats a dotenv file in
+# pydantic-settings, whichever tree uvicorn is launched from, and `.env.local` last matches the
+# precedence that tuple already has. It reaches `config.load_raw_env` too, whose instance seeds
+# read the same two files by relative path for the same reason.
+ENV_ROOT="$(cd "$DATA_DIR/.." 2>/dev/null && pwd || echo "$REPO")"
+ENV_LOADED=""
+for env_file in "$ENV_ROOT/.env" "$ENV_ROOT/.env.local"; do
+  [ -f "$env_file" ] || continue
+  set -a
+  # shellcheck disable=SC1090  # the developer's own dotenv; the path is only known at runtime
+  . "$env_file"
+  set +a
+  ENV_LOADED="$ENV_LOADED${ENV_LOADED:+, }$(basename "$env_file")"
+done
 
 API_PORT_DEFAULT=8420
 WEB_PORT_DEFAULT=5173
@@ -205,6 +231,15 @@ fi
 stop_all  # clear any half-up state / stale listeners
 
 log "data dir: $DATA_DIR"
+if [ -n "$ENV_LOADED" ]; then
+  log "env: $ENV_LOADED (from $ENV_ROOT, beside the data dir)"
+elif [ -f "$DATA_DIR/reaper.db" ] && [ -z "${REAPER_SECRET_KEY:-}" ]; then
+  # No dotenv beside a database that already exists. Normal on an install keyed by
+  # data/secret.key; the one thing it must not do is pass silently (#286).
+  warn "no .env beside $DATA_DIR -- if that DB was encrypted under REAPER_SECRET_KEY,"
+  warn "stored credentials will not decrypt. Do NOT re-enter them: that overwrites the good"
+  warn "ciphertext under the wrong key. Point REAPER_DATA_DIR elsewhere, or restore the .env."
+fi
 
 if [ "${REAPER_DEV_NO_MIGRATE:-}" = 1 ]; then
   warn "skipping migrations (REAPER_DEV_NO_MIGRATE=1); boot may fail if the DB is behind head"
