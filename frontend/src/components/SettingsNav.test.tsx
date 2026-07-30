@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
-import { Settings } from "./Settings";
+import { PANELS as DECLARED_PANELS, Settings } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -55,6 +55,9 @@ vi.mock("../api", async (importOriginal) => ({
   api: apiMock,
 }));
 
+// The spec, written out rather than derived: these are the words an operator reads, so a rename
+// has to be typed here too. The test below reconciles the table with the declaration it mirrors --
+// deriving it instead would assert the rail against itself (rule 119).
 const PANELS = [
   "General",
   "Services",
@@ -166,6 +169,20 @@ describe("the settings section navigation", () => {
       return el!;
     });
     await expectNoA11yViolations();
+  });
+
+  it("mirrors the section list declared in Settings.tsx", () => {
+    // One set, two hand copies: this table and `PANELS` in Settings.tsx. A tenth section used to
+    // fail only here, on the labels, which reads as a rail bug -- while the thing that actually
+    // needed doing was classifying the new section in the switch guard, and the suite went green
+    // again the moment a label was appended (#156). `dirtyPanels` is a total record now, so the
+    // compiler owns that half; this owns the label half and names the other one (rules 103, 144).
+    expect(
+      DECLARED_PANELS.map((p) => p.label),
+      "Settings.tsx's PANELS changed. Update this table, and classify the section in " +
+        "`dirtyPanels` (Settings.tsx): tsc refuses a missing key, but a `false` written without " +
+        "checking drops that section's unsaved edits with no confirm.",
+    ).toEqual(PANELS);
   });
 
   it("is a rail of every panel on a wide screen", async () => {

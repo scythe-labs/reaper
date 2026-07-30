@@ -63,7 +63,10 @@ export type Panel =
   | "logs"
   | "about";
 
-const PANELS: { id: Panel; label: string }[] = [
+/** The nine sections, in rail order. Exported for the one test that owns the hand-written label
+ *  table this must agree with (SettingsNav.test.tsx), so a section added here fails there naming
+ *  what to do rather than as an unexplained label mismatch (rules 103, 144). */
+export const PANELS: { id: Panel; label: string }[] = [
   { id: "general", label: "General" },
   { id: "services", label: "Services" },
   { id: "plex", label: "Plex" },
@@ -717,7 +720,12 @@ export function GeneralPanel({
             <div className="set-control">
               {/* Both halves read and write the DRAFT, never the stored value. A press stages
                   the mode in the save bar beside the number, so the bar names one field, one
-                  Discard puts both back, and neither is written until Save. */}
+                  Discard puts both back, and neither is written until Save.
+
+                  Both halves also stop taking presses while the save is in flight, for the
+                  same reason: `onSuccess` re-seeds this mode from the response (:235), so a
+                  press landing in the gap was overwritten and the bar cleared in the same
+                  flush, leaving nothing that said so (#151). */}
               <Segmented
                 value={spareForever ? "forever" : "days"}
                 options={[
@@ -725,6 +733,7 @@ export function GeneralPanel({
                   ["forever", "Forever"],
                 ]}
                 label="Default spare length"
+                disabled={save.isPending}
                 onChange={(mode) => setSpareForever(mode === "forever")}
               />
               {/* Only while the draft is a length -- Forever hides the box, matching how a
@@ -2763,14 +2772,20 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
   // clicked, so that control does not move under the pointer.
   //
-  // Five panels report, which is the whole population: General's save bar; Plex's web address and
-  // manual connection rows; the Discord webhook URL, a secret the operator has to go back to
-  // Discord to re-copy; Security's three admin-password boxes; and Backup's staged restore, which
-  // is the only one whose loss also strands something on the SERVER. The guard first landed on
-  // General alone and then on three, so the rest went on unmounting silently while the app had
-  // already trained the operator to expect to be asked (rule 72). Each reports through its own
-  // `onDirtyChange`; the five are `useState` setters and so are stable, which that prop requires.
-  // A panel absent from this record reads undefined and switches straight through.
+  // Five panels report: General's save bar; Plex's web address and manual connection rows; the
+  // Discord webhook URL, a secret the operator has to go back to Discord to re-copy; Security's
+  // three admin-password boxes; and Backup's staged restore, which is the only one whose loss also
+  // strands something on the SERVER. The guard first landed on General alone and then on three, so
+  // the rest went on unmounting silently while the app had already trained the operator to expect
+  // to be asked (rule 72). Each reports through its own `onDirtyChange`; the five are `useState`
+  // setters and so are stable, which that prop requires.
+  //
+  // The other four are spelled out below rather than left out, because `dirtyPanels` is a total
+  // `Record<Panel, …>`: a panel missing from it does not compile, where an absent key used to read
+  // as "holds nothing" and switch straight through. That is rule 103's one-declaration branch, and
+  // it replaces a comment claiming these five "are the whole population" -- a claim nothing checked
+  // against the nine in `PANELS`, so the next section added would have been unguarded and silent
+  // (#156). `npm run build` runs `tsc --noEmit` and is a CI gate, so the compiler is the guard.
   //
   // The last two took a hop the first three did not: their drafts live in CHILD components
   // (`AdminPasswordForm`, `RestoreCard`), so the signal is declared there and passed up through
@@ -2787,14 +2802,28 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   // already holds, which React treats as nothing happening (see SwitchConfirm.tsx).
   const [switchNonce, setSwitchNonce] = useState(0);
 
-  const dirtyPanels: Partial<Record<Panel, boolean>> = {
+  // Every panel classified, in `PANELS` order. A `false` here is a claim that the section has
+  // nothing to lose on the way out, so each one says why -- verified in the tree, not assumed.
+  const dirtyPanels: Record<Panel, boolean> = {
     general: generalDirty,
+    // Its drafts live in `ServiceModal`, inside `ModalShell` (ServiceModal.tsx:481), whose scrim
+    // covers the rail and whose `trapTab` keeps Tab inside, so the switch cannot be reached while
+    // one is open. A draft added to the panel BEHIND the modal would need to report.
+    services: false,
     plex: plexDirty,
+    // Same shape as services: the job editor is a `ModalShell` (:1905).
+    jobs: false,
     notifications: webhookDirty,
     security: securityDirty,
     backup: backupDirty,
+    // Holds view filters, and its one stored setting saves the moment it changes
+    // (LogsPanel.tsx:242), so there is never an unsaved edit to lose. LogsPanel carries the other
+    // half of this note: a draft added there is invisible from this file.
+    logs: false,
+    // Read-only.
+    about: false,
   };
-  const leavingDirty = dirtyPanels[panel] ?? false;
+  const leavingDirty = dirtyPanels[panel];
 
   // The notice exists only because there are edits to lose, so it goes when they do -- by
   // Discard, or by a Save that stores them. Keyed on the draft rather than on the Discard

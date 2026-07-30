@@ -112,6 +112,12 @@ export function LogsPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [visible.length, live]);
 
+  // Saves on change, so this panel holds no unsaved edit and reports no draft to the section rail
+  // (`dirtyPanels` in Settings.tsx classifies it `false` and says so). Everything else here is a
+  // view filter, which is not an edit. **Add a real draft to this panel and that classification is
+  // wrong from this file, where nothing mentions the rail**: leaving the section would then throw
+  // the draft away with no confirm, and the compiler cannot see it because the key already exists
+  // (#156). Report it upward the way `SecurityPanel` does, and read rule 146 first.
   const setLevel = useMutation({
     mutationFn: api.setLogLevel,
     onSuccess: (page) => setRecordLevel(page.level),
