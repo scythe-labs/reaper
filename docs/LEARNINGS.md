@@ -2290,6 +2290,30 @@ out, and without the row it stays plausible. The coercion has to be in the compo
 where it now is (`useTypedNumber`'s `decimals`). Reaper reaches for `stepMismatch` nowhere, so
 none of this is reachable through validation either.
 
+## Driving a branch is not discriminating it: two of four undefended arms had a test on them (2026-07-30)
+
+Closing the four rows above cost six cases, and the surprise was where they had to go. The
+expected shape held for two of them: nothing anywhere drove a curated-list *hit* or a rating
+policy with no bars set, so the arm was undefended because the state was never built. The other
+two were not that. **`test_all_of_matching_needs_every_bar` sat directly on the partial-clear
+arm** — an ALL policy, one bar cleared, one missed, exactly the state — and asserted
+`outcome == ABSTAIN`, which *both* arms return. The case reached the branch, ran it, and could
+not tell it from its neighbor. Same for the percentage bar: a parametrized sweep four cases wide
+pinned `describe_bar`, all four on IMDb, so the arm that reorders the words for a percentage
+source was exercised by nothing.
+
+So coverage measured as "a test reaches this line" is the wrong instrument twice over, and the
+second miss is the quiet one. A line nothing reaches at least looks empty in a report. A line
+reached by a test that asserts the value both arms share looks *covered*, and reads to the next
+author as settled. **The discriminating question is not which branch the case takes, it is
+whether the assertion changes when the branch does** — which is what a mutant asks and a
+coverage percentage cannot.
+
+The cheap consequence: when a case lands on a branch whose arms agree on the outcome, assert
+the thing they disagree about. Three of the four here disagree only in the *sentence*, so the
+assertion is an exact string rather than an enum. That reads as brittle and is the opposite: the
+string is the whole difference between the two arms, and rule 21 already says the operator has
+to be able to read it.
 
 ## Prior art
 

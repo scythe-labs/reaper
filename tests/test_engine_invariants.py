@@ -378,6 +378,47 @@ class TestEveryFailClosedGuardKeepsTheFile:
         }
 
 
+class TestTheCuratedListGateHoldsWhatIsOnTheList:
+    """The arm that fires the protection, driven directly.
+
+    Every `Facts` the suite built carried `in_curated_list` as `Absent` or as a generated
+    draw nothing asserted on, so nothing drove a list *hit*. Deleting the membership test
+    therefore turned "on a protected list" into "Not on any protected list" behind a green
+    run: a protection withdrawn from every listed title in the library, with nothing to say
+    so. Rule 118, in the condemn direction.
+    """
+
+    def test_a_listed_title_is_protected_and_the_list_is_named(self) -> None:
+        """The hold fires, and says which list produced it.
+
+        The name is not decoration. It is the only thing separating this hold from the keep
+        list's in the "Protections that fired" list, and a protection the operator cannot
+        trace to its source is one they cannot turn off. Pinned whole, including the missing
+        trailing period: a fired protection reads as a lowercase fragment in that list,
+        beside "someone is watching it right now".
+        """
+        gate = CuratedListGate(GateConfig(GateId.CURATED_LIST))
+        listed = replace(_ALL_READABLE, in_curated_list=Known(value="Awards Shortlist", source="t"))
+
+        result = gate.evaluate(listed)
+
+        assert result.outcome == PROTECT
+        assert result.blocked is False
+        assert result.detail == "on a protected list: Awards Shortlist"
+
+    def test_a_title_on_no_list_abstains_and_says_so(self) -> None:
+        """The other half, without which the case above holds for a gate that protects
+        everything. Its sentence is pinned too: it is what the why-panel prints under the
+        checks that ran and did not fire, where a blank reads as a check that never ran."""
+        gate = CuratedListGate(GateConfig(GateId.CURATED_LIST))
+
+        result = gate.evaluate(_ALL_READABLE)  # `in_curated_list` is a genuine Absent
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is False
+        assert result.detail == "Not on any protected list."
+
+
 class TestScoreBounds:
     @given(item=facts())
     @settings(max_examples=300)
@@ -478,6 +519,24 @@ def _rating_facts(ratings: tuple[Rating, ...]) -> Facts:
     )
 
 
+#: How a bar of 75 from 1,000 votes reads for every source Reaper knows, written from the
+#: spec rather than from the branch that produces it (rule 119): a percentage source leads
+#: with its name, a 0-10 source leads with its number and carries the vote clause. Keyed on
+#: the whole enum, so a source added to `RatingSource` fails here until someone decides which
+#: word order it takes -- the population, not just the two members that motivated the table
+#: (rule 145).
+_BAR_TEXT: dict[RatingSource, str] = {
+    RatingSource.IMDB: "7.5 on IMDb from 1,000 votes",
+    RatingSource.TMDB: "7.5 on TMDb from 1,000 votes",
+    RatingSource.ROTTEN_TOMATOES_CRITIC: "Rotten Tomatoes critics 75%",
+    RatingSource.ROTTEN_TOMATOES_AUDIENCE: "Rotten Tomatoes audience 75%",
+    RatingSource.METACRITIC: "Metacritic 75%",
+    RatingSource.TRAKT: "7.5 on Trakt from 1,000 votes",
+    RatingSource.TVDB: "7.5 on TVDB from 1,000 votes",
+    RatingSource.UNKNOWN: "7.5 on an unknown source from 1,000 votes",
+}
+
+
 class TestRatingGate:
     @pytest.mark.parametrize(
         ("value", "protects"),
@@ -525,6 +584,45 @@ class TestRatingGate:
         bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
 
         assert bar.describe_bar() == f"7.5 on IMDb{clause}"
+
+    @pytest.mark.parametrize("source", list(_BAR_TEXT), ids=[s.value for s in _BAR_TEXT])
+    def test_each_source_states_its_bar_in_its_own_word_order(self, source: RatingSource) -> None:
+        """A percentage bar reads "Rotten Tomatoes critics 75%", never "75% on Rotten
+        Tomatoes critics".
+
+        The case above sweeps the vote clause but only ever on IMDb, so the percentage arm
+        had nothing pinning either spelling and could be deleted without a word: the bar
+        would render in the 0-10 sources' word order, with a stray vote clause behind it on
+        sources that count no votes. The operator reads this string in the why-panel and
+        beside the bar in the policy editor, and both are supposed to echo what they typed.
+        """
+        bar = RatingRule(source=source, floor=75, min_votes=1000)
+
+        assert bar.describe_bar() == _BAR_TEXT[source]
+
+    def test_the_table_of_word_orders_covers_every_source(self) -> None:
+        """Set equality both ways, so the sweep above is over the sources that exist rather
+        than the sources it was written against."""
+        assert set(_BAR_TEXT) == set(RatingSource)
+
+    def test_a_policy_with_no_bars_set_says_nothing_is_configured(self) -> None:
+        """A rating gate switched on with an empty rule set still owes the operator a
+        sentence.
+
+        Not a hypothetical state: it is exactly what `policy.recover_rating_rules` exists to
+        repair, and that function's own docstring quotes this sentence as the symptom the
+        operator would have seen. Deleting the arm drops through to the miss-list return,
+        which joins an empty list and renders `"."` -- a bare period in the panel whose job
+        is to be believed (rule 21). Pinned as an exact string because the failure is that
+        there is no string.
+        """
+        gate = RatingFloorGate(rules=())
+
+        result = gate.evaluate(_rating_facts(()))
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is False
+        assert result.detail == "No rating is set that would keep a title."
 
     def test_the_vote_floor_rejects_noise(self) -> None:
         """8.3 from a few hundred votes is noise, not quality, and a bare rating
@@ -615,6 +713,33 @@ class TestRatingGate:
         result = gate.evaluate(_rating_facts(_imdb(8.2, votes=200_000)))
 
         assert result.outcome == ABSTAIN
+
+    def test_all_of_matching_names_the_bar_that_did_clear(self) -> None:
+        """A near miss under ALL says what cleared as well as what did not.
+
+        The gate has two ABSTAIN sentences and only one of them credits the bar the title
+        passed. The case above drives this arm and asserts nothing about it, so deleting the
+        arm printed the misses alone: a title an inch under one of two bars reads as though
+        it cleared neither, and the operator cannot see how close the file came to being
+        kept. The second bar is present and below its floor here rather than missing
+        entirely, so the "below the bar you keep" miss is exercised alongside the credit.
+        """
+        gate = RatingFloorGate(
+            rules=(_IMDB_BAR, RatingRule(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75)),
+            match="all",
+        )
+        ratings = (
+            Rating(source=RatingSource.IMDB, value=8.2, votes=200_000, provider="imdb-dataset"),
+            Rating(source=RatingSource.ROTTEN_TOMATOES_CRITIC, value=4.0, votes=None, provider="p"),
+        )
+
+        result = gate.evaluate(_rating_facts(ratings))
+
+        assert result.outcome == ABSTAIN
+        assert result.detail == (
+            "cleared 8.2 on IMDb from 200,000 votes, but not every bar you asked for: "
+            "Rotten Tomatoes critics 40%, below the 75% you keep."
+        )
 
 
 def _popularity_facts(
