@@ -294,20 +294,30 @@ export function GeneralPanel({
   // top of this function: the only handler that reaches it renders on the branch where the flag
   // is false, so such an arm is unreachable, and one that reads as though it routes the confirmed
   // press earns a later author the belief that path re-proves absence too.
-  const requestGenerate = async () => {
-    setKeyError(null);
-    const fresh = await general.refetch();
-    if (fresh.isError) {
-      setConfirmReplace(true);
-      setKeyError("Couldn't check for an existing key. Confirming replaces one if it's there.");
-      return;
-    }
-    if (fresh.data?.api_key_set) {
-      setKeyError("A key already exists. Use Replace to make a new one.");
-      return;
-    }
-    generate.mutate();
-  };
+  // A mutation, not a bare async onClick, the shape `copy` below uses for the same reason (rule
+  // 17/36): the re-read is a round trip, and `retry: 1` app-wide means a failing one costs two
+  // requests and a backoff between them. Through all of it `generate` has not started, so
+  // `generate.isPending` -- the button's only pending input -- was false, and the button sat
+  // enabled under its idle label looking dead. A second press then ran a second check, and both
+  // cleared, so two keys were minted back to back: the second revokes the first, and whichever
+  // RESPONSE landed last is the one left in the box, which need not be the key the server kept.
+  // The operator copies it and it returns 401.
+  const requestGenerate = useMutation({
+    onMutate: () => setKeyError(null),
+    mutationFn: async () => {
+      const fresh = await general.refetch();
+      if (fresh.isError) {
+        setConfirmReplace(true);
+        setKeyError("Couldn't check for an existing key. Confirming replaces one if it's there.");
+        return;
+      }
+      if (fresh.data?.api_key_set) {
+        setKeyError("A key already exists. Use Replace to make a new one.");
+        return;
+      }
+      generate.mutate();
+    },
+  });
 
   const copyKey = async () => {
     let key = revealedKey;
@@ -883,10 +893,14 @@ export function GeneralPanel({
               ) : (
                 <button
                   className="primary"
-                  disabled={generate.isPending}
-                  onClick={() => void requestGenerate()}
+                  disabled={generate.isPending || requestGenerate.isPending}
+                  onClick={() => requestGenerate.mutate()}
                 >
-                  {generate.isPending ? "Generating…" : "Generate API key"}
+                  {generate.isPending
+                    ? "Generating…"
+                    : requestGenerate.isPending
+                      ? "Checking…"
+                      : "Generate API key"}
                 </button>
               )}
             </div>

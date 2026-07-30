@@ -639,6 +639,32 @@ describe("the Generate API key button", () => {
     // telling the operator that confirming replaces a key with no confirm anywhere on the page.
     expect(screen.queryByText(/Couldn't check for an existing key/)).toBeNull();
   });
+
+  it("says it is checking, and cannot be pressed again while it does", async () => {
+    const user = renderPanel();
+    const button = await screen.findByRole("button", { name: "Generate API key" });
+
+    // Hold the re-read open. This is the window the button used to sit through under its idle
+    // label, enabled: `generate` has not started yet, so the only pending flag it read was false.
+    let release: (row: GeneralSettings) => void = () => {};
+    apiMock.general.mockImplementation(
+      () =>
+        new Promise<GeneralSettings>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await user.click(button);
+
+    const checking = await screen.findByRole("button", { name: "Checking…" });
+    expect(checking).toBeDisabled();
+
+    // The second press is what minted a second key: two checks, both clearing, two POSTs, and the
+    // box left holding whichever response came back last.
+    await user.click(checking);
+    release({ ...STORED, api_key_set: false });
+
+    await waitFor(() => expect(apiMock.generateApiKey).toHaveBeenCalledTimes(1));
+  });
 });
 
 describe("a control that saves on the spot", () => {
