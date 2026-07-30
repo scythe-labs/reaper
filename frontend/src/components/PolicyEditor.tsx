@@ -1033,8 +1033,11 @@ export function PolicyEditor({
       void queryClient.invalidateQueries({ queryKey: ["policy", savedType] });
       // Apply the saved policy to the review queue by re-scanning in the background. The
       // queue and the simulator read the last snapshot's stored verdicts, which were
-      // produced by the OLD policy; a rescan re-scores the library under the new one, and
-      // the running->stopped effect above refreshes the simulator and queue when it lands.
+      // produced by the OLD policy; a rescan re-scores the library under the new one, and the
+      // shell's `useScanSettled` refreshes the simulator and queue when it lands. That used to
+      // read "the running->stopped effect above", which this panel carried until its copy was
+      // folded into `SCAN_SETTLED_KEYS` -- so the file told a reader to look 36 lines up for an
+      // effect the line up there says outright is gone.
       // Idempotent server-side: if a scan is already running this just follows it.
       startScan.mutate();
     },

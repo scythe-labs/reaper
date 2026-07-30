@@ -805,9 +805,20 @@ export function PlexPanel({
               anyway, which #196 corrected down to the one that was true at the time. `SetupWizard`
               reaches it by a second route: it fires a bare `invalidateQueries()` when the first
               scan ends, and it renders this panel on that same screen, so every key refetches
-              with the last good list in hand. A link still cannot land on the STALE arm here:
-              this query is `enabled: linked`, so linking mounts the read for the first time, and
-              a failure there is the never-loaded arm.
+              with the last good list in hand.
+
+              Which arm a LINK lands on depends on whether this key has ever been read. On a
+              fresh install it has not -- the query is `enabled: linked`, so linking mounts it
+              for the first time and a failure there is the never-loaded arm above. After an
+              unlink it has: invalidating marks the entry stale but keeps it, and this observer
+              stays mounted, so linking a different server refetches with the PREVIOUS server's
+              list still in hand and a failure lands here, on the stale arm, with the notice up.
+              Shorter and quieter: between the link landing and the refetch resolving, neither
+              `isPending` nor `isError` is set, so that list renders unmarked for a moment. Both
+              are bounded -- `set_plex_libraries` walks the server's own stored list and ignores
+              keys it does not contain (#194), so a press cannot mis-target -- and the earlier
+              draft of this paragraph denied the state exists at all, which is the part that
+              would have stopped the next reader looking.
 
               The list is a read, not a draft, so what is lost is smaller than the General panel's
               typed value -- but a switch the operator cannot see is a library they cannot turn
