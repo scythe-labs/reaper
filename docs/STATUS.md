@@ -67,6 +67,12 @@ Last verified against the code: 2026-07-26.
    queue's two `role="status"` toasts mounted with their text, and roughly fifty middot separators
    in running text across sixteen files; **#232** the reasons panel is an `<aside>` claiming
    `role="dialog"`, suppressed because both repairs break something the suite guarantees.
+6. **The stylesheet split has four optional stages left** (`docs/CSS_SPLIT_PLAN.md`). The cut
+   itself landed: 31 files under `frontend/src/styles/`, load order declared by `index.css` and
+   load-bearing. Left: naming the control-standard padding and the 12 unnamed `z-index` values;
+   rehoming `.notice` and `.qty` out of the sections they were appended into; a type and space
+   scale, since 39 font sizes and 25 gap values are drift, not variety; and a dead-CSS pass that
+   must stay manual, because 96 sites compute their class name.
 
 ## Decisions locked
 

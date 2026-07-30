@@ -1,9 +1,16 @@
 # Splitting `index.css`: a stylesheet that outgrew one document
 
-> **PROPOSED — 0 of 7 stages landed.** Nothing here has been executed. Stage 1 is mechanical and
-> provably safe; every later stage is optional and independently gated. Approve or amend before
-> anyone starts. When Stage 1 lands, this file gets its `STATUS.md` open-work line and its row in
-> `docs/README.md`'s map moves from *proposed* to *live*.
+> **LIVE — Stages 1 to 3 landed 2026-07-29. Four remain, and every one of them is optional.**
+> The stylesheet is 31 files behind a barrel, the three tests that walk it read the concatenation
+> in load order, and every live cross-reference names the file that now holds the thing.
+>
+> **The cut is proven, not argued:** built before and after, the emitted CSS is byte-identical —
+> sha `889c45e2…`, 122,006 bytes both sides — so the app renders exactly what it rendered before.
+> Re-verified after prettier ran over the new files, since a formatter is the obvious way for a
+> "pure move" to stop being one.
+>
+> Stages 4 to 7 are separately gated and none is a prerequisite for another. **Stage 4's gate as
+> originally written was wrong and is corrected in place below** — found while executing Stage 1.
 
 Written 2026-07-29 against `frontend/src/index.css` at 9,075 lines.
 
@@ -205,7 +212,13 @@ naming the file and selector over a line number.
 
 ### Stage 4 — name the two scales that have none *(no pixels change)*
 
-Both are pure renames, verifiable by the same byte-identical build diff as Stage 1:
+**Corrected while executing Stage 1.** This section originally claimed both were "verifiable by
+the same byte-identical build diff as Stage 1." They are not, and the error is worth keeping
+written down because it is the exact trap this plan is otherwise built to avoid: replacing the
+literal `0.42rem 0.6rem` with `var(--control-pad)` changes the emitted CSS **text**, so the
+build diff that proves Stage 1 reports a difference here and proves nothing either way. These
+two need a computed-value check in a browser instead, which makes them strictly more expensive
+than Stage 1 rather than a free rider on it. Both are still worth doing:
 
 - **The control standard.** Rule 40 calls `0.42rem 0.6rem` "the one control standard"; it is
   written out as a literal **11 times**. It should be a custom property, which is rule 67's own
