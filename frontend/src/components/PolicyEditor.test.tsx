@@ -6,7 +6,7 @@
 // click left the removal lane over budget with Save disabled. Each test here fails if
 // either fix is reverted.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
@@ -1083,7 +1083,11 @@ describe("why an 'Add rule' will not act", () => {
   it("names the empty value box in the remove composer, and lets go once it is filled", async () => {
     const user = renderWithFields();
     const field = (await screen.findAllByLabelText("Field"))[0]!;
-    await waitFor(() => expect(field).toBeEnabled());
+    // Wait for the OPTION, not the control (rule 137). This select is enabled before the
+    // vocabulary read fills it -- it holds only its "when…" placeholder until then -- so
+    // `toBeEnabled` is satisfied one turn early and `selectOptions` throws "Value \"genre\" not
+    // found in options". It is the exact shape rule 137 names, and it failed a full-suite run.
+    await within(field).findByRole("option", { name: "Genre" });
     await user.selectOptions(field, "genre");
 
     const add = await screen.findByRole("button", { name: "Add rule" });
@@ -1103,7 +1107,8 @@ describe("why an 'Add rule' will not act", () => {
     const user = renderWithFields();
     const fields = await screen.findAllByLabelText("Field");
     const keepField = fields[fields.length - 1]!;
-    await waitFor(() => expect(keepField).toBeEnabled());
+    // The same one-turn-early wait as the composer above (rule 72).
+    await within(keepField).findByRole("option", { name: "Genre" });
     await user.selectOptions(keepField, "genre");
 
     const box = screen.getByLabelText("Genre value");
