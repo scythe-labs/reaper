@@ -2264,6 +2264,33 @@ discriminate must not read as a proof). Third time a survivor here has turned ou
 redundant guard rather than a gap, and the check that settles it costs one call to
 `decide_verdict` with both values.
 
+## A number input's `step` is advice to the spinner, not a gate on the value (2026-07-30)
+
+`<input type="number">` with no `step` is a whole-number box by definition — HTML defaults the
+attribute to 1 — and seven policy boxes were written that way over fields declared `int`. The
+open question in #296 was whether the browser therefore refused a typed `1.5` before it could
+reach React, which would have made the issue a non-defect. **It does not.**
+
+Driven in headless Chrome 150 against three boxes, typing `1.5` into each:
+
+| box | `input` event value | `.value` | `stepMismatch` |
+| --- | --- | --- | --- |
+| no `step` | `"1.5"` | `"1.5"` | true |
+| `step="1"` | `"1.5"` | `"1.5"` | true |
+| `step="any"` | `"1.5"` | `"1.5"` | false |
+
+So the value sanitization algorithm keeps `1.5` — it is a valid floating-point number, which is
+all that algorithm asks — and the step is checked separately, by **constraint validation**, which
+runs at form submission and colors `:invalid`. A control that never submits a form and reads
+`e.target.value` sees the fraction either way.
+
+**The consequence for a fix: adding `step={1}` would have changed nothing.** The middle row is
+the whole point of running all three — the obvious remedy is the one measurement that rules it
+out, and without the row it stays plausible. The coercion has to be in the component, which is
+where it now is (`useTypedNumber`'s `decimals`). Reaper reaches for `stepMismatch` nowhere, so
+none of this is reachable through validation either.
+
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

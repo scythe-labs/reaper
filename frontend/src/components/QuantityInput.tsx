@@ -87,6 +87,17 @@ function cutToShown(n: number): number {
   return Number(`${whole}.${decimals.slice(0, SHOWN_DECIMALS)}`);
 }
 
+/** Whether `n` fits in the decimals the field BEHIND the box can hold. `undefined` decimals is
+ *  a box that takes any precision, which is the changeable-unit twin and nothing else.
+ *
+ *  Read off the decimal text at `TYPED_DECIMALS` for the same reason `cutToShown` does: the
+ *  arithmetic form cannot tell a typed 0.29 from binary floating point's version of it. */
+function fitsDecimals(n: number, decimals: number | undefined): boolean {
+  if (decimals === undefined) return true;
+  const rest = n.toFixed(TYPED_DECIMALS).split(".")[1] ?? "";
+  return /^0*$/.test(rest.slice(decimals));
+}
+
 /** Where a number lives while it is being typed.
  *
  * A box whose text is re-derived from the stored number on every render gets rewritten
@@ -106,7 +117,13 @@ function cutToShown(n: number): number {
 export function useTypedNumber(
   shown: string,
   emit: (n: number) => void,
-  bounds: { min?: number | undefined; max?: number | undefined } = {},
+  bounds: {
+    min?: number | undefined;
+    max?: number | undefined;
+    /** Decimals the field behind this box can hold. Omit only where the field really does take
+     *  any precision; a whole-number field passes 0, and gets a box that cannot emit 1.5. */
+    decimals?: number | undefined;
+  } = {},
 ): {
   value: string;
   onFocus: () => void;
@@ -128,7 +145,22 @@ export function useTypedNumber(
       // An empty box is someone midway through retyping, never a zero.
       if (raw.trim() === "") return;
       const n = Number(raw);
-      if (Number.isFinite(n)) emit(n);
+      if (!Number.isFinite(n)) return;
+      // A number carrying more decimals than the field can hold is the same kind of text as
+      // "7." -- on the way to a value, not a value -- so it is left alone exactly the same way,
+      // and the box goes back to showing the stored number when it is left. Nothing is rounded,
+      // because rounding needs a direction and this control has no one direction: half its call
+      // sites are caps, where DOWN is the bound with less deletion pressure (rule 31), and half
+      // are protections, where down is the one with more. What it stores instead is the last
+      // number the operator actually typed in the field's own units.
+      //
+      // Withholding is the whole fix. The browser will not do it: a bare `<input type=number>`
+      // has an implicit step of 1, and Chrome duly marks a typed 1.5 `stepMismatch` -- and then
+      // hands the change handler "1.5" regardless, because step is checked at form validation
+      // and this control never submits a form. Driven in Chrome 150; an explicit `step={1}`
+      // behaves identically, which is why this is not fixed with an attribute (#296).
+      if (!fitsDecimals(n, bounds.decimals)) return;
+      emit(n);
     },
     onBlur: () => {
       setTyping(false);
@@ -204,6 +236,11 @@ export function QuantityInput({
       mine.current = base;
       onChange(base);
     },
+    // No `decimals` here, unlike the fixed-suffix twin below (rule 72), and it is not a
+    // deferral. A fraction of the SHOWN unit is exactly what this box is for -- 0.5 GB is a real
+    // cap -- and the number it hands the parent is already whole in the BASE unit, because the
+    // emit above rounds it there. Its precision is bounded twice over by `cutToShown` and by
+    // that rounding, so there is no value it can emit that the field behind it cannot hold.
     { min: shownMin },
   );
   // The unit drops only on the way OUT of the box, never mid-keystroke. Switching inside the
@@ -249,6 +286,32 @@ export function QuantityInput({
   );
 }
 
+/** How many decimals the field behind a fixed-suffix box can hold, read off the box's own
+ *  `step` so the two cannot disagree (rule 67) -- there is no second prop to keep in step with
+ *  the first, and no call site has to restate in a `decimals` what it already said in a `step`.
+ *
+ *  **No step means whole numbers**, which is not an invention: HTML already defines `step` as 1
+ *  when it is absent, so `min={1} max={1000}` with nothing else declares integers, and the seven
+ *  policy boxes written that way are all backed by an `int` in `engine/policy.py`.
+ *
+ *  `step` is read as a PRECISION, never as a ladder the value must land on. `min_votes` ships
+ *  `step={100}` so the spinner moves in hundreds, and 250 is still a perfectly legal vote floor:
+ *  snapping to the grid would rewrite the operator's own number, which is the deletion-path
+ *  version of the bug this is fixing. Only the decimals are taken.
+ *
+ *  Exported for the two ramp bounds, which rule 40 leaves as plain boxes: they declare a `step`
+ *  the same way and must read it the same way, rather than restating the tenths test twice. */
+export function decimalsOfStep(step: number | "any" | undefined): number | undefined {
+  if (step === "any") return undefined;
+  if (step === undefined) return 0;
+  const text = String(step);
+  // An exponent form would need parsing this does not do, and reading one wrong would WIDEN the
+  // box rather than narrow it, so it declines to guess rather than guess loosely. No call site
+  // uses one; if one ever does, it gets the old any-precision behavior and not a wrong bound.
+  if (text.includes("e") || text.includes("E")) return undefined;
+  return text.split(".")[1]?.length ?? 0;
+}
+
 /** The fixed-suffix variant: same box, but the unit is a word that cannot change
  *  ("30 days", "3 people", "2 seasons"). Values pass through untranslated. */
 export function FixedQuantity({
@@ -281,7 +344,11 @@ export function FixedQuantity({
   // policy control, and a policy warning of either severity still saves, so there is no state
   // this box could honestly report as invalid.
 }) {
-  const typed = useTypedNumber(String(value), onChange, { min, max });
+  const typed = useTypedNumber(String(value), onChange, {
+    min,
+    max,
+    decimals: decimalsOfStep(step),
+  });
   // The unit is the other half of the value, and it used to be `aria-hidden`, so the box
   // announced "Points this rule adds, 12" for a number that means 12 points -- the unit was on
   // screen and nowhere else. It is bound as the input's DESCRIPTION rather than folded into its

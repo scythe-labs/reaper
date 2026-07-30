@@ -149,6 +149,65 @@ describe("typing a number into a box that already has one", () => {
   });
 });
 
+describe("a number the field behind the box cannot hold", () => {
+  it("never lets a fraction out of a whole-number box", async () => {
+    // #296: seven policy boxes declare no `step`, which in HTML already means 1, and every one
+    // is backed by an `int`. The browser does not enforce it -- Chrome marks a typed 1.5
+    // `stepMismatch` and hands the change handler "1.5" anyway, because step is checked at form
+    // validation and this control never submits a form -- so 1.5 reached the draft and came
+    // home as "Input should be a valid integer, got a number with a fractional part", a
+    // validator's sentence on a saveable-looking form (rule 21).
+    const user = userEvent.setup();
+    const emit = vi.fn();
+    render(<Fixed initial={40} min={1} max={1000} onEmit={emit} />);
+
+    await user.clear(box());
+    await user.type(box(), "1.5");
+    await user.tab();
+
+    expect(emit).not.toHaveBeenCalledWith(1.5);
+    // The "1" typed on the way there is a real value and is kept: nothing is rounded, because
+    // rounding needs a direction this control cannot have -- half its call sites are caps and
+    // half are protections, and the safe direction is opposite for the two.
+    expect(emit).toHaveBeenLastCalledWith(1);
+    expect(box()).toHaveValue(1);
+  });
+
+  it("leaves the stored number alone when the fraction is all that was typed", async () => {
+    // ".5" never passes through a whole number on its way in, so there is nothing to keep and
+    // the box goes back to what was stored -- the same thing it does with an abandoned "7.".
+    // The floor is 0 here so the blur clamp cannot fire: this is about what the box withholds,
+    // and a box whose floor DOES bite pulls the value up to it, which the floor test covers.
+    const user = userEvent.setup();
+    const emit = vi.fn();
+    render(<Fixed initial={40} min={0} max={1000} onEmit={emit} />);
+
+    await user.clear(box());
+    await user.type(box(), ".5");
+    await user.tab();
+
+    expect(emit).not.toHaveBeenCalled();
+    expect(box()).toHaveValue(40);
+  });
+
+  it("reads step as a precision, not as a ladder the value has to land on", async () => {
+    // The vote floor ships `step={100}` so its spinner moves in hundreds. 250 is a legal floor,
+    // and snapping it to the grid would rewrite the operator's own number on a field that
+    // decides what survives -- the deletion-path version of the bug above. Only decimals are
+    // taken from a step, which for 100 is none.
+    const user = userEvent.setup();
+    const emit = vi.fn();
+    render(<Fixed initial={100} min={0} step={100} onEmit={emit} />);
+
+    await user.clear(box());
+    await user.type(box(), "250");
+    await user.tab();
+
+    expect(emit).toHaveBeenLastCalledWith(250);
+    expect(box()).toHaveValue(250);
+  });
+});
+
 describe("the rating bar", () => {
   it("lets a half score be typed", async () => {
     // B8: the box re-derived its text from stored tenths on every render, so "7" became
@@ -168,6 +227,23 @@ describe("the rating bar", () => {
     // Never, at any keystroke, a floor of zero: the "." used to report the box as empty,
     // which the old coercion stored as 0.0 -- a bar that keeps nothing.
     expect(emit).not.toHaveBeenCalledWith(0);
+  });
+
+  it("takes tenths but not hundredths, because the field behind it holds tenths", async () => {
+    // The tenths box is the case that proves the bound is read off `step` rather than hardcoded
+    // to whole numbers: 7.5 is a real score here and must still go through, while the digit
+    // past it is withheld the same way a fraction is in a whole-number box.
+    const user = userEvent.setup();
+    const emit = vi.fn();
+    render(<RatingBar onEmit={emit} />);
+    const bar = screen.getByLabelText("Rating score out of 10");
+
+    await user.clear(bar);
+    await user.type(bar, "7.55");
+    await user.tab();
+
+    expect(emit).toHaveBeenLastCalledWith(75);
+    expect(bar).toHaveValue(7.5);
   });
 
   it("keeps the stored score when the box is cleared and abandoned", async () => {

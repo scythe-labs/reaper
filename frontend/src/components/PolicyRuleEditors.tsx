@@ -27,6 +27,7 @@ import {
   QuantityInput,
   SIZE_UNITS,
   TIME_UNITS,
+  decimalsOfStep,
   useTypedNumber,
 } from "./QuantityInput";
 import { Segmented } from "./Segmented";
@@ -305,12 +306,20 @@ export function RemoveRulesEditor({
   const [rWeight, setRWeight] = useState(20);
   const [rFrom, setRFrom] = useState(0);
   const [rTo, setRTo] = useState(1);
+  const field = condemnFields.find((f) => f.key === rField);
   // The unitless ramp bounds are plain boxes (rule 40), but a number being typed lives in
   // the same one place it does everywhere else: clearing one to retype must not read as a
   // zero the next digits land after.
-  const rampFrom = useTypedNumber(String(rFrom), setRFrom, { min: 0 });
-  const rampTo = useTypedNumber(String(rTo), setRTo, { min: 0 });
-  const field = condemnFields.find((f) => f.key === rField);
+  //
+  // Their precision is the chosen field's, decided by the same tenths test the `FixedQuantity`
+  // siblings in this file make when they pick a `step` -- declared once here and read for both
+  // the attribute and the bound, so the spinner and the value cannot disagree (rule 67). A
+  // rating bound is in tenths; every other rampable field is whole, and a count ramp that could
+  // start at 1.5 is #296's defect at a box that is not a `FixedQuantity` (rule 72).
+  const rampStep = field?.type === "rating_tenths" ? 0.1 : 1;
+  const rampBounds = { min: 0, decimals: decimalsOfStep(rampStep) };
+  const rampFrom = useTypedNumber(String(rFrom), setRFrom, rampBounds);
+  const rampTo = useTypedNumber(String(rTo), setRTo, rampBounds);
   const rampable = Boolean(
     field && RAMP_PHRASES[field.key] && field.type !== "bool" && field.type !== "text",
   );
@@ -507,6 +516,7 @@ export function RemoveRulesEditor({
                     ) : (
                       <input
                         type="number"
+                        step={rampStep}
                         aria-label="Starts counting at"
                         aria-describedby={rampBackwards ? RAMP_ERROR_ID : undefined}
                         aria-invalid={rampBackwards ? true : undefined}
@@ -535,6 +545,7 @@ export function RemoveRulesEditor({
                     ) : (
                       <input
                         type="number"
+                        step={rampStep}
                         aria-label="Full effect at"
                         aria-describedby={rampBackwards ? RAMP_ERROR_ID : undefined}
                         aria-invalid={rampBackwards ? true : undefined}
