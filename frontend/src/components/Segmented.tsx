@@ -11,6 +11,7 @@ export function Segmented<T extends string>({
   label,
   fill = false,
   describedBy,
+  disabled = false,
 }: {
   value: T;
   /** [value, visible text] pairs, in display order. */
@@ -25,6 +26,15 @@ export function Segmented<T extends string>({
    *  cursor. No `invalid` companion -- `aria-invalid` on a `role="group"` is not a state ARIA
    *  defines, and a policy warning does not refuse the value anyway. */
   describedBy?: string | undefined;
+  /** True while a save carrying this choice is in flight. Without it this group is the one
+   *  control in a settings row still pressable during the save: the press paints as taken,
+   *  then the re-seed from the response puts it back, and the save bar clears in the same
+   *  flush, so nothing on screen says the press was dropped (rules 17/36 and 39).
+   *
+   *  Off by default because the policy page's consumers pass nothing. No control there
+   *  carries a pending gate and its save re-seeds the whole draft, so gating these segments
+   *  alone would make them the odd one out; that page is one question, not nine (rule 72). */
+  disabled?: boolean;
 }) {
   return (
     <div
@@ -41,6 +51,7 @@ export function Segmented<T extends string>({
           // Reserve the bold (active) width so choosing a segment never shifts the track.
           data-label={text}
           aria-pressed={value === v}
+          disabled={disabled}
           onClick={() => onChange(v)}
         >
           {text}

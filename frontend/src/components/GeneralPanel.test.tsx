@@ -454,6 +454,56 @@ describe("the default spare length", () => {
     expect(dayBox()).toHaveValue(30);
     expect(apiMock.saveGeneral).not.toHaveBeenCalled();
   });
+
+  it("stops taking presses while the save carrying it is in flight", async () => {
+    // Issue #151, in the order it was driven. `Segmented` took no `disabled`, so this was the one
+    // control in the row still pressable during a save -- every neighbor already carries
+    // `disabled={save.isPending}`. The press flipped `aria-pressed`, so it read as taken; then
+    // `onSuccess` re-seeded the mode from the response and the bar cleared in the same flush, so
+    // nothing on screen said it had been dropped.
+    //
+    // What is pinned is the GAP, not the end state. After the response the mode reads Days either
+    // way, because the re-seed is exactly what overwrote the press -- so the in-flight moment is
+    // the only place a refused press and a silently dropped one look different (rule 118).
+    apiMock.general.mockResolvedValue({ ...STORED_BOTH_ON, default_spare_days: 365 });
+    const person = renderPanel();
+    const box = await screen.findByLabelText("Default spare length in days");
+
+    await person.clear(box);
+    await person.type(box, "7");
+    await waitFor(() => expect(bar()!.textContent).toContain("Default spare length"));
+
+    // Hold the save open, so the press lands in the window the response has not closed yet.
+    let release: (row: GeneralSettings) => void = () => {};
+    apiMock.saveGeneral.mockImplementation(
+      () =>
+        new Promise<GeneralSettings>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await person.click(saveChanges());
+
+    // Both segments, not only the one that would have been pressed: the drop is symmetric, a
+    // Days press during a save writing 0 was lost the same way.
+    await waitFor(() => expect(forever()).toBeDisabled());
+    expect(days()).toBeDisabled();
+
+    // user-event dispatches nothing at a disabled target and reports success (rule 137), which
+    // is the behavior under test: the pair does not move. It used to flip here.
+    await person.click(forever());
+    expect(forever()).toHaveAttribute("aria-pressed", "false");
+    expect(days()).toHaveAttribute("aria-pressed", "true");
+
+    await act(async () => {
+      release({ ...STORED_BOTH_ON, default_spare_days: 7 });
+    });
+
+    // One request, carrying the number that was actually staged, and the row settles on it.
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1);
+    expect(apiMock.saveGeneral.mock.calls[0]![0]).toEqual({ default_spare_days: 7 });
+    expect(dayBox()).toHaveValue(7);
+  });
 });
 
 describe("what the panel reports to the section rail", () => {
