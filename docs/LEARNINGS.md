@@ -1876,6 +1876,45 @@ question.** A hand sweep predicted `GateSetting._protective_floors` (`threshold 
 included. Reading tests to guess what they pin is unreliable in both directions; running the
 mutants is not.
 
+## A mutation run is worth parallelizing, and the copy is nearly free (2026-07-29)
+
+The first runner wrote each mutant into the real source file and restored it in a `finally`,
+which forces the run sequential and leaves the tree modified if it is interrupted. Giving each
+worker its own copy fixes both, and the copy costs about as much as one mutant:
+
+| step | cost |
+| --- | --- |
+| `cp -Rc` of `src`, `tests`, `alembic`, `frontend/src` and the manifests | **0.09 s** (APFS clone) |
+| `uv sync --all-extras` against a warm cache | **0.65 s** |
+| eight workers, end to end | **3.9 s** |
+
+Measured, same mutant counts and identical verdicts before and after:
+
+| zone | sequential | 8 workers | speedup |
+| --- | --- | --- | --- |
+| repair shims (60) | ~2 min | 52 s | 2.3x |
+| save boundary (78) | ~6 min | 48 s | 7.5x |
+| gates (88) | ~24 min | 3 min | **7.9x** |
+
+**`uv sync` inside the copy is what makes the isolation real**, not the copy itself: it installs
+the project editable against the COPY's `src`, so `import reaper` there cannot reach back to the
+original. Copying alone would leave every worker importing the same unmutated module through the
+main venv's editable install, and every mutant would survive -- a green run that means nothing.
+
+**The cost is the test set, not the mutant count.** The gates zone has 47% more mutants than the
+shims zone and took twelve times as long sequentially, purely because it runs eight whole test
+files where the shims zone runs two test classes. Naming classes instead of files is the other
+lever, and the one to reach for second: being generous about what may kill a mutant is what
+makes a survivor trustworthy, and a survivor that only survived because the killing test was
+not in the list is a false finding.
+
+**Two things the copy has to carry that are not obvious.** `README.md`, because
+`[project] readme` points at it and the build backend reads it during `uv sync`; and
+`frontend/src`, because some backend tests reconcile a Python vocabulary against the TSX that
+renders it (`test_review_chips.py` opens `WhyPanel.tsx`). Listed as a nested path so that
+copying it does not drag `node_modules` into every worker. Both were found by the baseline
+check refusing to start, which is the cheapest possible place to find them.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

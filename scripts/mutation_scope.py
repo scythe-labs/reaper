@@ -8,6 +8,7 @@ Run it:
 
     uv run python scripts/mutation_scope.py --zone policy-repair-shims
     uv run python scripts/mutation_scope.py --zone policy-save-boundary
+    uv run python scripts/mutation_scope.py --zone engine-gates
 
 Add a zone to `ZONES` below: the module, the functions (`Class.method` for a method), the tests
 that could plausibly kill a mutant in them, and a probe. **Scope by function, not by file.**
@@ -30,9 +31,14 @@ source. Splicing is also what gives `1 <= floor <= 100` two separately-addressab
 the AST hands back a single `Compare` node with a list of operators and no position for any
 of them.
 
-**A probe case built from a test fixture inherits whatever that fixture cannot see.** The
-first run mislabeled its one real defect for exactly that reason, so the recovery cases below
-are built from the stored *shape* by hand rather than by dumping the current model.
+**A probe only sees what it records, and each zone is responsible for something different.**
+Zone 1 returns a repaired body, zone 2 an accept-or-refuse plus the operator's sentence, zone 3
+whether the gate still holds the file. Getting that wrong has cost three findings so far: a
+corpus that imported a test fixture inherited the blind spot hiding the defect; one recording
+only a verdict called an operator string reading "-1" no change; and one passing a percentage
+rating unnormalized tested an 800% bar against a 75% floor. So **read "no change on the probe
+corpus" as a question**, and sanity-check what the baseline actually answers before trusting a
+survivor list built on it.
 """
 
 from __future__ import annotations
@@ -40,8 +46,13 @@ from __future__ import annotations
 import argparse
 import ast
 import io
+import itertools
 import json
+import os
+import shutil
 import subprocess
+import tempfile
+import threading
 import time
 import tokenize
 from dataclasses import dataclass, field
@@ -235,7 +246,71 @@ def splice(source: str, m: Mutant) -> str:
     return "".join(lines)
 
 
-def run_tests(zone: Zone, timeout: float) -> str:
+#: Everything a worker copy needs to run the suite. Two non-obvious members:
+#: `README.md`, because `[project] readme` points at it and the build backend reads it during
+#: `uv sync`; and `frontend/src`, because some backend tests reconcile a Python vocabulary
+#: against the TSX that renders it (`test_review_chips.py` opens `WhyPanel.tsx`). Listed as a
+#: nested path deliberately -- copying all of `frontend` would drag `node_modules` into every
+#: worker. If a zone's tests need something absent here, the baseline check says so before any
+#: mutant runs, which is exactly how `frontend/src` got found.
+WORKER_PATHS = (
+    "src",
+    "tests",
+    "alembic",
+    "alembic.ini",
+    "pyproject.toml",
+    "uv.lock",
+    "README.md",
+    "frontend/src",
+)
+
+
+def make_worker(root: Path) -> Path:
+    """A throwaway copy of the tree with its own venv, so a mutant never touches the real one.
+
+    This is what lets the run go parallel, but the isolation is the bigger win on its own: the
+    first version of this script wrote each mutant into the actual source file and restored it
+    in a `finally`, which means an interrupted run leaves the tree modified. Here the real
+    checkout is only ever read.
+
+    Cheap enough to stop being a trade-off. On APFS the copy is a clone (`cp -Rc`, ~0.1s) and
+    `uv sync` against a warm cache is well under a second, so a worker costs about as much as
+    one mutant. `uv sync` inside the copy is also what makes the isolation real: it installs
+    the project editable against the COPY's `src`, so `import reaper` there cannot reach back
+    to the original.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    for rel in WORKER_PATHS:
+        source = REPO / rel
+        if not source.exists():
+            continue
+        # Copy INTO the path's own parent, so a nested member lands where its readers expect
+        # it rather than flattened to the root.
+        destination = root / rel
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # -c asks for APFS clones; other filesystems fall back to a real copy.
+        for flags in ("-Rc", "-R"):
+            proc = subprocess.run(  # noqa: S603 -- flags and paths are this file's own
+                ["cp", flags, str(source), str(destination)],  # noqa: S607 -- `cp` from PATH
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode == 0:
+                break
+        else:
+            raise SystemExit(f"could not copy {rel} into {root}: {proc.stderr.strip()}")
+    sync = subprocess.run(
+        ["uv", "sync", "--all-extras", "--quiet"],  # noqa: S607 -- `uv` is the documented entry
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if sync.returncode != 0:
+        raise SystemExit(f"uv sync failed in worker {root}: {sync.stderr.strip()[-300:]}")
+    return root
+
+
+def run_tests(zone: Zone, workdir: Path, timeout: float) -> str:
     """`killed` when the suite notices, `survived` when it does not."""
     argv = [
         "uv",
@@ -251,7 +326,7 @@ def run_tests(zone: Zone, timeout: float) -> str:
     ]
     try:
         proc = subprocess.run(  # noqa: S603 -- argv is this file's literals plus zone.tests
-            argv, cwd=REPO, capture_output=True, text=True, timeout=timeout
+            argv, cwd=workdir, capture_output=True, text=True, timeout=timeout
         )
     except subprocess.TimeoutExpired:
         return "timeout"
@@ -473,6 +548,209 @@ print(json.dumps({"order": order, "cases": cases}))
 """
 
 
+#: Zone 3: the gates. These are the hard protections, so the probe records what a caller acts
+#: on -- the outcome, whether the gate blocked, and the sentence the panel prints.
+#:
+#: The direction rule here is one predicate: **does this result still hold the file?** A gate
+#: holds it by protecting outright, or by blocking because it could not check (rule 93's
+#: corollary -- a hold standing in for "we could not answer" is `blocked`, and it holds). So a
+#: survivor that turns holds into does-not-hold has silently withdrawn a protection library-wide,
+#: and one that turns does-not-hold into holds has only kept a file nobody asked to keep.
+GATES_PROBE = r"""
+import json
+from reaper.engine.gates import (
+    CuratedListGate,
+    DataHorizonGate,
+    Facts,
+    GateConfig,
+    GateId,
+    MinDormancyGate,
+    RatingFloorGate,
+    RatingRule,
+    ServerPopularityGate,
+    StreamingNowGate,
+    WhitelistGate,
+    history_shortfall,
+    lifetime_shortfall,
+    progress_is_establishable,
+    thaw_defers_to_owner,
+)
+from reaper.engine.observation import Absent, Known, Unknown
+from reaper.ratings import Rating, RatingSource
+
+cases, order = {}, []
+
+def record(name, value):
+    order.append(name)
+    cases[name] = value
+
+# A gate result reads as "holds/OUTCOME/blocked -- detail", so a change of mind about holding
+# the file is the first thing the diff shows.
+def verdict(fn):
+    try:
+        r = fn()
+    except Exception as exc:
+        return f"RAISED {type(exc).__name__}"
+    holds = "holds" if (r.outcome == "PROTECT" or r.blocked) else "lets-go"
+    return f"{holds}/{r.outcome}/blocked={r.blocked} -- {' '.join((r.detail or '').split())[:90]}"
+
+def gate_case(name, gate, **facts):
+    base = dict(
+        title="t",
+        days_observed_unwatched=Absent(source="x"),
+        distinct_watchers=Absent(source="x"),
+        distinct_watchers_all_time=Absent(source="x"),
+        size_bytes=Absent(source="x"),
+        imdb_rating_tenths=Absent(source="x"),
+        imdb_votes=Absent(source="x"),
+        season_rank=Absent(source="x"),
+        is_streaming_now=Absent(source="x"),
+        is_managed=Absent(source="x"),
+        in_curated_list=Absent(source="x"),
+        is_whitelisted=Absent(source="x"),
+    )
+    record(name, verdict(lambda: gate.evaluate(Facts(**(base | facts)))))
+
+def cfg(gate_id, **kw):
+    return GateConfig(gate=gate_id, **kw)
+
+# --- RatingFloorGate: the empty set, the IMDb fail-closed guard, and the bar itself ---
+imdb_bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
+pct_bar = RatingRule(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75)
+def rated(value, votes, source=RatingSource.IMDB):
+    return (Rating(source=source, value=value, votes=votes, provider="p"),)
+
+unreadable = Unknown(reason="r", source="x")
+readable = dict(imdb_rating_tenths=Known(value=80, source="x"),
+                imdb_votes=Known(value=5000, source="x"))
+
+gate_case("rating-no-rules-configured", RatingFloorGate(rules=()))
+# Fail closed: an IMDb bar whose own rating or vote count could not be read must HOLD.
+gate_case("rating-imdb-rating-unreadable", RatingFloorGate(rules=(imdb_bar,)),
+          imdb_rating_tenths=unreadable, imdb_votes=Known(value=5000, source="x"),
+          ratings=rated(8.0, 5000))
+gate_case("rating-imdb-votes-unreadable", RatingFloorGate(rules=(imdb_bar,)),
+          imdb_rating_tenths=Known(value=80, source="x"), imdb_votes=unreadable,
+          ratings=rated(8.0, 5000))
+gate_case("rating-clears-the-bar", RatingFloorGate(rules=(imdb_bar,)),
+          ratings=rated(8.0, 5000), **readable)
+gate_case("rating-exactly-at-the-bar", RatingFloorGate(rules=(imdb_bar,)),
+          ratings=rated(7.5, 1000), **readable)
+gate_case("rating-just-under-the-bar", RatingFloorGate(rules=(imdb_bar,)),
+          ratings=rated(7.4, 5000), **readable)
+gate_case("rating-votes-one-short", RatingFloorGate(rules=(imdb_bar,)),
+          ratings=rated(8.0, 999), **readable)
+gate_case("rating-no-rating-at-all", RatingFloorGate(rules=(imdb_bar,)), **readable)
+# A percentage bar carries no IMDb rule, so the fail-closed guard must not fire for it.
+# 80% arrives as 8.0 and 70% as 7.0: a percentage is normalized onto the 0-10 scale before
+# it reaches here, so passing 80.0 would be 800% and would clear every bar there is.
+gate_case("rating-percentage-bar-clears", RatingFloorGate(rules=(pct_bar,)),
+          ratings=rated(8.0, None, RatingSource.ROTTEN_TOMATOES_CRITIC))
+gate_case("rating-percentage-bar-misses", RatingFloorGate(rules=(pct_bar,)),
+          ratings=rated(7.0, None, RatingSource.ROTTEN_TOMATOES_CRITIC))
+# match=all fails closed toward NOT protecting; match=any keeps on one cleared bar.
+two = RatingFloorGate(rules=(imdb_bar, pct_bar), match="all")
+gate_case("rating-all-one-cleared-one-missed", two,
+          ratings=rated(8.0, 5000) + rated(7.0, None, RatingSource.ROTTEN_TOMATOES_CRITIC),
+          **readable)
+gate_case("rating-all-both-cleared", two,
+          ratings=rated(8.0, 5000) + rated(8.0, None, RatingSource.ROTTEN_TOMATOES_CRITIC),
+          **readable)
+gate_case("rating-any-one-cleared-one-missed",
+          RatingFloorGate(rules=(imdb_bar, pct_bar), match="any"),
+          ratings=rated(8.0, 5000) + rated(7.0, None, RatingSource.ROTTEN_TOMATOES_CRITIC),
+          **readable)
+
+# --- ServerPopularityGate: the watcher floor, the pluralization, and the reach bound ---
+pop = ServerPopularityGate(cfg(GateId.SERVER_POPULARITY, threshold=3, window_days=365))
+# "well-over" matters as much as "at-floor": every case sitting at or below the floor left
+# `count >= floor` free to become `count == floor`, which stops protecting the most-watched
+# titles on the server and changes nothing a probe can see.
+for label, n in (("at-floor", 3), ("well-over-floor", 10), ("one-under", 2),
+                 ("one-watcher", 1), ("nobody", 0)):
+    gate_case(f"popularity-{label}", pop, distinct_watchers=Known(value=n, source="x"),
+              history_reach_days=Known(value=400.0, source="x"))
+# A floor of 1 is the only way to reach the PROTECT arm's singular, and an Absent count is
+# the only way to reach the `else 0` fallback.
+solo = ServerPopularityGate(cfg(GateId.SERVER_POPULARITY, threshold=1, window_days=365))
+gate_case("popularity-single-watcher-protects", solo,
+          distinct_watchers=Known(value=1, source="x"),
+          history_reach_days=Known(value=400.0, source="x"))
+gate_case("popularity-count-genuinely-absent", solo,
+          distinct_watchers=Absent(source="x"),
+          history_reach_days=Known(value=400.0, source="x"))
+gate_case("popularity-watchers-unreadable", pop,
+          distinct_watchers=Unknown(reason="r", source="x"),
+          history_reach_days=Known(value=400.0, source="x"))
+# A history shorter than the window makes a sub-floor count a LOWER BOUND, not an answer.
+gate_case("popularity-reach-shorter-than-window", pop,
+          distinct_watchers=Known(value=1, source="x"),
+          history_reach_days=Known(value=100.0, source="x"))
+gate_case("popularity-reach-exactly-the-window", pop,
+          distinct_watchers=Known(value=1, source="x"),
+          history_reach_days=Known(value=365.0, source="x"))
+gate_case("popularity-reach-unreadable", pop,
+          distinct_watchers=Known(value=1, source="x"),
+          history_reach_days=Unknown(reason="r", source="x"))
+
+# --- MinDormancyGate: the floor, at it and either side ---
+dorm = MinDormancyGate(cfg(GateId.MIN_DORMANCY, threshold=1095))
+for label, days in (("at-floor", 1095.0), ("one-under", 1094.0), ("well-under", 400.0),
+                    ("well-over", 1500.0)):
+    gate_case(f"dormancy-{label}", dorm, days_observed_unwatched=Known(value=days, source="x"))
+gate_case("dormancy-unreadable", dorm,
+          days_observed_unwatched=Unknown(reason="r", source="x"))
+gate_case("dormancy-absent", dorm, days_observed_unwatched=Absent(source="x"))
+
+# --- the three switch-shaped gates ---
+for name, gate, field in (
+    ("streaming", StreamingNowGate(cfg(GateId.STREAMING_NOW)), "is_streaming_now"),
+    ("whitelist", WhitelistGate(cfg(GateId.WHITELISTED)), "is_whitelisted"),
+):
+    gate_case(f"{name}-true", gate, **{field: Known(value=True, source="x")})
+    gate_case(f"{name}-false", gate, **{field: Known(value=False, source="x")})
+    gate_case(f"{name}-unreadable", gate, **{field: Unknown(reason="r", source="x")})
+curated = CuratedListGate(cfg(GateId.CURATED_LIST))
+gate_case("curated-on-a-list", curated, in_curated_list=Known(value="a list", source="x"))
+gate_case("curated-on-no-list", curated, in_curated_list=Absent(source="x"))
+gate_case("curated-unreadable", curated, in_curated_list=Unknown(reason="r", source="x"))
+gate_case("horizon-unreadable", DataHorizonGate(cfg(GateId.DATA_HORIZON)),
+          days_observed_unwatched=Unknown(reason="r", source="x"))
+
+# --- the three pure span helpers, at and either side of every boundary ---
+def obs(v):
+    return Known(value=v, source="x") if v is not None else Unknown(reason="r", source="x")
+
+for label, reach, needed in (("covers-exactly", 365.0, 365.0), ("one-day-short", 364.0, 365.0),
+                             ("a-month-short", 335.0, 365.0), ("just-inside-margin", 336.0, 365.0),
+                             ("covers-easily", 900.0, 365.0), ("unreadable", None, 365.0)):
+    record(f"history-shortfall-{label}", str(history_shortfall(obs(reach), needed)))
+record("lifetime-reach-covers-age", str(lifetime_shortfall(obs(400.0), obs(400.0))))
+record("lifetime-reach-short-of-age", str(lifetime_shortfall(obs(399.0), obs(400.0))))
+record("lifetime-age-unknown", str(lifetime_shortfall(obs(400.0), obs(None))))
+for label, reach, hold in (("spans-exactly", 180, 180), ("one-short", 179, 180),
+                           ("spans-easily", 900, 180), ("hold-never-expires", 400, 0),
+                           ("hold-of-one-day", 400, 1), ("hold-negative", 400, -1)):
+    record(f"progress-{label}", str(progress_is_establishable(reach_days=reach, hold_days=hold)))
+
+for label, v in (("true", True), ("false", False), ("none", None), ("junk-string", "yes"),
+                 ("junk-int", 1)):
+    record(f"thaw-{label}", str(thaw_defers_to_owner(v)))
+
+# --- the bar's own wording, in each source's units ---
+record("bar-text-score", imdb_bar.threshold_text())
+record("bar-text-percentage", pct_bar.threshold_text())
+record("bar-describe-score-with-votes", imdb_bar.describe_bar())
+record("bar-describe-score-no-votes",
+       RatingRule(source=RatingSource.IMDB, floor=75, min_votes=0).describe_bar())
+record("bar-describe-score-one-vote",
+       RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1).describe_bar())
+record("bar-describe-percentage", pct_bar.describe_bar())
+
+print(json.dumps({"order": order, "cases": cases}))
+"""
+
+
 ZONES: dict[str, Zone] = {
     "policy-repair-shims": Zone(
         module=Path("src/reaper/engine/policy.py"),
@@ -509,6 +787,36 @@ ZONES: dict[str, Zone] = {
         ),
         probe=SAVE_BOUNDARY_PROBE,
     ),
+    "engine-gates": Zone(
+        module=Path("src/reaper/engine/gates.py"),
+        functions=(
+            "thaw_defers_to_owner",
+            "RatingRule.threshold_text",
+            "RatingRule.describe_bar",
+            "RatingFloorGate.evaluate",
+            "StreamingNowGate.evaluate",
+            "history_shortfall",
+            "lifetime_shortfall",
+            "progress_is_establishable",
+            "ServerPopularityGate.evaluate",
+            "WhitelistGate.evaluate",
+            "CuratedListGate.evaluate",
+            "MinDormancyGate.evaluate",
+            "DataHorizonGate.evaluate",
+            "evaluate_all",
+        ),
+        tests=(
+            "tests/test_engine_invariants.py",
+            "tests/test_signal_quality.py",
+            "tests/test_review_chips.py",
+            "tests/test_season_pruning.py",
+            "tests/test_fields.py",
+            "tests/test_policy.py",
+            "tests/test_facts_codec.py",
+            "tests/test_override_truth.py",
+        ),
+        probe=GATES_PROBE,
+    ),
 }
 DEFAULT_ZONE = "policy-repair-shims"
 
@@ -518,11 +826,11 @@ DEFAULT_ZONE = "policy-repair-shims"
 #: would be the flag-shaped coverage claim rule 145 is about. Their logic is a separate zone.
 
 
-def probe(zone: Zone, timeout: float) -> dict[str, object] | str:
+def probe(zone: Zone, workdir: Path, timeout: float) -> dict[str, object] | str:
     try:
         proc = subprocess.run(  # noqa: S603 -- fixed argv, no caller input
             ["uv", "run", "python", "-c", zone.probe],  # noqa: S607 -- `uv` is how CLAUDE.md runs everything
-            cwd=REPO,
+            cwd=workdir,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -540,45 +848,74 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--zone", choices=sorted(ZONES), default=DEFAULT_ZONE)
     parser.add_argument("--report", type=Path, default=None)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=min(8, max(1, (os.cpu_count() or 2) - 2)),
+        help="parallel worker copies; each gets its own tree and venv",
+    )
+    parser.add_argument(
+        "--keep-workers",
+        action="store_true",
+        help="leave the worker copies on disk to inspect a failing mutant",
+    )
     args = parser.parse_args()
 
     name, zone = args.zone, ZONES[args.zone]
     report = args.report or REPO / f"mutation-report-{name}.json"
 
-    path = REPO / zone.module
-    original = path.read_text()
+    original = (REPO / zone.module).read_text()
     mutants = generate(original, zone)
-    print(f"zone {name}: {len(mutants)} mutants across {len(zone.functions)} targets\n", flush=True)
+    workers = max(1, min(args.workers, len(mutants) or 1))
+    print(f"zone {name}: {len(mutants)} mutants across {len(zone.functions)} targets", flush=True)
 
-    baseline = probe(zone, 180)
-    if isinstance(baseline, str):
-        raise SystemExit(f"baseline {baseline}")
-
+    pool = Path(tempfile.mkdtemp(prefix=f"mutation-{name}-"))
     started = time.time()
-    if (status := run_tests(zone, 900)) != "survived":
-        raise SystemExit(f"baseline suite is not green ({status}); fix that before mutating")
-    each = time.time() - started
-    print(
-        f"baseline green in {each:.1f}s -> about {len(mutants) * each / 60:.0f} min\n", flush=True
-    )
+    roots = [make_worker(pool / f"w{i}") for i in range(workers)]
+    print(f"{workers} worker copies ready in {time.time() - started:.1f}s\n", flush=True)
 
     try:
-        for i, m in enumerate(mutants, 1):
+        baseline = probe(zone, roots[0], 240)
+        if isinstance(baseline, str):
+            raise SystemExit(f"baseline {baseline}")
+
+        started = time.time()
+        if (status := run_tests(zone, roots[0], 900)) != "survived":
+            raise SystemExit(f"baseline suite is not green ({status}); fix that before mutating")
+        each = time.time() - started
+        print(
+            f"baseline green in {each:.1f}s -> about "
+            f"{len(mutants) * each / 60 / workers:.0f} min across {workers} workers\n",
+            flush=True,
+        )
+
+        speak = threading.Lock()
+        done = itertools.count(1)
+
+        def report_one(m: Mutant, extra: str = "") -> None:
+            mark = {"killed": "kill ", "survived": "SURV "}.get(m.status, m.status)
+            with speak:
+                print(f"[{next(done)}/{len(mutants)}] {mark} {m.label}{extra}", flush=True)
+                for detail in m.direction:
+                    print(f"          {detail}", flush=True)
+
+        def process(m: Mutant, root: Path) -> None:
+            target = root / zone.module
             try:
                 mutated = splice(original, m)
-                compile(mutated, str(path), "exec")
+                compile(mutated, str(target), "exec")
             except ValueError as exc:
                 m.status = "skipped"
-                print(f"[{i}/{len(mutants)}] SKIP  {m.label}: {exc}", flush=True)
-                continue
+                report_one(m, f": {exc}")
+                return
             except SyntaxError:
                 m.status = "invalid"
-                print(f"[{i}/{len(mutants)}] INVAL {m.label}", flush=True)
-                continue
-            path.write_text(mutated)
-            m.status = run_tests(zone, max(120.0, each * 6))
+                report_one(m)
+                return
+            target.write_text(mutated)
+            m.status = run_tests(zone, root, max(120.0, each * 6))
             if m.status == "survived":
-                after = probe(zone, 180)
+                after = probe(zone, root, 240)
                 if isinstance(after, str):
                     m.direction = [after]
                 else:
@@ -587,16 +924,30 @@ def main() -> int:
                         for k, v in after.items()
                         if baseline.get(k) != v
                     ] or ["no change on the probe corpus -- equivalent, or a case is missing"]
-            print(
-                f"[{i}/{len(mutants)}] "
-                f"{ {'killed': 'kill ', 'survived': 'SURV '}.get(m.status, m.status) } {m.label}",
-                flush=True,
-            )
-            for detail in m.direction:
-                print(f"          {detail}", flush=True)
+            report_one(m)
+
+        def drain(index: int) -> None:
+            """One thread per worker, taking every mutant.
+
+            Round-robin rather than contiguous blocks: mutants in the same function tend to
+            cost the same, so slicing by position would hand one worker every slow one.
+            """
+            root = roots[index]
+            for m in mutants[index::workers]:
+                process(m, root)
+
+        threads = [threading.Thread(target=drain, args=(i,)) for i in range(workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
     finally:
-        path.write_text(original)
-        print("\nsource restored", flush=True)
+        if args.keep_workers:
+            print(f"\nworker copies left at {pool}", flush=True)
+        else:
+            shutil.rmtree(pool, ignore_errors=True)
+        # The real tree is only ever read: mutants are written into the worker copies.
+        assert (REPO / zone.module).read_text() == original, "the source under test changed"
 
     report.write_text(
         json.dumps(
