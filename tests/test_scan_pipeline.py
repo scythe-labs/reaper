@@ -14,7 +14,7 @@ still produces the snapshot a sequential gather would have:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1775,7 +1775,13 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
     against a verdict this suite already pins in the other direction.
     """
 
-    async def _scan(self, session: AsyncSession, cache_engine: AsyncEngine) -> Any:
+    async def _scan(
+        self,
+        session: AsyncSession,
+        cache_engine: AsyncEngine,
+        *,
+        degrade: Sequence[str] | None = None,
+    ) -> Any:
         return await scan(
             cache_engine,
             session,
@@ -1794,6 +1800,7 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
             tv_gates=build_gates(DEFAULT_TV_POLICY),
+            extra_degrade_reasons=degrade,
         )
 
     async def _prepare(self, cache_engine: AsyncEngine) -> None:
@@ -1879,6 +1886,37 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
 
         marks = await watch_evidence.recall_all(session)
         assert marks["radarr:1:1"].watchers_all_time == 3
+
+    async def test_a_degraded_scan_still_records_what_it_measured(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The mark write is deliberately NOT gated on ``degraded``, and this pins it (#276).
+
+        Rule 116 gates a degraded scan's side effects because they act on the condemned set:
+        a grace clock, the shelf and a Discord post each push an item toward deletion, so
+        skipping them is the keep direction. This write is the opposite kind. The mark is what
+        a LATER scan reads to WITHHOLD pressure, so skipping it removes a reason to keep, and
+        ``degraded`` is snapshot-global -- it fires on one *arr being unreachable, on sessions
+        or ratings being unreadable, none of which say anything about this item's plays.
+
+        So: a title watched by one person, on a scan degraded for an unrelated reason. Gate the
+        write and no mark is stored; when this item's Plex key later churns, the fall has
+        nothing to fall from and it reads Known(0) with maximum dormancy -- the exact defect
+        ``watch_evidence`` exists to prevent, arriving through the guard meant to be careful.
+        """
+        await self._prepare(cache_engine)
+        # radarr:1:1 carries Plex rating key 11, so this play is ITS play -- unlike the
+        # anchor play in `_prepare`, whose key no candidate here holds.
+        await _seed_play(cache_engine, row_id=2, rating_key=11)
+
+        snapshot = await self._scan(
+            session, cache_engine, degrade=["could not read what is playing right now"]
+        )
+        await session.commit()
+
+        assert snapshot.degraded is True
+        marks = await watch_evidence.recall_all(session)
+        assert marks["radarr:1:1"].watchers_all_time == 1
 
     async def test_a_scan_with_no_marks_condemns_and_counts_none(
         self, session: AsyncSession, cache_engine: AsyncEngine

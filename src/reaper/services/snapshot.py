@@ -1133,6 +1133,22 @@ async def scan(
     # Written even for the items just flagged blind: the mark only ever rises, so a blind
     # reading cannot lower it, and the next scan therefore asks the same question against the
     # same evidence instead of quietly accepting zero as the new truth.
+    #
+    # Deliberately NOT gated on `context.degraded`, unlike the grace clocks above (#276).
+    # Rule 116 gates a degraded scan's side effects because they act on the condemned set --
+    # a clock, a shelf, a Discord post all push an item toward deletion. This write is the
+    # opposite kind: the mark is the evidence a LATER scan reads to withhold pressure, and
+    # raising it can only ever add a reason to keep. Skipping it is what costs a protection.
+    # Rule 28's sanctioned exception is the same trade read from the other side.
+    #
+    # Direction, concretely: `degraded` is snapshot-global and mostly fires on causes that say
+    # nothing about this item's watch reading -- one *arr unreachable, sessions unreadable,
+    # ratings unreadable. Skip the write on those and a title watched by five people whose
+    # first scan happened to be degraded stores no mark; when its Plex key later churns, the
+    # fall has nothing to fall from, and it reads Known(0) with maximum dormancy. That is the
+    # exact defect `watch_evidence` exists to prevent, reintroduced by the gate meant to be
+    # careful. `TestTheWatchBlindnessGuardThroughAWholeScan
+    # .test_a_degraded_scan_still_records_what_it_measured` goes red if the gate is added.
     await watch_evidence.record(session, watch_readings, now=now)
     # Stored so Settings can say how many items the last scan held back for this reason,
     # which is the one number that tells an operator whether they need the reset at all.
