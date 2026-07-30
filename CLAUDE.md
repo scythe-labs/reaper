@@ -75,6 +75,16 @@ rule narrating the gate that enforces it pays twice for one constraint.
   edit the line that is now wrong, never append beside it. Measured findings, including
   negative results, go to `docs/LEARNINGS.md`. `docs/README.md` says what belongs where: state,
   knowledge, and history have different lifespans and never share a file.
+  **`STATUS.md` records the state, never the route to it, and it is budgeted twice: 120 lines
+  and 100 columns.** Both are enforced, because a line budget alone is not a size budget — the
+  file sat at exactly 200/200 lines for days, so every new fact went onto a line that already
+  existed, and since a markdown table row cannot wrap, one cell reached 21,210 characters and
+  three cells held two thirds of the file. So: **a row holds a phrase, never a sentence**;
+  reasoning behind a locked choice goes to `docs/DECISIONS.md` (one section per daggered row,
+  and `test_repo_hygiene.py` checks the two agree both ways); and **closed work leaves the file
+  entirely** — a shipped fix is not state, its record is the tracker and the code. Narrating a
+  fix you just landed is the single way this file grows, and it reads as diligence, which is why
+  it needs a rule and not just a budget.
 - **A bug you are not fixing becomes an issue before the session ends — don't wait to be
   asked.** A defect left in a transcript dies with the session, and "I flagged it in the
   summary" is not a record. Every defect leaves fixed or filed, in *every* session, not just
@@ -323,7 +333,11 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
 
 - `docs/README.md` — what belongs in which file, and the rule that keeps them current.
 - `docs/STATUS.md` — **start here.** What is true right now: milestones, open work, decisions
-  locked. Small and edited in place.
+  locked. Small and edited in place, budgeted at 120 lines and 100 columns.
+- `docs/DECISIONS.md` — why each locked decision is what it is, one section per daggered row of
+  `STATUS.md`'s table. Read the row, then this if you are about to change the behavior it
+  describes: several of these decisions were reversed once already, and the reversal is the part
+  a future reader needs most.
 - `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. `SIGNALS.md` is cited from
   five places in `src/`: `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py`, and
   `api/routes.py`. Read it before touching any of them, and before the rewatch curve in

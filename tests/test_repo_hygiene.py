@@ -28,7 +28,19 @@ HISTORY = DOCS / "history"
 # the same standards as code; docs/history/ is frozen and deliberately describes the past, so
 # its stale dates, TBD placeholders and superseded rule wordings are correct as written.
 STATUS_DOC = DOCS / "STATUS.md"
-STATUS_MAX_LINES = 200
+STATUS_MAX_LINES = 120
+# A line budget alone is not a size budget. STATUS.md sat at exactly 200/200 lines for days, so
+# every new fact had to be appended to a line that already existed -- and a markdown table row
+# cannot wrap, so one "Decisions locked" cell reached 21,210 characters. The width cap is what
+# makes the line cap honest, and it is the repo's one width (ruff line-length, prettier
+# printWidth). Together they bound the file's total size, which is the thing that has to stay
+# small.
+STATUS_MAX_COLUMNS = 100
+DECISIONS_DOC = DOCS / "DECISIONS.md"
+# Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
+# sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
+# dropped out of the walk).
+DECISION_SECTIONS = 13
 
 
 def _live_docs() -> list[Path]:
@@ -737,8 +749,100 @@ def test_status_doc_stays_small() -> None:
     lines = len(STATUS_DOC.read_text(encoding="utf-8").splitlines())
     assert lines <= STATUS_MAX_LINES, (
         f"docs/STATUS.md is {lines} lines, over its {STATUS_MAX_LINES}-line budget.\n"
-        "Move history to docs/history/ and measured findings to docs/LEARNINGS.md, "
-        "then shorten what is left. Do not raise this number to make the test pass."
+        "Move reasoning to docs/DECISIONS.md, measured findings to docs/LEARNINGS.md, and the "
+        "story of how a fix was chosen to docs/history/, then shorten what is left. Closed work "
+        "leaves the file entirely. Do not raise this number to make the test pass."
+    )
+
+
+def test_status_doc_lines_stay_narrow() -> None:
+    """No line of ``docs/STATUS.md`` is wider than the repo's one width.
+
+    This is the other half of the line budget, and the half that was missing. With only a line
+    cap, a file sitting at its limit can still absorb any amount of new text -- by lengthening
+    a line that already exists. That is what happened: a "Decisions locked" cell reached 21,210
+    characters, three cells held 66% of the file, and every agent editing a row had to rewrite a
+    paragraph-length line to change a phrase.
+
+    A markdown table row cannot be wrapped, so this cap is also what keeps narration out of a
+    table cell: at 100 columns a cell holds a phrase and nothing longer. The reasoning belongs in
+    ``docs/DECISIONS.md``, where prose can wrap.
+    """
+    offenders = [
+        f"  line {n} is {len(line)} columns: {line[:60]}..."
+        for n, line in enumerate(STATUS_DOC.read_text(encoding="utf-8").splitlines(), start=1)
+        if len(line) > STATUS_MAX_COLUMNS
+    ]
+    assert not offenders, (
+        f"docs/STATUS.md has lines over its {STATUS_MAX_COLUMNS}-column budget:\n"
+        + "\n".join(offenders)
+        + "\n\nA table row cannot wrap, so a cell this long is narration in the wrong file. "
+        "Cut the row to a phrase and move the reasoning to docs/DECISIONS.md."
+    )
+
+
+def _dagger_rows() -> set[str]:
+    """Keys of the "Decisions locked" rows that promise a section in ``docs/DECISIONS.md``."""
+    keys: set[str] = set()
+    in_table = False
+    for line in STATUS_DOC.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            in_table = line == "## Decisions locked"
+            continue
+        if not in_table or not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) == 2 and "†" in cells[1]:
+            keys.add(cells[0])
+    return keys
+
+
+def test_the_documented_status_budget_matches_the_enforced_one() -> None:
+    """The budget is stated in prose four times, so the prose is checked against the constants.
+
+    Rule 144: one fact about how the tool works, written in several places by authors each
+    reading a different one. Nothing here is generated, so a cap lowered in this file would leave
+    four confident sentences quoting the old number -- and a reader who trusts them writes to a
+    budget that is no longer enforced. Cheaper to name the files in a failure message than to ask
+    the next author to remember them.
+    """
+    phrase = f"{STATUS_MAX_LINES} lines and {STATUS_MAX_COLUMNS} columns"
+    sites = [REPO / "CLAUDE.md", DOCS / "README.md", STATUS_DOC]
+    offenders = [
+        str(p.relative_to(REPO)) for p in sites if phrase not in p.read_text(encoding="utf-8")
+    ]
+    assert not offenders, (
+        f'these files no longer state the enforced budget as "{phrase}":\n'
+        + "\n".join(offenders)
+        + "\n\nCorrect the prose, or correct STATUS_MAX_LINES/STATUS_MAX_COLUMNS -- but do not "
+        "raise a cap to make a test pass."
+    )
+
+
+def test_every_decisions_section_matches_a_locked_decision_row() -> None:
+    """``docs/STATUS.md`` and ``docs/DECISIONS.md`` name the same decisions, both ways.
+
+    STATUS.md holds each choice as a phrase and marks with a dagger the ones whose reasoning
+    lives in DECISIONS.md. That dagger is a promise to the reader, so it is checked: a section
+    renamed on one side and not the other leaves either a pointer into nothing or reasoning
+    nobody can find from the table. Rule 144 -- one fact written in two places, so the test names
+    the other file rather than a comment asking the next author to remember.
+    """
+    sections = {
+        line.removeprefix("## ").strip()
+        for line in DECISIONS_DOC.read_text(encoding="utf-8").splitlines()
+        if line.startswith("## ")
+    }
+    rows = _dagger_rows()
+    assert len(rows) == DECISION_SECTIONS, (
+        f"the dagger walk collected {len(rows)} rows of 'Decisions locked', expected "
+        f"{DECISION_SECTIONS}. Reconcile by hand, then correct DECISION_SECTIONS: comparing two "
+        "collections cannot tell a row that agrees from one that fell out of the walk (rule 145)."
+    )
+    assert sections == rows, (
+        "docs/DECISIONS.md sections and the daggered rows of docs/STATUS.md disagree.\n"
+        f"  sections with no daggered row: {sorted(sections - rows)}\n"
+        f"  daggered rows with no section: {sorted(rows - sections)}"
     )
 
 

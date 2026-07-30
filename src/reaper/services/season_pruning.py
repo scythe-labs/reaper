@@ -652,7 +652,8 @@ def _detect_conflicts(
     by the SCAN, and automatic TV pruning is inert until the mirror catches up. That is
     the prime directive's answer, since the alternative is deciding on two numbers Reaper
     knows are wrong -- but it is a blanket effect, not a narrow one, and an earlier draft of
-    this docstring claimed the opposite (rule 7/24). ``docs/STATUS.md`` records it, and
+    this docstring claimed the opposite (rule 7/24). ``docs/DECISIONS.md`` records it under
+    **Watch-history reach**, and
     ``test_a_short_mirror_holds_every_prunable_season_of_an_old_show`` pins it, because the
     mutation that turns this into a true blanket hold otherwise passes the whole suite.
 

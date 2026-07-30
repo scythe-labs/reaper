@@ -8,7 +8,7 @@ one with a lifespan of years, makes both untrustworthy.
 |---|---|---|---|
 | **Rules** — how to work on Reaper | `CLAUDE.md`, `.claude/rules/` | until a review changes them | edited in place; numbered, and the numbers are permanent |
 | **State** — what is true right now | `docs/STATUS.md` | days | **edited in place, never appended to** |
-| **Knowledge** — what we measured and learned | `docs/LEARNINGS.md`, `docs/SIGNALS.md` | years | appended into the right topic section |
+| **Knowledge** — what we measured and learned | `docs/LEARNINGS.md`, `docs/SIGNALS.md`, `docs/DECISIONS.md` | years | appended into the right topic section |
 | **History** — what happened, and why | `docs/history/` | forever | **frozen; never edited** |
 
 ## The rule that keeps this working
@@ -24,10 +24,33 @@ to 3,508 lines, so adding a note meant first reading enough of it to find where 
 and that cost grew every day. `STATUS.md` is small and edited in place so that the update is
 cheaper than the excuse. `tests/test_repo_hygiene.py` keeps it that way.
 
+### A line budget is not a size budget
+
+The first version of that budget capped lines only, and it failed in a way worth keeping written
+down. `STATUS.md` reached exactly 200 of its 200 lines and stayed there, so every new fact had to
+go onto a line that already existed. **A markdown table row cannot be wrapped**, so the pressure
+landed in the cells: one "Decisions locked" cell reached 21,210 characters, three cells held two
+thirds of the file, and changing a phrase meant editing a paragraph-length line. The gate was
+green throughout — it was measuring the one dimension the file was no longer growing in.
+
+So the budget is now **120 lines and 100 columns**, both enforced, and the width cap does most of
+the work: at 100 columns a table cell holds a phrase and cannot hold narration. What that
+displaces has somewhere to go — reasoning to `DECISIONS.md`, measurements to `LEARNINGS.md`, the
+story to `history/`. **And closed work leaves the file**: narrating a fix you just landed is the
+one habit that reliably refills it, and it feels like diligence while it happens.
+
 ## Which file takes what
 
 - **A milestone changed state, a decision got locked, a limitation was lifted** → `STATUS.md`.
-  Change the line that is now wrong. Do not add a new line beside it.
+  Change the line that is now wrong. Do not add a new line beside it, and keep the row a phrase:
+  a sentence in a table cell is the one shape this file cannot hold.
+- **Why a locked decision is what it is** → `DECISIONS.md`, one `##` section per daggered row of
+  `STATUS.md`'s table, matched by name in both directions and checked. A decision reversed is
+  edited there in place with the reversal stated, because the reversal is what a future reader
+  needs; a decision whose choice fits a cell on its own needs no section at all.
+- **A fix you just landed** → nowhere, unless something it changed is still true and still worth
+  a reader's time. The tracker and the code are its record. Correct the `STATUS.md` line the fix
+  made wrong and stop there.
 - **You measured something against a real library** → `LEARNINGS.md`, in the topic section it
   belongs to, using the shape the file already uses: a claim written as a sentence with
   `(measured <date>)`, evidence as ratios and orders of magnitude, and a `⇒` consequence line.
@@ -64,7 +87,8 @@ auto-memory note to explain the product, move it here.
 
 | File | Kind | Status |
 |---|---|---|
-| `STATUS.md` | state | **live** — edit in place |
+| `STATUS.md` | state | **live** — edit in place; 120 lines and 100 columns |
+| `DECISIONS.md` | knowledge | **live** — one section per daggered `STATUS.md` row |
 | `LEARNINGS.md` | knowledge | **live** — append by topic |
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
 | `SIZE_TRUTH_PLAN.md` | state (one feature) | **live** — 4 of 9 stages remain; archive it when they land |
@@ -73,3 +97,4 @@ auto-memory note to explain the product, move it here.
 | `history/CODE_REVIEW.md` | history | frozen — 100/100 findings remediated |
 | `history/CODE_REVIEW_PHASES.md` | history | frozen — 10/10 phases done |
 | `history/UI_REVIEW.md` | history | frozen — 92/94 findings fixed |
+| `history/SCREEN_READER_SWEEP.md` | history | frozen — the sweep's narrative; open half in `STATUS.md` |

@@ -382,7 +382,8 @@ function conflictNote(defersToOwner: boolean | null | undefined): string {
  *  someone is watching, and a file no *arr manages has no path to delete through.
  *
  *  Every OTHER protection is cautious rather than structural, and a hand reap condemns straight
- *  past it (`docs/STATUS.md`, and the #96 reversal that deleted `DEFERRABLE_BLOCK_GATES`). So
+ *  past it (`docs/DECISIONS.md` under "What a hand reap may overrule", and the #96 reversal
+ *  that deleted `DEFERRABLE_BLOCK_GATES`). So
  *  this is the one test that separates "kept no matter what" from "kept unless you say
  *  otherwise", and both sentences below turn on it: `heldReapNote` says why a reap is still
  *  held, and the Sanctuary note says whether one would be. Deriving them apart is exactly how

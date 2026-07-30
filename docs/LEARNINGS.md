@@ -2002,6 +2002,29 @@ real Plex agents serve in that band — which nobody has measured. A test either
 a proof that the reading is correct (rule 118), so it went to the tracker as a question instead.
 The remaining survivor is a genuine equivalent: `split("://", 1)[0]` is `split("://", 2)[0]`.
 
+## The accessibility guard: axe-core over a lint plugin (measured 2026-07-29)
+
+Two candidates for a standing accessibility gate, compared before choosing.
+
+**`eslint-plugin-jsx-a11y` stays out**, re-measured: unreleased since October 2024, capped at
+eslint 9, 116 lockfile entries, three advisories, and **15 of its 36 findings here were false**.
+It reads source text, so it cannot see through a wrapper component, which is where this
+project's accessibility bugs actually lived.
+
+**`axe-core` went in instead** — one lockfile entry, dev-only, absent from every bundle chunk —
+because it reads the tree the browser *built*. `src/test/a11y.ts` fails on what it finds **and on
+what axe could not decide**: jsdom files an unsettled rule under `incomplete`, which is where
+`aria-hidden-focus` lands, so asserting on violations alone passed silently over an invariant
+held by hand at 113 sites.
+
+⇒ Prefer a guard that reads the rendered tree over one that reads source text, and fail the run
+on `incomplete` as well as on `violations` — an undecided rule is not a passing one.
+
+**Where a source-text scan still earns its place**: a control no fixture mounts. Measured, an
+`<input>` scan ran at 94% false positives and was dropped; a `<button>`'s accessible name is
+ambiguous-but-present, which no scanner can judge. A brace-aware scan over `<select>` elements
+was kept, because that population is small, enumerable, and pinned by count.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
