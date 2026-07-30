@@ -43,7 +43,12 @@ import { FixedQuantity } from "./QuantityInput";
 import { ScanRow } from "./ScanBar";
 import { Segmented } from "./Segmented";
 import { KINDS, kindLabel, ServiceModal, TestBadge, testSentence } from "./ServiceModal";
-import { StaleReadNotice } from "./StaleReadNotice";
+import {
+  StaleReadNotice,
+  type StaleReadPlan,
+  StaleReadSlot,
+  collapseStaleReads,
+} from "./StaleReadNotice";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
@@ -2167,7 +2172,16 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
 
 /** The Leaving Soon shelf update, moved here from Plex settings. Its on/off toggle still
  *  lives on the Plex tab, so this row links there; when off, it grays out and can't run. */
-function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
+function LeavingSoonRow({
+  onGoToPlex,
+  plan,
+}: {
+  onGoToPlex: () => void;
+  /** The Jobs panel's stale-read decision. This row draws its own line only while it is the
+   *  only read that failed; when the panel's read failed too, the panel says it once, above
+   *  these rows (#198). */
+  plan: StaleReadPlan;
+}) {
   const queryClient = useQueryClient();
   const ls = useQuery({ queryKey: ["leaving-soon-settings"], queryFn: api.leavingSoonSettings });
   const runSync = useMutation({
@@ -2238,7 +2252,7 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
   const { enabled, last } = ls.data;
   // The row is still the best answer there is, so it renders -- and says it could not be
   // confirmed, above everything in the row the failed read could have changed.
-  const stale = ls.isError ? <StaleReadNotice what="the shelf status" inline /> : null;
+  const stale = <StaleReadSlot plan={plan} slot="the shelf status" inline />;
 
   if (!enabled) {
     return (
@@ -2343,6 +2357,21 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
     () => !savePendingRef.current,
   );
 
+  // The shelf row owns this read and renders inside this panel, so the panel has to know whether
+  // it failed to decide whether both lines collapse into one (#198). A second `useQuery` on the
+  // same key rather than a signal threaded up out of the row: React Query hands both observers
+  // the one cache entry, so there is no second request and no state to keep in step -- and the
+  // row's own early returns cannot leave a lifted flag asserting something its surface no longer
+  // shows, which is the trap rule 146 is about.
+  const shelf = useQuery({
+    queryKey: ["leaving-soon-settings"],
+    queryFn: api.leavingSoonSettings,
+  });
+  const stale = collapseStaleReads("these jobs", [
+    { what: "these jobs", stale: schedule.isError && !!schedule.data },
+    { what: "the shelf status", stale: shelf.isError && !!shelf.data },
+  ]);
+
   const jobsById = new Map<string, ScheduledJob>((schedule.data?.jobs ?? []).map((j) => [j.id, j]));
   const scanJob = jobsById.get(SCAN_ID);
 
@@ -2369,7 +2398,11 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
       {schedule.isError && !schedule.data && (
         <Notice tone="error">Couldn't load the upkeep jobs. Reload to try again.</Notice>
       )}
-      {schedule.isError && schedule.data && <StaleReadNotice what="these jobs" />}
+      {/* Both reads on this panel say the same thing when they fail together, so they say it
+          once, here, above the rows (#198). Unlike Plex's four these are independent polls
+          that can fail apart, which is why the rule counts the lines that would draw rather
+          than grouping by invalidation: either one alone still speaks in its own words. */}
+      <StaleReadSlot plan={stale} slot="these jobs" />
 
       <div className="set-rows">
         <ScanRow
@@ -2381,7 +2414,7 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
           onEdit={() => scanJob && setEditing(scanJob)}
           canEdit={!!scanJob}
         />
-        <LeavingSoonRow onGoToPlex={onGoToPlex} />
+        <LeavingSoonRow onGoToPlex={onGoToPlex} plan={stale} />
         {/* Render the upkeep jobs from the server's own list (scan aside; it has its own
             row), in its order, so a job added server-side appears here without a frontend
             edit. jobMeta falls back to the raw id for a job with no copy yet. */}

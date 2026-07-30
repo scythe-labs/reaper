@@ -769,6 +769,9 @@ describe("the groups below the form, through a failed refetch", () => {
   const STALE_LIBS = /Couldn't check the library list just now/;
   const STALE_SHELF = /Couldn't check the Leaving Soon settings just now/;
   const STALE_WATCH = /Couldn't check the watch history record just now/;
+  // The one this panel speaks in once several of its reads have failed at once (#198).
+  const STALE_PANEL = /Couldn't check the Plex settings just now/;
+  const STALE_ANY = /Couldn't check .* just now/;
   // Rule 144: the noun is the `what` prop of StaleReadNotice, which owns the sentence. Deleting
   // either `what` here leaves the loose form below green, so each is asserted by its own noun.
   const WHAT_HINT =
@@ -802,6 +805,40 @@ describe("the groups below the form, through a failed refetch", () => {
     expect(screen.getByRole("switch", { name: "Let Reaper touch Movies" })).toBe(toggle);
     expect(toggle).toBeEnabled();
     expect(screen.getByRole("button", { name: "Refresh libraries" })).toBeEnabled();
+  });
+
+  it("says it once when several reads fail together", async () => {
+    // The state `invalidateAllPlex` produces: one server switch against an unreachable Plex
+    // refetches all four of these, and each used to answer with its own amber paragraph, so the
+    // operator read the same failure four times down one panel (#198). The notice carries
+    // role="alert", so it was four announcements as well.
+    const queryClient = renderWithClient();
+    await screen.findByText("Refresh libraries");
+    await screen.findByRole("button", { name: "Forget…" });
+
+    apiMock.plexLibraries.mockRejectedValue(new Error("boom"));
+    apiMock.watchEvidence.mockRejectedValue(new Error("boom"));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
+      await queryClient.invalidateQueries({ queryKey: ["watch-evidence"] });
+    });
+    await waitFor(() => expect(apiMock.plexLibraries).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(apiMock.watchEvidence).toHaveBeenCalledTimes(2));
+
+    const lines = await screen.findAllByText(STALE_ANY);
+    expect(lines, WHAT_HINT).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent(STALE_PANEL);
+    // Neither read speaks for itself while the panel is speaking for both.
+    expect(screen.queryByText(STALE_LIBS)).toBeNull();
+    expect(screen.queryByText(STALE_WATCH)).toBeNull();
+    // And the line still sits above everything it now covers, since it says what's BELOW may be
+    // out of date and `.panel` is plain block flow.
+    const grid = screen.getByRole("switch", { name: "Let Reaper touch Movies" });
+    expect(lines[0]!.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The controls under it are all still drawn and operable, which is the whole reason the
+    // panel keeps its surface through a failed refetch.
+    expect(grid).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Forget…" })).toBeEnabled();
   });
 
   it("keeps the watch-history control when the refetch fails", async () => {

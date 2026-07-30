@@ -208,6 +208,32 @@ describe("JobsPanel through a failed refetch", () => {
     expect(screen.queryByText(SCAN_UNKNOWN)).toBeNull();
   });
 
+  it("says it once when the shelf read fails alongside the schedule", async () => {
+    // The two reads on this panel are independent polls -- the schedule's runs every 1.5s while
+    // any job does, the shelf row's does not -- so they can fail apart and often fail together.
+    // Together, they used to answer with two near-identical amber lines a few inches apart, one
+    // of them inside a row belonging to the other (#198).
+    apiMock.schedule.mockResolvedValue(SCHEDULE);
+    apiMock.leavingSoonSettings.mockResolvedValue({ enabled: true, last: null });
+    const queryClient = renderPanel("jobs");
+    expect(await screen.findByText("Refresh IMDb ratings")).toBeInTheDocument();
+
+    apiMock.schedule.mockRejectedValue(new Error("boom"));
+    apiMock.leavingSoonSettings.mockRejectedValue(new Error("boom"));
+    await queryClient.invalidateQueries({ queryKey: ["schedule"] });
+    await queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] });
+    await waitFor(() => expect(apiMock.schedule).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(apiMock.leavingSoonSettings).toHaveBeenCalled());
+
+    const lines = await screen.findAllByText(STALE_ANY);
+    expect(lines, WHAT_HINT).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent(STALE_JOBS);
+    // The row's own line is the one that goes: the panel is speaking for it now.
+    expect(screen.queryByText(STALE_SHELF)).toBeNull();
+    // Both rows are still on screen underneath it, which is why the panel keeps its surface.
+    expect(screen.getByText("Refresh IMDb ratings")).toBeInTheDocument();
+  });
+
   it("still says the jobs never loaded when the first read is the one that fails", async () => {
     apiMock.schedule.mockRejectedValue(new Error("boom"));
     renderPanel("jobs");

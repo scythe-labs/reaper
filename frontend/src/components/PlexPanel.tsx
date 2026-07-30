@@ -15,7 +15,7 @@ import { useSuccessorFocus } from "../focus";
 import { count, since } from "../format";
 import { useSafety } from "../useSafety";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
-import { StaleReadNotice } from "./StaleReadNotice";
+import { StaleReadSlot, collapseStaleReads } from "./StaleReadNotice";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 
@@ -594,6 +594,18 @@ export function PlexPanel({
     );
   }
 
+  // All four of these are refetched by one `invalidateAllPlex`, so they reach the stale state
+  // together and used to say so four times (#198). Only a failed REFETCH is listed: each group
+  // below shows its own never-loaded notice when nothing ever landed, which is a different claim
+  // and must not pull the panel into a collapse. `plex` needs no `data` test -- the guard above
+  // already returned when it has none.
+  const stale = collapseStaleReads("the Plex settings", [
+    { what: "these settings", stale: plex.isError },
+    { what: "the library list", stale: libraries.isError && !!libraries.data },
+    { what: "the watch history record", stale: watchEvidence.isError && !!watchEvidence.data },
+    { what: "the Leaving Soon settings", stale: leavingSoon.isError && !!leavingSoon.data },
+  ]);
+
   return (
     <div className="panel">
       <h2>Plex</h2>
@@ -604,8 +616,12 @@ export function PlexPanel({
 
       {/* The failed refetch the `!data` branch above deliberately no longer swallows the form
           for. Keeping the form is right; keeping it SILENTLY is not, because everything below
-          then reads as current when it is known to be stale (rule 17/36). */}
-      {plex.isError && <StaleReadNotice />}
+          then reads as current when it is known to be stale (rule 17/36).
+
+          This slot carries the collapsed line too, because it is the only one above all four
+          groups (#198): `invalidateAllPlex` refetches every read below, so one server switch
+          against an unreachable Plex used to draw four of these down the page. */}
+      <StaleReadSlot plan={stale} slot="these settings" />
 
       <div className="set-group">
         <h3>Connection</h3>
@@ -971,7 +987,7 @@ export function PlexPanel({
             <Notice tone="error">Couldn't load the library list.</Notice>
           ) : (
             <>
-              {libraries.isError && <StaleReadNotice what="the library list" />}
+              <StaleReadSlot plan={stale} slot="the library list" />
               <div className="lib-head">
                 <span className="muted">
                   {count((libraries.data ?? []).length)}{" "}
@@ -1027,7 +1043,7 @@ export function PlexPanel({
             <Notice tone="error">Couldn't load the watch history record.</Notice>
           ) : (
             <>
-              {watchEvidence.isError && <StaleReadNotice what="the watch history record" />}
+              <StaleReadSlot plan={stale} slot="the watch history record" />
               <div className="set-rows">
                 <div className="set-row set-row-plain">
                   <span className="set-label">Recorded watch history</span>
@@ -1182,7 +1198,7 @@ export function PlexPanel({
             <Notice tone="error">Couldn't load the Leaving Soon settings.</Notice>
           ) : (
             <>
-              {leavingSoon.isError && <StaleReadNotice what="the Leaving Soon settings" />}
+              <StaleReadSlot plan={stale} slot="the Leaving Soon settings" />
               <div className="set-rows">
                 {/* Both rows here carry a Switch and nothing else, so they release the control
                   track (`.set-row-plain`). */}

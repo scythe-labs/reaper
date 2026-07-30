@@ -494,10 +494,20 @@ Jobs take that same line for a different reason**: they hold no draft at all, an
 content through a failed refetch anyway while printing "couldn't load this page" on top of it, so
 the sentence was simply false above a page that was right there. Jobs reads worst stale, since its
 rows carry next-run times and a running flag and the query polls itself every 1.5s while anything
-runs, so it reaches the failed read with the operator doing nothing — the panel notice, the scan
-row's schedule line and the Leaving Soon row inside it each read that one failure separately, and
+runs, so it reaches the failed read with the operator doing nothing, and
 the notice goes ABOVE the rows, since it says what is below may be out of date and a panel is
-plain block flow. **Notifications is the seventh**, and it is a third reason: it never had an
+plain block flow. **Several reads failing at once now say it once (#198)**, naming the panel:
+Jobs read that one failure twice over, its own notice plus the Leaving Soon row's inside it, and
+Plex read it up to four times, since `invalidateAllPlex` refetches every group on the page and one
+server switch against an unreachable Plex drew a line over each. The scan row's schedule line was
+already exempt, on `failed && !job`, which is the same judgment made once by hand. `collapseStaleReads`
+is the rule and it counts the lines that WOULD draw rather than grouping by invalidation: React
+Query does not expose what caused a refetch, and Jobs' two reads are independent polls that fail
+apart, so an invalidation-group rule would collapse nothing on the panel this was filed about. **A
+lone failure keeps its own noun in its own slot**, because "the library list" tells the operator
+more than "the Plex settings" and the panel noun is only worth reaching for once it speaks for
+several; and only a failed REFETCH counts, never a read that never landed, which is a different
+claim ("there is nothing here") that keeps its own never-loaded notice per group. **Notifications is the seventh**, and it is a third reason: it never had an
 early return to lose its form to, so the failed read printed "couldn't check whether Discord is
 connected" directly above three controls derived from that very answer — the
 keep-the-current-webhook placeholder, an enabled Remove, and a Send test that fires at the stored
