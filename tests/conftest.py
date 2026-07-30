@@ -92,6 +92,33 @@ def _capturable_logs() -> None:
     structlog.configure(cache_logger_on_first_use=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_file_sink_left_behind() -> Iterator[None]:
+    """Rule 133: no test leaves the log file sink pointing into its own ``tmp_path``.
+
+    ``configure_file_logging`` sets three module globals, and every ``create_app`` boot
+    reaches it through ``configure_logging(data_dir)`` -- so hundreds of tests open a sink
+    and none of them owned the teardown. Two log modules cleaned up after themselves; what
+    neither could do is clean up before the test that runs next on the worker.
+
+    Two things then ride on the ordering. A sink left open on a temp dir takes every later
+    append anywhere in the suite, and one failed write flips the one-shot degraded flag for
+    everything after it. And ``log_files()`` answers from the leftover ``_log_path``, which
+    is how ``test_an_unwritable_data_dir_degrades_to_no_files`` went red in CI on an
+    unrelated branch: setup on an unwritable dir swallows the error and returns with the
+    previous sink deliberately untouched, so "no files" held only when the previous sink was
+    not a neighbor's.
+    """
+    yield
+    with logbuffer._file_lock:
+        sink, logbuffer._file_sink = logbuffer._file_sink, None
+        logbuffer._log_path = None
+        # A degradation test flips this process-global; reset it so the next test starts healthy.
+        logbuffer._file_sink_healthy = True
+    if sink is not None:
+        sink.close()
+
+
 @pytest.fixture
 def _restore_logging() -> Iterator[None]:
     """Save and restore everything ``configure_logging`` / ``logbuffer.set_level`` mutate.

@@ -13,30 +13,11 @@ The rules pinned here:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from reaper import logbuffer
-
-
-@pytest.fixture
-def _restore_file_sink() -> Iterator[None]:
-    """Leave the module-global file sink as it was before the test.
-
-    ``configure_file_logging`` sets process-wide state; without this a temp-dir sink
-    would linger and later appends would chase a deleted path.
-    """
-    yield
-    with logbuffer._file_lock:
-        sink = logbuffer._file_sink
-        logbuffer._file_sink = None
-        logbuffer._log_path = None
-        # A degradation test flips this process-global; reset it so a later test starts healthy.
-        logbuffer._file_sink_healthy = True
-    if sink is not None:
-        sink.close()
 
 
 def test_the_rotation_bounds_are_three_files_of_twenty_mib() -> None:
@@ -46,7 +27,7 @@ def test_the_rotation_bounds_are_three_files_of_twenty_mib() -> None:
     assert logbuffer.LOG_BACKUP_COUNT == 2
 
 
-def test_lines_are_mirrored_to_disk_in_order(tmp_path: Path, _restore_file_sink: None) -> None:
+def test_lines_are_mirrored_to_disk_in_order(tmp_path: Path) -> None:
     logbuffer.configure_file_logging(tmp_path)
     for n in range(3):
         logbuffer.RING.append(ts="2026-01-01T00:00:00Z", level="info", text=f"disk line {n}")
@@ -59,7 +40,7 @@ def test_lines_are_mirrored_to_disk_in_order(tmp_path: Path, _restore_file_sink:
     assert body.index("disk line 0") < body.index("disk line 2")  # oldest first
 
 
-def test_a_stray_percent_is_written_verbatim(tmp_path: Path, _restore_file_sink: None) -> None:
+def test_a_stray_percent_is_written_verbatim(tmp_path: Path) -> None:
     # The line is not a format string: a '%' in a logged path or message must land as-is,
     # never be interpreted (which would raise or mangle the line).
     logbuffer.configure_file_logging(tmp_path)
@@ -68,7 +49,7 @@ def test_a_stray_percent_is_written_verbatim(tmp_path: Path, _restore_file_sink:
 
 
 def test_rotation_never_keeps_a_fourth_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _restore_file_sink: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A tiny cap so a handful of lines forces many rollovers; the count is what matters.
     monkeypatch.setattr(logbuffer, "LOG_MAX_BYTES", 1024)
@@ -82,7 +63,7 @@ def test_rotation_never_keeps_a_fourth_file(
     assert not (tmp_path / "logs" / "reaper.log.3").exists()
 
 
-def test_log_files_reports_nothing_before_any_write(_restore_file_sink: None) -> None:
+def test_log_files_reports_nothing_before_any_write() -> None:
     # No sink configured (or nothing written yet): the download falls back to the ring, so
     # log_files must be empty rather than pointing at a file that does not exist.
     with logbuffer._file_lock:
@@ -101,9 +82,7 @@ def test_dump_lines_returns_the_whole_ring_oldest_first() -> None:
     assert [line.text for line in held] == ["line 0", "line 1", "line 2"]
 
 
-def test_an_unwritable_data_dir_degrades_to_no_files(
-    tmp_path: Path, _restore_file_sink: None
-) -> None:
+def test_an_unwritable_data_dir_degrades_to_no_files(tmp_path: Path) -> None:
     # A data dir that is actually a file cannot hold a logs/ subdir: setup must swallow the
     # error and leave file logging off, never raise into app startup.
     wall = tmp_path / "not-a-dir"
@@ -114,7 +93,7 @@ def test_an_unwritable_data_dir_degrades_to_no_files(
     logbuffer.RING.append(ts="t", level="info", text="still logging")
 
 
-def test_the_log_directory_is_owner_only(tmp_path: Path, _restore_file_sink: None) -> None:
+def test_the_log_directory_is_owner_only(tmp_path: Path) -> None:
     # S-6: the decision trail (DEBUG carries the full per-item reasoning) must be no more
     # readable than the databases beside it. The dir is owner-only, so no other local account
     # can traverse into it regardless of the files' own modes.
@@ -123,9 +102,7 @@ def test_the_log_directory_is_owner_only(tmp_path: Path, _restore_file_sink: Non
     assert mode == 0o700, oct(mode)
 
 
-def test_a_preexisting_world_readable_log_dir_is_tightened(
-    tmp_path: Path, _restore_file_sink: None
-) -> None:
+def test_a_preexisting_world_readable_log_dir_is_tightened(tmp_path: Path) -> None:
     # A dir left world-readable by an earlier version is chmod'd on the next boot, not only
     # a freshly created one (the chmod runs unconditionally after mkdir).
     loose = tmp_path / "logs"
@@ -136,7 +113,7 @@ def test_a_preexisting_world_readable_log_dir_is_tightened(
 
 
 def test_a_steady_state_write_failure_degrades_loudly_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _restore_file_sink: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # PR-2: a volume that goes read-only AFTER setup fails every mirror write. The sink must
     # flip to degraded and announce it through the ring exactly once, never swallow it forever.
@@ -166,9 +143,7 @@ def test_a_steady_state_write_failure_degrades_loudly_once(
     ]
 
 
-def test_reconfiguring_the_sink_clears_a_prior_degradation(
-    tmp_path: Path, _restore_file_sink: None
-) -> None:
+def test_reconfiguring_the_sink_clears_a_prior_degradation(tmp_path: Path) -> None:
     # A fresh sink on a dir we just proved writable starts trusted again.
     with logbuffer._file_lock:
         logbuffer._file_sink_healthy = False

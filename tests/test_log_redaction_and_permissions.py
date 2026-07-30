@@ -39,18 +39,12 @@ QS_URL = "http://tautulli.example.net:8181/api/v2?apikey=SUPERSECRET&cmd=get_his
 def _fresh_ring() -> Iterator[None]:
     """Each test reads its own lines, not the ones a neighbor left behind.
 
-    The file sink is a module global, so it is torn down too: a sink left pointing into a
-    deleted ``tmp_path`` would fail on the next append anywhere in the suite and flip the
-    one-shot degraded flag for every test after it.
+    The file sink is a module global too, but it is torn down for the whole suite by
+    ``conftest.py``'s ``_no_file_sink_left_behind`` rather than here.
     """
     logbuffer.RING = logbuffer.LogRing()
     yield
     logbuffer.RING = logbuffer.LogRing()
-    sink = logbuffer._file_sink
-    logbuffer._file_sink, logbuffer._log_path = None, None
-    logbuffer._file_sink_healthy = True
-    if sink is not None:  # pragma: no cover -- kept symmetric with configure_file_logging
-        sink.close()
 
 
 def _ring_text() -> str:
