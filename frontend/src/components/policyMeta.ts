@@ -80,8 +80,10 @@ export const SIGNAL_META: Record<string, { label: string; help: string }> = {
     // control, and goes stale the first time the operator moves a slider.
     //
     // "Untouched", never "since anyone played it": `engine/dormancy.py`'s
-    // `reference_instant` is `last_played or max(added_at, horizon)`, so a play is one of
-    // three anchors. This is the copy that TEACHES the control, and the recipe in
+    // `reference_instant` measures from `last_played`, else from `max(added_at, horizon)`,
+    // else from nothing at all -- so a play is one of two anchors, and an item with neither
+    // is Unknown rather than scored. This is the copy that TEACHES the control, and the
+    // recipe in
     // `docs/content/understandingPolicy.ts` points operators at this signal for
     // never-played backlog -- exactly the titles whose clock starts at arrival instead
     // (rule 72, with the review chip fixed for the same divergence).

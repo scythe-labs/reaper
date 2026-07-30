@@ -58,11 +58,11 @@ def reference_instant(
     `season_scan.build_season_facts` measured from the play and judged the season -- one
     derived value with two thaw rules, and the movie lane's why-panel telling the operator
     dormancy could not be measured with a play for that item in scope. Measured before the
-    lanes were joined: across 41 stored snapshots and [redacted] candidate rows, the movie
-    lane's ``added_at``-missing arm was reached zero times, so no observed verdict moved
-    (`docs/LEARNINGS.md`). The overloads let the two callers that narrow ``added_at``
-    themselves (`engine/backtest.py`, `engine/calibration.py`) keep a non-optional result
-    without a None-check that cannot fire.
+    lanes were joined: across 41 stored snapshots and ~[redacted] movie rows -- the only rows that
+    can reach a movie-lane arm, out of [redacted] counted in all -- that arm was reached zero
+    times, so no observed verdict moved (`docs/LEARNINGS.md`). The overloads let the two
+    callers that narrow ``added_at`` themselves (`engine/backtest.py`,
+    `engine/calibration.py`) keep a non-optional result without a None-check that cannot fire.
     """
     if last_played is not None:
         return last_played

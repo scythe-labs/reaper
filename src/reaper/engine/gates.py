@@ -220,7 +220,9 @@ class Facts:
     title: str
     days_observed_unwatched: Observation[float]
     """Days since the last play -- or, if never played, days since
-    ``max(added_at, history_begins_at)``.
+    ``max(added_at, history_begins_at)``. Unknown when it has neither: with no play and no
+    arrival date there is nothing to measure from, and ``dormancy.reference_instant``
+    returns no instant rather than inventing one.
 
     Derived rather than raw, because "days since last play" is null for the exact
     items we care about most, and every naive implementation coerces that null to
@@ -314,11 +316,12 @@ class Facts:
     ``days_observed_unwatched`` cannot stand in for it, though it looks like it could.
     Dormancy is deliberately clamped to the mirror's edge --
     ``dormancy.reference_instant`` measures a never-played item from
-    ``max(added_at, horizon)``, and a played one from a play the mirror by definition
-    holds -- so it is never larger than ``history_reach_days``, and comparing the two
-    would pronounce every all-time count complete. This one is measured from the arrival
-    date itself and is free to exceed the reach, which is exactly the case that must fail
-    closed.
+    ``max(added_at, horizon)``, a played one from a play the mirror by definition holds,
+    and an item with neither from nothing at all -- so it is never larger than
+    ``history_reach_days``, and comparing the two would pronounce every all-time count
+    complete. (The third arm yields no number, so it bounds nothing and cannot break that.)
+    This one is measured from the arrival date itself and is free to exceed the reach, which
+    is exactly the case that must fail closed.
 
     Defaulted like ``history_reach_days`` above, and read the same way: anything but
     ``Known`` is "cannot establish", the keep direction (rule 104).

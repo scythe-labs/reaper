@@ -2091,6 +2091,7 @@ reissued to something else, but the one invariant that needs no key at all. All-
 evidence cannot fall, so a count that drops to zero (or a last play that moves earlier) is a
 transition no library can perform, and the honest answer is `Unknown` rather than a measured
 zero. A never-watched item reads zero on every scan, so it never trips it.
+
 ## A missing arrival date is a reachable branch nobody reaches (2026-07-30)
 
 Two scan lanes thawed one derived value two ways: the movie lane took `Unknown` dormancy the
