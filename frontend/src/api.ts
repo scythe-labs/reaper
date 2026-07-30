@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The wire types, mirrored from reaper/api/schemas.py.
+// The wire types, mirrored from the response models. Not one file: they live across
+// reaper/api/ (schemas.py holds most, but the one route that deletes answers with
+// runs.py's ReapStatus) plus engine/policy.py and engine/explanation.py.
 //
 // Hand-written rather than generated. The set is small, it changes rarely, and a
 // codegen step is one more thing that can silently drift out of date in CI. If these
 // grow much past this size, generate them from /openapi.json instead.
+//
+// tests/test_api_type_mirror.py checks this file against those declarations and fails
+// naming the field, because hand-maintained meant nothing noticed when MatchOut gained
+// `by` and `merged_rating_keys` and this file did not (#260, #289). It compares field
+// NAMES only: the type and optionality differences here are deliberate and documented
+// there. A new type with no server model is classified in that file, not ignored.
 
 export type Verdict = "condemn" | "protect" | "abstain";
 
