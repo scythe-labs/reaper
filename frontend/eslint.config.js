@@ -38,4 +38,18 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-expressions": ["error", { allowTernary: true }],
     },
   },
+  // The build scripts, which the block above never matched: `--print-config` reported 0 rules
+  // for `scripts/gen-icons.mjs` against 93 for a file under `src/`, so `npm run lint` walked
+  // both of these applying nothing and reported success. They are not scratch files -- rule 68
+  // makes `gen-icons.mjs` the committed generator a shipped asset is required to name, and
+  // `prebuild` runs `copy-scalar.mjs` on every build, in CI included. Node globals, because
+  // these run under node and not in a browser; the recommended set only, since the hook and
+  // TypeScript rules above have nothing to say about a plain `.mjs`.
+  {
+    files: ["scripts/**/*.mjs"],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
 );
