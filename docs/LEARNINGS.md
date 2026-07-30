@@ -2057,11 +2057,33 @@ keys. History rows do carry a guid (100% of a 5,000-row window, from
 `session_history_metadata.guid`), and they are almost all `plex://`, so the ids cannot be
 parsed out of them without Plex's side anyway.
 
-**A negative result, and its limit.** Across 31 stored snapshots no `media_key` changed its
-`plex_rating_key` — 0 of [redacted] movies and 0 of [redacted] seasons. That is not evidence the
-mechanism is rare: those snapshots span **6.7 days** and every `reap_run` in that window is
-still `PLANNED`, so nothing was ever deleted and no file ever came back. The window contains
-none of the trigger.
+**Measured against a live library, and it bites.** The instrument: for each movie guid in a
+sample of history rows, ask whether the rating key Plex holds for that guid *right now* is among
+the keys those plays were recorded under. If it is not, every one of those plays is invisible to
+Reaper. It is robust to duplicate copies, because the comparison is against **every** live key
+the guid has, so an HD play still matches when the 4K listing is the other key.
+
+Sampled three pages of 500 at each decile of a six-figure history, newest to oldest:
+
+| age of play (0% = newest) | movies still in Plex | current key not among their own plays |
+| --- | --- | --- |
+| 0–30% | 654 | **0** |
+| 40% | 133 | 2 (1.5%) |
+| 50% | 131 | 2 (1.5%) |
+| 60% | 134 | 6 (4.5%) |
+| 80–90% | 6 | 3 (small denominator: the oldest pages are nearly all episodes) |
+
+Zero among recent plays, rising with age. That gradient is the signature: a key churns when a
+file leaves the library and comes back, so exposure accumulates, and a play recorded last week
+has had no time to be orphaned. Roughly one mid-history movie in twenty is affected here, on a
+server whose operator has never run a deletion through Reaper at all.
+
+**The instrument that found nothing, and why it was the wrong one.** Across 31 stored snapshots
+no `media_key` changed its `plex_rating_key` — 0 of [redacted] movies and 0 of [redacted] seasons. Read as
+reassurance that would have been wrong: those snapshots span **6.7 days** and every `reap_run` in
+that window is still `PLANNED`, so nothing was deleted and no file came back. The window
+contained none of the trigger. Reaper's own scan history can only see churn it was running
+across; Tautulli's history reaches back years, which is why it could answer.
 
 ⇒ Hence the shape of the guard: not a remap, which would have to trust a key Plex may have
 reissued to something else, but the one invariant that needs no key at all. All-time watch
