@@ -1457,6 +1457,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "backnav.test.tsx": "history entries, not a screen",
     "components/SettingsStaleRead.test.tsx": "a failed read's branch, audited in the panels",
     "components/StaleReadSweep.test.tsx": "a failed read's branch, audited in the panels",
+    "components/TestBadgeFreshness.test.tsx": "one badge's freshness, audited in the panels",
     "focus.test.tsx": "focus moves, not a screen",
 }
 
@@ -1464,7 +1465,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 38
+_EXPECTED_RENDERING_TEST_FILES = 39
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:

@@ -1033,7 +1033,17 @@ export function GeneralPanel({
 
 function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => void }) {
   const queryClient = useQueryClient();
-  const [test, setTest] = useState<InstanceTest | null>(null);
+  // The result and the address it was computed for, the third of this badge's siblings to keep the
+  // pairing (rule 72; `ServiceModal` and the Discord row are the others). Nothing cleared this, and
+  // editing a service through the modal invalidates `instances`, so the card re-rendered with a new
+  // address while the local result went on vouching for the old one (rule 85, #178).
+  //
+  // The address and the certificate setting are what this card can see change. A key ROTATED at the
+  // same address is not visible here -- `has_key` stays true -- so it is included for the false-to-
+  // true case only; the server's own `last_ok_at` / `last_error` below is the answer that survives
+  // a rotation, since only a real test moves it.
+  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
+  const testedWith = () => `${instance.base_url} ${instance.verify_tls} ${instance.has_key}`;
   // A two-step "Remove" -> "Confirm remove" toggle, mirroring the Safety arm flow below,
   // rather than a native confirm() dialog -- the OS alert box ignores the app's theme and
   // typography and is the only confirmation in the product that does.
@@ -1049,7 +1059,7 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
     // Announced, like the modal's own test and the webhook's below -- three siblings of one
     // result that reached nobody by ear (#192, rule 72). `testSentence` is the one wording.
     onSuccess: (r) => {
-      setTest(r);
+      setTest({ result: r, of: testedWith() });
       announce(testSentence(r));
       invalidate();
     },
@@ -1080,8 +1090,8 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
           {/* All three states render through the one badge. What the card remembers from
               the last test is the same shape a fresh test returns, so it is handed over as
               one rather than rebuilt with a second set of markup that can drift. */}
-          {test ? (
-            <TestBadge result={test} />
+          {test && test.of === testedWith() ? (
+            <TestBadge result={test.result} />
           ) : instance.last_error ? (
             <TestBadge result={{ ok: false, detail: instance.last_error, version: null }} />
           ) : instance.last_ok_at ? (
@@ -2346,7 +2356,8 @@ function isDiscordWebhook(raw: string): boolean {
  *  is a write-only secret: the URL is sent once, encrypted on arrival, and never comes back,
  *  so the field is always blank and we report only *whether* a webhook is connected. Same
  *  pattern as an instance API key. */
-function NotificationsPanel({
+// Exported for TestBadgeFreshness.test.tsx, which drives this row's badge against an edited URL.
+export function NotificationsPanel({
   /** Called whenever the webhook box gains or loses a draft, so the section rail can hold a
    *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
   onDirtyChange,
@@ -2359,8 +2370,16 @@ function NotificationsPanel({
     queryFn: api.notifications,
   });
   const [url, setUrl] = useState("");
-  const [test, setTest] = useState<InstanceTest | null>(null);
+  // The result and the URL it was computed for, the same pairing `ServiceModal` keeps for its own
+  // badge (rule 72). Save, Remove and the Test button each cleared this, but EDITING the box did
+  // not, so a passed test then a pasted-over URL left "Passed" beside a webhook nobody had sent
+  // to (rule 85, #178).
+  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** What the test was sent. A blank box tests the webhook already STORED, so blank is a real
+   *  value here and not an absence -- which is why this is the trimmed string rather than a
+   *  truthiness check. */
+  const testedWith = () => url.trim();
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["notifications"] });
 
@@ -2382,7 +2401,7 @@ function NotificationsPanel({
     // test the already-stored webhook, so a saved channel can be verified without re-pasting.
     mutationFn: () => api.testWebhook(url.trim() ? url.trim() : null),
     onSuccess: (r) => {
-      setTest(r);
+      setTest({ result: r, of: testedWith() });
       announce(testSentence(r));
     },
     onError: (e: Error) => setError(e.message),
@@ -2534,7 +2553,7 @@ function NotificationsPanel({
             {remove.isPending ? "Removing…" : "Remove"}
           </button>
         )}
-        <TestBadge result={test} />
+        <TestBadge result={test && test.of === testedWith() ? test.result : null} />
       </div>
       {badFormat && (
         <Notice tone="error" id={WEBHOOK_ERROR_ID}>
