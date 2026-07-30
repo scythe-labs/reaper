@@ -59,7 +59,7 @@ describe("accentInk", () => {
 
 describe("accentText", () => {
   it("agrees with the stylesheet's fallback for the built-in accent", () => {
-    // index.css falls back to color-mix(in srgb, var(--accent), #000 42%) when no measured
+    // styles/00-tokens.css falls back to color-mix(in srgb, var(--accent), #000 42%) when no measured
     // ink is set. If this search and that fallback ever disagreed, a page would change color
     // the moment the module loaded. #157194 is that mix.
     expect(accentText(DEFAULT_ACCENT, "light")).toBe("#157194");

@@ -17,7 +17,7 @@ nothing. The SPA's general UI grammar stays in `frontend.md`; rules binding ever
 the root `CLAUDE.md`. Holds 48–50, 120–123.
 
 **Read this with `frontend.md`, not instead of it.** Rule 51 governs the row layout these
-controls sit in and stays there, because `index.css` cites it eight times.
+controls sit in and stays there, because the stylesheet cites it eight times.
 
 **48. Reap is dropped wherever the item is already condemned; keep-first colors the pair.** A
 hand Reap does nothing to an already-condemned item, so it is hidden in every surface carrying

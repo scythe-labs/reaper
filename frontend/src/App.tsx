@@ -79,7 +79,7 @@ const NAV: { id: View; label: string; Icon: () => ReactElement }[] = [
 /** The section nav. One element in two shapes: a rail sitting on the masthead's own bottom
  *  border on a wide screen, and the phone's bottom bar under 900px, where the labels give way
  *  to the icons. The labels are never dropped from the accessibility tree -- the 900px block in
- *  index.css clips `.view-label` to a 1px box rather than hiding it, so it still names its
+ *  styles/10-layout.css clips `.view-label` to a 1px box rather than hiding it, so it still names its
  *  button -- which is why none of these carries an `aria-label` of its own.
  *
  *  Reap carries the safety state as a dot. That is the same fact `SafetyBanner` states in words
@@ -105,7 +105,7 @@ export function SectionNav({ view, onChange }: { view: View; onChange: (next: Vi
           key={n.id}
           className={view === n.id ? "view-tab active" : "view-tab"}
           // Reserve the bold (active) width so switching sections never shifts the rail. The
-          // phone bar drops the strut with the labels; see the 900px block in index.css.
+          // phone bar drops the strut with the labels; see the 900px block in styles/10-layout.css.
           data-label={n.label}
           // The view you are on is stated, not just colored.
           aria-current={view === n.id ? "page" : undefined}
@@ -653,7 +653,7 @@ function Dashboard({ user }: { user: AuthUser }) {
   // The two list views the split rides on. Off these, there is no list scroll to keep.
   const listView = view === "review" || view === "fairness";
   // A phone shows the panel as a full-screen sheet over the list (`main.split .why` below 900px
-  // in index.css); a wider screen keeps the list visible beside it. That is what decides whether
+  // in styles/10-layout.css); a wider screen keeps the list visible beside it. That is what decides whether
   // the window scroll still tracks the list while a panel is open (used just below). The width
   // must match that full-screen-sheet breakpoint, so it comes from the one declaration both
   // readers share (rule 67).
@@ -694,7 +694,7 @@ function Dashboard({ user }: { user: AuthUser }) {
 
   // Freeze the list while a panel covers the whole screen on a phone, so a touch drag scrolls
   // the panel's own overflow instead of the list underneath it. Only the full-screen sheet
-  // (`splitOpen && fullSheet`, matching the 900px block in index.css): on a wider screen the
+  // (`splitOpen && fullSheet`, matching the 900px block in styles/12-why-panel.css): on a wider screen the
   // list stays visible beside the panel and is meant to scroll, so it is left alone. The freeze
   // parks and restores window.scrollY through the same ref-counted lock the modal shell uses,
   // and it returns to the exact place the restore above keeps (both hold the pre-open offset),

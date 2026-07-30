@@ -6,12 +6,12 @@
 //
 // Drawn to the same standard as queueIcons: a 16px grid, `currentColor` strokes at 1.3, nothing
 // filled except where a shape needs mass. None of them carries a width or height -- `.view-ico`
-// in index.css sizes all five from one declaration, so the bar's icon size is changed in one
+// in styles/02-masthead.css sizes all five from one declaration, so the bar's icon size is changed in one
 // place (rule 67).
 //
 // All are `aria-hidden`: each sits inside a button whose accessible name is the section label,
 // which the phone bar keeps in the tree by CLIPPING rather than dropping -- `.view-label` in
-// index.css's 900px block, never `display: none`. A screen reader must not read the decoration on
+// styles/10-layout.css's 900px block, never `display: none`. A screen reader must not read the decoration on
 // top of the name.
 //
 // Reap draws nothing of its own. It wears the app's ONE scythe (ScytheGlyph -> brand/scythe),

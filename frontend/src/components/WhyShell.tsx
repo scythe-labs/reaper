@@ -6,7 +6,7 @@
 // seventh cannot ship without it.
 //
 // It is a dialog wherever it covers the list and a side panel where it does not, and that is not
-// a detail: index.css makes `main.split .why` a right-hand sheet floated over the cards at 1100px
+// a detail: styles/10-layout.css makes `main.split .why` a right-hand sheet floated over the cards at 1100px
 // and `inset: 0; z-index: 50` at 900px, so from 1100px down this covers cards the operator can
 // still reach, and under 900px it covers the entire application. Claiming `role="dialog"` at
 // every width would be false above 1100px, where the panel really does sit beside the list in its

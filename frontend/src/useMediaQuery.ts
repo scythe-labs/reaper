@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 /** The width at or below which this is a phone, for the JS that has to agree with the CSS.
  *
- *  900px is where index.css moves the section rail off the masthead into a nav bar pinned to
+ *  900px is where styles/10-layout.css moves the section rail off the masthead into a nav
  *  the bottom of the screen (and lifts the three foot-anchored surfaces clear of it), and
  *  where `main.split .why` stops being a right-hand sheet and covers the screen. It is NOT
  *  where the queue becomes one column: `main.split` collapses at 1100px and `.card-list` is
@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
  *  `fullSheet`, which decides whether the window scroll still tracks the list; the review
  *  queue's "expand seasons by default" mode, which opens a show's season list on one screen
  *  size and not the other; and Settings, which swaps its nine-section rail for a single
- *  `.settings-picker` select. Change this and change the `900px` blocks in index.css with it
+ *  `.settings-picker` select. Change this and change the `900px` blocks across styles/ with it
  *  -- it is also the stored meaning of the operator's "Mobile" and "Desktop" choices, which is
  *  why the panel's dialog contract moved OFF it to `PANEL_OVERLAY_QUERY` below rather than
  *  dragging this number up (#184). */
@@ -21,7 +21,7 @@ export const NARROW_SCREEN_QUERY = "(max-width: 900px)";
 /** The width at or below which the `.why` panel stops being a side column and starts covering
  *  the list, for the JS that has to agree with the CSS.
  *
- *  1100px is where index.css collapses `main.split` to one full-width track and makes
+ *  1100px is where styles/10-layout.css collapses `main.split` to one full-width track and makes
  *  `main.split .why` `position: fixed; right: 0; z-index: 40` -- the panel rides OVER the cards
  *  from there down, first as a right-hand sheet and, once `NARROW_SCREEN_QUERY` also matches, as
  *  a full-screen one. `WhyShell` is the only reader: it decides whether the panel claims to be a
@@ -30,7 +30,7 @@ export const NARROW_SCREEN_QUERY = "(max-width: 900px)";
  *  the panel floating over the right of the cards with no `role="dialog"`, no focus move and no
  *  Tab trap, so a keyboard operator tabbed into cards hidden underneath it and could press Spare
  *  or Reap on an item they could not see (#184). Change this and change the `1100px` block in
- *  index.css with it (rule 67). */
+ *  styles/12-why-panel.css with it (rule 67). */
 export const PANEL_OVERLAY_QUERY = "(max-width: 1100px)";
 
 /** Read a CSS media query from JS and keep it in step as the viewport crosses the query.

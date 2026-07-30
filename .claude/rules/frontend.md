@@ -97,7 +97,7 @@ undefined CSS variable, a native `confirm()`, or white-on-`--accent` text that f
 `FixedQuantity` with the unit as a suffix in the same box (both in
 `components/QuantityInput.tsx`, sharing the `.qty` chrome). Never a bare `<input type="number">`
 beside loose unit text, and never a new input size: every text, number, and select box sits on
-the one control standard documented at the top of `index.css` (`0.42rem 0.6rem` padding,
+the one control standard documented in `styles/00-tokens.css` (`0.42rem 0.6rem` padding,
 `--border-strong`, `--radius-sm`, `--bg` fill, accent focus ring). Width is the only thing that
 may vary.
 
@@ -159,7 +159,7 @@ keyboard — can be one long unbroken string, and on a phone it paints straight 
 holding it. Where the page can scroll, the layout slides sideways; where the container clips (a
 side panel, a sheet), the tail is simply unreachable, which is rule 138's failure reached by a
 different route. So an element rendering text from outside the app carries `overflow-wrap:
-anywhere`, the idiom already at a dozen sites in `index.css`, and the fix lands on every surface
+anywhere`, the idiom already at a dozen sites across `styles/`, and the fix lands on every surface
 rendering that same value (rule 72): the Scales card's `.fair-name` and the person panel's
 `.scales-head-id h2` are one name in two places. **Wrap, do not truncate** — two handles
 differing only in their tail truncate to the same string, and the operator reading them is

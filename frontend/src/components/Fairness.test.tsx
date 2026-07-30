@@ -80,7 +80,7 @@ describe("PersonCard", () => {
     );
 
     // Two separate statements of the clean state, and the card does not always carry both:
-    // the chip is the one below 640px drops (index.css, the .fair-card grid block), so the
+    // the chip is the one below 640px drops (styles/18-scales.css, the .fair-card grid block), so the
     // legend is all a phone has left. jsdom applies no media queries and cannot tell them
     // apart, so pin the wording of each -- otherwise the only assertion here is the one a
     // phone never renders.

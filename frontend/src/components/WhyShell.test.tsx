@@ -2,7 +2,7 @@
 //
 // The `.why` panel shell. Six panels render it, and what it owes them changes with the screen:
 // above 1100px it is a side panel in its own grid column beside the list and both are usable,
-// below it index.css floats it over the cards, and below 900px `inset: 0; z-index: 50` puts it
+// below it styles/10-layout.css floats it over the cards, and below 900px `inset: 0; z-index: 50` puts it
 // over the entire application. The contract has to follow that, which is why every test here is
 // written twice -- once per side of the boundary.
 //

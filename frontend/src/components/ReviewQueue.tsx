@@ -567,7 +567,7 @@ function SeasonStrip({
         // engine can't honor yet reads dashed red (noted, but the file is held), never the
         // solid red of a removal, and carries the scythe mark below so it never blends into
         // the plain condemned outline (`.strip-ov-reap-refused` sits after `.strip-abstain`
-        // in index.css and wins).
+        // in styles/20-queue-cards.css and wins).
         const handClass =
           fate === "spare"
             ? " strip-ov-spare"
@@ -900,7 +900,7 @@ function SeasonList({
         className="season-list"
         style={
           {
-            // Both widths derive from --ov-btn-w / --ov-btn-gap (index.css), so a button-width
+            // Both widths derive from --ov-btn-w / --ov-btn-gap (styles/00-tokens.css), so a button-width
             // change lands in one place and the columns can't drift (H-1, rule 16).
             "--btns": anyReapable
               ? "calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))"

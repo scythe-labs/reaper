@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The one operator-chosen color, applied at runtime. Settings → General stores a #rrggbb
-// accent on the server; the whole UI derives from --accent (see index.css), so applying it
+// accent on the server; the whole UI derives from --accent (see styles/00-tokens.css), so applying it
 // is just setting a few custom properties on <html>:
 //   --accent             the color itself
 //   --accent-ink         the text that rides on a solid accent fill -- dark or light by
@@ -90,7 +90,7 @@ const AA_TEXT = 4.5;
  *  22% tint -- the docs index's selected row, and --accent-soft in dark mode. Clearing that
  *  clears every lighter ground behind it.
  *
- *  These three mirror declarations in index.css, and the AA guarantee holds only while they
+ *  These three mirror declarations in styles/00-tokens.css, and the AA guarantee holds only while they
  *  agree (rule 67). Their twins carry a comment back to here, so a retune of either side is
  *  caught by the other:
  *    TINT          -- the dark `--accent-soft` (both dark blocks) and `.docs-index-item
