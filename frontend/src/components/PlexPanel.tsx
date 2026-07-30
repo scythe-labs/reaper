@@ -131,14 +131,22 @@ export function PlexPanel({
   }, [savedVerify]);
 
   // Every key that means "of the currently linked server". Declared up here, above the first
-  // caller, because all three paths that change WHICH server that is have to run it: the four
-  // reads below are not qualified by a machine identifier, so a row cached against the old
-  // server answers for the new one until its staleTime runs out (30s libraries, 60s resources).
+  // caller, because all three paths that change WHICH server that is have to run it: none of
+  // these reads is qualified by a machine identifier, so a row cached against the old server
+  // answers for the new one until its staleTime runs out (30s libraries, 60s resources).
+  //
+  // "Every" is grep-verified against the whole SPA, not counted from this file (rule 79). The
+  // last key is the one that shows how little that claim is worth unchecked: it is read on the
+  // Reap page, not this one, and it went unlisted while this comment said "the four reads
+  // below" -- the four that happen to be declared underneath it. It costs the operator nothing
+  // today, because a stale trash count can only ever over-warn, and it is listed anyway: the
+  // next author reads "every" and stops grepping, which is exactly what happened here.
   const invalidateAllPlex = () => {
     void queryClient.invalidateQueries({ queryKey: ["plex"] });
     void queryClient.invalidateQueries({ queryKey: ["plex-resources"] });
     void queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
     void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] });
+    void queryClient.invalidateQueries({ queryKey: ["plexTrash"] });
   };
 
   const saveWebUrl = useMutation({

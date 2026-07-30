@@ -310,14 +310,20 @@ describe("linking with Plex", () => {
 // have said the whole set is no longer trusted, which is the fix, and reverting either caller to
 // `["plex"]` + `["setup"]` fails here (rule 118: it does not read as a proof of the grid).
 describe("changing which server is linked", () => {
-  /** The four keys that mean "of the currently linked server". Written out rather than imported
+  /** Every key that means "of the currently linked server". Written out rather than imported
    *  from the panel, so a key quietly dropped from `invalidateAllPlex` fails instead of moving
-   *  the expectation with it (rule 119). */
+   *  the expectation with it (rule 119).
+   *
+   *  Grep-verified against the whole SPA rather than read off the panel, which is how
+   *  `["plexTrash"]` came to be missing from both: it is read on the Reap page, so counting the
+   *  keys declared beside the helper gives four and the tree has five. The count is pinned for
+   *  the same reason -- a per-key `toContain` cannot notice a key nobody listed (rule 145). */
   const OF_THE_LINKED_SERVER = [
     ["plex"],
     ["plex-resources"],
     ["plex-libraries"],
     ["leaving-soon-settings"],
+    ["plexTrash"],
   ];
 
   /** A mount whose invalidations the test can read back. The spy calls THROUGH, so the panel
@@ -351,6 +357,16 @@ describe("changing which server is linked", () => {
         `${JSON.stringify(key)} is not "of the linked server" any more`,
       ).toContain(JSON.stringify(key));
     }
+    // And the SIZE of what the helper dropped, reconciled by hand against the list above. The
+    // loop can only check keys somebody thought to list, so it read green for the whole life of
+    // `["plexTrash"]`'s absence (rule 145). A key added to `invalidateAllPlex` and not to this
+    // list fails here; `["setup"]`, which the callers invalidate separately, is not the helper's.
+    const helperKeys = new Set(invalidated.filter((k) => k !== JSON.stringify(["setup"])));
+    expect(
+      helperKeys.size,
+      `invalidateAllPlex dropped ${helperKeys.size} keys, this list names ` +
+        `${OF_THE_LINKED_SERVER.length}: ${[...helperKeys].join(", ")}`,
+    ).toBe(OF_THE_LINKED_SERVER.length);
   }
 
   it("stops trusting every row about the old server when you unlink", async () => {
