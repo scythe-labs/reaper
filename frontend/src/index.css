@@ -6394,7 +6394,8 @@ button.sm {
  * below it shifted. Unlike .panel-season-name, there is no branch to split here, because this
  * value is the server's title on every branch. So the row height wins, the pill beside it is the
  * element that gives, and truncating instead is not on the table (rule 139 forbids it
- * outright). */
+ * outright). Recorded as a decision in index-outside-text.test.ts, which fails if this block
+ * ever starts wrapping without that record being updated. */
 .season-name {
   white-space: nowrap;
 }
