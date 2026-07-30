@@ -1390,7 +1390,13 @@ function RestoreCard({
       setSummary(await prepared);
     } catch (err) {
       setFileName(null);
-      setError(err instanceof Error ? err.message : "That file couldn't be read.");
+      // Each of this card's three failures states its own outcome, because one shared lead-in was
+      // wrong for two of them (#178). Nothing was staged here: the file never got read.
+      setError(
+        err instanceof Error
+          ? `Reaper couldn't read that file: ${err.message}`
+          : "Reaper couldn't read that file.",
+      );
     } finally {
       setPreparing(false);
       setBusy(false);
@@ -1426,7 +1432,12 @@ function RestoreCard({
       await refreshInfo();
     } catch (err) {
       setPassword("");
-      setError(err instanceof Error ? err.message : "The restore couldn't be confirmed.");
+      // The only one of the three the old shared lead-in was right for.
+      setError(
+        err instanceof Error
+          ? `The restore didn't start: ${err.message}`
+          : "The restore didn't start.",
+      );
     } finally {
       setBusy(false);
       if (confirmRef.current === confirming) confirmRef.current = null;
@@ -1440,7 +1451,14 @@ function RestoreCard({
       reset();
       await refreshInfo();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      // A cancel that fails used to report itself as a restore that did not start, which points
+      // the operator at the wrong button: the file is still staged on the server, so what they
+      // need to know is that it is still there.
+      setError(
+        err instanceof Error
+          ? `That file is still waiting to be restored: ${err.message}`
+          : "That file is still waiting to be restored.",
+      );
     } finally {
       setBusy(false);
     }
@@ -1664,7 +1682,11 @@ function RestoreCard({
         </>
       )}
 
-      {error && <Notice tone="error">The restore didn't start: {error}</Notice>}
+      {/* The lead-in belongs to whichever step failed, so it is written where the failure is
+          caught (`choose`, `restore`, `cancel`) rather than here. One lead for all three said a
+          restore had not started when the real news was an unreadable file, or a staged archive
+          still sitting on the server (#178). */}
+      {error && <Notice tone="error">{error}</Notice>}
     </section>
   );
 }

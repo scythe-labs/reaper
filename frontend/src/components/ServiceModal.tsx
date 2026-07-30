@@ -204,7 +204,13 @@ export function ServiceModal({
   // The address links open, when it differs from the one Reaper connects to. Blank means
   // "use the address above": on save a blank value clears the stored one back to null.
   const [externalUrl, setExternalUrl] = useState(instance?.external_url ?? "");
-  const [test, setTest] = useState<InstanceTest | null>(null);
+  // A test result, and the exact credentials it was computed against. The two are stored together
+  // because nothing used to clear the badge: `setTest` was called only here and in the mutation's
+  // `onSuccess`, so passing a test and then editing the hostname or the key left "Reached" on
+  // screen vouching for an address that had never been tried (rule 85, #178). Clearing it from
+  // each field's setter would be one more thing to remember every time a field joins `baseUrl()`;
+  // comparing against what was tested cannot be forgotten.
+  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Kept apart from `error` above, which is the form's shared slot for a failed save and a
   // failed connection test. One flag rather than a message, because there is exactly one thing
@@ -212,6 +218,11 @@ export function ServiceModal({
   const [extUrlBad, setExtUrlBad] = useState(false);
 
   const baseUrl = () => joinBaseUrl({ ssl, host, port, urlBase });
+  /** Everything `testInstance` is sent, as one string. The badge shows only while this still
+   *  matches what was tested, so any edit to an address, a key or a certificate setting takes the
+   *  result down with it. Every field here is one the test's answer depends on: add a field to the
+   *  request above and add it here too (rule 143). */
+  const testedWith = () => [kind, baseUrl(), apiKey, ssl ? verifyCert : true].join(" ");
   // Only Sonarr and Radarr delete, so only they carry the re-download switch.
   const isArr = kind === "radarr" || kind === "sonarr";
 
@@ -374,7 +385,7 @@ export function ServiceModal({
     // unreachable host arrives as a 200 with `ok=False` and never reaches the shared error
     // notice -- the badge was the only report, and it announced nothing (#192).
     onSuccess: (r) => {
-      setTest(r);
+      setTest({ result: r, of: testedWith() });
       announce(testSentence(r));
     },
     onError: (e: Error) => setError(e.message),
@@ -628,9 +639,13 @@ export function ServiceModal({
             {rootFolders.isPending ? (
               <p className="help">Reading this instance's folders…</p>
             ) : rootFolders.error && !rootFolders.data ? (
+              /* Names the boxes, not the Test button: this block needs `mapEditable`, so it only
+                 ever renders while editing, and the Test button renders under `!editing`. The copy
+                 sent the operator to a control that is nowhere on screen in the only mode it
+                 appears in (rule 25, #178). Its twin below says the same thing. */
               <Notice tone="warn">
-                Reaper couldn't read this instance's folders. Test the connection above, then reopen
-                this to map them.
+                Reaper couldn't read this instance's folders. Check the address and key above, then
+                reopen this to map them.
               </Notice>
             ) : rootFolders.data && rootFolders.data.length > 0 ? (
               <>
@@ -717,9 +732,11 @@ export function ServiceModal({
             {seerrServices.isPending ? (
               <p className="help">Reading this portal's services…</p>
             ) : seerrServices.error && !seerrServices.data ? (
+              /* Same correction as the folder notice above (rule 72): no Test button exists in
+                 edit mode, which is the only mode this renders in. */
               <Notice tone="warn">
-                Reaper couldn't read this portal's services. Test the connection above (this needs
-                an admin key), then reopen this to map them.
+                Reaper couldn't read this portal's services. Check the address and key above (it
+                needs an admin key), then reopen this to map them.
               </Notice>
             ) : seerrServices.data && seerrServices.data.length > 0 ? (
               <>
@@ -810,9 +827,9 @@ export function ServiceModal({
         )}
         {meta && <p className="help">{meta.hint}</p>}
         {error && <Notice tone="error">{error}</Notice>}
-        {test && (
+        {test && test.of === testedWith() && (
           <div className="instance-status">
-            <TestBadge result={test} />
+            <TestBadge result={test.result} />
           </div>
         )}
         <div className="add-actions">

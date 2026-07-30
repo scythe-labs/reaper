@@ -519,3 +519,74 @@ describe("what a screen reader hears when a connection is tested", () => {
     );
   });
 });
+
+describe("what the connection badge vouches for", () => {
+  // #178: `setTest` was called in exactly two places, the declaration and the mutation's
+  // `onSuccess`, and NOTHING cleared it -- not the submit handler, not the Test button. So a
+  // passed test followed by an edited hostname or key left the "Passed" badge on screen beside
+  // credentials that had never been tried. Rule 85's family: an indicator must describe the state
+  // it was computed from.
+  const badge = () => document.querySelector(".test-badge");
+  const hostBox = () => screen.getByLabelText(/Hostname or IP/);
+  const keyBox = () => screen.getByLabelText(/^API key$/);
+
+  /** The ADD form with a passed test already on screen -- "Test connection" is only offered while
+   *  adding, so this is the one place the badge and the boxes are editable together. */
+  async function passATest() {
+    apiMock.testInstance.mockResolvedValue({
+      ok: true,
+      detail: "Connected to Sonarr.",
+      version: "4.0.1",
+    });
+    apiMock.instanceRootFolders.mockResolvedValue([]);
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <Announcer />
+        <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await user.type(hostBox(), "10.0.0.5");
+    await user.type(keyBox(), "k");
+    // Rule 137: the button gates on `canTest`, so act only once both boxes have filled it.
+    const press = await screen.findByRole("button", { name: /Test connection/i });
+    await waitFor(() => expect(press).toBeEnabled());
+    await user.click(press);
+    await waitFor(() => expect(badge()!.textContent).toContain("Passed"));
+    return user;
+  }
+
+  it("goes when the address it was computed for changes", async () => {
+    const user = await passATest();
+
+    await user.type(hostBox(), "1");
+
+    expect(badge()).toBeNull();
+  });
+
+  it("goes when the key it was computed for changes", async () => {
+    // The sharper half: the address on screen is still the one that passed, so the badge reads as
+    // current while the credential beside it is one nobody has tried.
+    const user = await passATest();
+
+    await user.type(keyBox(), "2");
+
+    expect(badge()).toBeNull();
+  });
+
+  it("stands again for the exact credentials it was tested against", async () => {
+    // Typing back to the tested value is where clearing on change and comparing against what was
+    // tested differ. Nothing was retested, but the stored result is once more a statement about
+    // what is in the boxes, so withholding it would understate what Reaper knows.
+    const user = await passATest();
+    await user.type(hostBox(), "1");
+    expect(badge()).toBeNull();
+
+    await user.type(hostBox(), "{backspace}");
+
+    expect(badge()!.textContent).toContain("Passed");
+    // One request the whole way through: the badge is re-shown, never re-earned.
+    expect(apiMock.testInstance).toHaveBeenCalledTimes(1);
+  });
+});

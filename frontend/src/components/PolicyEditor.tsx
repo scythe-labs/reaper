@@ -1225,11 +1225,17 @@ export function PolicyEditor({
   const willSavePace = paceDirty;
   const saving = save.isPending || savePace.isPending;
   // Why the policy half is held, in one clause. The numbers are NOT repeated here: the points
-  // meter renders directly below this line and the 422 notice at the top of the page, so a
-  // second copy of either would be the third sentence in the bar saying one thing. Points are
-  // named first when both are true, because that notice is the one right beside this.
+  // meter renders directly below this line and the 422 notice renders with the protections card
+  // (see `invalidMessage` below), so a second copy of either would be the third sentence in the
+  // bar saying one thing. Points are named first when both are true, because that meter is the
+  // one right beside this.
+  //
+  // The 422 clause quotes the notice's own heading rather than pointing anywhere. It used to send
+  // the operator to "the top of this page" for a notice that renders near the bottom of the second
+  // section, and a direction that survives one layout change is worth less than the words already
+  // on screen (#178).
   const policyHeldBecause =
-    pointsLeft !== 0 ? "the points add up to 100" : "the problem at the top of this page is fixed";
+    pointsLeft !== 0 ? "the points add up to 100" : 'the "Can\'t save this" problem is fixed';
 
   const switchMediaType = (next: "movie" | "tv") => {
     if (next === mediaType) return;
