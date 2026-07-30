@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Instance, PlexLibrary, RootFolder, SeerrService } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
+import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { Announcer } from "../announce";
 import { ServiceModal } from "./ServiceModal";
@@ -287,7 +288,9 @@ describe("ServiceModal external URL", () => {
     // S-5: a scheme-less paste is caught before save (mirroring the server's 422), so the value
     // is never sent to be stored verbatim.
     renderModal(sonarr({ external_url: null }), []);
-    await userEvent.type(screen.getByLabelText("External URL"), "tv.example.com:8989");
+    // A session rather than the direct API, which the rest of this test uses: `fill` takes the
+    // `UserEvent` that `setup()` returns, and the module object is a different type.
+    await fill(userEvent.setup(), screen.getByLabelText("External URL"), "tv.example.com:8989");
 
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText(/must be a full web address/i)).toBeInTheDocument();
@@ -505,7 +508,7 @@ describe("what a screen reader hears when a connection is tested", () => {
       </QueryClientProvider>,
     );
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/Hostname or IP/), "10.0.0.5");
+    await fill(user, screen.getByLabelText(/Hostname or IP/), "10.0.0.5");
     await user.type(screen.getByLabelText(/^API key$/), "k");
     return user;
   }
@@ -570,7 +573,7 @@ describe("what the connection badge vouches for", () => {
       </QueryClientProvider>,
     );
     const user = userEvent.setup();
-    await user.type(hostBox(), "10.0.0.5");
+    await fill(user, hostBox(), "10.0.0.5");
     await user.type(keyBox(), "k");
     // Rule 137: the button gates on `canTest`, so act only once both boxes have filled it.
     const press = await screen.findByRole("button", { name: /Test connection/i });
@@ -650,7 +653,7 @@ describe("why 'Add service' will not act", () => {
     expect(submit()).toBeDisabled();
     expect(blocked()!.textContent).toBe("Enter a hostname or IP address to add this service.");
 
-    await user.type(screen.getByLabelText(/Hostname or IP/), "10.0.0.5");
+    await fill(user, screen.getByLabelText(/Hostname or IP/), "10.0.0.5");
     expect(submit()).toBeDisabled();
     expect(blocked()!.textContent).toBe("Enter an API key to add this service.");
 

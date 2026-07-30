@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
 import type { Instance } from "../api";
+import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { NotificationsPanel, ServicesPanel } from "./Settings";
 
@@ -115,7 +116,7 @@ describe("the badge on the Discord row", () => {
       </QueryClientProvider>,
     );
     const user = userEvent.setup();
-    await user.type(urlBox(), "https://discord.com/api/webhooks/1/aaa");
+    await fill(user, urlBox(), "https://discord.com/api/webhooks/1/aaa");
     const press = await screen.findByRole("button", { name: "Send test message" });
     await waitFor(() => expect(press).toBeEnabled());
     await user.click(press);

@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_WATCH_EVIDENCE, seedSettings } from "../test/apiFixtures";
+import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { PANELS as DECLARED_PANELS, Settings } from "./Settings";
 
@@ -236,9 +237,11 @@ describe("leaving General with something unsaved", () => {
 
   async function typeADraft(person: ReturnType<typeof userEvent.setup>) {
     const url = await screen.findByLabelText("Application URL");
-    await waitFor(() => expect(url).toBeEnabled());
-    await person.type(url, "https://reaper.example.com");
-    // The bar is the definition of a draft, so wait for it rather than for the keystrokes.
+    // One edit, not twenty-six keystrokes: what this family needs is a draft in the box, and
+    // paying a panel re-render per character is what put these six tests within a few hundred
+    // milliseconds of the 5000ms timeout on a loaded runner (`src/test/forms.ts`).
+    await fill(person, url, "https://reaper.example.com");
+    // The bar is the definition of a draft, so wait for it rather than for the edit.
     await waitFor(() => expect(document.querySelector(".savebar")).not.toBeNull());
     return url;
   }
@@ -350,8 +353,7 @@ describe("leaving Plex or Notifications with something unsaved", () => {
     stubMatchMedia(false);
     const person = renderSettings("notifications");
     const box = await screen.findByLabelText("Discord webhook URL");
-    await waitFor(() => expect(box).toBeEnabled());
-    await person.type(box, "https://discord.com/api/webhooks/1/secret");
+    await fill(person, box, "https://discord.com/api/webhooks/1/secret");
 
     await person.click(screen.getByRole("button", { name: "Security" }));
 
@@ -370,8 +372,7 @@ describe("leaving Plex or Notifications with something unsaved", () => {
     stubMatchMedia(false);
     const person = renderSettings("notifications");
     const box = await screen.findByLabelText("Discord webhook URL");
-    await waitFor(() => expect(box).toBeEnabled());
-    await person.type(box, "discord.com/api/webhoo");
+    await fill(person, box, "discord.com/api/webhoo");
 
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     await person.click(screen.getByRole("button", { name: "Security" }));
@@ -398,9 +399,7 @@ describe("leaving Plex or Notifications with something unsaved", () => {
     // the way an operator sees it. Rule 137: the panel early-returns "Loading…" until the status
     // read lands, so wait for the box to be usable rather than for the page.
     const box = await screen.findByPlaceholderText(SAVED_WEB_URL);
-    await waitFor(() => expect(box).toBeEnabled());
-    await person.clear(box);
-    await person.type(box, "https://plex.example.net");
+    await fill(person, box, "https://plex.example.net");
 
     await person.click(screen.getByRole("button", { name: "Security" }));
 
@@ -415,9 +414,7 @@ describe("leaving Plex or Notifications with something unsaved", () => {
     stubMatchMedia(false);
     const person = renderSettings("plex");
     const box = await screen.findByPlaceholderText(SAVED_WEB_URL);
-    await waitFor(() => expect(box).toBeEnabled());
-    await person.clear(box);
-    await person.type(box, "https://plex.example.net");
+    await fill(person, box, "https://plex.example.net");
 
     await person.click(screen.getByRole("button", { name: "Security" }));
     await person.click(screen.getByRole("button", { name: "Discard and switch" }));
@@ -431,10 +428,8 @@ describe("leaving Plex or Notifications with something unsaved", () => {
     stubMatchMedia(false);
     const person = renderSettings("plex");
     const box = await screen.findByPlaceholderText(SAVED_WEB_URL);
-    await waitFor(() => expect(box).toBeEnabled());
-    // Typed and put back: the box diverged and returned, so there is nothing left to lose.
-    await person.clear(box);
-    await person.type(box, SAVED_WEB_URL);
+    // Filled and put back: the box diverged and returned, so there is nothing left to lose.
+    await fill(person, box, SAVED_WEB_URL);
 
     await person.click(screen.getByRole("button", { name: "Security" }));
 
@@ -470,7 +465,7 @@ describe("leaving Security or Backup with something unsaved", () => {
     stubMatchMedia(false);
     const person = renderSettings("security");
     const next = await screen.findByLabelText(/^new password$/i);
-    await person.type(next, "a-long-enough-password");
+    await fill(person, next, "a-long-enough-password");
 
     await person.click(screen.getByRole("button", { name: "About" }));
 

@@ -7,6 +7,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
+import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { SecurityPanel } from "./Settings";
 
@@ -72,15 +73,14 @@ describe("the admin password form", () => {
 
     const next = await screen.findByLabelText(/^new password$/i);
     const confirm = screen.getByLabelText(/confirm new password/i);
-    await person.type(next, "a-long-enough-password");
-    await person.type(confirm, "a-long-enough-passwerd"); // typo
+    await fill(person, next, "a-long-enough-password");
+    await fill(person, confirm, "a-long-enough-passwerd"); // typo
 
     expect(screen.getByText(/the passwords don't match/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
 
     // Fix the typo -> Save enables and only the new password is sent.
-    await person.clear(confirm);
-    await person.type(confirm, "a-long-enough-password");
+    await fill(person, confirm, "a-long-enough-password");
     const save = screen.getByRole("button", { name: /^save$/i });
     expect(save).toBeEnabled();
     await person.click(save);
@@ -123,8 +123,8 @@ describe("the admin password form", () => {
 
     const next = await screen.findByLabelText(/^new password$/i);
     const confirm = screen.getByLabelText(/confirm new password/i);
-    await person.type(next, "a-long-enough-password");
-    await person.type(confirm, "a-long-enough-password");
+    await fill(person, next, "a-long-enough-password");
+    await fill(person, confirm, "a-long-enough-password");
 
     // Matching, long enough, but the current password is still blank.
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
@@ -136,7 +136,7 @@ describe("the admin password form", () => {
     // that belongs to the notice rather than to this sentence.
     expect(currentBox).toHaveAccessibleDescription(/enter the current password to save\./i);
 
-    await person.type(currentBox, "whatever-it-is");
+    await fill(person, currentBox, "whatever-it-is");
     expect(currentBox).toHaveAccessibleDescription("");
     const save = screen.getByRole("button", { name: /^save$/i });
     expect(save).toBeEnabled();
@@ -179,7 +179,7 @@ describe("the admin password form", () => {
 
     // Long enough and confirmed: the only thing left is the current password, so it speaks now.
     await person.type(next, "-but-now-long-enough");
-    await person.type(screen.getByLabelText(/confirm new password/i), "short-but-now-long-enough");
+    await fill(person, screen.getByLabelText(/confirm new password/i), "short-but-now-long-enough");
 
     expect(next).toHaveAccessibleDescription("");
     // Regex, because `Notice tone="error"` prefixes its text with a visually-hidden "Problem:"
@@ -218,7 +218,7 @@ describe("what leaving this panel would lose", () => {
     const person = renderPanel(dirty);
 
     const current = await screen.findByLabelText(/current password/i);
-    await person.type(current, "whatever-it-is");
+    await fill(person, current, "whatever-it-is");
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
 
     await person.clear(current);
@@ -238,7 +238,7 @@ describe("what leaving this panel would lose", () => {
     const person = renderPanel(dirty, queryClient);
 
     const next = await screen.findByLabelText(/^new password$/i);
-    await person.type(next, "a-long-enough-password");
+    await fill(person, next, "a-long-enough-password");
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
 
     // In the app this arrives on `useSafety`'s own 15-second poll, which no test should sit out;

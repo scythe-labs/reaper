@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
 import type { GeneralSettings } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
+import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { GeneralPanel } from "./Settings";
 
@@ -185,8 +186,7 @@ describe("the save bar", () => {
     await waitFor(() => expect(name).toHaveValue(STORED.application_name));
     expect(bar()).toBeNull();
 
-    await person.clear(name);
-    await person.type(name, "Second install");
+    await fill(person, name, "Second install");
 
     await waitFor(() => expect(bar()).not.toBeNull());
     expect(bar()!.textContent).toContain("Application name");
@@ -199,9 +199,8 @@ describe("the save bar", () => {
     const url = await screen.findByLabelText("Application URL");
     const name = screen.getByLabelText("Application name");
 
-    await person.type(url, "https://reaper.example.com");
-    await person.clear(name);
-    await person.type(name, "Second install");
+    await fill(person, url, "https://reaper.example.com");
+    await fill(person, name, "Second install");
     await person.click(saveChanges());
 
     await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));
@@ -223,8 +222,7 @@ describe("the save bar", () => {
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
 
-    await person.clear(name);
-    await person.type(name, "Second install");
+    await fill(person, name, "Second install");
     await person.click(saveChanges());
 
     await waitFor(() => expect(announced()).toBe("Settings saved."));
@@ -237,9 +235,8 @@ describe("the save bar", () => {
     const name = await screen.findByLabelText("Application name");
     const url = screen.getByLabelText("Application URL");
 
-    await person.clear(name);
-    await person.type(name, "Second install");
-    await person.type(url, "https://reaper.example.com");
+    await fill(person, name, "Second install");
+    await fill(person, url, "https://reaper.example.com");
     await person.click(screen.getByRole("button", { name: "Discard" }));
 
     await waitFor(() => expect(bar()).toBeNull());
@@ -295,8 +292,7 @@ describe("the save bar", () => {
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
 
-    await person.clear(name);
-    await person.type(name, "  Trimmed  ");
+    await fill(person, name, "  Trimmed  ");
     await person.click(saveChanges());
 
     await waitFor(() => expect(name).toHaveValue("Trimmed"));
@@ -314,8 +310,7 @@ describe("the save bar", () => {
 
     await person.clear(days);
     await person.type(days, "90");
-    await person.clear(proxies);
-    await person.type(proxies, "10.0.0.0/8, 192.168.0.0/16");
+    await fill(person, proxies, "10.0.0.0/8, 192.168.0.0/16");
 
     await waitFor(() => expect(bar()!.textContent).toContain("Default spare length"));
     expect(bar()!.textContent).toContain("Trusted proxy addresses");
@@ -338,8 +333,7 @@ describe("the save bar", () => {
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
 
-    await person.clear(name);
-    await person.type(name, "Second install");
+    await fill(person, name, "Second install");
     await person.click(saveChanges());
 
     await waitFor(() => expect(bar()!.textContent).toContain("That web address isn't valid."));
@@ -519,8 +513,7 @@ describe("what the panel reports to the section rail", () => {
     const { person, onDirtyChange } = renderReporting();
     const box = await screen.findByLabelText("Trusted proxy addresses");
 
-    await person.clear(box);
-    await person.type(box, "10.9.0.0/16");
+    await fill(person, box, "10.9.0.0/16");
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
 
     await person.click(screen.getByLabelText("Behind a reverse proxy"));
@@ -537,8 +530,7 @@ describe("what the panel reports to the section rail", () => {
     const { person, onDirtyChange, queryClient } = renderReporting();
     const name = await screen.findByLabelText("Application name");
 
-    await person.clear(name);
-    await person.type(name, "Second install");
+    await fill(person, name, "Second install");
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
 
     // Generate API key and Remove key both invalidate this very query, so a server that blinks
@@ -726,7 +718,7 @@ describe("a control that saves on the spot", () => {
     const person = renderPanel();
     const url = await screen.findByLabelText("Application URL");
 
-    await person.type(url, "https://reaper.example.com");
+    await fill(person, url, "https://reaper.example.com");
     await person.click(screen.getByLabelText("Behind a reverse proxy"));
 
     await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));

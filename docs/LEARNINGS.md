@@ -2124,6 +2124,64 @@ without touching the live servers. `facts_json` is sparse on older rows (~58% of
 carry it), which is what made the `explanation_json` cross-check worth running: it covers every
 row, and agreeing with the sparse measurement is what rules out a sampling artifact.
 
+## A keystroke is a render, and twenty-six of them is what times out a test (2026-07-30)
+
+`SettingsNav.test.tsx > stops warning once the draft is discarded` failed CI at vitest's 5000 ms
+default. No bug under it, and no hang: the same commit was green an hour earlier, and the file's
+other 18 tests were untouched.
+
+**The failing run carried its own control.** Two tests in that family differ by one statement —
+one types a draft into the Application URL box before clicking away, the other clicks away with
+the box empty. Same fixture, same panel, same two renders:
+
+| `SettingsNav.test.tsx`, one CI run | |
+| --- | --- |
+| `switches straight through when there is nothing to lose` (types nothing) | 824 ms |
+| `holds the switch and says what leaving would cost` (types 26 chars) | 4713 ms |
+| `stops warning once the draft is discarded` (types 26 chars) | **5063 ms, failed** |
+
+So 3889 ms of a 4713 ms test is 26 keystrokes, about 150 ms each on a loaded runner.
+`userEvent.type(box, s)` dispatches one keystroke per character and each one re-renders the panel
+around the box, so the cost is per character and the test that types the most is the one that goes
+over. Unloaded, the same family runs 70–400 ms, which is where this hides: **the amplification is
+invisible until the machine is busy, and then it is multiplied by the same factor as everything
+else.**
+
+**The fix is the tail, not the median.** `clear` + `paste` produces one input event where `type`
+produced 26. Five runs of the family, 25 samples each arm:
+
+| filling one 26-char box | median | worst |
+| --- | --- | --- |
+| `userEvent.type` | 116 ms | **405 ms** |
+| `clear` + `paste` (`src/test/forms.ts`) | 37 ms | **39 ms** |
+
+The medians are a 3x win and the worst cases are a 10x one, because one event has almost no
+spread to have. A test goes red on its worst case, so the number that decides a run stops moving.
+Swept over 47 sites in 7 files: the suite's slowest test went 1742 ms → 675 ms, and summed test
+time 78.8 s → 54.7 s.
+
+**A silent paste is the trap this opens, so the helper closes it.** `paste` lands on
+`document.activeElement` and does nothing at all if the box is disabled or unfocused, exactly the
+way a click on a disabled control does (rule 137) — and several converted tests assert that some
+control stays **disabled**, which an empty box satisfies just as well as the half-typed one they
+mean. So `fill` asserts the box really holds the value. Removing the paste from the helper fails
+34 tests across 4 files; without that line it failed none of them.
+
+**Where it does not apply, measured rather than assumed.** 76 `.type(` sites were classified;
+13 must stay keystrokes — 9 append onto text already in the box (`clear` would destroy the
+half-typed hex or the sent webhook the test is about) and 4 carry user-event's `{backspace}`
+syntax, which a paste delivers as literal text. None exceeds 20 characters, so none of them is a
+timeout contributor anyway.
+
+**What this does not fix.** It is a second term in the family
+[the `getComputedStyle` entry](#the-frontend-suites-expensive-role-query-is-jsdoms-first-getcomputedstyle-2026-07-29)
+above ends on, not a replacement for that entry's conclusion: the dominant term is still runner
+latency, and it survives. The two axe audits type nothing and cannot be helped this way — the
+General panel's ran 3988 ms on that runner, a fifth under the old ceiling with nothing wrong with
+it, which is why `testTimeout` moved to 15000 ms in the same change. Of that audit, only ~139 ms
+is the 418-option time-zone `<select>` (axe over 418 options is 177 ms against 38 ms over one), so
+trimming the tree would not have bought the margin either.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

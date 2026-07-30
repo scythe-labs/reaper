@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlexResourceConnection, PlexStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
+import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
@@ -481,8 +482,7 @@ describe("what leaving this panel would lose", () => {
     renderPanel([discovered(LOCAL)], dirty);
 
     const box = await screen.findByPlaceholderText("https://app.plex.tv");
-    await user.clear(box);
-    await user.type(box, "https://plex.example.org");
+    await fill(user, box, "https://plex.example.org");
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
 
     const toggle = await screen.findByRole("switch", { name: "Check the server's certificate" });
@@ -640,8 +640,7 @@ describe("what leaving this panel would lose", () => {
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
     await user.selectOptions(await usableConnectionSelect(), "__manual__");
     const host = await screen.findByPlaceholderText("plex.example.net");
-    await user.clear(host);
-    await user.type(host, "plex.example.org");
+    await fill(user, host, "plex.example.org");
 
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
   });
@@ -677,8 +676,7 @@ describe("what leaving this panel would lose", () => {
     await user.type(box, "/extra");
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
 
-    await user.clear(box);
-    await user.type(box, "https://app.plex.tv");
+    await fill(user, box, "https://app.plex.tv");
 
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
   });
@@ -952,7 +950,7 @@ describe("forgetting the recorded watch history", () => {
   async function arm(user: ReturnType<typeof userEvent.setup>, password = PASSWORD) {
     await user.click(await screen.findByRole("button", { name: "Forget…" }));
     const box = screen.getByLabelText("Admin password");
-    if (password) await user.type(box, password);
+    if (password) await fill(user, box, password);
     return box;
   }
 
@@ -971,7 +969,7 @@ describe("forgetting the recorded watch history", () => {
     // Nor can the second press land on its own: an empty box confirms nothing.
     expect(confirm).toBeDisabled();
 
-    await user.type(screen.getByLabelText("Admin password"), PASSWORD);
+    await fill(user, screen.getByLabelText("Admin password"), PASSWORD);
     await waitFor(() => expect(confirm).toBeEnabled());
     await user.click(confirm);
     // The password reaches the server, which is the whole of this change: the route refuses

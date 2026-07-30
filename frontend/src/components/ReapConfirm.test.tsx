@@ -10,6 +10,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
+import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { expectNoA11yViolations } from "../test/a11y";
 import { Announcer } from "../announce";
@@ -135,11 +136,10 @@ describe("the execute gate", () => {
     expect(execute).toBeDisabled();
 
     const input = screen.getByRole("textbox");
-    await user.type(input, "REAP 9 SOULS 9 GB"); // a stale tab's phrase
+    await fill(user, input, "REAP 9 SOULS 9 GB"); // a stale tab's phrase
     expect(execute).toBeDisabled();
 
-    await user.clear(input);
-    await user.type(input, run.confirmation_phrase);
+    await fill(user, input, run.confirmation_phrase);
     expect(execute).toBeEnabled();
   });
 
@@ -160,7 +160,7 @@ describe("the execute gate", () => {
     expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
 
     // The phrase alone is not enough while the warning stands.
-    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
     const execute = screen.getByRole("button", { name: /^Reap 1 soul$/ });
     expect(execute).toBeDisabled();
 
@@ -178,7 +178,7 @@ describe("the execute gate", () => {
     await screen.findByText(/Practice run passed/);
     expect(await screen.findByText(/couldn't read Plex's trash/i)).toBeInTheDocument();
 
-    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
     expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
   });
 
@@ -237,7 +237,7 @@ describe("the execute gate", () => {
     const { container } = renderSheet(onClose);
 
     await screen.findByText(/Practice run passed/);
-    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
 
     // In flight: the graceful Stop is offered, and the sheet no longer traps -- the ✕ is
@@ -253,7 +253,7 @@ describe("the execute gate", () => {
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
 
     await user.click(await screen.findByRole("button", { name: /^Stop$/ }));
@@ -309,7 +309,7 @@ describe("the execute gate", () => {
     // Trailing whitespace is trimmed on the way out, which is only possible if what is
     // posted comes from the input. Echoing the prop would make the human gate a `disabled`
     // attribute the server cannot tell from a script (S-1).
-    await user.type(screen.getByRole("textbox"), `${run.confirmation_phrase}  `);
+    await fill(user, screen.getByRole("textbox"), `${run.confirmation_phrase}  `);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
     expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
   });
@@ -323,7 +323,7 @@ describe("the execute gate", () => {
     renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
     await screen.findByText(/The plan changed./);
 
@@ -364,7 +364,7 @@ describe("the execute gate", () => {
     const { queryClient } = renderSheet();
 
     await screen.findByText(/Practice run passed/);
-    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    await fill(user, screen.getByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
     await screen.findByRole("button", { name: /^Stop$/ });
 
