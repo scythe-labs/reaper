@@ -151,10 +151,34 @@ class TestTheMarkOnlyEverRises:
     async def test_a_blind_reading_cannot_lower_the_mark(self, session: AsyncSession) -> None:
         # The property the whole check rests on. If a blind scan could lower the mark, the
         # first one would write zero as the new baseline and no later scan would ever notice.
+        # A fully blind reading carries no evidence, so ``record`` skips it outright; the two
+        # tests below cover the partial case, where a row IS written and the SQL max() is the
+        # only thing holding the mark up.
         await watch_evidence.record(session, {"radarr:1:5": Reading(4, NOW)}, now=NOW)
         await watch_evidence.record(session, {"radarr:1:5": Reading(0, None)}, now=NOW)
         marks = await watch_evidence.recall_all(session)
         assert marks["radarr:1:5"] == Mark(watchers_all_time=4, last_played_at=NOW)
+
+    async def test_a_lower_but_still_readable_count_cannot_lower_the_mark(
+        self, session: AsyncSession
+    ) -> None:
+        # The partially blind item: some plays still visible under the current key, so the
+        # reading carries evidence and IS written. Nothing skips this row, which makes the
+        # SQL ``max()`` on the counter the only thing standing between a partial fall and a
+        # mark that quietly follows it down (rule 118).
+        await watch_evidence.record(session, {"radarr:1:5": Reading(5, NOW)}, now=NOW)
+        await watch_evidence.record(session, {"radarr:1:5": Reading(2, NOW)}, now=NOW)
+        marks = await watch_evidence.recall_all(session)
+        assert marks["radarr:1:5"].watchers_all_time == 5
+
+    async def test_an_earlier_last_play_cannot_lower_the_mark(self, session: AsyncSession) -> None:
+        # The same partial case on the timestamp arm: the most recent play was recorded under
+        # a key that moved, so the latest one still visible is older. The mark must keep the
+        # later instant, or the next scan compares against the fallen value and reads honest.
+        await watch_evidence.record(session, {"radarr:1:5": Reading(4, NOW)}, now=NOW)
+        await watch_evidence.record(session, {"radarr:1:5": Reading(4, EARLIER)}, now=NOW)
+        marks = await watch_evidence.recall_all(session)
+        assert marks["radarr:1:5"].last_played_at == NOW
 
     async def test_a_null_reading_does_not_erase_a_stored_last_played(
         self, session: AsyncSession
@@ -176,6 +200,60 @@ class TestTheMarkOnlyEverRises:
     async def test_recording_nothing_is_not_an_error(self, session: AsyncSession) -> None:
         await watch_evidence.record(session, {}, now=NOW)
         assert await watch_evidence.recall_all(session) == {}
+
+
+class TestAReadingOfNothingIsNotAMark:
+    """No watchers and no play is the ABSENCE of evidence, not a measurement of none.
+
+    The two are the same thing only for an item whose history was readable, and the read path
+    cannot tell which it has. So no row is written, and an absent mark keeps meaning exactly
+    what it says. This is deliberately behavior-neutral -- a stored zero and no row both make
+    ``went_blind`` return ``None`` -- and the tests below pin both halves of that: the row
+    does not appear, and nothing about what fires moves.
+    """
+
+    def test_a_reading_of_nothing_carries_no_evidence(self) -> None:
+        assert not watch_evidence.carries_evidence(Reading(0, None))
+
+    def test_a_play_with_no_counted_watcher_still_carries_evidence(self) -> None:
+        # The arms are independent on purpose: a play Reaper can see is evidence even where
+        # the watcher count did not survive, and dropping it would forfeit the timestamp arm
+        # of the check for that item.
+        assert watch_evidence.carries_evidence(Reading(0, EARLIER))
+
+    def test_a_counted_watcher_with_no_play_still_carries_evidence(self) -> None:
+        assert watch_evidence.carries_evidence(Reading(3, None))
+
+    async def test_no_row_is_written_for_a_reading_of_nothing(self, session: AsyncSession) -> None:
+        await watch_evidence.record(session, {"radarr:1:5": Reading(0, None)}, now=NOW)
+        assert await watch_evidence.recall_all(session) == {}
+
+    async def test_the_watched_item_beside_it_is_still_recorded(
+        self, session: AsyncSession
+    ) -> None:
+        # The skip is per row, not per call: one unwatched item in a chunk must not cost the
+        # rest of the chunk its marks.
+        await watch_evidence.record(
+            session,
+            {"radarr:1:5": Reading(0, None), "radarr:1:6": Reading(2, NOW)},
+            now=NOW,
+        )
+        assert set(await watch_evidence.recall_all(session)) == {"radarr:1:6"}
+
+    async def test_a_later_real_play_still_starts_the_mark(self, session: AsyncSession) -> None:
+        # The item read nothing for as many scans as you like, then was watched. Skipping the
+        # empty readings must not stop the first real one landing.
+        await watch_evidence.record(session, {"radarr:1:5": Reading(0, None)}, now=NOW)
+        await watch_evidence.record(session, {"radarr:1:5": Reading(1, NOW)}, now=NOW)
+        marks = await watch_evidence.recall_all(session)
+        assert marks["radarr:1:5"] == Mark(watchers_all_time=1, last_played_at=NOW)
+
+    def test_an_absent_mark_decides_exactly_what_a_stored_zero_did(self) -> None:
+        # Why this is safe to change: the two states were already indistinguishable to the
+        # only function that reads them, so removing the row moves no decision. A never-watched
+        # item stays condemnable either way, which is what keeps the check usable library-wide.
+        assert went_blind(None, Reading(0, None)) is None
+        assert went_blind(Mark(0, None), Reading(0, None)) is None
 
 
 class TestRecallAndForget:

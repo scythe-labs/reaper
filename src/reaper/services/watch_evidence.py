@@ -34,6 +34,16 @@ point of the feature and the reason this check is safe to run library-wide. A co
 merely *drops* (five watchers to three) is not flagged either: it does not cross the
 never-watched boundary that drives the condemn lane, and the last-played check below
 catches the case where such a drop also inflates dormancy.
+
+**And one thing it CANNOT flag, which is not the same as a choice.** An item whose plays
+were already unreachable the first time Reaper measured it has no mark to fall from, so it
+reads zero forever and this check never fires for it. That is a measured population, not a
+corner: 1.5% to 4.5% of mid-history titles on a live library (``docs/LEARNINGS.md``).
+Nothing here narrows it, and the mark deliberately records no zero so that at least no row
+*asserts* those titles were measured and found unwatched. Telling them apart needs the
+play's guid, which neither the watch mirror nor the Plex index carries today. What holds
+such an item back meanwhile is only its own arrival date -- a re-added file carries a fresh
+one, which delays the condemn rather than preventing it.
 """
 
 from __future__ import annotations
@@ -87,8 +97,11 @@ def went_blind(mark: Mark | None, reading: Reading) -> str | None:
     takes ``Unknown`` for these facts from its own branch, and has no reading to compare.
     """
     if mark is None:
-        # Never measured before, so there is nothing this could have fallen from. A brand
-        # new item -- and every item on the first scan after this ships -- lands here.
+        # No watch evidence has ever been measured for this item, so there is nothing this
+        # could have fallen from. Three different items land here and this check cannot tell
+        # them apart: a brand new one, every item on the first scan after this ships, and one
+        # whose plays were ALREADY unreachable when Reaper first looked. The third is not
+        # protected -- see the module docstring, which says what closing it would take.
         return None
     if mark.watchers_all_time > 0 and reading.watchers_all_time <= 0:
         return BLIND_REASON
@@ -122,6 +135,16 @@ async def recall_all(session: AsyncSession) -> dict[str, Mark]:
     }
 
 
+def carries_evidence(reading: Reading) -> bool:
+    """Does this reading hold any watch evidence at all?
+
+    No watchers and no play is the *absence* of evidence, not a measurement of none, and the
+    two are only the same thing for an item whose history was readable. :func:`record` keeps
+    such a reading out of the table for that reason.
+    """
+    return reading.watchers_all_time > 0 or reading.last_played_at is not None
+
+
 async def record(session: AsyncSession, readings: Mapping[str, Reading], *, now: datetime) -> None:
     """Raise each item's mark to cover this scan's reading. Never lowers one.
 
@@ -132,6 +155,15 @@ async def record(session: AsyncSession, readings: Mapping[str, Reading], *, now:
     A reading the check just flagged as blind is passed in like any other. That is
     deliberate -- it cannot lower the mark, so a blind scan leaves the mark standing and
     the next scan asks the same question against the same evidence.
+
+    **A reading carrying no evidence is not recorded at all** (:func:`carries_evidence`). It
+    could not raise a mark, so nothing this scan or any later one decides changes -- a stored
+    zero and an absent row both return ``None`` from :func:`went_blind`. What changes is what
+    is on record: a row of zero asserts that Reaper measured this title and found nothing
+    watched, and for a title whose plays were already unreachable the first time it was looked
+    at, that is the one claim the read path is not entitled to make. It also keeps the table
+    the size of the *watched* library rather than the whole one, which matters because
+    :func:`recall_all` loads all of it.
     """
     rows = [
         {
@@ -141,6 +173,7 @@ async def record(session: AsyncSession, readings: Mapping[str, Reading], *, now:
             "updated_at": now,
         }
         for key, reading in readings.items()
+        if carries_evidence(reading)
     ]
     if not rows:
         return
