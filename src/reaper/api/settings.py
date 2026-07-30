@@ -307,19 +307,28 @@ class PlexLibraryOut(BaseModel):
 
 
 class WatchEvidenceOut(BaseModel):
-    """What Reaper has recorded about how much each title has been watched."""
+    """How much watching Reaper has recorded, and what the last scan could not read.
+
+    ``titles`` is how many titles hold a record. ``held_back`` is how many items the last scan
+    found had plays it could no longer read, and it is **null when no scan has counted** --
+    either none has run, or the newest one predates the count. Null is not zero and must not be
+    rendered as zero: a scan that did not count is not a scan that counted none (rule 93).
+
+    It counts what was measured, never what was decided. Such an item is normally held, but by
+    three gates the operator can each switch off, and nothing here consults the verdict, so copy
+    calling this figure items held back or kept asserts a protection it is not computed from.
+
+    The contract lives in this class docstring, not on the fields: attribute docstrings are
+    not published in the schema here (see ``PlexUpdateIn`` above), so a field-level note is
+    invisible to anyone reading the API reference.
+    """
 
     titles: int
-    """How many titles hold a record."""
     held_back: int | None = None
-    """How many items the LAST scan held back because their plays stopped being readable.
-    ``None`` when no scan has recorded it -- either none has run, or the newest one predates
-    the count. Never rendered as zero: a scan that did not count is not a scan that counted
-    none (rule 93)."""
 
 
 class WatchEvidenceResetOut(BaseModel):
-    """How many recorded watch-evidence marks were discarded."""
+    """How many titles Reaper forgot."""
 
     forgotten: int
 
@@ -1048,10 +1057,11 @@ async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
 
 @router.get("/watch-evidence", tags=[api_tags.PLEX])
 async def get_watch_evidence(request: Request) -> WatchEvidenceOut:
-    """How many titles hold a watch record, and how many the last scan held back.
+    """How many titles hold a watch record, and how many the last scan could not read.
 
     The second number is the one that answers "do I need to press this": a nonzero count is
-    titles Reaper is refusing to judge because their plays stopped being readable.
+    items whose recorded plays Reaper can no longer see. It is what was measured, not what was
+    decided -- see ``WatchEvidenceOut``, which says why the difference matters here.
     """
     async with _factory(request)() as session:
         titles = int(

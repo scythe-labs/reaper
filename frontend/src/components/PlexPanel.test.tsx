@@ -109,7 +109,8 @@ beforeEach(() => {
   ]);
   apiMock.syncPlexLibraries.mockResolvedValue([]);
   apiMock.setPlexLibraries.mockResolvedValue([]);
-  apiMock.watchEvidence.mockResolvedValue({ titles: 0, held_back: 0 });
+  // null, not 0: the shape a fresh install actually returns (no snapshot has counted).
+  apiMock.watchEvidence.mockResolvedValue({ titles: 0, held_back: null });
   apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 0 });
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
@@ -720,7 +721,7 @@ describe("the certificate check", () => {
   });
 });
 
-// The two groups below the connection form, driven through a failed refetch (#166).
+// The three groups below the connection form, driven through a failed refetch (#166).
 //
 // The panel's own status read got this split in #140; these two did not, so an undivided
 // `isError` traded the whole library grid, and separately both Leaving Soon switches, for one
@@ -731,118 +732,7 @@ describe("the certificate check", () => {
 // the status row alone, which is the bug #205 fixed; the count here has been wrong in both
 // directions since, so the callers are now pinned by name in "changing which server is linked"
 // below rather than counted in prose. Each group is pinned in both directions, because a fix that
-// only deleted the `isError` arm would leave a genuinely-unread group claiming to be empty rather
-// The watch-record reset. Reaper holds back a title whose measured plays have fallen to zero,
-// which is right until the cause is a rebuilt library -- then it is every watched title at once
-// and nothing is reapable. This is the way out, so it has to be reachable, has to say what it
-// will do, and must not be reachable by one stray click.
-describe("forgetting the recorded watch history", () => {
-  function renderPanel() {
-    apiMock.plexResources.mockResolvedValue({
-      source: "plex.tv",
-      servers: [
-        { name: "Example server", machine_identifier: "machine-1", current: true, connections: [] },
-      ],
-    });
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
-    return queryClient;
-  }
-
-  it("takes two presses, and sends nothing on the first", async () => {
-    const user = userEvent.setup();
-    apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
-    renderPanel();
-
-    const open = await screen.findByRole("button", { name: "Forget…" });
-    await user.click(open);
-
-    // Armed, and still nothing sent: the whole point of the second press.
-    expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
-    const confirm = screen.getByRole("button", { name: "Confirm forget" });
-    expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();
-
-    await user.click(confirm);
-    expect(apiMock.resetWatchEvidence).toHaveBeenCalledTimes(1);
-  });
-
-  it("stands down on Cancel without sending anything", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-
-    await user.click(await screen.findByRole("button", { name: "Forget…" }));
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-
-    expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
-    expect(await screen.findByRole("button", { name: "Forget…" })).toBeEnabled();
-  });
-
-  it("says how many it forgot", async () => {
-    const user = userEvent.setup();
-    apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
-    apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 1284 });
-    renderPanel();
-
-    await user.click(await screen.findByRole("button", { name: "Forget…" }));
-    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
-
-    expect(await screen.findByText("Forgotten for 1,284 titles.")).toBeInTheDocument();
-  });
-
-  it("reports a failure and says nothing changed", async () => {
-    const user = userEvent.setup();
-    apiMock.resetWatchEvidence.mockRejectedValue(new Error("boom"));
-    renderPanel();
-
-    await user.click(await screen.findByRole("button", { name: "Forget…" }));
-    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
-
-    const failure = await screen.findByText(/Couldn't forget the record/);
-    expect(failure).toHaveClass("notice-error");
-    // "Nothing changed" is the load-bearing half: an operator who reads a bare failure does not
-    // know whether to press again.
-    expect(failure).toHaveTextContent("Nothing changed.");
-  });
-
-  // The status line, whose job is to answer "do I need to press this at all". Three readings,
-  // and the null one is the reason this is a table: a scan that never counted is not a scan that
-  // counted none (rule 93), so it must not render as "nothing is held back".
-  it.each([
-    [
-      { titles: 1284, held_back: 3 },
-      "Holding a record for 1,284 titles. 3 items are held back right now.",
-    ],
-    [
-      { titles: 1284, held_back: 1 },
-      "Holding a record for 1,284 titles. 1 item is held back right now.",
-    ],
-    [
-      { titles: 1284, held_back: 0 },
-      "Holding a record for 1,284 titles. Nothing is held back right now.",
-    ],
-    [{ titles: 1284, held_back: null }, "Holding a record for 1,284 titles."],
-    [{ titles: 1, held_back: 0 }, "Holding a record for 1 title. Nothing is held back right now."],
-  ])("reads %o as its own sentence", async (evidence, expected) => {
-    apiMock.watchEvidence.mockResolvedValue(evidence);
-    renderPanel();
-    expect(await screen.findByText(expected)).toBeInTheDocument();
-  });
-
-  it("warns that a watched title will score as unwatched until Tautulli is repaired", async () => {
-    renderPanel();
-    // The honest cost of pressing it. A reset that reads as free is the one an operator presses
-    // without repairing the source, and then every re-added title is condemnable on false zeros.
-    const warning = await screen.findByText(/score as never watched/);
-    expect(warning).toHaveClass("notice-warn");
-    expect(warning).toHaveTextContent("repair its history in Tautulli");
-  });
-});
-
-// than unread.
+// only deleted the `isError` arm would leave a genuinely-unread group claiming to be empty rather than unread.
 describe("the groups below the form, through a failed refetch", () => {
   /** A cold mount whose queryClient the test keeps, so it can invalidate one key by hand. */
   function renderWithClient() {
@@ -973,5 +863,134 @@ describe("the groups below the form, through a failed refetch", () => {
     expect(await screen.findByText(NEVER_LOADED_SHELF)).toBeInTheDocument();
     expect(screen.queryByText(STALE_SHELF)).toBeNull();
     expect(screen.queryByRole("switch", { name: 'Show "Leaving Soon" in Plex' })).toBeNull();
+  });
+});
+
+// The watch-record reset. A title whose measured plays fall to zero reads as
+// unreadable, which is right until the cause is a rebuilt library -- then it is every
+// watched title at once and nothing is reapable. This is the way out, so it has to be
+// reachable, has to say what it will do, and must not be reachable by one stray click.
+describe("forgetting the recorded watch history", () => {
+  function renderPanel() {
+    apiMock.plexResources.mockResolvedValue({
+      source: "plex.tv",
+      servers: [
+        { name: "Example server", machine_identifier: "machine-1", current: true, connections: [] },
+      ],
+    });
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PlexPanel />
+      </QueryClientProvider>,
+    );
+    return queryClient;
+  }
+
+  it("takes two presses, and sends nothing on the first", async () => {
+    const user = userEvent.setup();
+    apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
+    renderPanel();
+
+    const open = await screen.findByRole("button", { name: "Forget…" });
+    await user.click(open);
+
+    // Armed, and still nothing sent: the whole point of the second press.
+    expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
+    const confirm = screen.getByRole("button", { name: "Confirm forget" });
+    expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();
+
+    await user.click(confirm);
+    expect(apiMock.resetWatchEvidence).toHaveBeenCalledTimes(1);
+  });
+
+  it("stands down on Cancel without sending anything", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "Forget…" })).toBeEnabled();
+  });
+
+  it("says how many it forgot, and when that takes effect", async () => {
+    const user = userEvent.setup();
+    apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
+    apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 1284 });
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
+
+    // The second sentence is load-bearing: the stored candidates are frozen snapshot data, so
+    // the queue does not move until the next scan. Without it the operator reads the unchanged
+    // queue as "that did not work" and reaches for the policy next, which does cost files.
+    const status = await screen.findByText(/Forgotten for 1,284 titles/);
+    expect(status).toHaveTextContent("The next scan uses what Plex holds now.");
+  });
+
+  it("reports a failure and says nothing changed", async () => {
+    const user = userEvent.setup();
+    apiMock.resetWatchEvidence.mockRejectedValue(new Error("boom"));
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
+
+    const failure = await screen.findByText(/Couldn't forget the record/);
+    expect(failure).toHaveClass("notice-error");
+    // "Nothing changed" is the load-bearing half: an operator who reads a bare failure does not
+    // know whether to press again.
+    expect(failure).toHaveTextContent("Nothing changed.");
+  });
+
+  // The status line, whose job is to answer "do I need to press this at all". Three readings,
+  // and the null one is the reason this is a table: a scan that never counted is not a scan that
+  // counted none (rule 93), so it must not claim the last scan found nothing unreadable.
+  it.each([
+    [
+      { titles: 1284, held_back: 3 },
+      "Holding a record for 1,284 titles. The last scan couldn't read the plays for 3 items.",
+    ],
+    [
+      { titles: 1284, held_back: 1 },
+      "Holding a record for 1,284 titles. The last scan couldn't read the plays for 1 item.",
+    ],
+    [
+      { titles: 1284, held_back: 0 },
+      "Holding a record for 1,284 titles. The last scan found no unreadable plays.",
+    ],
+    [{ titles: 1284, held_back: null }, "Holding a record for 1,284 titles."],
+    [
+      { titles: 1, held_back: 0 },
+      "Holding a record for 1 title. The last scan found no unreadable plays.",
+    ],
+  ])("reads %o as its own sentence", async (evidence, expected) => {
+    apiMock.watchEvidence.mockResolvedValue(evidence);
+    renderPanel();
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+  });
+
+  // "Held back" is this app's phrase for an item with no readable SIZE, in the planner and on
+  // four docs pages, where the repair is a policy allowance. Reusing it for unreadable plays
+  // would send the operator to that allowance instead of to Tautulli (rules 21, 144).
+  it("does not describe an unreadable-history item with the unknown-size phrase", async () => {
+    apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
+    renderPanel();
+    const status = await screen.findByText(/couldn't read the plays for 3 items/);
+    expect(status).not.toHaveTextContent("held back");
+    // Nor a verdict claim: the number is not computed from one (rule 144).
+    expect(status).not.toHaveTextContent("kept");
+  });
+
+  it("warns that a watched title will score as unwatched until Tautulli is repaired", async () => {
+    renderPanel();
+    // The honest cost of pressing it. A reset that reads as free is the one an operator presses
+    // without repairing the source, and then every re-added title is condemnable on false zeros.
+    const warning = await screen.findByText(/score as never watched/);
+    expect(warning).toHaveClass("notice-warn");
+    expect(warning).toHaveTextContent("repair its history in Tautulli");
   });
 });

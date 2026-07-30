@@ -370,10 +370,15 @@ class Snapshot(Base):
     degraded_reason: Mapped[str | None] = mapped_column(Text, default=None)
 
     watch_blind_items: Mapped[int | None] = mapped_column(Integer, default=None)
-    """How many items this scan held back because their watch history stopped being
-    readable (``services.watch_evidence``). Counted at scan time and stored, rather than
-    derived later by matching the reason text on each stored explanation, which would be
-    rule 92's coupling: that string is operator copy and will be reworded.
+    """How many items this scan found had watch history it could no longer read
+    (``services.watch_evidence``). Counted at scan time and stored, rather than derived
+    later by matching the reason text on each stored explanation, which would be rule 92's
+    coupling: that string is operator copy and will be reworded.
+
+    **What was measured, never what was decided.** Such an item is normally held -- three
+    gates block on the ``Unknown`` this produces -- but the operator can switch each of them
+    off, and nothing here consults the verdict, so copy calling this items held back or kept
+    asserts a protection the number is not computed from (rule 144).
 
     ``NULL`` means "not recorded", which is every snapshot taken before this column
     existed -- read it as unknown, never as zero."""

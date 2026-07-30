@@ -750,10 +750,15 @@ export interface LeavingSoonResult {
 export interface WatchEvidence {
   /** How many titles Reaper holds a watch record for. */
   titles: number;
-  /** How many items the LAST scan held back because their plays stopped being readable.
+  /** How many items the LAST scan found had plays it could no longer read.
    *  `null` when no scan has recorded it, either because none has run or because the newest
    *  one predates the count. Render that as "not recorded", never as zero: a scan that did
-   *  not count is not a scan that counted none. */
+   *  not count is not a scan that counted none.
+   *
+   *  **Do not render this as items held back or kept.** It counts what was measured, not what
+   *  was decided, and the hold it usually causes comes from three gates the operator can each
+   *  switch off. "Held back" is also this app's phrase for an item with no readable size. See
+   *  `watchEvidenceStatus` in `PlexPanel.tsx`, which is the one place this number is worded. */
   held_back: number | null;
 }
 

@@ -65,21 +65,33 @@ function seedManual(uri: string): { host: string; port: string; ssl: boolean } {
   }
 }
 
-/** The watch-record status line: what Reaper holds, and whether it is holding anything back.
+/** The watch-record status line: what Reaper holds, and what the last scan could not read.
  *
- *  `held_back === null` is "no scan has recorded it", which is NOT zero, so it says nothing
- *  about held-back items rather than claiming none (rule 93). Zero is a real answer and is
- *  reported plainly, because "none right now" is exactly what tells an operator to leave this
- *  control alone. */
+ *  `held_back === null` is "no scan has recorded it", which is NOT zero, so it says nothing at
+ *  all rather than claiming none (rule 93). Zero is a real answer and is reported plainly,
+ *  because "none" is exactly what tells an operator to leave this control alone.
+ *
+ *  **It reports what was COUNTED, never what was decided.** The stored number is items whose
+ *  plays stopped being readable; nothing consults the verdict. Saying they were "held back" or
+ *  "kept" would assert a protection this figure is not computed from: the hold comes from three
+ *  gates the operator can each switch off, and with all three off the item is condemned exactly
+ *  as before while this line still counted it (rule 144).
+ *
+ *  Nor "held back" as a phrase, whatever it claimed: this app has already bound that to an item
+ *  with no readable size, in the planner and on four docs pages, where the repair is a policy
+ *  allowance. Reusing it would send the operator there instead of to Tautulli.
+ *
+ *  It names the LAST SCAN rather than "right now" because that is where the number comes from:
+ *  it does not move until the next scan runs, which is also why the reset leaves it standing. */
 function watchEvidenceStatus(evidence: WatchEvidence): string {
   const titles = evidence.titles === 1 ? "1 title" : `${evidence.titles.toLocaleString()} titles`;
   if (evidence.held_back === null) return `Holding a record for ${titles}.`;
   if (evidence.held_back === 0) {
-    return `Holding a record for ${titles}. Nothing is held back right now.`;
+    return `Holding a record for ${titles}. The last scan found no unreadable plays.`;
   }
-  const held =
-    evidence.held_back === 1 ? "1 item is" : `${evidence.held_back.toLocaleString()} items are`;
-  return `Holding a record for ${titles}. ${held} held back right now.`;
+  const items =
+    evidence.held_back === 1 ? "1 item" : `${evidence.held_back.toLocaleString()} items`;
+  return `Holding a record for ${titles}. The last scan couldn't read the plays for ${items}.`;
 }
 
 export function PlexPanel({
@@ -979,10 +991,16 @@ export function PlexPanel({
                   </div>
                 </div>
                 <div className="set-row set-status">
+                  {/* Says when it takes effect, because nothing on any surface moves until the
+                      next scan: the record is gone, but the stored candidates and their facts
+                      are frozen snapshot data. Without the second sentence an operator reads
+                      the unchanged queue as "that did not work" and reaches for the policy
+                      next, which does cost files. Same clause as the restore notice and the
+                      shelf hint (rule 72). */}
                   {forgotten !== null
                     ? `Forgotten for ${forgotten.toLocaleString()} ${
                         forgotten === 1 ? "title" : "titles"
-                      }.`
+                      }. The next scan uses what Plex holds now.`
                     : watchEvidenceStatus(watchEvidence.data)}
                 </div>
               </div>

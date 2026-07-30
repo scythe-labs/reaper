@@ -37,10 +37,14 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   trusted_proxies: [],
 };
 
-/** No watch record held, and the last scan held nothing back: the state a fresh install
- *  is in, and the one that renders the Plex panel's watch-history group at rest. Picked so
- *  a tree that was silently rendering the failed read keeps rendering the same thing. */
-export const DEFAULT_WATCH_EVIDENCE: WatchEvidence = { titles: 0, held_back: 0 };
+/** No watch record held, and no scan has counted: the state a fresh install is in, and the
+ *  one that renders the Plex panel's watch-history group at rest.
+ *
+ *  `held_back` is `null`, not `0`, because that is what the route returns with no snapshot
+ *  rows. A fixture stating `0` here would be the one shape a fresh database cannot produce,
+ *  and every test that does not care about this read would render the "counted none" sentence
+ *  instead of the "not recorded" one. */
+export const DEFAULT_WATCH_EVIDENCE: WatchEvidence = { titles: 0, held_back: null };
 
 /** Nothing running -- the shape `api.scanStatus` returns between scans. */
 export const IDLE_SCAN: ScanStatus = {

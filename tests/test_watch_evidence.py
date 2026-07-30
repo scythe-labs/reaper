@@ -346,6 +346,72 @@ class TestTheStartFreshRoute:
         assert client.post("/api/settings/watch-evidence/reset").json() == {"forgotten": 0}
 
 
+def _insert_snapshot(client: TestClient, *, blind: int | None) -> None:
+    """One snapshot row with a given ``watch_blind_items``. Raw SQL, like the class above.
+
+    ``UtcTimestamp`` stores epoch seconds, so the two timestamps are integers here.
+    """
+    engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO snapshot (created_at, policy_hash, scoring_hash, horizon_at, "
+                "item_count, degraded, watch_blind_items) "
+                "VALUES (1, 'h', 's', 1, 1, 0, :blind)"
+            ),
+            {"blind": blind},
+        )
+    engine.dispose()
+
+
+class TestTheRouteThatSaysWhetherAnythingIsHeldBack:
+    """The number that decides whether an operator presses the discard, so the three states
+    are pinned separately. ``None`` is "no scan has counted", which is NOT zero: collapsing it
+    would print an affirmative "nothing is being held back" about a scan that never looked
+    (rule 93), on the one surface that talks the operator into discarding protection evidence.
+    """
+
+    def test_a_fresh_install_reports_nothing_recorded(self, client: TestClient) -> None:
+        # No snapshot at all: the honest answer is null, and this is the shape a fresh
+        # install actually returns, which is what the frontend fixture must state.
+        assert client.get("/api/settings/watch-evidence").json() == {
+            "titles": 0,
+            "held_back": None,
+        }
+
+    def test_a_snapshot_predating_the_count_stays_unknown(self, client: TestClient) -> None:
+        # An existing database upgraded into this feature: the column is NULL because that
+        # scan could not have counted, not because it counted none.
+        _insert_snapshot(client, blind=None)
+        assert client.get("/api/settings/watch-evidence").json()["held_back"] is None
+
+    def test_a_scan_that_counted_none_reports_zero(self, client: TestClient) -> None:
+        # The other side of the same coin: zero is a real answer and must survive as zero,
+        # because "none right now" is what tells the operator to leave the control alone.
+        _insert_snapshot(client, blind=0)
+        assert client.get("/api/settings/watch-evidence").json()["held_back"] == 0
+
+    def test_it_answers_from_the_latest_scan_not_the_first(self, client: TestClient) -> None:
+        # Non-zero behind, zero in front, so a query that read the wrong end of the table
+        # would return 4 here and could not be told from a correct one by the rows above.
+        _insert_snapshot(client, blind=4)
+        _insert_snapshot(client, blind=0)
+        assert client.get("/api/settings/watch-evidence").json()["held_back"] == 0
+
+    def test_it_counts_the_titles_holding_a_record(self, client: TestClient) -> None:
+        engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO watch_high_water "
+                    "(media_key, watchers_all_time, last_played_at, updated_at) "
+                    "VALUES ('radarr:1:5', 3, NULL, 1)"
+                )
+            )
+        engine.dispose()
+        assert client.get("/api/settings/watch-evidence").json()["titles"] == 1
+
+
 class TestTheMovieLaneReportsUnknownNotZero:
     def test_a_flagged_movie_has_unknown_watchers(self) -> None:
         facts = _movie_facts(blind=watch_evidence.BLIND_REASON)

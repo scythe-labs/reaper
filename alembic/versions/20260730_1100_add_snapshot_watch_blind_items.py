@@ -2,8 +2,12 @@
 """add snapshot.watch_blind_items
 
 Settings -> Plex offers to discard Reaper's recorded watch evidence, and the one number that
-tells an operator whether they need to is how many items the last scan actually held back for
-that reason. This column is that count, written by the scan.
+tells an operator whether they need to is how many items the last scan found had plays it could
+no longer read. This column is that count, written by the scan.
+
+It counts what was measured, not what was decided. Such an item is normally held, but by three
+gates the operator can each switch off, and nothing here consults the verdict, so no copy
+anywhere may call this figure items held back or kept (rule 144).
 
 Counted at scan time rather than derived later on purpose. The alternative is to read each
 stored explanation back and match the reason text, which is exactly rule 92's coupling: that
