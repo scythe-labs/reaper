@@ -55,7 +55,7 @@ import {
   type PresetCaps,
   type PresetId,
 } from "./policyPresets";
-import { Outcome, StaleNotice } from "./PolicySimulator";
+import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { Switch } from "./Switch";
@@ -1013,9 +1013,14 @@ export function PolicyEditor({
       queryClient.setQueryData(["scanStatus"], started);
       // The press swaps the notice for a progress bar, which is a visual change and nothing else:
       // the failure path speaks (`Notice` owns `role="alert"`) and the success path did not, so a
-      // scan that started and one that did nothing sounded alike (#173). The same sentence the
-      // heading now shows, since a reader lands on that heading in the next breath (rule 144).
-      announce("Rescanning to apply your changes.");
+      // scan that started and one that did nothing sounded alike (#173). Both sentences come from
+      // the panel that also shows them, since a reader lands on that heading in the next breath
+      // and one fact written in two files drifts (rule 144).
+      //
+      // It branches because the two cases are not the same news. When a scan was already running,
+      // the bar the operator is now watching belongs to a scan that started BEFORE they saved, so
+      // "rescanning to apply your changes" would be wrong about the one thing it claims (#177).
+      announce(started.followup_queued ? RESCAN_QUEUED_LEAD : `${RESCAN_HEADING}.`);
     },
   });
 

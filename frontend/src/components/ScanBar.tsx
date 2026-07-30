@@ -12,6 +12,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { announce } from "../announce";
 import { api, type ScheduledJob, type Snapshot } from "../api";
 import { bytes, count, totalBytes } from "../format";
 import { JobStatus, useJobFlash } from "./JobStatus";
@@ -34,6 +35,15 @@ export const PHASE_LABELS: Record<string, string> = {
 export function phaseLabel(phase: string): string {
   return PHASE_LABELS[phase] ?? phase;
 }
+
+/** What the wait is called: the progress bar's name, and the lead of the sentence said when a
+ *  scan starts. One string for both (rule 144). */
+const SCANNING_LABEL = "Scanning your library";
+
+/** The line under the bar, shown and said. For an operation that can run for many minutes, the
+ *  fact that walking away does not cancel it is the most useful thing an operator can be told,
+ *  and it was on screen only. */
+const KEEPS_RUNNING = "You can leave this page; it keeps running.";
 
 /** What the totals did between the scan that just finished and the one before it.
  *
@@ -139,8 +149,16 @@ export function ScanRow({
   // or the button appears to do nothing at all.
   const start = useMutation({
     mutationFn: () => api.startScan(),
-    // Seed the cache with the returned status so polling begins immediately.
-    onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
+    onSuccess: (started) => {
+      // Seed the cache with the returned status so polling begins immediately.
+      queryClient.setQueryData(["scanStatus"], started);
+      // The press disables its own button and swaps the schedule line for a progress bar, both
+      // of them visual. Focus is at `<body>` from the disable, the bar announces nothing on its
+      // own, and the next thing said is the finish -- which for a library scan is minutes away
+      // (#177). Said at `onSuccess`, so it reports a scan that actually started rather than one
+      // still being asked for (rule 85); a start that fails speaks through the `Notice` below.
+      announce(`${SCANNING_LABEL}. ${KEEPS_RUNNING}`);
+    },
   });
 
   // The server hands us a monotonic 0-100 that rises smoothly across the scan's phases.
@@ -217,14 +235,14 @@ export function ScanRow({
             <div
               className="bar"
               role="progressbar"
-              aria-label="Scanning your library"
+              aria-label={SCANNING_LABEL}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={pct ?? 0}
             >
               <div className="bar-fill" style={{ width: `${pct ?? 0}%` }} />
             </div>
-            <div className="jobrow-sched">You can leave this page; it keeps running.</div>
+            <div className="jobrow-sched">{KEEPS_RUNNING}</div>
           </>
         ) : (
           <div className="jobrow-sched">{scheduleText}</div>

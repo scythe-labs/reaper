@@ -845,7 +845,7 @@ function Dashboard({ user }: { user: AuthUser }) {
   // poll, for the same reason the finished-reap refresh above is here: a scan started from
   // the Reap page, the scheduler or another device must refresh the screen the operator is
   // on, not only the one screen that happens to mount the scan bar.
-  useScanSettled(scanStatus?.running ?? false);
+  useScanSettled(scanStatus?.running ?? false, scanStatus?.error ?? null);
 
   const { data: detail, isError: detailError } = useQuery({
     queryKey: ["candidate", selectedId],

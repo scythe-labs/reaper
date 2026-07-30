@@ -25,10 +25,14 @@ function harness() {
   // silence. The app mounts it above every route, so this is the shipped arrangement.
   const wrapper = ({ children }: { children: ReactNode }) =>
     createElement(QueryClientProvider, { client }, createElement(Announcer), children);
-  const view = renderHook(({ scanning }) => useScanSettled(scanning), {
-    initialProps: { scanning: false },
-    wrapper,
-  });
+  const view = renderHook(
+    ({ scanning, error }: { scanning: boolean; error?: string | null }) =>
+      useScanSettled(scanning, error),
+    {
+      initialProps: { scanning: false } as { scanning: boolean; error?: string | null },
+      wrapper,
+    },
+  );
   return { view, invalidated };
 }
 
@@ -99,6 +103,36 @@ describe("what a background scan tells an operator using a screen reader", () =>
     harness();
 
     expect(spoken()).toBe("");
+  });
+
+  it("says a crashed scan stopped, instead of reporting numbers it did not update", () => {
+    // `api/scan.py` clears `running` inside a `finally`, so a scan that crashed arrives at this
+    // exact edge carrying its message. The sentence above then told the operator a scan had
+    // finished and the page had been updated, when nothing had been: no snapshot is written by
+    // a run that crashed. This hook is the ONLY voice on every page except the one mounting the
+    // scan bar, so there was nothing else to correct it (#177).
+    const { view } = harness();
+
+    view.rerender({ scanning: true });
+    view.rerender({ scanning: false, error: "Sonarr timed out" });
+
+    expect(spoken()).toContain("stopped before it finished");
+    // Named outright rather than left to the sentence above: the two branches must not be able
+    // to converge on wording that claims an update (rule 118). "finished" alone cannot
+    // discriminate them -- the failure sentence contains the word too.
+    expect(spoken()).not.toContain("have been updated");
+  });
+
+  it("still refreshes the caches when a scan crashes", () => {
+    // A run that stopped somewhere unknown is exactly when a stale number on screen is worst,
+    // and a refetch that comes back unchanged costs nothing. The branch is the sentence, not
+    // the refresh.
+    const { view, invalidated } = harness();
+
+    view.rerender({ scanning: true });
+    view.rerender({ scanning: false, error: "Sonarr timed out" });
+
+    expect(invalidated).toEqual(SCAN_SETTLED_KEYS.map((k) => JSON.stringify(k)));
   });
 
   it("names no count, because the refetches it just triggered have not landed", () => {

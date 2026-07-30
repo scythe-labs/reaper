@@ -153,6 +153,57 @@ describe("the first scan finishing", () => {
     }
   });
 
+  it("says a crashed first scan stopped, rather than that it finished", async () => {
+    // `api/scan.py` clears `running` in a `finally`, so a scan that crashed reaches the same
+    // running -> not-running edge a successful one does. The announcement was unconditional, so
+    // it told a new operator their library had been scanned while the panel behind it fell back
+    // to "Ready to scan" with an error notice beside it -- the sentence and the screen
+    // disagreeing about the same event (#177, rule 72 with `useScanSettled`).
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      apiMock.setupStatus.mockResolvedValue(READY);
+      apiMock.scanStatus.mockResolvedValue(RUNNING);
+      renderWizard();
+      expect(await screen.findByText(/your first scan is running/i)).toBeInTheDocument();
+
+      // The scan dies. `running` goes false carrying the reason, and no snapshot was written,
+      // so `has_scanned` stays false.
+      apiMock.scanStatus.mockResolvedValue({
+        ...IDLE,
+        phase: "error",
+        error: "Radarr refused the connection",
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(announceSpy.mock.calls).toEqual([
+        ["Your first scan stopped before it finished. You can start it again."],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says a scan started, because the press swaps the panel and nothing else says so", async () => {
+    // "Ready to scan" and its button become a spinner, a heading and a paragraph. That is the
+    // whole signal, it is visual, and the copy itself warns the wait "can take a while" -- so
+    // the next thing an operator using a reader would have heard was the finish (#177).
+    const person = userEvent.setup();
+    apiMock.setupStatus.mockResolvedValue(READY);
+    apiMock.scanStatus.mockResolvedValue(IDLE);
+    apiMock.startScan.mockResolvedValue(RUNNING);
+    renderWizard();
+
+    const run = await screen.findByRole("button", { name: /run first scan/i });
+    await person.click(run);
+
+    expect(announceSpy.mock.calls).toEqual([
+      ["Your first scan is running. You don't have to wait here."],
+    ]);
+  });
+
   it("stays quiet on a panel that mounts already-scanned", async () => {
     // The edge trigger's other half: arriving at a finished scan is not news, and a wizard
     // re-rendered by any of its sibling panels must not re-announce a scan that ended before

@@ -53,11 +53,21 @@ export const SCAN_SETTLED_KEYS: string[][] = [
  *  invalidation triggers an async refetch and leaves the cached data in place meanwhile, so
  *  a synchronous `getQueryData` in the same tick still sees the old snapshot whichever
  *  effect ran first. */
-export function useScanSettled(scanning: boolean): void {
+export function useScanSettled(scanning: boolean, error: string | null = null): void {
   const queryClient = useQueryClient();
   const wasScanning = useRef(false);
+  // Read at the transition, never as a dependency: `error` arrives in the same poll that turns
+  // `running` off (api/scan.py sets both, the message before `running = False` in its `finally`),
+  // and a later change to it must not re-fire the effect. `useJobFlash` reads its result through
+  // a ref for the same reason.
+  const latestError = useRef(error);
+  latestError.current = error;
   useEffect(() => {
     if (wasScanning.current && !scanning) {
+      // Invalidated on both branches. A crashed scan writes no snapshot, so these refetches are
+      // expected to come back unchanged -- but "expected" is not "guaranteed" for a run that
+      // stopped somewhere unknown, and a refetch showing current truth is never wrong, where
+      // skipping one can leave a stale number on screen.
       for (const queryKey of SCAN_SETTLED_KEYS) void queryClient.invalidateQueries({ queryKey });
       // Thirteen caches go stale on this line, which is most of the numbers in the app moving at
       // once -- and it can be triggered by the scheduler, by another device, or by another tab, so
@@ -69,7 +79,19 @@ export function useScanSettled(scanning: boolean): void {
       // said here would be the PREVIOUS scan's (rule 85). The review queue's own nudge and toast
       // speak separately and say something narrower, which is right: this is the shell, and it is
       // the only voice on every other page.
-      announce("A scan finished. The numbers on this page have been updated.");
+      //
+      // And being the only voice is why it has to branch. `api/scan.py` clears `running` in a
+      // `finally`, so a scan that CRASHED reaches this same edge, where the sentence above then
+      // reported a finish and an update that never happened -- on every page except the one
+      // mounting the scan bar, which is the only surface rendering the error. `ScanBar` already
+      // withholds its own "Finished" chip on `status.error`; this is that guard at its sibling
+      // (rule 72). A crashed scan writes no snapshot, which is what lets the second sentence say
+      // the numbers are unchanged rather than only declining to claim they moved.
+      announce(
+        latestError.current === null
+          ? "A scan finished. The numbers on this page have been updated."
+          : "A scan stopped before it finished. The numbers on this page haven't changed.",
+      );
     }
     wasScanning.current = scanning;
   }, [scanning, queryClient]);

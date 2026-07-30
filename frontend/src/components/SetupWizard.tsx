@@ -43,6 +43,10 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   });
   const scanning = scanState?.running ?? false;
   const wasScanning = useRef(false);
+  // Read at the transition rather than depended on: the message lands in the same poll that
+  // turns `running` off, and a later change to it must not re-fire the effect.
+  const latestError = useRef(scanState?.error ?? null);
+  latestError.current = scanState?.error ?? null;
   useEffect(() => {
     if (wasScanning.current && !scanning) {
       void queryClient.invalidateQueries();
@@ -53,7 +57,17 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
       // scan they were told could take a while had finished, short of re-reading the page on
       // a guess (#177). Said at the transition, not on every render, so a panel that mounts
       // already-scanned stays quiet.
-      announce("Your first scan finished. Reaper has scanned your library.");
+      //
+      // It branches for the same reason `useScanSettled` does, and this is its sibling (rule
+      // 72): `api/scan.py` clears `running` in a `finally`, so a scan that crashed arrives at
+      // this exact edge. The panel behind it does NOT turn into "You're all set" then -- it
+      // falls back to "Ready to scan" with an error notice beside it -- so announcing a finish
+      // here also contradicted the screen it was describing.
+      announce(
+        latestError.current === null
+          ? "Your first scan finished. Reaper has scanned your library."
+          : "Your first scan stopped before it finished. You can start it again.",
+      );
     }
     wasScanning.current = scanning;
   }, [scanning, queryClient]);
@@ -70,7 +84,15 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   // (a service just removed, the server restarting) must say so, not silently do nothing.
   const firstScan = useMutation({
     mutationFn: () => api.startScan(),
-    onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
+    onSuccess: (started) => {
+      queryClient.setQueryData(["scanStatus"], started);
+      // The press replaces this whole half of the panel -- "Ready to scan" and its button
+      // become a spinner, a heading and a paragraph -- with nothing said, on the first screen
+      // a new operator ever meets and for an operation the copy itself warns "can take a
+      // while" (#177). Same edge as `ScanBar`'s start, and the wording carries the same
+      // permission to walk away, because that is the useful part of a wait this long.
+      announce("Your first scan is running. You don't have to wait here.");
+    },
   });
 
   // Still waiting and couldn't-read are different states, and neither may trap the owner:

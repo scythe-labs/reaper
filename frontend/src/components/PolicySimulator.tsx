@@ -45,6 +45,20 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
   );
 }
 
+/** The heading this panel shows while a rescan runs, and the sentence the app says when one
+ *  starts. One string, because a reader lands on that heading in the next breath and two
+ *  copies of one fact drift (rule 144); `PolicyEditor` announces it from here. */
+export const RESCAN_HEADING = "Rescanning to apply your changes";
+
+/** Said and shown instead when the rescan cannot carry the changes yet.
+ *
+ *  This is the one thing about the wait an operator cannot see: the bar in front of them
+ *  belongs to a scan that started BEFORE they saved, so it is scoring the old policy. Saying
+ *  `RESCAN_HEADING` here would be a sentence that is wrong about the very thing it describes,
+ *  which is why the announcement branches rather than settling for one string. */
+export const RESCAN_QUEUED_LEAD =
+  "A scan was already running, so your changes go into a second scan that starts right after it.";
+
 /** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
  *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
  *  you the one button that fixes it. A start that fails says so right here, or the button
@@ -78,13 +92,13 @@ export function StaleNotice({
   return (
     <div className="sim sim-info">
       <h3 ref={afterStart.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
-        {scanning ? "Rescanning to apply your changes" : "Needs a fresh scan"}
+        {scanning ? RESCAN_HEADING : "Needs a fresh scan"}
       </h3>
       {scanning ? (
         <>
           <p>
             {followupQueued
-              ? "A scan was already running, so your changes go into a second scan that starts right after it. You can leave this page; the numbers here refresh when everything finishes."
+              ? `${RESCAN_QUEUED_LEAD} You can leave this page; the numbers here refresh when everything finishes.`
               : "Scoring your library under the new policy. You can leave this page; it keeps running, and the numbers here refresh when it finishes."}
           </p>
           <p className="muted">
@@ -96,7 +110,7 @@ export function StaleNotice({
           <div
             className="bar"
             role="progressbar"
-            aria-label="Rescanning to apply your changes"
+            aria-label={RESCAN_HEADING}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
