@@ -1037,11 +1037,14 @@ export function PlexPanel({
                         Set an admin password first, in Settings → Security.
                       </span>
                     ) : forgetting ? (
-                      /* The same form as arming deletion, down to the class: one password box,
-                         Confirm, Cancel. The placeholder is a hint that disappears on the first
-                         keystroke, so the field is named by its label either way. */
+                      /* The same form as arming deletion: one password box, Confirm, Cancel.
+                         The placeholder is a hint that disappears on the first keystroke, so
+                         the field is named by its label either way.
+                         `pw-inline` because this one sits in a settings ROW, not the Security
+                         panel's field pane: `.pw-form` alone is a column, which put the box and
+                         BOTH buttons at full width on a phone. */
                       <form
-                        className="pw-form"
+                        className="pw-form pw-inline"
                         onSubmit={(e) => {
                           e.preventDefault();
                           forgetWatchEvidence.mutate(forgetPassword);
@@ -1057,9 +1060,14 @@ export function PlexPanel({
                           autoComplete="current-password"
                           autoFocus
                         />
+                        {/* `danger` and a plain button, the pair this row already had before the
+                            password box joined them. Not `sm`, which the arming form spells but
+                            no stylesheet defines: an inert class reads as a size that was chosen
+                            (rule 18). Left in place there rather than swept, since removing a
+                            no-op moves no pixel. */}
                         <button
                           type="submit"
-                          className="danger sm"
+                          className="danger"
                           disabled={!forgetPassword || forgetWatchEvidence.isPending}
                         >
                           Confirm forget
@@ -1068,7 +1076,6 @@ export function PlexPanel({
                             form's own Cancel (S-5). */}
                         <button
                           type="button"
-                          className="ghost sm"
                           disabled={forgetWatchEvidence.isPending}
                           onClick={() => {
                             setForgetting(false);
