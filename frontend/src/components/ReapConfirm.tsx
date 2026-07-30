@@ -268,8 +268,8 @@ export function ReapConfirm({
     <ModalShell title={`Reap ${souls(run.item_count)}`} onClose={onClose} className="reap-confirm">
       <p className="reap-confirm-phrase">{run.confirmation_phrase}</p>
       <p className="muted small">
-        {souls(run.item_count)} · {bytes(run.total_bytes)} · smallest first, and the first is a
-        test: if it doesn't go exactly as planned, the run stops. This removes the files through
+        {souls(run.item_count)}, {bytes(run.total_bytes)}, smallest first, and the first is a test:
+        if it doesn't go exactly as planned, the run stops. This removes the files through
         Sonarr/Radarr and adds an import exclusion so they won't silently re-download.
       </p>
 
@@ -398,7 +398,7 @@ export function ReapConfirm({
               </span>
               <span className="prog-note">
                 {bytes(status.deleted_bytes)} freed
-                {status.skipped > 0 && ` · ${count(status.skipped)} spared`}
+                {status.skipped > 0 && `, ${count(status.skipped)} spared`}
               </span>
             </div>
             {/* A bare `<div>` with an inline width is a picture of a number and nothing else.
@@ -468,8 +468,8 @@ export function ReapConfirm({
                   read as the whole story. */}
               {bytes(report.deleted_bytes)} freed
               {report.deleted_unmeasured > 0 &&
-                ` · ${count(report.deleted_unmeasured)} of unknown size`}
-              {report.skipped > 0 && ` · ${count(report.skipped)} spared at the last moment`}
+                `, ${count(report.deleted_unmeasured)} of unknown size`}
+              {report.skipped > 0 && `, ${count(report.skipped)} spared at the last moment`}
             </span>
           </div>
           {report.state === "aborted" && (

@@ -48,7 +48,7 @@ function season(
   return {
     id,
     media_key: `sonarr:5:42:${n}`,
-    title: `Example Show · Season ${n}`,
+    title: `Example Show, Season ${n}`,
     media_type: "season",
     size_bytes: 1024 ** 3,
     verdict,
@@ -116,7 +116,7 @@ function season(
 
 const limboSeason = season(3, 3, "abstain", 82, {
   tone: "look",
-  text: "Needs a look · watched more than a season your rule keeps",
+  text: "Needs a look, watched more than a season your rule keeps",
 });
 
 function renderQueue(
@@ -160,7 +160,7 @@ describe("the show card", () => {
   it("wears its one status chip and the whole-show strip", async () => {
     renderQueue();
     expect(
-      await screen.findByText("Needs a look · watched more than a season your rule keeps"),
+      await screen.findByText("Needs a look, watched more than a season your rule keeps"),
     ).toBeInTheDocument();
     // The strip marks every season across every lane, not just this tab's.
     expect(screen.getByTitle("Season 1: kept. Open for its full reasoning.")).toBeInTheDocument();
@@ -227,15 +227,52 @@ describe("the all-seasons list", () => {
       links: {} as Group["links"],
       show_status: null,
       seasons: [
-        season(1, 1, "protect", 34, { tone: "kept", text: "Kept · someone is partway through" }),
+        season(1, 1, "protect", 34, { tone: "kept", text: "Kept, someone is partway through" }),
         season(2, 2, "condemn", 88, null),
         limboSeason,
       ],
     } as Group);
     const { container } = renderQueue();
     await expandSeasons();
-    await screen.findByText("Kept · someone is partway through");
+    await screen.findByText("Kept, someone is partway through");
     await expectNoA11yViolations(container);
+  });
+
+  it("strips the show's name from a season row however old the stored title is", async () => {
+    // A title is FROZEN into the snapshot that scanned it, so a library scanned before the
+    // separator changed still holds the older shape, and will until someone rescans. Every
+    // other fixture in this file now uses the comma `season_scan.py` writes today, which left
+    // both legacy branches of `seasonName` with no cover at all -- one refactor from silently
+    // gone (rule 118). What their loss looks like is not subtle: the show's name doubled on
+    // every season row of every older library, on the rows a per-season reap is chosen from.
+    const titled = (n: number, title: string) => ({ ...season(n, n, "condemn", 88, null), title });
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:5:42",
+      title: "Example Show",
+      year: 2012,
+      poster_url: null,
+      summary: null,
+      size_bytes: 3 * 1024 ** 3,
+      unknown_size_seasons: 0,
+      reason: null,
+      library: null,
+      chip: null,
+      show_override: null,
+      show_spare_expires_at: null,
+      links: {} as Group["links"],
+      show_status: null,
+      seasons: [
+        titled(1, "Example Show, Season 1"), // what a scan writes now
+        titled(2, "Example Show · Season 2"), // before the screen-reader pass
+        titled(3, "Example Show — Season 3"), // older still
+      ],
+    } as Group);
+    renderQueue();
+    await expandSeasons();
+
+    for (const n of [1, 2, 3]) {
+      expect(await screen.findByText(`Season ${n}`)).toBeInTheDocument();
+    }
   });
 
   it("says it failed rather than sitting silent under an open chevron", async () => {
@@ -262,7 +299,7 @@ describe("the all-seasons list", () => {
       links: {} as Group["links"],
       show_status: null,
       seasons: [
-        season(1, 1, "protect", 34, { tone: "kept", text: "Kept · someone is partway through" }),
+        season(1, 1, "protect", 34, { tone: "kept", text: "Kept, someone is partway through" }),
         season(2, 2, "condemn", 88, null),
         limboSeason,
       ],
@@ -273,7 +310,7 @@ describe("the all-seasons list", () => {
 
     // Every lane is present: the kept season's chip, the condemned row's constant
     // mark, and the limbo row (whose chip also sits on the card head).
-    expect(await screen.findByText("Kept · someone is partway through")).toBeInTheDocument();
+    expect(await screen.findByText("Kept, someone is partway through")).toBeInTheDocument();
     expect(screen.getByText("Would be removed")).toBeInTheDocument();
 
     // Every season is actable in place now, not just this tab's. Scope to the season list
@@ -294,7 +331,7 @@ describe("the all-seasons list", () => {
     // list's own `.status-chip` family -- exactly like ShowPanel's SeasonPill and the row's
     // other chips -- so a long "Reap requested" line ellipsizes in place instead (rule 51).
     const held: Candidate = {
-      ...season(3, 3, "protect", 90, { tone: "kept", text: "Kept · playing right now" }),
+      ...season(3, 3, "protect", 90, { tone: "kept", text: "Kept, playing right now" }),
       override: "reap",
       override_own: "reap",
       override_effective: false,
@@ -318,7 +355,7 @@ describe("the all-seasons list", () => {
     renderQueue();
     await expandSeasons();
 
-    const chip = await screen.findByText(/Reap requested · kept for now/);
+    const chip = await screen.findByText(/Reap requested, kept for now/);
     expect(chip.className).toContain("status-chip");
     expect(chip.className).toContain("status-reap-held");
     // NOT the non-clamping card family; a bare "chip" token here is the regression.
@@ -611,7 +648,7 @@ describe("what a screen reader hears on a season row", () => {
       links: {} as Group["links"],
       show_status: null,
       seasons: [
-        season(1, 1, "protect", 34, { tone: "kept", text: "Kept · someone is partway through" }),
+        season(1, 1, "protect", 34, { tone: "kept", text: "Kept, someone is partway through" }),
         season(2, 2, "condemn", 88, null),
         limboSeason,
       ],

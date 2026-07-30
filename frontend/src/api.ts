@@ -40,7 +40,7 @@ export interface Chip {
   tone: "kept" | "quiet" | "look";
   text: string;
   /** The same fact as `text`, worded as a lowercase clause that can follow "Reap
-   *  requested · kept for now:" -- or null when this chip names no reason a reap would
+   *  requested, kept for now:" -- or null when this chip names no reason a reap would
    *  be refused. Read it through `chipWhy`; never parse `text` to recover it. */
   why?: string | null;
 }
@@ -1386,7 +1386,7 @@ const del = <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE"
 export const api = {
   latestSnapshot: () => request<Snapshot>("/api/snapshots/latest"),
   /** One page of the review queue. The full filtered totals (count + bytes, before the page
-   *  window) ride along in response headers, so the queue can show "[redacted] items · [redacted]"
+   *  window) ride along in response headers, so the queue can show "[redacted] items, [redacted]"
    *  without loading them all. Paged because a library runs to thousands of protected titles. */
   candidates: async (
     verdict: Verdict,

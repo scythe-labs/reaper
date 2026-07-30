@@ -36,7 +36,7 @@ export function itemBytes(value: number | null): string {
  *  answer sees exactly what they saw before. */
 export function totalBytes(known: number, unknown: number): string {
   if (unknown === 0) return bytes(known);
-  return `${bytes(known)} · ${count(unknown)} ${unknown === 1 ? "size" : "sizes"} unknown`;
+  return `${bytes(known)}, ${count(unknown)} ${unknown === 1 ? "size" : "sizes"} unknown`;
 }
 
 export function count(value: number): string {

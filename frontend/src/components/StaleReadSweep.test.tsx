@@ -461,7 +461,7 @@ function showSeason(): Candidate {
   return {
     id: 3,
     media_key: "sonarr:5:42:3",
-    title: "Example Show · Season 3",
+    title: "Example Show, Season 3",
     media_type: "season",
     size_bytes: 1024 ** 3,
     verdict: "abstain",

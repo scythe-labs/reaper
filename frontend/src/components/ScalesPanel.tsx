@@ -70,7 +70,7 @@ function LimitChip({ label, line }: { label: string; line: QuotaLine }) {
         ) : (
           limitText(line)
         )}
-        {line.at_limit && " · at limit"}
+        {line.at_limit && ", at limit"}
       </span>
     </span>
   );

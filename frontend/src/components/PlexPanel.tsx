@@ -33,8 +33,8 @@ function connectionLabel(c: PlexResourceConnection): string {
   if (direct) {
     host = `${direct[1]}.${direct[2]}.${direct[3]}.${direct[4]}${direct[5] ?? ""}`;
   }
-  const secure = c.protocol === "https" ? " · secure" : "";
-  return `${kind} · ${host}${secure}`;
+  const secure = c.protocol === "https" ? ", secure" : "";
+  return `${kind}, ${host}${secure}`;
 }
 
 /** The address the Manual address row would save, or "" when it has no host to send. One
@@ -524,8 +524,8 @@ export function PlexPanel({
     if (!last) return "Not updated yet. It runs after every scan, or from the Jobs page.";
     const movies = `${count(last.movies)} movie${last.movies === 1 ? "" : "s"}`;
     const seasons = `${count(last.seasons)} season${last.seasons === 1 ? "" : "s"}`;
-    const wrote = last.applied ? "" : " · preview only, nothing was written in Plex";
-    return `Last updated ${since(last.at)} · ${movies} and ${seasons} on the shelves · next update after the next scan${wrote}`;
+    const wrote = last.applied ? "" : ", preview only, nothing was written in Plex";
+    return `Last updated ${since(last.at)}, ${movies} and ${seasons} on the shelves, next update after the next scan${wrote}`;
   })();
 
   // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
@@ -806,7 +806,7 @@ export function PlexPanel({
                     </option>
                   ))}
                   {!savedIsDiscovered && savedUri !== "" && (
-                    <option value={savedUri}>Manual · {savedUri}</option>
+                    <option value={savedUri}>Manual, {savedUri}</option>
                   )}
                   <option value={MANUAL_CONNECTION}>Manual address…</option>
                 </select>

@@ -162,7 +162,7 @@ export function ReapBreakdown({
         <span className="rb-meta">
           {!allowanceUnknown && (
             <>
-              <strong>{count(reapCount)}</strong> {reapCount === 1 ? "title" : "titles"} ·{" "}
+              <strong>{count(reapCount)}</strong> {reapCount === 1 ? "title" : "titles"},{" "}
             </>
           )}
           <strong>{bytes(data.will_reap_bytes)}</strong>
@@ -226,7 +226,7 @@ export function ReapBreakdown({
             </div>
           </div>
           <div className="rb-split">
-            {plural(movies, "movie", "movies")} · {plural(seasons, "TV season", "TV seasons")} ·
+            {plural(movies, "movie", "movies")}, {plural(seasons, "TV season", "TV seasons")},
             smallest first, test item first.
           </div>
 

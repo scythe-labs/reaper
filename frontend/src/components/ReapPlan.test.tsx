@@ -129,7 +129,7 @@ describe("ReapPlan staleness", () => {
       will_reap_unknown: 0,
       movies: 2,
       // Both `_unknown` shares are required, and omitting them is invisible: `ReapBreakdown`
-      // subtracts them from the totals beside it, so `undefined` rendered "NaN movies · NaN TV
+      // subtracts them from the totals beside it, so `undefined` rendered "NaN movies, NaN TV
       // seasons" behind ten passing tests. Rule 135, reached through the arrow the mock hands
       // React Query rather than through a missing method.
       movies_unknown: 0,

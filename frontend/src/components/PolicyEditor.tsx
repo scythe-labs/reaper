@@ -599,11 +599,11 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
   );
 }
 
-/** How the 100 points are split: "70 built in · 30 yours", or "all on built-in signals"
+/** How the 100 points are split: "70 built in, 30 yours", or "all on built-in signals"
  *  when the operator has written no removal rules. Both arguments are point totals, not
  *  rule counts, so the two numbers always add up to the total shown beside them. */
 function pointsSplit(builtIn: number, yours: number): string {
-  return yours > 0 ? `${builtIn} built in · ${yours} yours` : "all on built-in signals";
+  return yours > 0 ? `${builtIn} built in, ${yours} yours` : "all on built-in signals";
 }
 
 /** One signal: a plain-English label, its help, a slider, and the flat points it can add.
@@ -1891,7 +1891,7 @@ export function PolicyEditor({
         <p className="hash">
           {validation && (
             <>
-              {kind} policy <code>{validation.policy_hash.slice(0, 12)}</code> · saving does not arm
+              {kind} policy <code>{validation.policy_hash.slice(0, 12)}</code>, saving does not arm
               anything
             </>
           )}
@@ -2077,7 +2077,7 @@ export function PolicyEditor({
                 Unsaved changes:{" "}
                 {[dirty ? `${kind} policy` : null, paceDirty ? "pace and limits" : null]
                   .filter(Boolean)
-                  .join(" · ")}
+                  .join(", ")}
               </strong>
               <br />
               {/* What Save will ACTUALLY write, not what is merely dirty: a held-back policy

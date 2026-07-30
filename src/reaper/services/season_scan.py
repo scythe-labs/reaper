@@ -308,8 +308,8 @@ def season_media_key(instance_id: int, series_id: int, season_number: int) -> st
 
 def season_title(series_title: str, season_number: int) -> str:
     if season_number == SPECIALS_SEASON:
-        return f"{series_title} · Specials"
-    return f"{series_title} · Season {season_number}"
+        return f"{series_title}, Specials"
+    return f"{series_title}, Season {season_number}"
 
 
 def season_requester(

@@ -134,7 +134,7 @@ describe("ScalesPanel", () => {
       />,
     );
     expect(screen.getByText("1 per 14 days")).toBeInTheDocument();
-    expect(screen.getByText(/2 per 30 days · at limit/)).toBeInTheDocument();
+    expect(screen.getByText(/2 per 30 days, at limit/)).toBeInTheDocument();
   });
 
   it("says “per day” for a daily quota, not “per 1 days”", () => {

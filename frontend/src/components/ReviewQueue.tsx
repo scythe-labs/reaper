@@ -681,10 +681,19 @@ function SeasonExpander({
   );
 }
 
-/** "Show Title · Season 3" -> "Season 3". The second form strips the pre-middot
- *  separator still present in titles frozen into older snapshots. */
+/** "Show Title, Season 3" -> "Season 3".
+ *
+ *  Three separators, because a title is FROZEN into the snapshot that scanned it and a
+ *  database predates whichever form the current code writes. The comma is what
+ *  `season_scan.py` writes now; the middot is what it wrote until the screen-reader pass
+ *  (a middot is decoration a reader may voice as "middle dot" mid-sentence), and the dash
+ *  is older still. Dropping either older form would leave the show's name doubled on every
+ *  season row of every library scanned before the change, until a rescan. */
 function seasonName(title: string, showTitle: string): string {
-  return title.replace(`${showTitle} · `, "").replace(`${showTitle} — `, "");
+  return title
+    .replace(`${showTitle}, `, "")
+    .replace(`${showTitle} · `, "")
+    .replace(`${showTitle} — `, "");
 }
 
 /** Capitalize the first letter and end the clause as a sentence -- turns a lowercase "why"
@@ -1203,7 +1212,7 @@ const ShowCard = memo(function ShowCard({
   //     describes the set from BEFORE that decision and cannot catch up on its own.
   // The second case needs saying because `patchShowOverride` deliberately refetches nothing
   // (refetchType "none"): on a Sanctuary or Limbo show the rollup is a real 0, so reading it
-  // printed "0 of 5 would be removed · 0 B" under a "will be removed" chip for the rest of
+  // printed "0 of 5 would be removed, 0 B" under a "will be removed" chip for the rest of
   // the session. Refetching instead would fix every figure and re-bucket the show out from
   // under the operator mid-review, the one thing the in-place patch exists to prevent.
   //
@@ -1295,7 +1304,7 @@ const ShowCard = memo(function ShowCard({
             />
             <span>
               {isReapTab
-                ? `${condemnedCount} of ${totalSeasons} would be removed · ${totalBytes(condemnedBytes, condemnedUnknown)}`
+                ? `${condemnedCount} of ${totalSeasons} would be removed, ${totalBytes(condemnedBytes, condemnedUnknown)}`
                 : totalBytes(wholeShowBytes ?? fetchedSize, unknownSeasons)}
             </span>
             {/* Ended, or a status we couldn't read. A show that is still going wears
@@ -2435,12 +2444,12 @@ export function ReviewQueue({
               the same phrase says the opposite of what is true. */}
             <p className="queue-total">
               <strong>{count(totalItems)}</strong> {totalItems === 1 ? "item" : "items"}
-              {" · "}
+              {", "}
               <strong>{bytes(totalSize)}</strong>
               {verdict === "condemn" && " would be freed"}
               {totalUnknownSize > 0 && (
                 <>
-                  {" · "}
+                  {", "}
                   <strong>
                     {count(totalUnknownSize)} {totalUnknownSize === 1 ? "size" : "sizes"} unknown
                   </strong>
@@ -2507,7 +2516,7 @@ export function ReviewQueue({
                 "Tap or drag to pick"
               ) : selectedItems != null && selectedItems !== selected.size ? (
                 <>
-                  <strong>{selected.size}</strong> {selected.size === 1 ? "card" : "cards"} ·{" "}
+                  <strong>{selected.size}</strong> {selected.size === 1 ? "card" : "cards"},{" "}
                   <strong>{count(selectedItems)}</strong> {selectedItems === 1 ? "item" : "items"}
                 </>
               ) : (

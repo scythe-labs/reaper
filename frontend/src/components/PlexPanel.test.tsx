@@ -156,7 +156,7 @@ describe("the connection picker", () => {
     const connection = await usableConnectionSelect();
     // The typed address is its own option, and it is the one selected.
     expect(connection.value).toBe(TYPED);
-    expect(screen.getByRole("option", { name: `Manual · ${TYPED}` })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: `Manual, ${TYPED}` })).toBeInTheDocument();
 
     // "Manual address…" is a separate option, so picking it always fires a change.
     await user.selectOptions(connection, "__manual__");

@@ -349,7 +349,7 @@ class TestChip:
         )
         assert chip is not None
         assert chip.tone == "kept"
-        assert chip.text == "Kept · well rated: 6.8 on IMDb"
+        assert chip.text == "Kept, well rated: 6.8 on IMDb"
 
     def test_protect_with_nothing_fired_degrades_to_no_chip(self) -> None:
         """A stored row that claims protect but records no protection must not invent
@@ -425,7 +425,7 @@ class TestChip:
         )
         assert chip is not None
         assert chip.tone == "look"
-        assert chip.text == "Needs a look · watched more than a season your rule keeps"
+        assert chip.text == "Needs a look, watched more than a season your rule keeps"
 
     def test_an_unreadable_kept_season_claims_no_comparison(self) -> None:
         """The twin of the dormancy chip's fabricated play, one gate over.
@@ -453,7 +453,7 @@ class TestChip:
         assert chip is not None
         assert chip.tone == "look"
         assert "watched more than" not in chip.text
-        assert chip.text == "Needs a look · couldn't check who watched these seasons"
+        assert chip.text == "Needs a look, couldn't check who watched these seasons"
 
     def test_a_conflict_the_mirror_could_not_settle_shares_that_chip(self) -> None:
         """The third shape, and why that chip stopped naming the KEPT season.
@@ -481,7 +481,7 @@ class TestChip:
         assert chip is not None
         assert chip.tone == "look"
         assert "watched more than" not in chip.text
-        assert chip.text == "Needs a look · couldn't check who watched these seasons"
+        assert chip.text == "Needs a look, couldn't check who watched these seasons"
 
     def test_a_row_frozen_before_the_flag_names_neither_shape(self) -> None:
         """A stored row that predates ``defers_to_owner`` carries nothing that can tell a
@@ -504,7 +504,7 @@ class TestChip:
 
             assert chip is not None
             assert chip.tone == "look"
-            assert chip.text == "Needs a look · left for you to decide"
+            assert chip.text == "Needs a look, left for you to decide"
             assert chip.why == "a check on it couldn't be settled"
             # ...and the invitation the chip extends is one the engine honors.
             assert reap_override_verdict_decoded(legacy, score=82) == "condemn"
@@ -534,7 +534,7 @@ class TestChip:
         chip = _chip(_exp(82, unknown=[entry]), "abstain", 82)
 
         assert chip is not None
-        assert chip.text == "Needs a look · left for you to decide"
+        assert chip.text == "Needs a look, left for you to decide"
         assert "watched more than" not in chip.text
 
     @pytest.mark.parametrize("junk", ['"true"', '"false"', '"0"', "1", "0", "[]", "{}", "null"])
@@ -582,7 +582,7 @@ class TestChip:
         # And the chip beside it says the same thing about the same row.
         chip = _chip(exp, "abstain", 82)
         assert chip is not None
-        assert chip.text == "Needs a look · left for you to decide"
+        assert chip.text == "Needs a look, left for you to decide"
 
     @pytest.mark.parametrize("junk", ["70.5", '"abc"', "true", "[]", '{"a": 1}'])
     def test_an_illegible_threshold_costs_its_own_clause_and_nothing_else(self, junk: str) -> None:
@@ -788,7 +788,7 @@ class TestChip:
             60,
         )
         assert chip is not None
-        assert (chip.tone, chip.text) == ("look", "Needs a look · left for you to decide")
+        assert (chip.tone, chip.text) == ("look", "Needs a look, left for you to decide")
 
     def test_checks_that_could_not_run(self) -> None:
         chip = _chip(
@@ -915,7 +915,7 @@ class TestTheReasonLineAgreesWithTheChip:
 class TestChipWhy:
     """The clause a chip carries for the refused-reap sentence.
 
-    The frontend used to recover this by slicing "Kept · " off the chip text and looking
+    The frontend used to recover this by slicing "Kept, " off the chip text and looking
     the rest up in a transcribed copy of the strings above, so rewording one chip here
     silently dropped every held-reap explanation to a generic fallback -- and both sides
     of the contract were asserted from the same transcription, so nothing failed (H-1).
@@ -924,14 +924,14 @@ class TestChipWhy:
     """
 
     def test_a_fired_protection_says_the_same_words_without_the_lead(self) -> None:
-        """ "Kept · playing right now" reads "kept for now: playing right now"."""
+        """ "Kept, playing right now" reads "kept for now: playing right now"."""
         chip = _chip(
             _exp(90, fired=[{"gate": "streaming_now", "detail": "someone is watching"}]),
             "protect",
             90,
         )
         assert chip is not None
-        assert chip.text == f"Kept · {chip.why}"
+        assert chip.text == f"Kept, {chip.why}"
 
     @pytest.mark.parametrize(
         ("explanation", "verdict", "score", "why"),
@@ -1030,12 +1030,17 @@ class TestChipWhy:
     )
     def test_a_clause_reads_mid_sentence(self, explanation: str, verdict: str, score: int) -> None:
         """It follows a colon, so it starts lowercase and carries no chip furniture: no
-        capital lead, and no middot of its own to collide with the sentence's."""
+        capital lead, and none of the chip's own lead riding along inside the clause.
+
+        The furniture used to be a middot and this asserted the clause held none. The
+        separator is a comma now (#177), which made that assertion vacuous -- nothing
+        produces a middot any more, so it could not fail. It names the leads instead.
+        """
         chip = _chip(explanation, verdict, score)
         assert chip is not None
         assert chip.why is not None
         assert chip.why[0].islower()
-        assert "·" not in chip.why
+        assert not chip.why.startswith(("Kept,", "Needs a look,"))
 
 
 class TestSeasonNumber:
@@ -1081,7 +1086,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             return Candidate(
                 snapshot_id=snapshot.id,
                 media_key=f"sonarr:5:42:{number}",
-                title=f"Example Show · Season {number}",
+                title=f"Example Show, Season {number}",
                 media_type="season",
                 size_bytes=1_000_000_000 * number,
                 group_key="sonarr:5:42",
@@ -1165,7 +1170,7 @@ class TestCandidatesCarryTheGroupShape:
         assert row["season_number"] == 3
         assert row["chip"] == {
             "tone": "look",
-            "text": "Needs a look · watched more than a season your rule keeps",
+            "text": "Needs a look, watched more than a season your rule keeps",
             # The clause travels with the chip, so a held reap on this row can say why
             # without the frontend parsing the text back apart (H-1).
             "why": "watched more than a season your rule keeps",

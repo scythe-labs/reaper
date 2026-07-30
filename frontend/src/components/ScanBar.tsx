@@ -60,7 +60,7 @@ function scanDelta(
   }
   if (size !== 0) {
     const qualifier =
-      unknowns > 0 ? ` · ${count(unknowns)} ${unknowns === 1 ? "size" : "sizes"} unknown` : "";
+      unknowns > 0 ? `, ${count(unknowns)} ${unknowns === 1 ? "size" : "sizes"} unknown` : "";
     parts.push(`${bytes(Math.abs(size))} ${size > 0 ? "more" : "less"} to free${qualifier}`);
   }
   return `Compared with the scan before: ${parts.join(", ")}.`;
@@ -155,8 +155,8 @@ export function ScanRow({
 
   // The scan's live phase, shown in the shared status slot while it runs.
   const runLabel = status
-    ? `${phaseLabel(status.phase)}${status.detail ? ` · ${status.detail}` : ""}${
-        pct !== null ? ` · ${pct}%` : ""
+    ? `${phaseLabel(status.phase)}${status.detail ? `, ${status.detail}` : ""}${
+        pct !== null ? `, ${pct}%` : ""
       }`
     : "Scanning…";
   // A finished scan confirms itself in the same slot, then settles to the last-run line. A

@@ -284,7 +284,7 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
         <span className="reap-bar-text">
           <b>{errored ? "Reap failed." : status.phase === "aborted" ? "Stopped." : "Reaped."}</b>{" "}
           <span className="reap-bar-sub">
-            {souls(status.deleted_items)} removed · {bytes(status.deleted_bytes)} freed
+            {souls(status.deleted_items)} removed, {bytes(status.deleted_bytes)} freed
             {errored && status.error ? `. ${status.error}` : ""}
           </span>
         </span>
@@ -328,9 +328,9 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
         ) : (
           <>
             <b>
-              Reaping · {count(status.done)} of {count(status.total)}
-            </b>{" "}
-            <span className="reap-bar-sub">· {bytes(status.deleted_bytes)} freed</span>
+              Reaping, {count(status.done)} of {count(status.total)}
+            </b>
+            <span className="reap-bar-sub">, {bytes(status.deleted_bytes)} freed</span>
           </>
         )}
       </span>
@@ -445,11 +445,11 @@ export function ScanFreshness({
   }
   return (
     <p className="scan-freshness muted">
-      Last scanned {date(snapshot.created_at)} · {count(snapshot.item_count)} items
+      Last scanned {date(snapshot.created_at)}, {count(snapshot.item_count)} items
       {snapshot.degraded && (
         <span className="freshness-warn">
-          {" "}
-          · that scan came back incomplete, so Reaper won't act on it
+          {". "}
+          That scan came back incomplete, so Reaper won't act on it
         </span>
       )}
     </p>

@@ -87,7 +87,7 @@ describe("JobStatus resting states", () => {
     const { container } = render(
       <JobStatus
         running={true}
-        runningLabel="Reading watch history · 40%"
+        runningLabel="Reading watch history, 40%"
         lastRunAt={AT}
         lastOk={true}
         flash={null}
@@ -95,7 +95,7 @@ describe("JobStatus resting states", () => {
     );
     expect(container.querySelector(".spin")).not.toBeNull();
     expect(container.querySelector(".jobrow-run")?.textContent).toContain(
-      "Reading watch history · 40%",
+      "Reading watch history, 40%",
     );
   });
 });

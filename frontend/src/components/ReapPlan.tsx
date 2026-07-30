@@ -297,8 +297,8 @@ export function ReapPlan({
           <div className="plan-summary">
             <span className="confirm-phrase">{run.confirmation_phrase}</span>
             <span className="muted">
-              {souls(run.item_count)} · {bytes(run.total_bytes)} · smallest first, and the first is
-              a test: if it doesn't go exactly as planned, the run stops.
+              {souls(run.item_count)}, {bytes(run.total_bytes)}, smallest first, and the first is a
+              test: if it doesn't go exactly as planned, the run stops.
             </span>
             {/* The plan is smaller than the queue implied, and this is where the owner
                 finds out. Silence here reads as "that was everything". */}
@@ -403,8 +403,8 @@ export function ReapPlan({
                     #{r.id}
                   </button>{" "}
                   <span className="muted">
-                    {date(r.approved_at)} · {runState(r.state)}
-                    {open && " · open above"}
+                    {date(r.approved_at)}, {runState(r.state)}
+                    {open && ", open above"}
                   </span>
                 </li>
               );

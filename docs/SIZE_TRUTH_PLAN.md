@@ -459,9 +459,10 @@ number it cannot stand behind" (`schemas.py:539-542`).
   "one unreadable item in a sum makes the total low, not unknown" is exactly what this plan
   retires. After this change `itemBytes(0)` correctly renders `"0 B"` again.
 - Add `totalBytes(known: number, unknown: number)`: `bytes(known)` when `unknown === 0`,
-  otherwise the middot form **`"4.2 TiB · 3 sizes unknown"`**. Middots are the approved
-  separator (rule 21); there is no "at least" precedent in the UI, and the middot form fits
-  the nowrap size cells (`index.css:1188-1196`).
+  otherwise the comma form **`"4.2 TiB, 3 sizes unknown"`**. This said "middots are the
+  approved separator (rule 21)", which was true when it was written and is not now: a middot
+  is decoration a screen reader may voice mid-sentence, so rule 21 takes a comma (#177). There
+  is no "at least" precedent in the UI, and the comma form fits the nowrap size cells.
 
 **Every unknown count is suppressed at zero.** An operator with a fully healthy library must
 see no new pixels anywhere.
@@ -497,7 +498,7 @@ exactly the silent under-count being removed. Aggregate renders taking a count:
 
 `ScanBar.tsx:45` subtracts two totals whose unknown populations may differ. **Do not silently
 drop the delta** — a line the operator is used to must never vanish without saying why. Render
-it qualified: `"3.1 TiB less to free · 2 sizes unknown"`.
+it qualified: `"3.1 TiB less to free, 2 sizes unknown"`.
 
 When `run.held_back_unknown_size > 0`, `ReapPlan.tsx` and `ReapConfirm.tsx` render the
 **shared `.notice.notice-warn`** beside the reap control (the pattern at `GracePanel.tsx:126`,
@@ -823,7 +824,7 @@ red. Named ones:
   measured item goes red (SQLite sorts NULL first).
 - Remove the null encoding from `manifest_hash` → the "NULL hashes differently from 0" test
   goes red.
-- Restore `?? 0` in the `ReviewQueue` reduce → the `· N sizes unknown` suffix vanishes, test
+- Restore `?? 0` in the `ReviewQueue` reduce → the `, N sizes unknown` suffix vanishes, test
   goes red.
 - Revert the comparator to always read `sizeOnDisk` → a `radarr-file`-sourced item is falsely
   skipped as grown, test goes red.

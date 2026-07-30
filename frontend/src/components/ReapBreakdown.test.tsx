@@ -106,7 +106,7 @@ describe("the ledger", () => {
     expect(screen.getByText("You spared by hand")).toBeInTheDocument();
     expect(screen.getByText("You marked to reap by hand")).toBeInTheDocument();
     expect(screen.getByText("Will be reaped")).toBeInTheDocument();
-    expect(screen.getByText(/402 movies · 167 TV seasons/)).toBeInTheDocument();
+    expect(screen.getByText(/402 movies, 167 TV seasons/)).toBeInTheDocument();
   });
 
   it("collapses to just the net when there are no hand changes", async () => {
@@ -134,7 +134,7 @@ describe("the ledger", () => {
     expect(screen.queryByText("569")).not.toBeInTheDocument();
     // And the split subtracts the same four, so the page states ONE number for one reap:
     // 399 + 166 = 565, never the raw 402 + 167 (B-5, rule 30).
-    expect(screen.getByText(/399 movies · 166 TV seasons/)).toBeInTheDocument();
+    expect(screen.getByText(/399 movies, 166 TV seasons/)).toBeInTheDocument();
   });
 
   it("rewords the unmeasured line when the allowance admits them", async () => {
@@ -152,7 +152,7 @@ describe("the ledger", () => {
     // Not reduced: the unmeasured stay in the count when the allowance admits them -- and in
     // the split, which follows the same set.
     expect(screen.getAllByText("569").length).toBeGreaterThan(0);
-    expect(screen.getByText(/402 movies · 167 TV seasons/)).toBeInTheDocument();
+    expect(screen.getByText(/402 movies, 167 TV seasons/)).toBeInTheDocument();
   });
 
   it("says a reap removes nothing when every condemned title is unmeasured", async () => {

@@ -124,9 +124,15 @@ undocumented while the UI advertises its outcome.
 Keep internal vocabulary out of it: no rating keys, no tmdb/imdb/tvdb ids, no
 "collision"/"guard"/"coverage bp"/abstain-as-jargon. If a normal person wouldn't say it,
 reword it. This binds notices, tooltips, empty states, and error text alike. **No em dashes
-in operator-facing copy**: reword with a period, comma, or colon. Middots as separators
-("70/100 · 20% of the score") and arrows ("Policy → Deletion") are fine. A string that is
-plain but long still fails.
+in operator-facing copy**: reword with a period, comma, or colon. **A middot does not separate
+two facts either, and neither does a dash**: it is punctuation a screen reader may voice
+("40 titles *middle dot* 1.2 TB freed") or drop entirely, so the separator is a comma, which is
+read as the pause it looks like. This clause used to bless the middot, and 49 of them were
+sitting in running text when someone finally listened to the app (#177). Arrows
+("Policy → Deletion") are fine. A middot is still fine where it is *only* decoration — a dot
+between chips, a placeholder for "no value" — and there it carries `aria-hidden`, because
+nothing is lost by not hearing it. The test is whether a reader who never hears the character
+still gets the sentence. A string that is plain but long still fails.
 
 **25. Operator copy may only reference features that are wired.** Confirm the route or UI
 path exists before writing text that names a mechanism (backtest, cap, interlock); a DB

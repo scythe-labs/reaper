@@ -20,14 +20,14 @@ function chip(props: Partial<Parameters<typeof OverrideChip>[0]> = {}) {
 describe("the spared chip", () => {
   it("promises the keep outright when the spare is forever", () => {
     const el = chip({ spareCoversUntil: null });
-    expect(el.textContent).toBe("Spared by hand · will be kept");
+    expect(el.textContent).toBe("Spared by hand, will be kept");
     // Nothing to date, so nothing in the tooltip.
     expect(el.getAttribute("title")).toBeNull();
   });
 
   it("counts down while time remains, with the day in the tooltip", () => {
     const el = chip({ spareCoversUntil: inDays(27) });
-    expect(el.textContent).toBe("Spared by hand · 27 days left");
+    expect(el.textContent).toBe("Spared by hand, 27 days left");
     expect(el.getAttribute("title")).toMatch(/^Kept until /);
   });
 
@@ -36,7 +36,7 @@ describe("the spared chip", () => {
     // spare's clock. What changes is the clause and the fill -- dashed rather than solid,
     // since this is no longer a live decision.
     const el = chip({ spareCoversUntil: inDays(-3) });
-    expect(el.textContent).toBe("Spared by hand · expired");
+    expect(el.textContent).toBe("Spared by hand, expired");
     expect(el.className).toContain("chip-spare-expired");
     expect(el.className).not.toContain("chip-hand-spare");
   });
@@ -57,6 +57,6 @@ describe("the spared chip", () => {
     // A mixed show needs qualifying before it needs a clock: one season inside goes the other
     // way, so the unqualified "27 days left" would be the wrong thing to lead with.
     const el = chip({ spareCoversUntil: inDays(27), exceptions: 2 });
-    expect(el.textContent).toBe("Spared by hand · except 2 seasons");
+    expect(el.textContent).toBe("Spared by hand, except 2 seasons");
   });
 });

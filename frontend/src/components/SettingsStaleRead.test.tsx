@@ -106,7 +106,7 @@ const WHAT_HINT =
 
 // The scan row's schedule line, from the fixture's cron. It is rendered from the same held row
 // the upkeep rows below it use, so a blinked read must not blank it.
-const SCAN_SCHEDULE = /Automatic scan: Every day at 3:00 AM · next not scheduled/;
+const SCAN_SCHEDULE = /Automatic scan: Every day at 3:00 AM, next not scheduled/;
 const SCAN_UNKNOWN = "Couldn't check the schedule.";
 
 beforeEach(() => {

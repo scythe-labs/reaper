@@ -137,10 +137,10 @@ export function JobStatus({
         <span className={`last-dot ${failed ? "fail" : "ok"}`} aria-hidden="true" />
         <span>
           Last run {failed ? "failed " : ""}
-          {since(lastRunAt)}{" "}
+          {since(lastRunAt)}
           <span className="last-exact">
-            · {date(lastRunAt)}, {time(lastRunAt)}
-            {failed && lastResult ? ` · ${lastResult}` : ""}
+            , {date(lastRunAt)}, {time(lastRunAt)}
+            {failed && lastResult ? `, ${lastResult}` : ""}
           </span>
         </span>
       </div>

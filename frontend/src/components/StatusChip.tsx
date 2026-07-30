@@ -28,13 +28,13 @@ export function CondemnedChip() {
 }
 
 /** The refused-reap chip's clause: why the item is still being kept, in lowercase, ready
- *  to sit after "Reap requested · kept for now:".
+ *  to sit after "Reap requested, kept for now:".
  *
  *  A reap is refused in two different lanes, and their chips read nothing alike -- a
- *  structural protection that fired ("Kept · playing right now") and a row Reaper cannot
+ *  structural protection that fired ("Kept, playing right now") and a row Reaper cannot
  *  identify ("it couldn't be found in Plex") -- so the server words the clause for both
  *  beside the chip text itself (`_chip` in `api/routes.py`). A check that merely could not
- *  RUN is no longer one of the lanes: it stopped refusing a reap (`engine/verdict.py`). This used to slice the "Kept · " prefix
+ *  RUN is no longer one of the lanes: it stopped refusing a reap (`engine/verdict.py`). This used to slice the "Kept, " prefix
  *  off and look the rest up in a map of the backend's exact prose: rewording one chip
  *  server-side dropped every held-reap explanation to the generic fallback below, with
  *  the tests still green because they transcribed the same strings (H-1). Null is a real
@@ -123,7 +123,7 @@ export function OverrideChip({
         className={remaining.expired ? classes.spareExpired : classes.spare}
         title={title || undefined}
       >
-        {suffix ? `Spared by hand · ${suffix}` : "Spared by hand"}
+        {suffix ? `Spared by hand, ${suffix}` : "Spared by hand"}
       </span>
     );
   }
@@ -131,9 +131,9 @@ export function OverrideChip({
   if (effective === false) {
     return (
       <span className={classes.refused}>
-        Reap requested · kept for now: {keptWhy ?? "Reaper couldn't confirm it's safe to remove"}
+        Reap requested, kept for now: {keptWhy ?? "Reaper couldn't confirm it's safe to remove"}
       </span>
     );
   }
-  return <span className={classes.reap}>Reaped by hand · {except ?? "will be removed"}</span>;
+  return <span className={classes.reap}>Reaped by hand, {except ?? "will be removed"}</span>;
 }

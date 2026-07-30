@@ -65,9 +65,8 @@ Last verified against the code: 2026-07-26.
    `snapshot.candidates()` deleted, a standing rule 38 violation with no caller in `src/`.
 5. **The screen-reader sweep is partly landed.** What landed and why each shape was chosen is
    `docs/history/SCREEN_READER_SWEEP.md`; the guard's own measurement is in `docs/LEARNINGS.md`.
-   Still open: **#177** the scan, simulator and setup waits pass unannounced, the docs pane
-   swaps articles unannounced, and roughly fifty middot separators in running text;
-   **#189** five policy
+   Still open: **#177** the scan, simulator and setup waits pass unannounced, and the docs pane
+   swaps articles unannounced; **#189** five policy
    warnings bound to a list rather than a control, held until option 2 is measured on a real
    screen reader.
 6. **The stylesheet split has four optional stages left** (`docs/CSS_SPLIT_PLAN.md`). The cut

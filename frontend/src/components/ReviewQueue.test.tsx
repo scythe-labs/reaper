@@ -140,12 +140,12 @@ function renderQueue(verdict: Verdict = "condemn", latestScanSnapshotId: number 
   );
 }
 
-/** What the bulk bar says is picked -- "N selected", or "N cards · M items" once a show card
+/** What the bulk bar says is picked -- "N selected", or "N cards, M items" once a show card
  *  stands for more than itself. Scoped to the bar: the queue header carries a count of its
  *  own, and the two are different numbers. */
 function pickedCount(): string {
   const bar = screen.getByRole("region", { name: "Bulk actions" });
-  return within(bar).getByText(/selected|Tap or drag|cards? ·/).textContent ?? "";
+  return within(bar).getByText(/selected|Tap or drag|cards?,/).textContent ?? "";
 }
 
 /** Enter Select mode (the bulk bar only exists there) and pick every drawn card. */
@@ -642,7 +642,7 @@ describe("the bulk bar's count", () => {
     );
     renderQueue("condemn");
     await selectAllDrawn();
-    expect(pickedCount()).toMatch(/1 card · 10 items/);
+    expect(pickedCount()).toMatch(/1 card, 10 items/);
   });
 
   it("says plain 'selected' when every picked card is one item", async () => {
@@ -675,7 +675,7 @@ describe("select everything matching", () => {
 describe("a reap the engine refused", () => {
   it("reads as one sentence whichever lane kept the item", async () => {
     // Two lanes refuse a hand reap: a FIRED safety stop, and a row Reaper cannot identify
-    // (`StatusChip.chipWhy`). Their chips read nothing alike -- one leads "Kept · ", the
+    // (`StatusChip.chipWhy`). Their chips read nothing alike -- one leads "Kept, ", the
     // other is a capitalized sentence of its own -- and both have to land in the same
     // sentence. A protection that merely could not be CHECKED is not one of the lanes: it
     // stopped refusing a reap in the #96 reversal, so an abstain row carrying its conflict
@@ -688,7 +688,7 @@ describe("a reap the engine refused", () => {
     const streaming = movie(1, {
       override: "reap",
       override_effective: false,
-      chip: { tone: "kept", text: "Kept · playing right now", why: "playing right now" },
+      chip: { tone: "kept", text: "Kept, playing right now", why: "playing right now" },
     });
     const unidentifiable = movie(2, {
       override: "reap",
@@ -703,16 +703,16 @@ describe("a reap the engine refused", () => {
     renderQueue();
 
     expect(
-      await screen.findByText("Reap requested · kept for now: playing right now"),
+      await screen.findByText("Reap requested, kept for now: playing right now"),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Reap requested · kept for now: Reaper couldn't read what it matched in Plex",
+        "Reap requested, kept for now: Reaper couldn't read what it matched in Plex",
       ),
     ).toBeInTheDocument();
     // The chip's own display wording never lands mid-sentence: the clause is the server's
-    // `why`, never the chip text with its "Kept · " lead sliced off (H-1).
-    expect(screen.queryByText(/kept for now: Kept ·/)).not.toBeInTheDocument();
+    // `why`, never the chip text with its "Kept, " lead sliced off (H-1).
+    expect(screen.queryByText(/kept for now: Kept,/)).not.toBeInTheDocument();
     expect(
       screen.queryByText(/kept for now: Couldn't read its Plex match/),
     ).not.toBeInTheDocument();
@@ -1319,7 +1319,7 @@ describe("what a card says after a hand decision", () => {
   it("counts the whole show the moment it is reaped by hand", async () => {
     // The reap direction of the case above. A Sanctuary show's rollup is a real 0, and the
     // whole-show patch refetches nothing by design, so reading the rollup here printed
-    // "0 of 3 would be removed · 0 B" beneath a "will be removed" chip for the rest of the
+    // "0 of 3 would be removed, 0 B" beneath a "will be removed" chip for the rest of the
     // session, while the server would in fact plan every season it honors (B-1).
     const marks: GroupSeasonMark[] = [
       {
@@ -1371,7 +1371,7 @@ describe("what a card says after a hand decision", () => {
     await user.click(screen.getByRole("button", { name: "Reap" }));
 
     // The whole show, sized from its own marks, not the stale rollup's 0.
-    expect(await screen.findByText(/3 of 3 would be removed · 3\.0 GiB/)).toBeInTheDocument();
+    expect(await screen.findByText(/3 of 3 would be removed, 3\.0 GiB/)).toBeInTheDocument();
     expect(screen.queryByText(/0 of 3 would be removed/)).not.toBeInTheDocument();
   });
 
@@ -1430,7 +1430,7 @@ describe("what a card says after a hand decision", () => {
     );
     renderQueue("protect");
 
-    expect(await screen.findByText(/1 of 3 would be removed · 1\.0 GiB/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 of 3 would be removed, 1\.0 GiB/)).toBeInTheDocument();
     expect(screen.queryByText(/3 of 3 would be removed/)).not.toBeInTheDocument();
   });
 
@@ -1477,7 +1477,7 @@ describe("what a card says after a hand decision", () => {
     );
     renderQueue("protect");
 
-    expect(await screen.findByText(/1 of 2 would be removed · 1\.0 GiB/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 of 2 would be removed, 1\.0 GiB/)).toBeInTheDocument();
     expect(screen.queryByText(/2 of 2 would be removed/)).not.toBeInTheDocument();
   });
 

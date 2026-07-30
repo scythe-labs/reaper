@@ -112,7 +112,7 @@ export function PersonCard({
             <span className="fair-name">{row.name}</span>
           </CardOpen>
           <span className="fair-sub">
-            <strong>{count(row.requests_made)}</strong> requests · <strong>{bytes(granted)}</strong>{" "}
+            <strong>{count(row.requests_made)}</strong> requests, <strong>{bytes(granted)}</strong>{" "}
             granted
           </span>
         </div>
@@ -135,7 +135,7 @@ export function PersonCard({
           </span>
           {hasReclaim ? (
             <span className="bad">
-              <strong>{bytes(reclaim)}</strong> to reclaim · {count(row.reclaimable_items)}{" "}
+              <strong>{bytes(reclaim)}</strong> to reclaim, {count(row.reclaimable_items)}{" "}
               {row.reclaimable_items === 1 ? "title" : "titles"}
             </span>
           ) : (

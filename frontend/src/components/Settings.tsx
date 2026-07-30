@@ -1013,7 +1013,7 @@ export function GeneralPanel({
       {pending.length > 0 && (
         <div className="savebar">
           <span className="savebar-what">
-            Unsaved changes: <strong>{pending.map((p) => p.label).join(" · ")}</strong>
+            Unsaved changes: <strong>{pending.map((p) => p.label).join(", ")}</strong>
             {accentBlocks && (
               <span className="savebar-blocked">Enter a hex code like #25c3ff to save.</span>
             )}
@@ -1817,9 +1817,9 @@ function AboutPanel() {
               <code>{data.data_dir}</code>
             </dd>
             <dt>Reaper's own data</dt>
-            <dd>{bytes(data.reaper_db_bytes)} · decisions, audit trail, credentials</dd>
+            <dd>{bytes(data.reaper_db_bytes)}, decisions, audit trail, credentials</dd>
             <dt>Rebuildable cache</dt>
-            <dd>{bytes(data.cache_db_bytes)} · watch history, ratings, lists</dd>
+            <dd>{bytes(data.cache_db_bytes)}, watch history, ratings, lists</dd>
           </dl>
         </div>
       )}
@@ -1959,12 +1959,12 @@ function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): strin
   if (failed && !job) return "Couldn't check the schedule.";
   if (!job) return "Automatic scan: checking…";
   if (job.cron === null) return "Automatic scan is off. It runs when you ask.";
-  return `Automatic scan: ${describeCron(job.cron)} · next ${whenText(job.next_run_at)}`;
+  return `Automatic scan: ${describeCron(job.cron)}, next ${whenText(job.next_run_at)}`;
 }
 
 function maintenanceScheduleText(job: ScheduledJob): string {
   if (job.cron === null) return "Off. Run it by hand.";
-  return `${describeCron(job.cron)} · next ${whenText(job.next_run_at)}`;
+  return `${describeCron(job.cron)}, next ${whenText(job.next_run_at)}`;
 }
 
 /** The one schedule editor, for the scan and every upkeep job. Presets plus "off" plus a

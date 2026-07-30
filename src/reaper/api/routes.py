@@ -232,7 +232,7 @@ async def list_candidates(
     them in one payload was hiding the tail: the client fetches ``limit`` rows at ``offset``
     and asks for the next page as it scrolls. The full size of the filtered set (a count and a
     byte total, both *before* the page window) is returned in the ``X-Total-Count`` and
-    ``X-Total-Bytes`` response headers, so the queue can show "[redacted] items · [redacted]" without
+    ``X-Total-Bytes`` response headers, so the queue can show the whole set's count and byte
     having loaded them all.
 
     Default order is by score, then by size -- so the biggest wins among the safest
@@ -818,7 +818,7 @@ def _kept_season_phrase(detail: str) -> str:
 
 
 def _kept_phrase(gate: str, detail: str) -> str:
-    """The green chip's phrase for the protection that fired, worn as "Kept · {phrase}"."""
+    """The green chip's phrase for the protection that fired, worn as "Kept, {phrase}"."""
     if detail == HAND_SPARE_DETAIL:
         return "you spared it"
     if gate == "whitelisted":
@@ -896,8 +896,8 @@ def _chip(
         detail = str(fired[0].get("detail") or "")
         phrase = _kept_phrase(gate, detail)
         # The kept phrase is already a lowercase clause, so the chip and its why say the
-        # same words with and without the "Kept · " lead.
-        return ChipOut(tone="kept", text=f"Kept · {phrase}", why=phrase)
+        # same words with and without the "Kept, " lead.
+        return ChipOut(tone="kept", text=f"Kept, {phrase}", why=phrase)
 
     if verdict != "abstain":
         return None
@@ -988,18 +988,18 @@ def _chip(
                 if defers is True:
                     return ChipOut(
                         tone="look",
-                        text="Needs a look · watched more than a season your rule keeps",
+                        text="Needs a look, watched more than a season your rule keeps",
                         why="watched more than a season your rule keeps",
                     )
                 if defers is False:
                     return ChipOut(
                         tone="look",
-                        text="Needs a look · couldn't check who watched these seasons",
+                        text="Needs a look, couldn't check who watched these seasons",
                         why="Reaper couldn't check who watched these seasons",
                     )
             return ChipOut(
                 tone="look",
-                text="Needs a look · left for you to decide",
+                text="Needs a look, left for you to decide",
                 why="a check on it couldn't be settled",
             )
     if unknown:
@@ -1186,7 +1186,7 @@ async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
         imdb_id=row.imdb_id,
         media_type=row.media_type,
         # A season row searches by its SHOW's title ("Example Show", not
-        # "Example Show · Season 3") -- that is the page the rating describes.
+        # "Example Show, Season 3") -- that is the page the rating describes.
         title=row.group_title or row.title,
         # The rows an abstain could not choose between. Read through the one match thaw
         # (rule 104) rather than a second copy of the same json.loads, so the links and the

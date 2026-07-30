@@ -109,7 +109,7 @@ class ChipOut(BaseModel):
 
     why: str | None = None
     """The same fact as ``text``, worded as a lowercase clause that can follow
-    "Reap requested · kept for now:" -- or None when this chip names no reason a reap
+    "Reap requested, kept for now:" -- or None when this chip names no reason a reap
     would be refused (an item under the threshold is reaped on request, not held).
 
     It ships beside ``text`` because the frontend must never parse ``text`` to recover

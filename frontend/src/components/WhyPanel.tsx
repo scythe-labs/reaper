@@ -74,7 +74,7 @@ function MetaLine({ item }: { item: CandidateDetail }) {
   return (
     <p className="why-meta">
       {item.content_rating && <span className="cert">{item.content_rating}</span>}
-      {parts.join(" · ")}
+      {parts.join(", ")}
     </p>
   );
 }

@@ -53,7 +53,7 @@ describe("PersonCard", () => {
     render(<PersonCard row={row()} selected={false} onSelect={onSelect} horizonAt={HORIZON} />);
 
     expect(screen.getByText(/earning its keep/i)).toBeInTheDocument();
-    expect(screen.getByText(/to reclaim · 3 titles/i)).toBeInTheDocument();
+    expect(screen.getByText(/to reclaim, 3 titles/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /marlow/i }));
     expect(onSelect).toHaveBeenCalledWith("plex:7");
@@ -104,7 +104,7 @@ describe("PersonCard", () => {
     expect(screen.getByRole("button", { name: /marlow/i })).toBeInTheDocument();
     expect(screen.getByText(/requests/i)).toBeInTheDocument();
     expect(screen.getByText(/earning its keep/i)).toBeInTheDocument();
-    expect(screen.getByText(/to reclaim · 3 titles/i)).toBeInTheDocument();
+    expect(screen.getByText(/to reclaim, 3 titles/i)).toBeInTheDocument();
     // The balance bar states itself for a reader through `role="img"`; under the pruned card
     // that name was unreachable too.
     expect(screen.getByRole("img", { name: /kept,.*reclaim/i })).toBeInTheDocument();

@@ -56,11 +56,11 @@ describe("totalBytes", () => {
   it("says how many the total could not include", () => {
     // The sum is of what IS known, so it reads low. Saying so is the difference between
     // an incomplete number and a wrong one.
-    expect(totalBytes(1024 ** 4, 3)).toBe(`${bytes(1024 ** 4)} · 3 sizes unknown`);
+    expect(totalBytes(1024 ** 4, 3)).toBe(`${bytes(1024 ** 4)}, 3 sizes unknown`);
   });
 
   it("reads naturally for a single unknown", () => {
-    expect(totalBytes(1024, 1)).toBe("1.0 KiB · 1 size unknown");
+    expect(totalBytes(1024, 1)).toBe("1.0 KiB, 1 size unknown");
   });
 });
 

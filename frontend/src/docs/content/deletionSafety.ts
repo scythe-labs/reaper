@@ -30,25 +30,25 @@ export const deletionSafety: Doc = {
           branch: { label: "a source failed", node: { text: "View only", shape: "terminal" } },
         },
         {
-          node: { text: "Review the three lists", sub: "condemned · protected · left alone" },
+          node: { text: "Review the three lists", sub: "condemned, protected, left alone" },
           enter: { label: "yes" },
         },
         { node: { text: "Read each item's reason", sub: "score, and every protection checked" } },
-        { node: { text: "Build the plan", sub: "unmeasured held back · smallest first" } },
+        { node: { text: "Build the plan", sub: "unmeasured held back, smallest first" } },
         { node: { text: "Practice run", sub: "a full rehearsal, nothing sent" } },
         {
           node: { text: "Deletion armed?", shape: "decision" },
-          branch: { label: "off · the default", node: { text: "Delete off", shape: "terminal" } },
+          branch: { label: "off, the default", node: { text: "Delete off", shape: "terminal" } },
         },
         {
           node: { text: "Type the exact phrase", sub: "counts this plan's titles and size" },
-          enter: { label: "on · needs password" },
+          enter: { label: "on, needs password" },
         },
-        { node: { text: "Reap, one item at a time", sub: "live progress · Stop anytime" } },
+        { node: { text: "Reap, one item at a time", sub: "live progress, Stop anytime" } },
         {
           node: {
             text: "Confirm it's really gone",
-            sub: "re-read the world · rescan",
+            sub: "re-read the world, rescan",
             shape: "terminal",
           },
         },

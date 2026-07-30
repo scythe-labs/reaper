@@ -52,7 +52,7 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   // phase itself goes through ScanBar's shared table, so this never shows a raw phase id.
   const scanError = scanState?.error ?? null;
   const scanMsg = scanning
-    ? `${phaseLabel(scanState!.phase)}${scanState!.detail ? ` · ${scanState!.detail}` : ""}`
+    ? `${phaseLabel(scanState!.phase)}${scanState!.detail ? `, ${scanState!.detail}` : ""}`
     : null;
 
   // A mutation, not a fire-and-forget async onClick: on a fresh install a failed start

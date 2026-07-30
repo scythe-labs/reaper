@@ -88,7 +88,7 @@ class TestKeys:
         assert season_scan.season_media_key(1, 42, 3) == "sonarr:1:42:3"
 
     def test_the_title_names_the_season(self) -> None:
-        assert season_scan.season_title("Example Show", 3) == "Example Show · Season 3"
+        assert season_scan.season_title("Example Show", 3) == "Example Show, Season 3"
 
     def test_specials_are_named_not_numbered(self) -> None:
         assert "Specials" in season_scan.season_title("Example Show", 0)

@@ -88,7 +88,7 @@ export function StaleNotice({
               : "Scoring your library under the new policy. You can leave this page; it keeps running, and the numbers here refresh when it finishes."}
           </p>
           <p className="muted">
-            {detail || "Working"} · {percent}%
+            {detail || "Working"}, {percent}%
           </p>
           {/* Same sweep as ScanBar's and the deletion path's (#177, rule 72). The visible
               detail line above already says the phase and the percent, so `aria-valuetext`
