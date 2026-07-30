@@ -22,7 +22,7 @@ import re
 import secrets
 from ipaddress import ip_network
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -406,34 +406,56 @@ class NotificationsTestIn(BaseModel):
 _DISCORD_WEBHOOK_HOSTS = ("discord.com", "discordapp.com")
 
 
-def _validate_external_url(raw: str | None) -> None:
-    """A per-service link address, when set, must be a real http(s) URL with a host, else 422.
+def _required_web_url(raw: str, *, refusal: str) -> tuple[SplitResult, str]:
+    """Rule 84's one shared check: a real http(s) address with a host, else 422.
 
-    Reaper renders ``external_url`` into a jump link for every signed-in user, so a scheme-less
-    paste (``host:8989``) or a ``javascript:``/``data:`` value must be refused at the edge
-    rather than stored verbatim (rules 84/13). A blank value clears the setting and is allowed
-    through; ``None`` (the field omitted on update) keeps the stored value and is not our
-    concern here. A ``type="url"`` input is not validation, so this is the real check even when
+    A scheme-less paste (``host:8989``), a ``javascript:``/``data:`` value, a scheme with no host
+    behind it (``http://``), and a blank string are all refused here rather than carried further
+    (rules 84/13). A ``type="url"`` input is not validation, so this is the real check even where
     the browser mirrors it.
 
-    Rule 84 asks for one shared validator and there is not one yet, so this is *not* "the way
-    every sibling does it": ``_validated_discord_webhook`` checks a host allow-list,
-    ``plex_switch_server`` inlines its own scheme/hostname pair, and ``put_general``'s
-    ``application_url`` tests ``netloc`` where the others test ``hostname``. The sibling that
-    matters most has no check at all -- an instance's ``base_url`` is stored as typed (issue
-    #255) -- so nothing here may be cited as covering it.
+    ``refusal`` is the operator's sentence, one per field, because they need to know which box to
+    fix and not merely that some URL somewhere was wrong.
+
+    Returns the parsed URL and its host, so a caller that needs the pieces (a probe wanting the
+    host and port) reads them from the value this validated instead of re-parsing and re-deciding
+    what a missing host means.
+
+    This IS the shared validator rule 84 asks for, and the docstring that stood here until #255
+    said there was not one -- naming the four divergent implementations and ``base_url``'s missing
+    check. All five now route through here. ``_validated_discord_webhook`` stays separate on
+    purpose: it checks a host allow-list, which is a narrower question than URL shape.
     """
-    if raw is None:
-        return
-    cleaned = raw.strip()
-    if not cleaned:
-        return
-    parts = urlsplit(cleaned)
+    parts = urlsplit(raw.strip())
     if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise HTTPException(
-            422,
-            "The external URL must be a full web address, like https://192.0.2.10:8989.",
-        )
+        raise HTTPException(422, refusal)
+    return parts, parts.hostname
+
+
+def _require_web_url(raw: str | None, *, refusal: str) -> None:
+    """The same check for an OPTIONAL field, where blank is a real answer and passes.
+
+    Blank means the operator turned the setting off (a link address cleared, a Plex web address
+    reset to the hosted default), or -- on a required field like ``base_url`` -- that the "this is
+    required" refusal downstream is the better sentence than one about URL shape. ``None``, the
+    field omitted from a partial update, keeps the stored value and is not our concern.
+    """
+    if raw is None or not raw.strip():
+        return
+    _required_web_url(raw, refusal=refusal)
+
+
+#: The address every Reaper request for a service goes to, so it is the most consequential URL an
+#: operator types -- and the one that used to reach storage unchecked, surfacing much later as a
+#: connection or scan failure rather than at the box that was wrong (#255).
+_BASE_URL_REFUSAL = "The service address must be a full web address, like https://192.0.2.10:8989."
+
+
+def _validate_external_url(raw: str | None) -> None:
+    """The per-service link address Reaper renders into a jump link for every signed-in user."""
+    _require_web_url(
+        raw, refusal="The external URL must be a full web address, like https://192.0.2.10:8989."
+    )
 
 
 def _validated_discord_webhook(raw: str) -> str:
@@ -477,6 +499,7 @@ async def list_instances(request: Request) -> list[InstanceOut]:
 
 @router.post("/instances", tags=[api_tags.SERVICES])
 async def create_instance(request: Request, payload: InstanceCreateIn) -> InstanceOut:
+    _require_web_url(payload.base_url, refusal=_BASE_URL_REFUSAL)
     _validate_external_url(payload.external_url)
     async with _factory(request)() as session:
         try:
@@ -505,6 +528,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
 async def update_instance(
     request: Request, instance_id: int, payload: InstanceUpdateIn
 ) -> InstanceOut:
+    _require_web_url(payload.base_url, refusal=_BASE_URL_REFUSAL)
     _validate_external_url(payload.external_url)
     async with _factory(request)() as session:
         try:
@@ -669,8 +693,10 @@ async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexS
     hosted default) and, once a server is linked, the certificate check. Each field is
     independent, and one left out is left alone."""
     cleaned = payload.web_url.strip() if payload.web_url is not None else None
-    if cleaned and not (cleaned.startswith("https://") or cleaned.startswith("http://")):
-        raise HTTPException(422, "The Plex web address must start with https:// or http://.")
+    _require_web_url(
+        cleaned,
+        refusal="The Plex web address must be a full web address, like https://192.0.2.10:32400.",
+    )
     async with _factory(request)() as session:
         # Only when the caller sent the field. `cleaned` is `None` for "not sent" and `""` for
         # "reset to the hosted default", and those are different requests (rule 1).
@@ -875,11 +901,11 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
     not say who it is is refused for the same reason: unconfirmed is not confirmed.
     """
     uri = payload.uri.strip().rstrip("/")
-    parts = urlsplit(uri)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise HTTPException(
-            422, "The server address must be a full URL, like https://192.0.2.10:32400."
-        )
+    # The required form: this address is dialed, not stored for display, so a blank one is refused
+    # here rather than carried into the probe. `host` is the validated host the probe needs.
+    parts, host = _required_web_url(
+        uri, refusal="The server address must be a full web address, like https://192.0.2.10:32400."
+    )
 
     async with _factory(request)() as session:
         server = await _linked_server(session)
@@ -890,7 +916,7 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
 
     probe = PlexConnection(
         uri=uri,
-        address=parts.hostname,
+        address=host,
         port=parts.port or (443 if parts.scheme == "https" else 32400),
         local=False,
         relay=False,
@@ -1505,15 +1531,13 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
     """
     async with _factory(request)() as session:
         if payload.application_url is not None:
-            cleaned = payload.application_url.strip()
-            if cleaned:
-                parts = urlsplit(cleaned)
-                if parts.scheme not in ("http", "https") or not parts.netloc:
-                    raise HTTPException(
-                        422,
-                        "The application URL must start with http:// or https:// and "
-                        "include a host, like https://reaper.example.com",
-                    )
+            _require_web_url(
+                payload.application_url,
+                refusal=(
+                    "The application URL must be a full web address, like "
+                    "https://reaper.example.com"
+                ),
+            )
         if payload.trusted_proxies is not None:
             for entry in payload.trusted_proxies:
                 cleaned_entry = entry.strip()

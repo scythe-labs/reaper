@@ -354,6 +354,45 @@ class TestInstancesCrud:
         kept = next(row for row in still if row["id"] == made["id"])
         assert kept["external_url"] == "https://radarr.example.com"
 
+    @pytest.mark.parametrize(
+        "address",
+        [
+            "radarr.local:7878",  # a scheme-less host:port paste, the shape an operator types
+            "javascript:alert(1)",  # a scheme, but not one anything here may dial
+            "http://",  # a scheme and no host: what the Plex startswith pair used to admit
+            "not a url",
+        ],
+    )
+    def test_the_service_address_must_be_a_full_web_address(
+        self, client: TestClient, address: str
+    ) -> None:
+        """#255: ``base_url`` is where every Reaper request for this service goes, and it
+        reached storage checked only for being non-empty while its own sibling field
+        ``external_url`` was validated. So a scheme-less address saved with no complaint and
+        surfaced much later as a connection or scan failure, far from the box that was wrong.
+        Rule 84: one shared check, at the edge, for every URL an operator types.
+
+        The refused values are spelled out rather than derived from the validator's branches
+        (rule 119), and each one is a shape that used to be accepted.
+        """
+        on_create = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "HD", "base_url": address, "api_key": "k"},
+        )
+        assert on_create.status_code == 422, on_create.text
+
+        made = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
+        ).json()
+        on_update = client.put(f"/api/settings/instances/{made['id']}", json={"base_url": address})
+        assert on_update.status_code == 422, on_update.text
+        # Refused means nothing changed, not "refused and stored anyway".
+        listed = client.get("/api/settings/instances").json()
+        assert (
+            next(row for row in listed if row["id"] == made["id"])["base_url"] == "http://a.local"
+        )
+
 
 class TestConnectionTestsHonorTheTlsChoice:
     """The TLS choice must reach the client that actually dials out -- the stored
@@ -728,6 +767,19 @@ class TestPlexStatus:
         response = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": False})
         assert response.status_code == 422
         assert "Link one" in response.json()["detail"]
+
+    @pytest.mark.parametrize("address", ["plex.example", "http://", "https://", "ftp://a.local"])
+    def test_the_web_address_must_be_a_full_web_address(
+        self, client: TestClient, address: str
+    ) -> None:
+        """This field checked ``startswith("http://")`` and nothing else, so a bare scheme with
+        no host behind it passed where every sibling URL setting refused it (#255). Rule 84: one
+        shared check, so all four of these are refused here for the same reason they are refused
+        on a service address."""
+        refused = client.put("/api/settings/plex", json={"web_url": address})
+        assert refused.status_code == 422, refused.text
+        # Nothing was stored, so links still point at the hosted default.
+        assert client.get("/api/settings/plex").json()["web_url"] == "https://app.plex.tv"
 
 
 def _plex_resource(machine_id: str, name: str) -> dict[str, object]:

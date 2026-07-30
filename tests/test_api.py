@@ -1048,7 +1048,11 @@ class TestPlexWebUrlSetting:
     def test_a_non_http_address_is_refused_in_plain_words(self, client: TestClient) -> None:
         refused = client.put("/api/settings/plex", json={"web_url": "plex.example"})
         assert refused.status_code == 422
-        assert "must start with" in refused.json()["detail"]
+        # The sentence names the box and shows the shape. It said "must start with https:// or
+        # http://" while the check behind it was a `startswith` pair that let a bare scheme with
+        # no host through; both moved to the shared check together (#255, rule 84). The sibling
+        # cases live in test_settings_api.py's TestPlexStatus.
+        assert "full web address" in refused.json()["detail"]
 
     def test_clearing_resets_to_the_default(self, client: TestClient) -> None:
         client.put("/api/settings/plex", json={"web_url": "https://plex.example"})
