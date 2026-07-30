@@ -103,7 +103,17 @@ def decide_verdict(
     at, so this is identity, not judgment) and an explanation this code could not parse
     (they cannot consent to reasons the panel never rendered). Neither is a protection;
     both are "we do not know WHAT this is", which is a different question from "we could
-    not check whether it is wanted". ``snapshot._verdict`` passes ``False``, though it
+    not check whether it is wanted".
+
+    The second of those is enforced by running the panel's own validation, not a likeness of
+    it: ``engine.explanation.read_explanation`` is the single definition both readers call
+    (rule 104). It was two definitions, and the narrower one sat on the destructive path --
+    the panel refused any bad field anywhere in the document, the reap path tested only
+    whether the protections lists were the right shape, so a row with a string where a
+    signal's contribution belongs rendered blank and reaped anyway (#142). The sentence in
+    parentheses above is the promise; that function is what makes it one.
+
+    ``snapshot._verdict`` passes ``False``, though it
     never takes the reap branch in production -- its only caller, ``judge_facts``, passes
     ``override=None`` unconditionally, and a hand reap is applied afterwards by
     ``effective_fate`` off the frozen explanation.

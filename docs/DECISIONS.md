@@ -41,7 +41,15 @@ read failure, `executor._watched_since_approval` refuses an item played since ap
 transport guard refuses any mutation unless the host is armed and the intent was journalled first.
 Two things still hold a reap on the stored-row path and neither is a protection: a bad Plex match
 and an explanation that could not be parsed, both of which mean "we do not know what this row IS"
-rather than "we could not check whether it is wanted". **What counts as a bad match is phrased
+rather than "we could not check whether it is wanted". **"Could not be parsed" is the why panel's
+own test, run on the reap path rather than approximated there** (`engine.explanation.read_explanation`,
+one derivation for both readers, rule 104). It was two tests, and the narrower one sat on the
+destructive path: the panel refused any bad field anywhere in the document while the reap read
+checked only whether the two protections lists were the right shape, so a row with a string where
+a signal's contribution belongs rendered blank and reaped anyway (**#142 closed**). An explicit
+empty protections list still reaps — the scan looked and found nothing — but a `null`, a missing
+key, or `{}` no longer does: those record no answer at all, and rule 1's omitted-is-not-empty
+resolves toward keeping on a deletion path. **What counts as a bad match is phrased
 against the one CLEAN value, never against a list of the bad ones** (`condemned.bad_match` and
 `MATCH_CLEAN`, rule 1): it was a written-out set of three, so the fourth status shipped below
 would have been reapable the moment it landed — Reaper offering to delete a file while refusing to

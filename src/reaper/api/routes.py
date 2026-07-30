@@ -73,6 +73,7 @@ from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, Pl
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import history_reach_days
+from reaper.engine.explanation import read_explanation
 from reaper.engine.fields import Lane, MediaType, vocabulary
 from reaper.engine.gates import PROTECT, GateId, GateResult, thaw_defers_to_owner
 from reaper.engine.observation import Known
@@ -592,13 +593,14 @@ def _explanation_out(row: Candidate) -> _PanelExplanation:
     The fallback deliberately leaves ``threshold`` unset rather than filling a number in.
     The panel prints "your threshold is N" beside the score, and an invented N would state
     a policy setting that is not the operator's. Unset, the panel omits the clause.
+
+    The read itself is ``engine.explanation.read_explanation`` rather than a ``try`` around
+    the model here, because ``services.condemned`` must refuse a hand reap on exactly the
+    rows this degrades and cannot reach into this layer to find out which they are (#142).
     """
-    decoded = _decode_explanation(row.explanation_json)
-    if decoded is not None:
-        try:
-            return _PanelExplanation(Explanation(**decoded), False)
-        except ValidationError:
-            pass
+    body = read_explanation(_decode_explanation(row.explanation_json))
+    if body is not None:
+        return _PanelExplanation(body, False)
     log.warning("candidate.explanation_unreadable", media_key=row.media_key)
     return _PanelExplanation(
         Explanation(

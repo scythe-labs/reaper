@@ -50,7 +50,27 @@ def _explain(adds: list[str], *, keeps: list[str] | None = None) -> str:
         {"id": sid, "contribution": 0.0, "weight": 20, "evaluated": True, "state": "argues_keep"}
         for sid in keeps or []
     ]
-    return json.dumps({"signals": signals, "protections_fired": [], "protections_unknown": []})
+    return _document(signals=signals)
+
+
+def _document(**blocks: object) -> str:
+    """One stored explanation carrying every block a real one carries.
+
+    A reap is refused on any document the why panel cannot render (#142), so a fixture that
+    names only the block it varies describes a row no scan could produce, and every hand reap
+    over it would be held for a reason the test is not about.
+    """
+    return json.dumps(
+        {
+            "score": 50,
+            "coverage": 1.0,
+            "signals": [],
+            "protections_fired": [],
+            "protections_checked": [],
+            "protections_unknown": [],
+            **blocks,
+        }
+    )
 
 
 def _refused_explain(*, match: object = None) -> str:
@@ -61,15 +81,11 @@ def _refused_explain(*, match: object = None) -> str:
     one of them, which is why this helper stopped building one -- a fixture that still did
     would report zero held reaps and the assertions below would pass on an empty set.
     """
-    return json.dumps(
-        {
-            "signals": [],
-            "protections_fired": (
-                [] if match else [{"gate": "streaming_now", "detail": "playing right now"}]
-            ),
-            "protections_unknown": [],
-            **({"match": match} if match else {}),
-        }
+    return _document(
+        protections_fired=(
+            [] if match else [{"gate": "streaming_now", "detail": "playing right now"}]
+        ),
+        **({"match": match} if match else {}),
     )
 
 
@@ -336,7 +352,11 @@ async def test_a_hand_reap_joins_the_net(session: AsyncSession) -> None:
     await _add(session, snapshot_id=snap, media_key="radarr:1:1")  # condemned
     # An abstained row with a clean explanation resolves to condemn under a hand reap.
     await _add(
-        session, snapshot_id=snap, media_key="radarr:1:9", verdict="abstain", explanation="{}"
+        session,
+        snapshot_id=snap,
+        media_key="radarr:1:9",
+        verdict="abstain",
+        explanation=_document(),
     )
     await whitelist.set_override(
         session, media_key="radarr:1:9", title="x", decision="reap", note=None
@@ -391,12 +411,8 @@ async def test_a_hand_reap_past_a_protection_nobody_could_check_is_in_the_net(
         snapshot_id=snap,
         media_key="radarr:1:9",
         verdict="abstain",
-        explanation=json.dumps(
-            {
-                "signals": [],
-                "protections_fired": [],
-                "protections_unknown": [{"gate": "whitelisted", "detail": "could not check"}],
-            }
+        explanation=_document(
+            protections_unknown=[{"gate": "whitelisted", "detail": "could not check"}]
         ),
     )
     await whitelist.set_override(

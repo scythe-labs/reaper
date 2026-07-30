@@ -24,7 +24,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import _chip, _decode_explanation, _dormant_for, _primary_reason
+from reaper.api.routes import (
+    _chip,
+    _decode_explanation,
+    _dormant_for,
+    _explanation_out,
+    _primary_reason,
+)
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -224,6 +230,72 @@ class TestTheWhyPanelSurvivesABrokenRow:
         assert body["explanation_unreadable"] is False
         assert body["explanation"]["threshold"] == 70
         assert body["explanation"]["protections_fired"][0]["detail"] == "you spared it by hand"
+
+
+class TestThePanelAndTheReapAgreeOnUnreadable:
+    """One definition of "unreadable", checked from both ends (rule 104, #142).
+
+    These two used to answer it separately. The panel's test was ``Explanation(**decoded)``
+    raising, which is any bad field anywhere in the document; the reap path's was a non-dict
+    test over the two protections lists alone. ``radarr:1:5`` in the table above is a live
+    instance of the gap -- an entry missing ``detail`` -- and it degraded the panel while a
+    hand Reap on it still condemned, which is the one thing ``engine.verdict`` says in writing
+    it will not do. Both now call ``engine.explanation.read_explanation``.
+
+    The implication is only worth asserting if BOTH classes are populated, so the counts are
+    pinned rather than left to the fixture (rule 118): a table that drifted to all-readable
+    would satisfy "unreadable implies protect" vacuously and read as a proof.
+    """
+
+    def _rows(self) -> dict[str, Candidate]:
+        now = utcnow()
+        return {
+            media_key: Candidate(
+                snapshot_id=1,
+                media_key=media_key,
+                title="Example Movie",
+                media_type="movie",
+                size_bytes=1_000_000_000,
+                verdict=VERDICTS[media_key],
+                score=80,
+                coverage_bp=10_000,
+                explanation_json=explanation,
+                created_at=now,
+            )
+            for media_key, explanation in {**MALFORMED, "radarr:1:7": HEALTHY}.items()
+        }
+
+    def test_a_panel_that_cannot_render_never_lets_the_reap_through(self) -> None:
+        rows = self._rows()
+        degraded = {k for k, row in rows.items() if _explanation_out(row).unreadable}
+        reaps = {
+            k: reap_override_verdict(str(row.explanation_json), score=int(row.score))
+            for k, row in rows.items()
+        }
+
+        # Pin both populations by hand (rule 145): five of the seven stored rows here cannot
+        # be rendered. Two can, and they are the ones that make this test discriminate --
+        # ``radarr:1:6`` carries a non-dict ``match``, which ``Explanation._thaw_match`` reads
+        # as an absent block rather than failing the document, so the panel renders it and its
+        # reap is held by the bad match instead. If either set moves, the table changed and
+        # the implication below may have gone vacuous.
+        assert len(rows) == 7
+        assert degraded == {f"radarr:1:{n}" for n in range(1, 6)}
+        assert rows.keys() - degraded == {"radarr:1:6", "radarr:1:7"}
+
+        condemned_but_blank = sorted(k for k in degraded if reaps[k] == "condemn")
+        assert not condemned_but_blank, (
+            "these rows render an empty why panel and a hand Reap on them still condemns, so "
+            "the operator consents to reasons nobody showed them (#142). api.routes."
+            "_explanation_out and services.condemned.reap_override_verdict_decoded must both "
+            f"read engine.explanation.read_explanation: {condemned_but_blank}"
+        )
+
+    def test_the_readable_control_is_still_reapable(self) -> None:
+        """Or "unreadable holds the reap" is indistinguishable from "nothing is reapable"."""
+        row = self._rows()["radarr:1:7"]
+        assert _explanation_out(row).unreadable is False
+        assert reap_override_verdict(str(row.explanation_json), score=int(row.score)) == "condemn"
 
 
 class TestTheExtractorsThemselves:

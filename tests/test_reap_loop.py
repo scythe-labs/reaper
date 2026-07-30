@@ -2524,10 +2524,35 @@ async def _snapshot_one(
     ``media_type`` of ``season``. ``merged_keys`` writes the match block a merged bind
     stores (one file listed several times in Plex), which those same checks re-read."""
     explanation = (
-        json.dumps({"match": {"merged_rating_keys": list(merged_keys)}}) if merged_keys else "{}"
+        _clean_explanation(match={"merged_rating_keys": list(merged_keys)})
+        if merged_keys
+        else _clean_explanation()
     )
     return await _snapshot_many(
         session, [(media_key, size, rating_key)], media_type=media_type, explanation=explanation
+    )
+
+
+def _clean_explanation(**blocks: object) -> str:
+    """A stored explanation carrying every block a real one carries.
+
+    ``"{}"`` was the default here, and it is not a row any scan writes: the why panel cannot
+    render it, so a hand reap on it is refused (#142) and an item planned ONLY by that reap
+    never reaches the plan. Every candidate below is scan-condemned, where the document is not
+    read at all -- but the tests that flip a verdict to ``abstain`` and lean on a hand reap
+    depend on it, and a fixture that quietly stopped planning its second item would report a
+    one-item run as a pass.
+    """
+    return json.dumps(
+        {
+            "score": 90,
+            "coverage": 1.0,
+            "signals": [],
+            "protections_fired": [],
+            "protections_checked": [],
+            "protections_unknown": [],
+            **blocks,
+        }
     )
 
 
@@ -2536,9 +2561,10 @@ async def _snapshot_many(
     items: list[tuple[str, int | None, int | None]],
     *,
     media_type: str = "movie",
-    explanation: str = "{}",
+    explanation: str | None = None,
     group_key: str | None = None,
 ) -> int:
+    explanation = _clean_explanation() if explanation is None else explanation
     now = utcnow()
     snapshot = Snapshot(
         created_at=now,

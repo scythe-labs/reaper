@@ -175,13 +175,15 @@ def thaw_defers_to_owner(value: object) -> bool | None:
 
     The one derivation, because it had two and they disagreed (rule 104). ``api.routes._chip``
     read the raw dict with ``is True`` / ``is False``, so anything else fell to its
-    vague-but-true chip; ``api.schemas.GateOutcomeOut`` read the same byte through Pydantic's
+    vague-but-true chip; ``explanation.GateOutcomeOut`` read the same byte through Pydantic's
     lax bool coercion, which takes ``1`` and ``"true"`` as True, ``0`` as False, and REFUSES
     ``2``, ``"banana"``, ``[]`` and ``{}``. A refusal there is not a smaller failure than a
     disagreement: it fails the whole ``Explanation``, so ``_explanation_out`` falls to its
     degraded body and the operator gets a panel with no signals, no protections and no
-    threshold -- while the chip beside it, the reap-override read, and every other extractor
-    go on reading that same row perfectly well, and a hand Reap on it still condemns.
+    threshold -- while the chip beside it and every other display extractor go on reading that
+    same row perfectly well. The reap path used to as well, and that was #142; it now refuses
+    the row instead (``explanation.read_explanation``). Costing the operator a hand reap over
+    one illegible byte is still the wrong price, which is why this thaw stays.
 
     So: exactly ``True`` or exactly ``False`` is the flag; anything else is ``None``, which is
     the state the field already has a meaning for -- "nothing here can tell a comparison Reaper

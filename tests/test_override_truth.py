@@ -53,24 +53,52 @@ from tests._auth import login
 GB = 1024**3
 NOW = utcnow()
 
-CAUTIOUS = json.dumps(
-    {
-        "protections_fired": [
-            {
-                "gate": "season_progression",
-                "detail": "the newest season of a show that is still running",
-            }
-        ]
-    }
+
+def stored_explanation(**blocks: Any) -> str:
+    """One stored explanation, carrying the blocks every real one carries.
+
+    The scaffolding is not what these tests are about -- each varies ONE block and asserts
+    what a hand reap does with it -- but it has to be present, because a reap is now refused
+    on any document the why panel cannot render (#142), and a bare
+    ``{"protections_fired": [...]}`` is one of those. ``services.snapshot._explain`` has
+    written all six of these keys in every generation of the writer, so a fixture without
+    them was asserting reap behavior against a row no scan could ever have produced.
+
+    Deliberately NOT a transcription of ``_explain`` (rule 119): it carries the minimum the
+    reader requires, so a new REQUIRED field on ``Explanation`` fails these tests rather than
+    being back-filled here unnoticed. The values are inert -- the reap branch reads neither
+    score nor coverage (``test_the_score_is_inert_on_the_reap_branch`` pins that) -- and each
+    test that cares passes its own block.
+    """
+    return json.dumps(
+        {
+            "score": 50,
+            "coverage": 1.0,
+            "signals": [],
+            "protections_fired": [],
+            "protections_checked": [],
+            "protections_unknown": [],
+            **blocks,
+        }
+    )
+
+
+CAUTIOUS = stored_explanation(
+    protections_fired=[
+        {
+            "gate": "season_progression",
+            "detail": "the newest season of a show that is still running",
+        }
+    ]
 )
-STRUCTURAL = json.dumps(
-    {"protections_fired": [{"gate": "streaming_now", "detail": "playing right now"}]}
+STRUCTURAL = stored_explanation(
+    protections_fired=[{"gate": "streaming_now", "detail": "playing right now"}]
 )
-UNMANAGED = json.dumps(
-    {"protections_fired": [{"gate": "unmanaged", "detail": "no *arr manages this file"}]}
+UNMANAGED = stored_explanation(
+    protections_fired=[{"gate": "unmanaged", "detail": "no *arr manages this file"}]
 )
-BLOCKED = json.dumps(
-    {"protections_unknown": [{"gate": "curated_list", "detail": "could not check the list"}]}
+BLOCKED = stored_explanation(
+    protections_unknown=[{"gate": "curated_list", "detail": "could not check the list"}]
 )
 # The keep-rule conflict: the season guard flags a prunable season watched MORE than one
 # the rule keeps, and hands the call to a human. It rides in `protections_unknown` (blocked,
@@ -78,30 +106,26 @@ BLOCKED = json.dumps(
 # for the owner rather than a source Reaper could not read. A hand reap IS that decision,
 # so it condemns. The flag no longer decides that -- no block holds a hand reap -- but it
 # still picks the operator's chip (`api.routes._chip`), so the shapes below keep varying it.
-KEEP_RULE_CONFLICT = json.dumps(
-    {
-        "protections_unknown": [
-            {
-                "gate": "season_progression",
-                "detail": "5 people watched this season, more than one your keep rule protects.",
-                "defers_to_owner": True,
-            }
-        ]
-    }
+KEEP_RULE_CONFLICT = stored_explanation(
+    protections_unknown=[
+        {
+            "gate": "season_progression",
+            "detail": "5 people watched this season, more than one your keep rule protects.",
+            "defers_to_owner": True,
+        }
+    ]
 )
 # The same gate blocked by a genuine plumbing failure rather than a decision put to the
 # owner. It used to be the fail-closed half of a two-condition test; now it lands where every
 # other block lands, and it is kept because it is the shape a reader most expects to differ.
-CONFLICT_BUT_PLUMBING = json.dumps(
-    {
-        "protections_unknown": [
-            {
-                "gate": "season_progression",
-                "detail": "could not check the sequential guard",
-                "defers_to_owner": False,
-            }
-        ]
-    }
+CONFLICT_BUT_PLUMBING = stored_explanation(
+    protections_unknown=[
+        {
+            "gate": "season_progression",
+            "detail": "could not check the sequential guard",
+            "defers_to_owner": False,
+        }
+    ]
 )
 # The shape that shipped broken: the kept season is on disk but was never resolved in Plex,
 # so the comparison could not be made at all (`season_pruning.PruneConflict` with
@@ -111,36 +135,32 @@ CONFLICT_BUT_PLUMBING = json.dumps(
 # STORED rows, an operator's database is full of ones written by older versions, and a fixture
 # that tracks the current copy would stop covering them. It is here because the wording trap
 # must go on deciding nothing, whichever way the decision itself points.
-CONFLICT_COMPARISON_REFUSED = json.dumps(
-    {
-        "protections_unknown": [
-            {
-                "gate": "season_progression",
-                "detail": (
-                    "40 people watched Season 1. Reaper could not check who watched "
-                    "Season 4, which it is keeping because it is one of the newest "
-                    "seasons your rule keeps. Kept for now."
-                ),
-                "defers_to_owner": False,
-            }
-        ]
-    }
+CONFLICT_COMPARISON_REFUSED = stored_explanation(
+    protections_unknown=[
+        {
+            "gate": "season_progression",
+            "detail": (
+                "40 people watched Season 1. Reaper could not check who watched "
+                "Season 4, which it is keeping because it is one of the newest "
+                "seasons your rule keeps. Kept for now."
+            ),
+            "defers_to_owner": False,
+        }
+    ]
 )
 # A row frozen before the flag shipped: same conflict, no `defers_to_owner` key at all.
 # Nothing in it can tell a made comparison from a refused one -- which no longer changes the
 # reap, and still changes the chip the operator is shown (rule 104's thaw, in `_chip`).
-LEGACY_CONFLICT_NO_FLAG = json.dumps(
-    {
-        "protections_unknown": [
-            {
-                "gate": "season_progression",
-                "detail": "5 people watched this season, more than one your keep rule protects.",
-            }
-        ]
-    }
+LEGACY_CONFLICT_NO_FLAG = stored_explanation(
+    protections_unknown=[
+        {
+            "gate": "season_progression",
+            "detail": "5 people watched this season, more than one your keep rule protects.",
+        }
+    ]
 )
-UNMATCHED = json.dumps({"match": {"status": "unmatched"}})
-CLEAN_ABSTAIN = json.dumps({"threshold": 70})
+UNMATCHED = stored_explanation(match={"status": "unmatched"})
+CLEAN_ABSTAIN = stored_explanation(threshold=70)
 
 
 class TestReapOverrideVerdict:
@@ -167,11 +187,11 @@ class TestReapOverrideVerdict:
         What did NOT move is asserted in the same class, deliberately adjacent: a structural
         stop, a bad Plex match, an unreadable protections list and an unreadable document all
         still keep the file."""
-        stored = json.dumps(
-            {"protections_unknown": [{"gate": gate, "detail": "could not check the list"}]}
+        row = stored_explanation(
+            protections_unknown=[{"gate": gate, "detail": "could not check the list"}]
         )
 
-        assert reap_override_verdict(stored, score=99) == "condemn"
+        assert reap_override_verdict(row, score=99) == "condemn"
 
     def test_a_keep_rule_conflict_loses_to_the_owner(self) -> None:
         """The season keep-rule conflict is a deliberate "you decide" flag. A hand reap is
@@ -193,15 +213,17 @@ class TestReapOverrideVerdict:
         reads the same key the same way to pick the operator's chip, pinned in
         ``test_review_chips.py`` -- which is why the key is still written and still varied
         here rather than dropped."""
-        for stored_flag in ("true", "false", '"true"', '"false"', '"0"', "1", "[]", "{}", "null"):
-            stored = json.dumps(
-                {
-                    "protections_unknown": [
-                        {"gate": "season_progression", "detail": "d", "defers_to_owner": None}
-                    ]
-                }
-            ).replace("null", stored_flag)
-            assert reap_override_verdict(stored, score=90) == "condemn", stored_flag
+        for raw_flag in ("true", "false", '"true"', '"false"', '"0"', "1", "[]", "{}", "null"):
+            row = stored_explanation(
+                protections_unknown=[
+                    {
+                        "gate": "season_progression",
+                        "detail": "d",
+                        "defers_to_owner": json.loads(raw_flag),
+                    }
+                ]
+            )
+            assert reap_override_verdict(row, score=90) == "condemn", raw_flag
         # ...including the row frozen before the key existed at all, which carries none.
         assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=90) == "condemn"
         assert reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=90) == "condemn"
@@ -236,16 +258,25 @@ class TestReapOverrideVerdict:
         worth stating because these rows LOOK like the released ones. An unreadable entry is
         not a check that came back empty: the panel could not render the reasons at all, so
         there was nothing for the owner to consent to. A block they can read is theirs to
-        answer; one that never reached them is not."""
-        for stored in (
-            '{"protections_unknown": ["season_progression could not be checked"]}',
-            '{"protections_unknown": [null]}',
-            '{"protections_unknown": [{"gate": "x", "detail": "d"}, "and a string"]}',
-            '{"protections_unknown": "could not check the season guard"}',
-            '{"protections_fired": ["whitelisted"]}',
-            '{"protections_fired": 1}',
+        answer; one that never reached them is not.
+
+        Each row is otherwise a complete document, so the list is the only thing wrong with
+        it. **Both readers refuse these shapes and the assertion cannot tell which one did**
+        (rule 118): a protections list carrying a string fails ``_protection_entries`` and
+        fails ``Explanation`` too, since the field is typed ``list[GateOutcomeOut]``. That is
+        the subsumption #142 intended, not a gap -- what this pins is that the shape keeps the
+        file, and ``TestThePanelAndTheReapAgree`` is where the two readers are held level."""
+        for bad_list in (
+            ["season_progression could not be checked"],
+            [None],
+            [{"gate": "x", "detail": "d"}, "and a string"],
+            "could not check the season guard",
         ):
-            assert reap_override_verdict(stored, score=90) == "protect", stored
+            row = stored_explanation(protections_unknown=bad_list)
+            assert reap_override_verdict(row, score=90) == "protect", bad_list
+        for bad_fired in (["whitelisted"], 1):
+            row = stored_explanation(protections_fired=bad_fired)
+            assert reap_override_verdict(row, score=90) == "protect", bad_fired
 
     def test_a_scalar_protections_list_does_not_raise_out_of_the_reap(self) -> None:
         """A scalar where a list belongs used to raise ``TypeError`` straight out of this
@@ -253,17 +284,40 @@ class TestReapOverrideVerdict:
         review queue, the planner's step expansion, the confirmation-phrase count and the
         executor's per-item spare re-read (rule 112's path) -- one malformed row taking down
         every surface that counts what a reap will remove."""
-        assert reap_override_verdict('{"protections_unknown": 1}', score=90) == "protect"
-        assert reap_override_verdict('{"protections_fired": 2.5}', score=90) == "protect"
+        assert reap_override_verdict(stored_explanation(protections_unknown=1), score=90) == (
+            "protect"
+        )
+        assert reap_override_verdict(stored_explanation(protections_fired=2.5), score=90) == (
+            "protect"
+        )
 
     def test_a_genuinely_empty_protections_list_stays_permissive(self) -> None:
-        """The other side of the same rule, so the fix above cannot be over-read: absent and
-        empty are readable answers -- the scan looked and found nothing holding the item --
-        and they must still let a hand reap through, or every clean abstain stops being
+        """The other side of the same rule, so the fix above cannot be over-read: an empty
+        list is a readable answer -- the scan looked and found nothing holding the item --
+        and it must still let a hand reap through, or every clean abstain stops being
         reapable."""
-        assert reap_override_verdict('{"protections_unknown": []}', score=90) == "condemn"
-        assert reap_override_verdict('{"protections_unknown": null}', score=90) == "condemn"
-        assert reap_override_verdict("{}", score=90) == "condemn"
+        assert reap_override_verdict(stored_explanation(), score=90) == "condemn"
+        assert reap_override_verdict(stored_explanation(protections_unknown=[]), score=90) == (
+            "condemn"
+        )
+
+    def test_a_recorded_nothing_and_a_missing_answer_are_not_the_same_row(self) -> None:
+        """Rule 1 on this path, and the half of #142 most easily read as a regression.
+
+        An explicit ``[]`` above says the scan looked and nothing held the item, and it reaps.
+        A ``null``, or no key at all, says only that nothing was recorded -- and the why panel
+        has never been able to render such a row, so the operator is shown no signals, no
+        protections and no threshold above the Reap button. ``"{}"`` is that row at its
+        smallest, and it used to condemn: it reads like the permissive case and is not one.
+        ``engine.verdict`` promises they "cannot consent to reasons the panel never rendered",
+        and these are the rows that made it false. They keep the file now.
+
+        The direction is the point. Omitted is not empty, and where they are told apart on a
+        deletion path the omitted one resolves toward keeping."""
+        assert reap_override_verdict("{}", score=90) == "protect"
+        assert reap_override_verdict(stored_explanation(protections_unknown=None), score=90) == (
+            "protect"
+        )
 
     @pytest.mark.parametrize(
         "match",
@@ -281,15 +335,16 @@ class TestReapOverrideVerdict:
         block that is present but is not an object (rule 96).
 
         Each row also carries a blocked protection, so the sweep cannot pass on a hold that
-        the gate block is quietly still supplying."""
-        stored = json.dumps(
-            {
-                "match": match,
-                "protections_unknown": [{"gate": "curated_list", "detail": "could not check"}],
-            }
+        the gate block is quietly still supplying. It is otherwise a complete, readable
+        document, so it cannot pass on #142's wider hold either: the string case thaws to an
+        absent match (``Explanation._thaw_match`` guards the outer shape), leaving the match
+        itself as the only thing that can refuse the reap."""
+        row = stored_explanation(
+            match=match,
+            protections_unknown=[{"gate": "curated_list", "detail": "could not check"}],
         )
 
-        assert reap_override_verdict(stored, score=99) == "protect"
+        assert reap_override_verdict(row, score=99) == "protect"
 
     def test_a_match_problem_reads_as_blocked(self) -> None:
         assert reap_override_verdict(UNMATCHED, score=99) == "protect"

@@ -32,6 +32,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.db.models import Candidate
+from reaper.engine.explanation import read_explanation
 from reaper.engine.identity import MatchStatus
 from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
 from reaper.services import whitelist
@@ -148,6 +149,12 @@ def _protection_entries(value: object) -> tuple[list[dict[Any, Any]], bool]:
     (rule 96). ``api.routes._has_blocked_protections`` reads the same stored block with the
     same posture and says so in its own docstring; these two must not disagree, because the
     permissive one is the one on the destructive path.
+
+    **This is no longer the whole of "unreadable" on the reap path, and must not be read as
+    it (#142).** It answers only which protections are legible enough to count; whether the
+    DOCUMENT can be rendered at all is ``engine.explanation.read_explanation``, which the
+    caller consults beside these two flags. Widening this function instead would have put a
+    second definition of the same word next to the first, which is the defect, not the fix.
     """
     if value is None:
         return [], False
@@ -183,7 +190,12 @@ def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
 
     fired, fired_unreadable = _protection_entries(exp.get("protections_fired"))
     unknown, unknown_unreadable = _protection_entries(exp.get("protections_unknown"))
-    unreadable = fired_unreadable or unknown_unreadable
+    # The panel's own test, run here rather than approximated (rule 104). The two lists above
+    # still answer WHICH protections fired, which is a different question and stays local; what
+    # this adds is the one #142 was about -- a document the why panel cannot render at all.
+    # Strictly wider than the two flags beside it, so it can only ever withdraw a reap the
+    # operator was already being shown no reasons for.
+    unreadable = fired_unreadable or unknown_unreadable or read_explanation(exp) is None
     match_holds = bad_match(exp)
 
     return decide_verdict(

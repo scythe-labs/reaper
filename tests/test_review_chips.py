@@ -1270,10 +1270,19 @@ class TestTheMatchStatusVocabulary:
         )
 
     def test_a_confident_bind_still_lets_a_hand_reap_through(self) -> None:
-        """The other half of the pair, so the fix above cannot pass by holding everything."""
+        """The other half of the pair, so the fix above cannot pass by holding everything.
+
+        A complete document, because a reap is refused on any the why panel cannot render
+        (#142) and a row carrying only the two protections lists is one of those -- which
+        would hold this reap for a reason that has nothing to do with the bind, and quietly
+        make the pair agree by holding everything after all."""
         exp = {
+            "score": 99,
+            "coverage": 1.0,
+            "signals": [],
             "match": {"status": identity.MatchStatus.MATCHED.value},
             "protections_fired": [],
+            "protections_checked": [],
             "protections_unknown": [],
         }
         assert reap_override_verdict_decoded(exp, score=99) == "condemn"

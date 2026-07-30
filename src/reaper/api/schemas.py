@@ -14,229 +14,32 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from reaper.engine.explanation import (
+    Explanation,
+    GateOutcomeOut,
+    KeepContributionOut,
+    MatchOut,
+    SignalContribution,
+    thaw_threshold,
+)
 from reaper.engine.fields import FieldType, Lane, Op
-from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId, thaw_defers_to_owner
+from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
 from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
-from reaper.engine.signals import SignalId, SignalState
+from reaper.engine.signals import SignalId
 
-
-class SignalContribution(BaseModel):
-    id: str
-    contribution: float
-    weight: int
-    detail: str
-    evaluated: bool
-    """False means the input was Unknown. Its weight still counts in the denominator,
-    so an unevaluated signal drags the score DOWN, never up."""
-
-    state: SignalState | None = None
-    """What a zero actually means: it pushed toward removing, it argued for keeping, it
-    did not apply, or it could not be read. See ``engine.signals.SignalState``.
-
-    Optional because snapshots taken before this field existed carry rows without it.
-    The UI's fallback for such a row is ``not_applicable``, never ``argues_keep``:
-    claiming an old row argued for keeping, when nothing recorded whether it did, would
-    overstate the case for keeping the file."""
-
-
-class GateOutcomeOut(BaseModel):
-    """One protection's outcome on one item.
-
-    ``defers_to_owner`` has three states and folding the third into ``false`` asserts
-    something nobody established: ``true`` means Reaper made the comparison behind this
-    hold, ``false`` means it could not make it, and ``null`` means nothing legible in the
-    row tells those two apart -- either a row frozen before the flag existed, or one
-    carrying a value that is not a bool (``engine.gates.thaw_defers_to_owner``). Read it
-    off ``protections_unknown``; entries in the other two lists never carry it, so every
-    one of them reads ``null`` for a reason that is not the third state.
-
-    Said here rather than on the field because a class docstring is the only one of the
-    two that reaches the published document: Pydantic harvests attribute docstrings only
-    under ``use_attribute_docstrings``, which this tree does not set, so the contract
-    below this line is invisible to anyone building against ``/api/docs``.
-    """
-
-    gate: str
-    detail: str
-
-    defers_to_owner: bool | None = None
-    """Whether the comparison behind this hold is one Reaper actually made.
-
-    Set only by the season keep-rule guard (``services.season_scan.guard_result``), where a
-    conflict arrives in three shapes and only one of them is a comparison: the other two are
-    a kept season's watcher count that could not be read, and a watch mirror too short to
-    stand behind the counts it reports. All three send the item to the operator; only the
-    first may be described to them as "watched more than a season your rule keeps".
-
-    **Three-state, and the third state is the whole point (rule 142).** A row frozen before
-    the flag existed carries no key, and nothing in it can tell the shapes apart -- the
-    wording that used to stand in for the flag is exactly what failed. ``None`` is that row,
-    and a plain ``bool`` here would silently assert one shape about every legacy
-    explanation. ``None`` is also a row carrying a value that is not a bool at all: the
-    validator below reads it there rather than coercing it (which contradicts the chip) or
-    refusing it (which blanks the whole panel), because a value nobody can read tells the
-    shapes apart exactly as well as no value does. ``services.snapshot._explain`` writes the
-    key on every ``protections_unknown`` entry, never omitting it when ``False``, so
-    present-and-``False`` stays distinguishable from absent ON DISK -- and on the wire the
-    absent key arrives as ``null``, since nothing here or on the route sets ``exclude_none``.
-
-    The same model types ``protections_fired`` and ``protections_checked``, where the key is
-    never written and every entry therefore reads ``None``. That is honest for a gate with no
-    opinion, but it is NOT "no answer recorded" for the one row that appears in two lists: an
-    unestablishable season PROTECT rides in both, and only its ``protections_unknown`` copy
-    carries the flag. Read this field off ``protections_unknown``, which is where the guard
-    that sets it puts its blocked result.
-
-    Declared here because a wire schema must name every key the UI reads: ``api.routes._chip``
-    already reads it off the stored row, and until this field existed the panel that opens
-    beside that chip could not, so it went on running the retired wording test and asserted a
-    comparison its own reason block denied (#86)."""
-
-    @field_validator("defers_to_owner", mode="before")
-    @classmethod
-    def _thaw_defers_to_owner(cls, value: object) -> bool | None:
-        """Read the stored byte the way ``_chip`` reads it, which is the point (rule 104).
-
-        ``mode="before"`` because the whole job is to run INSTEAD of Pydantic's bool coercion,
-        not after it. Left to Pydantic, ``1``/``"true"`` became a chip-contradicting ``True``
-        and ``2``/``"banana"``/``[]`` raised -- and a raise here does not degrade this one
-        field, it fails the enclosing ``Explanation`` and blanks the operator's whole why
-        panel while every other reader of the same row carries on. ``thaw_defers_to_owner``
-        holds the reasoning and is the only place this rule is written down (#112).
-        """
-        return thaw_defers_to_owner(value)
-
-
-class MatchOut(BaseModel):
-    """How (or whether) the item was bound to its Plex row. ``status`` is what the UI
-    reads: quiet on ``matched``, a plain "kept to be safe" notice otherwise."""
-
-    status: str | None = None
-    by: str | None = None
-    detail: str | None = None
-    rating_key: int | None = None
-    merged_rating_keys: list[int] | None = None
-    """Every listing a merged bind covers, when one file is listed several times in Plex.
-    Audit only; absent for a normal single-listing bind."""
-
-    candidate_rating_keys: list[int] | None = None
-    """The Plex rows an abstain was choosing between, on ``ambiguous`` and ``conflicted``.
-
-    Display only, and the reason the panel can offer a way out: without it the operator is
-    told Reaper could not tell which Plex row this is and given no link to any of them,
-    because ``rating_key`` (which every jump link is built from) is null on exactly these
-    rows. ``None`` on a bind, and on a record stored before this shipped."""
-
-
-class KeepContributionOut(BaseModel):
-    """A graded keep's pull on the score. ``evaluated=False`` means the input was
-    Unknown, which takes the FULL discount -- fail-closed toward keeping."""
-
-    name: str
-    discount: float
-    max_discount: float
-    detail: str
-    evaluated: bool
-
-
-def thaw_threshold(value: object) -> int | None:
-    """Read the stored score-to-beat, or nothing where the row carries no legible one.
-
-    One derivation for all three readers of this byte (rule 104), which is the same shape #112
-    gave ``defers_to_owner`` and the twin rule 72 binds to it. ``routes._chip`` and
-    ``routes._primary_reason`` each tested it with ``isinstance(value, int)`` and coped with
-    anything else, while ``Explanation.threshold`` read it through pydantic's lax ``int | None``
-    -- a different rule, which REFUSES ``70.5`` and ``"abc"``. A refusal does not degrade this
-    one field: it fails the enclosing ``Explanation``, drops ``_explanation_out`` to its degraded
-    body, and hands the operator a panel with no signals, no protections and no threshold, beside
-    a chip that read the same row perfectly well.
-
-    A ``bool`` is not accepted even though Python calls it an ``int``: a threshold of ``True`` is
-    not a score of 1, it is a row nobody can read. All three readers go through here, so that
-    judgment is made once rather than three times.
-    """
-    if isinstance(value, bool):
-        return None
-    return value if isinstance(value, int) else None
-
-
-class Explanation(BaseModel):
-    """The why-panel.
-
-    Three blocks, and the last two are what make a verdict trustworthy. Every
-    competitor shows which rules matched. None of them show the work.
-
-    ``match``, ``keeps`` and the score split are optional with safe defaults: the
-    stored explanation JSON has carried them since they shipped, but pydantic's
-    ``extra="ignore"`` silently DROPPED them at this boundary until the fields were
-    declared here -- which is why the panel's "kept to be safe" notice and keep
-    breakdown never rendered. Wire schemas must name every key the UI reads.
-    """
-
-    score: float
-    base_score: float | None = None
-    keep_discount: float | None = None
-    threshold: int | None = None
-    """The score an item had to beat. ``None`` only when the stored explanation could not
-    be read at all and the panel is showing the degraded fallback (routes._explanation_out):
-    the panel omits its "your threshold is N" clause rather than print an invented figure."""
-    coverage: float
-    watch_blind: bool | None = None
-    """Whether this title is held because plays recorded earlier stopped being readable.
-
-    The panel offers the per-title escape on it (#275). Typed rather than read off an
-    observation's reason text, which is operator copy and will be reworded (rule 92).
-
-    Three-state (rule 142): ``None`` is "cannot tell" -- a row scanned before the key existed,
-    or an item with no reading to judge -- and shows no control, because offering to discard a
-    record on a guess is the wrong direction. ``False`` is the positive claim that the scan
-    took a reading and it was honest.
-    """
-    match: MatchOut | None = None
-
-    signals: list[SignalContribution]
-    keeps: list[KeepContributionOut] = Field(default_factory=list)
-
-    protections_fired: list[GateOutcomeOut]
-    """Why it is being kept. A tool that only explains deletions cannot be trusted
-    about keeps."""
-
-    protections_checked: list[GateOutcomeOut]
-    """Protections evaluated that did NOT fire -- **with the actual numbers**:
-    "checked: recently watched -- last play 612d ago, your floor is 730d"."""
-
-    protections_unknown: list[GateOutcomeOut]
-    """Protections that COULD NOT BE CHECKED. Rendered amber, not green. "We could not
-    look" is not "we looked and it was fine", and displaying them alike is the entire
-    Deleterr failure class."""
-
-    @field_validator("threshold", mode="before")
-    @classmethod
-    def _thaw_threshold(cls, value: object) -> int | None:
-        """Read an illegible score-to-beat as absent rather than failing the whole panel.
-
-        ``mode="before"`` for the same reason ``GateOutcomeOut`` uses it: the job is to run
-        INSTEAD of pydantic's coercion, not after it. ``None`` costs the operator nothing here --
-        it is a state the panel already renders, by omitting its "your threshold is N" clause
-        rather than printing an invented figure (see the field docstring above).
-        """
-        return thaw_threshold(value)
-
-    @field_validator("match", mode="before")
-    @classmethod
-    def _thaw_match(cls, value: object) -> object:
-        """Read a match block that is not a mapping as absent, for the same reason (rule 72).
-
-        ``routes._match_status`` reads the stored match off the raw dict and copes with any
-        shape; refusing it here blanks every other block on the panel with it. ``None`` is a
-        shape the panel already handles, being what a row scanned before the match block existed
-        carries.
-
-        Scoped deliberately to the block's own shape: a mapping whose INNER fields are illegible
-        still raises, and is left to do so rather than silently emptying a match the panel could
-        have partly rendered. Rule 7/24 -- this guards the outer shape only, and says so.
-        """
-        return value if value is None or isinstance(value, dict) else None
+# The why-panel document moved to ``engine.explanation`` so the reap path could run the same
+# validation the panel does, which is the whole of #142; it may not import this layer. The
+# names stay bound here because they are wire formats and half the tree refers to them as
+# ``api.schemas.X`` -- and because the OpenAPI components are named off the classes, so
+# nothing about the published document moves with them.
+__all__ = [
+    "Explanation",
+    "GateOutcomeOut",
+    "KeepContributionOut",
+    "MatchOut",
+    "SignalContribution",
+    "thaw_threshold",
+]
 
 
 class CandidateLinkOut(BaseModel):
