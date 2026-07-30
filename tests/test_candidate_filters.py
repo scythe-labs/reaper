@@ -464,8 +464,17 @@ class TestYearInSearch:
         # though its title ends in a different one.
         assert self._found(client, "Example Delta 2017") == {"Example Delta 2049"}
 
-    def test_a_year_alone_stays_a_plain_text_search(self, client: TestClient) -> None:
-        # Splitting a bare year off would leave an empty stem matching every row, so a search
-        # for a title *named* after a year would answer with the whole of that year's library.
-        # Delta has 2049 in its name and comes back; Echo merely came out that year and does not.
-        assert self._found(client, "2049") == {"Example Delta 2049"}
+    def test_a_year_alone_asks_for_that_year_and_still_reads_as_text(
+        self, client: TestClient
+    ) -> None:
+        # Both readings again, and this fixture is built to tell them apart: Echo came out in
+        # 2049 and only the year arm finds it; Delta has 2049 in its NAME and was released in
+        # 2017, so only the text arm does. A bare year that answered with just one of them is
+        # the half-answer this returns both halves to avoid -- it read as a broken search when
+        # it matched titles only, and would lose a title named after a year if it matched the
+        # column only.
+        assert self._found(client, "2049") == {"Example Delta 2049", "Example Echo"}
+
+    def test_a_year_alone_narrows_to_that_year(self, client: TestClient) -> None:
+        # Not "every row": 2017 is Delta's release year and nothing else here, so Echo stays out.
+        assert self._found(client, "2017") == {"Example Delta 2049"}

@@ -219,19 +219,16 @@ _TRAILING_YEAR = re.compile(r"[\s,·-]*\(?(?P<year>(?:1[89]|20|21)\d{2})\)?\s*$"
 
 
 def _split_search_year(term: str) -> tuple[str, int | None]:
-    """Split a trailing release year off a search term, or leave the term whole.
+    """Split a trailing release year off a search term.
 
-    Returns ``(stem, year)``. The year is only split off when something is left in front of
-    it: a bare ``2025`` or ``1917`` is a title the operator is searching for, not a filter,
-    and splitting it would answer with every item from that year instead.
+    Returns ``(stem, year)``, where an empty stem means the term was *only* a year. The
+    caller reads the three cases apart: no year is a plain text search, a year behind a
+    stem narrows that stem to it, and a year alone asks for everything released then.
     """
     match = _TRAILING_YEAR.search(term)
     if match is None:
         return term, None
-    stem = term[: match.start()].strip()
-    if not stem:
-        return term, None
-    return stem, int(match["year"])
+    return term[: match.start()].strip(), int(match["year"])
 
 
 @router.get("/candidates", tags=[api_tags.REVIEW])
@@ -269,8 +266,9 @@ async def list_candidates(
     re-decides it: ``search`` matches the title or the show name, and understands a release
     year on the end of either ("Example Alpha 1979", or with parentheses) -- the queue prints
     the year beside the title, so it is part of what the operator reads and types back. A
-    search that is *only* a year stays a plain text match, so a title named after a year is
-    still findable. ``media_type`` keeps
+    year on its own ("1979") asks for everything released that year. Either way the term is
+    still tried as plain text too, so a title whose NAME ends in a year it predates, or is a
+    year outright, is never lost to the reading of the number. ``media_type`` keeps
     movies or seasons, ``requested`` keeps only what someone asked for through Seerr
     (``yes``), only what nobody asked for (``no``), or everything (``any``), ``genre``
     keeps rows whose stored genre list contains the given term exactly, ``library`` keeps
@@ -312,12 +310,18 @@ async def list_candidates(
             stem, year = _split_search_year(term)
             if year is None:
                 conditions.append(matches(term))
-            else:
+            elif stem:
                 # Either reading of the number, never one or the other: "Blade Runner 2049" is a
                 # title that ends in a year it was not released in, and "Freaky Tales 2025" is a
                 # title beside its year. Trying the whole string first keeps the first kind
                 # findable, and the stem-plus-year arm makes the second kind work at all.
                 conditions.append(or_(matches(term), and_(Candidate.year == year, matches(stem))))
+            else:
+                # A year on its own is the operator asking what came out that year. It is also
+                # still a string, so a title *named* after a year ("1917", "2012") comes back
+                # too -- both readings, the same as the arm above. Every other search is text
+                # that happens to allow a year; this is the one the year is the whole of.
+                conditions.append(or_(matches(term), Candidate.year == year))
         if media_type:
             conditions.append(Candidate.media_type == media_type)
         if library and library.strip():

@@ -2238,8 +2238,12 @@ export function ReviewQueue({
             <input
               className="search-input"
               type="search"
-              aria-label="Search titles and shows"
-              placeholder="Search titles and shows…"
+              // The year is named because it is not guessable: the box takes "Example Alpha
+              // 1979" and takes "1979" on its own, and an operator who is not told tries the
+              // year once, gets nothing, and stops trying. `list_candidates` is the other copy
+              // of this sentence (rule 144) and says the same three things.
+              aria-label="Search titles, shows, and years"
+              placeholder="Search titles, shows, years…"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
