@@ -50,7 +50,13 @@ function Steps({ run }: { run: Run }) {
     // The Request column holds a full API path and a JSON body, so the table has a wider
     // minimum than a phone. The wrapper keeps that scroll sideways inside the table instead
     // of pushing the whole page sideways.
-    <div className="table-scroll">
+    //
+    // And nothing inside the table is focusable, so that sideways scroll could not be reached
+    // from a keyboard at all (WCAG 2.1.1, #177): no cell to tab onto and carry it with.
+    // `tabIndex={0}` makes the wrapper its own stop, named so it is worth stopping on. Same
+    // sweep as `.docs-content`, `.log-console`, `.dryrun-outcomes` and `docs/DocBody.tsx`'s
+    // two (rule 72).
+    <div className="table-scroll" tabIndex={0} role="region" aria-label="Plan steps">
       <table className="plan-steps">
         <thead>
           <tr>
@@ -138,7 +144,11 @@ function Report({ report }: { report: RunReport }) {
           </>
         )}
       </p>
-      <ul className="dryrun-outcomes">
+      {/* Every row is text, so this list scrolls with nothing to tab onto (WCAG 2.1.1, #177).
+          `tabIndex={0}` on the list itself keeps its `listitem`s intact where a wrapper with
+          `role="region"` would not, and it is named for what it holds. Same sweep as the plan
+          table above (rule 72). */}
+      <ul className="dryrun-outcomes" tabIndex={0} aria-label="What the practice run walked">
         {report.outcomes.slice(0, LIST_CAP).map((o) => (
           // One outcome per item, never more: executor._run_deletes records exactly one
           // StepOutcome per delete, so the item's own key is unique among siblings.

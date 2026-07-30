@@ -80,8 +80,13 @@ function DiagramNodeBox({ node }: { node: DiagramNode }) {
  *  text; the container scrolls sideways on a narrow pane rather than clipping. */
 function DocDiagram({ block }: { block: DiagramBlock }) {
   return (
+    // Named but unreachable was the worse half of this: the group advertised itself in the
+    // accessibility tree as somewhere to go, and the Tab order never went there, so the
+    // sideways scroll a narrow pane needs could not be moved from a keyboard (WCAG 2.1.1,
+    // #177). `.doc-table` below and the four outside this file went the same way (rule 72).
     <div
       className="doc-diagram"
+      tabIndex={0}
       role="group"
       aria-label={block.title ? `Flowchart: ${block.title}` : "Flowchart"}
     >
@@ -181,7 +186,12 @@ function renderBlock(b: Block, key: number): ReactNode {
       );
     case "table":
       return (
-        <div key={key} className="doc-table">
+        // Horizontal scroll with no focusable cell, so a keyboard could not move it (WCAG
+        // 2.1.1, #177). Focusable and nothing more, unlike the five siblings: a table block
+        // carries no title, so `role="region"` here could only be an UNNAMED landmark, which
+        // is worse than none -- it adds a stop to the landmark list that says nothing about
+        // what it holds. A reader entering the stop reads the table, which is the name.
+        <div key={key} className="doc-table" tabIndex={0}>
           <table>
             <thead>
               <tr>

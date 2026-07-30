@@ -125,7 +125,18 @@ export function WhyShell({
       role={modal ? "dialog" : "complementary"}
       aria-modal={modal || undefined}
       aria-labelledby={headingId}
-      tabIndex={-1}
+      // 0, not -1, and the difference is the whole desktop band. The reasoning body scrolls, and
+      // -1 is programmatic focus only: below the boundary `useDialogFocus` moves focus here, so
+      // it was scrollable by keyboard there, but above it -- split view, `role="complementary"`,
+      // nobody moving focus -- Tab could not reach the container at all (WCAG 2.1.1, #177).
+      //
+      // It was cleared once on the grounds that the panel "holds focusable children". It does
+      // not always: `WhyPanelFallback` and `ScalesPanelFallback` render a Notice or a spinner
+      // with no control in them, and where the rich panels do have buttons those cluster at the
+      // top rather than running down the body, so tabbing to one scrolls away from the text
+      // being read. `trapTab` reads descendants only and already handles `active === panel`, so
+      // the dialog band is unaffected.
+      tabIndex={0}
       onKeyDown={modal ? (e) => trapTab(e, panelRef.current) : undefined}
     >
       <WhyClose onClose={onClose} />

@@ -189,9 +189,16 @@ export function LogsPanel() {
           </button>
         </Notice>
       ) : (
+        // The log is rows of <span>, so there is nothing focusable to tab onto and carry the
+        // scroll with -- a keyboard operator could not move this pane at all (WCAG 2.1.1,
+        // #177). It already named itself, which is the worse half of that state: it advertised
+        // a destination the Tab order never visited. `tabIndex={0}` makes the pane its own
+        // stop; `.docs-content` was the first of these and the other five went the same way
+        // (rule 72).
         <div
           className={wrap ? "log-console log-wrap" : "log-console"}
           ref={consoleRef}
+          tabIndex={0}
           role="log"
           aria-label="Application log"
         >
