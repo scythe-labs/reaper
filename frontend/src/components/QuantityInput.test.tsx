@@ -57,7 +57,26 @@ function RatingBar({ onEmit }: { onEmit: (tenths: number) => void }) {
   );
 }
 
+/** The changeable-unit twin of `Fixed`: a size box wired the way PolicyEditor wires the two
+ *  deletion caps, storing whatever the box emits. */
+function Sized({ initial = 1e9, onEmit }: { initial?: number; onEmit?: (n: number) => void }) {
+  const [value, setValue] = useState(initial);
+  return (
+    <QuantityInput
+      value={value}
+      units={SIZE_UNITS}
+      ariaLabel="Most disk freed per run"
+      onChange={(n) => {
+        setValue(n);
+        onEmit?.(n);
+      }}
+    />
+  );
+}
+
 const box = () => screen.getByLabelText("Most titles per run");
+const size = () => screen.getByLabelText("Most disk freed per run");
+const sizeUnit = () => screen.getByLabelText("Most disk freed per run unit");
 
 describe("typing a number into a box that already has one", () => {
   it("replaces what was there instead of appending to it", async () => {
@@ -224,26 +243,14 @@ describe("the unit a value is shown in", () => {
     // The box's own emits are remembered, so typing a fraction of the current unit never
     // jumps the dropdown out from under the caret.
     const user = userEvent.setup();
-    function Sized() {
-      const [value, setValue] = useState(1e9);
-      return (
-        <QuantityInput
-          value={value}
-          units={SIZE_UNITS}
-          onChange={setValue}
-          ariaLabel="Most disk freed per run"
-        />
-      );
-    }
     render(<Sized />);
-    const size = screen.getByLabelText("Most disk freed per run");
 
-    await user.clear(size);
-    await user.type(size, "0.5");
+    await user.clear(size());
+    await user.type(size(), "0.5");
     await user.tab();
 
-    expect(screen.getByLabelText("Most disk freed per run unit")).toHaveValue("GB");
-    expect(size).toHaveValue(0.5);
+    expect(sizeUnit()).toHaveValue("GB");
+    expect(size()).toHaveValue(0.5);
   });
 
   it("clamps a typed 0 down to the smallest unit, not up to the shown one", async () => {
@@ -256,29 +263,68 @@ describe("the unit a value is shown in", () => {
     // pressure). 0.01 MB is 10 KB, which no media file fits inside.
     const user = userEvent.setup();
     const emit = vi.fn();
-    function Sized() {
-      const [value, setValue] = useState(1e9);
-      return (
-        <QuantityInput
-          value={value}
-          units={SIZE_UNITS}
-          onChange={(n) => {
-            setValue(n);
-            emit(n);
-          }}
-          ariaLabel="Most disk freed per run"
-        />
-      );
-    }
-    render(<Sized />);
-    const size = screen.getByLabelText("Most disk freed per run");
+    render(<Sized onEmit={emit} />);
 
-    await user.clear(size);
-    await user.type(size, "0");
+    await user.clear(size());
+    await user.type(size(), "0");
     await user.tab();
 
-    expect(size).toHaveValue(0.01);
-    expect(screen.getByLabelText("Most disk freed per run unit")).toHaveValue("MB");
+    expect(size()).toHaveValue(0.01);
+    expect(sizeUnit()).toHaveValue("MB");
     expect(emit).toHaveBeenLastCalledWith(1e4);
+  });
+});
+
+describe("the number the box stores, against the number it shows", () => {
+  it("drops the digits it will not draw instead of storing them", async () => {
+    // #251: the box draws two decimals of GB and the emit kept every digit typed, so 1.234
+    // stored 1_234_000_000 and then redrew "1.23". The cap in force sat 4 MB above the one on
+    // screen -- on the control whose whole job is to state a bound. No clamp and no unit
+    // switch are involved: three decimals in the shown unit is the whole reproduction.
+    const user = userEvent.setup();
+    const emit = vi.fn();
+    render(<Sized onEmit={emit} />);
+
+    await user.clear(size());
+    await user.type(size(), "1.234");
+    await user.tab();
+
+    expect(emit).toHaveBeenLastCalledWith(1.23e9);
+    expect(size()).toHaveValue(1.23);
+    expect(sizeUnit()).toHaveValue("GB");
+  });
+
+  it("cuts the digits off rather than rounding them up", async () => {
+    // Rule 31: a precision reduction on a field that can add deletion pressure takes the bound
+    // with LESS pressure. `trim` rounds to nearest, so reusing it on the way in would round
+    // this cap up to 1.24 GB -- 4 MB of deletion the operator never authorized. Cutting is the
+    // half of the fix that has a direction, and this is the case that tells them apart.
+    const user = userEvent.setup();
+    const emit = vi.fn();
+    render(<Sized onEmit={emit} />);
+
+    await user.clear(size());
+    await user.type(size(), "1.236");
+    await user.tab();
+
+    expect(emit).toHaveBeenLastCalledWith(1.23e9);
+    expect(size()).toHaveValue(1.23);
+  });
+
+  it("keeps a two-decimal number the operator really did type", async () => {
+    // The cut reads the decimal text because the arithmetic form does not survive binary
+    // floating point: `Math.floor(0.29 * 100) / 100` is 0.28, since 0.29 * 100 is
+    // 28.999999999999996. Storing 0.28 over a typed 0.29 would be this same defect pointing
+    // the other way, and it is a whole display step wide rather than a hidden digit.
+    const user = userEvent.setup();
+    const emit = vi.fn();
+    render(<Sized onEmit={emit} />);
+
+    await user.clear(size());
+    await user.type(size(), "0.29");
+    await user.tab();
+
+    expect(emit).toHaveBeenLastCalledWith(2.9e8);
+    expect(size()).toHaveValue(0.29);
   });
 });

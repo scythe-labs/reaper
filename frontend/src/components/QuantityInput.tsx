@@ -38,11 +38,17 @@ function bestUnit(value: number, units: Unit[]): Unit {
   return sorted.find((u) => value >= u.factor) ?? units[0]!;
 }
 
-/** The smallest positive number the box can draw in the unit it is showing. `trim` keeps two
- *  decimals, so anything under this renders as "0" -- which is what the blur clamp below is
- *  floored to, so a clamped box can never show a number it is not storing. Change one of these
- *  and you change the other (rule 67). */
-const SHOWN_MIN = 0.01;
+/** How many decimals of its unit the box draws. Everything about the precision of this control
+ *  derives from this one number -- the smallest value it can show, the rounding on the way out,
+ *  and the cut on the way in -- rather than each site spelling "two decimals" its own way
+ *  (rule 67). */
+const SHOWN_DECIMALS = 2;
+
+/** The smallest positive number the box can draw in the unit it is showing: anything under this
+ *  renders as "0", which is what the blur clamp below is floored to, so a *clamped* box can
+ *  never show a number it is not storing. That is the clamp alone. What a box does with a TYPED
+ *  number carrying more decimals than it draws is `cutToShown`. */
+const SHOWN_MIN = 10 ** -SHOWN_DECIMALS;
 
 /** The smallest base value ANY of these units can draw at two decimals. A clamp stops
  *  here rather than at the current unit's own smallest step: flooring in the shown unit
@@ -56,7 +62,29 @@ function drawableFloor(units: Unit[]): number {
 
 /** Two decimals of the shown unit -- see SHOWN_MIN. */
 function trim(n: number): number {
-  return Math.round(n * 100) / 100;
+  const scale = 10 ** SHOWN_DECIMALS;
+  return Math.round(n * scale) / scale;
+}
+
+/** A typed number cut to the decimals the box actually draws, dropping the rest rather than
+ *  rounding them. Typing 1.234 in a GB box used to emit 1_234_000_000 while the box redrew
+ *  "1.23", so the cap in force was 4 MB above the one on screen, on the control whose whole
+ *  job is to state a bound. Cutting rather than rounding is rule 31: `trim` rounds to nearest,
+ *  which on 1.236 would raise the cap to 1.24 GB and permit deletion the operator never
+ *  authorized. Every box here has a positive floor, so cutting toward zero is always downward.
+ *
+ *  Both halves of this are binary floating point traps, and each one on its own turns a typed
+ *  0.29 into a stored 0.28 -- this same defect pointing the other way, and a whole display step
+ *  wide rather than a hidden digit. Arithmetic cannot do it: `Math.floor(0.29 * 100) / 100` is
+ *  0.28, because 0.29 * 100 is 28.999999999999996. Nor can the exact decimal text:
+ *  `(0.29).toFixed(20)` is "0.28999999999999998002", which is the binary value and not the one
+ *  anybody typed. So the number is first read back at a precision past anything a person types
+ *  into this box and short of where the representation error lives, and cut from there. */
+const TYPED_DECIMALS = 10;
+
+function cutToShown(n: number): number {
+  const [whole = "0", decimals = ""] = n.toFixed(TYPED_DECIMALS).split(".");
+  return Number(`${whole}.${decimals.slice(0, SHOWN_DECIMALS)}`);
 }
 
 /** Where a number lives while it is being typed.
@@ -162,10 +190,17 @@ export function QuantityInput({
   // number, which on a deletion cap is the direction rule 31 forbids.
   const floor = Math.max(min, drawableFloor(units));
   const shownMin = floor / unit.factor;
+  // The number is cut to the decimals the box draws BEFORE it is scaled, so the box cannot
+  // keep precision it declines to show (`cutToShown`). Where 0.01 of the shown unit is a whole
+  // number of base units the two then agree exactly, which is every size unit -- 0.01 MB is
+  // 10,000 bytes. Where it is not, the base unit is the coarser grid and wins: 0.01 weeks is
+  // under a tenth of a day and `grace_days` is whole days, so the value settles on a day and
+  // the box redraws the conversion of it (9 days as "1.29 weeks"). That residual is the unit
+  // dropdown's own arithmetic, not kept precision, and picking "days" shows the value exactly.
   const typed = useTypedNumber(
     shown,
     (n) => {
-      const base = Math.max(floor, Math.round(n * unit.factor));
+      const base = Math.max(floor, Math.round(cutToShown(n) * unit.factor));
       mine.current = base;
       onChange(base);
     },
