@@ -324,6 +324,56 @@ cannot fail closed on a report, so it names the span instead (`PersonDetailOut.h
 `components/watchReach.ts`). A zero reads "none since {date}" rather than "not watched", and an
 empty mirror asserts no figure at all rather than a confident 0%
 
+## Watch history that vanished
+
+**Choice: A high-water mark that cannot fall**, never a remapped key
+
+A Plex rating key is not stable. A file that leaves a library and comes back gets a new one,
+while Tautulli keeps every earlier play filed under the old one, so Reaper reads the mirror by
+the key the item carries *now*, finds nothing, and reports `Known(0)` watchers with maximum
+dormancy. That is an affirmative "nobody ever watched this" about a title somebody watched:
+maximum condemn pressure on the item that deserves it least, and the read path cannot tell it
+from a genuinely unwatched item, because both are "no rows for this key". Measured, not feared:
+0% of recently-played movies, rising to 1.5%, 1.5% and 4.5% across the 40th, 50th and 60th
+deciles of a six-figure history, on a server that had never run a deletion through Reaper
+(`docs/LEARNINGS.md`).
+
+**The two rejected fixes are the reason this is written down.** *Remapping the key* needs a
+remembered key to stay trustworthy after Plex may have reissued it to something else, and
+`metadata_items.id` is a SQLite integer id, not a never-reused handle. *Keying the mirror on the
+guid* was measured unsafe: about one guid in twenty-five in that library sits on more than one
+live rating key, the same title held twice in HD and [redacted], so a guid does not identify one item
+guid-keyed read pools two separate candidates' plays. What is left is the one invariant needing
+no key at all — **all-time watch evidence cannot fall** — so a count dropping to zero, or a last
+play moving earlier in time, is a transition no library performs and those facts read `Unknown`.
+A never-watched item reads zero on every scan, and 0 → 0 is not a fall, which is what makes the
+check safe to run library-wide.
+
+The mark therefore lives outside the snapshot lifecycle (`watch_high_water`, keyed on the
+durable `media_key`) and is only ever raised in SQL. Compared against the previous snapshot
+alone, the first blind scan would write zero as the new baseline and nothing could notice again.
+A reading carrying no evidence is not recorded at all: it could not raise a mark, and a stored
+zero would assert that Reaper measured the title and found nothing watched.
+
+**Two limits are accepted, not fixed.** A title whose plays were *already* unreachable the first
+time Reaper measured it has no mark to fall from, so the check never fires for it — the
+population the deciles above describe. Closing that needs the play's guid, which the watch
+mirror does not carry and cannot cheaply be made to: `history_sync` rebuilds the whole mirror on
+any change to its column tuple, `plex.py` parses raw guids to `ExternalIds` and keeps no
+`plex://` string to match on, and the guid would still not identify one item. Deliberately
+deferred as not worth the lift (#269). Separately, `snapshot._fold_merged_watch_stats` unions a
+merged group's counts onto the canonical item, so removing a duplicate listing is a real fall
+with no churn behind it; it reads as unreadable and holds that title until the record is
+discarded. Both are keep-direction, and both are stated in `services/watch_evidence.py` rather
+than papered over.
+
+**The escape hatch is required, not a convenience.** Rebuild a library without repairing its
+history and every watched title reads zero at once, so every one is held and nothing is reapable
+— correct, and unusable. Settings → Plex discards the record, two-step, with a standing warning
+saying what it costs. Deliberately not paired with a cache rebuild, which was the first design
+and was wrong: the mirror is a faithful copy, so re-syncing fetches the same stale rows back.
+The repair is at the source, in Tautulli's Fix Metadata screen.
+
 ## Delete mode
 
 **Choice: Grace is a notice window, not a gate.**
