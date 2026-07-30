@@ -13,6 +13,7 @@ import { announce } from "../announce";
 import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence } from "../api";
 import { useSuccessorFocus } from "../focus";
 import { count, since } from "../format";
+import { useSafety } from "../useSafety";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { Switch } from "./Switch";
@@ -119,8 +120,19 @@ export function PlexPanel({
   // A two-step in place rather than a native confirm(), which ignores the app's theme and
   // typography, and rather than a typed phrase, which this does not earn: it deletes no file
   // and the next scan rebuilds the record.
+  //
+  // The second step takes the admin password, the same credential and the same form as arming
+  // deletion (`DeletionToggle`) and confirming a restore (`RestoreCard`). No file goes, but the
+  // record is the only thing that can tell a title whose plays went unreadable apart from one
+  // nobody ever watched, so discarding it withdraws that protection library-wide and the next
+  // scan scores those titles as never watched. That is the condemn direction, which is what
+  // earns the password here.
   const [forgetting, setForgetting] = useState(false);
   const [forgotten, setForgotten] = useState<number | null>(null);
+  // Deliberately NOT part of `hasDrafts` below: a confirm credential is not work to lose, it is
+  // three seconds of retyping, and `DeletionToggle` treats its own the same way. `onDirtyChange`
+  // exists to stop the operator walking away from something they cannot get back.
+  const [forgetPassword, setForgetPassword] = useState("");
   // The web-address box mirrors the saved value and follows it when a save (or another
   // tab) changes it; typing diverges the two until Save or a refetch reconciles them.
   const [webUrl, setWebUrl] = useState("");
@@ -451,10 +463,21 @@ export function PlexPanel({
     queryFn: api.watchEvidence,
     enabled: linked,
   });
+  // Whether an admin password exists at all. Read from `useSafety` rather than added to
+  // `/watch-evidence`, because the answer already ships on `/safety` and every surface that
+  // gates on it reads it there: a second copy of one fact is the copy that goes wrong (rule
+  // 144). It is the same flag `DeletionToggle` branches on for the same reason.
+  const safety = useSafety();
   const forgetWatchEvidence = useMutation({
     mutationFn: api.resetWatchEvidence,
+    // The typed password is dropped on the way out on BOTH exits, success and refusal alike.
+    // Holding it would leave the admin password sitting in component state for as long as the
+    // panel stays mounted and refill the box on the next open, which is the shape S-5 was filed
+    // for; `RestoreCard` clears on a refusal for the same reason.
+    onError: () => setForgetPassword(""),
     onSuccess: (result) => {
       setForgetting(false);
+      setForgetPassword("");
       setForgotten(result.forgotten);
       // Refetch rather than patch: the reset moves `titles` to zero, but `held_back` is a
       // property of the LAST SCAN and does not change until the next one runs. Writing the
@@ -995,23 +1018,66 @@ export function PlexPanel({
                     rebuild that can be every title at once. Forget the record to start from what
                     Plex holds now.
                   </p>
+                  {/* Five states, all explicit (rule 17/36). The three that are not the form
+                      all fail closed: this control withdraws a protection, so a safety read
+                      Reaper could not complete offers nothing to press rather than assuming a
+                      password is there to check against. `DeletionToggle` splits the same way,
+                      and keeps its OFF direction live on an unreadable state because that
+                      direction can only make Reaper safer -- this one has no such direction,
+                      which is why unknown ends the branch here. */}
                   <div className="set-control">
-                    {forgetting ? (
-                      <>
+                    {safety.isLoading ? (
+                      <span className="muted">Checking…</span>
+                    ) : !safety.data ? (
+                      <span className="muted">
+                        Reaper couldn't check whether an admin password is set.
+                      </span>
+                    ) : !safety.data.has_password ? (
+                      <span className="muted">
+                        Set an admin password first, in Settings → Security.
+                      </span>
+                    ) : forgetting ? (
+                      /* The same form as arming deletion, down to the class: one password box,
+                         Confirm, Cancel. The placeholder is a hint that disappears on the first
+                         keystroke, so the field is named by its label either way. */
+                      <form
+                        className="pw-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          forgetWatchEvidence.mutate(forgetPassword);
+                        }}
+                      >
+                        <input
+                          type="password"
+                          value={forgetPassword}
+                          onChange={(e) => setForgetPassword(e.target.value)}
+                          maxLength={128}
+                          placeholder="admin password"
+                          aria-label="Admin password"
+                          autoComplete="current-password"
+                          autoFocus
+                        />
                         <button
-                          className="danger"
-                          disabled={forgetWatchEvidence.isPending}
-                          onClick={() => forgetWatchEvidence.mutate()}
+                          type="submit"
+                          className="danger sm"
+                          disabled={!forgetPassword || forgetWatchEvidence.isPending}
                         >
                           Confirm forget
                         </button>
+                        {/* Cancel drops the typed password with the form, same as the arming
+                            form's own Cancel (S-5). */}
                         <button
+                          type="button"
+                          className="ghost sm"
                           disabled={forgetWatchEvidence.isPending}
-                          onClick={() => setForgetting(false)}
+                          onClick={() => {
+                            setForgetting(false);
+                            setForgetPassword("");
+                          }}
                         >
                           Cancel
                         </button>
-                      </>
+                      </form>
                     ) : (
                       <button
                         className="ghost"
@@ -1040,9 +1106,17 @@ export function PlexPanel({
                     : watchEvidenceStatus(watchEvidence.data)}
                 </div>
               </div>
+              {/* The server's own sentence, not a fixed one. Every refusal this can now meet
+                  says something the operator has to act on differently -- a password that did
+                  not match, one not set yet, too many tries -- and one sentence covering all
+                  of them would name none of them. Each already reads as plain language and
+                  already states that the record was kept, so there is no lead-in either: that
+                  would print the reassurance twice. `DeletionToggle` renders its arming
+                  failures the same way (rule 72). */}
               {forgetWatchEvidence.error && (
                 <Notice tone="error">
-                  Couldn't forget the record. Nothing changed. Try again.
+                  {forgetWatchEvidence.error.message ||
+                    "Couldn't forget the record. Nothing changed. Try again."}
                 </Notice>
               )}
               {/* `standing`: it is always on screen, so it must not announce itself as an

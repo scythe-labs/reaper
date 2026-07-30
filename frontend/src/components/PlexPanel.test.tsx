@@ -22,6 +22,10 @@ const { apiMock } = vi.hoisted(() => ({
     setPlexLibraries: vi.fn(),
     watchEvidence: vi.fn(),
     resetWatchEvidence: vi.fn(),
+    // Read by `useSafety`, which the watch-history group consults for `has_password` before it
+    // offers the reset at all. A mock that omitted it would hand the hook `undefined` and the
+    // group would render its "couldn't check" branch in every test here (rule 135).
+    safety: vi.fn(),
     leavingSoonSettings: vi.fn(),
     setLeavingSoonSettings: vi.fn(),
     syncLeavingSoon: vi.fn(),
@@ -117,6 +121,9 @@ beforeEach(() => {
   // null, not 0: the shape a fresh install actually returns (no snapshot has counted).
   apiMock.watchEvidence.mockResolvedValue({ titles: 0, held_back: null });
   apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 0 });
+  // An install that has set an admin password and left deletion off -- the shipped state, and
+  // the only one in which the reset is offered at all. The tests that vary it say so.
+  apiMock.safety.mockResolvedValue({ destructive_enabled: false, has_password: true, note: null });
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
     allow_unarmed: false,
@@ -892,7 +899,21 @@ describe("forgetting the recorded watch history", () => {
     return queryClient;
   }
 
-  it("takes two presses, and sends nothing on the first", async () => {
+  const PASSWORD = "correct-horse-battery";
+
+  /** Open the reset and type the admin password into the confirm form.
+   *
+   *  Rule 137: the Confirm is disabled until the box has something in it, and user-event reports
+   *  a click on a disabled control as SUCCESS -- so a test that pressed it before typing would
+   *  send nothing, then fail later on a state its no-op never produced. */
+  async function arm(user: ReturnType<typeof userEvent.setup>, password = PASSWORD) {
+    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    const box = screen.getByLabelText("Admin password");
+    if (password) await user.type(box, password);
+    return box;
+  }
+
+  it("takes two presses and a password, and sends nothing on the first", async () => {
     const user = userEvent.setup();
     apiMock.watchEvidence.mockResolvedValue({ titles: 1284, held_back: 3 });
     renderPanel();
@@ -904,20 +925,37 @@ describe("forgetting the recorded watch history", () => {
     expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
     const confirm = screen.getByRole("button", { name: "Confirm forget" });
     expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();
+    // Nor can the second press land on its own: an empty box confirms nothing.
+    expect(confirm).toBeDisabled();
 
+    await user.type(screen.getByLabelText("Admin password"), PASSWORD);
+    await waitFor(() => expect(confirm).toBeEnabled());
     await user.click(confirm);
+    // The password reaches the server, which is the whole of this change: the route refuses
+    // without it, so a call that dropped it on the floor would read as green here and 403 in
+    // the app.
+    // Read off the first argument rather than matching the whole call: React Query hands a
+    // mutationFn its own context as a second argument, which the client ignores and this
+    // assertion has no business pinning.
     expect(apiMock.resetWatchEvidence).toHaveBeenCalledTimes(1);
+    expect(apiMock.resetWatchEvidence.mock.calls[0]?.[0]).toBe(PASSWORD);
   });
 
-  it("stands down on Cancel without sending anything", async () => {
+  it("stands down on Cancel, sending nothing and keeping no password", async () => {
     const user = userEvent.setup();
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await arm(user);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
     expect(await screen.findByRole("button", { name: "Forget…" })).toBeEnabled();
+
+    // Reopening offers an EMPTY box. Cancel that only closed the form would leave the admin
+    // password in component state for as long as this panel stayed mounted, and refill the field
+    // on the next open -- the shape S-5 was filed for.
+    await user.click(screen.getByRole("button", { name: "Forget…" }));
+    expect(screen.getByLabelText("Admin password")).toHaveValue("");
   });
 
   it("says how many it forgot, and when that takes effect", async () => {
@@ -926,7 +964,7 @@ describe("forgetting the recorded watch history", () => {
     apiMock.resetWatchEvidence.mockResolvedValue({ forgotten: 1284 });
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await arm(user);
     await user.click(screen.getByRole("button", { name: "Confirm forget" }));
 
     // The second sentence is load-bearing: the stored candidates are frozen snapshot data, so
@@ -936,19 +974,83 @@ describe("forgetting the recorded watch history", () => {
     expect(status).toHaveTextContent("The next scan uses what Plex holds now.");
   });
 
-  it("reports a failure and says nothing changed", async () => {
+  // The fallback, for a failure that arrived with nothing to say. Without it the operator gets a
+  // red box holding no words, which is worse than the fixed sentence this used to always show:
+  // "nothing changed" is the load-bearing half, since someone reading a bare failure cannot tell
+  // whether pressing again is safe.
+  it("still says nothing changed when the failure carries no message", async () => {
     const user = userEvent.setup();
-    apiMock.resetWatchEvidence.mockRejectedValue(new Error("boom"));
+    apiMock.resetWatchEvidence.mockRejectedValue(new Error(""));
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Forget…" }));
+    await arm(user);
     await user.click(screen.getByRole("button", { name: "Confirm forget" }));
 
     const failure = await screen.findByText(/Couldn't forget the record/);
     expect(failure).toHaveClass("notice-error");
-    // "Nothing changed" is the load-bearing half: an operator who reads a bare failure does not
-    // know whether to press again.
     expect(failure).toHaveTextContent("Nothing changed.");
+  });
+
+  // Every refusal the password gate can raise needs a different move from the operator, so the
+  // server's own sentence is what gets rendered. A fixed "couldn't forget the record" would have
+  // told someone locked out to keep pressing.
+  it.each([
+    "That password didn't match. The record was kept.",
+    "Too many attempts. Please wait and try again.",
+    "The server is busy checking passwords. Please try again shortly.",
+  ])("shows the server's own refusal: %s", async (detail) => {
+    const user = userEvent.setup();
+    apiMock.resetWatchEvidence.mockRejectedValue(new Error(detail));
+    renderPanel();
+
+    await arm(user);
+    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
+
+    expect(await screen.findByText(detail)).toHaveClass("notice-error");
+  });
+
+  it("drops the typed password when the server refuses it", async () => {
+    const user = userEvent.setup();
+    apiMock.resetWatchEvidence.mockRejectedValue(new Error("That password didn't match."));
+    renderPanel();
+
+    await arm(user);
+    await user.click(screen.getByRole("button", { name: "Confirm forget" }));
+    await screen.findByText("That password didn't match.");
+
+    // The form stays open to retype into, but the wrong password does not sit there waiting to
+    // be resent -- the same thing `RestoreCard` does with a rejected confirm.
+    expect(screen.getByLabelText("Admin password")).toHaveValue("");
+  });
+
+  // The three states that are not "a password exists" all fail closed: this control withdraws a
+  // protection from every title at once, so there is no direction here that is safe to offer on
+  // a guess. `DeletionToggle` keeps its OFF direction live on an unreadable safety read because
+  // that one can only make Reaper safer; this row has no such half.
+  it("offers nothing to press until an admin password is set", async () => {
+    apiMock.safety.mockResolvedValue({
+      destructive_enabled: false,
+      has_password: false,
+      note: null,
+    });
+    renderPanel();
+
+    expect(await screen.findByText(/Set an admin password first/)).toHaveTextContent(
+      "Settings → Security",
+    );
+    expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();
+    expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
+  });
+
+  it("offers nothing to press when it can't tell whether a password is set", async () => {
+    apiMock.safety.mockRejectedValue(new Error("boom"));
+    renderPanel();
+
+    // Named, not blank: a control that simply vanished would read as "this install doesn't have
+    // that feature" rather than "Reaper couldn't look" (rule 17/36).
+    await screen.findByText(/couldn't check whether an admin password is set/);
+    expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();
+    expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
   });
 
   // The status line, whose job is to answer "do I need to press this at all". Three readings,

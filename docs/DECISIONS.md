@@ -369,10 +369,20 @@ than papered over.
 
 **The escape hatch is required, not a convenience.** Rebuild a library without repairing its
 history and every watched title reads zero at once, so every one is held and nothing is reapable
-— correct, and unusable. Settings → Plex discards the record, two-step, with a standing warning
-saying what it costs. Deliberately not paired with a cache rebuild, which was the first design
-and was wrong: the mirror is a faithful copy, so re-syncing fetches the same stale rows back.
-The repair is at the source, in Tautulli's Fix Metadata screen.
+— correct, and unusable. Settings → Plex discards the record, two-step and behind the admin
+password, with a standing warning saying what it costs. Deliberately not paired with a cache
+rebuild, which was the first design and was wrong: the mirror is a faithful copy, so re-syncing
+fetches the same stale rows back. The repair is at the source, in Tautulli's Fix Metadata screen.
+
+**The password is the same one that arms deletion**, on the same lockout, and it was added after
+the two-step shipped alone. Discarding the record is the only control in Settings that withdraws
+a protection from every title at once: the mark is what separates "plays we can no longer read"
+from "nobody ever watched this", so the scan after a discard scores every churned title as never
+watched and `MIN_DORMANCY`, `SERVER_POPULARITY` and `DATA_HORIZON` all stop holding it. No file
+goes when it is pressed, which is why a typed confirmation phrase would be theater — but a stray
+click or a stale tab reaching it is the same failure arming has, and it gets the same answer.
+With no admin password set the control is not offered and the route refuses, pointing at the
+password step rather than at a password to guess.
 
 ## Delete mode
 

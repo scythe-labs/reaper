@@ -36,7 +36,7 @@ from reaper.main import create_app
 from reaper.services import lists, season_scan, watch_evidence
 from reaper.services.snapshot import RawItem, ScanContext, build_facts
 from reaper.services.watch_evidence import Mark, Reading, went_blind
-from tests._auth import login
+from tests._auth import TEST_PASSWORD, login
 
 # Whole seconds. ``UtcTimestamp`` stores epoch seconds (``db.types.EpochDateTime``), so a
 # microsecond here would survive in memory and not in the row, and every round-trip
@@ -320,30 +320,120 @@ def _movie_facts(*, blind: str | None, added_at: datetime = JUST_ADDED) -> Facts
     )
 
 
+def _seed_marks(client: TestClient, *keys: str) -> None:
+    """Rows in ``watch_high_water``, by raw SQL like the snapshot helper below."""
+    engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
+    with engine.begin() as conn:
+        for key in keys:
+            conn.execute(
+                text(
+                    "INSERT INTO watch_high_water "
+                    "(media_key, watchers_all_time, last_played_at, updated_at) "
+                    "VALUES (:k, 3, NULL, 1)"
+                ),
+                {"k": key},
+            )
+    engine.dispose()
+
+
+def _marks_held(client: TestClient) -> int:
+    """How many marks survive, read straight out of the table rather than off the route.
+
+    The route's own count is what these tests are judging, so believing it about whether the
+    delete happened would be circular: a refusal that returned ``{"forgotten": 0}`` while
+    emptying the table reads identically from the response body.
+    """
+    engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
+    with engine.begin() as conn:
+        held = conn.execute(text("SELECT count(*) FROM watch_high_water")).scalar_one()
+    engine.dispose()
+    return int(held)
+
+
+def _clear_admin_password(client: TestClient) -> None:
+    """Leave the signed-in session standing, but with no admin password behind it.
+
+    The state a Plex-only install is in: the owner claimed the server over OAuth and never set
+    one. Nulling the hash rather than deleting the row keeps the cookie valid, because
+    resolving a session never touches ``password_hash`` -- so this isolates "no password set"
+    from "not signed in", which are different refusals.
+    """
+    engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_user SET password_hash = NULL"))
+    engine.dispose()
+
+
 class TestTheStartFreshRoute:
     """The escape hatch. Rebuild a library without repairing its history and every watched
     title reads zero at once, so every one is held back and nothing is reapable. Correct, and
-    unusable, so the operator can discard the record."""
+    unusable, so the operator can discard the record.
+
+    It is gated on the admin password, like arming deletion and confirming a restore, because
+    the record is the only thing separating "plays we can no longer read" from "nobody ever
+    watched this" -- so discarding it withdraws that protection from every title at once, and
+    the next scan scores those titles as never watched. Same gate, same lockout, same refusal
+    with no password set (rule 72).
+    """
 
     def test_it_forgets_every_mark_and_says_how_many(self, client: TestClient) -> None:
-        engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
-        with engine.begin() as conn:
-            for n in (5, 6):
-                conn.execute(
-                    text(
-                        "INSERT INTO watch_high_water "
-                        "(media_key, watchers_all_time, last_played_at, updated_at) "
-                        "VALUES (:k, 3, NULL, 1)"
-                    ),
-                    {"k": f"radarr:1:{n}"},
-                )
-        engine.dispose()
+        _seed_marks(client, "radarr:1:5", "radarr:1:6")
 
-        body = client.post("/api/settings/watch-evidence/reset").json()
+        body = client.post(
+            "/api/settings/watch-evidence/reset", json={"password": TEST_PASSWORD}
+        ).json()
         assert body == {"forgotten": 2}
         # Idempotent: a second press has nothing left to discard and says so rather than
         # failing, so a double click cannot read as an error.
-        assert client.post("/api/settings/watch-evidence/reset").json() == {"forgotten": 0}
+        assert client.post(
+            "/api/settings/watch-evidence/reset", json={"password": TEST_PASSWORD}
+        ).json() == {"forgotten": 0}
+
+    def test_a_wrong_or_missing_password_keeps_every_mark(self, client: TestClient) -> None:
+        """Both spellings of "did not confirm" are refused, and the marks are still there.
+
+        The omitted case is not a validator's 422: the field is optional on the wire precisely
+        so that an empty submit gets the same plain sentence a wrong password gets.
+        """
+        _seed_marks(client, "radarr:1:5", "radarr:1:6")
+
+        for payload in ({"password": "not-the-admin-password"}, {}):
+            refused = client.post("/api/settings/watch-evidence/reset", json=payload)
+            assert refused.status_code == 403, refused.text
+            assert refused.json()["detail"] == "That password didn't match. The record was kept."
+            assert _marks_held(client) == 2
+
+        # And the right one still works afterwards: a refusal locks nothing but the attempt.
+        ok = client.post("/api/settings/watch-evidence/reset", json={"password": TEST_PASSWORD})
+        assert ok.status_code == 200, ok.text
+        assert _marks_held(client) == 0
+
+    def test_with_no_admin_password_set_it_points_at_the_password_step(
+        self, client: TestClient
+    ) -> None:
+        """Not a 403: there is nothing to type, so "that didn't match" would send the operator
+        to guess at a password that does not exist. Same sentence shape as arming deletion and
+        confirming a restore, naming this action (rule 72)."""
+        _seed_marks(client, "radarr:1:5")
+        _clear_admin_password(client)
+
+        refused = client.post("/api/settings/watch-evidence/reset", json={"password": ""})
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["detail"] == (
+            "Set an admin password first. It's what confirms forgetting the record."
+        )
+        assert _marks_held(client) == 1
+
+    def test_repeated_wrong_passwords_are_locked_out(self, client: TestClient) -> None:
+        """This is a password-guessing surface like the other two, so past the threshold it
+        stops hashing and answers 429 instead of running another Argon2 verify (rule 11/98)."""
+        codes = [
+            client.post(
+                "/api/settings/watch-evidence/reset", json={"password": f"wrong-{n}"}
+            ).status_code
+            for n in range(6)
+        ]
+        assert codes == [403] * 5 + [429]
 
 
 def _insert_snapshot(client: TestClient, *, blind: int | None) -> None:

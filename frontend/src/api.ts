@@ -1461,7 +1461,10 @@ export const api = {
     put<PlexLibrary[]>("/api/settings/plex/libraries", { enabled_keys }),
 
   watchEvidence: () => request<WatchEvidence>("/api/settings/watch-evidence"),
-  resetWatchEvidence: () => post<{ forgotten: number }>("/api/settings/watch-evidence/reset", {}),
+  /** Forgetting the record takes the admin password, like arming deletion and confirming a
+   *  restore: it withdraws a protection from every title at once. */
+  resetWatchEvidence: (password: string) =>
+    post<{ forgotten: number }>("/api/settings/watch-evidence/reset", { password }),
 
   leavingSoonSettings: () => request<LeavingSoonSettings>("/api/settings/leaving-soon"),
   setLeavingSoonSettings: (body: { enabled?: boolean; allow_unarmed?: boolean }) =>

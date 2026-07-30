@@ -327,6 +327,17 @@ class WatchEvidenceOut(BaseModel):
     held_back: int | None = None
 
 
+class WatchEvidenceResetIn(BaseModel):
+    """The admin password, which is what confirms forgetting the record.
+
+    Optional on the wire rather than required, so an omitted password comes back as the same
+    plain "that password didn't match" the wrong one gets, instead of a validator's sentence
+    (rule 21). Its siblings ``SafetyIn`` and ``RestoreConfirmIn`` are typed the same way.
+    """
+
+    password: str | None = Field(default=None, max_length=128)
+
+
 class WatchEvidenceResetOut(BaseModel):
     """How many titles Reaper forgot."""
 
@@ -1076,7 +1087,9 @@ async def get_watch_evidence(request: Request) -> WatchEvidenceOut:
 
 
 @router.post("/watch-evidence/reset", tags=[api_tags.PLEX])
-async def reset_watch_evidence(request: Request) -> WatchEvidenceResetOut:
+async def reset_watch_evidence(
+    request: Request, payload: WatchEvidenceResetIn
+) -> WatchEvidenceResetOut:
     """Forget how much watching Reaper has measured for each title, and start over.
 
     Reaper records the most watch history it has ever seen per title, so that a title whose
@@ -1092,8 +1105,39 @@ async def reset_watch_evidence(request: Request) -> WatchEvidenceResetOut:
     Deliberately not paired with a cache rebuild: the watch mirror is a faithful copy of the
     source, so re-syncing it fetches the same rows back. The repair that restores the real
     numbers is on the source side, in Tautulli.
+
+    **Gated on the admin password, exactly like arming deletion (:func:`set_safety`) and
+    confirming a restore (:func:`reaper.api.backup.restore_confirm`)** -- the same per-IP and
+    per-account lockout, the same Argon2 concurrency gate, and the same refusal when no
+    password has been set at all. It earns that gate on blast radius: the record is the only
+    thing that can tell a title whose plays went unreadable apart from one nobody ever
+    watched, so discarding it withdraws that protection from every title at once, and the
+    three gates that were holding those titles (``MIN_DORMANCY``, ``SERVER_POPULARITY``,
+    ``DATA_HORIZON``) stop holding on the next scan. A stray click or a stale tab must not be
+    able to do that, which is the same sentence ``set_safety`` is written on.
+
+    No content-binding token (rule 73), and that is a decision rather than an omission: there
+    is nothing staged for the operator to review. They are not approving a list, and the
+    action discards the whole record whatever the count beside it says, so a token bound to
+    that count could only refuse a press over a change that cannot alter what the press does.
+    ``set_safety`` is the shape this follows; ``restore_confirm`` binds a token because it has
+    a staged artifact to bind one to.
     """
+    keys = (f"ip:{_client_ip(request)}", "account:watch-evidence-reset")
     async with _factory(request)() as session:
+        if not await admin_password.has_password(session):
+            raise HTTPException(
+                400,
+                "Set an admin password first. It's what confirms forgetting the record.",
+            )
+        _throttled(password_throttle, *keys)
+        ok = await _verify_admin_password(session, payload.password or "")
+        if not ok:
+            for key in keys:
+                password_throttle.record_failure(key)
+            raise HTTPException(403, "That password didn't match. The record was kept.")
+        for key in keys:
+            password_throttle.record_success(key)
         forgotten = await watch_evidence.forget_all(session)
         await session.commit()
     return WatchEvidenceResetOut(forgotten=forgotten)
