@@ -343,8 +343,23 @@ async def update_instance(
 
     The key is write-only: the browser cannot read it back, so "no new key" must mean
     "leave it alone", never "clear it". Clearing a key would silently break the next scan.
+
+    Changing what a connection test was computed against clears the stored outcome, so the
+    card falls back to "Not tested yet" rather than vouching for credentials nobody has tried
+    (see ``tested_against_changed`` below).
     """
     row = await _get(session, instance_id)
+
+    # The stored outcome of the last connection test describes one exact set of credentials:
+    # `test_saved_instance` computes it from base_url, the key and verify_tls. Change any of them
+    # and it describes something nobody tried, so it is cleared. The green direction is the one
+    # that matters: "Reached" would tell the operator Reaper can reach the app it deletes
+    # *through* when nothing has checked the address now configured (#264, rules 85/7/24). The
+    # same trio is what the browser's own freshness pairing watches, in `ServiceModal.testedWith`
+    # and `ServiceCard.testedWith` -- one fact, so keep the three lists together (rule 144).
+    # `api_path_prefix` rides along in that test too, but no route can change it, so it cannot go
+    # stale here; adding a writer for it means adding it here.
+    tested_against_changed = False
 
     if name is not None and name.strip():
         new_name = name.strip()
@@ -363,17 +378,25 @@ async def update_instance(
                 )
         row.name = new_name
     if base_url is not None and base_url.strip():
-        row.base_url = base_url.strip().rstrip("/")
+        new_base_url = base_url.strip().rstrip("/")
+        tested_against_changed |= new_base_url != row.base_url
+        row.base_url = new_base_url
     if external_url is not None:
         # Unlike base_url (blank keeps, since it is required), a blank external_url CLEARS it to
         # NULL -- that is how the operator turns off a custom link address and falls back to
         # base_url. Omitting the field (None) still keeps the stored value.
         row.external_url = external_url.strip().rstrip("/") or None
     if api_key:  # a blank/omitted key means "keep the existing one"
+        # A key that arrives at all counts as a rotation, without comparing it to the stored one:
+        # the browser only sends this field when the operator typed in it, and re-typing the same
+        # key costs a truthful "Not tested yet" while guessing the other way would leave a green
+        # badge standing for a key that was never tried.
         row.api_key_enc = box.encrypt(api_key)
+        tested_against_changed = True
     if enabled is not None:
         row.enabled = enabled
     if verify_tls is not None:  # None means "leave it as it is"; an explicit False sticks
+        tested_against_changed |= verify_tls != row.verify_tls
         row.verify_tls = verify_tls
     if add_import_exclusion is not None:  # None keeps the stored value; explicit False sticks
         row.add_import_exclusion = add_import_exclusion
@@ -385,6 +408,14 @@ async def update_instance(
         # An empty dict clears the map to NULL, so "removed every mapping" and "never had one"
         # are the one state build_map reads as "no map" (fall back to the tmdb/tvdb union).
         row.service_instance_map = _encode_service_instance_map(service_instance_map)
+
+    if tested_against_changed:
+        # All three, because all three are read only beside a passed test: the card prints
+        # `detected_version` inside the "Reached" badge, so a version left behind would name the
+        # build at the old address.
+        row.last_ok_at = None
+        row.last_error = None
+        row.detected_version = None
 
     await session.flush()
     log.info("instance.updated", kind=row.kind.value, name=row.name)

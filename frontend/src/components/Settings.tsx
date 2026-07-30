@@ -1040,8 +1040,10 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
   //
   // The address and the certificate setting are what this card can see change. A key ROTATED at the
   // same address is not visible here -- `has_key` stays true -- so it is included for the false-to-
-  // true case only; the server's own `last_ok_at` / `last_error` below is the answer that survives
-  // a rotation, since only a real test moves it.
+  // true case only. The rotation is answered on the server instead: `update_instance` clears
+  // `last_ok_at` / `last_error` / `detected_version` whenever the address, the key or the
+  // certificate setting changes, so the fallbacks below cannot outlive what they were computed
+  // against either, and this card drops to "Not tested yet" (#264, rule 85).
   const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const testedWith = () => `${instance.base_url} ${instance.verify_tls} ${instance.has_key}`;
   // A two-step "Remove" -> "Confirm remove" toggle, mirroring the Safety arm flow below,

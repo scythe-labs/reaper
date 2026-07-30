@@ -394,6 +394,128 @@ class TestInstancesCrud:
         )
 
 
+class TestTheStoredTestResultDescribesWhatWasTested:
+    """A connection test's outcome is stored on the instance row and rendered as the service
+    card's badge, so it must describe the credentials in force -- not the ones it was computed
+    from before an edit (#264, rule 85's family, one layer below #178's frontend half).
+
+    The green direction is the one that matters: a stale "Reached" tells the operator Reaper can
+    reach the app it deletes *through* when nothing has checked the address now configured.
+    """
+
+    @staticmethod
+    def _pass_a_test(client: TestClient, monkeypatch: pytest.MonkeyPatch, instance_id: int) -> None:
+        async def fake_test(
+            kind: InstanceKind,
+            base_url: str,
+            api_key: str,
+            *,
+            verify: bool = True,
+            api_path_prefix: str | None = None,
+        ) -> instances_service.TestResult:
+            return instances_service.TestResult(ok=True, detail="Connected.", version="4.0.1")
+
+        monkeypatch.setattr(instances_service, "test_connection", fake_test)
+        assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
+
+    @staticmethod
+    def _row(client: TestClient, instance_id: int) -> dict[str, object]:
+        listed = client.get("/api/settings/instances").json()
+        return next(row for row in listed if row["id"] == instance_id)  # type: ignore[no-any-return]
+
+    def _saved_and_tested(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> dict[str, object]:
+        made = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
+        ).json()
+        self._pass_a_test(client, monkeypatch, made["id"])
+        stored = self._row(client, made["id"])
+        # The precondition, asserted rather than assumed: without a stored pass to clear, every
+        # case below would hold on an empty row and prove nothing (rule 118).
+        assert stored["last_ok_at"] is not None
+        assert stored["detected_version"] == "4.0.1"
+        return made
+
+    @pytest.mark.parametrize(
+        ("what_changed", "edit"),
+        [
+            ("the address", {"base_url": "http://b.local"}),
+            ("the key", {"api_key": "rotated"}),
+            ("the certificate check", {"verify_tls": False}),
+        ],
+    )
+    def test_changing_what_was_tested_clears_the_stored_outcome(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        what_changed: str,
+        edit: dict[str, object],
+    ) -> None:
+        """Each of the three inputs ``test_saved_instance`` computes its answer from, driven on
+        its own: nothing cleared these columns, and the only writer was a real test."""
+        made = self._saved_and_tested(client, monkeypatch)
+
+        assert client.put(f"/api/settings/instances/{made['id']}", json=edit).status_code == 200
+
+        after = self._row(client, made["id"])
+        assert after["last_ok_at"] is None, f"a pass survived {what_changed} changing"
+        assert after["last_error"] is None
+        # Cleared too, or the badge would name the build found at the old address.
+        assert after["detected_version"] is None
+
+    def test_an_edit_that_changes_nothing_tested_keeps_the_outcome(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The discriminating case: a rename, and a save that resends the SAME address, both
+        keep the pass. Without this the clearing above is indistinguishable from clearing on
+        every update, which would leave no service card able to show a result at all."""
+        made = self._saved_and_tested(client, monkeypatch)
+
+        renamed = client.put(f"/api/settings/instances/{made['id']}", json={"name": "4K"})
+        assert renamed.status_code == 200
+        assert renamed.json()["last_ok_at"] is not None
+
+        resent = client.put(
+            f"/api/settings/instances/{made['id']}",
+            json={"base_url": "http://a.local", "verify_tls": True},  # both unchanged
+        )
+        assert resent.status_code == 200
+        assert resent.json()["last_ok_at"] is not None
+        assert resent.json()["detected_version"] == "4.0.1"
+
+    def test_a_stored_failure_is_cleared_by_the_same_edit(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both directions, because the badge renders ``last_error`` ahead of ``last_ok_at``: a
+        failure left behind would blame the new address for the old one's refusal."""
+        made = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
+        ).json()
+
+        async def failing_test(
+            kind: InstanceKind,
+            base_url: str,
+            api_key: str,
+            *,
+            verify: bool = True,
+            api_path_prefix: str | None = None,
+        ) -> instances_service.TestResult:
+            return instances_service.TestResult(ok=False, detail="Couldn't reach it.")
+
+        monkeypatch.setattr(instances_service, "test_connection", failing_test)
+        assert client.post(f"/api/settings/instances/{made['id']}/test").status_code == 200
+        assert self._row(client, made["id"])["last_error"] == "Couldn't reach it."
+
+        moved = client.put(
+            f"/api/settings/instances/{made['id']}", json={"base_url": "http://b.local"}
+        )
+        assert moved.status_code == 200
+        assert moved.json()["last_error"] is None
+
+
 class TestConnectionTestsHonorTheTlsChoice:
     """The TLS choice must reach the client that actually dials out -- the stored
     ``verify_tls`` for a saved instance, and the checkbox value sent with the request
