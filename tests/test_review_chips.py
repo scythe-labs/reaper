@@ -58,8 +58,10 @@ from reaper.services.condemned import (
 )
 from reaper.services.season_pruning import PruneConflict
 from reaper.services.season_scan import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
+from reaper.services.season_scan import NO_ADDED_AT_REASON as SEASON_NO_ADDED_AT_REASON
 from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
+from reaper.services.snapshot import NO_ADDED_AT_REASON as MOVIE_NO_ADDED_AT_REASON
 
 from ._auth import login
 
@@ -1291,20 +1293,32 @@ class TestTheMatchStatusVocabulary:
         assert set(reasons) == wanted
         assert len(set(reasons.values())) == len(wanted), "two statuses share one reason"
 
-    def test_every_no_key_reason_has_operator_copy_in_the_panel(self) -> None:
+    def test_every_backend_cause_has_operator_copy_in_the_panel(self) -> None:
         """Rule 144, across the tree boundary. ``CAUSE_COPY`` turns each backend reason into
         the sentence the owner reads; a key with no entry there renders the backend's raw
         phrasing instead, which is how internal wording reaches the screen. The failure
         message names the file to edit, because a comment asking the next author to remember
-        does nothing."""
+        does nothing.
+
+        The two dormancy reasons are covered here as of #278. They were hand-typed five
+        times in `src/` and twice more in `WhyPanel.tsx`, with a comment in `snapshot.py`
+        citing rule 144 over the pair -- and nothing checking them, so rewording either side
+        printed the raw backend phrase at the owner with the suite green. Naming them beside
+        the no-key reasons is the fix rule 144 actually asks for: point the test at the
+        sibling copies rather than trusting a comment to be remembered.
+        """
         panel = (
             Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
         ).read_text(encoding="utf-8")
         cause_copy = panel.split("const CAUSE_COPY", 1)[1].split("};", 1)[0]
         missing = [
             reason
-            for reasons in (MOVIE_NO_KEY_REASONS, SEASON_NO_KEY_REASONS)
-            for reason in reasons.values()
+            for reason in (
+                *MOVIE_NO_KEY_REASONS.values(),
+                *SEASON_NO_KEY_REASONS.values(),
+                MOVIE_NO_ADDED_AT_REASON,
+                SEASON_NO_ADDED_AT_REASON,
+            )
             if f'"{reason}"' not in cause_copy
         ]
         assert not missing, (

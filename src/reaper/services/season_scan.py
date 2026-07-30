@@ -532,6 +532,11 @@ _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
     identity.MatchStatus.CONFLICTED: "Plex and Sonarr describe this show differently",
 }
 
+#: The season twin of ``snapshot.NO_ADDED_AT_REASON``, and the same contract: a key into
+#: ``CAUSE_COPY``, named so the drift test covers it (rule 144). Its own wording, for the
+#: reason the map above keeps its own -- the subject is "this season", not "this item".
+NO_ADDED_AT_REASON = "no added-at date for this season"
+
 
 def build_season_facts(
     *,
@@ -653,7 +658,7 @@ def build_season_facts(
                 season=season.season_number,
                 plex_rating_key=plex_rating_key,
             )
-            dormancy = Unknown(reason="no added-at date for this season", source="tautulli")
+            dormancy = Unknown(reason=NO_ADDED_AT_REASON, source="tautulli")
         else:
             dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
 
@@ -707,7 +712,7 @@ def build_season_facts(
         days_since_added=(
             Known(value=dormancy_days(season_added_at, now=utcnow()), source="plex")
             if season_added_at is not None
-            else Unknown(reason="no added-at date for this season", source="plex")
+            else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
         ),
         size_bytes=(
             Known(value=season.size_on_disk, source="sonarr")
@@ -1740,7 +1745,7 @@ def _judge_series(
         age: Observation[float] = (
             Known(value=float(dormancy_days(added_at, now=now or utcnow())), source="plex")
             if added_at is not None
-            else Unknown(reason="no added-at date for this season", source="plex")
+            else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
         )
         shortfall_by_season[season.season_number] = lifetime_shortfall(reach, age)
     plan = plan_series_prune(

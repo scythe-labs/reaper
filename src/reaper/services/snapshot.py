@@ -221,6 +221,12 @@ _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
     identity.MatchStatus.CONFLICTED: "Plex and Radarr describe this file differently",
 }
 
+#: Why dormancy could not be measured: matched to Plex, but no arrival date AND no play, so
+#: there is no instant to measure from. A KEY into ``CAUSE_COPY`` exactly as the reasons
+#: above are, and named here rather than typed at each site so the same drift test covers it
+#: (rule 144) -- it was written twice by hand, on both sides of the tree, and nothing failed.
+NO_ADDED_AT_REASON = "no added-at date"
+
 
 def build_facts(
     item: RawItem,
@@ -294,9 +300,11 @@ def build_facts(
             # there is genuinely nothing to measure from and the item abstains: it appears
             # only as "kept to be safe", never on the reap list. Warn so "why isn't this
             # reapable" is answerable from the log, the same as an unmatched item. Rare: a
-            # matched Plex item almost always carries an added_at. The reason string is a key
-            # into WhyPanel's copy map (rule 144) and is the same state the season lane's
-            # both-missing arm reports, so the two lanes now say one thing.
+            # matched Plex item almost always carries an added_at. The reason is a key into
+            # WhyPanel's copy map, named in `NO_ADDED_AT_REASON` so
+            # `test_review_chips.py::TestTheMatchStatusVocabulary` fails if the two sides
+            # drift (rule 144) -- it is also the same state the season lane's both-missing
+            # arm reports, so the two lanes say one thing.
             log.warning(
                 "scan.no_added_at",
                 media_type="movie",
@@ -306,7 +314,7 @@ def build_facts(
                 tmdb_id=item.tmdb_id,
                 plex_rating_key=rating_key,
             )
-            dormancy = Unknown(reason="no added-at date", source="tautulli")
+            dormancy = Unknown(reason=NO_ADDED_AT_REASON, source="tautulli")
         else:
             dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
 
@@ -448,7 +456,7 @@ def build_facts(
         days_since_added=(
             Known(value=dormancy_days(item.added_at, now=utcnow()), source="plex")
             if item.added_at is not None
-            else Unknown(reason="no added-at date", source="plex")
+            else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
         ),
         size_bytes=(
             Known(value=item.size_bytes, source="radarr")
