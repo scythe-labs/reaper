@@ -2001,3 +2001,33 @@ describe("the search box a jump aims at this queue", () => {
     expect(box).toHaveValue("something else");
   });
 });
+
+describe("what the search box calls itself", () => {
+  // The placeholder is this box's only visible label -- there is no <label> and no visible
+  // heading naming it -- so the accessible name has to repeat it word for word. Someone driving
+  // the page by voice says what they can read, and a name reading "and years" where the screen
+  // reads "years" is a control they cannot ask for (WCAG 2.5.3 Label in Name). Derived from the
+  // element rather than spelled twice here, so the two can only be changed together; LogsPanel's
+  // box is the sibling that already pairs this way.
+  it("names itself with the words on screen, so it can be asked for by voice", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <ReviewQueue
+          verdict="condemn"
+          onVerdictChange={() => {}}
+          selectedId={null}
+          selectedGroupKey={null}
+          onSelect={() => {}}
+          onSelectGroup={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    const box = await screen.findByRole("searchbox", { name: /search titles/i });
+    // The ellipsis is the one difference the visible copy is allowed: it says "keep typing",
+    // and a screen reader has no use for it.
+    expect(box.getAttribute("aria-label")).toBe(
+      (box.getAttribute("placeholder") ?? "").replace(/…$/, ""),
+    );
+  });
+});

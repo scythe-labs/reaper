@@ -2242,7 +2242,10 @@ export function ReviewQueue({
               // 1979" and takes "1979" on its own, and an operator who is not told tries the
               // year once, gets nothing, and stops trying. `list_candidates` is the other copy
               // of this sentence (rule 144) and says the same three things.
-              aria-label="Search titles, shows, and years"
+              // The name repeats the placeholder word for word, because the placeholder is this
+              // box's only visible label: a name that says "and years" where the screen says
+              // "years" cannot be reached by someone who speaks what they can see.
+              aria-label="Search titles, shows, years"
               placeholder="Search titles, shows, years…"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
