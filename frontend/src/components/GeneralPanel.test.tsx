@@ -6,7 +6,7 @@
 // BOTH of them in the bar: it was a third on-the-spot writer, and pressing Forever committed the
 // number the bar had just called unsaved (issue #90).
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
@@ -21,6 +21,11 @@ const { apiMock } = vi.hoisted(() => ({
     saveGeneral: vi.fn(),
     revealApiKey: vi.fn(),
     generateApiKey: vi.fn(),
+    // Read at `Settings.tsx`'s `removeKey`. Absent from this mock until the Remove path needed
+    // driving, and absent SILENTLY: the `setup.ts` gate covers a query with no `queryFn`, not a
+    // mutation with no `mutationFn`, so a test pressing Remove would have failed on an undefined
+    // call rather than on the thing it was checking (rule 135).
+    removeApiKey: vi.fn(),
   },
 }));
 
@@ -75,6 +80,20 @@ function renderPanel() {
     </QueryClientProvider>,
   );
   return userEvent.setup();
+}
+
+/** The same tree, handing back the client, for the one test that needs a refresh the panel never
+ *  asked for. A key made in another tab is exactly that: nothing the operator does here can
+ *  produce it, and it is the state #203 is about. */
+function renderPanelWithClient() {
+  const queryClient = testQueryClient();
+  render(
+    <QueryClientProvider client={queryClient}>
+      <Announcer />
+      <GeneralPanel />
+    </QueryClientProvider>,
+  );
+  return { user: userEvent.setup(), queryClient };
 }
 
 /** What a screen reader would have heard: the region currently holding a sentence. */
@@ -557,6 +576,68 @@ describe("the Generate API key button", () => {
     expect(apiMock.generateApiKey).not.toHaveBeenCalled();
     // And the row is now the key-present one, so the two-step Replace is what is on offer.
     expect(screen.getByRole("button", { name: "Replace…" })).toBeInTheDocument();
+  });
+
+  // One `confirmReplace` arms a danger button on BOTH rows, and `api_key_set` decides which row
+  // renders, so the flag crossing between them arms a confirm nobody opened. Both directions are
+  // driven here because both were reachable and they fail differently: one shows a danger button
+  // with no notice, the other leaves a live key one press from revocation.
+  it("does not leave a generate confirm armed after the key is removed", async () => {
+    apiMock.general.mockResolvedValue({ ...STORED, api_key_set: true });
+    const user = renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Replace…" }));
+    expect(await screen.findByRole("button", { name: "Confirm replace" })).toBeInTheDocument();
+
+    // Changed their mind: remove it instead. Remove and Replace render side by side, so no
+    // backing out is needed to reach it.
+    apiMock.removeApiKey.mockImplementation(async () => {
+      apiMock.general.mockResolvedValue({ ...STORED, api_key_set: false });
+    });
+    await user.click(screen.getByRole("button", { name: "Remove…" }));
+    await user.click(screen.getByRole("button", { name: "Confirm remove" }));
+
+    // The no-key row rests on its plain one-click Generate. It used to open on a red "Confirm
+    // generate", asking the operator to confirm destroying a key it had just proved is gone,
+    // with no notice on the page saying why.
+    expect(await screen.findByRole("button", { name: "Generate API key" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm generate" })).toBeNull();
+  });
+
+  it("does not leave a replace confirm armed when a key arrives from elsewhere", async () => {
+    const { user, queryClient } = renderPanelWithClient();
+    const button = await screen.findByRole("button", { name: "Generate API key" });
+
+    // The re-read fails, so the panel falls back to asking.
+    apiMock.general.mockRejectedValue(new Error("boom"));
+    await user.click(button);
+    expect(await screen.findByRole("button", { name: "Confirm generate" })).toBeInTheDocument();
+
+    // Now a key made in another tab lands: #203's own scenario, pointed the other way.
+    apiMock.general.mockResolvedValue({ ...STORED, api_key_set: true });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["general-settings"] });
+    });
+
+    // The key-present row rests on Replace…. It used to render with "Confirm replace" ALREADY
+    // pressed, so one press revoked a live key through a confirm the operator never opened.
+    expect(await screen.findByRole("button", { name: "Replace…" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm replace" })).toBeNull();
+  });
+
+  it("takes the notice away with the confirm when you back out", async () => {
+    const user = renderPanel();
+    const button = await screen.findByRole("button", { name: "Generate API key" });
+
+    apiMock.general.mockRejectedValue(new Error("boom"));
+    await user.click(button);
+    expect(screen.getByText(/Couldn't check for an existing key/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // The sentence explained a confirm, so it goes when the confirm does. It used to stay,
+    // telling the operator that confirming replaces a key with no confirm anywhere on the page.
+    expect(screen.queryByText(/Couldn't check for an existing key/)).toBeNull();
   });
 });
 

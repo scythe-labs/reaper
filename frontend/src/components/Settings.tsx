@@ -288,12 +288,14 @@ export function GeneralPanel({
   //   - the re-read failed: nothing is provable, so fall back to the confirm. Rule 53's class --
   //     a control whose gate is derived from a value that went stale -- for a destructive button
   //     rather than a rendered limit.
+  //
+  // Only the un-armed press comes through here. The two armed buttons call `generate` straight,
+  // the way `Confirm replace` beside them does, so there is no `if (confirmReplace)` arm at the
+  // top of this function: the only handler that reaches it renders on the branch where the flag
+  // is false, so such an arm is unreachable, and one that reads as though it routes the confirmed
+  // press earns a later author the belief that path re-proves absence too.
   const requestGenerate = async () => {
     setKeyError(null);
-    if (confirmReplace) {
-      generate.mutate();
-      return;
-    }
     const fresh = await general.refetch();
     if (fresh.isError) {
       setConfirmReplace(true);
@@ -339,6 +341,11 @@ export function GeneralPanel({
     onSuccess: () => {
       setRevealedKey(null);
       setConfirmRemove(false);
+      // And the OTHER confirm, which this row also renders. Cleared here as well as in the effect
+      // below, because the effect waits on the refetch: for that round trip `api_key_set` is still
+      // true, so a Replace armed before the operator changed their mind to Remove would sit armed
+      // over a key that is already gone.
+      setConfirmReplace(false);
       // The three neighbours above all announce; this one's entire success signal was the key
       // block unmounting and taking the pressed Confirm with it, which is an absence and cannot
       // be heard (#192's shape, missed in its sweep).
@@ -357,6 +364,20 @@ export function GeneralPanel({
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
   });
+
+  // A confirm belongs to the row that raised it. `api_key_set` decides WHICH row renders, and one
+  // flag arms a danger button on each of them, so it must not cross: a Replace armed on the
+  // key-present row was still armed when Remove took the key away, and the no-key row then opened
+  // on "Confirm generate" with no notice to explain it. The other direction is the worse one --
+  // the fallback arms this flag while no key exists, so a key arriving from another tab (#203's
+  // own scenario, pointed back the other way) re-rendered the key-present row with "Confirm
+  // replace" ALREADY armed, leaving a live key one press from a confirm the operator never opened.
+  // Whichever way the row changes, nothing destructive stays pressed.
+  const keyPresent = general.data?.api_key_set;
+  useEffect(() => {
+    setConfirmReplace(false);
+    setConfirmRemove(false);
+  }, [keyPresent]);
 
   // The dirty checks and the pending list are computed BEFORE the early returns below, because
   // the effect that reports them to `Settings` is a hook and a hook may not sit after a
@@ -786,7 +807,19 @@ export function GeneralPanel({
                       >
                         Confirm replace
                       </button>
-                      <button onClick={() => setConfirmReplace(false)}>Cancel</button>
+                      {/* Backing out clears the notice too. It is the shared one (above), and the
+                          only thing that clears it otherwise is the NEXT mutation starting -- so a
+                          notice raised to explain a confirm outlived the confirm it explained, and
+                          went on describing a button no longer on the page. Same on the twin
+                          Cancel below (rule 72). */}
+                      <button
+                        onClick={() => {
+                          setConfirmReplace(false);
+                          setKeyError(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
                     </>
                   ) : (
                     <button
@@ -825,7 +858,11 @@ export function GeneralPanel({
                 /* Reached only when the re-read in `requestGenerate` could not answer, so this
                    panel cannot prove there is no key to destroy. Same two-step shape as Replace
                    above, because it is the same act with a worse-known target; the notice under
-                   the group says why it is being asked. */
+                   the group says why it is being asked.
+                   "Only" is true because the flag is reset whenever `api_key_set` changes (the
+                   effect beside the mutations) and again the moment Remove succeeds. Without
+                   those it was false in both directions, and this branch opened with no notice
+                   after a Remove -- a danger confirm over a key the panel had just proved gone. */
                 <>
                   <button
                     className="danger"
@@ -834,7 +871,14 @@ export function GeneralPanel({
                   >
                     Confirm generate
                   </button>
-                  <button onClick={() => setConfirmReplace(false)}>Cancel</button>
+                  <button
+                    onClick={() => {
+                      setConfirmReplace(false);
+                      setKeyError(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
                 </>
               ) : (
                 <button
