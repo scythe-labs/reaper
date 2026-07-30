@@ -1,0 +1,77 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The account chip and its dropdown. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- user menu ----------------------------------------------------------- */
+
+.user-menu {
+  position: relative;
+  flex: none;
+}
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0.5rem 0.28rem 0.32rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.user-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+}
+.user-avatar-fallback {
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+.user-name {
+  font-size: 0.88rem;
+  font-weight: 550;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-chip .chevron {
+  color: var(--faint);
+}
+.user-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  min-width: 200px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 0.35rem;
+  z-index: 30;
+}
+.user-dropdown-head {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.3rem;
+}
+.user-provider {
+  font-size: 0.76rem;
+}
+.user-dropdown-item {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.88rem;
+}
+.user-dropdown-item:hover {
+  background: var(--hover);
+}

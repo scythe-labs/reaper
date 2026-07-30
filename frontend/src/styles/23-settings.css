@@ -1,0 +1,666 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The Settings shell and its panels. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ==========================================================================
+   Settings
+   ========================================================================== */
+
+.settings {
+  margin-top: 1.25rem;
+}
+.settings-nav {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+.settings-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--muted);
+  padding: 0.5rem 0.9rem;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+.settings-tab:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+.settings-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+/* The rail wraps, so it never overflows -- but it pays for its padding in LINES, and each line
+   is height `.policy-section`'s scroll-margin has to clear on a jump. This trim holds it to two
+   from 330px up, which is where the labels can still pair; below that they cannot pair at any
+   padding, so the third line is genuine and the scroll-margin step at 328px is what answers it
+   (see the note beside `.policy-section`). */
+@media (max-width: 400px) {
+  .settings-tab {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
+}
+
+/* The settings rail's narrow-screen form: one picker instead of nine wrapped tabs. Measured
+   with the nine shipped labels, `Backup & Restore` included: the rail holds one line down to
+   880px, takes a second from 860px, and a third from 470px -- 131px of a short screen
+   restating where you already are. (It drops back to two lines under 400px, where the padding
+   trim above buys a line back. Re-measure these if a label is renamed: the longest one sets
+   them, which is why renaming that tab moved the first threshold 50px.)
+   `Settings` swaps the two in JS on NARROW_SCREEN_QUERY rather than showing both and hiding
+   one, so only one of them is ever in the accessibility tree; there is deliberately no CSS
+   media query here to keep in step with that constant.
+   A native <select> is the right control: nine sections is an open list, not a binary hidden
+   in a dropdown (rule 41), and the phone draws the list itself, so nothing has to be measured
+   against the viewport edge (rule 138). The POLICY rail shares `.settings-nav` /
+   `.settings-tab` and is deliberately NOT changed with it (rule 72): four labels rather than
+   nine, and it reports which section you have scrolled to, which a closed dropdown cannot
+   show. */
+.settings-picker {
+  display: block;
+  margin-bottom: 1.25rem;
+}
+/* The control standard, unforked -- only the width and the weight are its own. The weight is
+   the `.settings-tab.active` treatment carried over: this names the section you are on. */
+.settings-picker select {
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+}
+.settings-picker select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Settings panels fill the page frame like every other page; the row grid keeps labels
+   readable on the left and controls on the right however wide the card runs. */
+.panel {
+  max-width: none;
+}
+.panel h2 {
+  font-size: 1.15rem;
+}
+.panel h3 {
+  margin-top: 1.5rem;
+}
+
+/* services: one section per kind, a grid of compact cards, add/edit in a modal */
+.panel-wide {
+  max-width: none;
+}
+.service-section {
+  margin-bottom: 1.6rem;
+}
+.service-section h3 {
+  margin: 0;
+}
+.service-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.15rem 0 0.7rem;
+}
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
+  gap: 0.75rem;
+}
+.service-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.service-card.disabled .service-card-body {
+  opacity: 0.6;
+}
+.service-card-body {
+  padding: 0.7rem 0.9rem;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.instance-id {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.instance-url {
+  font-size: 0.82rem;
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.instance-status {
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+}
+.service-card-foot {
+  display: flex;
+  border-top: 1px solid var(--border);
+}
+.service-card-foot button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.5rem 0.2rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.service-card-foot button:first-child {
+  border-left: none;
+}
+.service-card-foot button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.service-card-foot button.danger {
+  color: var(--condemn);
+}
+.service-card-foot button.danger:hover:not(:disabled) {
+  background: var(--condemn-soft);
+}
+.service-add {
+  background: none;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius);
+  min-height: 118px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.service-add:hover:not(:disabled) {
+  background: none;
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+button.danger {
+  color: var(--condemn);
+}
+button.danger:hover:not(:disabled) {
+  border-color: var(--condemn);
+  background: var(--condemn-soft);
+}
+
+.kind-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+/* Brand marks, from the token pairs beside --plex. Tautulli is Plex gold, so it wears the
+   Plex pair rather than a copy of it. */
+.kind-radarr {
+  background: var(--radarr);
+  color: var(--radarr-ink);
+}
+.kind-sonarr {
+  background: var(--sonarr);
+  color: var(--sonarr-ink);
+}
+.kind-tautulli {
+  background: var(--plex);
+  color: var(--plex-ink);
+}
+.kind-seerr {
+  background: var(--seerr);
+  color: var(--seerr-ink);
+}
+
+.test-badge {
+  font-size: 0.8rem;
+  font-weight: 500;
+  /* A failed connection test quotes the upstream error, which usually contains the URL it tried.
+     .instance-url on the same card already wraps; this is its sibling line (rule 139, rule 72). */
+  overflow-wrap: anywhere;
+}
+.test-badge.ok {
+  color: var(--protect);
+}
+.test-badge.bad {
+  color: var(--condemn);
+}
+
+/* the service add/edit modal */
+.service-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.host-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 0.6rem;
+}
+.url-join {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.url-scheme {
+  display: flex;
+  align-items: center;
+  padding: 0 0.55rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-right: none;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.url-join input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.chip-warn {
+  background: var(--unknown-soft);
+  color: var(--unknown);
+}
+.flex-spacer {
+  flex: 1;
+}
+
+.add-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.7rem;
+}
+
+/* On a phone the two-column settings forms are too cramped to read a pasted URL or API
+   key, so collapse them to a single column below a narrow width, and give the reason bars'
+   label column back some of the row. (The queue/editor already reflow at 900px via their
+   own query.) */
+@media (max-width: 640px) {
+  .add-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rb-bar {
+    grid-template-columns: 9rem 1fr auto;
+  }
+}
+.field-sm {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.field-sm.wide {
+  grid-column: 1 / -1;
+}
+.field-sm input,
+.field-sm select {
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.field-sm input:focus,
+.field-sm select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.add-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+  flex-wrap: wrap;
+}
+
+/* The HD/4K library map inside the service modal: each root folder paired with the Plex
+   library it lands in. One grid with a shared folder column and a library select per row
+   (rule 44). The select rides the .field-sm control standard already; only its width and the
+   suggested pill are new. */
+.plex-map-grid {
+  display: grid;
+  /* The folder column sizes to its path, but its MIN is 0, not max-content: a long root path
+     must be able to shrink and wrap (.pl-root is overflow-wrap: anywhere) instead of forcing the
+     grid wider than the modal, which on touch turned the whole panel into a sideways pan. */
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 0.5rem 0.8rem;
+  align-items: center;
+  margin: 0.15rem 0 0.35rem;
+}
+.pl-root {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.pl-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.pl-pick .pl-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+/* "Not set" reads as the quiet, unchosen state. */
+.pl-select.unset {
+  color: var(--muted);
+}
+/* A suggested-but-unconfirmed row: a soft accent pill that clears once the operator picks. */
+.pl-suggested {
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+/* A muted 4K marker on a Seerr service, so its HD twin at the same address reads apart. */
+.pl-tag {
+  margin-left: 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+  padding: 0.02rem 0.3rem;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
+/* plex */
+/* The Jobs page: one row per job inside a .set-rows card. Left is what it is, its stats and
+   schedule; right is an Edit column and a run column, both fixed width so they line up down
+   the list whatever a row's labels are (rule 51: the columns hold still). */
+.jobrow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.95rem 1.1rem;
+}
+.jobrow + .jobrow {
+  border-top: 1px solid var(--border);
+}
+.jobrow-main {
+  min-width: 0;
+}
+.jobrow-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.jobrow-desc {
+  margin: 0.18rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  max-width: 70ch;
+}
+.jobrow-meta {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.jobrow-meta strong {
+  color: var(--text);
+  font-weight: 650;
+}
+.jobrow-sched {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.jobrow-run {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--accent-text);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  /* The scan's live line carries status.detail, which is the library or path it is reading right
+     now (ScanBar's runLabel) -- a file system string, so rule 139 applies. */
+  overflow-wrap: anywhere;
+}
+.jobrow-link {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+}
+.jobrow-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.jobrow-actions .slot-edit,
+.jobrow-actions .slot-act {
+  width: 8rem;
+  flex: none;
+}
+.jobrow-actions .slot-edit button,
+.jobrow-actions .slot-act button {
+  width: 100%;
+}
+/* An off, Plex-gated row reads as unavailable, but its link stays bright enough to act on. */
+.jobrow.dimmed .jobrow-title,
+.jobrow.dimmed .jobrow-desc,
+.jobrow.dimmed .jobrow-meta {
+  opacity: 0.5;
+}
+/* On a phone the two fixed 8rem action buttons eat the width and crush the text column to
+   nothing, wrapping the title and description one word per line. Below phone width the row
+   stacks: text full width, then Edit and Run as one equal-split button row. The desktop
+   columns (rule 51: they hold still) are untouched above the breakpoint. */
+@media (max-width: 640px) {
+  .jobrow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.7rem;
+  }
+  .jobrow-actions {
+    width: 100%;
+  }
+  .jobrow-actions .slot-edit,
+  .jobrow-actions .slot-act {
+    flex: 1 1 0;
+    width: auto;
+  }
+}
+
+/* The one status line every job wears (JobStatus.tsx), used by the scan row, the Leaving
+   Soon row, and every upkeep job. Its whole point is that every state -- the resting
+   "Last run ..." line, the running spinner, and the manual-run confirmation -- lives in
+   this ONE fixed-height slot, vertically centered, so swapping between them never changes
+   the slot's height or margin and nothing below it moves. The inner element is keyed by
+   state in the TSX, so React remounts it on a change and it fades in on OPACITY ALONE --
+   no transform, no height change, no reflow. */
+.jobrow-status {
+  margin: 0.42rem 0 0;
+  min-height: 1.45rem;
+  display: flex;
+  align-items: center;
+}
+.jobrow-status > * {
+  animation: job-status-in 0.28s var(--ease);
+}
+@keyframes job-status-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* The running line rides the shared slot, so it drops its own top margin and centers. */
+.jobrow-status .jobrow-run {
+  margin: 0;
+}
+.jobrow-last {
+  font-size: 0.8rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+/* The outcome dot, in Reaper's verdict colors: a success is green, a failure red, and a job
+   that has never run is a hollow ring -- "nothing to report" reads differently from "ran". */
+.last-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.last-dot.ok {
+  background: var(--protect);
+}
+.last-dot.fail {
+  background: var(--condemn);
+}
+.last-dot.never {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 1.5px solid var(--faint);
+}
+.jobrow-last.is-fail {
+  color: var(--condemn);
+}
+.jobrow-last.is-never {
+  color: var(--muted);
+}
+/* The exact time trails the relative phrase on the same line, so a glance reads "when-ish"
+   and the precise time is still there. Held at --muted (never --faint) so it clears WCAG as
+   real text. */
+.last-exact {
+  color: var(--muted);
+}
+.jobrow-last.is-fail .last-exact {
+  color: color-mix(in srgb, var(--condemn) 78%, var(--muted));
+}
+/* The manual-run confirmation. The chip carries ONLY horizontal padding, and its border is
+   an inset box-shadow, so it is exactly as tall as the plain text line -- the slot never
+   grows when the chip appears. */
+.jobrow-last.is-flash {
+  color: var(--protect);
+  font-weight: 600;
+}
+.jobrow-last.is-flash-fail {
+  color: var(--condemn);
+  font-weight: 600;
+}
+.flash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+}
+.is-flash .flash-chip {
+  background: var(--protect-soft);
+  color: var(--protect);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--protect) 35%, transparent);
+}
+.is-flash-fail .flash-chip {
+  background: var(--condemn-soft);
+  color: var(--condemn);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--condemn) 35%, transparent);
+}
+.flash-chip .check {
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: reduce) {
+  .jobrow-status > * {
+    animation: none;
+  }
+}
+
+/* The indeterminate "running now" spinner beside a background job that is executing. */
+.spin {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-ring);
+  border-top-color: var(--accent);
+  animation: job-spin 0.7s linear infinite;
+}
+@keyframes job-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+.scan-freshness {
+  font-size: 0.85rem;
+  margin: 0.6rem 0 0;
+}
+.freshness-warn {
+  color: var(--unknown);
+  font-weight: 600;
+}
+
+/* safety */
+.safety-state {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  margin: 0.75rem 0 1.25rem;
+}
+/* The .safe / .armed tones (soft fill + color-mix border + dot color) are shared with the
+   top-of-page banner near the top of this file; only the panel-specific spacing lives here. */
+.safety-state p {
+  margin: 0.2rem 0 0;
+  font-size: 0.84rem;
+}
+.safety-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.safety-row .help {
+  margin-top: 0.2rem;
+  max-width: 46ch;
+}
+/* The row is a space-between flex line, so a failure notice would otherwise be squeezed in
+   beside the form it belongs to. Give it the full width, under the control. */
+.safety-row .notice {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+}

@@ -1,0 +1,84 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The bottom sheet (local login). One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- bottom sheet (local login) ------------------------------------------ */
+
+.sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--scrim);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s var(--ease);
+}
+.sheet-scrim.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.sheet {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: min(440px, 100%);
+  transform: translate(-50%, 100%);
+  transition: transform 0.32s var(--ease);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: var(--shadow-lg);
+  padding: 0.9rem 1.6rem 1.8rem;
+  /* Same bound as .modal, and dvh for the same reason: the sheet is anchored to the bottom
+     of the scrim, so on a short viewport (a landscape phone, or once an error notice
+     renders) the username field grows straight off the top with nothing to scroll. */
+  max-height: 85dvh;
+  overflow-y: auto;
+}
+.sheet.open {
+  transform: translate(-50%, 0);
+}
+.sheet-grip {
+  width: 42px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  margin: 0 auto 1rem;
+}
+.sheet h2 {
+  text-align: center;
+}
+.sheet-blurb {
+  text-align: center;
+  font-size: 0.85rem;
+  margin: 0 auto 1.2rem;
+  max-width: 34ch;
+}
+.local-form .field {
+  text-align: left;
+  margin-bottom: 0.9rem;
+}
+/* The one control chrome (see the standard at the top of the file); only the full-bleed
+   width is this sheet's own. */
+.local-form input {
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.local-form input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.sheet-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+}
+.sheet-actions .primary {
+  flex: 1;
+}

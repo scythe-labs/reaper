@@ -1,0 +1,376 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Select mode: tap-or-drag to pick cards. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* --- select mode: tap-or-drag to pick cards ----------------------------------------------- */
+
+/* The toolbar toggle that arms selection. Lit (accent-filled) while it is on. */
+.select-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.75rem;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.14s var(--ease),
+    border-color 0.14s var(--ease),
+    color 0.14s var(--ease);
+}
+.select-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.select-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* The whole list becomes a selection surface: pointer cursor, and no text/image selection to
+   fight the drag. touch-action keeps vertical scrolling alive on touch devices. */
+.card-list-selecting {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y;
+}
+.card-list-selecting .card,
+.card-list-selecting .card-head {
+  cursor: pointer;
+}
+
+/* A card offered for selection, and one that has been picked. Picked = accent ring + a wash,
+   so a swept run reads at a glance without the old checkbox furniture. */
+.card-select {
+  transition:
+    border-color 0.12s var(--ease),
+    background 0.12s var(--ease);
+}
+.card-picked,
+.card-picked.card-show {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* The selection tick that sits in the gutter in place of the chevron. An empty ring until the
+   card is picked, then an accent disc with the check in --accent-ink (white fails AA on the
+   lighter dark-mode accent; see the token's own comment). */
+.select-tick {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  color: transparent;
+  background: transparent;
+  transition:
+    background 0.12s var(--ease),
+    border-color 0.12s var(--ease),
+    color 0.12s var(--ease);
+}
+.select-tick.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.card-list.has-bulk-bar {
+  padding-bottom: 4.5rem;
+}
+
+/* The bulk-action bar: floats at the foot of the list while any cards are selected. */
+.bulk-bar {
+  position: sticky;
+  bottom: 1rem;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1rem auto 0;
+  padding: 0.6rem 0.9rem;
+  max-width: min(880px, 100%);
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  /* One line, always. If the viewport is too narrow for every control, the bar scrolls
+     sideways rather than wrapping to a ragged second row. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+/* Clear the phone's section bar, which is fixed over the foot of the screen. Same placement rule
+   as .scan-toast above: this has to follow the base `bottom: 1rem`, because a media query adds no
+   specificity and the later declaration wins. Sitting up in the 900px block instead, it was inert
+   and the bar's controls -- the only way to spare or reap several items at once -- sat behind the
+   nav icons, unreachable on a phone. */
+@media (max-width: 900px) {
+  .bulk-bar {
+    bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 0.6rem);
+  }
+}
+.bulk-count {
+  font-size: 0.9rem;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.bulk-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+.select-done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 550;
+}
+.select-done:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* show card */
+.card-show {
+  flex-direction: column;
+  padding: 0;
+  gap: 0;
+}
+.card-head {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.7rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.card-head:hover {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+/* The selection tick's column, present only in Select mode -- posters otherwise sit
+   flush left on movie and show cards alike. */
+.card-tick-col {
+  flex: none;
+  display: flex;
+  align-items: center;
+  align-self: center;
+}
+
+/* The season count as the expand control: a small labeled pill in the meta line. The
+   card itself opens the show's information panel, so expanding gets its own,
+   clearly-labeled target instead of the whole-card click. */
+.season-expander {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.06rem 0.55rem 0.06rem 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 0.14s var(--ease),
+    color 0.14s var(--ease);
+}
+.season-expander:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.season-expander .chevron {
+  color: var(--faint);
+  transition: transform 0.18s var(--ease);
+  flex: none;
+}
+.season-expander:hover .chevron {
+  color: currentColor;
+}
+.season-expander .chevron.open {
+  transform: rotate(90deg);
+}
+
+/* The banner atop an expanded show whose whole-show decision drives its seasons: the sentence
+   the rows used to each repeat, said once. A reap tints faint red, a spare faint green, matching
+   the fate the seasons below inherit; the tint is a soft wash + hairline, never a loud fill. */
+.show-inherit {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.5rem 0.7rem 0.3rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.show-inherit b {
+  color: var(--text);
+  font-weight: 650;
+}
+.show-inherit-reap {
+  background: color-mix(in srgb, var(--condemn) 9%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--condemn) 26%, transparent);
+}
+.show-inherit-spare {
+  background: color-mix(in srgb, var(--protect) 9%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--protect) 26%, transparent);
+}
+.show-inherit-mark {
+  flex: none;
+  line-height: 1.2;
+  margin-top: 1px;
+}
+.show-inherit-reap .show-inherit-mark {
+  color: var(--condemn);
+}
+.show-inherit-spare .show-inherit-mark {
+  color: var(--protect);
+}
+.show-inherit-mark .mk-inf {
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.show-inherit-mark .scythe {
+  width: 13px;
+  height: 13px;
+}
+
+.season-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.7rem 0.5rem 2.4rem;
+  border-top: 1px solid var(--border);
+}
+.season-row {
+  display: grid;
+  /* score | title | Spare/Reap | size.  The button track (--btns, set once per list by
+     SeasonList so a fully-condemned show that only ever shows Spare reserves no empty Reap
+     slot) and the size track are both a FIXED width, so every row places its buttons and its
+     size at the same x -- the columns can't drift with the size string ("22.5 GiB" vs
+     "9.1 GiB") or the button count. Only the title (1fr) flexes. See rule 51. */
+  grid-template-columns:
+    2.6rem minmax(0, 1fr)
+    var(--btns, calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))) 4.75rem;
+  align-items: center;
+  column-gap: 0.7rem;
+  row-gap: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  margin: 0 -0.5rem;
+  border-radius: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.season-row > .score {
+  grid-column: 1;
+  grid-row: 1;
+}
+.season-row > .season-title {
+  grid-column: 2;
+  grid-row: 1;
+}
+.season-row > .override-controls {
+  grid-column: 3;
+  grid-row: 1;
+}
+.season-row > .season-size {
+  grid-column: 4;
+  grid-row: 1;
+}
+/* A divergent or held season's one-line reason (only on `.has-reason` rows): under the title,
+   spanning across to the size, so rule 51's fixed button and size columns stay put above it. */
+.season-row > .season-reason {
+  grid-column: 2 / 5;
+  grid-row: 2;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.season-row.clickable {
+  cursor: pointer;
+}
+.season-row.clickable:hover {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.season-row.card-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* The open season row keeps its accent wash on hover instead of dropping to the lighter one,
+   so hovering it deepens rather than dims -- the row-level twin of .card-selected:hover. */
+.season-row.card-selected:hover {
+  background: var(--accent-soft);
+}
+.season-row:last-child {
+  border-bottom: none;
+}
+.season-title {
+  display: flex;
+  align-items: center;
+  /* One line, never two. A long status pill shrinks and ellipsizes in place (.status-chip
+     carries overflow:hidden + text-overflow) instead of wrapping to a second line. Wrapping
+     grew the row taller when the list narrowed to seat the open why panel, which shifted every
+     card below it -- nowrap holds the row height steady at any width. */
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  min-width: 0;
+}
+/* The name holds its width and never wraps, so only the pill gives when space runs short.
+ *
+ * This one is a DECIDED exception to rule 139, not an unswept site (#220). The name comes from
+ * the server, so the rule reaches it -- but the row above documents a measured regression:
+ * wrapping grew the row taller when the list narrowed to seat the open why panel, and every card
+ * below it shifted. Unlike .panel-season-name, there is no branch to split here, because this
+ * value is the server's title on every branch. So the row height wins, the pill beside it is the
+ * element that gives, and truncating instead is not on the table (rule 139 forbids it
+ * outright). Recorded as a decision in index-outside-text.test.ts, which fails if this block
+ * ever starts wrapping without that record being updated. */
+.season-name {
+  white-space: nowrap;
+}
+.season-title .status-chip {
+  min-width: 0;
+}
+
+/* The expanded list's own loading / failed states -- an open chevron must never sit
+   over silence. */
+.season-list-note {
+  margin: 0;
+  padding: 0.6rem 0.9rem 0.8rem 2.4rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+/* The stale-read line, above rows that are still drawn: the app's "we could not look" amber
+   (--unknown), never the red of `.error` beside it, which means the list is not there. */
+.season-list-note.stale {
+  color: var(--unknown);
+}
+
+.season-size {
+  color: var(--muted);
+  font-size: 0.84rem;
+  text-align: right;
+}

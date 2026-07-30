@@ -1,0 +1,340 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Scales (fairness). One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- Scales (fairness) --------------------------------------------------- */
+/* One card per requester: the balance bar weighs granted disk that is still earning its
+   keep (green) against what nobody watched (red). The watched % is a separate behavioral
+   signal, kept on the side so the two never blur. */
+.fair-head h2 {
+  margin-bottom: 0.15rem;
+}
+/* Title on the left, a Refresh action on the right: Scales reads live requests, so a way to
+   pull the latest without a full scan belongs at the top of its own screen. */
+.fair-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.fair-refresh {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.fair-refresh .ico {
+  width: 14px;
+  height: 14px;
+}
+/* The glyph spins only while a refresh is in flight, echoing the loading spinner's motion. */
+.fair-refresh.busy .ico {
+  animation: spin 0.7s linear infinite;
+}
+
+/* Summary strip: SPACE leads (the reclaimable tile shows bytes, the count is its caption). */
+.fair-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.6rem;
+  margin: 0.2rem 0 0.9rem;
+}
+/* The same tiles, when "not in the last scan" is the only one there is (nobody on the
+   board). auto-fit would stretch the lone tile the full width of the page. */
+.fair-stats-lone {
+  grid-template-columns: minmax(160px, 22rem);
+}
+.fair-stat {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 0.65rem 0.8rem;
+}
+.fair-stat-num {
+  font-size: 1.4rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.fair-stat-num.red {
+  color: var(--condemn);
+}
+.fair-stat-num.amber {
+  color: var(--unknown);
+}
+.fair-stat-lbl {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+.fair-stat-sub {
+  font-size: 0.76rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+.fair-stat-sub.red {
+  color: color-mix(in srgb, var(--condemn) 82%, var(--muted));
+}
+
+/* The not-in-scan tile is a button: it keeps the exact .fair-stat chrome and only adds the
+   clickable grammar the person cards already use (accent hover, focus ring, the accent
+   selection bar when its panel is open), so it reads as interactive without a new look. */
+.fair-stat-btn {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition:
+    box-shadow 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+/* Its hover, focus ring, selection bar and additive selected+hover are NOT declared here:
+   they are byte-for-byte the card grammar, so this tile joins the four grouped selectors that
+   own it (search ".card:hover"). They used to be copied out in full, directly under the
+   comment on .card claiming that grammar "is declared once here ... so a card-hover tweak
+   lands in one place" -- the exact drift the comment said was impossible (R-5). */
+/* The "open me" affordance, so the tile doesn't rely on hover alone to read as a control. */
+.fair-stat-more {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-text);
+}
+.fair-stat-btn:hover .fair-stat-more {
+  text-decoration: underline;
+}
+
+/* Scales gathers every request and matches it to the last scan, so its first load can take a
+   moment. A prominent, self-explaining wait (spinner + what it's doing) beats a bare "Loading". */
+.fair-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  text-align: center;
+  padding: 2.5rem 1rem;
+  color: var(--muted);
+}
+.fair-loading-lead {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.fair-loading-sub {
+  margin: 0;
+  font-size: 0.83rem;
+  max-width: 42ch;
+}
+
+.fair-horizon {
+  font-size: 0.82rem;
+  margin: 0 0 0.9rem;
+}
+/* The same line inside the person drawer, where it sits directly under the summary tiles
+   rather than above the card list, so the gap belongs on top instead of underneath. */
+.why .fair-horizon {
+  margin: 0.6rem 0 0;
+}
+
+.fair-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+/* The requester card. Its OWN layout (padding, gap, the background transition its hover
+   wash needs); the interaction grammar itself -- accent hover, focus ring, the accent
+   selection bar when open, and the additive open+hover -- is shared with .card, declared on
+   the grouped .card rules below so a tweak lands once (R-4). */
+.fair-card {
+  position: relative;
+  display: flex;
+  gap: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  transition:
+    box-shadow 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+/* Every card opens its person panel, so every card is clickable. */
+.fair-card.clickable {
+  cursor: pointer;
+}
+
+.fair-avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  font-weight: 650;
+  background: color-mix(in srgb, var(--seerr) 22%, var(--surface));
+  color: var(--seerr);
+}
+
+.fair-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.fair-row1 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.fair-name {
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  /* A portal handle can be one long unbroken string with nothing to break on, and it then
+     paints past the card and gives the whole page a sideways scroll on a phone. The panel
+     renders the same name and needs the same treatment (.scales-head-id h2), where it is
+     worse: there the overrun is clipped and no scroll reaches it. */
+  overflow-wrap: anywhere;
+}
+.fair-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.fair-sub strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.fair-balance {
+  display: flex;
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.fair-balance i {
+  display: block;
+  height: 100%;
+}
+.fair-balance .used {
+  background: color-mix(in srgb, var(--protect) 72%, var(--surface));
+}
+.fair-balance .reclaim {
+  background: var(--condemn);
+}
+.fair-legend {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.fair-legend strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.fair-legend .bad,
+.fair-legend .bad strong {
+  color: var(--condemn);
+}
+
+.fair-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem;
+  text-align: right;
+  min-width: 6.5rem;
+}
+.fair-watched {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.fair-pct {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.fair-pct.good {
+  color: var(--protect);
+}
+.fair-pct.bad {
+  color: var(--condemn);
+}
+.fair-pct-lbl {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+/* On a phone the card's three flex columns leave the middle one -- which is all the balance
+   bar can ever be as wide as -- about half the card, so the bar stops dead under the watched
+   %, reading as a bar that ran out rather than a full one. The whole card becomes one grid
+   instead: avatar, name and % share the top line, and the bar and its legend span to the
+   right edge, where the eye already expects a 100% bar to end. .fair-body and .fair-side are
+   plain unlabeled wrappers, so display: contents dissolves them and their children place
+   themselves -- no second markup for the same card.
+
+   The chip drops out here, and the two branches are NOT symmetric about that. With something
+   to reclaim it is pure repetition: the legend line directly above says the same thing in the
+   same red ("48 GiB to reclaim" over "48 GiB to reclaim · 6 titles"). On a clean card it is
+   not -- the pill is green (.status-kept, --protect) while its legend counterpart reads
+   "nothing reclaimable" in gray (--muted) -- so below 640px that card states its good news in
+   the full green bar and a gray line, and wears no pill at all. Reviewed against rendered
+   alternatives and left this way on purpose. Height is not the reason and was never the
+   argument: the reflow makes the card SHORTER (390px: 199px flex -> 180px grid) and the pill
+   would only cost about 29px of that back. */
+@media (max-width: 640px) {
+  .fair-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    row-gap: 0.5rem;
+    column-gap: 0.9rem;
+  }
+  .fair-body,
+  .fair-side {
+    display: contents;
+  }
+  .fair-avatar {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .fair-row1 {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .fair-watched {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .fair-balance,
+  .fair-legend {
+    grid-column: 2 / -1;
+  }
+  .fair-side > .status-chip {
+    display: none;
+  }
+}

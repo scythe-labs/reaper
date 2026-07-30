@@ -12,15 +12,19 @@
 // `lvh` is that same largest viewport, spelled explicitly -- exactly the hazard above -- so it
 // is caught too, and `svh` (the smallest) with it: the point is that a height tracks the
 // viewport as it actually is, which only `dvh` does.
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
-const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.css"), "utf8");
+import { CSS as css, FILES } from "./test/stylesheet";
 
-describe("index.css", () => {
+describe("the stylesheet", () => {
+  it("reads every file the barrel imports", () => {
+    // This test used to read `index.css` alone. When that file became a barrel of @imports it
+    // went on passing while scanning no rules at all -- so the population is pinned here, where
+    // a stylesheet that stops being loaded fails loudly instead of quietly clearing the ban.
+    expect(FILES.length).toBeGreaterThan(25);
+    expect(css.length).toBeGreaterThan(200_000);
+  });
+
   it("sizes every viewport height in dvh, never vh, lvh or svh", () => {
     // A digit immediately before the unit (with only `l` or `s` allowed between), so `100dvh`
     // is not a match -- its `d` sits where the digit would have to be -- and neither is the

@@ -1,0 +1,151 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Buttons and the segmented pill track. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- buttons ------------------------------------------------------------- */
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.42rem 0.85rem;
+  transition:
+    background 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease),
+    transform 0.05s var(--ease);
+}
+button:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--faint);
+}
+button:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 550;
+  box-shadow: var(--shadow-sm);
+}
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+button.ghost {
+  background: transparent;
+  border-color: var(--border-strong);
+}
+button.ghost:hover:not(:disabled) {
+  background: var(--hover);
+}
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent-text);
+  padding: 0;
+}
+button.link:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+.btn-block {
+  width: 100%;
+  justify-content: center;
+  padding: 0.6rem 1rem;
+}
+
+/* The pill inside the segmented track: the queue's lane tab (.tab) and the policy toggle
+   button (.seg) are the same control, so they share one definition. The masthead's section nav
+   used to be a third member and is now the .views rail instead. */
+.tab,
+.seg {
+  background: none;
+  border: none;
+  border-radius: 999px;
+  color: var(--muted);
+  padding: 0.34rem 0.95rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+.tab:hover:not(:disabled),
+.seg:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+.tab.active,
+.seg.active {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+}
+/* Hovering the section, lane, or option you are ALREADY on keeps its raised pill: the plain
+   :hover rules above outrank .active (the :not() adds a class's weight) and would repaint the
+   fill to transparent, which in dark mode drops the pill to the track color and reads as a
+   deselect. Same hazard, same shape as the .ov-spare.active:hover block. */
+.tab.active:hover:not(:disabled),
+.seg.active:hover:not(:disabled) {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+}
+/* Reserve the ACTIVE (600) width at every weight, so selecting an item -- which bumps 500 -> 600
+   -- never widens it and shoves its neighbors sideways (the tab/nav "wiggle"). A hidden,
+   zero-height copy of the label at the bold weight sets the width; the visible text rides above
+   it. `visibility: hidden` keeps the strut out of the accessibility tree. Applied to every
+   control that bolds when active (queue lane tabs `.tab`, policy toggle `.seg`, the
+   settings/policy rails `.settings-tab`, the docs index `.docs-index-item`); each needs a
+   `data-label` of its visible text, and one without simply keeps the old behavior. */
+.tab[data-label]::after,
+.seg[data-label]::after,
+.settings-tab[data-label]::after,
+.docs-index-item[data-label]::after {
+  content: attr(data-label);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+}
+/* The `fill` variant (Segmented `fill` prop): equal-width segments, so a short label
+   ("TV") and a long one ("Movies") both center in the track instead of the active pill
+   hogging its side. */
+.segmented.fill .seg {
+  flex: 1 1 0;
+  min-width: 5.25rem;
+  text-align: center;
+}
+/* A pill track is a flex row, and a flex item floors at its own min-content, so the track
+   itself cannot get narrower than its labels laid end to end however narrow the screen is:
+   the lane switcher held 300px and the preset picker 304px at every viewport, and both ran
+   straight off a narrow phone. Buy the room back from the padding rather than from the
+   labels -- reading every option at once is the whole point of this control, so truncating
+   one, hiding one behind a sideways scroll, or dropping one into a dropdown all defeat it
+   (rule 41). Clearing the SCREEN is the wrong test on its own, though: the preset picker sits
+   inside a card, and at 0.55rem it still ran past `.intent-band`'s content box below 340px. */
+@media (max-width: 400px) {
+  .tab,
+  .seg {
+    padding-left: 0.55rem;
+    padding-right: 0.55rem;
+  }
+}
+/* So below 340px the pills give up a little more, and the band gives up padding to meet them
+   (see the note beside `.intent-band`); measured, the two together leave the track inside the
+   card at 320px with room to spare. The lane switcher sits in no card and keeps its width. */
+@media (max-width: 340px) {
+  .seg {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
+}

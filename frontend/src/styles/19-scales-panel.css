@@ -1,0 +1,491 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The Scales person panel. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- Scales person panel (ScalesPanel) ---------------------------------- */
+/* The panel is the why-panel shell (.why, main.split), so it inherits the side-column /
+   right-hand-sheet behavior and the head/close grammar. Only its body is Scales' own: the
+   avatar id, the balance tiles, the request-limit chips, and the requested-title rows. */
+.scales-head-id {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.scales-head-id h2 {
+  font-size: 1.2rem;
+  margin: 0;
+  /* The .fair-name break, on the panel's copy of the name. Both branches of ProfileName put
+     the name in this h2, linked or not, so the one selector covers each. */
+  overflow-wrap: anywhere;
+}
+
+/* The name as a link to the requester's portal page. Text at rest (the title-link idiom, so
+   it doesn't shout), accent underline on hover, with a small outbound arrow to mark it. */
+.scales-name-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  color: inherit;
+  text-decoration: none;
+}
+.scales-ext {
+  flex: none;
+  color: var(--faint);
+}
+.scales-name-link:hover h2 {
+  text-decoration: underline;
+  text-decoration-color: var(--accent-text);
+  text-underline-offset: 2px;
+}
+.scales-name-link:hover .scales-ext {
+  color: var(--accent-text);
+}
+.scales-name-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* The four summary tiles, reusing .fair-stat chrome in a tight 2-up grid. */
+.scales-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+.fair-stat-num.green {
+  color: var(--protect);
+}
+
+/* Request limits: one full-width chip per line (label left, value right), amber when the
+   person is capped there right now. Stacked, not wrapped: the set is always the same three
+   (movies, series, lifetime), so a fixed one-per-row order keeps them from shifting position
+   between people the way content-width pills in a wrapping row did. */
+.scales-limits {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.scales-limit {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.7rem;
+}
+.scales-limit-k {
+  color: var(--muted);
+  font-weight: 600;
+}
+.scales-limit-v {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.scales-limit-sub {
+  color: var(--muted);
+}
+.scales-limit.at {
+  border-color: color-mix(in srgb, var(--unknown) 45%, var(--border));
+  background: var(--unknown-soft);
+}
+.scales-limit.at .scales-limit-k,
+.scales-limit.at .scales-limit-v {
+  color: var(--unknown);
+}
+
+/* The requested-title list. A heading row carries the count; rows are the panel's own
+   layout (a fixed poster, a title + meta column, and a right-pinned fate/size/watched
+   column), not the compact media-chip -- there is more to say about each one here. */
+.scales-h3row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.scales-count {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.scales-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.scales-title {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  width: 100%;
+  color: var(--text);
+}
+/* :not(.static) so a title with nothing to open (no id) does not promise the accent hover. */
+.scales-title:not(.static) {
+  cursor: pointer;
+}
+/* The same accent wash the card grammar uses. It sat at 6% for no stated reason, one point
+   off every sibling, which reads as a mistake rather than a choice (R-5). This row is not a
+   card -- no shadow, no selection bar -- so it keeps its own rule; only the number is
+   brought into line. */
+.scales-title:not(.static):hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.scales-poster {
+  flex: none;
+  width: 40px;
+  height: 60px;
+  border-radius: 5px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.scales-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.scales-title-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+.scales-title-name {
+  font-weight: 600;
+  font-size: 0.88rem;
+  letter-spacing: -0.01em;
+  /* Wraps, and is never cut: this used to be nowrap + overflow:hidden + text-overflow:ellipsis,
+     which is the one shape rule 139 forbids outright. Two titles differing only past the cut
+     ellipsize to the same string, and the operator reading them is deciding what to delete. The
+     row grows to hold a long title instead; a short one is unaffected. */
+  overflow-wrap: anywhere;
+}
+.scales-title-yr {
+  color: var(--muted);
+  font-weight: 400;
+}
+.scales-4k {
+  margin-left: 0.35rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--seerr);
+  border: 1px solid color-mix(in srgb, var(--seerr) 45%, var(--border));
+  border-radius: 4px;
+  padding: 0 0.22rem;
+  vertical-align: 1px;
+}
+.scales-title-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.scales-dot {
+  margin-right: 0.4rem;
+  color: var(--border-strong);
+}
+.scales-title-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.24rem;
+  text-align: right;
+}
+/* The fate marker hugs the right rail with the size and watched line beneath it. .status-chip
+   left-aligns itself (align-self: flex-start) for the review card and season lists; here that
+   floated the pill off the right edge whenever the watched line was wider, so the markers read
+   as shifting row to row. Pin it to flex-end so fate, size, and watched share one right edge. */
+.scales-title-side .status-chip {
+  align-self: flex-end;
+}
+.scales-size {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.scales-watch {
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.scales-watch.yes {
+  color: var(--protect);
+}
+.scales-watch.no {
+  color: var(--muted);
+}
+/* "Kept" is the quiet, expected state: a plain gray label, not a green pill on every row.
+   The loud, actionable fates (Reclaimable red, Left-to-decide amber) keep their chips. */
+.scales-kept {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.scales-foot {
+  margin-top: 0.9rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px dashed var(--border-strong);
+  padding-top: 0.7rem;
+}
+
+/* The "not in the last scan" list, in the board panel and inside a person's drawer alike.
+   A group per reason, each with a colored left stripe that encodes the reason at a glance,
+   its heading + count, and one bound help line. Rows reuse the requested-title chrome. */
+.nis-group {
+  border-left: 3px solid var(--stripe, var(--border-strong));
+  padding-left: 0.75rem;
+  margin-top: 1.15rem;
+}
+.nis-group:first-child {
+  margin-top: 0.3rem;
+}
+.nis-group--new {
+  --stripe: var(--accent);
+}
+.nis-group--aside {
+  --stripe: var(--protect);
+}
+.nis-group--nomatch {
+  --stripe: var(--unknown);
+}
+.nis-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.nis-group-head h3 {
+  margin: 0;
+}
+.nis-count {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.nis-why {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.3rem 0 0.6rem;
+  max-width: 54ch;
+}
+/* A row that names nothing (no id, or the lookup failed): the label reads as absent, not as a
+   real title, so it is never mistaken for a film called "Name unavailable". */
+.nis-noname {
+  color: var(--muted);
+  font-style: italic;
+  font-weight: 500;
+}
+
+.dryrun-outcomes {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dryrun-outcomes li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.82rem;
+  padding: 0.15rem 0;
+}
+/* The executor's own words for one item. The same shape as .plan-steps code above and needs the
+   same treatment, in a different subtree so that rule does not reach it (rule 139, rule 72). */
+.dryrun-outcomes li code {
+  overflow-wrap: anywhere;
+}
+.dryrun-outcomes .gate-mark {
+  color: var(--protect);
+}
+
+/* Pace and limits. The four caps read as one 2x2 matrix -- titles / disk freed down the
+   side, per run / per 30 days across the top -- so the boxes sit in fixed grid tracks and
+   line up down each column, and the row + column headers carry what four separate labels
+   and four help lines used to. */
+.pace-matrix {
+  display: grid;
+  grid-template-columns: max-content max-content max-content;
+  column-gap: 1.6rem;
+  row-gap: 0.55rem;
+  align-items: center;
+  margin: 0.3rem 0 0.1rem;
+}
+.pace-matrix .col-h {
+  align-self: end;
+  padding-bottom: 0.05rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+/* The rolling cue rides small and plain inside the uppercase column header. */
+.pace-matrix .col-h em {
+  font-style: normal;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.pace-matrix .row-h {
+  white-space: nowrap;
+}
+/* One number width and one unit width across the matrix, so the title counts and the
+   GB/TB boxes align down every column. */
+.pace-matrix .qty input[type="number"] {
+  flex: none;
+  width: 5rem;
+}
+/* Wide enough for the largest number the box will accept: the per-run title cap tops out
+   at 1,000, and a ceiling you can reach but not read is worse than no ceiling. */
+.pace-matrix .qty.qty-narrow input[type="number"] {
+  width: 4.3rem;
+}
+.pace-matrix .qty select {
+  width: 4.6rem;
+}
+.matrix-note {
+  margin-top: 0.75rem;
+}
+
+/* Grace and unknown-size are not caps, so they leave the matrix: a label column, the
+   control, and one short line of help bound directly beneath the control. */
+.pace-extra {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 1.6rem;
+  row-gap: 1rem;
+  align-items: start;
+  margin-top: 1.1rem;
+  padding-top: 1.05rem;
+  border-top: 1px solid var(--border);
+  max-width: 54ch;
+}
+.pace-extra .ex-label {
+  align-self: start;
+  padding-top: 0.5rem;
+  white-space: nowrap;
+}
+.pace-extra .ex-ctl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+.pace-extra .ex-ctl .help {
+  margin-top: 0;
+}
+/* "months" / "weeks" are wider than a size unit, so the grace box gets its own unit width
+   rather than jittering the shared matrix one. */
+.pace-extra .ex-ctl .qty select {
+  width: 6rem;
+}
+
+/* On a phone the editor is full width; tighten the matrix gaps and boxes so the three
+   columns still fit without a sideways scroll. */
+@media (max-width: 640px) {
+  .pace-matrix {
+    column-gap: 0.7rem;
+  }
+  .pace-matrix .qty input[type="number"] {
+    width: 3.6rem;
+  }
+  .pace-matrix .qty.qty-narrow input[type="number"] {
+    width: 3.7rem; /* still four digits, see the note above */
+  }
+  .pace-matrix .qty select {
+    width: 3.7rem;
+  }
+}
+
+/* Narrower still, and the three `max-content` tracks above stop being affordable at all:
+   max-content is fixed by construction, so the matrix held 324px and the grace/unknown rows
+   331px however small the screen got. The 2x2 reading survives -- it is the point of the
+   matrix -- but the two value columns become shrinkable and the boxes shrink with them. */
+@media (max-width: 400px) {
+  .pace-matrix {
+    /* Column 1 stays `max-content`, so the row header keeps its one line and no `white-space`
+       here could change that: a max-content track is sized from the max-content contribution,
+       which ignores soft wrap opportunities by definition. Relaxing the header to `normal` was
+       measured to leave the column at an identical 62.4x19.8px, so it is not worth writing --
+       wrapping it would mean giving up the `max-content` track, and the boxes do not need the
+       room. */
+    grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 0.4rem;
+  }
+  /* The box fills its column instead of hugging its content, and the NUMBER takes the give:
+     `.qty` is `overflow: hidden`, so a unit squeezed out of the box is CLIPPED rather than
+     merely tight -- "MB" rendered as "ME" and still measured as fitting. */
+  .pace-matrix .qty {
+    display: flex;
+    min-width: 0;
+  }
+  .pace-matrix .qty input[type="number"],
+  .pace-matrix .qty.qty-narrow input[type="number"] {
+    width: auto;
+    flex: 1 1 0;
+    /* Four digits and the stepper: the per-run title cap tops out at 1,000, and the note
+       above is right that a ceiling you can reach but not read is worse than no ceiling. */
+    min-width: 2.9rem;
+    padding-left: 0.35rem;
+    padding-right: 0.25rem;
+  }
+  .pace-matrix .qty select {
+    width: 3.5rem;
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
+  }
+  /* A nowrap label beside its control does not fit a phone, so it steps above it. */
+  .pace-extra {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.3rem;
+  }
+  .pace-extra .ex-label {
+    padding-top: 0;
+  }
+  .pace-extra .ex-ctl {
+    margin-bottom: 0.7rem;
+  }
+}
+
+.run-history {
+  margin-top: 2rem;
+}
+.run-history ul {
+  list-style: none;
+  padding: 0;
+  font-size: 0.88rem;
+}
+.run-history li {
+  padding: 0.2rem 0;
+}
+/* The plan currently shown above wears the app's active-item look (the raised surface of
+   .tab.active), so the list says which row you are already reading. The negative margin
+   cancels the added padding, so marking a row never shifts its neighbors. */
+.run-history li.open {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  margin: 0 -0.5rem;
+}

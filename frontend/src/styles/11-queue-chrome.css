@@ -1,0 +1,278 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Queue tabs, the scan nudge and toast, verdict tokens. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- review queue -------------------------------------------------------- */
+
+/* Container base is shared with .segmented near the top of the file; only the queue-specific
+   top margin and hug-content width live here. The masthead's nav is deliberately NOT in this
+   track any more, so a lane switcher and a section switcher no longer wear the same chrome. */
+.tabs {
+  margin-top: 1rem;
+  width: fit-content;
+}
+
+.queue-total {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: 0 0 0.5rem;
+}
+
+/* A scan finished under an open review. Built from the app's own tokens so it reads as
+   native, and accent (not amber/red -- neither a warning nor a decision, just a fresher list
+   to load). Sticky so it stays in reach however far the reviewer has scrolled; the whole
+   window scrolls, so top: 0.5rem pins it just below the viewport edge. */
+.scan-nudge {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0 0 0.7rem;
+  padding: 0.55rem 0.6rem 0.55rem 0.85rem;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.nudge-dot {
+  position: relative;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.nudge-dot::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 999px;
+  border: 1.5px solid var(--accent);
+  opacity: 0.6;
+  animation: nudge-pulse 1.8s var(--ease) infinite;
+}
+.nudge-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  min-width: 0;
+}
+.nudge-text b {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.nudge-text span {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.nudge-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.nudge-x {
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  padding: 0.3rem;
+  border-radius: var(--radius-sm);
+  line-height: 0;
+}
+.nudge-x:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: transparent;
+  color: var(--text);
+}
+
+/* Deferred, but still behind: a slim marker so the reviewer is never silently left on an old
+   scan. Sticky in the same slot; the whole thing is the Show-latest control. */
+.scan-behind {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.7rem;
+  padding: 0.32rem 0.7rem;
+  border: 1px solid var(--accent-ring);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--muted);
+  font-size: 0.82rem;
+  box-shadow: var(--shadow-sm);
+}
+.scan-behind:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-soft);
+}
+.scan-behind-cta {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.scan-behind .nudge-dot::after {
+  animation: none;
+}
+
+/* The silent path's one acknowledgment. A scan landed while the reviewer was idle at the top,
+   so the list refreshed under them; this brief toast confirms it moved to the newest scan, then
+   clears itself. Fixed to the bottom of the viewport. The mid-review case gets the nudge above. */
+.scan-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.1rem;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.85rem 0.42rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.84rem;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  animation: scan-toast 2.6s var(--ease) forwards;
+}
+/* Clear the phone's section bar. This override MUST sit after the base rule, not up in the
+   900px block that declares the bar: a media query adds no specificity, so at equal specificity
+   source order decides and the later declaration wins. Written in that block first, it lost to
+   the `bottom: 1.1rem` above and did nothing. */
+@media (max-width: 900px) {
+  .scan-toast {
+    bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 0.7rem);
+  }
+}
+.scan-toast-check {
+  display: inline-flex;
+  color: var(--protect);
+}
+@keyframes scan-toast {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  6% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  92% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+
+@keyframes nudge-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nudge-dot::after {
+    animation: none;
+  }
+  .scan-toast {
+    animation: none;
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+th {
+  text-align: left;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+tbody tr {
+  cursor: pointer;
+  transition: background 0.12s var(--ease);
+}
+tbody tr:hover {
+  background: var(--hover);
+}
+tbody tr.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.score {
+  display: inline-block;
+  min-width: 2.4rem;
+  text-align: center;
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.score-condemn {
+  background: var(--condemn-soft);
+  color: var(--condemn);
+}
+.score-protect {
+  background: var(--protect-soft);
+  color: var(--protect);
+}
+.score-abstain {
+  background: var(--surface-2);
+  color: var(--abstain);
+}
+/* A hand decision recolors the number to the fate it forces, so it never contradicts the
+   row's chip: SOLID for a decision that takes effect (you chose this), DASHED RED for a reap
+   the engine can't honor yet (noted, the file is held) -- never solid, never the amber that
+   now means only "left for you to decide". This mirrors the chips (.chip-hand-*,
+   .chip-reap-refused) and the strip (.strip-ov-*), the app's one hand-decision language. */
+.score-reap {
+  background: var(--condemn);
+  color: var(--condemn-soft);
+}
+.score-spare {
+  background: var(--protect);
+  color: var(--protect-soft);
+}
+.score-refused {
+  background: var(--condemn-soft);
+  color: var(--condemn);
+  border: 1px dashed var(--condemn);
+}
+/* The keep-direction twin of .score-refused: a hand spare whose clock has passed. Green,
+   because the item is still kept until a scan re-judges it; dashed, because the decision
+   keeping it has expired. Routed through handFate like every other fate-bearing cell. */
+.score-spare-expired {
+  background: var(--protect-soft);
+  color: var(--protect);
+  border: 1px dashed var(--protect);
+}

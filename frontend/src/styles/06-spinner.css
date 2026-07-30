@@ -1,0 +1,35 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The loading ring, every size. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- spinner ------------------------------------------------------------- */
+
+.spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex: none;
+}
+.spinner-lg {
+  width: 34px;
+  height: 34px;
+  border-width: 3px;
+}
+/* A step up from -lg for a screen whose whole body is the wait (Scales' first load): larger,
+   with a thicker, more visibly accent track so the spin reads as the app's color, not gray. */
+.spinner-xl {
+  width: 46px;
+  height: 46px;
+  border-width: 4px;
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-top-color: var(--accent);
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -18,13 +18,9 @@
 //
 // A test rather than a fourth comment, because the next surface to grow a bottom anchor will be
 // written the same way (rule 72: the fix lands on every twin, including ones not yet added).
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { describe, expect, it } from "vitest";
 
-const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.css"), "utf8");
+import { CSS as css, siteOf } from "./test/stylesheet";
 
 type Rule = { selector: string; body: string; at: number; inPhoneMedia: boolean };
 
@@ -76,7 +72,7 @@ function matchBrace(src: string, open: number): number {
 
 const declaresBottom = (body: string) => /(^|[;{\s])bottom\s*:/.test(body);
 
-describe("index.css bottom-bar clearance", () => {
+describe("the stylesheet: bottom-bar clearance", () => {
   const rules = parse(css);
   const lifts = rules.filter(
     (r) => r.inPhoneMedia && declaresBottom(r.body) && r.body.includes("--navbar-h"),
@@ -97,12 +93,8 @@ describe("index.css bottom-bar clearance", () => {
       // Same specificity, so only source order decides: the lift must come last.
       return base
         .filter((b) => b.at > lift.at)
-        .map((b) => `${lift.selector}: lift at ${lineOf(lift.at)}, base at ${lineOf(b.at)}`);
+        .map((b) => `${lift.selector}: lift at ${siteOf(lift.at)}, base at ${siteOf(b.at)}`);
     });
     expect(losing).toEqual([]);
   });
 });
-
-function lineOf(offset: number): number {
-  return css.slice(0, offset).split("\n").length;
-}

@@ -12,7 +12,7 @@
 // what that cost; SITES below is what replaces the remembering.
 //
 // **What this guard can and cannot do.** Whether an element renders text from outside the app is
-// a fact about the TSX, not about the stylesheet, so no grep over `index.css` can discover a NEW
+// a fact about the TSX, not about the stylesheet, so no grep over the CSS can discover a NEW
 // site -- only a person adding a row here can. What the table does hold, for every site already
 // in it:
 //   - the block still exists (a rename fails, rather than dropping the site out of the walk
@@ -35,13 +35,14 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { CSS, siteOf } from "./test/stylesheet";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CSS = readFileSync(join(HERE, "index.css"), "utf8");
 
 type Site = {
   /** The value that lands here, in the words of someone reading a failure message. */
   what: string;
-  /** Every selector in `index.css` styling this element, in the order the file declares them. */
+  /** Every selector in the stylesheet styling this element, in the order it declares them. */
   selectors: string[];
   /** The class the components write, checked to still be there. */
   classInTsx: string;
@@ -300,8 +301,6 @@ function declaredValue(body: string, prop: string): string | null {
 const matchesOf = (site: Site) =>
   RULES.filter((r) => r.selectors.some((s) => site.selectors.includes(s)));
 
-const lineOf = (at: number) => CSS.slice(0, at).split("\n").length;
-
 /** Where a site is granted a break opportunity, and where one is taken back, in source order.
  *  `inherit` counts as a grant: the element is forwarding a parent's value on purpose, and the
  *  parents are themselves rows in the table (see `forwards`). */
@@ -327,7 +326,7 @@ function resolve(site: Site) {
 
 const named = (site: Site) => `${site.selectors.join(" / ")} (${site.what})`;
 
-describe("index.css: text the operator did not choose", () => {
+describe("the stylesheet: text the operator did not choose", () => {
   it("still declares every block the table names", () => {
     const missing: string[] = [];
     for (const site of SITES) {
@@ -374,8 +373,8 @@ describe("index.css: text the operator did not choose", () => {
       const { grantedAt, defeatedAfterGrant } = resolve(site);
       for (const d of defeatedAfterGrant) {
         undone.push(
-          `${named(site)} -- ${d.prop}: ${d.value} at index.css:${lineOf(d.at)} defeats the ` +
-            `break opportunity at index.css:${lineOf(grantedAt as number)}`,
+          `${named(site)} -- ${d.prop}: ${d.value} at ${siteOf(d.at)} defeats the ` +
+            `break opportunity at ${siteOf(grantedAt as number)}`,
         );
       }
     }
@@ -427,7 +426,7 @@ describe("index.css: text the operator did not choose", () => {
 });
 
 // Rule 147: a guard reading source text is bounded by the syntax it can parse, so the parser is
-// run against every spelling `index.css` actually uses before it is trusted with the checks above.
+// run against every spelling the stylesheet actually uses before it is trusted with the checks above.
 describe("the stylesheet walk", () => {
   it("reads every selector spelling the file uses", () => {
     const fixture = `

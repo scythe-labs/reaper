@@ -1,0 +1,201 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The sign-in screen. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- auth / login -------------------------------------------------------- */
+
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  overflow: hidden;
+}
+/* A soft, theme-aware aurora so the sign-in screen has depth without an image. */
+.auth-aurora {
+  position: absolute;
+  inset: -30%;
+  z-index: 0;
+  background:
+    radial-gradient(
+      38% 42% at 22% 26%,
+      color-mix(in srgb, var(--accent) 28%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      34% 40% at 82% 18%,
+      color-mix(in srgb, var(--plex) 22%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      46% 50% at 68% 88%,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      transparent 72%
+    );
+  filter: blur(30px);
+  opacity: 0.7;
+  animation: drift 22s ease-in-out infinite alternate;
+}
+@keyframes drift {
+  to {
+    transform: translate(1.5%, -1.5%) scale(1.08);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the depth, drop the drift. This is the largest and longest-running motion in the
+     app -- a full-bleed blurred layer, 22s, forever -- on the first screen a person sees
+     and the one they cannot skip past. Every smaller motion here already has an opt-out;
+     this one shipped without it (U-5, agent rule 18). The gradient alone still lifts the
+     card off the page. */
+  .auth-aurora {
+    animation: none;
+  }
+}
+
+.auth-card {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 100%);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(14px) saturate(1.1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 2.2rem 2rem 1.6rem;
+  text-align: center;
+}
+
+/* The Deep app icon (BrandBadge) worn large on the login screen. It draws its own dark shell
+   and accent-following platter, so this only sizes, centers, and lifts it off the card. */
+.brand-badge {
+  display: block;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 1rem;
+  filter: drop-shadow(0 8px 18px rgba(6, 22, 32, 0.45));
+}
+.auth-card .brand-word {
+  font-size: 1.7rem;
+  letter-spacing: -0.03em;
+}
+.auth-tagline {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0.15rem 0 0;
+}
+.auth-note {
+  color: var(--text);
+  font-size: 0.92rem;
+  margin: 1.1rem 0 1.4rem;
+  line-height: 1.5;
+}
+
+.btn-plex {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--plex);
+  color: var(--plex-ink);
+  font-weight: 650;
+  font-size: 0.95rem;
+  box-shadow: var(--shadow-sm);
+}
+.btn-plex:hover:not(:disabled) {
+  background: var(--plex-hover);
+  border-color: transparent;
+}
+
+.auth-alt {
+  margin-top: 0.85rem;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+.auth-alt:hover {
+  background: none;
+  border-color: transparent;
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.auth-safety {
+  margin: 1.5rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.plex-waiting {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  text-align: left;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.plex-waiting p {
+  margin: 0.1rem 0 0;
+  font-size: 0.8rem;
+}
+.plex-waiting .link {
+  margin-left: auto;
+  font-size: 0.85rem;
+}
+
+/* The server picker: shown when the signing-in account owns several Plex servers.
+ * One tap per server; Reaper never guesses which library a deletion tool manages. */
+.server-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.server-pick > strong {
+  font-size: 0.92rem;
+}
+.server-pick > p {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+}
+.server-pick-row {
+  width: 100%;
+  text-align: left;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 550;
+  /* The server's name comes from plex.tv, and a <button> does not take the page's wrapping the
+     way surrounding text does, so it declares the break opportunity itself (rule 139). */
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+.server-pick-row:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+.server-pick .link {
+  align-self: flex-start;
+  font-size: 0.85rem;
+}
