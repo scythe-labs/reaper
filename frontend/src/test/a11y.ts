@@ -6,7 +6,7 @@
 // props, a role that prunes its own children from the accessibility tree, a control that
 // only exists after a query resolves -- a static linter reads the source and sees none of
 // them. `eslint-plugin-jsx-a11y` was measured against the real tree and caught none of the
-// filed bugs (docs/STATUS.md), because it cannot see through <Switch> to the <input> it
+// filed bugs (docs/LEARNINGS.md), because it cannot see through <Switch> to the <input> it
 // renders. axe reads the DOM the browser built, so a custom component is not a blind spot.
 //
 // It fails rather than warns, for the reason the whole of setup.ts fails rather than warns
