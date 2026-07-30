@@ -1915,6 +1915,45 @@ renders it (`test_review_chips.py` opens `WhyPanel.tsx`). Listed as a nested pat
 copying it does not drag `node_modules` into every worker. Both were found by the baseline
 check refusing to start, which is the cheapest possible place to find them.
 
+## Mutation testing the gates (2026-07-29)
+
+Zone 3: twelve gate functions, 88 mutants, eight test files that could kill them. **69 killed,
+19 survived**, and the survivors sorted by one predicate -- *does this result still hold the
+file?* A gate holds it by protecting outright or by blocking because it could not check, so a
+survivor flipping holds to lets-go has withdrawn a protection library-wide.
+
+**Two withdrew a protection.** Both are comparisons whose covering cases all sat on one side:
+
+- `RatingFloorGate` compares a rating against `rule.floor / 10`, converting the policy's
+  tenths to the 0-10 scale ratings arrive on. **Nothing drove a rating at the bar or a tenth
+  under it**, so the divisor was free to move: at `/ 9` a configured 7.5 silently becomes 8.33
+  and every title between them loses a protection the operator still sees configured; at `/ 11`
+  it becomes 6.8 and keeps titles nobody asked to keep. A unit conversion is only pinned by a
+  case that lands differently under it.
+- `ServerPopularityGate` protects on `count >= floor`, and every case sat AT the floor or under
+  it, so `>=` was free to become `==`. The protection would then hold for a title watched by
+  exactly three people and withdraw from one watched by five hundred -- un-protecting the
+  most-watched titles on the server while the suite stayed green. **A floor makes the "well
+  over" case easy to forget, and it is the one that catches this.**
+
+**The rest were operator copy, and one of them was a live defect rather than a gap.** Three
+copies of the vote clause -- `RatingRule.describe_bar`, `Rating.describe`,
+`Rating.describe_for_user` -- all rendered "from 1 votes", because every case that drove them
+used a count in the thousands. A vote floor of 1 is a legal policy and a title with one vote is
+ordinary, so all three were reachable. They derive from `ratings.describe_votes` now (rule 104).
+The popularity gate pluralizes on two separate lines and neither was pinned at a count of one,
+and deleting the not-kept line's assignment outright raises, which nothing noticed either.
+
+**Fixing a copy defect can delete the mutants instead of defending them.** Collapsing
+`describe_bar`'s `if min_votes > 0` branch into the shared helper took the zone from 88 mutants
+to 81: seven mutable tokens stopped existing. Worth knowing when reading a survivor count
+across runs -- the denominator moves, so the ratio is not comparable and the list is.
+
+**And the honest gap it opened.** `describe_votes` now carries 4 mutants in `ratings.py`, which
+no zone names. The tests written here kill them, but nothing *checks* that any more, which is
+exactly the flag-shaped coverage claim rule 145 is about. `Rating.meets` -- the function that
+decides whether a bar clears at all -- is in the same unzoned module.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

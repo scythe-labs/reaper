@@ -971,6 +971,12 @@ class TestTheMirrorMustSpanTheHold:
             (0, 30, False),  # an empty mirror establishes nothing
             (400, 0, False),  # a hold that never expires...
             (10_000, 0, False),  # ...which no reach covers, however deep
+            # A one-day hold is the shortest real one (the policy field is `ge=0`), and the
+            # only case that separates "the hold never expires" from "the hold is short".
+            # Without it the zero test alone pins the guard, and `hold_days <= 0` is free to
+            # become `<= 1`, which stops establishing a hold an operator really can set.
+            (400, 1, True),
+            (0, 1, False),  # ...but no mirror at all still spans nothing
         ],
     )
     def test_the_span_the_guard_claims_is_checked_against_the_reach(
@@ -979,6 +985,17 @@ class TestTheMirrorMustSpanTheHold:
         assert (
             progress_is_establishable(reach_days=reach_days, hold_days=hold_days) is establishable
         )
+
+    def test_a_negative_hold_is_not_reachable_so_nothing_here_pins_it(self) -> None:
+        """Stated rather than tested, because a test could not fail (rule 118).
+
+        ``hold_days <= 0`` also catches a negative, but ``PolicyBody.in_progress_hold_days``
+        is `ge=0`, so no stored policy can produce one. Mutating the ``<=`` to ``==`` is
+        therefore invisible to any input the app can reach, and a case built to catch it
+        would be asserting on a state the save boundary already refuses. This asserts the
+        bound instead, so the claim goes red if the field is ever widened to allow one.
+        """
+        assert PolicyBody.model_fields["in_progress_hold_days"].metadata[0].ge == 0
 
     def test_a_viewer_the_mirror_cannot_see_still_holds_the_next_season(self) -> None:
         """The reproduction from the issue: one viewer finished Season 3 120 days ago, under

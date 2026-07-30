@@ -34,7 +34,13 @@ from typing import Literal, Protocol
 
 from reaper.clock import humanize_days, humanize_window
 from reaper.engine.observation import Absent, Known, Observation, Unknown
-from reaper.ratings import Rating, RatingSource, is_percentage_source, source_label
+from reaper.ratings import (
+    Rating,
+    RatingSource,
+    describe_votes,
+    is_percentage_source,
+    source_label,
+)
 
 GateOutcome = Literal["PROTECT", "ABSTAIN"]
 PROTECT: GateOutcome = "PROTECT"
@@ -387,10 +393,12 @@ class RatingRule:
         the vote floor where the source has one (``7.5 on IMDb from 1,000 votes``)."""
         if is_percentage_source(self.source):
             return f"{source_label(self.source)} {self.floor}%"
-        bar = f"{self.threshold_text()} on {source_label(self.source)}"
-        if self.min_votes > 0:
-            bar += f" from {self.min_votes:,} votes"
-        return bar
+        # `describe_votes` is the one derivation of this clause (rule 104); it also renders a
+        # count of 1 as "vote", which all three copies of the phrase used to get wrong.
+        return (
+            f"{self.threshold_text()} on {source_label(self.source)}"
+            f"{describe_votes(self.min_votes)}"
+        )
 
 
 @dataclass(frozen=True, slots=True)

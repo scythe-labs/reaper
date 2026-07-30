@@ -356,6 +356,53 @@ def _rating_facts(ratings: tuple[Rating, ...]) -> Facts:
 
 
 class TestRatingGate:
+    @pytest.mark.parametrize(
+        ("value", "protects"),
+        [(7.6, True), (7.5, True), (7.4, False)],
+        ids=["above-the-bar", "exactly-at-the-bar", "one-tenth-under"],
+    )
+    def test_the_bar_is_read_in_tenths_and_compared_on_the_ten_point_scale(
+        self, value: float, protects: bool
+    ) -> None:
+        """A floor of 75 is 7.5, and both sides of that conversion have to be pinned.
+
+        The policy stores every rating floor in tenths so the hash stays byte-stable, and
+        ratings arrive on the 0-10 scale, so the gate divides by 10 to compare them. Nothing
+        drove a rating at the bar or a tenth under it, which left the divisor free to move:
+        at ``floor / 9`` a configured 7.5 silently becomes a bar of 8.33 and every title
+        between them loses a protection the operator still sees configured, and at
+        ``floor / 11`` it becomes 6.8 and keeps titles they never asked to keep. A
+        conversion is only pinned by a case that would land differently under it.
+        """
+        gate = RatingFloorGate(rules=(_IMDB_BAR,))  # IMDb 7.5 from 1,000 votes
+
+        result = gate.evaluate(_rating_facts(_imdb(value, votes=5_000)))
+
+        assert (result.outcome == PROTECT) is protects
+
+    @pytest.mark.parametrize(
+        ("min_votes", "clause"),
+        [(0, ""), (1, " from 1 vote"), (2, " from 2 votes"), (1000, " from 1,000 votes")],
+        ids=["no-vote-floor", "one-vote", "two-votes", "a-thousand"],
+    )
+    def test_the_bar_names_its_vote_floor_and_counts_one_as_one_vote(
+        self, min_votes: int, clause: str
+    ) -> None:
+        """The clause is present exactly when there is a vote floor, and reads as English.
+
+        Three copies of this phrase existed -- here, ``Rating.describe`` and
+        ``Rating.describe_for_user`` -- and all three said "from 1 votes", because every
+        case that drove them used a count in the thousands. A vote floor of 1 is a legal
+        policy and a title with a single vote is ordinary, so all three were reachable.
+        They now derive from ``ratings.describe_votes`` (rule 104), and this pins the
+        presence of the clause in both directions as well as its wording: with no floor
+        there is nothing honest to print, and "from 0 votes" would read as a measurement
+        rather than as its absence.
+        """
+        bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=min_votes)
+
+        assert bar.describe_bar() == f"7.5 on IMDb{clause}"
+
     def test_the_vote_floor_rejects_noise(self) -> None:
         """8.3 from a few hundred votes is noise, not quality, and a bare rating
         floor would protect it forever."""
@@ -408,7 +455,11 @@ class TestRatingGate:
 
 
 def _popularity_facts(
-    watchers: int, reach: Observation[float], *, added_days: float = 800.0
+    watchers: int | None,
+    reach: Observation[float],
+    *,
+    added_days: float = 800.0,
+    absent: bool = False,
 ) -> Facts:
     """A minimal Facts carrying only what the popularity gate reads.
 
@@ -416,12 +467,19 @@ def _popularity_facts(
     count needs the mirror to cover, which the windowed gate does not read but the
     operator-authored lanes do (``Facts.days_since_added``). Defaulted well past the
     reaches these tests use, so a test that does not name it is exercising the window.
+
+    ``absent`` makes the watcher count a genuine ``Absent`` rather than a ``Known`` zero --
+    "the mirror was read and holds no play for this title", which is what the gate's own
+    substitution of 0 stands in for and a different fact from a counted zero (rule 93).
     """
+    counted: Observation[int] = (
+        Absent(source="t") if absent else Known(value=watchers or 0, source="t")
+    )
     return Facts(
         title="x",
         days_observed_unwatched=Known(value=900.0, source="t"),
-        distinct_watchers=Known(value=watchers, source="t"),
-        distinct_watchers_all_time=Known(value=watchers, source="t"),
+        distinct_watchers=counted,
+        distinct_watchers_all_time=counted,
         size_bytes=Known(value=1, source="t"),
         imdb_rating_tenths=Absent(source="t"),
         imdb_votes=Absent(source="t"),
@@ -459,6 +517,72 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         assert "Nobody here watched it" not in result.detail
         assert "could not check who watched it in the last year" in result.detail
         assert "only goes back 3 months" in result.detail
+
+    @pytest.mark.parametrize(
+        "count", [3, 4, 10, 500], ids=["at-the-floor", "one-over", "ten", "many"]
+    )
+    def test_a_count_at_or_over_the_floor_protects(self, count: int) -> None:
+        """The floor is a floor, not a target, and only a count ABOVE it can say so.
+
+        Every other case here sits at the floor or under it, which left ``count >= floor``
+        free to become ``count == floor``: the protection would then hold for a title watched
+        by exactly three people and withdraw from one watched by five hundred, silently
+        un-protecting the most-watched titles on the server while every test stayed green.
+        A comparison needs a case on each side of it, and "well over" is the side a floor
+        makes easy to forget.
+        """
+        result = self.gate.evaluate(_popularity_facts(count, Known(value=400.0, source="t")))
+
+        assert result.outcome == PROTECT
+        assert result.blocked is False
+
+    @pytest.mark.parametrize(
+        ("floor", "count", "phrase"),
+        [
+            (1, 1, "1 person"),
+            (1, 2, "2 people"),
+            (3, 1, "Only 1 person"),
+            (3, 2, "Only 2 people"),
+        ],
+        ids=["one-watcher-protects", "two-watchers-protect", "one-watcher-short", "two-short"],
+    )
+    def test_one_watcher_is_a_person_on_both_the_kept_and_the_not_kept_line(
+        self, floor: int, count: int, phrase: str
+    ) -> None:
+        """Both arms pluralize, and both were unpinned at a count of one.
+
+        The gate says "1 person watched it" when the protection fires and "Only 1 person
+        watched it" when it does not, and the two are separate expressions on separate
+        lines. Every case here drove a count of 0, 2 or 3, so nothing distinguished the
+        singular from the plural on either -- and deleting the not-kept line's assignment
+        outright raises, which no test noticed either. Rule 21: an operator reading
+        "1 people watched it" is reading a bug, in the panel whose job is to be believed.
+        """
+        gate = ServerPopularityGate(
+            GateConfig(GateId.SERVER_POPULARITY, threshold=floor, window_days=365)
+        )
+
+        result = gate.evaluate(_popularity_facts(count, Known(value=400.0, source="t")))
+
+        assert phrase in result.detail
+
+    def test_a_genuinely_absent_watcher_count_is_nobody_and_not_somebody(self) -> None:
+        """``Absent`` means the mirror was read and holds no play for this title (rule 93),
+        so it has to floor at zero watchers.
+
+        The gate substitutes 0 for a non-``Known`` count, and with a watcher floor of 1 the
+        difference between substituting 0 and substituting 1 is the difference between
+        deleting an unwatched title and protecting the entire library. Nothing drove that
+        substitution, because every other case here carries a ``Known`` count.
+        """
+        gate = ServerPopularityGate(
+            GateConfig(GateId.SERVER_POPULARITY, threshold=1, window_days=365)
+        )
+
+        result = gate.evaluate(_popularity_facts(None, Known(value=400.0, source="t"), absent=True))
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is False
 
     def test_a_count_between_one_and_the_floor_is_a_lower_bound_too(self) -> None:
         """Not only the zero case. Two watchers seen inside a partly-covered window says

@@ -128,6 +128,28 @@ class TestTheMinDormancyGate:
         assert "Untouched for" in result.detail
         assert "3 years" in result.detail  # the floor, humanised
 
+    @pytest.mark.parametrize(
+        ("days", "protects"),
+        [(1094, True), (1095, False), (1096, False)],
+        ids=["a-day-short-of-the-floor", "exactly-at-the-floor", "a-day-past-it"],
+    )
+    def test_the_floor_is_the_first_day_the_gate_stops_protecting(
+        self, days: int, protects: bool
+    ) -> None:
+        """The boundary itself, which 400 and 1500 leave 695 days away on either side.
+
+        ``dormant < floor`` protects, so a title dormant for exactly the floor is the first
+        one the gate lets go. Nothing drove a value near it, which left the comparison free
+        to become ``<=`` and hold that title back for another day -- the keep direction, so
+        no file was ever at risk, but this is the gate its own docstring calls the one a
+        weight cannot outvote, and an undefended boundary on it is one refactor from
+        mattering. Sits here rather than in an issue because the demonstration was cheap
+        and the test is three lines (#242).
+        """
+        result = GATE.evaluate(_facts(days))
+
+        assert (result.outcome == PROTECT) is protects
+
     def test_a_gigantic_low_rated_film_is_still_protected_if_it_is_too_recent(
         self,
     ) -> None:

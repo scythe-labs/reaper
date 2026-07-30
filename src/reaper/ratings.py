@@ -134,7 +134,7 @@ class Rating:
 
     def describe(self) -> str:
         """The string the why-panel shows. Provenance is not optional."""
-        votes = f" from {self.votes:,} votes" if self.votes else ""
+        votes = describe_votes(self.votes)
         return f"{self.source.value} {self.value:.1f}/10{votes} (via {self.provider})"
 
     def describe_for_user(self) -> str:
@@ -147,8 +147,24 @@ class Rating:
         label = source_label(self.source)
         if self.source in _PERCENTAGE_SOURCES:
             return f"{label} {round(self.value * 10)}%"
-        votes = f" from {self.votes:,} votes" if self.votes else ""
-        return f"{self.value:.1f} on {label}{votes}"
+        return f"{self.value:.1f} on {label}{describe_votes(self.votes)}"
+
+
+def describe_votes(count: int | None) -> str:
+    """The vote clause an operator reads, or nothing at all: `` from 1 vote``.
+
+    The one derivation of this phrase (rule 104). It had three copies -- ``Rating.describe``,
+    ``Rating.describe_for_user`` and ``engine.gates.RatingRule.describe_bar`` -- and every one
+    of them said "from 1 votes", because each was only ever exercised at a count in the
+    thousands. A vote floor of 1 is a legal policy and a title with a single vote is ordinary,
+    so all three were reachable.
+
+    A falsy count (``None`` or ``0``) yields the empty string: there is no honest clause to
+    print, and "from 0 votes" reads as a measurement rather than as its absence.
+    """
+    if not count:
+        return ""
+    return f" from {count:,} vote" if count == 1 else f" from {count:,} votes"
 
 
 def _to_ten(value: float, source: RatingSource) -> float:
