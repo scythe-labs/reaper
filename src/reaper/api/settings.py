@@ -44,7 +44,13 @@ from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting, InstanceKind, PlexServer
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
-from reaper.services import admin_password, app_settings, instances, leaving_soon
+from reaper.services import (
+    admin_password,
+    app_settings,
+    instances,
+    leaving_soon,
+    watch_evidence,
+)
 from reaper.services.app_settings import ExpandSeasonsMode
 from reaper.services.plex_link import (
     PlexLinkError,
@@ -298,6 +304,12 @@ class PlexLibraryOut(BaseModel):
     kind: str
     """``"movie"`` or ``"show"``."""
     enabled: bool
+
+
+class WatchEvidenceResetOut(BaseModel):
+    """How many recorded watch-evidence marks were discarded."""
+
+    forgotten: int
 
 
 class PlexLibrariesIn(BaseModel):
@@ -1020,6 +1032,30 @@ async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
         await session.commit()
     log.info("plex.libraries_synced", count=len(merged))
     return result
+
+
+@router.post("/watch-evidence/reset", tags=[api_tags.PLEX])
+async def reset_watch_evidence(request: Request) -> WatchEvidenceResetOut:
+    """Forget how much watching Reaper has measured for each title, and start over.
+
+    Reaper records the most watch history it has ever seen per title, so that a title whose
+    plays suddenly read as zero can be told apart from one nobody ever watched. Plays go
+    unreadable when Plex reissues an item's id, which happens when a file leaves the library
+    and comes back: the plays stay filed under the old id.
+
+    Rebuild a whole library without repairing that history and EVERY watched title reads zero
+    at once, so every one of them is held back and nothing is reapable. That is the honest
+    answer, and no amount of re-scanning changes it. This discards the record so the next scan
+    accepts the library as it is now.
+
+    Deliberately not paired with a cache rebuild: the watch mirror is a faithful copy of the
+    source, so re-syncing it fetches the same rows back. The repair that restores the real
+    numbers is on the source side, in Tautulli.
+    """
+    async with _factory(request)() as session:
+        forgotten = await watch_evidence.forget_all(session)
+        await session.commit()
+    return WatchEvidenceResetOut(forgotten=forgotten)
 
 
 @router.put("/plex/libraries", tags=[api_tags.PLEX])

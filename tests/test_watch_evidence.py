@@ -14,13 +14,18 @@ monotonic write -- including the SQLite trap where ``max()`` of anything and NUL
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from reaper.main import create_app
+from tests._auth import login
 
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import utcnow
@@ -40,6 +45,18 @@ from reaper.services.watch_evidence import Mark, Reading, went_blind
 # sees it: both sides of the comparison come from epoch seconds already.
 NOW = utcnow().replace(microsecond=0)
 EARLIER = NOW - timedelta(days=30)
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    """A logged-in client over an empty database, exactly a fresh install."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+    engine.dispose()
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
 
 
 @pytest.fixture
@@ -224,6 +241,32 @@ def _movie_facts(*, blind: str | None, added_at: datetime = JUST_ADDED) -> Facts
         whitelisted=set(),
         watch_blind_reason=blind,
     )
+
+
+class TestTheStartFreshRoute:
+    """The escape hatch. Rebuild a library without repairing its history and every watched
+    title reads zero at once, so every one is held back and nothing is reapable. Correct, and
+    unusable, so the operator can discard the record."""
+
+    def test_it_forgets_every_mark_and_says_how_many(self, client: TestClient) -> None:
+        engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
+        with engine.begin() as conn:
+            for n in (5, 6):
+                conn.execute(
+                    text(
+                        "INSERT INTO watch_high_water "
+                        "(media_key, watchers_all_time, last_played_at, updated_at) "
+                        "VALUES (:k, 3, NULL, 1)"
+                    ),
+                    {"k": f"radarr:1:{n}"},
+                )
+        engine.dispose()
+
+        body = client.post("/api/settings/watch-evidence/reset").json()
+        assert body == {"forgotten": 2}
+        # Idempotent: a second press has nothing left to discard and says so rather than
+        # failing, so a double click cannot read as an error.
+        assert client.post("/api/settings/watch-evidence/reset").json() == {"forgotten": 0}
 
 
 class TestTheMovieLaneReportsUnknownNotZero:
