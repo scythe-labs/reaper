@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
+import { Announcer } from "../announce";
 import { Settings } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -49,6 +50,10 @@ function renderBackupPanel() {
   const queryClient = testQueryClient();
   const { unmount } = render(
     <QueryClientProvider client={queryClient}>
+      {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when no
+          region is listening -- so without it here the card's sentences are dropped and a test
+          about them passes against silence. */}
+      <Announcer />
       <Settings initialPanel="backup" />
     </QueryClientProvider>,
   );
@@ -270,5 +275,54 @@ describe("the backup panel's own read failing", () => {
 
     expect(await screen.findByText(/Couldn't load this page/)).toBeInTheDocument();
     expect(document.querySelector(".dropzone")).toBeNull();
+  });
+});
+
+describe("what an operator is told when a restore arms", () => {
+  // A confirmed restore replaces the entire database on the next boot, and its ONLY signal was the
+  // card becoming a different card: no sentence, and the pressed Restore button gone with the form
+  // it lived on, so focus fell to `<body>` and the next Tab restarted above the whole page. An
+  // absence cannot be heard, and this is the costliest absence in Settings (#173).
+  const spoken = () =>
+    [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+
+  async function arm() {
+    apiMock.restoreConfirm.mockResolvedValue({ ok: true });
+    const { person, queryClient } = renderBackupPanel();
+    const password = await stage("a.reaper");
+    await person.type(password, "a-password");
+    // The refetch after the confirm is what flips the card into its armed branch.
+    apiMock.backupInfo.mockResolvedValue({ ...INFO, restore_armed: true });
+    await person.click(screen.getByRole("button", { name: /^restore$/i }));
+    return { person, queryClient };
+  }
+
+  it("says a restore is ready, in the same words the card shows", async () => {
+    // One pair of constants behind both, so the notice and the sentence cannot be reworded apart
+    // (rule 144). Asserted against the rendered notice rather than against a copy of the string,
+    // which is the only version of this assertion that can catch them drifting.
+    await arm();
+
+    // Scoped to the notice on the card, because the live region holds these words too now -- which
+    // is the whole point, and also why an unscoped text query cannot be the assertion.
+    // Anchored on the bolded lead's parent, not on the first span in the card: `Notice` opens with
+    // its own visually-hidden "Warning: ", which belongs to the notice and not to this sentence.
+    const notice = await waitFor(() => {
+      const el = document.querySelector(".restore-armed strong")?.parentElement;
+      if (!el) throw new Error("the card has not armed yet");
+      return el;
+    });
+    expect(spoken()).toBe(notice.textContent);
+    expect(spoken()).toContain("A restore is ready.");
+  });
+
+  it("leaves the operator on the one control the armed card has", async () => {
+    // "Cancel restore" is the only way back out, and it mounts a commit before `busy` clears, so
+    // the move has to wait for it to become actable rather than for it to exist.
+    await arm();
+
+    const cancel = await screen.findByRole("button", { name: /cancel restore/i });
+    await waitFor(() => expect(cancel).toBeEnabled());
+    await waitFor(() => expect(cancel).toHaveFocus());
   });
 });

@@ -146,3 +146,40 @@ describe("the badge on the Discord row", () => {
     expect(apiMock.testWebhook).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("where a keyboard operator lands when a service card removes itself", () => {
+  // The Confirm remove button is inside the card it destroys, so the card unmounts a refetch later
+  // and takes it along: focus falls to `<body>` and the next Tab restarts at the top of Settings
+  // (#173). The successor cannot live in the card, which is why the section above owns the move.
+  //
+  // Driven through a SINGLETON kind on purpose. Tautulli hides its Add button while its one card
+  // exists, so the target is not merely off-screen at press time -- it does not exist, and only
+  // mounts because `canAdd` flips in the same refetch that removes the card. A non-singleton kind
+  // has the Add button up all along and cannot tell a hook that waits from one that does not.
+  function tautulli(): Instance {
+    return { ...sonarr(), id: 9, kind: "tautulli", name: "Stats", api_path_prefix: "/api/v2" };
+  }
+
+  it("lands on the Add button, which only arrives once the card is gone", async () => {
+    apiMock.instances.mockResolvedValue([tautulli()]);
+    apiMock.deleteInstance.mockResolvedValue({ ok: true });
+    const client = testQueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <Announcer />
+        <ServicesPanel />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Remove Stats" }));
+    // While the card is up, a singleton kind offers no Add at all.
+    expect(screen.queryByRole("button", { name: /Add a Tautulli/ })).toBeNull();
+
+    apiMock.instances.mockResolvedValue([]);
+    await user.click(screen.getByRole("button", { name: "Confirm remove Stats" }));
+
+    const add = await screen.findByRole("button", { name: /Add a Tautulli/ });
+    await waitFor(() => expect(add).toHaveFocus());
+  });
+});

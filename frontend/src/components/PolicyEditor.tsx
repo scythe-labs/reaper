@@ -1009,7 +1009,14 @@ export function PolicyEditor({
   // in the stale notice, or the button appears to do nothing at all.
   const startScan = useMutation({
     mutationFn: () => api.startScan(),
-    onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
+    onSuccess: (started) => {
+      queryClient.setQueryData(["scanStatus"], started);
+      // The press swaps the notice for a progress bar, which is a visual change and nothing else:
+      // the failure path speaks (`Notice` owns `role="alert"`) and the success path did not, so a
+      // scan that started and one that did nothing sounded alike (#173). The same sentence the
+      // heading now shows, since a reader lands on that heading in the next breath (rule 144).
+      announce("Rescanning to apply your changes.");
+    },
   });
 
   const save = useMutation({

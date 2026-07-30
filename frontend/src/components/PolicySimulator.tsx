@@ -8,7 +8,9 @@
 // PolicyEditor.tsx decides which of the two renders, and its header says why that decision
 // is the most important behavior on the page.
 
+import type { RefObject } from "react";
 import type { ProfileSettings, Simulation } from "../api";
+import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
 import { GATE_META, titleCase } from "./policyMeta";
 import { Notice } from "./Notice";
@@ -67,9 +69,17 @@ export function StaleNotice({
   percent: number;
   detail: string;
 }) {
+  // "Scan now" replaces its own branch with the progress bar, and it is `disabled` from the press,
+  // so focus is at `<body>` before the swap. Nothing focusable mounts in its place in ANY state of
+  // this notice, so the target is the heading -- which is the same DOM node either side of the
+  // swap (child 0 of both arms) and whose text becomes the sentence worth hearing (#173). The
+  // pattern `useSavebarFocus` sets: after a completed action, the name of what you are looking at.
+  const afterStart = useSuccessorFocus();
   return (
     <div className="sim sim-info">
-      <h3>{scanning ? "Rescanning to apply your changes" : "Needs a fresh scan"}</h3>
+      <h3 ref={afterStart.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
+        {scanning ? "Rescanning to apply your changes" : "Needs a fresh scan"}
+      </h3>
       {scanning ? (
         <>
           <p>
@@ -105,7 +115,14 @@ export function StaleNotice({
             This policy doesn't match the last scan: a protection, a watch window, a keep tag, or a
             season rule reads differently now. Scan to apply it.
           </p>
-          <button className="primary sm" onClick={onScan} disabled={starting}>
+          <button
+            className="primary sm"
+            onClick={() => {
+              afterStart.arriving();
+              onScan();
+            }}
+            disabled={starting}
+          >
             {starting ? "Starting…" : "Scan now"}
           </button>
         </>

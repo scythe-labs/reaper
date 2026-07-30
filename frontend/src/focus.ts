@@ -120,6 +120,74 @@ export function useRemovalFocus(fallbackRef?: RefObject<HTMLElement | null>) {
   };
 }
 
+/** A control nobody can act on, so neither a focus TARGET nor a place worth leaving someone.
+ *  Focusing one is a silent no-op -- the browser drops it straight back to `<body>`, which is the
+ *  trap `OverrideControls`' `returnToCaret` hit. Read from both ends by `useSuccessorFocus`. */
+const UNACTABLE = "[disabled], [aria-disabled='true']";
+
+/** Where focus goes when the control that was pressed goes with the thing it acted on, and its
+ *  replacement arrives a server round trip later.
+ *
+ *  `useRemovalFocus` above cannot cover these: it resolves the target on the very next commit,
+ *  which is the right shape for a draft list edited in the browser and the wrong one for anything
+ *  waiting on a write. Six of the seven sites this was written for also carry
+ *  `disabled={…isPending}`, so the browser has already dropped focus to `<body>` at the press,
+ *  BEFORE the unmount -- there is nothing left to move by the time the successor exists (#173).
+ *
+ *  So the request is armed in the handler and every commit afterwards gets a turn at satisfying
+ *  it. Three settle timings fall out of one hook: a successor that mounts with `onSuccess`, one
+ *  that waits for the invalidated query to refetch, and one that passes through an intermediate
+ *  state where the only candidate is still `disabled` -- which is why being mounted is not
+ *  enough, and a disabled target is waited out rather than focused. Focusing a disabled control
+ *  is the silent no-op `OverrideControls`' `returnToCaret` hit.
+ *
+ *  Used as:
+ *
+ *      const after = useSuccessorFocus();
+ *      const remove = useMutation({ …, onSuccess: () => { announce("…"); invalidate(); } });
+ *      <button onClick={() => { after.arriving(); remove.mutate(); }} />
+ *      <button ref={after.ref}>What is left to do here</button>
+ *
+ *  **Only while focus is still lost**, which is the difference between a recovery and a steal.
+ *  If the operator has put focus somewhere themselves during the round trip, the request is
+ *  dropped: a write settling under them must not pull them out of the box they are typing in.
+ *  That check is also what keeps a request harmless when the successor never arrives at all --
+ *  a failed refetch leaves it armed, and the next commit that finds focus lost is the only one
+ *  that can spend it.
+ *
+ *  "Lost" is broader than `<body>`, and deliberately so. A browser blurs an element that becomes
+ *  `disabled`, so on the sites whose press disables the control it is on, `<body>` is what a real
+ *  browser reports -- but jsdom does NOT blur it, and leaves the cursor parked on a control that
+ *  can no longer be acted on. Reading only `<body>` would make this hook behave one way in the
+ *  suite and another in the app, which is the worst of both. A control that is gone, or still
+ *  there and no longer actable, is nowhere to stand either way. */
+export function useSuccessorFocus() {
+  const ref = useRef<HTMLElement>(null);
+  const wanted = useRef(false);
+  useEffect(() => {
+    if (!wanted.current) return;
+    const target = ref.current;
+    // Not mounted yet, or mounted but not actable yet: keep the request and take the next commit.
+    if (target === null || !target.isConnected) return;
+    if (target.matches(UNACTABLE)) return;
+    const at = document.activeElement;
+    const lost =
+      at === null ||
+      at === document.body ||
+      !at.isConnected ||
+      (at instanceof HTMLElement && at.matches(UNACTABLE));
+    wanted.current = false;
+    if (lost) target.focus();
+  });
+  return {
+    ref,
+    /** Say a successor is on its way, in the handler that presses the control. */
+    arriving: () => {
+      wanted.current = true;
+    },
+  };
+}
+
 /** Where focus goes when a savebar unmounts, taking the button that was pressed.
  *
  *  A savebar exists only while something is unsaved, so Save and Discard both destroy the

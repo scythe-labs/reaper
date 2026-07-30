@@ -8,9 +8,10 @@
 // PlexPin.tsx, the same one the login screen uses.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence } from "../api";
+import { useSuccessorFocus } from "../focus";
 import { count, since } from "../format";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 import { StaleReadNotice } from "./StaleReadNotice";
@@ -124,6 +125,17 @@ export function PlexPanel({
   // tab) changes it; typing diverges the two until Save or a refetch reconciles them.
   const [webUrl, setWebUrl] = useState("");
   const [webUrlError, setWebUrlError] = useState<string | null>(null);
+  // Both inline Saves on this panel exist only while their row is dirty, so pressing one destroys
+  // it -- and each is `disabled` while its write is in flight, so focus is at `<body>` before that
+  // (#173). Neither row has a heading of its own, so each hands focus to the control that outlives
+  // it, and they are different controls: the web address box survives its own save and still holds
+  // the value just committed, while the whole Manual address row collapses, leaving the Connection
+  // select above it -- which is where the operator opened the row from, and which now reads back
+  // the address they saved. Two hooks for the same reason they have two targets, plus two settle
+  // timings: the web address waits for the `["plex"]` refetch, the manual row collapses inside
+  // `onSuccess` and its select is `disabled` until the write clears.
+  const afterWebUrlSave = useSuccessorFocus();
+  const afterManualSave = useSuccessorFocus();
   const savedWebUrl = data?.web_url ?? "";
   // Which stored value the box currently holds a copy of. The effect below runs after the
   // commit, so the first pass where `data` exists paints an empty box against a stored
@@ -199,6 +211,10 @@ export function PlexPanel({
     onSuccess: (status) => {
       setWebUrl(status.web_url);
       setWebUrlError(null);
+      // Its whole success signal was the Save button going away, which is an absence: the manual
+      // address row beside it has said "Connection saved." all along, so this was the asymmetric
+      // half of a pair (#173, rule 72).
+      announce("Plex web address saved.");
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
     onError: (e: Error) => setWebUrlError(e.message),
@@ -243,9 +259,21 @@ export function PlexPanel({
   const pin = usePlexPinPoll<PlexLinkPoll>({
     poll: (pinId, machineId) => api.plexLinkPoll(pinId, machineId, verifyRef.current),
     onOk: (poll) => {
-      setMessage(`Linked to ${poll.server?.name ?? "your server"}.`);
+      const said = `Linked to ${poll.server?.name ?? "your server"}.`;
+      setMessage(said);
+      // `message` renders as a plain `.muted` paragraph, which is not a live region, and the
+      // failure siblings below reach `Notice`'s `role="alert"` and so DO speak -- the same
+      // success-is-silent asymmetry as the web address save above (#173, rule 72).
+      announce(said);
       done();
     },
+    // A poll, not a press. The picker replaces the "waiting for Plex" block on a timer, so there
+    // is usually nothing focused to recover -- pressing "Link with Plex" already destroyed itself
+    // one state earlier -- and moving focus off a timer is a steal rather than a recovery, which
+    // is the line `useDialogFocus` draws for the same reason. So this site gets the news and NOT
+    // a `.focus()`: the sign-in finished and there is now a choice waiting.
+    onChooseServer: () =>
+      announce("Signed in with Plex. Choose which server Reaper should manage."),
     // A sign-in that never completed is a failure, not status: it goes to `plexError`
     // so it renders as an error, not in the gray slot "Linked to ..." uses.
     onTimedOut: () => {
@@ -700,6 +728,7 @@ export function PlexPanel({
               </p>
               <div className="set-control">
                 <select
+                  ref={afterManualSave.ref as RefObject<HTMLSelectElement>}
                   value={connectionValue}
                   aria-label="Connection"
                   // Without the linked server there is nothing to list but the saved address,
@@ -764,7 +793,10 @@ export function PlexPanel({
                 <button
                   className="primary sm"
                   disabled={!manualHost.trim() || setConnection.isPending}
-                  onClick={saveManual}
+                  onClick={() => {
+                    afterManualSave.arriving();
+                    saveManual();
+                  }}
                 >
                   {setConnection.isPending ? "Checking…" : "Save"}
                 </button>
@@ -817,6 +849,7 @@ export function PlexPanel({
             <div className="set-control">
               <input
                 type="url"
+                ref={afterWebUrlSave.ref as RefObject<HTMLInputElement>}
                 value={webUrl}
                 aria-label="Plex web address"
                 onChange={(e) => {
@@ -834,7 +867,10 @@ export function PlexPanel({
                   type="button"
                   className="primary sm"
                   disabled={saveWebUrl.isPending}
-                  onClick={() => saveWebUrl.mutate()}
+                  onClick={() => {
+                    afterWebUrlSave.arriving();
+                    saveWebUrl.mutate();
+                  }}
                 >
                   {saveWebUrl.isPending ? "Saving…" : "Save"}
                 </button>

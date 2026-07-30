@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlexResourceConnection, PlexStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
+import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -97,6 +98,10 @@ function renderPanel(
   if (cached) queryClient.setQueryData(["plex"], cached);
   return render(
     <QueryClientProvider client={queryClient}>
+      {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when no
+          region is listening -- so without it here this panel's sentences are dropped and a test
+          about them passes against silence. */}
+      <Announcer />
       <PlexPanel onDirtyChange={onDirtyChange} />
     </QueryClientProvider>,
   );
@@ -992,5 +997,42 @@ describe("forgetting the recorded watch history", () => {
     const warning = await screen.findByText(/score as never watched/);
     expect(warning).toHaveClass("notice-warn");
     expect(warning).toHaveTextContent("repair its history in Tautulli");
+  });
+});
+
+describe("saving the Plex web address", () => {
+  // The row's inline Save exists only while the box is dirty, so pressing it destroys the pressed
+  // control, and it is `disabled` while the write is in flight so focus is gone before that. Its
+  // whole success signal was that disappearance, which is an absence and cannot be heard -- while
+  // the Manual address row beside it has said "Connection saved." all along, so the two halves of
+  // one pair disagreed (#173, rule 72).
+  const spoken = () =>
+    [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+  const box = () => screen.getByLabelText("Plex web address");
+
+  async function typeAndSave() {
+    const user = userEvent.setup();
+    renderPanel();
+    const address = await waitFor(() => box());
+    await user.type(address, "x");
+    const save = await screen.findByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save);
+    return { user, address };
+  }
+
+  it("says the address was saved", async () => {
+    await typeAndSave();
+
+    await waitFor(() => expect(spoken()).toContain("Plex web address saved."));
+  });
+
+  it("hands focus back to the box, which is where the operator was working", async () => {
+    // The box outlives its own Save and still holds the value just committed, so it is both the
+    // stable neighbour and the thing the operator was looking at. There is no heading on this row
+    // to fall back to.
+    const { address } = await typeAndSave();
+
+    await waitFor(() => expect(address).toHaveFocus());
   });
 });

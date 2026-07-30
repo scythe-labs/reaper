@@ -21,7 +21,7 @@ import {
 } from "react";
 import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { announce } from "../announce";
-import { useSavebarFocus } from "../focus";
+import { useSavebarFocus, useSuccessorFocus } from "../focus";
 import {
   api,
   type ExpandSeasonsMode,
@@ -186,6 +186,12 @@ export function GeneralPanel({
   const [copied, setCopied] = useState(false);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  // Removing the key unmounts the whole key-present block, taking the pressed Confirm with it, and
+  // the button is `disabled` while the write is in flight so focus is at `<body>` before that even
+  // happens (#173). Focus lands on "Generate API key", which is not a nearby neighbour but the one
+  // thing left to do in this row -- and it only mounts once the refetch says the key is gone, which
+  // is the round trip `useSuccessorFocus` exists to wait out.
+  const afterKeyRemove = useSuccessorFocus();
 
   // Seed the editable fields from the server once per load (and re-seed after saves,
   // which return the canonical stored values -- rule 39).
@@ -857,7 +863,10 @@ export function GeneralPanel({
                       <button
                         className="danger"
                         disabled={removeKey.isPending}
-                        onClick={() => removeKey.mutate()}
+                        onClick={() => {
+                          afterKeyRemove.arriving();
+                          removeKey.mutate();
+                        }}
                       >
                         Confirm remove
                       </button>
@@ -902,6 +911,7 @@ export function GeneralPanel({
               ) : (
                 <button
                   className="primary"
+                  ref={afterKeyRemove.ref as RefObject<HTMLButtonElement>}
                   disabled={generate.isPending || requestGenerate.isPending}
                   onClick={() => requestGenerate.mutate()}
                 >
@@ -1031,7 +1041,18 @@ export function GeneralPanel({
 
 // --- Services --------------------------------------------------------------
 
-function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => void }) {
+function ServiceCard({
+  instance,
+  onEdit,
+  onRemoving,
+}: {
+  instance: Instance;
+  onEdit: () => void;
+  /** Called as the remove is sent, so the section above can catch focus when this card goes.
+   *  Lives up there rather than here because the successor is not inside this card -- the card
+   *  IS what unmounts (#173). */
+  onRemoving?: () => void;
+}) {
   const queryClient = useQueryClient();
   // The result and the address it was computed for, the third of this badge's siblings to keep the
   // pairing (rule 72; `ServiceModal` and the Discord row are the others). Nothing cleared this, and
@@ -1127,6 +1148,7 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
               aria-label={`Confirm remove ${instance.name}`}
               onClick={() => {
                 setConfirmingRemove(false);
+                onRemoving?.();
                 remove.mutate();
               }}
             >
@@ -1177,6 +1199,57 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
   );
 }
 
+/** One kind's cards and its Add button.
+ *
+ *  Its own component only so it can hold a hook per kind: a `useSuccessorFocus()` inside the
+ *  `KINDS.map` below would be a hook in a loop. What it buys is where focus goes when a card
+ *  removes itself -- the card IS the thing that unmounts, so the successor cannot live inside it
+ *  (#173). The Add button is the target rather than a neighbouring card: the cards' own focusable
+ *  content is a Test/Edit/Remove triplet, and landing on another service's Test button reads as
+ *  the wrong service being acted on, where Add is the one thing left to do in this section. It is
+ *  also the only candidate that is always there -- removing a singleton kind's one card empties
+ *  the grid, and `canAdd` flips the Add button ON in the same refetch, which the hook waits for. */
+function ServiceSection({
+  kind,
+  rows,
+  onOpen,
+}: {
+  kind: (typeof KINDS)[number];
+  rows: Instance[];
+  onOpen: (instance: Instance | null) => void;
+}) {
+  const afterRemove = useSuccessorFocus();
+  // A singleton kind (Tautulli) shows no "Add" once one exists: it mirrors one Plex, and
+  // Reaper connects to one Plex, so a second has no working setup.
+  const canAdd = !kind.singleton || rows.length === 0;
+  return (
+    <section className="service-section">
+      <h3>{kind.label}</h3>
+      <p className="service-hint">{kind.hint}</p>
+      <div className="service-grid">
+        {rows.map((i) => (
+          <ServiceCard
+            key={i.id}
+            instance={i}
+            onEdit={() => onOpen(i)}
+            onRemoving={afterRemove.arriving}
+          />
+        ))}
+        {canAdd && (
+          <button
+            type="button"
+            className="service-add"
+            ref={afterRemove.ref as RefObject<HTMLButtonElement>}
+            onClick={() => onOpen(null)}
+          >
+            <span aria-hidden="true">+</span> Add a {kind.label}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function ServicesPanel() {
   const { data, isPending, error } = useQuery({ queryKey: ["instances"], queryFn: api.instances });
   const [modal, setModal] = useState<{ kind: string; instance: Instance | null } | null>(null);
@@ -1205,36 +1278,14 @@ export function ServicesPanel() {
       {error && data && <StaleReadNotice what="your connections" />}
       {isPending && <p className="muted">Loading…</p>}
       {data &&
-        KINDS.map((k) => {
-          const rows = data.filter((i) => i.kind === k.value);
-          // A singleton kind (Tautulli) shows no "Add" once one exists: it mirrors one
-          // Plex, and Reaper connects to one Plex, so a second has no working setup.
-          const canAdd = !k.singleton || rows.length === 0;
-          return (
-            <section key={k.value} className="service-section">
-              <h3>{k.label}</h3>
-              <p className="service-hint">{k.hint}</p>
-              <div className="service-grid">
-                {rows.map((i) => (
-                  <ServiceCard
-                    key={i.id}
-                    instance={i}
-                    onEdit={() => setModal({ kind: i.kind, instance: i })}
-                  />
-                ))}
-                {canAdd && (
-                  <button
-                    type="button"
-                    className="service-add"
-                    onClick={() => setModal({ kind: k.value, instance: null })}
-                  >
-                    <span aria-hidden="true">+</span> Add a {k.label}
-                  </button>
-                )}
-              </div>
-            </section>
-          );
-        })}
+        KINDS.map((k) => (
+          <ServiceSection
+            key={k.value}
+            kind={k}
+            rows={data.filter((i) => i.kind === k.value)}
+            onOpen={(instance) => setModal({ kind: instance?.kind ?? k.value, instance })}
+          />
+        ))}
       {modal && (
         <ServiceModal
           key={modal.instance ? modal.instance.id : `add-${modal.kind}`}
@@ -1344,6 +1395,13 @@ function BackupPanel({
   );
 }
 
+/** What an armed restore says, in one place because it is said twice: the warn notice on the card
+ *  and the sentence spoken into the live region when the confirm lands. Two constants rather than
+ *  one so the notice can bold the lead without the announcement inheriting markup -- and so
+ *  neither copy can be reworded without the other (rule 144). */
+const RESTORE_ARMED_LEAD = "A restore is ready.";
+const RESTORE_ARMED_REST = "Restart Reaper's container to finish. Nothing has changed yet.";
+
 // The restore card: choose a backup file, confirm with the admin password, then restart the
 // container to finish. A restore never happens live -- the upload is validated and staged, the
 // password arms the swap, and the entrypoint does the swap on the next boot before migrations.
@@ -1368,6 +1426,12 @@ function RestoreCard({
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  // Pressing Restore replaces this whole card with the restart prompt, two hops later: the staged
+  // summary is dropped first, then the refetch flips `armed`. Focus lands on "Cancel restore",
+  // which is the only control the armed card has and the only way back out of it -- and it stays
+  // `disabled` until `busy` clears in the `finally`, one commit after it mounts, which is why the
+  // move waits on being actable rather than on being present (#173).
+  const afterArm = useSuccessorFocus();
 
   // The two sends that outlive a render, held so the unmount cleanup below can wait on them
   // instead of deciding against state that has not settled yet. A prepare stages its archive on
@@ -1438,6 +1502,11 @@ function RestoreCard({
     confirmRef.current = confirming;
     try {
       await confirming;
+      // Said here rather than after the refetch, because THIS is what armed it: the server has
+      // staged the swap whether or not the read that redraws the card lands. It was the one
+      // outcome in this panel with no signal at all -- the card simply became a different card,
+      // which is an absence, and the operator hears nothing when a full restore is armed (#173).
+      announce(`${RESTORE_ARMED_LEAD} ${RESTORE_ARMED_REST}`);
       // The confirm armed the swap; refetch so `armed` flips on and this card shows the
       // restart prompt. Drop the staged summary from local state either way.
       reset();
@@ -1554,10 +1623,15 @@ function RestoreCard({
         <h3>Restore from a backup</h3>
         <Notice tone="warn" className="restore-armed" as="div">
           <span>
-            <strong>A restore is ready.</strong> Restart Reaper's container to finish. Nothing has
-            changed yet.
+            <strong>{RESTORE_ARMED_LEAD}</strong> {RESTORE_ARMED_REST}
           </span>
-          <button type="button" className="link" onClick={() => void cancel()} disabled={busy}>
+          <button
+            type="button"
+            className="link"
+            ref={afterArm.ref as RefObject<HTMLButtonElement>}
+            onClick={() => void cancel()}
+            disabled={busy}
+          >
             Cancel restore
           </button>
         </Notice>
@@ -1675,7 +1749,10 @@ function RestoreCard({
             <button
               type="button"
               className="danger"
-              onClick={() => void restore()}
+              onClick={() => {
+                afterArm.arriving();
+                void restore();
+              }}
               disabled={busy || !password}
             >
               {busy ? "Restoring…" : "Restore"}
@@ -2408,6 +2485,12 @@ export function NotificationsPanel({
     },
     onError: (e: Error) => setError(e.message),
   });
+  // Remove is the rule 72 twin of the API key's, and the harder half of the pair: removing the
+  // webhook disables BOTH of the pressed button's siblings in the same breath -- Save wants a
+  // typed URL and `setUrl("")` has just cleared it, Send test wants a stored one and that is what
+  // went -- so there is no successor control at all, only the box the operator would refill.
+  // Which makes it the honest target: it is the one thing left to do here (#173).
+  const afterWebhookRemove = useSuccessorFocus();
   const remove = useMutation({
     mutationFn: () => api.clearWebhook(),
     onSuccess: () => {
@@ -2495,6 +2578,7 @@ export function NotificationsPanel({
           <span className="field-label">Discord webhook URL</span>
           <input
             type="password"
+            ref={afterWebhookRemove.ref as RefObject<HTMLInputElement>}
             value={url}
             onChange={(e) => {
               setUrl(e.target.value);
@@ -2549,6 +2633,7 @@ export function NotificationsPanel({
             disabled={remove.isPending}
             onClick={() => {
               setError(null);
+              afterWebhookRemove.arriving();
               remove.mutate();
             }}
           >
