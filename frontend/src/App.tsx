@@ -717,6 +717,21 @@ function Dashboard({ user }: { user: AuthUser }) {
     setReviewFocus(null);
   };
 
+  // A destination dies with the visit it aimed at. Clearing on a nav click (below) is not enough,
+  // because that is not the only way a view is left: a Back press restores `view` through the raw
+  // setter and runs no handler at all. The queue unmounts on the way out, so its once-per-nonce
+  // ref goes with it, and the next mount seeds the search box from a jump the operator had
+  // already backed out of -- they asked to return to the Review list they started from and got a
+  // one-title list with a chip they never typed. Clearing a focus as its view goes off screen
+  // also covers the search they cleared BY HAND, which the box would otherwise refill on the way
+  // back. Keyed on `view`, so clicking the tab you are already on still changes nothing (B-23).
+  // Rule 72: all three focuses, not just the one that was shown to replay.
+  useEffect(() => {
+    if (view !== "review") setReviewFocus(null);
+    if (view !== "policy") setPolicyFocus(null);
+    if (view !== "settings") setSettingsFocus(null);
+  }, [view]);
+
   // Every jump in the app, in one place. The caller names a whole destination (navIntent.ts) and
   // this applies it; nothing else calls the raw setters, so a new destination is a new call site
   // rather than a new function with its own idea of what a jump resets.

@@ -636,4 +636,74 @@ describe("the authenticated app's heading outline", () => {
     // argument list whose paging tail this test has no opinion about (rule 141).
     await waitFor(() => expect(apiMock.candidates.mock.calls.at(-1)?.[0]).toBe("abstain"));
   });
+
+  // The other half of that jump: it also seeds the queue's search box, and a seeded box is state
+  // the operator did not type. Backing out of the jump has to take it with them. Back restores
+  // the view through the raw setter and runs no handler, so the nav click's `clearFocus` never
+  // fires on this route -- and the queue UNMOUNTS on the way out, taking its once-per-nonce ref
+  // with it, so the next mount reads the same focus again and seeds from a jump that was undone.
+  // Driven through the real shell for the same reason as the test above: the focus, the view and
+  // the queue's own state are set in three places and only the assembled app proves they agree.
+  it("takes the jump's search back out of the queue when the operator backs out of it", async () => {
+    // jsdom carries one session history across a whole file, and the test above ends with layers
+    // still open, so its teardown hands those entries back one deferred step at a time. Those are
+    // real popstates: arriving after this test's provider is up, they read as Back presses and eat
+    // the ones below. Drain them while nothing is listening, then clear the marker the provider's
+    // mount-time reconcile keys on, the same reset `backnav.test.tsx` does between its tests.
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    history.replaceState(null, "");
+
+    const person = userEvent.setup();
+    mountTheShell();
+    apiMock.fairness.mockResolvedValue(scalesReport);
+    apiMock.person.mockResolvedValue(personDetail);
+    apiMock.candidate.mockRejectedValue(new ApiError(503, "not this test's subject"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Condemned" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+
+    await person.click(screen.getByRole("button", { name: "Scales" }));
+    await person.click(await screen.findByRole("button", { name: /marlow/i }));
+    await person.click(await screen.findByRole("button", { name: /Nightferry/i }));
+
+    // The jump landed and the box is seeded with the title as the queue prints it. Asserted so a
+    // regression that stopped seeding at all could never pass this test by the back door.
+    const box = await screen.findByRole("searchbox", { name: /search titles/i });
+    await waitFor(() => expect(box).toHaveValue("Nightferry 2021"));
+
+    // Leaving Scales took the person panel's Back layer with it (its condition names the view),
+    // and handing that entry back is a real `history.back()`. jsdom delivers its popstate on a
+    // later task and the provider swallows exactly one for it, so settle the tick first -- press
+    // Back before it lands and the press itself is what gets swallowed.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // A Back press, once the sentinel is parked, arrives as a popstate -- the same way
+    // `backnav.test.tsx` drives one. Four of them unwind this jump: the why-panel, the jump
+    // itself (back to Scales), the person panel, and the nav step that left Review.
+    const back = async () => {
+      await act(async () => {
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+    };
+    await back();
+    await back();
+    await back();
+    await back();
+
+    // Home again, on the list they started from: the lane they left, and an empty box with no
+    // chip over it. Without the fix the queue remounts still holding "Nightferry 2021".
+    expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    const boxAfter = await screen.findByRole("searchbox", { name: /search titles/i });
+    expect(boxAfter).toHaveValue("");
+    expect(screen.queryByRole("button", { name: /Stop searching for/i })).toBeNull();
+  });
 });
