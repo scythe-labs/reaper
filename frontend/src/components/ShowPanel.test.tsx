@@ -200,3 +200,30 @@ describe("the show panel's candidate Plex rows", () => {
     expect(screen.queryByText(/possible matches/i)).not.toBeInTheDocument();
   });
 });
+
+// Which season names may wrap. The row is nowrap so its height holds still while the list
+// narrows, and for the two labels the panel composes itself that costs nothing. The third branch
+// is different: a season with no number falls back to the server's own title, which can be one
+// long unbroken string with nothing to break on, and nowrap paints it out of the panel (rule
+// 139, #220). So only that branch is marked, and both directions are driven -- the unmarked
+// branch is the state the fixture hands you for free, which is exactly where a marker leaking
+// onto every row would hide, taking the steady row height with it (rule 145).
+describe("the show panel's season names", () => {
+  it("lets the unnumbered season wrap, because that name is the server's own", () => {
+    const { container } = renderPanel(
+      group([season(1, "condemn", { season_number: null, title: "A_Long_Unbroken_Season_Title" })]),
+    );
+    const name = container.querySelector(".panel-season-name");
+    expect(name).toHaveTextContent("A_Long_Unbroken_Season_Title");
+    expect(name).toHaveClass("is-server-title");
+  });
+
+  it("holds the line for both labels it composes itself", () => {
+    const { container } = renderPanel(
+      group([season(3, "condemn"), season(0, "condemn", { id: 9 })]),
+    );
+    const names = [...container.querySelectorAll(".panel-season-name")];
+    expect(names.map((n) => n.textContent)).toEqual(["Season 3", "Specials"]);
+    for (const name of names) expect(name).not.toHaveClass("is-server-title");
+  });
+});

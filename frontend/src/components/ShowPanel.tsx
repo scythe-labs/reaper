@@ -127,7 +127,15 @@ export function ShowPanel({
                 onClick={() => onOpenSeason(season.id)}
               >
                 <span className={`score score-${handFate(season)}`}>{season.score}</span>
-                <span className="panel-season-name">
+                {/* Two of these three branches are labels the panel composes, short enough that
+                    the row's nowrap costs them nothing. The third is the server's own title, and
+                    it is the only one that needs rule 139's break opportunity -- so it says so,
+                    rather than the row giving up its steady height for all three. */}
+                <span
+                  className={`panel-season-name${
+                    season.season_number == null ? " is-server-title" : ""
+                  }`}
+                >
                   {season.season_number === 0
                     ? "Specials"
                     : season.season_number != null

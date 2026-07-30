@@ -1908,9 +1908,19 @@ tbody tr.selected {
 .panel-season .status-chip {
   min-width: 0;
 }
+/* Almost always "Season 3" or "Specials", which the panel composes itself: app text, short, and
+   nowrap costs it nothing while holding the row one line tall. The server's own title reaches
+   this element on one branch only -- a season with no number -- and that is the branch nowrap
+   hurts, so it is the branch that carries the break opportunity (rule 139). Splitting the two
+   apart beats choosing between them: ShowPanel adds .is-server-title on exactly that branch. */
 .panel-season-name {
   font-weight: 550;
   white-space: nowrap;
+}
+.panel-season-name.is-server-title {
+  white-space: normal;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .panel-season-size {
   margin-left: auto;
@@ -4257,9 +4267,11 @@ a.rating-chip:hover {
   font-weight: 600;
   font-size: 0.88rem;
   letter-spacing: -0.01em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wraps, and is never cut: this used to be nowrap + overflow:hidden + text-overflow:ellipsis,
+     which is the one shape rule 139 forbids outright. Two titles differing only past the cut
+     ellipsize to the same string, and the operator reading them is deciding what to delete. The
+     row grows to hold a long title instead; a short one is unaffected. */
+  overflow-wrap: anywhere;
 }
 .scales-title-yr {
   color: var(--muted);
@@ -5288,6 +5300,8 @@ button.sm {
   color: var(--muted);
   white-space: nowrap;
 }
+/* Carries a portal handle, so it wraps rather than holding the chip's line -- see the rule it
+   shares with .lib-chip below, which is where the height and wrapping come from. */
 .chip-requested {
   background: var(--accent-soft);
   color: var(--accent-text);
@@ -5385,6 +5399,26 @@ button.sm {
   width: 12px;
   height: 12px;
   color: var(--faint);
+}
+
+/* The only two chips holding text from outside the app: a portal handle, and the name the
+ * operator gave a library on their own Plex server. Both were nowrap over a fixed 1.35rem, so a
+ * value too long for its row painted past the card (rule 139).
+ *
+ * The chip family's rhythm is that fixed height -- every chip the same, so mixed rows sit on one
+ * line. Turning it into a FLOOR keeps that exactly: an ordinary value still measures 1.35rem and
+ * nothing about any row changes. Only a value that cannot fit takes a second line, which is the
+ * case where the alternative was painting out of the box entirely.
+ *
+ * One rule for both, deliberately: these two are each other's sibling under rule 72, and the
+ * pair of them being fixed apart is how #219 and #220 came to exist. */
+.chip-requested,
+.lib-chip {
+  height: auto;
+  min-height: 1.35rem;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* How long the item has sat unwatched -- the strongest reason most items are here, so it
@@ -6352,7 +6386,15 @@ button.sm {
   font-size: 0.88rem;
   min-width: 0;
 }
-/* The name holds its width and never wraps, so only the pill gives when space runs short. */
+/* The name holds its width and never wraps, so only the pill gives when space runs short.
+ *
+ * This one is a DECIDED exception to rule 139, not an unswept site (#220). The name comes from
+ * the server, so the rule reaches it -- but the row above documents a measured regression:
+ * wrapping grew the row taller when the list narrowed to seat the open why panel, and every card
+ * below it shifted. Unlike .panel-season-name, there is no branch to split here, because this
+ * value is the server's title on every branch. So the row height wins, the pill beside it is the
+ * element that gives, and truncating instead is not on the table (rule 139 forbids it
+ * outright). */
 .season-name {
   white-space: nowrap;
 }
