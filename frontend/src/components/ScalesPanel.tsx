@@ -134,7 +134,14 @@ function Fate({ verdict }: { verdict: string }) {
 function watchedLabel(t: PersonTitle, reach: WatchReach): string {
   if (!reachIsMeasured(reach)) return "can't see their history";
   if (t.watched_by_them <= 0) return `none since ${date(reach.since)}`;
-  if (t.media_type === "movie") return `watched ${count(t.watched_by_them)}×`;
+  // "times", not a multiplication sign. The glyph carries the meaning here rather than
+  // decorating it, and a reader at its default symbol level drops it -- leaving "watched 3" on
+  // the screen where the operator decides whose files to delete. It is inside a composed string,
+  // so there is no element to hang `aria-hidden` on even if hiding it were right: the word is
+  // the fix, exactly as the middots in composed strings became commas (#299, rule 21).
+  if (t.media_type === "movie") {
+    return `watched ${count(t.watched_by_them)} ${t.watched_by_them === 1 ? "time" : "times"}`;
+  }
   const n = count(t.watched_by_them);
   return `${n} ${t.watched_by_them === 1 ? "episode" : "episodes"} watched`;
 }

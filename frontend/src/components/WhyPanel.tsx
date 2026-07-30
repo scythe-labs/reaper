@@ -661,13 +661,25 @@ function SignalRow({ row }: { row: Row }) {
             a plain 0, and one that added less than a whole point says so rather than
             rounding its contribution away to "+0". */}
         <span className="sig-share">
-          {state === "unreadable"
-            ? "·"
-            : row.share > 0
-              ? `+${row.share}`
-              : row.signal.contribution > 0
-                ? "<1"
-                : "0"}
+          {/* The one middot in the app that may not simply be hidden. Everywhere else the
+              character separates two facts that survive without it; here it IS the fact -- the
+              whole of what this column says for a reason Reaper could not read -- so hiding it
+              alone would leave the column silent while every sibling row reads out "+5", "<1"
+              or "0". It gets the word instead, in the same vocabulary as the group's own
+              heading. On the panel an operator reads before approving a deletion, a row that
+              could not be checked is the last one that should go by unheard. */}
+          {state === "unreadable" ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="sr-only">Couldn't check</span>
+            </>
+          ) : row.share > 0 ? (
+            `+${row.share}`
+          ) : row.signal.contribution > 0 ? (
+            "<1"
+          ) : (
+            "0"
+          )}
         </span>
         <span className="sig-detail">
           {signal.detail}
@@ -1108,7 +1120,11 @@ export function WhyPanel({
           className="link-btn back-to-show"
           onClick={() => onShowGroup(item.group_key!)}
         >
-          ◂ Back to {item.group_title ?? "the show"}
+          {/* The glyph marks "this goes somewhere" and the destination is already in the words,
+              so it is decoration sitting inside a control's accessible name. The space stays
+              OUTSIDE the wrapper: inside it, the name fuses into "◂Back" with no pause (#284).
+              The five directional glyphs swept in #177 missed this one (rule 72). */}
+          <span aria-hidden="true">◂</span> Back to {item.group_title ?? "the show"}
         </button>
       )}
 

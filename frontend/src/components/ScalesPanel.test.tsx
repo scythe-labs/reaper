@@ -220,13 +220,31 @@ describe("ScalesPanel", () => {
     expect(screen.getByText("Kept")).toBeInTheDocument();
     expect(screen.getByText("Left to decide")).toBeInTheDocument();
     // A movie shows its raw plays.
-    expect(screen.getByText(/watched 4×/)).toBeInTheDocument();
+    // The word, not the multiplication sign: `×` carried the meaning rather than decorating
+    // it, and a reader at its default symbol level drops the character, leaving "watched 4"
+    // (#177). It sits inside a composed string, so there was no element to hide it on.
+    expect(screen.getByText(/watched 4 times/)).toBeInTheDocument();
     // A zero is a lower bound against the mirror's span, so it names the span rather than
     // stating a never that nothing establishes.
     expect(screen.getByText(/none since/)).toBeInTheDocument();
     expect(screen.queryByText("not watched")).not.toBeInTheDocument();
     // A title the arr would not size reads "Size unknown", never a false 0 B.
     expect(screen.getByText("Size unknown")).toBeInTheDocument();
+  });
+
+  it("says one play as 'time', not 'times'", () => {
+    // The branch the `×` never needed: a glyph is silent about number, a word is not, so
+    // spelling it out introduced a plural this has to get right.
+    render(
+      <ScalesPanel
+        detail={detail({ titles: [title({ verdict: "protect", watched_by_them: 1 })] })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/watched 1 time(?!s)/)).toBeInTheDocument();
   });
 
   // The issue this guards: `watched_by_them` is counted over the whole mirror and the mirror
