@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import timedelta
@@ -85,6 +86,34 @@ _NO_PANEL_ROUTE = {
     ),
     "season_pruning.PROGRESS_UNREADABLE_REASON": ("its twin above, same surface and same shape"),
 }
+
+#: Panel copy whose backend producer is gone, and why the entry stays. ``CAUSE_COPY`` renders
+#: STORED explanations, so an entry outliving its producer is back-compat rather than dead
+#: code -- but only while a stored row can still reach it, which is a claim about wiring and is
+#: written down here rather than assumed (rule 103), the same way ``_NO_PANEL_ROUTE`` above
+#: writes down the other direction's excuses.
+_PANEL_COPY_WITHOUT_A_PRODUCER = {
+    "season has no rank": (
+        "season_scan records a season with no rank as Absent now (a special genuinely has no "
+        "rank slot), so no fresh scan can build this detail. A snapshot frozen before that "
+        "fix survives an upgrade -- migrations only add -- and the queue renders the latest "
+        "snapshot until the next scan replaces it, so an operator who upgrades before "
+        "re-scanning can still open a row carrying it. Deleting the entry would print the raw "
+        "backend phrase at exactly that operator, which is what #282 closed."
+    ),
+}
+
+
+def _cause_copy_source() -> str:
+    """The ``CAUSE_COPY`` map as it is spelled in ``WhyPanel.tsx``.
+
+    Read as source text rather than imported, because the walks either side of this file's
+    tree boundary have no other way to see a TSX literal. Three tests read it, so it is
+    derived once (rule 119)."""
+    panel = (
+        Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
+    ).read_text(encoding="utf-8")
+    return panel.split("const CAUSE_COPY", 1)[1].split("};", 1)[0]
 
 
 def _reason_constants() -> dict[str, str]:
@@ -1419,10 +1448,7 @@ class TestTheMatchStatusVocabulary:
         string under ``src/reaper`` -- so a new reason is covered the moment it is named,
         and the only way out is an entry in ``_NO_PANEL_ROUTE`` that says why.
         """
-        panel = (
-            Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
-        ).read_text(encoding="utf-8")
-        cause_copy = panel.split("const CAUSE_COPY", 1)[1].split("};", 1)[0]
+        cause_copy = _cause_copy_source()
         discovered = _reason_constants()
         assert discovered, "the *_REASON walk found nothing, so this test proves nothing"
         checked = {name: value for name, value in discovered.items() if name not in _NO_PANEL_ROUTE}
@@ -1446,14 +1472,67 @@ class TestTheMatchStatusVocabulary:
             "string at the owner:\n  " + "\n  ".join(missing)
         )
 
+    def test_every_panel_cause_has_a_live_producer(self) -> None:
+        """Rule 144's other direction, which nothing walked. The test above goes producer ->
+        copy, so an entry whose backend reason was retired or reworded stayed in the map
+        reading as a live translation of a sentence this build can no longer compose. #302
+        found the one by hand, which is the point: a map only walked one way is only half
+        pinned.
+
+        An orphaned entry is not automatically wrong, and that is why the way out is a
+        written claim rather than a deletion. The panel renders STORED explanations, so an
+        entry may still be serving rows frozen before its producer changed -- and deleting it
+        would print the raw backend phrase at the operator holding one, reopening #282.
+
+        The population is the same one the forward walk trusts: every module-level
+        ``*_REASON`` string under ``src/reaper``, plus both ``_NO_KEY_REASONS`` maps. A
+        producer spelled some other way is therefore invisible here and reads as orphaned --
+        the failure direction that costs a written line, not a wrong claim at the operator.
+
+        Scoped to ``CAUSE_COPY``, with ``CHECK_COPY`` deferred in writing (rule 72): its keys
+        are gate and field labels composed at the call site (``could not check {what}``), not
+        module constants, so this discovery cannot see them and covering that map needs a
+        different walk. ``CHECK_COPY`` also degrades harmlessly -- an unmatched check falls
+        back to the backend's own label, which is already a plain noun phrase.
+        """
+        cause_copy = _cause_copy_source()
+        keys = re.findall(r'^\s*"([^"]+)":', cause_copy, re.M)
+        # Rules 145 and 147: pin what the matcher COLLECTS, not just that it found something.
+        # It reads a double-quoted key at the start of a line followed by a colon -- which is
+        # how prettier spells every entry, including the four whose value wraps to the next
+        # line. It would not see a computed key or a key sharing a line with the entry before
+        # it, and a flag-shaped assertion could not tell that from a map that complies.
+        assert len(keys) == 20, (
+            f"CAUSE_COPY parsed to {len(keys)} entries. If you added or removed one, bump this\n"
+            "count; if it moved unexpectedly, the matcher above stopped seeing a spelling."
+        )
+        producers = set(_reason_constants().values())
+        producers |= set(MOVIE_NO_KEY_REASONS.values()) | set(SEASON_NO_KEY_REASONS.values())
+        orphaned = [
+            k for k in keys if k not in producers and k not in _PANEL_COPY_WITHOUT_A_PRODUCER
+        ]
+        assert not orphaned, (
+            "this why-panel copy translates a reason nothing in src/reaper writes any more\n"
+            "(frontend/src/components/WhyPanel.tsx). Either delete the entry, or add it to\n"
+            "_PANEL_COPY_WITHOUT_A_PRODUCER here saying which stored rows still reach it:\n  "
+            + "\n  ".join(repr(k) for k in orphaned)
+        )
+        for key, why in _PANEL_COPY_WITHOUT_A_PRODUCER.items():
+            assert why.strip(), f"{key!r} is exempt with no reason written"
+            assert key in keys, (
+                f"{key!r} is listed as panel copy outliving its producer, but CAUSE_COPY has "
+                "no such entry. The exemption is stale."
+            )
+            assert key not in producers, (
+                f"{key!r} is listed as having no producer, but one writes it again. Drop the "
+                "exemption: the entry is live copy, not back-compat."
+            )
+
     def test_the_reason_with_no_panel_route_still_has_one_way_out(self) -> None:
         """The exemption above is a claim about wiring, so it is checked rather than trusted
         (rule 25): a reason excused from needing panel copy must have no entry either, or the
         excuse is stale and the copy it does have is unreachable."""
-        panel = (
-            Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
-        ).read_text(encoding="utf-8")
-        cause_copy = panel.split("const CAUSE_COPY", 1)[1].split("};", 1)[0]
+        cause_copy = _cause_copy_source()
         discovered = _reason_constants()
         assert set(_NO_PANEL_ROUTE) <= set(discovered), (
             "_NO_PANEL_ROUTE names a constant that no longer exists: "

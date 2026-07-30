@@ -972,6 +972,14 @@ const CAUSE_COPY: Record<string, string> = {
   "no TMDb id to match a request": "It couldn't be matched to a request.",
   "no TVDb id to match a request": "It couldn't be matched to a request.",
   "Sonarr did not report series status": "Sonarr didn't say whether the show has ended.",
+  // Serves STORED rows only: nothing writes this reason any more. A season with no rank is
+  // a special, and season_scan.py now records that as Absent (it genuinely has no rank slot)
+  // rather than Unknown, so no fresh scan can compose the detail this translates. It stays
+  // because a snapshot frozen before that fix survives an upgrade -- migrations only add --
+  // and the queue renders the latest snapshot until the next scan replaces it, so an owner
+  // who upgrades before re-scanning can still open a row carrying it. Dropping the entry
+  // would print the backend's raw phrase at exactly that owner, which is what #282 closed.
+  // tests/test_review_chips.py::test_every_panel_cause_has_a_live_producer holds the pair.
   "season has no rank": "Reaper couldn't tell which season this is.",
   // The five that used to fall through and print the backend's own words here. Two arrive
   // through built-in gates (an IMDb rating bar, and the dormancy and popularity gates); the
