@@ -751,6 +751,181 @@ print(json.dumps({"order": order, "cases": cases}))
 """
 
 
+#: `ratings.py` is the layer *under* the rating bar: `RatingFloorGate` holds a file only where
+#: `Rating.meets` says the bar cleared, and it can only ever consider a rating the two parsers
+#: managed to interpret. So the direction here is the opposite of a validator's -- a mutant that
+#: makes `meets` answer False, or makes a parser return None where a number was readable, does
+#: not refuse a save, it silently withdraws the protection and hands the file to the reap list.
+#: `keeps` / `lets-go` is recorded per case for exactly that reason.
+RATINGS_PROBE = r"""
+import json
+from reaper.ratings import (
+    Rating,
+    RatingSource,
+    describe_votes,
+    from_plex,
+    from_radarr,
+    is_percentage_source,
+    merge_by_source,
+    pick,
+    source_label,
+)
+
+cases, order = {}, []
+
+def record(name, value):
+    order.append(name)
+    cases[name] = value
+
+def rating(source, value, votes=None):
+    return Rating(source=source, value=value, votes=votes, provider="p")
+
+# --- Rating.meets: does the bar clear, and which way does a mutant push it? ---
+# `RatingFloorGate.evaluate` calls this as `rating.meets(rule.floor / 10, ...)` and appends to
+# `cleared` only where it answers True, so False is "this bar was missed" -- the deletable side.
+def bar(name, source, value, floor, votes=None, min_votes=0):
+    try:
+        answer = rating(source, value, votes).meets(floor, min_votes=min_votes)
+    except Exception as exc:
+        record(name, f"RAISED {type(exc).__name__}")
+        return
+    record(name, f"{'keeps' if answer else 'lets-go'}/{answer}")
+
+IMDB, RT = RatingSource.IMDB, RatingSource.ROTTEN_TOMATOES_CRITIC
+
+# An uninterpretable source may never justify a deletion, so UNKNOWN fails closed to lets-go
+# even where the number itself sits far above the bar.
+bar("meets-unknown-source-far-above-bar", RatingSource.UNKNOWN, 9.9, 1.0)
+# The floor, at it and either side. Equality is the case an inclusive `>=` turns on.
+bar("meets-floor-exactly", IMDB, 7.5, 7.5, votes=5000, min_votes=1000)
+bar("meets-a-hair-under-floor", IMDB, 7.4, 7.5, votes=5000, min_votes=1000)
+bar("meets-a-hair-over-floor", IMDB, 7.6, 7.5, votes=5000, min_votes=1000)
+bar("meets-floor-of-zero", IMDB, 0.0, 0.0)
+bar("meets-floor-of-ten", IMDB, 10.0, 10.0)
+# The vote floor, at it and either side. `votes < min_votes` refuses, so equality clears.
+bar("meets-votes-exactly-at-floor", IMDB, 8.0, 7.5, votes=1000, min_votes=1000)
+bar("meets-votes-one-short", IMDB, 8.0, 7.5, votes=999, min_votes=1000)
+bar("meets-votes-one-over", IMDB, 8.0, 7.5, votes=1001, min_votes=1000)
+# A vote floor of 1 against a single vote: both ends of `min_votes > 0` and `votes < min_votes`
+# at their smallest legal values, which is where an off-by-one hides.
+bar("meets-one-vote-against-a-floor-of-one", IMDB, 8.0, 7.5, votes=1, min_votes=1)
+bar("meets-zero-votes-against-a-floor-of-one", IMDB, 8.0, 7.5, votes=0, min_votes=1)
+bar("meets-no-votes-against-a-floor-of-one", IMDB, 8.0, 7.5, votes=None, min_votes=1)
+# min_votes of 0 is "no vote floor asked for", so an absent or zero count must still clear.
+bar("meets-no-votes-and-no-vote-floor", IMDB, 8.0, 7.5, votes=None, min_votes=0)
+bar("meets-zero-votes-and-no-vote-floor", IMDB, 8.0, 7.5, votes=0, min_votes=0)
+# A percentage source counts no votes at all, so a vote floor must not apply to it -- the bar
+# clears on the value alone even with no count and a four-figure floor asked for.
+bar("meets-percentage-ignores-a-vote-floor", RT, 8.4, 7.5, votes=None, min_votes=1000)
+bar("meets-percentage-under-bar-still-refused", RT, 7.4, 7.5, votes=None, min_votes=1000)
+
+record("has-vote-count-imdb", str(rating(IMDB, 8.0).has_meaningful_vote_count))
+record("has-vote-count-percentage", str(rating(RT, 8.0).has_meaningful_vote_count))
+record("has-vote-count-unknown", str(rating(RatingSource.UNKNOWN, 8.0).has_meaningful_vote_count))
+for source in RatingSource:
+    record(f"is-percentage-{source.value}", str(is_percentage_source(source)))
+    record(f"label-{source.value}", source_label(source))
+
+# --- the two parsers: None here is a rating the gate never gets to consider ---
+def parsed(name, fn):
+    try:
+        out = fn()
+    except Exception as exc:
+        record(name, f"RAISED {type(exc).__name__}")
+        return
+    if out is None:
+        record(name, "dropped")
+        return
+    if isinstance(out, list):
+        record(name, "; ".join(f"{r.source.value}={r.value:.3f}/{r.votes}" for r in out) or "empty")
+        return
+    record(name, f"{out.source.value}={out.value:.3f}/{out.votes}")
+
+IMAGE = "imdb://image.rating.imdb"
+RT_IMAGE = "rottentomatoes://image.rating.ripe"
+parsed("plex-none-value", lambda: from_plex(None, IMAGE))
+parsed("plex-empty-value", lambda: from_plex("", IMAGE))
+parsed("plex-junk-value", lambda: from_plex("eight", IMAGE))
+parsed("plex-no-image", lambda: from_plex("8.2", None))
+parsed("plex-unreadable-image", lambda: from_plex("8.2", "who://knows"))
+parsed("plex-imdb", lambda: from_plex("8.2", IMAGE))
+parsed("plex-rt-critic", lambda: from_plex("8.4", RT_IMAGE))
+parsed("plex-rt-audience", lambda: from_plex("8.4", RT_IMAGE, audience=True))
+parsed("plex-imdb-in-audience-slot", lambda: from_plex("8.2", IMAGE, audience=True))
+# Plex serves 0-10 in every slot, so a percentage-shaped source ABOVE 10 proves an agent that
+# skipped the normalization. Both sides of that 10, and both ends of the 0-10 range itself.
+parsed("plex-percentage-raw-84", lambda: from_plex("84", RT_IMAGE))
+parsed("plex-percentage-exactly-10", lambda: from_plex("10", RT_IMAGE))
+parsed("plex-percentage-just-over-10", lambda: from_plex("10.1", RT_IMAGE))
+parsed("plex-percentage-raw-100", lambda: from_plex("100", RT_IMAGE))
+parsed("plex-percentage-raw-101", lambda: from_plex("101", RT_IMAGE))
+parsed("plex-score-exactly-10", lambda: from_plex("10", IMAGE))
+parsed("plex-score-just-over-10", lambda: from_plex("10.1", IMAGE))
+parsed("plex-score-exactly-0", lambda: from_plex("0", IMAGE))
+parsed("plex-score-negative", lambda: from_plex("-0.1", IMAGE))
+
+parsed("radarr-not-a-dict", lambda: from_radarr(None))
+parsed("radarr-a-list", lambda: from_radarr([]))
+parsed("radarr-empty", lambda: from_radarr({}))
+parsed("radarr-imdb", lambda: from_radarr({"imdb": {"value": 8.2, "votes": 1200}}))
+parsed("radarr-imdb-no-votes", lambda: from_radarr({"imdb": {"value": 8.2}}))
+parsed("radarr-entry-not-a-dict", lambda: from_radarr({"imdb": 8.2}))
+parsed("radarr-value-none", lambda: from_radarr({"imdb": {"value": None}}))
+parsed("radarr-value-empty", lambda: from_radarr({"imdb": {"value": ""}}))
+parsed("radarr-value-junk", lambda: from_radarr({"imdb": {"value": "eight"}}))
+# Radarr hands percentages raw, so 96 is 9.6 and 100 is the top of the scale.
+parsed("radarr-rt-96", lambda: from_radarr({"rottenTomatoes": {"value": 96}}))
+parsed("radarr-rt-exactly-100", lambda: from_radarr({"rottenTomatoes": {"value": 100}}))
+parsed("radarr-rt-101", lambda: from_radarr({"rottenTomatoes": {"value": 101}}))
+parsed("radarr-rt-zero", lambda: from_radarr({"rottenTomatoes": {"value": 0}}))
+parsed("radarr-metacritic-85", lambda: from_radarr({"metacritic": {"value": 85}}))
+parsed("radarr-tmdb-exactly-10", lambda: from_radarr({"tmdb": {"value": 10}}))
+parsed("radarr-tmdb-just-over-10", lambda: from_radarr({"tmdb": {"value": 10.1}}))
+parsed("radarr-imdb-negative", lambda: from_radarr({"imdb": {"value": -0.1}}))
+parsed("radarr-trakt", lambda: from_radarr({"trakt": {"value": 7.7, "votes": 40}}))
+# Votes on a percentage source, and votes this code cannot read. Both were missing from the
+# first corpus, and both times the runner reported a survivor as "no observable change": a
+# percentage source is the only place `and` differs from `or` on that line, and the malformed
+# count is the only thing that enters the `except` at all -- where `votes` is unassigned this
+# iteration, so dropping the assignment leaks the PREVIOUS source's count into this rating.
+parsed("radarr-percentage-with-a-vote-count",
+       lambda: from_radarr({"rottenTomatoes": {"value": 96, "votes": 500}}))
+parsed("radarr-votes-with-a-thousands-separator",
+       lambda: from_radarr({"imdb": {"value": 8.2, "votes": "1,234"}}))
+parsed("radarr-votes-as-a-list", lambda: from_radarr({"imdb": {"value": 8.2, "votes": [1]}}))
+parsed("radarr-unreadable-votes-after-a-readable-count", lambda: from_radarr({
+    "imdb": {"value": 8.2, "votes": 1200}, "tmdb": {"value": 7.9, "votes": "3,000"},
+}))
+parsed("radarr-every-source", lambda: from_radarr({
+    "imdb": {"value": 8.2, "votes": 1200}, "tmdb": {"value": 7.9, "votes": 30},
+    "metacritic": {"value": 85}, "rottenTomatoes": {"value": 96}, "trakt": {"value": 7.7},
+}))
+
+# --- provenance and the operator's own sentence ---
+imdb_many = rating(IMDB, 8.2, 120000)
+parsed("pick-present", lambda: pick([imdb_many], IMDB))
+parsed("pick-absent", lambda: pick([imdb_many], RT))
+parsed("pick-from-empty", lambda: pick([], IMDB))
+parsed("merge-prefers-the-first-group",
+       lambda: list(merge_by_source([imdb_many], [rating(IMDB, 1.0, 3)])))
+parsed("merge-keeps-distinct-sources",
+       lambda: list(merge_by_source([imdb_many], [rating(RT, 8.4)])))
+parsed("merge-of-nothing", lambda: list(merge_by_source([], ())))
+
+for label, count in (("none", None), ("zero", 0), ("one", 1), ("two", 2), ("many", 120000)):
+    record(f"votes-clause-{label}", describe_votes(count))
+record("describe-imdb", imdb_many.describe())
+record("describe-percentage-no-votes", rating(RT, 8.4).describe())
+record("user-imdb", imdb_many.describe_for_user())
+record("user-imdb-one-vote", rating(IMDB, 8.2, 1).describe_for_user())
+record("user-imdb-no-votes", rating(IMDB, 8.2).describe_for_user())
+record("user-percentage", rating(RT, 8.4).describe_for_user())
+record("user-percentage-rounds", rating(RT, 8.45).describe_for_user())
+
+print(json.dumps({"order": order, "cases": cases}))
+"""
+
+
 ZONES: dict[str, Zone] = {
     "policy-repair-shims": Zone(
         module=Path("src/reaper/engine/policy.py"),
@@ -816,6 +991,34 @@ ZONES: dict[str, Zone] = {
             "tests/test_override_truth.py",
         ),
         probe=GATES_PROBE,
+    ),
+    "ratings": Zone(
+        module=Path("src/reaper/ratings.py"),
+        functions=(
+            "Rating.meets",
+            "Rating.has_meaningful_vote_count",
+            "Rating.describe",
+            "Rating.describe_for_user",
+            "describe_votes",
+            "is_percentage_source",
+            "source_label",
+            "_to_ten",
+            "from_plex",
+            "from_radarr",
+            "pick",
+            "merge_by_source",
+        ),
+        tests=(
+            "tests/test_upstream_quirks.py",
+            "tests/test_engine_invariants.py",
+            "tests/test_display_meta.py",
+            "tests/test_facts_codec.py",
+            "tests/test_review_scan.py",
+            "tests/test_season_scan.py",
+            "tests/test_plex_sweep.py",
+            "tests/test_policy.py",
+        ),
+        probe=RATINGS_PROBE,
     ),
 }
 DEFAULT_ZONE = "policy-repair-shims"

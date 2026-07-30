@@ -301,6 +301,34 @@ class TestRatingProvenance:
         assert from_plex("", "imdb://image.rating") is None
         assert from_plex(None, "imdb://image.rating") is None
 
+    def test_both_ends_of_the_scale_are_inside_it(self) -> None:
+        """``0.0 <= number <= 10.0`` is inclusive at both ends, and the test above only
+        drove the outside (11, -1, 250). Dropping either edge turns a rating we read
+        perfectly well into "no rating", which the why-panel prints as a source that was
+        never checked -- and takes the protection with it."""
+        top = from_plex("10", "imdb://image.rating")
+        assert top is not None
+        assert top.value == 10.0
+
+        bottom = from_plex("0", "imdb://image.rating")
+        assert bottom is not None
+        assert bottom.value == 0.0
+
+    def test_a_percentage_source_at_exactly_ten_is_a_score_not_a_percentage(self) -> None:
+        """The raw-percentage rescale triggers ABOVE 10, never at it. A Tomatometer of 10
+        on Plex's 0-10 scale is a perfect 100%; rescaling it would file the
+        best-reviewed title in the library as 10% and let the bar miss it."""
+        on_the_scale = from_plex("10", "rottentomatoes://image.rating.ripe")
+        assert on_the_scale is not None
+        assert on_the_scale.value == 10.0
+
+        # 100 is the raw-percentage shape the rescale exists for, and it lands on the
+        # same 10.0 -- so the two readings agree at the top of the scale and only the
+        # boundary itself decides which one a value of 10 gets.
+        raw_percentage = from_plex("100", "rottentomatoes://image.rating.ripe")
+        assert raw_percentage is not None
+        assert raw_percentage.value == 10.0
+
 
 class TestRadarrRatings:
     """Radarr hands us five rating sources for free, in a payload we already fetch.
@@ -373,6 +401,107 @@ class TestRadarrRatings:
         assert "imdb" in described
         assert "400,000 votes" in described
         assert "radarr" in described
+
+    def test_both_ends_of_the_scale_are_inside_it(self) -> None:
+        """``0.0 <= value_on_ten <= 10.0`` is inclusive at both ends, and the drop test
+        above only drove the outside (96 as an average, 250 as a percentage). A 100%
+        Tomatometer and a 10.0 average are the best ratings a title can carry, so
+        dropping them withdraws the protection from exactly what it exists to keep."""
+        perfect_percentage = pick(
+            from_radarr({"rottenTomatoes": {"value": 100, "type": "user"}}),
+            RatingSource.ROTTEN_TOMATOES_CRITIC,
+        )
+        assert perfect_percentage is not None
+        assert perfect_percentage.value == 10.0
+
+        perfect_average = pick(from_radarr({"tmdb": {"value": 10}}), RatingSource.TMDB)
+        assert perfect_average is not None
+        assert perfect_average.value == 10.0
+
+        # The bottom edge matters for the panel rather than for a protection: a 0 that is
+        # dropped reads as "no Rotten Tomatoes rating" when there is one, and it is zero.
+        floor = pick(
+            from_radarr({"rottenTomatoes": {"value": 0}}), RatingSource.ROTTEN_TOMATOES_CRITIC
+        )
+        assert floor is not None
+        assert floor.value == 0.0
+
+    def test_a_percentage_source_never_carries_a_vote_count(self) -> None:
+        """The sample reports ``votes: 0`` for Rotten Tomatoes, so the test above cannot
+        tell dropping the count from reading a zero. A payload carrying a real count
+        distinguishes them: a percentage source has no vote concept, and storing one would
+        print "from 500 votes" beside a number no votes produced -- and hand a vote floor
+        a count to reject it on."""
+        rt = pick(
+            from_radarr({"rottenTomatoes": {"value": 96, "votes": 500}}),
+            RatingSource.ROTTEN_TOMATOES_CRITIC,
+        )
+        assert rt is not None
+        assert rt.votes is None
+        assert rt.has_meaningful_vote_count is False
+        assert rt.meets(9.0, min_votes=1000) is True
+
+    @pytest.mark.parametrize("unreadable", ["3,000", [1], {"count": 1}, "many"])
+    def test_an_unreadable_vote_count_costs_that_one_rating_and_nothing_else(
+        self, unreadable: object
+    ) -> None:
+        """Rule 32: a fork or a future schema serializing votes as "3,000" must not raise
+        out of the fact build. It costs that rating its count -- and specifically NOT the
+        previous source's, which is still in the loop variable when the conversion raises,
+        so a recovery that forgets to clear it attributes IMDb's 1,200 votes to TMDb.
+        """
+        out = from_radarr(
+            {
+                "imdb": {"value": 8.2, "votes": 1_200},
+                "tmdb": {"value": 7.9, "votes": unreadable},
+            }
+        )
+
+        imdb = pick(out, RatingSource.IMDB)
+        assert imdb is not None
+        assert imdb.votes == 1_200
+
+        tmdb = pick(out, RatingSource.TMDB)
+        assert tmdb is not None
+        assert tmdb.value == 7.9
+        assert tmdb.votes is None
+
+
+class TestWhereTheRatingBarTurns:
+    """``Rating.meets`` decides whether one rating bar cleared, and a bar that stops
+    clearing does not refuse a save -- it withdraws a protection ``RatingFloorGate`` was
+    carrying and hands the file to the reap list.
+
+    Its three comparisons are all inclusive. The value floor (``value >= floor``) was
+    already defended; the two governing the VOTE floor were not, because every case above
+    drove a four-figure count or a dozen, never the numbers the comparisons turn on.
+    """
+
+    @staticmethod
+    def imdb(value: float, votes: int | None) -> Rating:
+        return Rating(source=RatingSource.IMDB, value=value, votes=votes, provider="radarr")
+
+    def test_a_rating_with_no_vote_count_clears_a_bar_that_asked_for_no_vote_floor(self) -> None:
+        """``min_votes > 0`` is the whole of what makes a vote floor optional, and
+        ``from_plex`` returns ``votes=None`` for every rating it reads. Applying the vote
+        check at ``min_votes=0`` therefore drops the protection off every Plex-sourced
+        rating in the library at once."""
+        assert self.imdb(8.0, None).meets(7.5) is True
+        assert self.imdb(8.0, 0).meets(7.5) is True
+
+    def test_a_vote_floor_of_one_still_applies(self) -> None:
+        """The other end of the same comparison: 1 is a legal vote floor an operator can
+        set, and it has to bite. A 9.5 from a single vote is noise, and protecting on it
+        keeps junk -- so it clears at one vote and not at none."""
+        assert self.imdb(9.5, 1).meets(7.5, min_votes=1) is True
+        assert self.imdb(9.5, 0).meets(7.5, min_votes=1) is False
+        assert self.imdb(9.5, None).meets(7.5, min_votes=1) is False
+
+    def test_a_count_exactly_at_the_vote_floor_is_trusted(self) -> None:
+        """``votes < min_votes`` refuses, so the floor is inclusive: an operator asking for
+        1,000 votes is asking for a title with exactly 1,000 to count."""
+        assert self.imdb(8.0, 1_000).meets(7.5, min_votes=1_000) is True
+        assert self.imdb(8.0, 999).meets(7.5, min_votes=1_000) is False
 
 
 class TestUpstreamTimestampShapes:

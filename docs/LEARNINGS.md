@@ -1954,6 +1954,54 @@ no zone names. The tests written here kill them, but nothing *checks* that any m
 exactly the flag-shaped coverage claim rule 145 is about. `Rating.meets` -- the function that
 decides whether a bar clears at all -- is in the same unzoned module.
 
+## The rating bar's own arithmetic: 12 survivors, 10 of them the inclusive edge (2026-07-29)
+
+`ratings.py` was the gap the section above named, and zoning it (75 mutants over 12 functions,
+eight test files) left **12 survivors, now 2**. It is the layer *under* the bar: `RatingFloorGate`
+holds a file only where `Rating.meets` says a bar cleared, and only over ratings the two parsers
+managed to interpret at all — so the direction inverts once more. A validator fails by accepting;
+a repair shim fails by refusing; here a mutant fails by making a readable rating **unreadable**,
+which does not refuse anything, it withdraws a protection and hands the file to the reap list.
+
+**Ten of the twelve were one shape: an inclusive boundary probed only from the outside.** The
+third zone in a row to say this, so it is the finding rather than an anecdote — the suite reaches
+for a value comfortably past a bound and almost never for the bound itself.
+
+| the edge | mutated | what stopped being protected |
+| --- | --- | --- |
+| `min_votes > 0` → `>= 0` | the vote check applies when no vote floor was asked for | **every Plex-sourced rating in the library at once** — `from_plex` returns `votes=None` for all of them |
+| `min_votes > 0` → `> 1` | a vote floor of exactly 1 stops applying | the other way: a 9.5 from one vote protects, which keeps junk |
+| `votes < min_votes` → `<=` | a count exactly at the floor is refused | the titles an operator asking for 1,000 votes meant to include |
+| `number > 10` → `>= 10` (Plex) | a percentage source at exactly 10 is rescaled to 1.0 | a perfect 100% Tomatometer, filed as 10% and let go |
+| `0.0 <= n <= 10.0`, three of its four ends | 0.0 and 10.0 fall outside the scale | the best- and worst-rated titles, dropped to "no rating" |
+
+The value floor itself (`value >= floor`) was already defended, which is the useful contrast: the
+vote floor is the half nobody drove, because it is the half that is usually a four-figure number.
+
+**"No change on the probe corpus" was a missing case twice more, in the same run.** Both were the
+`from_radarr` vote conversion, and neither is an equivalent:
+
+- `raw_votes and source not in _PERCENTAGE_SOURCES` → `or` changes nothing *unless* a percentage
+  source arrives carrying a real vote count. The corpus had Rotten Tomatoes with no votes and the
+  suite had `votes: 0` (which is what Radarr actually sends), and a zero cannot tell "the count
+  was dropped" from "the count was read and was zero."
+- Deleting `votes = None` from the malformed-count recovery changes nothing *unless* an unreadable
+  count follows a readable one — because `votes` is unassigned that iteration, so the recovery
+  silently attributes the **previous source's** count to this rating. Nothing drove that `except`
+  at all, and its comment cites rule 32.
+
+That is now three runs where a survivor reported "no observable change" and the corpus was at
+fault, against two where the mutant was genuinely equivalent. **The prior should be a missing
+case, not an equivalence.**
+
+**One survivor was left deliberately, and filed rather than pinned.** Mutating the rescale's
+boundary constant from `10` to `11` only changes values in `(10, 11]`: `10.1` reads as 10.1% and
+becomes `1.01` today, and becomes dropped under the mutant. Both readings withdraw the
+protection, they differ in what the panel tells the operator, and which is right depends on what
+real Plex agents serve in that band — which nobody has measured. A test either way would read as
+a proof that the reading is correct (rule 118), so it went to the tracker as a question instead.
+The remaining survivor is a genuine equivalent: `split("://", 1)[0]` is `split("://", 2)[0]`.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
