@@ -17,6 +17,17 @@ auto-update — backend edits reload the API, frontend edits hot-swap — so you
 Use it, then skip to "Log in" and "Drive headlessly". The manual Boot below is the fallback
 when you need a non-default data dir or want to watch startup by hand.
 
+**Beside a running instance, pass BOTH ports** — they move together, because Vite's `/api`
+proxy target reads `REAPER_PORT` (`frontend/vite.config.ts`), so moving only the web port
+leaves the second UI talking to the first instance's API:
+
+```
+REAPER_PORT=8421 REAPER_WEB_PORT=5174 scripts/dev-local.sh up
+```
+
+Those same two ports name its logs and scope `down` / `status` / `logs`, so pass them there
+too or those commands answer for the default instance. A successful `up` prints the spelling.
+
 ## Boot
 
 Backup/real data goes in `data/` (needs `reaper.db`, `cache.db`, **`secret.key` + `secret.salt`**
@@ -33,8 +44,10 @@ REAPER_SERVE_SPA=false uv run uvicorn reaper.main:create_app --factory --no-prox
 npm --prefix frontend run dev                                                        # "ready in" / localhost:5173
 ```
 
-Vite proxies `/api` → 8420. `.env`/`.env.local` auto-load (seed vars); seeding is
-idempotent by `(kind, name)`, so it won't duplicate configured instances.
+Vite proxies `/api` → 8420, and refuses to start if 5173 is taken rather than sliding to
+another port (`strictPort`), so a second UI can never end up on the first instance's API.
+`.env`/`.env.local` auto-load (seed vars); seeding is idempotent by `(kind, name)`, so it
+won't duplicate configured instances.
 
 **Both files resolve against the cwd**, so a manual boot from a worktree reads neither and
 falls back to `data/secret.key` — a different key than the one that `data/` was encrypted

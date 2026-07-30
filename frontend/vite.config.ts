@@ -24,6 +24,15 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Fail on a taken port instead of quietly taking the next one. Vite's default is to slide
+    // to 5174 and say so only in its own log, so a second launcher that also omits REAPER_PORT
+    // came up on a port nobody was told about and proxied /api to the FIRST instance's API:
+    // a UI serving this tree's code over someone else's backend, every request answering 200.
+    // An agent then verifies a change end to end against a build that does not contain it
+    // (#239). This is the one file every launcher shares -- .claude/launch.json, the verify
+    // skill's manual boot, README.md -- so failing closed here closes all of them at once,
+    // and `tests/test_repo_hygiene.py` keeps a launcher from overriding it back.
+    strictPort: true,
     proxy: {
       // The scan runs as a detached background job; the browser polls GET /api/scan/status
       // for its progress (see api/scan.py). This is a plain same-origin proxy of /api to the

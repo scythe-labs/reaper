@@ -424,6 +424,50 @@ def test_dev_proxy_target_follows_the_api_port() -> None:
         )
 
 
+# Spellings that turn Vite's port strictness back off, written down before shipping the matcher
+# (rule 147): the config field ``strictPort: false``, and the two CLI forms a launcher can pass,
+# ``--strictPort false`` and ``--no-strictPort``. It reads the value, so quoting and spacing do
+# not matter, and it cannot swallow ``--strictPort`` alone, which is the form that turns it ON.
+_STRICT_PORT_OFF = re.compile(r"(?:--no-strictPort\b|strictPort[\"'\s:=]+false\b)")
+
+
+def test_the_vite_dev_server_refuses_a_taken_port() -> None:
+    """A dev server that cannot have the port it was told to use must say so, not pick another.
+
+    Vite's ``strictPort`` defaults to false, so beside a running instance it slides to the next
+    free port and says so only in its own log. A launcher that also omits ``REAPER_PORT`` then
+    proxies ``/api`` to the FIRST instance's API, and the result is a UI serving this tree's
+    code over someone else's backend with every request answering 200 -- an agent verifies a
+    change end to end against a build that does not contain it (#239). The quiet inverse of the
+    502 in ``test_dev_proxy_target_follows_the_api_port`` above, and the more dangerous one,
+    because that one at least fails visibly.
+
+    **Not a per-launch walk, unlike ``--no-proxy-headers``.** That flag lives on each uvicorn
+    command line, so nothing but a walk can prove every launch carries it. This one lives in
+    ``frontend/vite.config.ts``, which every launcher goes through -- ``.claude/launch.json``,
+    the verify skill's manual boot, ``README.md``, ``scripts/dev-local.sh`` -- so the config is
+    the whole population, and what a launcher can still do is override it back. Both halves are
+    checked here; the ban runs over the same ``_repo_text_files`` walk the other gates use, so a
+    launcher added anywhere in this checkout is inside it from the moment it is written.
+    """
+    config = (REPO / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
+    assert re.search(r"strictPort:\s*true", config), (
+        "frontend/vite.config.ts must set `strictPort: true` on `server`, or a second dev "
+        "server silently binds another port and proxies /api to the first instance's API"
+    )
+
+    overrides = [
+        f"{path.relative_to(REPO)}:{lineno} -> {line.strip()}"
+        for path, text in _repo_text_files()
+        for lineno, line in enumerate(text.splitlines(), 1)
+        if _STRICT_PORT_OFF.search(line)
+    ]
+    assert not overrides, (
+        "a launcher turns Vite's port strictness back off, which re-opens #239 there even "
+        "though frontend/vite.config.ts sets it:\n" + "\n".join(overrides)
+    )
+
+
 # ``pkill``/``killall`` select processes by PATTERN, which is machine-wide: nothing in the
 # pattern distinguishes this dev instance from a parallel one. ``pgrep`` only counts when the
 # same line goes on to kill (``pgrep -f x | xargs kill``); read-only, it is a status check and
