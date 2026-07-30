@@ -394,6 +394,81 @@ class TestInstancesCrud:
         )
 
 
+class TestTheApiPathIsStoredAndUnreachable:
+    """`Instance.api_path_prefix` feeds the *arr clients and no route reads or writes it (#274).
+
+    The column is real work: the scan and Test Connection both hand it to the client, so the two
+    always probe the same path. But it has only ever held its default, because nothing can set
+    it. It used to cross the wire anyway, typed in the SPA and read by no component -- and an
+    unwritable field on the wire is rule 25's blocker rather than a placeholder, since the only
+    thing it can ever tell an operator is a constant.
+
+    Retiring the column would need a migration and the baseline is frozen, so the column stayed
+    and the wire went. Both halves are pinned here: putting the field back on the response
+    without also adding a writer fails, and so does a writer that lands without a surface.
+    """
+
+    def test_the_instance_response_does_not_carry_the_api_path(self, client: TestClient) -> None:
+        created = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "HD",
+                "base_url": "http://radarr.local:7878",
+                "api_key": "k",
+            },
+        )
+        assert created.status_code == 200, created.text
+        assert "api_path_prefix" not in created.json()
+
+        listed = client.get("/api/settings/instances").json()
+        assert listed and all("api_path_prefix" not in row for row in listed)
+
+    def test_no_route_can_write_the_api_path(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Offered to create AND update, then read back through the value the client actually
+        receives rather than off the column, so a writer landing on either route fails here.
+
+        `/api/v9` is the discriminating value (rule 141): the assertion below is the shipped
+        default, which only holds because neither route stored what was offered.
+        """
+        made = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "HD",
+                "base_url": "http://radarr.local:7878",
+                "api_key": "k",
+                "api_path_prefix": "/api/v9",
+            },
+        )
+        assert made.status_code == 200, made.text
+        instance_id = made.json()["id"]
+        updated = client.put(
+            f"/api/settings/instances/{instance_id}",
+            json={"api_path_prefix": "/api/v9"},
+        )
+        assert updated.status_code == 200, updated.text
+
+        prefixes: list[str | None] = []
+
+        async def fake_test(
+            kind: InstanceKind,
+            base_url: str,
+            api_key: str,
+            *,
+            verify: bool = True,
+            api_path_prefix: str | None = None,
+        ) -> instances_service.TestResult:
+            prefixes.append(api_path_prefix)
+            return instances_service.TestResult(ok=True, detail="Connected.")
+
+        monkeypatch.setattr(instances_service, "test_connection", fake_test)
+        assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
+        assert prefixes == ["/api/v3"]
+
+
 class TestTheStoredTestResultDescribesWhatWasTested:
     """A connection test's outcome is stored on the instance row and rendered as the service
     card's badge, so it must describe the credentials in force -- not the ones it was computed

@@ -72,9 +72,20 @@ class Instance(Base):
     # The API path every request to this instance is built on. Held against the day an
     # *arr serves a different one -- Sonarr's v5-develop ships a real /api/v5 with a
     # different SeriesResource shape -- and passed to the client by both the scan and Test
-    # Connection, so the two always probe the same path. Nothing WRITES it yet: it has
-    # only ever held its default, and there is no UI or probe that derives it (rule 24 --
-    # this comment used to say it was discovered from system/status, which it is not).
+    # Connection, so the two always probe the same path. Nothing WRITES it: it has only
+    # ever held its default, and there is no UI or probe that derives it (rule 24 -- this
+    # comment used to say it was discovered from system/status, which it is not).
+    #
+    # It is deliberately NOT published to the browser (#274). It was, and an unwritable
+    # field on the wire is rule 25's blocker rather than a placeholder: the SPA typed it,
+    # no component read it, and no route could change it, so the only thing it could ever
+    # tell an operator was a constant. Retiring the column would need a migration and the
+    # baseline is frozen, so the column stays and the wire is what went. Wiring it later
+    # means a writer on `instances.update_instance` (which is where the connection-test
+    # result is cleared, so it joins that trio) AND a per-kind default in the box, because
+    # `clients/arr.py` reads `api_path_prefix or self.default_prefix` -- a stored "/api/v3"
+    # is truthy, so handing it to Seerr would override Seerr's own /api/v1. Tautulli and
+    # Seerr are not passed the stored value today, and that is load-bearing.
     api_path_prefix: Mapped[str] = mapped_column(String(20), default="/api/v3")
     detected_version: Mapped[str | None] = mapped_column(String(50), default=None)
 

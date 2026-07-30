@@ -1088,7 +1088,6 @@ export interface Instance {
    *  when a title is in more than one library. Empty means the loose union. Seerr only. */
   service_instance_map: Record<string, number>;
   has_key: boolean;
-  api_path_prefix: string;
   detected_version: string | null;
   last_ok_at: string | null;
   last_error: string | null;

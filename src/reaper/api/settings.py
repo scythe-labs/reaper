@@ -120,7 +120,8 @@ class InstanceOut(BaseModel):
     plex_library_map: dict[str, str]
     service_instance_map: dict[str, int]
     has_key: bool
-    api_path_prefix: str
+    # No `api_path_prefix` here: no route writes it, so it could only ever publish its
+    # default (#274, rule 25). `db.models.Instance.api_path_prefix` holds the reasoning.
     detected_version: str | None = None
     last_ok_at: str | None = None
     last_error: str | None = None

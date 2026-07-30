@@ -241,7 +241,6 @@ function sonarr(over: Partial<Instance> = {}): Instance {
     plex_library_map: {},
     service_instance_map: {},
     has_key: true,
-    api_path_prefix: "/api/v3",
     detected_version: null,
     last_ok_at: null,
     last_error: null,
@@ -367,7 +366,7 @@ const SERVICES: SeerrService[] = [
 ];
 
 function seerr(over: Partial<Instance> = {}): Instance {
-  return { ...sonarr(), id: 7, kind: "seerr", name: "Portal", api_path_prefix: "/api/v1", ...over };
+  return { ...sonarr(), id: 7, kind: "seerr", name: "Portal", ...over };
 }
 
 function renderSeerrModal(): QueryClient {

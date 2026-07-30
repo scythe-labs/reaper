@@ -92,7 +92,6 @@ class InstanceView:
     plex_library_map: dict[str, str]
     service_instance_map: dict[str, int]
     has_key: bool
-    api_path_prefix: str
     detected_version: str | None
     last_ok_at: str | None
     last_error: str | None
@@ -247,7 +246,6 @@ def _view(row: Instance) -> InstanceView:
         plex_library_map=decode_library_map(row.plex_library_map),
         service_instance_map=decode_service_instance_map(row.service_instance_map),
         has_key=bool(row.api_key_enc),
-        api_path_prefix=row.api_path_prefix,
         detected_version=row.detected_version,
         last_ok_at=row.last_ok_at.isoformat() if row.last_ok_at else None,
         last_error=row.last_error,

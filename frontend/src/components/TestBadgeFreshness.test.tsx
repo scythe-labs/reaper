@@ -54,7 +54,6 @@ function sonarr(overrides: Partial<Instance> = {}): Instance {
     plex_library_map: {},
     service_instance_map: {},
     has_key: true,
-    api_path_prefix: "/api/v3",
     detected_version: null,
     // Never tested server-side, so the card has no stored result to fall back to and the badge on
     // screen can only be the local one. A `last_ok_at` here would answer in its place and the
@@ -157,7 +156,7 @@ describe("where a keyboard operator lands when a service card removes itself", (
   // mounts because `canAdd` flips in the same refetch that removes the card. A non-singleton kind
   // has the Add button up all along and cannot tell a hook that waits from one that does not.
   function tautulli(): Instance {
-    return { ...sonarr(), id: 9, kind: "tautulli", name: "Stats", api_path_prefix: "/api/v2" };
+    return { ...sonarr(), id: 9, kind: "tautulli", name: "Stats" };
   }
 
   it("lands on the Add button, which only arrives once the card is gone", async () => {

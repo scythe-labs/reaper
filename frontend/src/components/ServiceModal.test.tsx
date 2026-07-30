@@ -48,7 +48,6 @@ function sonarr(overrides: Partial<Instance> = {}): Instance {
     plex_library_map: {},
     service_instance_map: {},
     has_key: true,
-    api_path_prefix: "/api/v3",
     detected_version: null,
     last_ok_at: null,
     last_error: null,
