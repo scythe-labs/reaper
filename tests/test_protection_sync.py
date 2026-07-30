@@ -66,9 +66,13 @@ class TestTheTop250IsPopulatedForAScan:
 
 class TestAnEmptyCacheDoesNotCrashTheScan:
     """The cache database is rebuildable and can be empty on a fresh install. Reading it
-    before it has ever been synced must degrade gracefully -- 'no history yet', which
-    leaves dormancy Unknown and Unknown protects -- never crash with 'no such table'
-    a hundred frames deep in a scan. Found by clearing the cache and scanning."""
+    before it has ever been synced must degrade gracefully -- 'no history yet' -- never crash
+    with 'no such table' a hundred frames deep in a scan. Found by clearing the cache and
+    scanning.
+
+    Reading no plays is not itself the protection: an empty mirror resolves the horizon to
+    `utcnow()`, so an item with an arrival date reads Known ZERO days dormant. What holds is
+    `snapshot.scan` degrading the snapshot un-plannably on that mirror."""
 
     async def test_watch_stats_on_a_never_synced_cache_returns_empty(
         self, engine: AsyncEngine

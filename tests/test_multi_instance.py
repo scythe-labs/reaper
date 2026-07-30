@@ -91,8 +91,9 @@ class TestEveryInstanceIsScanned:
 
     def test_a_movie_plex_has_not_matched_still_appears(self) -> None:
         """It must not vanish. It appears with no rating key, which makes its dormancy
-        Unknown -- and Unknown protects. Dropping it silently would be worse: the owner
-        would never learn that Plex has failed to match it."""
+        Unknown, and an Unknown dormancy blocks both dormancy gates so the item abstains and
+        is kept (a blocked hold, not a PROTECT -- `gates._blocked`). Dropping it silently
+        would be worse: the owner would never learn that Plex has failed to match it."""
         movie = {"id": 7, "title": "Unmatched By Plex", "hasFile": True, "sizeOnDisk": 1}
 
         items = _raw_items([movie], _plex_index(), instance_id=1)

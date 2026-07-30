@@ -2074,9 +2074,14 @@ async def _watch_stats(
     if not rating_keys:
         return {}, {}, {}
 
-    # The cache is rebuildable and may be empty on a fresh install. Ensure the table
-    # exists so a never-synced cache reads as "no plays" (which leaves dormancy Unknown,
-    # and Unknown protects) rather than crashing the scan with 'no such table'.
+    # The cache is rebuildable and may be empty on a fresh install. Ensure the table exists
+    # so a never-synced cache reads as "no plays" rather than crashing the scan with 'no such
+    # table'. What makes that fail-closed is NOT the dormancy observation: a zero-row mirror
+    # leaves `mirror.earliest` None, so `scan` resolves the horizon to `utcnow()` and an item
+    # with an arrival date reads `max(added_at, utcnow())`, i.e. Known ZERO days dormant. The
+    # hold comes from `scan` degrading the whole snapshot un-plannably on that same empty
+    # mirror ("no watch history at all: nothing can be judged"), with the zero-day reading
+    # under any dormancy floor as the second layer.
     await history_sync.ensure_schema(engine)
 
     # Deliberately NOT clamped up to the data horizon, though a window reaching past it is

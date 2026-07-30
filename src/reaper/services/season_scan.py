@@ -861,11 +861,19 @@ async def season_watch_stats(
         return stats
 
     # The cache is rebuildable and may be empty on a fresh install. Ensure the table exists so
-    # a never-synced cache reads as "no plays" (which leaves dormancy Unknown, and Unknown
-    # protects) rather than crashing the scan with 'no such table'. Both siblings reading this
-    # mirror carry the same guard -- `snapshot._watch_stats` and `fairness._evidence_index`
-    # (rule 72). Today the season task always runs after `scan()` has touched the mirror, so
-    # the table exists; this does not depend on that ordering holding.
+    # a never-synced cache reads as "no plays" rather than crashing the scan with 'no such
+    # table'. What makes that fail-closed is NOT the dormancy observation -- a zero-row mirror
+    # resolves the horizon to `utcnow()`, so a season with an arrival date reads Known ZERO
+    # days dormant, not Unknown. The hold is `snapshot.scan` degrading the snapshot
+    # un-plannably on that same empty mirror; see the twin note in `snapshot._watch_stats`.
+    #
+    # Every reader of this mirror that a scan can reach carries the guard (rule 72):
+    # `snapshot._watch_stats` and `fairness._evidence_index` call it directly, and
+    # `snapshot._fold_merged_watch_stats` / `fairness._distinct_episodes` inherit it by running
+    # after a guarded sibling over a subset of its keys. `backtest._plays` and
+    # `calibration.derive` do NOT have it, and have no route, CLI or schedule reaching them.
+    # Today the season task also always runs after `scan()` has touched the mirror, so the
+    # table exists; this does not depend on that ordering holding.
     await history_sync.ensure_schema(engine)
 
     # Unclamped by the horizon, like the movie twin (`snapshot._watch_stats`): the clamp

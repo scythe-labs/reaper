@@ -759,8 +759,14 @@ class MinDormancyGate:
         floor = self.config.threshold
 
         if not isinstance(dormant, Known):
-            # We cannot establish that it HAS been dormant long enough, so we must
-            # not delete it. Unknown protects.
+            # We cannot establish that it HAS been dormant long enough, so we must not delete
+            # it. Reachable for ``Absent`` only: ``_blocked`` above already answered every
+            # ``Unknown`` with a blocked ABSTAIN, which is a different hold from this PROTECT
+            # (rule 143's corollary -- "we could not answer" is blocked, never a bare PROTECT).
+            # No fact builder emits ``Absent`` for this field today, so the PROTECT does not
+            # fire; it stays because ``Absent`` arriving later must keep the file, and the
+            # ``isinstance`` is load-bearing regardless -- ``_blocked`` returns a result, not a
+            # narrowed type, so ``.value`` below needs it.
             return GateResult(
                 self.id, PROTECT, detail="no watch history, so its dormancy cannot be established"
             )

@@ -969,8 +969,12 @@ class TestSeasonWatchStats:
         The `cache_engine` fixture runs `ensure_schema` itself, so every other test in this
         class meets a table that already exists; this one takes a raw cache. Without the
         guard the read raises `no such table: watch_event`, nothing catches it, and the whole
-        scan aborts on a technical string (rule 21) instead of reading no plays -- which is
-        the fail-closed answer, since no plays leaves dormancy Unknown and Unknown protects.
+        scan aborts on a technical string (rule 21) instead of reading no plays.
+
+        Reading no plays is not itself what keeps the file: an empty mirror resolves the
+        horizon to `utcnow()`, so a season with an arrival date reads Known ZERO days
+        dormant. `snapshot.scan` degrades the whole snapshot un-plannably on that mirror,
+        which is the actual hold.
         """
         settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_cache_engine(settings)
