@@ -468,6 +468,85 @@ def test_the_vite_dev_server_refuses_a_taken_port() -> None:
     )
 
 
+_PRESETS_TS = FRONTEND_SRC / "components" / "policyPresets.ts"
+#: The ``Pick<ProfileSettings, ...>`` union naming the fields a preset writes. Read as the whole
+#: declaration up to its ``>;`` and picked apart inside, rather than anchored on a delimiter one
+#: spelling happens to put there: the union is comment-interleaved, so a per-line matcher would
+#: be reading prose (rule 147). ``|`` is the only separator TypeScript allows here.
+_PRESET_CAPS_TYPE = re.compile(r"PresetCaps\s*=\s*Pick<\s*ProfileSettings\s*,(.*?)>;", re.DOTALL)
+_TS_LITERAL = re.compile(r'"(\w+)"')
+#: ``caps: { ... }`` holds no nested braces, so the character class is the whole parser and a
+#: nested one would fail loudly here rather than silently truncate the block (rule 147).
+_PRESET_CAPS = re.compile(r"caps:\s*\{([^{}]*)\}")
+_CAPS_FIELD = re.compile(r"^\s*(\w+):\s*([\w_]+),")
+#: Cautious, Balanced, Aggressive. Pinned because a flag-shaped assertion cannot tell a preset
+#: that validates from one this parser stopped collecting -- both read green (rule 145).
+_EXPECTED_PRESETS = 3
+
+
+def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
+    """A starting point may not build a combination the operator is refused for choosing.
+
+    Each preset sets ``caps_enabled: true``, and that switch is what activates
+    ``policy._run_cap_within_rolling_cap`` -- it early-returns while the caps are off. The
+    preset then MERGES its fields into the stored pace, so every cap it does not name keeps the
+    operator's own value, and a hand-maintained subset can build a combination out of one they
+    were allowed to store. ``max_unmeasured_per_run`` was the omission: the allowance accepts
+    up to 25, Cautious sets 5 items per run, and an operator who had raised it clicked a button
+    whose help text calls it a starting point and got a 422 (#256).
+
+    **The omission is the defect, not the values**, which is what the first draft of this test
+    got wrong: deleting a field from a preset leaves ``ProfileSettings`` supplying its default,
+    so validating each preset alone passes on exactly the mutation it exists to catch. The
+    field list is what has to be complete. So it is derived from the validator's own source
+    (rule 144: generate the copy, or the ungenerated one drifts toward reassuring), and the
+    values are then run through the real validator on top (rule 3/22) so a preset cannot also
+    carry a combination that is illegal on its face.
+    """
+    import inspect
+
+    from reaper.engine.policy import ProfileSettings
+
+    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)
+    reads = {
+        name
+        for name in re.findall(r"self\.(\w+)", validator)
+        if name in ProfileSettings.model_fields
+    }
+    assert reads, "parsed no fields out of _run_cap_within_rolling_cap -- the matcher is stale"
+
+    text = _PRESETS_TS.read_text(encoding="utf-8")
+    declaration = _PRESET_CAPS_TYPE.search(text)
+    assert declaration, f"no `PresetCaps = Pick<ProfileSettings, ...>` in {_PRESETS_TS.name}"
+    written = set(_TS_LITERAL.findall(declaration.group(1)))
+
+    missing = sorted(reads - written)
+    assert not missing, (
+        "ProfileSettings._run_cap_within_rolling_cap reads fields no preset writes, so "
+        f"applying a preset can trip it on a stored value the operator was allowed to save: "
+        f"{', '.join(missing)}.\nAdd each to PresetCaps in "
+        f"{_PRESETS_TS.relative_to(REPO)} and give every preset a value."
+    )
+
+    blocks = _PRESET_CAPS.findall(text)
+    assert len(blocks) == _EXPECTED_PRESETS, (
+        f"expected {_EXPECTED_PRESETS} preset caps blocks in "
+        f"{_PRESETS_TS.relative_to(REPO)}, found {len(blocks)}. If a preset was added, bump "
+        "the number; if not, one stopped matching and is no longer being validated."
+    )
+    for block in blocks:
+        caps: dict[str, object] = {}
+        for line in block.splitlines():
+            field = _CAPS_FIELD.match(line)
+            if not field:
+                continue  # a blank line or a `//` comment
+            name, raw = field.group(1), field.group(2)
+            caps[name] = raw == "true" if raw in ("true", "false") else int(raw.replace("_", ""))
+        assert caps, f"parsed no fields out of a caps block in {_PRESETS_TS.relative_to(REPO)}"
+        # A ValidationError here is the defect, stated by the server in its own words.
+        ProfileSettings(**caps)  # type: ignore[arg-type]
+
+
 # ``pkill``/``killall`` select processes by PATTERN, which is machine-wide: nothing in the
 # pattern distinguishes this dev instance from a parallel one. ``pgrep`` only counts when the
 # same line goes on to kill (``pgrep -f x | xargs kill``); read-only, it is a status check and

@@ -36,6 +36,15 @@ export type PresetCaps = Pick<
   // Every preset promises enforcement ("removes less per run"), so it must also turn the
   // caps ON. Staging the numbers while leaving caps off saved an uncapped profile (B-10).
   | "caps_enabled"
+  // Turning the caps on is what activates `policy._run_cap_within_rolling_cap`, which
+  // early-returns while they are off -- so a preset that writes a SUBSET of the caps can
+  // build a combination out of one the operator was allowed to store. This field was the
+  // subset's one omission: the allowance accepts up to 25 items with no size, Cautious sets
+  // 5 items per run, and the validator refuses a run that may delete more unmeasured items
+  // than items. An operator who had raised the allowance clicked a starting point and got a
+  // 422 instead (#256). Every cap the validator reads is named here now, so the preset can
+  // only ever produce a combination it has stated in full.
+  | "max_unmeasured_per_run"
 >;
 
 export const PRESETS: {
@@ -57,6 +66,11 @@ export const PRESETS: {
       max_bytes_per_30d: 1_000_000_000_000,
       grace_days: 30,
       caps_enabled: true,
+      // The shipped default, on all three: no preset's help text says anything about items
+      // whose size nothing will report, so none of them may quietly admit any. It is also
+      // the only value that is legal under every preset's per-run item cap, and the one that
+      // holds those items back (rule 31 -- a preset resolves toward keeping the file).
+      max_unmeasured_per_run: 0,
     },
   },
   {
@@ -71,6 +85,7 @@ export const PRESETS: {
       max_bytes_per_30d: 2_000_000_000_000,
       grace_days: 14,
       caps_enabled: true,
+      max_unmeasured_per_run: 0,
     },
   },
   {
@@ -85,6 +100,7 @@ export const PRESETS: {
       max_bytes_per_30d: 4_000_000_000_000,
       grace_days: 7,
       caps_enabled: true,
+      max_unmeasured_per_run: 0,
     },
   },
 ];
