@@ -1430,10 +1430,6 @@ export const api = {
   testSavedInstance: (id: number) => post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),
-  /**
-   * Save the Plex settings. An empty web_url resets to the hosted default; verify_tls
-   * (only valid once linked) flips the certificate check, omitted keeps it.
-   */
   /** Save one or both Plex settings. A PATCH: a field left out is left alone, so a control
    *  sends what it changes and nothing else.
    *

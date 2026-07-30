@@ -23,6 +23,7 @@ import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 
+from reaper.api.settings import PlexUpdateIn, update_plex_settings
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import InstanceKind
@@ -879,6 +880,31 @@ class TestPlexLinkChoice:
         reset = client.put("/api/settings/plex", json={"web_url": ""})
         assert reset.status_code == 200
         assert reset.json()["web_url"] == "https://app.plex.tv"
+
+    def test_the_patch_contract_is_published_where_someone_can_read_it(self) -> None:
+        """The empty string is the one way back to the hosted default, so it must publish.
+
+        ``PlexUpdateIn``'s per-field docstrings do NOT reach the schema: Pydantic harvests
+        those only under ``use_attribute_docstrings``, which this tree does not set (see
+        ``api/schemas.py``). So a contract written beside a field documents this file alone,
+        and moving the reset sentence down there emptied the published description while
+        every test still passed. One fact, two copies, so both are checked and each failure
+        names the other (rule 144).
+        """
+        described = PlexUpdateIn.model_json_schema().get("description", "")
+        # Words, not a phrase, so a rewording that keeps the fact still passes. Both are absent
+        # the moment the reset moves back down to an attribute docstring.
+        assert "empty" in described.lower() and "hosted default" in described.lower(), (
+            "PlexUpdateIn's CLASS docstring is the published schema description, and an "
+            "attribute docstring is published nowhere. Say there how the address resets."
+        )
+        assert "keeps its stored value" in described
+
+        route_doc = (update_plex_settings.__doc__ or "").lower()
+        assert "empty" in route_doc and "hosted default" in route_doc, (
+            "The PUT /plex route description is the sibling copy of PlexUpdateIn's class "
+            "docstring. Both name the empty-string reset; correcting one means both."
+        )
 
     def test_a_server_that_is_briefly_unreachable_keeps_the_sign_in_alive(
         self, client: TestClient, httpx2_mock: respx.Router

@@ -201,12 +201,19 @@ class PlexStatusOut(BaseModel):
 # filled the field from its CACHED status row, so flipping a setting about certificates wrote back
 # an address that may have moved since -- silently reverting it, and pointing every "open in Plex"
 # link in the app at plex.tv (#204). `None` means keep; `""` still means reset.
+#
+# Both sentences of the contract are in the CLASS docstring because that is the only part of this
+# model an operator can read: Pydantic harvests the per-field docstrings below only under
+# `use_attribute_docstrings`, which this tree does not set (`schemas.py` says so as well). So the
+# empty-string reset -- the one way back to the hosted default -- was written beside the field it
+# describes and published nowhere, leaving the browsable schema naming neither field's semantics
+# while every test stayed green (rule 144).
 class PlexUpdateIn(BaseModel):
     """The editable Plex settings. Send only what you are changing: a field you leave out
-    keeps its stored value."""
+    keeps its stored value, and an empty web address puts it back to the hosted default."""
 
     web_url: str | None = None
-    """Where "open in Plex" links point. An empty string puts it back to the hosted default."""
+    """Where "open in Plex" links point."""
     verify_tls: bool | None = None
     """Whether to check the linked server's TLS certificate."""
 
