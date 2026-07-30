@@ -601,14 +601,16 @@ def build_season_facts(
         # season backfilled into an old show arrived recently even though the show is old,
         # and using the show's date would read a just-added season as decades dormant and
         # condemn a file nobody has had a chance to watch. This mirrors the movie path,
-        # which floors on each item's own added_at. When we cannot establish the season's
-        # arrival at all, dormancy is Unknown -- which protects -- exactly as a movie with
-        # no added-at date does; we never fabricate a Known dormancy from the horizon.
-        # Through the one shared derivation (engine/dormancy.py), the same one the movie
-        # scan, the backtest and the prior calibration use (rule 3). The two arms differ
-        # only in what reference is available: with no arrival date there is nothing to
-        # fall back to, so a season with neither a play nor an added-at goes Unknown below
-        # rather than being measured from the horizon alone.
+        # which floors on each item's own added_at. Through the one shared derivation
+        # (engine/dormancy.py), the same one the movie scan, the backtest and the prior
+        # calibration use (rule 3); we never fabricate a Known dormancy from the horizon.
+        #
+        # Where this lane does NOT mirror the movie path: here a play is enough on its own.
+        # With no arrival date but a play in scope, the first arm below measures from that
+        # play and the season is judged. `snapshot.build_facts` takes Unknown the moment
+        # added_at is missing, whatever history it holds. Only the both-missing arm matches
+        # it: a season with neither a play nor an added-at goes Unknown -- which protects --
+        # exactly as a movie with no added-at date does.
         if last_played is not None:
             reference = reference_instant(
                 last_played=last_played, added_at=last_played, horizon=horizon
@@ -1750,10 +1752,13 @@ def _judge_series(
                 # worth deleting is genuinely 0 bytes, so a stored 0 would be a
                 # measurement Reaper never took.
                 #
-                # What that costs the season is deletion. `planner.build_plan` holds it
-                # back, `executor.size_confirmed` refuses it again per item, and both caps
-                # and the byte total the owner confirms leave it out. It still scores and
-                # still shows in the queue, saying "Size unknown".
+                # What that costs the season is deletion, while the owner's allowance
+                # (`ProfileSettings.max_unmeasured_per_run`) is shut: `planner.build_plan`
+                # holds it back, `executor._may_send_unmeasured` refuses it again per item,
+                # and both caps and the byte total the owner confirms leave it out. With the
+                # allowance open it IS planned and DOES count against the item caps; only
+                # the byte sums still leave it out (`executor._deletable_bytes`). Either way
+                # it still scores and still shows in the queue, saying "Size unknown".
                 # Do not "fix" this by inventing a size here.
                 size_bytes=season.size_on_disk,
                 size_source=SizeSource.SONARR if season.size_on_disk is not None else None,

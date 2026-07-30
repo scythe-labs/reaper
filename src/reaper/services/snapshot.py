@@ -259,10 +259,13 @@ def build_facts(
     if rating_key is None:
         dormancy = Unknown(reason=no_key_reason, source="plex")
     elif item.added_at is None:
-        # Matched to Plex, but Plex reports no arrival date, so dormancy cannot be measured
-        # and the item abstains: it appears only as "kept to be safe", never on the reap
-        # list. Warn so "why isn't this reapable" is answerable from the log, the same as an
-        # unmatched item. Rare: a matched Plex item almost always carries an added_at.
+        # Matched to Plex, but Plex reports no arrival date. This lane takes Unknown on that
+        # alone -- not because nothing could be measured: `last_played` is in scope right
+        # here, and the season lane (`season_scan.build_season_facts`) does measure from a
+        # play when the arrival date is missing. This one does not, and the item abstains: it
+        # appears only as "kept to be safe", never on the reap list. Warn so "why isn't this
+        # reapable" is answerable from the log, the same as an unmatched item. Rare: a
+        # matched Plex item almost always carries an added_at.
         log.warning(
             "scan.no_added_at",
             media_type="movie",
@@ -919,11 +922,14 @@ async def scan(
             # holds without a size, and it stays None: no file worth deleting is genuinely
             # 0 bytes, so a stored 0 would be a measurement Reaper never took.
             #
-            # What that costs the item is deletion. `planner.build_plan` holds it back,
-            # `executor.size_confirmed` refuses it again per item, and both caps and the
-            # byte total the owner confirms leave it out. It still scores, still shows in
-            # the queue, and says "Size unknown" wherever its size would appear.
-            # Do not "fix" this by inventing a size here.
+            # What that costs the item is deletion, while the owner's allowance
+            # (`ProfileSettings.max_unmeasured_per_run`) is shut: `planner.build_plan`
+            # holds it back, `executor._may_send_unmeasured` refuses it again per item, and
+            # both caps and the byte total the owner confirms leave it out. With the
+            # allowance open it IS planned and DOES count against the item caps; only the
+            # byte sums still leave it out (`executor._deletable_bytes`). Either way it
+            # still scores, still shows in the queue, and says "Size unknown" wherever its
+            # size would appear. Do not "fix" this by inventing a size here.
             size_bytes=item.size_bytes,
             size_source=movie_size_source,
             facts=facts,

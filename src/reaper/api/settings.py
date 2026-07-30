@@ -410,11 +410,18 @@ def _validate_external_url(raw: str | None) -> None:
     """A per-service link address, when set, must be a real http(s) URL with a host, else 422.
 
     Reaper renders ``external_url`` into a jump link for every signed-in user, so a scheme-less
-    paste (``host:8989``) or a ``javascript:``/``data:`` value must be refused at the edge, the
-    same way every sibling URL setting is, rather than stored verbatim (rules 84/13). A blank
-    value clears the setting and is allowed through; ``None`` (the field omitted on update)
-    keeps the stored value and is not our concern here. A ``type="url"`` input is not
-    validation, so this is the real check even when the browser mirrors it.
+    paste (``host:8989``) or a ``javascript:``/``data:`` value must be refused at the edge
+    rather than stored verbatim (rules 84/13). A blank value clears the setting and is allowed
+    through; ``None`` (the field omitted on update) keeps the stored value and is not our
+    concern here. A ``type="url"`` input is not validation, so this is the real check even when
+    the browser mirrors it.
+
+    Rule 84 asks for one shared validator and there is not one yet, so this is *not* "the way
+    every sibling does it": ``_validated_discord_webhook`` checks a host allow-list,
+    ``plex_switch_server`` inlines its own scheme/hostname pair, and ``put_general``'s
+    ``application_url`` tests ``netloc`` where the others test ``hostname``. The sibling that
+    matters most has no check at all -- an instance's ``base_url`` is stored as typed (issue
+    #255) -- so nothing here may be cited as covering it.
     """
     if raw is None:
         return

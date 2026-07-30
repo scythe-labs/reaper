@@ -341,9 +341,11 @@ class GateConfig:
     enabled: bool = True
     threshold: int = 0
     #: No ``secondary`` here. It carried the rating gate's vote floor until that bar moved to
-    #: ``PolicyBody.keep_rating_rules``, after which no gate read it and ``scan_runner`` was
-    #: copying a dead number into every gate it built. The policy body still stores it -- see
-    #: ``policy.GateSetting.secondary`` for why that one cannot follow.
+    #: ``PolicyBody.keep_rating_rules``, where it is now ``RatingRule.min_votes``, read by
+    #: ``RatingFloorGate.evaluate`` and the ``_miss_phrase`` helper it calls. After the move no
+    #: gate read ``secondary``, and ``scan_runner`` was copying a dead number into every gate it
+    #: built. The policy body still stores it -- see ``policy.GateSetting.secondary`` for why
+    #: that one cannot follow.
 
     window_days: int = 365
     """How far back "recently" reaches, for gates that count activity.

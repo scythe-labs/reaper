@@ -266,8 +266,9 @@ class Profile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    """Ships disabled. A profile that starts running the moment it is created is
-    how a starter template deletes a library."""
+    """Ships disabled, and nothing in ``src/`` reads it: written at creation, never
+    consulted, so it gates nothing today. What keeps a fresh install from acting is the
+    arming requirement and the typed phrase on ``api.runs.execute_run``, not this flag."""
 
     active_policy_id: Mapped[int] = mapped_column(ForeignKey("policy.id"))
 
@@ -439,9 +440,9 @@ class Candidate(Base):
     ``size_source`` below says which measurement this is, and is NULL exactly when this
     is. Both scan paths write a NULL when nothing reports a size. What keeps such an item
     out of a delete is ``planner.build_plan``, which holds it back, and
-    ``executor.size_confirmed``, which refuses it again per item -- unless the operator has
-    raised ``ProfileSettings.max_unmeasured_per_run``, which admits a bounded number of
-    them deliberately."""
+    ``executor._may_send_unmeasured``, which refuses it again per item at send time --
+    unless the operator has raised ``ProfileSettings.max_unmeasured_per_run``, which admits
+    a bounded number of them deliberately."""
 
     size_source: Mapped[str | None] = mapped_column(String(16), default=None)
     """Which measurement ``size_bytes`` holds, as a ``SizeSource`` value. NULL means no

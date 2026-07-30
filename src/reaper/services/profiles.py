@@ -336,8 +336,12 @@ async def save_profile_settings(
     and the scheduler alike. Tightening a cap here is always safe: it cannot void a
     pending approval, because the caps are not part of the policy hash.
 
-    The profile ships **disabled** and this does not enable it. Turning a profile on --
-    letting it act -- is a separate, deliberate step, never a side effect of saving a cap.
+    The row this creates carries ``Profile.enabled = False`` and this function never flips
+    it -- but do not read that as the interlock. Nothing in ``src/`` reads the column: it is
+    written at creation and never consulted, so there is no on-step and no consumer, and it
+    gates nothing. What actually keeps a saved cap from acting is that the scheduler never
+    deletes and the one route that does (``api.runs.execute_run``) needs the host armed and
+    the typed content-bound phrase.
     """
     profile = (
         await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))

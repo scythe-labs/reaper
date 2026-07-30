@@ -77,9 +77,12 @@ The interlocks, in order, and why each exists:
    the item is skipped (kept), and so is one whose current size cannot be read at all.
    That comparison needs two CONFIRMED numbers, and it does not police the *approved*
    side: ``_grew_materially(0, live)`` reduces to ``live > 256 MiB``, so it stays silent
-   for anything smaller. The approved side is policed instead by ``size_confirmed``,
-   which refuses the item in both send paths before the growth check, and by
+   for anything smaller. The approved side is policed instead by
+   ``_may_send_unmeasured``, which both send paths call before the growth check, and by
    ``_deletable``, which keeps it out of the caps and out of the phrase the owner types.
+   Neither refusal is unconditional: an owner who raises
+   ``ProfileSettings.max_unmeasured_per_run`` admits a bounded number of unmeasured items
+   deliberately, and each is sent with this growth comparison unavailable.
 9. **Verify the world changed.** A movie: re-read the exclusion list and assert the tmdbId
    is present *and* the movie is gone -- Sonarr and Radarr each accept the *other's*
    exclusion parameter and return 200 while doing nothing, so the 200 is re-read, not
@@ -206,10 +209,20 @@ def size_confirmed(candidate: Candidate) -> bool:
 
     An unconfirmed size cannot be caught downstream by the growth check --
     ``_grew_materially(0, live)`` reduces to ``live > _SIZE_DRIFT_FLOOR`` -- so it is
-    refused directly, in the two places that matter: ``_deletable`` keeps the item out of
-    the caps and out of the byte total behind the confirmation phrase (the same filter
-    runs in ``api.runs._planned_candidates``, so both numbers describe one set), and
-    ``_send_movie`` / ``_send_season`` skip it per item before anything is sent.
+    refused directly. This predicate has exactly two callers, both on the counting side:
+    ``_deletable``, which keeps the item out of the caps and out of the byte total behind
+    the confirmation phrase, and ``api.runs._planned_candidates``, which runs the same
+    filter so both numbers describe one set. The per-item refusal before anything is sent
+    is a *stronger*, separate check,
+    ``_may_send_unmeasured``: it asks this question and also requires the frozen size to
+    measure the same quantity the live re-read will (``_measures``). ``_send_movie`` /
+    ``_send_season`` call that one, never this one -- collapsing them back to this
+    predicate would silently drop the comparable-quantity half.
+
+    Neither refusal is unconditional. Both yield to the owner's allowance
+    (``ProfileSettings.max_unmeasured_per_run``): above zero, a bounded number of
+    unmeasured items are planned, ARE counted against the item caps, and are sent with the
+    growth comparison unavailable.
 
     The planner holds these items back before a plan exists at all
     (``planner.build_plan``). This is the independent second layer, and it deliberately
@@ -544,9 +557,10 @@ def _deletable(
     removes items from the count of what THIS run sends.
 
     An item whose approved size was never confirmed (``size_confirmed``) drops out for
-    the same reason: the send paths refuse it, so it is not part of what this run acts
-    on, and counting it as 0 bytes -- which is what its stored size says -- would let a
-    run delete materially more than the cap and the typed total the owner confirmed.
+    the same reason, wherever the allowance below is shut: ``_may_send_unmeasured`` refuses
+    it in the send paths, so it is not part of what this run acts on, and counting it as 0
+    bytes -- which is what its stored size says -- would let a run delete materially more
+    than the cap and the typed total the owner confirmed.
 
     ``allow_unmeasured`` is the operator's allowance
     (``ProfileSettings.max_unmeasured_per_run``) above zero. Those items ARE acted on, so
@@ -1687,9 +1701,12 @@ class Executor:
 
         # Fail CLOSED on an approved size that was never confirmed, BEFORE the growth
         # check below: the growth check compares against the approved number and cannot
-        # police it (``_grew_materially(0, live)`` is just ``live > 256 MiB``). This is
-        # the same question ``size_confirmed`` asks, written inline so the size is
-        # narrowed for the rest of the function.
+        # police it (``_grew_materially(0, live)`` is just ``live > 256 MiB``).
+        # ``_may_send_unmeasured`` is STRICTLY STRONGER than ``size_confirmed`` -- it also
+        # requires the frozen size to be one ``_MOVIE_COMPARABLE`` admits (``_measures``) --
+        # and it is a shared method, not inline. Do not collapse it to ``size_confirmed``:
+        # that drops the comparable-quantity check, which is what stops a file-only bound
+        # (``RADARR_FILE``, ``PLEX``) from being weighed against Radarr's folder read.
         candidate = delete.candidate
         approved_size = candidate.size_bytes
         if not self._may_send_unmeasured(candidate, _MOVIE_COMPARABLE):
@@ -1910,8 +1927,14 @@ class Executor:
         # The approved side first, and fail CLOSED on it. The live-side refusal below
         # only fires when Sonarr cannot report a size NOW; it says nothing about the
         # frozen number, and the growth check cannot police that either
-        # (``_grew_materially(0, live)`` is just ``live > 256 MiB``). Same question as
-        # ``size_confirmed``, written inline so the size is narrowed below.
+        # (``_grew_materially(0, live)`` is just ``live > 256 MiB``).
+        # ``_may_send_unmeasured`` is STRICTLY STRONGER than ``size_confirmed`` -- it also
+        # requires the frozen size to be one ``_SEASON_COMPARABLE`` admits (``_measures``)
+        # -- and it is a shared method, not inline. Do not collapse it to ``size_confirmed``:
+        # that drops the comparable-quantity check, which is what keeps a Plex or Radarr
+        # measurement that reached a season row from being weighed against a sum of Sonarr
+        # episode files. ``SONARR``, the season folder, is a KNOWN mismatch that the set
+        # admits anyway -- see the note on ``_SEASON_COMPARABLE`` for why.
         approved_size = candidate.size_bytes
         if not self._may_send_unmeasured(candidate, _SEASON_COMPARABLE):
             return self._mark_skipped(
