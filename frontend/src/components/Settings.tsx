@@ -2623,15 +2623,26 @@ function AdminPasswordForm({
   const valid =
     pw.length >= MIN_ADMIN_PASSWORD && confirm.length > 0 && confirm === pw && !needCurrent;
 
-  // One red error region under the row. Live validation (too short, then mismatch) explains
-  // why Save is off while typing; a failed submit reuses the same box. Validation wins over a
-  // stale submit error so the operator sees the thing they can fix right now.
+  // The third live complaint, and the one that used to be missing: an empty current password
+  // turns Save off with nothing on the page saying so, on the form that sets the key arming
+  // deletion (#188). Gated on a new password having been typed, like the two above are gated on
+  // their own box: on a pristine form nothing is wrong yet, and a complaint about a box the
+  // operator has not reached reads as a failure rather than a next step.
+  const askCurrent = needCurrent && pw.length > 0;
+
+  // One red error region under the row. Live validation (too short, then mismatch, then the
+  // missing current password) explains why Save is off while typing; a failed submit reuses the
+  // same box. Validation wins over a stale submit error so the operator sees the thing they can
+  // fix right now -- including a current password they have just cleared, which is why
+  // `askCurrent` sits above `save.error` rather than below it.
   const errorNode: ReactNode = tooShort ? (
     <>
       Use at least {MIN_ADMIN_PASSWORD} characters. <b>{pw.length} so far.</b>
     </>
   ) : mismatch ? (
     "The passwords don't match."
+  ) : askCurrent ? (
+    "Enter the current password to save."
   ) : save.error ? (
     needed ? (
       `The password wasn't set: ${save.error.message}`
@@ -2646,7 +2657,13 @@ function AdminPasswordForm({
   // only the first. Read off the two predicates, the confirm box then pointed at a region
   // holding "Use at least 12 characters", reading the box above it out as its own problem, and
   // "The passwords don't match." was not on the page at all to be reached (#174).
-  const errorOwner: "new" | "confirm" | null = tooShort ? "new" : mismatch ? "confirm" : null;
+  const errorOwner: "new" | "confirm" | "current" | null = tooShort
+    ? "new"
+    : mismatch
+      ? "confirm"
+      : askCurrent
+        ? "current"
+        : null;
 
   // What this form would LOSE, reported up through `SecurityPanel` to `Settings` so leaving the
   // section can stop and ask first. Any of the three boxes counts: a password too short to save,
@@ -2703,6 +2720,7 @@ function AdminPasswordForm({
                   onChange={onEdit(setCurrent)}
                   autoComplete="current-password"
                   maxLength={128}
+                  aria-describedby={errorOwner === "current" ? PASSWORD_ERROR_ID : undefined}
                 />
               </label>
               <hr className="pw-sep" />

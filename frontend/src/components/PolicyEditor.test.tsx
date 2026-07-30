@@ -7,6 +7,7 @@
 // either fix is reverted.
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
@@ -216,7 +217,6 @@ describe("a policy that couldn't be read", () => {
 
 describe("a preset", () => {
   it("fits the operator's own rules into the 100 points instead of overshooting", async () => {
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     const mine: CustomCondemn = {
       kind: "boolean",
@@ -245,7 +245,6 @@ describe("a preset", () => {
     // Applying rescales the whole removal lane, so the built-ins end up as the shipped mix
     // times a factor -- and the old exact-equality badge read that as "Custom" on the very
     // click that applied the preset, while the line below said "Staged, not saved" (U-8).
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     const mine: CustomCondemn = {
       kind: "boolean",
@@ -287,7 +286,6 @@ describe("a preset", () => {
   });
 
   it("turns the caps back on when they were off (its help promises enforcement)", async () => {
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     renderEditor({ body: body() }, { ...pace, caps_enabled: false });
 
@@ -362,7 +360,6 @@ describe("the unknown-size allowance", () => {
     // it from the SAVED profile. Drag it from 0 to 5 and no warning appeared until after a
     // save; drag it back down and the old warning kept naming the old number. Every other
     // warning on this page describes the draft, so this one was the odd one out.
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     renderEditor({ body: body() }, { ...pace, max_unmeasured_per_run: 0 });
 
@@ -380,7 +377,6 @@ describe("the one Save button, over two independent saves", () => {
     // nothing to do with the removal budget -- this file's own header says tightening a cap
     // never voids an approval -- yet a grace edit could not be saved until an unrelated
     // weight was fixed. One save affordance still (rule 43), gated per half.
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     apiMock.saveProfile.mockResolvedValue({ ...pace, grace_days: 21 });
     renderEditor({ body: body() });
@@ -459,7 +455,6 @@ async function renderTvEditor(
   /** What /policy/validate answers with, for the cases that drive a TV-only warning. */
   validationWarnings: PolicyWarning[] = [],
 ) {
-  const { userEvent } = await import("@testing-library/user-event");
   const user = userEvent.setup();
   const rendered = renderEditor({ body: tvBody(patch) }, pace, null, validationWarnings);
   if (shape) apiMock.seasonShape.mockResolvedValue(shape);
@@ -1040,5 +1035,109 @@ describe("the controls a screen reader has to tell apart", () => {
     const removes = await screen.findAllByRole("button", { name: /^Remove rule: leans/ });
     expect(removes).toHaveLength(2);
     expect(new Set(removes.map((b) => b.getAttribute("aria-label"))).size).toBe(2);
+  });
+});
+
+describe("why an 'Add rule' will not act", () => {
+  // Three composers refused to add a rule with nothing on the page naming the box they were
+  // waiting on: the operator pressed Add, nothing happened, and the form did not say why. The
+  // condemn composer is the sharpest case, because its OTHER refusal -- a backwards ramp -- has
+  // had a sentence beside the boxes all along, so two of its three arms spoke and one did not
+  // (#188).
+  //
+  // Each sentence binds to the empty BOX rather than to the button, because a `disabled` button
+  // is out of the Tab order and a description hung on it is unreachable by the operator it is
+  // for.
+  const TEXT_FIELD = {
+    key: "genre",
+    label: "Genre",
+    help_text: "",
+    type: "text",
+    unit_suffix: "",
+    ops: ["eq", "contains"],
+  };
+  const NUMBER_FIELD = {
+    key: "quality_score",
+    label: "Quality score",
+    help_text: "",
+    type: "int",
+    unit_suffix: "",
+    ops: ["gte", "lte"],
+  };
+
+  /** Both lanes given a real vocabulary, which `renderEditor` otherwise seeds empty. Deliberately
+   *  fields that no built-in covers and that carry no ramp phrase, so `isRamp` stays false and
+   *  the arm under test is the one an empty value reaches. */
+  function renderWithFields() {
+    renderEditor({ body: body() });
+    apiMock.vocabulary.mockImplementation((lane: string) =>
+      Promise.resolve(
+        lane === "condemn"
+          ? { lane, fields: [TEXT_FIELD] }
+          : { lane, fields: [TEXT_FIELD, NUMBER_FIELD] },
+      ),
+    );
+    return userEvent.setup();
+  }
+
+  it("names the empty value box in the remove composer, and lets go once it is filled", async () => {
+    const user = renderWithFields();
+    const field = (await screen.findAllByLabelText("Field"))[0]!;
+    await waitFor(() => expect(field).toBeEnabled());
+    await user.selectOptions(field, "genre");
+
+    const add = await screen.findByRole("button", { name: "Add rule" });
+    expect(add).toBeDisabled();
+    const box = screen.getByLabelText("Genre value");
+    expect(box).toHaveAccessibleDescription("Enter a value to add this rule.");
+
+    await user.type(box, "comedy");
+
+    expect(add).toBeEnabled();
+    expect(box).toHaveAccessibleDescription("");
+  });
+
+  it("names it in the keep-outright composer too", async () => {
+    // Rule 72's sibling: the same guard, the same silence, a different card. Reached through the
+    // keep card's own Field picker, which is the second one on the page.
+    const user = renderWithFields();
+    const fields = await screen.findAllByLabelText("Field");
+    const keepField = fields[fields.length - 1]!;
+    await waitFor(() => expect(keepField).toBeEnabled());
+    await user.selectOptions(keepField, "genre");
+
+    const box = screen.getByLabelText("Genre value");
+    expect(box).toHaveAccessibleDescription("Enter a value to add this rule.");
+    const adds = screen.getAllByRole("button", { name: "Add rule" });
+    expect(adds[adds.length - 1]!).toBeDisabled();
+
+    await user.type(box, "documentary");
+
+    expect(box).toHaveAccessibleDescription("");
+    expect(screen.getAllByRole("button", { name: "Add rule" }).at(-1)!).toBeEnabled();
+  });
+
+  it("names the empty 'full effect at' box in the lean composer", async () => {
+    // The third (rule 72), and the one whose box is a number rather than a suggest input, so the
+    // branch carrying the description is a different element. A lean has no yes/no arm: it always
+    // ramps to a number, which is why its sentence asks for one.
+    const user = renderWithFields();
+    await waitFor(async () =>
+      expect((await screen.findAllByLabelText("Field")).length).toBeGreaterThan(1),
+    );
+    await user.click(screen.getByRole("button", { name: "Leans toward keeping" }));
+
+    const fields = await screen.findAllByLabelText("Field");
+    const leanField = fields[fields.length - 1]!;
+    await user.selectOptions(leanField, "quality_score");
+
+    const box = screen.getByLabelText("Full effect at");
+    expect(box).toHaveAccessibleDescription("Enter a number to add this rule.");
+    expect(screen.getAllByRole("button", { name: "Add rule" }).at(-1)!).toBeDisabled();
+
+    await user.type(box, "70");
+
+    expect(box).toHaveAccessibleDescription("");
+    expect(screen.getAllByRole("button", { name: "Add rule" }).at(-1)!).toBeEnabled();
   });
 });

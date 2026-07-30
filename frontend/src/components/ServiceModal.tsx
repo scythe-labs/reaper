@@ -111,6 +111,10 @@ export function TestBadge({ result }: { result: InstanceTest | null }) {
 /** The external-URL box's complaint, named once for both ends of the association (rule 67). */
 const EXTERNAL_URL_ERROR_ID = "service-external-url-error";
 
+/** Why the submit button is off, one id shared by the three boxes that can be the reason: only
+ *  one of them is named at a time, so one region is all there is to point at (#188). */
+const BLOCKED_ID = "service-blocked";
+
 interface UrlParts {
   ssl: boolean;
   host: string;
@@ -488,6 +492,26 @@ export function ServiceModal({
   const canTest = host.trim() !== "" && apiKey.trim() !== "" && !testConn.isPending;
   const ready = name.trim() !== "" && host.trim() !== "" && (editing || apiKey.trim() !== "");
 
+  // Which box the submit button is waiting on, and the one sentence saying so. Three fields can
+  // be empty at once but only the FIRST is named: the operator fills it, the next one appears,
+  // and each sentence names a single box rather than reciting a form (#188). Ordered as the boxes
+  // are on screen, so the complaint always points DOWN the form, never back up it.
+  //
+  // The sentence binds to that box, not to the button. A `disabled` button is out of the Tab
+  // order, so a description hung on it is unreachable by the operator it is for -- the same
+  // reasoning as the password row's `errorOwner`, which this mirrors.
+  // The tail names what the button will do, read off the same `editing` the button's own label
+  // is, so the two cannot come to disagree about it (rule 144).
+  const willDo = editing ? "to save" : "to add this service";
+  const missing: { owner: "name" | "host" | "key"; says: string } | null =
+    name.trim() === ""
+      ? { owner: "name", says: `Enter a name ${willDo}.` }
+      : host.trim() === ""
+        ? { owner: "host", says: `Enter a hostname or IP address ${willDo}.` }
+        : !editing && apiKey.trim() === ""
+          ? { owner: "key", says: `Enter an API key ${willDo}.` }
+          : null;
+
   return (
     <ModalShell
       title={
@@ -523,6 +547,7 @@ export function ServiceModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={kind === "tautulli" || kind === "seerr" ? "Main" : "HD"}
+            aria-describedby={missing?.owner === "name" ? BLOCKED_ID : undefined}
           />
         </label>
         <div className="host-row">
@@ -541,6 +566,7 @@ export function ServiceModal({
                 value={host}
                 onChange={(e) => onHostChange(e.target.value)}
                 placeholder="192.168.1.10"
+                aria-describedby={missing?.owner === "host" ? BLOCKED_ID : undefined}
               />
             </span>
           </label>
@@ -605,6 +631,7 @@ export function ServiceModal({
               editing ? "leave blank to keep the current key" : "from the service's settings"
             }
             autoComplete="off"
+            aria-describedby={missing?.owner === "key" ? BLOCKED_ID : undefined}
           />
         </label>
         <label className="field-sm">
@@ -860,6 +887,11 @@ export function ServiceModal({
           <button type="submit" className="primary" disabled={!ready || save.isPending}>
             {save.isPending ? (editing ? "Saving…" : "Adding…") : editing ? "Save" : "Add service"}
           </button>
+          {missing && (
+            <span className="help help-warn" id={BLOCKED_ID}>
+              {missing.says}
+            </span>
+          )}
         </div>
       </form>
     </ModalShell>

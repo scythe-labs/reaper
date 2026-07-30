@@ -48,6 +48,16 @@ const RAMP_OP = "__ramp__";
  *  sentence explaining it are the same string rather than seven that can drift (rule 67). */
 const RAMP_ERROR_ID = "ramp-bounds-error";
 
+/** Why an Add button is off, one id per editor so the three can be on screen together.
+ *
+ *  A `disabled` button is out of the Tab order, so a description hung on the BUTTON is
+ *  unreachable by the operator it is for: the sentence binds to the empty box instead, which is
+ *  both focusable and the thing that fixes it (rule 42). Same shape as `RAMP_ERROR_ID` above and
+ *  the password row's `errorOwner` (#188). */
+const CONDEMN_EMPTY_ID = "condemn-value-empty";
+const HARD_EMPTY_ID = "keep-hard-value-empty";
+const LEAN_EMPTY_ID = "keep-lean-at-empty";
+
 /** Sensible starting ramp per field type, in the field's native units. */
 function rampDefaults(field: VocabField): [number, number] {
   if (field.type === "days") return [365, 1825];
@@ -125,10 +135,15 @@ function SuggestInput({
   field,
   value,
   onChange,
+  describedBy,
 }: {
   field: VocabField;
   value: string;
   onChange: (v: string) => void;
+  /** A sentence about this box, when there is one. Threaded to all three branches below: the
+   *  branch a field takes is not the caller's business, and a prop honored by one of them is a
+   *  message that vanishes on the other two (rule 72). */
+  describedBy?: string | undefined;
 }) {
   const isText = field.type === "text";
   const { data } = useQuery({
@@ -161,6 +176,7 @@ function SuggestInput({
         suffix={field.unit_suffix}
         step={field.type === "rating_tenths" ? 0.1 : 1}
         ariaLabel={`${field.label} value`}
+        describedBy={describedBy}
         onChange={(v) => onChange(String(v))}
       />
     ) : (
@@ -168,6 +184,7 @@ function SuggestInput({
         type="number"
         value={value}
         aria-label={`${field.label} value`}
+        aria-describedby={describedBy}
         onChange={(e) => onChange(e.target.value)}
       />
     );
@@ -194,6 +211,7 @@ function SuggestInput({
         aria-controls={show ? listboxId : undefined}
         aria-activedescendant={show && highlight >= 0 ? optionId(highlight) : undefined}
         aria-label={`${field.label} value`}
+        aria-describedby={describedBy}
         value={value}
         placeholder={field.unit_suffix || "value"}
         onChange={(e) => {
@@ -304,6 +322,11 @@ export function RemoveRulesEditor({
   // 5 years to 1826 days)" -- a rule nobody asked for, on the lane that removes files (B-32).
   // Refuse it beside the boxes instead, and add exactly what was typed.
   const rampBackwards = isRamp && rTo <= rFrom;
+  // The other reason Add is off. A ramp reads its bounds and a yes/no always has an answer, so
+  // only a typed value can be missing. It said nothing before: the button simply did not
+  // respond, on a form whose next step is invisible (#188).
+  const condemnEmpty =
+    !isRamp && field !== undefined && field.type !== "bool" && rValue.trim() === "";
 
   // Re-seed the half-built rule when the operator picks a DIFFERENT field: its comparison,
   // its value and its ramp bounds all belong to the old field and would otherwise be carried
@@ -531,7 +554,12 @@ export function RemoveRulesEditor({
                     ]}
                   />
                 ) : (
-                  <SuggestInput field={field} value={rValue} onChange={setRValue} />
+                  <SuggestInput
+                    field={field}
+                    value={rValue}
+                    onChange={setRValue}
+                    describedBy={condemnEmpty ? CONDEMN_EMPTY_ID : undefined}
+                  />
                 )}
                 {/* One control standard: a number with a fixed unit is a FixedQuantity, never
                     a bare number box beside loose text. "up to" for a ramp, flat for a yes/no,
@@ -548,13 +576,7 @@ export function RemoveRulesEditor({
                     ariaLabel="Points this rule adds"
                   />
                 </label>
-                <button
-                  className="ghost sm"
-                  onClick={add}
-                  disabled={
-                    rampBackwards || (!isRamp && field.type !== "bool" && rValue.trim() === "")
-                  }
-                >
+                <button className="ghost sm" onClick={add} disabled={rampBackwards || condemnEmpty}>
                   Add rule
                 </button>
               </>
@@ -565,6 +587,11 @@ export function RemoveRulesEditor({
             <p className="help help-warn" id={RAMP_ERROR_ID}>
               The second number has to be higher than the first: a rule like this builds up between
               them.
+            </p>
+          )}
+          {condemnEmpty && (
+            <p className="help help-warn" id={CONDEMN_EMPTY_ID}>
+              Enter a value to add this rule.
             </p>
           )}
           {field?.help_text && <p className="help">{field.help_text}</p>}
@@ -620,6 +647,9 @@ export function KeepRulesEditor({
   const [hOp, setHOp] = useState("");
   const [hValue, setHValue] = useState("");
   const hardField = hardFields.find((f) => f.key === hField);
+  // Why Add is off here, the condemn composer's twin (rule 72). A yes/no always has an answer,
+  // so only a typed value can be missing.
+  const hardEmpty = hardField !== undefined && hardField.type !== "bool" && hValue.trim() === "";
   // The keep-rule twin of the re-seed above, and suppressed for the same reason: a new field
   // needs its own comparison and value, and `hardFields` is reallocated every render (H-3).
   useEffect(() => {
@@ -648,6 +678,8 @@ export function KeepRulesEditor({
   const [lAt, setLAt] = useState("");
   const [lDir, setLDir] = useState<"high_keeps" | "low_keeps">("high_keeps");
   const leanField = leanFields.find((f) => f.key === lField);
+  // And the third (rule 72). This one has no yes/no branch: a lean always ramps to a number.
+  const leanEmpty = leanField !== undefined && lAt === "";
   const addLean = () => {
     if (!leanField || lAt === "") return;
     const saturate = Number(coerceValue(leanField, lAt));
@@ -808,16 +840,24 @@ export function KeepRulesEditor({
                         ]}
                       />
                     ) : (
-                      <SuggestInput field={hardField} value={hValue} onChange={setHValue} />
+                      <SuggestInput
+                        field={hardField}
+                        value={hValue}
+                        onChange={setHValue}
+                        describedBy={hardEmpty ? HARD_EMPTY_ID : undefined}
+                      />
                     )}
-                    <button
-                      className="ghost sm"
-                      onClick={addHard}
-                      disabled={hardField.type !== "bool" && hValue.trim() === ""}
-                    >
+                    <button className="ghost sm" onClick={addHard} disabled={hardEmpty}>
                       Add rule
                     </button>
                   </>
+                )}
+                {/* Beside the box that fixes it (rule 42), and bound to it: a disabled button
+                    is out of the Tab order, so the sentence has to live on the box. */}
+                {hardEmpty && (
+                  <p className="help help-warn" id={HARD_EMPTY_ID}>
+                    Enter a value to add this rule.
+                  </p>
                 )}
                 {hardField?.help_text && <p className="help">{hardField.help_text}</p>}
               </div>
@@ -856,6 +896,7 @@ export function KeepRulesEditor({
                         suffix={leanField.unit_suffix}
                         step={leanField.type === "rating_tenths" ? 0.1 : 1}
                         ariaLabel="Full effect at"
+                        describedBy={leanEmpty ? LEAN_EMPTY_ID : undefined}
                         onChange={(v) => setLAt(String(v))}
                       />
                     ) : (
@@ -863,6 +904,7 @@ export function KeepRulesEditor({
                         type="number"
                         value={lAt}
                         aria-label="Full effect at"
+                        aria-describedby={leanEmpty ? LEAN_EMPTY_ID : undefined}
                         onChange={(e) => setLAt(e.target.value)}
                       />
                     )}
@@ -880,10 +922,16 @@ export function KeepRulesEditor({
                         ariaLabel="Points this rule takes off"
                       />
                     </label>
-                    <button className="ghost sm" onClick={addLean} disabled={lAt === ""}>
+                    <button className="ghost sm" onClick={addLean} disabled={leanEmpty}>
                       Add rule
                     </button>
                   </>
+                )}
+                {/* And the third (rule 72). */}
+                {leanEmpty && (
+                  <p className="help help-warn" id={LEAN_EMPTY_ID}>
+                    Enter a number to add this rule.
+                  </p>
                 )}
                 {leanField?.help_text && <p className="help">{leanField.help_text}</p>}
               </div>

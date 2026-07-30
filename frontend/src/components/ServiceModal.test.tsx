@@ -614,3 +614,88 @@ describe("what the connection badge vouches for", () => {
     expect(apiMock.testInstance).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("why 'Add service' will not act", () => {
+  // The submit button was `disabled` on a three-field conjunction with nothing on the page naming
+  // any of them: the operator pressed it, nothing happened, and the form did not say what it was
+  // waiting for. Not a screen-reader gap -- there was no copy for a sighted operator either
+  // (#188).
+  //
+  // The sentence binds to the BOX, not to the button, and that is the whole design: a `disabled`
+  // button is out of the Tab order, so a description hung on it can never be reached by the
+  // operator it is for.
+  const submit = () => screen.getByRole("button", { name: "Add service" });
+  const blocked = () => document.querySelector("#service-blocked");
+
+  function renderAdd() {
+    apiMock.instanceRootFolders.mockResolvedValue([]);
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    const queryClient = testQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    return userEvent.setup();
+  }
+
+  it("names each empty box in turn, and lets go once the form is fillable", async () => {
+    // Every arm of the chain driven, in the order the boxes are on screen, because the chain
+    // shows only the FIRST and a later arm is otherwise never reached (rule 145). The button
+    // stays off for all three and turns on exactly when the sentence goes.
+    const user = renderAdd();
+    expect(submit()).toBeDisabled();
+    expect(blocked()!.textContent).toBe("Enter a name to add this service.");
+
+    await user.type(screen.getByLabelText("Name"), "HD");
+    expect(submit()).toBeDisabled();
+    expect(blocked()!.textContent).toBe("Enter a hostname or IP address to add this service.");
+
+    await user.type(screen.getByLabelText(/Hostname or IP/), "10.0.0.5");
+    expect(submit()).toBeDisabled();
+    expect(blocked()!.textContent).toBe("Enter an API key to add this service.");
+
+    await user.type(screen.getByLabelText(/^API key$/), "k");
+    expect(submit()).toBeEnabled();
+    expect(blocked()).toBeNull();
+  });
+
+  it("points the box that is empty at the sentence about it, and no other box", async () => {
+    // The reason this is a separate assertion from the text: one region carries three different
+    // complaints, so a box describing itself with the wrong one reads the sentence about a
+    // DIFFERENT field out as its own problem -- the bug `errorOwner` was written for in the
+    // password row (#174), reached here by the same shape.
+    const user = renderAdd();
+    const name = screen.getByLabelText("Name");
+    const host = screen.getByLabelText(/Hostname or IP/);
+    const key = screen.getByLabelText(/^API key$/);
+
+    expect(name).toHaveAccessibleDescription("Enter a name to add this service.");
+    expect(host).toHaveAccessibleDescription("");
+    expect(key).toHaveAccessibleDescription("");
+
+    await user.type(name, "HD");
+
+    expect(name).toHaveAccessibleDescription("");
+    expect(host).toHaveAccessibleDescription("Enter a hostname or IP address to add this service.");
+    expect(key).toHaveAccessibleDescription("");
+  });
+
+  it("says 'to save' on an existing service, matching what its button does", async () => {
+    // The tail is read off the same `editing` the button's label is (rule 144). An edit form
+    // needs no API key, so clearing the NAME is the only way to block it -- and the arm that
+    // names the key must stay unreachable here.
+    const user = userEvent.setup();
+    renderModal(sonarr(), []);
+    await user.clear(screen.getByLabelText("Name"));
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(document.querySelector("#service-blocked")!.textContent).toBe("Enter a name to save.");
+  });
+
+  it("has no accessibility violations while it is refusing", async () => {
+    renderAdd();
+    expect(blocked()).not.toBeNull();
+    await expectNoA11yViolations();
+  });
+});

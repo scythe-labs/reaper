@@ -128,8 +128,16 @@ describe("the admin password form", () => {
 
     // Matching, long enough, but the current password is still blank.
     expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
+    // ...and the form says so. This was the one refusal of the three with no arm in `errorNode`:
+    // Save went gray and nothing on the page named the box it was waiting on (#188). Bound to
+    // that box, because a `disabled` button is out of the Tab order.
+    const currentBox = screen.getByLabelText(/current password/i);
+    // Regex, because `Notice tone="error"` prefixes its text with a visually-hidden "Problem:"
+    // that belongs to the notice rather than to this sentence.
+    expect(currentBox).toHaveAccessibleDescription(/enter the current password to save\./i);
 
-    await person.type(screen.getByLabelText(/current password/i), "whatever-it-is");
+    await person.type(currentBox, "whatever-it-is");
+    expect(currentBox).toHaveAccessibleDescription("");
     const save = screen.getByRole("button", { name: /^save$/i });
     expect(save).toBeEnabled();
     await person.click(save);
@@ -138,6 +146,45 @@ describe("the admin password form", () => {
       "a-long-enough-password",
       "whatever-it-is",
     );
+  });
+
+  it("says nothing about the current password on a form nobody has touched", async () => {
+    // The complaint is gated on a new password having been typed, like the two above are gated on
+    // their own box. An empty current password is the state this form OPENS in, so an ungated
+    // sentence would greet the operator with a failure where there is only a next step.
+    apiMock.safety.mockResolvedValue({ has_password: true });
+    renderPanel();
+
+    const currentBox = await screen.findByLabelText(/current password/i);
+    expect(currentBox).toHaveAccessibleDescription("");
+    expect(screen.queryByText(/enter the current password/i)).not.toBeInTheDocument();
+    // Off, but for a reason further down the form the operator has not reached yet.
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
+  });
+
+  it("keeps the complaint the operator can act on when three could fire at once", async () => {
+    // One region, now four possible messages, so the order it picks them in is the behavior.
+    // A short new password and a blank current password hold together; the length complaint is
+    // the one about the box being typed in, so it wins and the current box stays quiet -- the
+    // same discipline `errorOwner` was written for (#174), driven through the arm added by #188.
+    apiMock.safety.mockResolvedValue({ has_password: true });
+    const person = renderPanel();
+
+    const next = await screen.findByLabelText(/^new password$/i);
+    const currentBox = screen.getByLabelText(/current password/i);
+    await person.type(next, "short");
+
+    expect(next).toHaveAccessibleDescription(/use at least 12 characters/i);
+    expect(currentBox).toHaveAccessibleDescription("");
+
+    // Long enough and confirmed: the only thing left is the current password, so it speaks now.
+    await person.type(next, "-but-now-long-enough");
+    await person.type(screen.getByLabelText(/confirm new password/i), "short-but-now-long-enough");
+
+    expect(next).toHaveAccessibleDescription("");
+    // Regex, because `Notice tone="error"` prefixes its text with a visually-hidden "Problem:"
+    // that belongs to the notice rather than to this sentence.
+    expect(currentBox).toHaveAccessibleDescription(/enter the current password to save\./i);
   });
 });
 
