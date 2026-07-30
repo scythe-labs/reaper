@@ -736,17 +736,42 @@ function Dashboard({ user }: { user: AuthUser }) {
     changeView("settings");
   };
 
-  // Scales lists titles without saying why each one is where it is. Opening one lands on its
-  // reasoning, which lives on the review screen beside the queue -- an item on its own card,
-  // a whole show on its group panel.
-  const goToItemReasons = (candidateId: number) => {
-    setSelected({ kind: "item", id: candidateId });
-    changeView("review");
+  // Open one item's reasoning, on the lane it lives in. The reasoning lives on the review
+  // screen beside the queue -- an item on its own card, a whole show on its group panel.
+  //
+  // That queue is ONE lane of three, so the jump carries the lane and lands on it. Opening a
+  // "Left to decide" title from Scales while the queue sat on Condemned used to leave its panel
+  // open above a list the title is not in: there was no card to find, and the two affordances
+  // that would have led back to it -- the scroll to the open card, and the j/k step through the
+  // list -- both quietly do nothing when the open item is off-lane, so the operator was left to
+  // hunt for it by hand.
+  //
+  // The CALLER names the lane; this never re-derives it. Only the caller knows which lane it
+  // means: a show sits in every lane one of its seasons does, so there is no single answer to
+  // derive for a group, while Scales means the lane of the seasons that person asked for.
+  // `reviewFate.laneOf` answers it for one item, and Scales sends the same override-aware lane
+  // the queue filters on (rule 77).
+  //
+  // One Back step for the whole jump, restoring the view AND the lane together. The lane is not
+  // a place the operator visited on its own, so recording it separately would spend a Back press
+  // landing them on a list they never saw.
+  const openReasons = (next: NonNullable<Selection>, lane: Verdict) => {
+    // `view` and `verdict` are this render's values, so the undo closes over where the operator
+    // was, exactly as changeView's does.
+    if (view !== "review" || lane !== verdict) {
+      pushNav(() => {
+        setView(view);
+        setVerdict(verdict);
+      });
+    }
+    setVerdict(lane);
+    setSelected(next);
+    setView("review");
   };
-  const goToGroupReasons = (key: string) => {
-    setSelected({ kind: "group", key });
-    changeView("review");
-  };
+  const goToItemReasons = (candidateId: number, lane: Verdict) =>
+    openReasons({ kind: "item", id: candidateId }, lane);
+  const goToGroupReasons = (key: string, lane: Verdict) =>
+    openReasons({ kind: "group", key }, lane);
 
   const selectedId = selected?.kind === "item" ? selected.id : null;
   const selectedGroupKey = selected?.kind === "group" ? selected.key : null;
@@ -946,6 +971,8 @@ function Dashboard({ user }: { user: AuthUser }) {
                 onVerdictChange={changeVerdict}
                 selectedId={selectedId}
                 selectedGroupKey={selectedGroupKey}
+                // No lane to carry on these two (unlike the jumps above): the row was picked
+                // out of the lane's own list, so it is already on the lane behind the panel.
                 onSelect={(id) => setSelected({ kind: "item", id })}
                 onSelectGroup={(key) => setSelected({ kind: "group", key })}
                 // Show latest closes an open why-panel: its candidate id belongs to the OLD
@@ -964,6 +991,9 @@ function Dashboard({ user }: { user: AuthUser }) {
                   <WhyPanel
                     item={detail}
                     onClose={() => setSelected(null)}
+                    // Also no lane: a show is listed on every lane one of its seasons is on,
+                    // and the season this panel is open on is on the current one, so its show
+                    // is already in the list behind.
                     onShowGroup={(key) => setSelected({ kind: "group", key })}
                   />
                 ) : (
@@ -973,7 +1003,11 @@ function Dashboard({ user }: { user: AuthUser }) {
                 (groupDetail ? (
                   <ShowPanel
                     group={groupDetail}
-                    onOpenSeason={(id) => setSelected({ kind: "item", id })}
+                    // This one DOES carry a lane: the panel lists every season the show has,
+                    // whatever Reaper decided, so the season picked here is regularly not on
+                    // the lane the queue behind it is showing (rule 72 -- the same jump as
+                    // Scales', reached from inside Review).
+                    onOpenSeason={goToItemReasons}
                     onClose={() => setSelected(null)}
                   />
                 ) : (

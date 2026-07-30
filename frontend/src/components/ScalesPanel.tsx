@@ -9,7 +9,7 @@
 // its real card in Review, exactly like the old reclaimable chips did.
 
 import { useId, useState } from "react";
-import type { PersonDetail, PersonTitle, QuotaLine } from "../api";
+import type { PersonDetail, PersonTitle, QuotaLine, Verdict } from "../api";
 import { bytes, count, date, itemBytes } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
@@ -216,8 +216,8 @@ export function ScalesPanel({
 }: {
   detail: PersonDetail;
   onClose: () => void;
-  onOpenItem: (candidateId: number) => void;
-  onOpenGroup: (key: string) => void;
+  onOpenItem: (candidateId: number, lane: Verdict) => void;
+  onOpenGroup: (key: string, lane: Verdict) => void;
 }) {
   const headingId = useId();
   const granted = detail.gb_granted_bytes;
@@ -240,9 +240,15 @@ export function ScalesPanel({
       : 0;
   const hasReclaim = detail.reclaimable_items > 0;
 
+  // The lane travels with the jump. Review's queue is one lane of three, and this row already
+  // knows which one the title is in -- it is the fate printed beside it, and the server derives
+  // it the same override-aware way the queue filters (rule 77). Sending only the id landed the
+  // panel over whichever lane the operator happened to leave the queue on, so a "Left to decide"
+  // title opened its reasoning above a Condemned list it is not in, with nothing on screen
+  // saying where to find it.
   const opener = (t: PersonTitle): (() => void) | null => {
-    if (t.item_id != null) return () => onOpenItem(t.item_id as number);
-    if (t.group_key != null) return () => onOpenGroup(t.group_key as string);
+    if (t.item_id != null) return () => onOpenItem(t.item_id as number, t.verdict);
+    if (t.group_key != null) return () => onOpenGroup(t.group_key as string, t.verdict);
     return null;
   };
 

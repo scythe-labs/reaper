@@ -23,7 +23,14 @@ import {
   WhyPanelFallback,
 } from "./App";
 import { announce, Announcer } from "./announce";
-import { ApiError, type AuthUser, type Safety, type Snapshot } from "./api";
+import {
+  ApiError,
+  type AuthUser,
+  type FairnessReport,
+  type PersonDetail,
+  type Safety,
+  type Snapshot,
+} from "./api";
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -41,6 +48,8 @@ const { apiMock } = vi.hoisted(() => ({
     general: vi.fn(),
     profile: vi.fn(),
     reapBreakdown: vi.fn(),
+    person: vi.fn(),
+    candidate: vi.fn(),
   },
 }));
 
@@ -519,5 +528,112 @@ describe("the authenticated app's heading outline", () => {
     mountTheShell();
     await screen.findByRole("heading", { level: 1, name: "Reaper" });
     await expectNoA11yViolations(document.body, { pageLevel: true });
+  });
+
+  const GB = 1024 ** 3;
+  const HORIZON = "2018-01-11T00:00:00+00:00";
+
+  /** One requester on the board, so Scales has a card to open. */
+  const scalesReport: FairnessReport = {
+    total_requests: 52,
+    total_reclaimable_bytes: 0,
+    total_reclaimable_items: 0,
+    not_in_scan: 0,
+    unmatched: [],
+    no_snapshot: false,
+    horizon_at: HORIZON,
+    rows: [
+      {
+        identity: "plex:7",
+        plex_id: 7,
+        name: "marlow",
+        requests_made: 52,
+        gb_granted_bytes: 549 * GB,
+        played_by_them: 30,
+        reclaimable_items: 0,
+        reclaimable_bytes: 0,
+      },
+    ],
+  };
+
+  /** Their one title, and the fact the whole test turns on: it is on the ABSTAIN lane, which is
+   *  deliberately not the lane the queue opens on. A `condemn` here would agree with the default
+   *  tab, so a lane that never travelled would be indistinguishable from one that did (rule 141). */
+  const personDetail: PersonDetail = {
+    plex_id: 7,
+    name: "marlow",
+    seerr_total: 52,
+    requests_in_scan: 1,
+    gb_granted_bytes: 6 * GB,
+    played_by_them: 0,
+    reclaimable_items: 0,
+    reclaimable_bytes: 0,
+    not_in_scan: 0,
+    quota: null,
+    titles: [
+      {
+        title: "Nightferry",
+        year: 2021,
+        media_type: "movie",
+        is_4k: false,
+        size_bytes: 6 * GB,
+        requested_at: null,
+        available_at: null,
+        watched_by_them: 0,
+        verdict: "abstain",
+        item_id: 101,
+        group_key: null,
+        co_requesters: [],
+        poster_url: null,
+      },
+    ],
+    unmatched: [],
+    horizon_at: HORIZON,
+    profile_url: null,
+  };
+
+  // The whole point of opening a title from Scales is to see it in Review -- and the queue there
+  // is one lane of three. Landing on whichever lane the operator last used put the title's panel
+  // above a list the title is not in, so the card they came to see was simply absent, and the two
+  // ways back to it (the scroll to the open card, the j/k step) both no-op off-lane. Driven
+  // through the real shell rather than the callback, because the lane, the selection and the view
+  // are three pieces of state set together and only the assembled app proves they agree.
+  it("lands a Scales title on the lane it lives in, not the one the queue was left on", async () => {
+    const person = userEvent.setup();
+    mountTheShell();
+    // Set after the mount, which is safe and deliberate: all three of these reads are gated on
+    // state the operator has not reached yet (`enabled: view === "fairness"`, `scalesUser !== null`,
+    // `selectedId !== null`), so none of them has fired against the shell's own stubs.
+    apiMock.fairness.mockResolvedValue(scalesReport);
+    apiMock.person.mockResolvedValue(personDetail);
+    // The panel's CONTENTS are WhyPanel's business and need a whole detail fixture to render;
+    // this test is about the list behind it, so the read is deliberately failed and the panel
+    // shows its fallback. Answered rather than left out, so rule 135's gate still means something.
+    apiMock.candidate.mockRejectedValue(new ApiError(503, "not this test's subject"));
+
+    // Where the operator starts: the queue's default lane, which is the one the title is NOT on.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Condemned" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+
+    await person.click(screen.getByRole("button", { name: "Scales" }));
+    await person.click(await screen.findByRole("button", { name: /marlow/i }));
+    await person.click(await screen.findByRole("button", { name: /Nightferry/i }));
+
+    // Review, on Limbo -- stated by the tab, and asked of the server, which is what actually
+    // decides the rows: the lane is a server-side filter, so a tab that merely looked right
+    // over a Condemned page would be the same bug wearing the right label.
+    expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("button", { name: "Limbo" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Condemned" })).not.toHaveAttribute("aria-current");
+    // Read the lane out of the call the queue actually made, rather than matching a whole
+    // argument list whose paging tail this test has no opinion about (rule 141).
+    await waitFor(() => expect(apiMock.candidates.mock.calls.at(-1)?.[0]).toBe("abstain"));
   });
 });

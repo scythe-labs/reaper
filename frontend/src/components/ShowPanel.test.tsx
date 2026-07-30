@@ -6,6 +6,7 @@
 //   - the decision acts on the show's group key, and a failed save says so.
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Group, Links, Verdict } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -94,11 +95,11 @@ function group(seasons: Candidate[]): Group {
   };
 }
 
-function renderPanel(g: Group) {
+function renderPanel(g: Group, onOpenSeason: (id: number, lane: Verdict) => void = () => {}) {
   const queryClient = seedSettings(testQueryClient());
   return render(
     <QueryClientProvider client={queryClient}>
-      <ShowPanel group={g} onOpenSeason={() => {}} onClose={() => {}} />
+      <ShowPanel group={g} onOpenSeason={onOpenSeason} onClose={() => {}} />
     </QueryClientProvider>,
   );
 }
@@ -133,7 +134,6 @@ describe("the show panel's whole-show buttons", () => {
   });
 
   it("reaps the whole show through its group key", async () => {
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     apiMock.override.mockResolvedValue(undefined);
     renderPanel(group([season(1, "condemn"), season(2, "protect")]));
@@ -146,13 +146,54 @@ describe("the show panel's whole-show buttons", () => {
   });
 
   it("says so when the save fails", async () => {
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     apiMock.override.mockRejectedValue(new Error("boom"));
     renderPanel(group([season(1, "condemn"), season(2, "protect")]));
 
     await user.click(screen.getByRole("button", { name: "Spare" }));
     expect(await screen.findByText("Couldn't save that. Try again.")).toBeInTheDocument();
+  });
+});
+
+// Opening a season from here crosses lanes as often as not: this list carries every season the
+// show has, whatever Reaper decided, while the queue behind the panel is showing one of the three.
+// So the row hands over the lane the season is really in, and the caller lands the operator on it.
+// A raw `season.verdict` read is a different answer the moment a hand decision is on the season,
+// and getting it wrong reopens the bug this closes -- a panel open above a list its subject is not
+// in, with no card to scroll to and no j/k step that reaches it.
+describe("the show panel's jump into a season", () => {
+  // Written from what each state MEANS for the file (rule 119), not from laneOf's branches. The
+  // last three are the cases a raw verdict read gets wrong, and they miss in BOTH directions:
+  // two say "condemned" over a file that is kept, one says "left to decide" over one that is not.
+  const cases: { what: string; row: Candidate; lane: Verdict }[] = [
+    {
+      what: "an untouched season stays on the lane the scan put it on",
+      row: season(1, "abstain"),
+      lane: "abstain",
+    },
+    {
+      what: "a spared season is with the kept ones, whatever the scan said",
+      row: season(2, "condemn", { override: "spare" }),
+      lane: "protect",
+    },
+    {
+      what: "a hand reap the engine honors is with the condemned",
+      row: season(3, "abstain", { override: "reap", override_effective: true }),
+      lane: "condemn",
+    },
+    {
+      what: "a hand reap the engine will not honor yet is still kept",
+      row: season(4, "abstain", { override: "reap", override_effective: false }),
+      lane: "protect",
+    },
+  ];
+
+  it.each(cases)("$what", async ({ row, lane }) => {
+    const onOpenSeason = vi.fn();
+    renderPanel(group([row]), onOpenSeason);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Season \d/ }));
+    expect(onOpenSeason).toHaveBeenCalledWith(row.id, lane);
   });
 });
 

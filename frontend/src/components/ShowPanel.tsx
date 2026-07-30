@@ -9,11 +9,11 @@
 // hands off to that season's complete reasoning.
 
 import { useId } from "react";
-import type { Candidate, Group } from "../api";
+import type { Candidate, Group, Verdict } from "../api";
 import { itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
-import { handFate, showReapIsNoop } from "./reviewFate";
+import { handFate, laneOf, showReapIsNoop } from "./reviewFate";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, MatchCandidates, Synopsis, WhyHero } from "./WhyPanel";
 import { WhyShell } from "./WhyShell";
@@ -44,7 +44,10 @@ export function ShowPanel({
   onClose,
 }: {
   group: Group;
-  onOpenSeason: (id: number) => void;
+  /** Opens that season's own reasoning, on the lane it is in. This list spans every lane
+   *  (see the blurb over it), so the season the operator picks is often not on the lane the
+   *  queue behind this panel is showing, and `laneOf` is what says which one it is. */
+  onOpenSeason: (id: number, lane: Verdict) => void;
   onClose: () => void;
 }) {
   const seasonLabel = group.seasons.length === 1 ? "1 season" : `${group.seasons.length} seasons`;
@@ -124,7 +127,7 @@ export function ShowPanel({
               <button
                 type="button"
                 className="panel-season"
-                onClick={() => onOpenSeason(season.id)}
+                onClick={() => onOpenSeason(season.id, laneOf(season))}
               >
                 <span className={`score score-${handFate(season)}`}>{season.score}</span>
                 {/* Two of these three branches are labels the panel composes, short enough that

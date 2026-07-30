@@ -913,8 +913,13 @@ export interface PersonTitle {
   requested_at: string | null;
   available_at: string | null;
   watched_by_them: number;
-  /** `condemn` (reclaimable), `protect` (kept), or `abstain` (left to decide). */
-  verdict: string;
+  /** `condemn` (reclaimable), `protect` (kept), or `abstain` (left to decide).
+   *
+   *  Already override-aware (rule 77), so this is the lane the review queue would file the
+   *  title under, not just what the scan first said -- which is what lets the row open it on
+   *  the tab it lives on. Typed as the `Verdict` union rather than a bare string for the same
+   *  reason `Candidate.verdict` is: a jump routes on it. */
+  verdict: Verdict;
   /** Exactly one of `item_id` / `group_key` is set: a movie or lone season opens its own
    *  card, a show its group. */
   item_id: number | null;

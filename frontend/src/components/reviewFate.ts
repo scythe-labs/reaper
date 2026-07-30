@@ -68,6 +68,35 @@ export function handFate(item: {
   return item.verdict;
 }
 
+/** Which of the queue's three lanes an item is actually in -- the one answer to "where would I
+ *  find this in the list".
+ *
+ *  `handFate` collapsed to the three stored verdicts, which is precisely what the server's tab
+ *  filter does: `condemned.effective_verdict` calls itself the backend twin of `handFate`
+ *  "collapsed to the three stored lanes", and the queue's lane query routes through it. So a
+ *  hand spare -- and a hand reap the engine will not honor yet -- KEEP the file and read as
+ *  Sanctuary however the scan first judged it; an honored hand reap reads as Condemned; an
+ *  untouched item keeps its scan verdict. The two must stay collapsed the same way or a jump
+ *  lands the operator on a lane the item is not in, which is the failure this answers.
+ *
+ *  It speaks for ONE item. A show is in every lane one of its seasons is in, so a caller opening
+ *  a whole group names the lane it means rather than asking this. */
+export function laneOf(item: {
+  verdict: Verdict;
+  override: Override | null;
+  override_effective: boolean | null;
+  /** Passed through to `handFate`. Both spare states land on the same lane -- an expired spare
+   *  is still a spare until a scan purges it, and the server reads the whitelist row the same
+   *  way -- so this changes no answer here; it is declared so a caller cannot quietly hand over
+   *  a candidate whose expiry the type dropped on the floor. */
+  spare_covers_until?: string | null;
+}): Verdict {
+  const fate = handFate(item);
+  if (fate === "spare" || fate === "spare-expired" || fate === "refused") return "protect";
+  if (fate === "reap") return "condemn";
+  return fate;
+}
+
 /** Whether the row a card leads with is on the block. One expression for both card
  *  shapes: a show card reads its first (highest-scoring) season, a movie card reads
  *  itself, and neither may drift into asking the question a different way. */
@@ -77,11 +106,13 @@ export function isCondemned(item: {
   override_effective: boolean | null;
 }): boolean {
   // The item's EFFECTIVE fate (will it be removed), not its raw (now pure-policy) verdict: a hand
-  // spare and a held hand reap keep it, a honored hand reap condemns it. Routed through handFate so
-  // this and the colors can't disagree (rule 49). Drives the card's condemned styling and the
-  // which-tab proxy -- NOT hideReap, which asks a different question (see reapIsNoop).
-  const fate = handFate(item);
-  return fate === "condemn" || fate === "reap";
+  // spare and a held hand reap keep it, a honored hand reap condemns it. Asked as "is its lane the
+  // condemned one", so the card's styling and the tab it can be found on are one fact and not two
+  // that can drift -- this was the "which-tab proxy" in its own right, beside a laneOf that
+  // answered the same question a second way. Reaches handFate through laneOf, so it still cannot
+  // disagree with the colors (rule 49). NOT hideReap, which asks a different question (see
+  // reapIsNoop).
+  return laneOf(item) === "condemn";
 }
 
 /** Whether a hand Reap on this row would change nothing, so its Reap control is dropped (rule 48).

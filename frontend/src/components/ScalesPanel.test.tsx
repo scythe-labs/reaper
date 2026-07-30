@@ -158,27 +158,37 @@ describe("ScalesPanel", () => {
     expect(screen.queryByText(/per 1 days/)).not.toBeInTheDocument();
   });
 
-  it("opens a movie by its item id from its row", async () => {
+  // Both of these send the LANE alongside the id, and both send one that is not the queue's
+  // default -- a row carrying "condemn" would agree with the tab the queue already opens on, so
+  // it could not tell a lane that travelled from one that was never sent. Two different lanes
+  // across the pair, so a caller passing a constant fails one of them (rule 141).
+  it("opens a movie by its item id, on the lane that movie is in", async () => {
     const onOpenItem = vi.fn();
     render(
       <ScalesPanel
-        detail={detail()}
+        detail={detail({ titles: [title({ verdict: "abstain" })] })}
         onClose={vi.fn()}
         onOpenItem={onOpenItem}
         onOpenGroup={vi.fn()}
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: /The Long Shoreline/i }));
-    expect(onOpenItem).toHaveBeenCalledWith(101);
+    expect(onOpenItem).toHaveBeenCalledWith(101, "abstain");
   });
 
-  it("opens a show by its group key, not one season", async () => {
+  it("opens a show by its group key, not one season, on the lane the show is in", async () => {
     const onOpenGroup = vi.fn();
     render(
       <ScalesPanel
         detail={detail({
           titles: [
-            title({ title: "A Show", media_type: "season", item_id: null, group_key: "tv:7" }),
+            title({
+              title: "A Show",
+              media_type: "season",
+              item_id: null,
+              group_key: "tv:7",
+              verdict: "protect",
+            }),
           ],
         })}
         onClose={vi.fn()}
@@ -187,7 +197,7 @@ describe("ScalesPanel", () => {
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: /A Show/i }));
-    expect(onOpenGroup).toHaveBeenCalledWith("tv:7");
+    expect(onOpenGroup).toHaveBeenCalledWith("tv:7", "protect");
   });
 
   it("shows a title's fate and whether they watched it", () => {
