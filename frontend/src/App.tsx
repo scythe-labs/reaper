@@ -930,7 +930,13 @@ function Dashboard({ user }: { user: AuthUser }) {
                 so heading navigation (H, 1) had no top-level landing point at all. `Login.tsx`
                 already promoted the same class this way and the pattern was not carried into
                 the shell (#177). No level is skipped anywhere below it -- this was a missing
-                root, not a broken outline. */}
+                root, not a broken outline.
+                "Only" is a claim about the whole authenticated tree, and it was false the day
+                it was written: the docs pane rendered its title as a second `h1`, so opening
+                Help put two on the page. That is why it is `h3` there now, under the `h2`
+                `ModalShell` gives the dialog (rule 7/24 -- a comment naming a property is
+                checked, not assumed). `SetupWizard` and `Login` keep their own `h1` because
+                each REPLACES this shell rather than rendering inside it. */}
             <h1 className="brand-word">Reaper</h1>
             <span className="muted brand-sub">Grave decisions, clearly explained</span>
           </div>

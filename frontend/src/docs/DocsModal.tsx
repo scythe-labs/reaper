@@ -123,7 +123,14 @@ export function DocsModal({
         >
           <article>
             <p className="doc-kicker">{doc.group}</p>
-            <h1>{doc.title}</h1>
+            {/* `h3`, under the `h2` `ModalShell` gives every dialog its title. This was an `h1`,
+                which made the docs the second `h1` on an authenticated page -- the masthead
+                grew the first one in this same issue -- and inverted the outline inside the
+                dialog, an `h2` containing an `h1`. axe catches neither: `heading-order` only
+                flags skips going DOWN, and `page-has-heading-one` was already satisfied by the
+                masthead. `DocBody`'s sections follow at `h4`/`h5` so the article nests under
+                this rather than climbing back over the dialog's own title (#177). */}
+            <h3>{doc.title}</h3>
             <p className="doc-summary">{doc.summary}</p>
             <DocBody blocks={doc.body} />
           </article>

@@ -44,7 +44,7 @@ describe("registry", () => {
     expect(policy).toBeDefined();
     const sections = docSections(policy!);
     expect(sections.map((s) => s.id)).toContain("in-a-policy");
-    // Subsection headings (h3) carry ids for deep links but are not jump targets.
+    // Subsection headings (h5) carry ids for deep links but are not jump targets.
     expect(sections.map((s) => s.id)).not.toContain("protections");
     expect(sections.map((s) => s.id)).not.toContain("starting-point");
   });
@@ -115,7 +115,7 @@ describe("DocsModal", () => {
         onNavigate={() => {}}
       />,
     );
-    await screen.findByRole("heading", { level: 1, name: "Understanding policy" });
+    await screen.findByRole("heading", { level: 3, name: "Understanding policy" });
     await expectNoA11yViolations(container);
   });
 
@@ -130,12 +130,51 @@ describe("DocsModal", () => {
       />,
     );
     expect(
-      screen.getByRole("heading", { level: 1, name: "Understanding policy" }),
+      screen.getByRole("heading", { level: 3, name: "Understanding policy" }),
     ).toBeInTheDocument();
     // The index lists other docs too.
     expect(screen.getByRole("button", { name: /Tuning cheat sheet/ })).toBeInTheDocument();
     // The active doc's top-level sections appear as jump buttons.
     expect(screen.getByRole("button", { name: "What's in a policy" })).toBeInTheDocument();
+  });
+
+  it("nests its headings under the dialog's own title, and adds no second h1", () => {
+    // The pane used to open at `h1`. The app's masthead grew an `h1` of its own in this same
+    // issue, so opening Help put two on an authenticated page, and inside the dialog an `h2`
+    // (ModalShell's title) contained an `h1` -- an outline that runs backwards on the pages an
+    // operator reads to find out what Reaper will do before letting it delete anything.
+    //
+    // Neither half is reachable by the axe audit above, which is why this is spelled out
+    // (rule 118): `heading-order` flags a level SKIPPED going down and says nothing about one
+    // that climbs, and `page-has-heading-one` was already satisfied by the masthead. So the
+    // audit stayed green through both.
+    render(
+      <DocsModal
+        docId="understanding-policy"
+        anchor={undefined}
+        nonce={1}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    // The dialog names itself at h2, the doc hangs off it at h3, and the doc's own sections
+    // below that -- so a section reads as part of the doc rather than as a sibling of the
+    // whole dialog.
+    expect(screen.getByRole("heading", { level: 2, name: /help & docs/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 3, name: "Understanding policy" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 4 }).length).toBeGreaterThan(0);
+    // No level between the doc title and its sections is skipped either.
+    const levels = screen
+      .getAllByRole("heading")
+      .map((h) => Number(h.tagName.slice(1)))
+      .sort((a, b) => a - b);
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i]! - levels[i - 1]!).toBeLessThanOrEqual(1);
+    }
   });
 
   it("falls back to the first doc for an unknown id", () => {
@@ -148,7 +187,7 @@ describe("DocsModal", () => {
         onNavigate={() => {}}
       />,
     );
-    expect(screen.getByRole("heading", { level: 1, name: DOCS[0]!.title })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: DOCS[0]!.title })).toBeInTheDocument();
   });
 });
 
@@ -171,7 +210,7 @@ describe("useDocs / DocsProvider", () => {
     );
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { level: 1, name: "Turning deletion on" }),
+      screen.getByRole("heading", { level: 3, name: "Turning deletion on" }),
     ).toBeInTheDocument();
   });
 

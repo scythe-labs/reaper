@@ -190,7 +190,10 @@
   text-transform: uppercase;
   color: var(--accent-text);
 }
-.docs-content h1 {
+/* The doc title, its sections and its subsections. The tags are h3/h4/h5 rather than h1/h2/h3
+ * because the pane sits inside a dialog whose own title is an h2 (see DocsModal); the sizes
+ * below are unchanged, so this is an outline fix and not a visual one. */
+.docs-content h3 {
   margin: 0 0 0.4rem;
   font-size: 1.6rem;
   line-height: 1.1;
@@ -203,7 +206,7 @@
   color: var(--muted);
   font-size: 1.02rem;
 }
-.docs-content h2 {
+.docs-content h4 {
   margin: 1.9rem 0 0.5rem;
   font-size: 1.16rem;
   font-weight: 640;
@@ -212,7 +215,7 @@
   border-bottom: 1px solid var(--border);
   scroll-margin-top: 0.5rem;
 }
-.docs-content h3 {
+.docs-content h5 {
   margin: 1.4rem 0 0.35rem;
   font-size: 1rem;
   font-weight: 620;

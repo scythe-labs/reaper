@@ -141,14 +141,19 @@ function DocDiagram({ block }: { block: DiagramBlock }) {
 function renderBlock(b: Block, key: number): ReactNode {
   switch (b.kind) {
     case "h":
+      // `h4`/`h5`, not `h2`/`h3`: the article hangs off the doc title `DocsModal` renders at
+      // `h3`, which itself sits under the `h2` `ModalShell` titles every dialog with. At the
+      // old levels a section of a doc read as a SIBLING of the whole dialog rather than as
+      // part of the doc it is in (#177). The `sub` flag, not the tag, is what decides a jump
+      // target, so the index is unaffected.
       return b.sub ? (
-        <h3 key={key} id={b.id}>
+        <h5 key={key} id={b.id}>
           {b.text}
-        </h3>
+        </h5>
       ) : (
-        <h2 key={key} id={b.id}>
+        <h4 key={key} id={b.id}>
           {b.text}
-        </h2>
+        </h4>
       );
     case "p":
       return <p key={key}>{inline(b.text)}</p>;
