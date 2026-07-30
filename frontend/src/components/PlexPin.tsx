@@ -10,6 +10,7 @@
 // in both files, and the two copies had already drifted apart.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { announce } from "../announce";
 import type { PlexServerChoice } from "../api";
 
 /** Poll every two seconds. The wait is a person staring at a browser tab, so the faster
@@ -65,6 +66,9 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
   const [retrying, setRetrying] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const pinRef = useRef<number | null>(null);
+  // The last reason spoken, so a poll repeating it every two seconds is said once. Cleared by
+  // `stop`, which every new wait runs first, so the next sign-in hears its reason again.
+  const saidRef = useRef<string | null>(null);
 
   // Stopping the timer does not stop a request already in the air, so every poll carries the
   // run it belongs to and a finished run ignores whatever lands late (B-11). Without this, two
@@ -89,6 +93,7 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
     timerRef.current = null;
     runRef.current += 1;
     inFlightRef.current = false;
+    saidRef.current = null;
   }, []);
 
   useEffect(() => stop, [stop]);
@@ -133,7 +138,22 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
               // "pending" or "retrying" -- neither is final, so keep polling. Only
               // "retrying" carries a reason; say it, so a longer-than-usual wait is
               // explained rather than looking like a hang.
-              setRetrying(result.status === "retrying" ? (result.reason ?? null) : null);
+              const reason = result.status === "retrying" ? (result.reason ?? null) : null;
+              setRetrying(reason);
+              // And say it by ear as well. Every transition in this flow is driven by the
+              // two-second poll rather than by the operator, so this paragraph swaps its text
+              // with nobody touching anything: on screen it changed, by ear it did not (#177).
+              //
+              // Announced from the hook and not from either caller's markup, for two reasons.
+              // This is the one copy both sign-in paths share, so a third caller inherits the
+              // announcement instead of forgetting it (rule 72). And the paragraph it replaces
+              // holds a link, so making that a live region would put interactive content inside
+              // one -- the shape #177 filed against the queue's nudge.
+              //
+              // Only on a CHANGE: the poll repeats the same reason every two seconds, and a
+              // region restating it would talk over everything else on the page.
+              if (reason !== null && reason !== saidRef.current) announce(reason);
+              saidRef.current = reason;
             }
           } catch (e) {
             if (run !== runRef.current) return;

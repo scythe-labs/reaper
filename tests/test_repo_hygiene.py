@@ -1646,6 +1646,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
     "components/StaleReadNotice.test.tsx": "one notice, audited in the panels that raise it",
     "components/StaleReadSweep.test.tsx": "a failed read's branch, audited in the panels",
     "components/TestBadgeFreshness.test.tsx": "one badge's freshness, audited in the panels",
+    "components/PlexPin.test.tsx": "the poll's state machine; it mounts the announcer, no screen",
     "focus.test.tsx": "focus moves, not a screen",
 }
 

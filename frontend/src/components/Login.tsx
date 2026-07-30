@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { announce } from "../announce";
 import { api, ApiError, type AuthContext, type PlexPoll } from "../api";
 import { trapTab } from "./ModalShell";
 import { BrandBadge } from "../brand/BrandBadge";
@@ -42,7 +43,16 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     onOk: () => onAuthed(),
     // On first-run setup, an account owning several servers answers "choose_server": the
     // sign-in stays valid while the picker is up, and the pick carries the answer.
-    onChooseServer: () => setPhase("choose"),
+    //
+    // Said out loud as well, which the Settings link panel already did and this, its sibling,
+    // did not (#177, rule 72). The picker replaces the wait on a two-second poll rather than on
+    // a press, so without this the screen grew a list of servers with no sign that anything had
+    // happened. Told, not focused: moving focus off a timer is a steal rather than a recovery,
+    // which is the line `PlexPanel` draws at the same moment for the same reason.
+    onChooseServer: () => {
+      setPhase("choose");
+      announce("Signed in with Plex. Choose which server Reaper should manage.");
+    },
     onTimedOut: () => {
       setPhase("error");
       setError("Plex sign-in timed out. Please try again.");

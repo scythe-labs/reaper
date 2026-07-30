@@ -4,9 +4,10 @@
 // so these pin the part it borrows from ModalShell: Tab stays inside the sheet, in both
 // directions, instead of landing on the sign-in buttons behind it.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { Login } from "./Login";
@@ -111,6 +112,55 @@ describe("the Plex sign-in popup", () => {
     await waitFor(() => expect(open).toHaveBeenCalled());
     expect(open.mock.calls[0]?.[2] ?? "").toContain("noopener");
     vi.unstubAllGlobals();
+  });
+
+  it("says so when the wait turns into a list of servers to choose from", async () => {
+    // The picker replaces the "Waiting for Plex" block on a two-second poll rather than on a
+    // press, so the screen grew a list of servers with nothing to say it had (#177). The
+    // Settings link panel already announced this and its twin here did not, which is the whole
+    // shape of rule 72: one of a pair fixed, the other left.
+    apiMock.plexStart.mockResolvedValue({ pin_id: 1, auth_url: "https://plex.test/link" });
+    apiMock.plexPoll.mockResolvedValue({
+      status: "choose_server",
+      servers: [{ machine_identifier: "m-1", name: "The one downstairs" }],
+    });
+    vi.stubGlobal(
+      "open",
+      vi.fn<typeof window.open>(() => null),
+    );
+    // The first poll is a 2s tick away, which is past every default timeout in here. Rule 133:
+    // restored in the `finally`, or the next test in the file inherits the fake clock.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(
+        <QueryClientProvider client={testQueryClient()}>
+          {/* The region `announce()` speaks through. Without it the call is a no-op by design,
+              so this test would pass against a component that says nothing. */}
+          <Announcer />
+          <Login />
+        </QueryClientProvider>,
+      );
+      const person = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await person.click(await screen.findByRole("button", { name: /sign in with plex/i }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // The picker is on screen...
+      await screen.findByRole("button", { name: "The one downstairs" });
+      // ...and it was said out loud, in one of the two regions the announcer alternates between.
+      await waitFor(() =>
+        expect(
+          screen
+            .getAllByRole("status")
+            .map((n) => n.textContent)
+            .join(""),
+        ).toContain("Choose which server Reaper should manage"),
+      );
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 });
 
