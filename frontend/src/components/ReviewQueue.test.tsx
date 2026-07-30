@@ -1925,3 +1925,79 @@ describe("what a reviewer hears when a scan lands under an open review", () => {
     expect(document.querySelector('.scan-toast[role="status"]')).toBeNull();
   });
 });
+
+describe("the search box a jump aims at this queue", () => {
+  // A jump from another section (Scales today) names a whole destination -- lane, what to open,
+  // and what to search for -- and this queue is the half that reads the search. The lane alone
+  // can be thousands of rows deep, so seeding the box is what puts the opened title's own card
+  // on screen behind its panel instead of leaving the operator to find it.
+  const focused = (search: string, nonce: number) => (
+    <ReviewQueue
+      verdict="condemn"
+      onVerdictChange={() => {}}
+      selectedId={null}
+      selectedGroupKey={null}
+      onSelect={() => {}}
+      onSelectGroup={() => {}}
+      focus={{ search, nonce }}
+    />
+  );
+
+  /** The `search` every call to the candidates endpoint carried, oldest first. */
+  const searches = () =>
+    apiMock.candidates.mock.calls.map((c) => (c[1] as { search?: string } | undefined)?.search);
+
+  it("asks for the searched list and never the whole lane first", async () => {
+    // The load-bearing part, and why the term seeds `useState` rather than arriving in an
+    // effect: this queue is UNMOUNTED while the operator is on Scales, so a jump mounts it.
+    // An effect runs after the first render has already fired its query, which means one
+    // request for the whole condemned lane -- and one paint of it -- before the seeded one
+    // replaces it. The list must arrive filtered.
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        {focused("Example Movie 1 2011", 7)}
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Example Movie 1");
+    expect(searches()).toEqual(["Example Movie 1 2011"]);
+    // And the box shows what it searched for, so the operator can widen it.
+    expect(screen.getByRole("searchbox", { name: /search titles/i })).toHaveValue(
+      "Example Movie 1 2011",
+    );
+  });
+
+  it("applies a jump that arrives while the queue is already on screen", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const { rerender } = render(
+      <QueryClientProvider client={testQueryClient()}>{focused("", 1)}</QueryClientProvider>,
+    );
+    await screen.findByText("Example Movie 1");
+    rerender(
+      <QueryClientProvider client={testQueryClient()}>
+        {focused("Example Movie 1 2011", 2)}
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(searches()).toContain("Example Movie 1 2011"));
+  });
+
+  it("does not re-seed the box on a re-render carrying the same jump", async () => {
+    // The nonce is what "once" is counted with. Without it every unrelated re-render would
+    // put the jump's term back, and typing over it would be undone a keystroke later.
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const { rerender } = render(
+      <QueryClientProvider client={testQueryClient()}>
+        {focused("Example Movie 1 2011", 7)}
+      </QueryClientProvider>,
+    );
+    const box = await screen.findByRole("searchbox", { name: /search titles/i });
+    await userEvent.clear(box);
+    await userEvent.type(box, "something else");
+    rerender(
+      <QueryClientProvider client={testQueryClient()}>
+        {focused("Example Movie 1 2011", 7)}
+      </QueryClientProvider>,
+    );
+    expect(box).toHaveValue("something else");
+  });
+});

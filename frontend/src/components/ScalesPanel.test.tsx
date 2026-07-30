@@ -173,7 +173,10 @@ describe("ScalesPanel", () => {
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: /The Long Shoreline/i }));
-    expect(onOpenItem).toHaveBeenCalledWith(101, "abstain");
+    // The title rides along as the search term, so the queue behind the opened panel is that
+    // one title rather than the whole lane. Its year goes with it: the queue prints the year
+    // beside the title and the review search understands one.
+    expect(onOpenItem).toHaveBeenCalledWith(101, "abstain", "The Long Shoreline 2021");
   });
 
   it("opens a show by its group key, not one season, on the lane the show is in", async () => {
@@ -197,7 +200,7 @@ describe("ScalesPanel", () => {
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: /A Show/i }));
-    expect(onOpenGroup).toHaveBeenCalledWith("tv:7", "protect");
+    expect(onOpenGroup).toHaveBeenCalledWith("tv:7", "protect", "A Show 2021");
   });
 
   it("shows a title's fate and whether they watched it", () => {

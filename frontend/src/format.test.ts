@@ -3,7 +3,16 @@
 // conventions are pinned: binary units with the unit named honestly (GiB, not GB),
 // one decimal below 100, none above, and nothing negative ever rendered.
 import { describe, expect, it } from "vitest";
-import { bytes, count, coverage, itemBytes, spareRemaining, totalBytes } from "./format";
+import {
+  bytes,
+  carriesYear,
+  count,
+  coverage,
+  itemBytes,
+  spareRemaining,
+  titleWithYear,
+  totalBytes,
+} from "./format";
 
 describe("bytes", () => {
   it("renders binary units with honest labels", () => {
@@ -135,5 +144,36 @@ describe("spareRemaining", () => {
     // `note` unconditionally must render nothing for them.
     expect(spareRemaining(null).note).toBe("");
     expect(spareRemaining(inDays(27)).note).toBe("");
+  });
+});
+
+describe("titleWithYear", () => {
+  // What a jump seeds the review search box with. The queue's search understands a year on the
+  // end of a title (`list_candidates`), so the seeded string is the title as the queue prints
+  // it -- and a title that already names its own year must not be handed a second one, which is
+  // the same question the Scales row asks before printing the year in its own span.
+  it("joins a title to its year the way the queue prints it", () => {
+    expect(titleWithYear("Example Alpha", 1979)).toBe("Example Alpha 1979");
+  });
+
+  it("leaves a title that already carries its year alone", () => {
+    expect(titleWithYear("Example Show (2019)", 2019)).toBe("Example Show (2019)");
+    expect(carriesYear("Example Show (2019)", 2019)).toBe(true);
+  });
+
+  it("appends a year the title carries a DIFFERENT one of", () => {
+    // "(2019)" in the name is not this item's year, so the year still has to be said.
+    expect(titleWithYear("Example Show (2019)", 2021)).toBe("Example Show (2019) 2021");
+    expect(carriesYear("Example Show (2019)", 2021)).toBe(false);
+  });
+
+  it("says nothing about a year it does not have", () => {
+    expect(titleWithYear("Example Alpha", null)).toBe("Example Alpha");
+    expect(titleWithYear("Example Alpha", undefined)).toBe("Example Alpha");
+    expect(carriesYear("Example Alpha", null)).toBe(false);
+  });
+
+  it("trims, so the seeded search is not a term with an edge no title has", () => {
+    expect(titleWithYear("  Example Alpha  ", 1979)).toBe("Example Alpha 1979");
   });
 });

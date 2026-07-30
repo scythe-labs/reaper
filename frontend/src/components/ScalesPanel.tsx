@@ -10,7 +10,7 @@
 
 import { useId, useState } from "react";
 import type { PersonDetail, PersonTitle, QuotaLine, Verdict } from "../api";
-import { bytes, count, date, itemBytes } from "../format";
+import { bytes, carriesYear, count, date, itemBytes, titleWithYear } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
 import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
 import { WhyShell } from "./WhyShell";
@@ -153,8 +153,10 @@ function TitleRow({
 }) {
   const kind = t.media_type === "movie" ? "Movie" : "Series";
   // Some stored titles already carry their year (e.g. "Some Show (2019)"); don't print it
-  // twice. Only append the year when the title does not already end with it.
-  const showYear = t.year != null && !t.title.trim().endsWith(`(${t.year})`);
+  // twice. Only append the year when the title does not already end with it. The search term
+  // the jump below carries asks the same question through the same helper, so a title that
+  // names its own year is not handed a second one there either.
+  const showYear = t.year != null && !carriesYear(t.title, t.year);
 
   const meta: string[] = [kind];
   if (t.requested_at) meta.push(`asked ${date(t.requested_at)}`);
@@ -216,8 +218,9 @@ export function ScalesPanel({
 }: {
   detail: PersonDetail;
   onClose: () => void;
-  onOpenItem: (candidateId: number, lane: Verdict) => void;
-  onOpenGroup: (key: string, lane: Verdict) => void;
+  /** Open one title in Review, on the lane it lives in, with the queue searched down to it. */
+  onOpenItem: (candidateId: number, lane: Verdict, search: string) => void;
+  onOpenGroup: (key: string, lane: Verdict, search: string) => void;
 }) {
   const headingId = useId();
   const granted = detail.gb_granted_bytes;
@@ -246,9 +249,15 @@ export function ScalesPanel({
   // panel over whichever lane the operator happened to leave the queue on, so a "Left to decide"
   // title opened its reasoning above a Condemned list it is not in, with nothing on screen
   // saying where to find it.
+  // The title travels with it too, into the queue's search box. The lane alone can still be
+  // thousands of rows deep, and the opened panel says nothing about where in that list its card
+  // is; seeding the search leaves one title on screen beside its own reasoning, and the chip
+  // above the list says what was searched and clears in one click. The year goes with the title
+  // because the row prints it -- and because the search now understands one (`list_candidates`).
   const opener = (t: PersonTitle): (() => void) | null => {
-    if (t.item_id != null) return () => onOpenItem(t.item_id as number, t.verdict);
-    if (t.group_key != null) return () => onOpenGroup(t.group_key as string, t.verdict);
+    const term = titleWithYear(t.title, t.year);
+    if (t.item_id != null) return () => onOpenItem(t.item_id as number, t.verdict, term);
+    if (t.group_key != null) return () => onOpenGroup(t.group_key as string, t.verdict, term);
     return null;
   };
 

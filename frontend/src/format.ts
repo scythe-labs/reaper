@@ -172,3 +172,26 @@ export function spareRemaining(iso: string | null): {
     expiredOn: "",
   };
 }
+
+/** Whether a stored title already ends in its own release year, as some do ("Some Show (2019)").
+ *
+ *  One derivation with two readers, which is the point: the Scales row uses it to decide whether
+ *  to print the year in its own span, and `titleWithYear` below uses it to build the string a
+ *  jump prefills the review search with. Those two have to agree, or the search box would be
+ *  seeded with a year the row is not showing. */
+export function carriesYear(title: string, year: number | null | undefined): boolean {
+  return year != null && title.trim().endsWith(`(${year})`);
+}
+
+/** A title the way the operator reads it on screen, year and all -- what a jump seeds the review
+ *  search box with.
+ *
+ *  Spelled the way the QUEUE prints it ("Example Alpha 1979"), because the queue is where the
+ *  jump lands and the seeded text sits above its cards. Scales prints the same fact in
+ *  parentheses, and `list_candidates` (api/routes.py) understands either, so the two spellings
+ *  are a display choice rather than something that has to be reconciled. */
+export function titleWithYear(title: string, year: number | null | undefined): string {
+  const name = title.trim();
+  if (year == null || carriesYear(name, year)) return name;
+  return `${name} ${year}`;
+}

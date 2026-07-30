@@ -44,6 +44,7 @@ import { announce } from "../announce";
 import { useBackGuard } from "../backnav";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
+import type { Focus } from "../navIntent";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
@@ -1376,9 +1377,14 @@ export function ReviewQueue({
   onClearItemSelection,
   stepRef,
   latestScanSnapshotId = null,
+  focus = null,
 }: {
   verdict: Verdict;
   onVerdictChange: (verdict: Verdict) => void;
+  /** What a jump into this queue aimed it at (navIntent.ts): the search box's contents, so the
+   *  list behind an opened panel is the title that was opened rather than the whole lane.
+   *  Acted on once per `nonce`, so returning to Review later does not re-seed the box. */
+  focus?: Focus<{ search: string }> | null;
   selectedId: number | null;
   selectedGroupKey: string | null;
   onSelect: (id: number) => void;
@@ -1393,8 +1399,16 @@ export function ReviewQueue({
    *  the snapshot this list is showing, a scan has landed a fresher one underneath. */
   latestScanSnapshotId?: number | null;
 }) {
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
+  // Seeded from the jump that opened this queue, not set by an effect afterwards: the queue is
+  // unmounted while the operator is on Scales, so a jump from there mounts it, and an effect
+  // would let one unfiltered request for the whole lane go out before the seeded one replaced
+  // it. `search` is seeded alongside `searchInput` for the same reason -- it is the debounced
+  // copy the query is keyed on, and waiting 250 ms for it would draw the lane first.
+  const [searchInput, setSearchInput] = useState(focus?.search ?? "");
+  const [search, setSearch] = useState(focus?.search ?? "");
+  // The last jump this queue has already acted on. Seeded with the one it mounted under, so the
+  // effect below only ever handles a jump that arrives while it is already on screen.
+  const handledFocus = useRef<number | null>(focus?.nonce ?? null);
   const [filters, setFilters] = useState<QueueFilters>(() => loadFilters(verdict));
   // Each tab remembers its own filters, and the new tab's set is adopted DURING the render
   // that brings the new verdict in -- React's supported "adjust state when a prop changes"
@@ -1467,6 +1481,16 @@ export function ReviewQueue({
     const id = setTimeout(() => setSearch(searchInput.trim()), 250);
     return () => clearTimeout(id);
   }, [searchInput]);
+
+  // A jump that lands on a queue already on screen -- ShowPanel's season list is the one inside
+  // Review today, and it deliberately sends no search. Both halves are set, skipping the
+  // debounce, so the list the operator lands on is the filtered one and not the lane first.
+  useEffect(() => {
+    if (!focus || focus.nonce === handledFocus.current) return;
+    handledFocus.current = focus.nonce;
+    setSearchInput(focus.search);
+    setSearch(focus.search.trim());
+  }, [focus]);
 
   // Close an open filter menu on an outside click or Escape. Each menu lives inside a
   // .filter-anchor wrapper (with its chip or button), so a click within any of them counts as

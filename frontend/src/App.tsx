@@ -30,6 +30,7 @@ import { WhyPanel } from "./components/WhyPanel";
 import { WhyShell } from "./components/WhyShell";
 import { DocsProvider } from "./docs/DocsContext";
 import { bytes, count, date, souls } from "./format";
+import type { Focus, NavIntent, Selection, View } from "./navIntent";
 import { usePageScrollLock } from "./pageScrollLock";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useSafety } from "./useSafety";
@@ -61,12 +62,6 @@ function RouteLoading() {
     </div>
   );
 }
-
-type View = "review" | "policy" | "reap" | "fairness" | "settings";
-
-/** What the review screen's side panel is showing: one item's reasoning, one whole
- *  show, or nothing. A single slot -- opening either closes the other. */
-type Selection = { kind: "item"; id: number } | { kind: "group"; key: string } | null;
 
 const NAV: { id: View; label: string; Icon: () => ReactElement }[] = [
   { id: "review", label: "Review", Icon: ReviewIcon },
@@ -707,71 +702,83 @@ function Dashboard({ user }: { user: AuthUser }) {
   // later Back restores it; the undo calls the raw setter, never these wrappers, so it never
   // records itself.
   const { pushNav } = useBackNav();
-  const changeView = (next: View) => {
-    if (next !== view) pushNav(() => setView(view));
-    setView(next);
-  };
-  const changeVerdict = (next: Verdict) => {
-    if (next !== verdict) pushNav(() => setVerdict(verdict));
-    setVerdict(next);
-    setSelected(null);
+
+  // What each view is currently aimed at, held here rather than inside the view: `App` outlives
+  // the mount, so a jump can name a destination for a page that is not on screen yet. Each is
+  // acted on once, counted by its nonce -- revisiting the page later must not replay the jump
+  // that first brought you there. Rule 72: three of these now, and a fourth belongs in the same
+  // three places (declared here, cleared on a plain tab visit, handed to the view).
+  const [policyFocus, setPolicyFocus] = useState<Focus<{ section: PolicySectionId }> | null>(null);
+  const [settingsFocus, setSettingsFocus] = useState<Focus<{ panel: Panel }> | null>(null);
+  const [reviewFocus, setReviewFocus] = useState<Focus<{ search: string }> | null>(null);
+  const clearFocus = () => {
+    setPolicyFocus(null);
+    setSettingsFocus(null);
+    setReviewFocus(null);
   };
 
-  // Cross-page jumps: "Turn it on in Policy → Deletion" from the Reap page lands on
-  // the Deletion section, "Settings → Plex" lands on the Plex panel. The nonce makes
-  // each jump fire once; plain tab clicks clear the focus so revisiting a page never
-  // replays an old jump.
-  const [policyFocus, setPolicyFocus] = useState<{
-    section: PolicySectionId;
-    nonce: number;
-  } | null>(null);
-  const [settingsFocus, setSettingsFocus] = useState<{ panel: Panel; nonce: number } | null>(null);
-
-  const goToPolicySection = (section: PolicySectionId) => {
-    setPolicyFocus({ section, nonce: Date.now() });
-    changeView("policy");
-  };
-  const goToSettingsPanel = (panel: Panel) => {
-    setSettingsFocus({ panel, nonce: Date.now() });
-    changeView("settings");
-  };
-
-  // Open one item's reasoning, on the lane it lives in. The reasoning lives on the review
-  // screen beside the queue -- an item on its own card, a whole show on its group panel.
+  // Every jump in the app, in one place. The caller names a whole destination (navIntent.ts) and
+  // this applies it; nothing else calls the raw setters, so a new destination is a new call site
+  // rather than a new function with its own idea of what a jump resets.
   //
-  // That queue is ONE lane of three, so the jump carries the lane and lands on it. Opening a
-  // "Left to decide" title from Scales while the queue sat on Condemned used to leave its panel
-  // open above a list the title is not in: there was no card to find, and the two affordances
-  // that would have led back to it -- the scroll to the open card, and the j/k step through the
-  // list -- both quietly do nothing when the open item is off-lane, so the operator was left to
-  // hunt for it by hand.
+  // Three things it has to get right, each of which was a bug in one of the four hand-written
+  // jumps this replaced:
   //
-  // The CALLER names the lane; this never re-derives it. Only the caller knows which lane it
+  // ONE BACK STEP for the whole jump, restoring the view AND the lane together. The lane is not
+  // a place the operator visited on its own, so recording it separately would spend a Back press
+  // landing them on a list they never saw. `view` and `verdict` are this render's values, so the
+  // undo closes over where the operator actually was, and it calls the raw setters, so it never
+  // records itself.
+  //
+  // THE LANE COMES FROM THE CALLER, never re-derived here. Only the caller knows which lane it
   // means: a show sits in every lane one of its seasons does, so there is no single answer to
   // derive for a group, while Scales means the lane of the seasons that person asked for.
   // `reviewFate.laneOf` answers it for one item, and Scales sends the same override-aware lane
-  // the queue filters on (rule 77).
+  // the queue filters on (rule 77). A jump that opened an item without its lane left the panel
+  // open above a list the item is not in: no card to find, and the two affordances that would
+  // have led back to it -- the scroll to the open card, and the j/k step through the list --
+  // both quietly do nothing when the open item is off-lane.
   //
-  // One Back step for the whole jump, restoring the view AND the lane together. The lane is not
-  // a place the operator visited on its own, so recording it separately would spend a Back press
-  // landing them on a list they never saw.
-  const openReasons = (next: NonNullable<Selection>, lane: Verdict) => {
-    // `view` and `verdict` are this render's values, so the undo closes over where the operator
-    // was, exactly as changeView's does.
-    if (view !== "review" || lane !== verdict) {
+  // OMITTED IS NOT EMPTY. Every optional here is three-state, and the middle state is what makes
+  // one function serve both a section-nav click and a targeted jump: `select: undefined` leaves
+  // an open panel alone (arriving on Review from the nav), `select: null` closes it (a lane tab,
+  // whose new list does not hold the open card). Same for `search` -- a jump from inside Review
+  // leaves the operator's own search text where it is.
+  const goTo = (intent: NavIntent) => {
+    const lane = intent.view === "review" ? (intent.lane ?? verdict) : verdict;
+    if (intent.view !== view || lane !== verdict) {
       pushNav(() => {
         setView(view);
         setVerdict(verdict);
       });
     }
-    setVerdict(lane);
-    setSelected(next);
-    setView("review");
+    if (intent.view === "review") {
+      setVerdict(lane);
+      if (intent.select !== undefined) setSelected(intent.select);
+      if (intent.search !== undefined) setReviewFocus({ search: intent.search, nonce: Date.now() });
+    } else if (intent.view === "policy") {
+      if (intent.section !== undefined)
+        setPolicyFocus({ section: intent.section, nonce: Date.now() });
+    } else if (intent.view === "settings") {
+      if (intent.panel !== undefined) setSettingsFocus({ panel: intent.panel, nonce: Date.now() });
+    }
+    setView(intent.view);
   };
-  const goToItemReasons = (candidateId: number, lane: Verdict) =>
-    openReasons({ kind: "item", id: candidateId }, lane);
-  const goToGroupReasons = (key: string, lane: Verdict) =>
-    openReasons({ kind: "group", key }, lane);
+
+  const goToPolicySection = (section: PolicySectionId) => goTo({ view: "policy", section });
+  const goToSettingsPanel = (panel: Panel) => goTo({ view: "settings", panel });
+  // A lane tab: the new list does not hold whatever card is open, so the panel closes with it.
+  const changeVerdict = (next: Verdict) => goTo({ view: "review", lane: next, select: null });
+  // Open one item's reasoning, on the lane it lives in -- an item on its own card, a whole show
+  // on its group panel. `search` is optional and the caller decides: a jump from another section
+  // arrives at an untouched queue and seeds the box with the title it is opening, so the list
+  // behind the panel is the one title rather than the whole lane. A jump from INSIDE Review
+  // (ShowPanel's season list) sends none, because the operator's own search is already in that
+  // box and seeding over it would throw away what they typed.
+  const goToItemReasons = (candidateId: number, lane: Verdict, search?: string) =>
+    goTo({ view: "review", lane, select: { kind: "item", id: candidateId }, search });
+  const goToGroupReasons = (key: string, lane: Verdict, search?: string) =>
+    goTo({ view: "review", lane, select: { kind: "group", key }, search });
 
   const selectedId = selected?.kind === "item" ? selected.id : null;
   const selectedGroupKey = selected?.kind === "group" ? selected.key : null;
@@ -889,8 +896,8 @@ function Dashboard({ user }: { user: AuthUser }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [view, hasSelection, modalOpen]);
 
-  // Back-button layers for the side panels and the app-wide reap sheet (the tab changes are
-  // recorded by changeView/changeVerdict above). Each is gated on the view that actually shows
+  // Back-button layers for the side panels and the app-wide reap sheet (the tab and section
+  // changes are recorded by `goTo` above). Each is gated on the view that actually shows
   // it, so a panel whose state lingers off-screen is not a phantom Back step.
   useBackGuard(selected !== null && view === "review", () => setSelected(null));
   useBackGuard(scalesUser !== null && view === "fairness", () => setScalesUser(null));
@@ -922,17 +929,17 @@ function Dashboard({ user }: { user: AuthUser }) {
             // the key Settings is mounted under, remounting the whole subtree and throwing
             // away whatever is typed into it (B-23). Arriving from a "Settings → Jobs" link,
             // typing a name, then clicking Settings in the nav used to silently discard it.
-            if (next !== view) {
-              setPolicyFocus(null);
-              setSettingsFocus(null);
-            }
+            if (next !== view) clearFocus();
             // Leaving Scales (or re-entering it) closes any open Scales panel, so the
             // split view never lingers on a tab that has no panel to show. Both the person
             // panel and the "not in the last scan" panel are cleared, matching the
             // mutual-exclusion pairing the open handlers use (U-5).
             setScalesUser(null);
             setScalesUnmatched(false);
-            changeView(next);
+            // A section visit and nothing more: no lane, no selection, no search. The queue
+            // keeps whatever the operator left open on it, which is what "go back to Review"
+            // means when it is the nav that says it.
+            goTo({ view: next });
           }}
         />
 
@@ -969,6 +976,7 @@ function Dashboard({ user }: { user: AuthUser }) {
               <ReviewQueue
                 verdict={verdict}
                 onVerdictChange={changeVerdict}
+                focus={reviewFocus}
                 selectedId={selectedId}
                 selectedGroupKey={selectedGroupKey}
                 // No lane to carry on these two (unlike the jumps above): the row was picked
@@ -1020,10 +1028,7 @@ function Dashboard({ user }: { user: AuthUser }) {
             <ReapPlan
               onGoToDeletion={() => goToPolicySection("deletion")}
               onGoToPlexSettings={() => goToSettingsPanel("plex")}
-              onGoToReview={() => {
-                setSelected(null);
-                changeView("review");
-              }}
+              onGoToReview={() => goTo({ view: "review", select: null })}
             />
           ) : view === "fairness" ? (
             <>
