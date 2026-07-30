@@ -973,6 +973,16 @@ const CAUSE_COPY: Record<string, string> = {
   "no TVDb id to match a request": "It couldn't be matched to a request.",
   "Sonarr did not report series status": "Sonarr didn't say whether the show has ended.",
   "season has no rank": "Reaper couldn't tell which season this is.",
+  // The five that used to fall through and print the backend's own words here. Two arrive
+  // through built-in gates (an IMDb rating bar, and the dormancy and popularity gates); the
+  // size pair arrives through a keep rule on "Size on disk", the same route the request
+  // reasons above already take.
+  "the IMDb ratings data could not be read": "Reaper couldn't read the IMDb ratings data.",
+  "no IMDb id to look up": "Reaper couldn't look this title up on IMDb.",
+  "the file's size was not reported": "Radarr didn't report this file's size.",
+  "the season's size was not reported": "Sonarr didn't report this season's size.",
+  "plays recorded on an earlier scan are no longer readable":
+    "Reaper can no longer read the plays it recorded earlier.",
 };
 
 function joinChecks(checks: string[]): string {

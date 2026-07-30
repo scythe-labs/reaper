@@ -158,6 +158,20 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
     }
 
 
+#: Why a field is unreadable on a snapshot written before that field existed.
+#:
+#: The one reason in ``src/`` with NO ``CAUSE_COPY`` entry, deliberately, and the reasoning is
+#: the same as ``backtest.NO_ADDED_AT_REASON``'s: ``facts_from_dict`` has a single caller, the
+#: policy simulator (``api.routes``), which reads a re-decided score and verdict and never
+#: builds or stores an ``Explanation``. So this string reaches a reader only through a stored
+#: explanation that does not exist, and giving it panel copy would claim a route it cannot
+#: take (rule 25). Named anyway, so the ban on hand-typed reasons has no exception and the
+#: exemption is a line in ``test_review_chips.py`` rather than a silence. If a route ever
+#: renders a thawed Facts, it wants a ``CAUSE_COPY`` entry and this comment is the wrong
+#: answer.
+NOT_RECORDED_REASON = "this scan did not record it"
+
+
 def facts_from_dict(d: dict[str, Any]) -> tuple[Facts, tuple[GateResult, ...]]:
     """Rebuild the Facts and its frozen extra results from :func:`facts_to_dict` output.
 
@@ -172,7 +186,7 @@ def facts_from_dict(d: dict[str, Any]) -> tuple[Facts, tuple[GateResult, ...]]:
     kwargs = {
         name: _obs_from_dict(obs[name])
         if name in obs
-        else Unknown(reason="this scan did not record it", source="snapshot")
+        else Unknown(reason=NOT_RECORDED_REASON, source="snapshot")
         for name in _OBS_FIELDS
     }
     facts = Facts(

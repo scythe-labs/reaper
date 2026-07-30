@@ -91,7 +91,12 @@ from reaper.engine.gates import (
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource, merge_by_source
 from reaper.services import history_sync, library_index, lists, requested_by, watch_evidence
-from reaper.services.display_meta import build_ratings_json, dataset_lookup
+from reaper.services.display_meta import (
+    IMDB_UNREADABLE_REASON,
+    NO_IMDB_ID_REASON,
+    build_ratings_json,
+    dataset_lookup,
+)
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.season_pruning import (
     SPECIALS_SEASON,
@@ -114,10 +119,10 @@ def _rating_obs(value: float | None, looked_up: bool, dataset_degraded: bool) ->
         # The dataset itself was unreadable, so the empty lookup map is not an answer
         # about this show. Absent here would claim we checked and found it unrated --
         # for every show at once -- which withdraws every rating-based keep.
-        return Unknown(reason="the IMDb ratings data could not be read", source="imdb")
+        return Unknown(reason=IMDB_UNREADABLE_REASON, source="imdb")
     if looked_up:
         return Absent(source="imdb")
-    return Unknown(reason="no IMDb id to look up", source="imdb")
+    return Unknown(reason=NO_IMDB_ID_REASON, source="imdb")
 
 
 #: How many shows to read per-show against Tautulli / Sonarr at once. Season resolution is
@@ -381,7 +386,7 @@ def series_ended(series: Mapping[str, Any]) -> Observation[bool]:
     """
     status = str(series.get("status") or "").lower()
     if not status and "ended" not in series:
-        return Unknown(reason="Sonarr did not report series status", source="sonarr")
+        return Unknown(reason=SERIES_STATUS_REASON, source="sonarr")
     ended = bool(series.get("ended", False))
     running = status == "continuing" or (status not in ("ended", "deleted") and not ended)
     return Known(value=not running, source="sonarr")
@@ -537,6 +542,14 @@ _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
 #: reason the map above keeps its own -- the subject is "this season", not "this item".
 NO_ADDED_AT_REASON = "no added-at date for this season"
 
+#: Why a season's size is unreadable: Sonarr reported no size on disk. Reaches the panel
+#: through a keep rule on "Size on disk"; the movie lane says it of a file, so the two are
+#: named apart (rule 144).
+NO_SIZE_REASON = "the season's size was not reported"
+
+#: Why "has the show ended?" is unreadable: Sonarr sent neither a status nor an ended flag.
+SERIES_STATUS_REASON = "Sonarr did not report series status"
+
 
 def build_season_facts(
     *,
@@ -669,7 +682,7 @@ def build_season_facts(
             recent = Known(value=watchers_window or 0, source="tautulli")
             all_time = Known(value=watchers_all_time or 0, source="tautulli")
         if activity_degraded:
-            streaming = Unknown(reason="could not read active sessions", source="tautulli")
+            streaming = Unknown(reason=watch_evidence.NO_SESSIONS_REASON, source="tautulli")
         else:
             streaming = Known(value=plex_rating_key in active_rating_keys, source="tautulli")
 
@@ -717,7 +730,7 @@ def build_season_facts(
         size_bytes=(
             Known(value=season.size_on_disk, source="sonarr")
             if season.size_on_disk is not None
-            else Unknown(reason="the season's size was not reported", source="sonarr")
+            else Unknown(reason=NO_SIZE_REASON, source="sonarr")
         ),
         # Sonarr's own ratings are flat TVDB, but the IMDb dataset we already ingest carries
         # a rating for the *series* (keyed by its imdbId). We apply the show's rating to each
@@ -1810,7 +1823,7 @@ def _judge_series(
         requested_obs = (
             request_index.season_requested(tvdb_id, n)
             if request_index is not None
-            else Unknown(reason="requests not loaded", source="seerr")
+            else Unknown(reason=requested_by.REQUESTS_NOT_LOADED_REASON, source="seerr")
         )
         # A season's history is read by its own Plex key, so the same fall this scan can
         # detect for a movie is detectable here, against the same marks (rule 72). Decided

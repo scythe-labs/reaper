@@ -75,6 +75,8 @@ from reaper.services import (
 )
 from reaper.services.condemned import reap_override_verdict
 from reaper.services.display_meta import (
+    IMDB_UNREADABLE_REASON,
+    NO_IMDB_ID_REASON,
     build_ratings_json,
     dataset_entry,
     dataset_lookup,
@@ -227,6 +229,12 @@ _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
 #: (rule 144) -- it was written twice by hand, on both sides of the tree, and nothing failed.
 NO_ADDED_AT_REASON = "no added-at date"
 
+#: Why a movie's size is unreadable: Radarr reported no size for the file. A KEY into
+#: ``CAUSE_COPY`` like the rest -- it reaches the panel through a keep rule on "Size on
+#: disk", the same route the request reasons take (rule 144). The season lane says this in
+#: its own words, so the two are named apart rather than shared.
+NO_SIZE_REASON = "the file's size was not reported"
+
 
 def build_facts(
     item: RawItem,
@@ -349,7 +357,7 @@ def build_facts(
         # for the entire library at once -- every rating floor reporting
         # checked-and-did-not-fire, every graded rating keep withdrawn, on evidence
         # Reaper has already declared untrustworthy.
-        unreadable = Unknown(reason="the IMDb ratings data could not be read", source="imdb")
+        unreadable = Unknown(reason=IMDB_UNREADABLE_REASON, source="imdb")
         rating = unreadable
         votes = unreadable
     elif looked_up:
@@ -363,7 +371,7 @@ def build_facts(
         # We never got to ask: no imdbId from Radarr and no Plex match to borrow one from.
         # Absent here would tell the keep lane "this title has no IMDb rating", withdrawing
         # every rating-based keep while coverage still read 100%. See dataset_lookup.
-        no_id = Unknown(reason="no IMDb id to look up", source="imdb")
+        no_id = Unknown(reason=NO_IMDB_ID_REASON, source="imdb")
         rating = no_id
         votes = no_id
 
@@ -421,7 +429,7 @@ def build_facts(
     if context.activity_degraded:
         # We could not check. Never assume False -- that is how a tool deletes a file
         # somebody is watching.
-        streaming = Unknown(reason="could not read active sessions", source="tautulli")
+        streaming = Unknown(reason=watch_evidence.NO_SESSIONS_REASON, source="tautulli")
     else:
         # A merged bind covers several listings of one file; someone streaming ANY of
         # them is streaming this very file, so the veto checks every key in the group.
@@ -461,7 +469,7 @@ def build_facts(
         size_bytes=(
             Known(value=item.size_bytes, source="radarr")
             if item.size_bytes is not None
-            else Unknown(reason="the file's size was not reported", source="radarr")
+            else Unknown(reason=NO_SIZE_REASON, source="radarr")
         ),
         imdb_rating_tenths=rating,
         imdb_votes=votes,
@@ -476,7 +484,7 @@ def build_facts(
         requested=(
             request_index.movie_requested(item.tmdb_id)
             if request_index is not None
-            else Unknown(reason="requests not loaded", source="seerr")
+            else Unknown(reason=requested_by.REQUESTS_NOT_LOADED_REASON, source="seerr")
         ),
         genres=(
             Known(value=", ".join(item.genres), source="radarr")

@@ -246,6 +246,19 @@ async def build_map(
     return result
 
 
+#: Why a "was this requested?" lookup came back unreadable. Each is a KEY into ``WhyPanel``'s
+#: ``CAUSE_COPY``, which turns it into the sentence the owner reads; a key with no entry
+#: there prints raw, and ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one.
+#: Named here rather than typed at each of the six sites below, so that test can see them
+#: (rule 144).
+NO_TMDB_REQUEST_REASON = "no TMDb id to match a request"
+NO_TVDB_REQUEST_REASON = "no TVDb id to match a request"
+REQUESTS_UNREACHABLE_REASON = "could not reach the requests app"
+#: The requests app was never read for this scan at all, which is not the same as reading it
+#: and failing: both lanes fall back to this when no index was built.
+REQUESTS_NOT_LOADED_REASON = "requests not loaded"
+
+
 @dataclass(frozen=True)
 class RequestIndex:
     """A three-state "was this requested?" view, for the scoring path.
@@ -264,26 +277,26 @@ class RequestIndex:
 
     def movie_requested(self, tmdb_id: int | None) -> Observation[bool]:
         if not tmdb_id:
-            return Unknown(reason="no TMDb id to match a request", source="seerr")
+            return Unknown(reason=NO_TMDB_REQUEST_REASON, source="seerr")
         if not self.available:
-            return Unknown(reason="could not reach the requests app", source="seerr")
+            return Unknown(reason=REQUESTS_UNREACHABLE_REASON, source="seerr")
         return Known(value=movie_key(tmdb_id) in self.movie_keys, source="seerr")
 
     def season_requested(self, tvdb_id: int | None, season: int) -> Observation[bool]:
         """A season counts as requested if the season itself, or the whole show, was."""
         if not tvdb_id:
-            return Unknown(reason="no TVDb id to match a request", source="seerr")
+            return Unknown(reason=NO_TVDB_REQUEST_REASON, source="seerr")
         if not self.available:
-            return Unknown(reason="could not reach the requests app", source="seerr")
+            return Unknown(reason=REQUESTS_UNREACHABLE_REASON, source="seerr")
         hit = season_key(tvdb_id, season) in self.season_keys or show_key(tvdb_id) in self.show_keys
         return Known(value=hit, source="seerr")
 
     def show_requested(self, tvdb_id: int | None) -> Observation[bool]:
         """Whether the show as a whole was requested -- the show itself, or any of its seasons."""
         if not tvdb_id:
-            return Unknown(reason="no TVDb id to match a request", source="seerr")
+            return Unknown(reason=NO_TVDB_REQUEST_REASON, source="seerr")
         if not self.available:
-            return Unknown(reason="could not reach the requests app", source="seerr")
+            return Unknown(reason=REQUESTS_UNREACHABLE_REASON, source="seerr")
         prefix = f"tv:tvdb:{tvdb_id}:"
         hit = show_key(tvdb_id) in self.show_keys or any(
             k.startswith(prefix) for k in self.season_keys

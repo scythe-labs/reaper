@@ -11,6 +11,7 @@ that a show can be read whole: every season, every lane, one response.
 
 from __future__ import annotations
 
+import ast
 import json
 from collections.abc import Iterator
 from dataclasses import replace
@@ -58,12 +59,59 @@ from reaper.services.condemned import (
 )
 from reaper.services.season_pruning import PruneConflict
 from reaper.services.season_scan import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
-from reaper.services.season_scan import NO_ADDED_AT_REASON as SEASON_NO_ADDED_AT_REASON
 from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
-from reaper.services.snapshot import NO_ADDED_AT_REASON as MOVIE_NO_ADDED_AT_REASON
 
 from ._auth import login
+
+#: A named reason that cannot reach the why panel's CAUSE slot, and why. ``CAUSE_COPY`` fills
+#: the tail of "could not check {what}: {reason}", which only a BLOCKED gate produces, so a
+#: reason the operator meets somewhere else is not a gap. Everything else the walk finds must
+#: have panel copy. Each excuse is a claim about wiring, so
+#: ``test_the_reason_with_no_panel_route_still_has_one_way_out`` checks it rather than
+#: trusting it; classified in writing rather than silenced (rule 103).
+_NO_PANEL_ROUTE = {
+    "facts_codec.NOT_RECORDED_REASON": (
+        "facts_from_dict has one caller, the policy simulator, which reads a re-decided "
+        "score and verdict and never builds or stores an Explanation"
+    ),
+    "executor._NO_APPROVED_SIZE_REASON": (
+        "a run step's own skip reason, already a finished sentence the report prints as it "
+        "stands; it never rides on a gate outcome"
+    ),
+    "season_pruning.PROGRESS_UNESTABLISHABLE_REASON": (
+        "a ProtectedSeason.reason, shown on the season list as why that season is kept, and "
+        "already plain: it answers 'why kept', not 'what could not be checked'"
+    ),
+    "season_pruning.PROGRESS_UNREADABLE_REASON": ("its twin above, same surface and same shape"),
+}
+
+
+def _reason_constants() -> dict[str, str]:
+    """Every module-level ``*_REASON`` string under ``src/reaper``, as ``file.NAME -> value``.
+
+    Discovered rather than listed, so naming a new reason is all it takes to be covered
+    (rule 145: a hand-written list can only ever pin the members somebody remembered, which
+    is the hole #282 came through). Walks the source rather than importing, so a module with
+    a heavy import graph costs nothing here.
+    """
+    found: dict[str, str] = {}
+    for path in sorted((Path(__file__).resolve().parents[1] / "src" / "reaper").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            targets = (
+                [node.target] if isinstance(node, ast.AnnAssign) else getattr(node, "targets", [])
+            )
+            value = getattr(node, "value", None)
+            for target in targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id.endswith("_REASON")
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    found[f"{path.stem}.{target.id}"] = value.value
+    return found
 
 
 def _conflict_detail(*, kept_watchers: int | None = 0, shortfall: str | None = None) -> str:
@@ -1307,6 +1355,52 @@ class TestTheMatchStatusVocabulary:
         assert set(reasons) == wanted
         assert len(set(reasons.values())) == len(wanted), "two statuses share one reason"
 
+    def test_no_reason_is_typed_by_hand(self) -> None:
+        """The gate under the copy check below, and the one that makes it complete.
+
+        A reason written as a literal at its ``Unknown(...)`` site is invisible to every
+        drift test, because there is no name to walk. That is exactly how five of them
+        reached the owner in Reaper's own words while this file was green (#282): the list
+        below could only ever check the reasons somebody remembered to name.
+
+        So every reason is a constant, and this reads the call rather than the line
+        (rule 147): an ``ast`` walk sees a reason split over two lines, wrapped in
+        parentheses, or passed positionally, none of which a regex on ``Unknown(reason="``
+        would catch. A local variable passes -- its value came from a constant or a map that
+        the walk below covers -- and so does a stored value thawed off a dict.
+        """
+        walked = 0
+        typed: list[str] = []
+        for path in sorted((Path(__file__).resolve().parents[1] / "src" / "reaper").rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not (isinstance(node.func, ast.Name) and node.func.id == "Unknown"):
+                    continue
+                reason = next(
+                    (kw.value for kw in node.keywords if kw.arg == "reason"),
+                    node.args[0] if node.args else None,
+                )
+                if reason is None:
+                    continue
+                walked += 1
+                if isinstance(reason, ast.Constant) and isinstance(reason.value, str):
+                    typed.append(f"{path.name}:{reason.lineno}  {reason.value!r}")
+        assert not typed, (
+            "these reasons are typed at the site, so no drift test can see them and the\n"
+            "why panel will print them raw at the owner. Name each one as a module\n"
+            "constant ending in _REASON and it is covered automatically:\n  " + "\n  ".join(typed)
+        )
+        # The population this ban scans, reconciled by hand (rule 147): a reason that stops
+        # being an ``Unknown(...)`` call leaves the walk silently, and a flag-shaped
+        # assertion cannot tell that from a tree that complies. Bump it deliberately.
+        assert walked == 42, (
+            f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
+            "its reason as a *_REASON constant and bump this count; if one left, check it\n"
+            "did not take its only coverage with it."
+        )
+
     def test_every_backend_cause_has_operator_copy_in_the_panel(self) -> None:
         """Rule 144, across the tree boundary. ``CAUSE_COPY`` turns each backend reason into
         the sentence the owner reads; a key with no entry there renders the backend's raw
@@ -1314,29 +1408,60 @@ class TestTheMatchStatusVocabulary:
         message names the file to edit, because a comment asking the next author to remember
         does nothing.
 
-        The two dormancy reasons are covered here as of #278. They were hand-typed five
+        The two dormancy reasons were named for this in #278. They had been hand-typed five
         times in `src/` and twice more in `WhyPanel.tsx`, with a comment in `snapshot.py`
         citing rule 144 over the pair -- and nothing checking them, so rewording either side
-        printed the raw backend phrase at the owner with the suite green. Naming them beside
-        the no-key reasons is the fix rule 144 actually asks for: point the test at the
-        sibling copies rather than trusting a comment to be remembered.
+        printed the raw backend phrase at the owner with the suite green.
+
+        Naming them one at a time is what left #282 behind: five more reasons were reaching
+        the panel raw, and a tuple of the constants somebody had thought to add could not
+        say so. The population is **discovered** now -- every module-level ``*_REASON``
+        string under ``src/reaper`` -- so a new reason is covered the moment it is named,
+        and the only way out is an entry in ``_NO_PANEL_ROUTE`` that says why.
         """
         panel = (
             Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
         ).read_text(encoding="utf-8")
         cause_copy = panel.split("const CAUSE_COPY", 1)[1].split("};", 1)[0]
+        discovered = _reason_constants()
+        assert discovered, "the *_REASON walk found nothing, so this test proves nothing"
+        checked = {name: value for name, value in discovered.items() if name not in _NO_PANEL_ROUTE}
         missing = [
-            reason
-            for reason in (
-                *MOVIE_NO_KEY_REASONS.values(),
-                *SEASON_NO_KEY_REASONS.values(),
-                MOVIE_NO_ADDED_AT_REASON,
-                SEASON_NO_ADDED_AT_REASON,
+            f"{name}  {value!r}"
+            for name, value in sorted(
+                {
+                    **checked,
+                    **{f"_NO_KEY_REASONS[{s.name}]": r for s, r in MOVIE_NO_KEY_REASONS.items()},
+                    **{
+                        f"season _NO_KEY_REASONS[{s.name}]": r
+                        for s, r in SEASON_NO_KEY_REASONS.items()
+                    },
+                }.items()
             )
-            if f'"{reason}"' not in cause_copy
+            if f'"{value}"' not in cause_copy
         ]
         assert not missing, (
             "these reasons reach the why-panel with no plain-language entry in CAUSE_COPY\n"
             "(frontend/src/components/WhyPanel.tsx), so the box prints the raw backend\n"
             "string at the owner:\n  " + "\n  ".join(missing)
         )
+
+    def test_the_reason_with_no_panel_route_still_has_one_way_out(self) -> None:
+        """The exemption above is a claim about wiring, so it is checked rather than trusted
+        (rule 25): a reason excused from needing panel copy must have no entry either, or the
+        excuse is stale and the copy it does have is unreachable."""
+        panel = (
+            Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
+        ).read_text(encoding="utf-8")
+        cause_copy = panel.split("const CAUSE_COPY", 1)[1].split("};", 1)[0]
+        discovered = _reason_constants()
+        assert set(_NO_PANEL_ROUTE) <= set(discovered), (
+            "_NO_PANEL_ROUTE names a constant that no longer exists: "
+            f"{sorted(set(_NO_PANEL_ROUTE) - set(discovered))}"
+        )
+        for name, why in _NO_PANEL_ROUTE.items():
+            assert why.strip(), f"{name} is exempt with no reason written"
+            assert f'"{discovered[name]}"' not in cause_copy, (
+                f"{name} is exempt from needing panel copy because {why}, but CAUSE_COPY has "
+                "an entry for it. One of the two is wrong."
+            )
