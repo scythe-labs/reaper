@@ -157,9 +157,25 @@ class TestSavingCreatesTheBackingPolicyRow:
         assert count == 1  # updated in place, not duplicated
         assert (await active_profile_settings(session)).max_items_per_run == 7
 
-    async def test_a_saved_profile_ships_disabled(self, session: AsyncSession) -> None:
-        """A profile that could act the moment it is created is how a starter template
-        deletes a library. Saving caps must never enable acting."""
+    async def test_the_unread_enabled_column_keeps_its_shipped_value(
+        self, session: AsyncSession
+    ) -> None:
+        """`Profile.enabled` is written False at creation, and that is ALL this pins (#271).
+
+        It used to claim this was what stopped a starter template deleting a library, which
+        is not true and is the more dangerous half: nothing in `src/` reads the column, so a
+        profile written `enabled=True` would scan and reap identically. A test asserting a
+        safeguard nobody implemented is rule 7/24's failure wearing a green tick.
+
+        What actually keeps a fresh install from acting is the master switch shipping off
+        (`test_app.test_destructive_actions_are_off_by_default`,
+        `test_settings_api.TestSafety.test_it_starts_read_only`) and the content-bound typed
+        phrase on `api.runs.execute_run`. Those are the tests to look at if this one's
+        subject ever seems to matter.
+
+        Kept rather than deleted because the attribute cannot go: `db.models.Profile.enabled`
+        records why `alembic check` blocks that.
+        """
         await save_profile_settings(session, ProfileSettings())
         profile = (await session.execute(select(Profile))).scalar_one()
         assert profile.enabled is False

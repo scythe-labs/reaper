@@ -279,7 +279,15 @@ class Profile(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     """Ships disabled, and nothing in ``src/`` reads it: written at creation, never
     consulted, so it gates nothing today. What keeps a fresh install from acting is the
-    arming requirement and the typed phrase on ``api.runs.execute_run``, not this flag."""
+    arming requirement and the typed phrase on ``api.runs.execute_run``, not this flag.
+
+    **The attribute cannot simply be deleted (#271).** The column is ``NOT NULL`` with no
+    server default in the frozen baseline, so dropping it here leaves ``alembic check``
+    -- a CI gate -- reporting a pending ``drop_column`` forever, and a ``DROP COLUMN``
+    revision is not the additive-only migration ``CLAUDE.md`` requires. Retiring it for
+    real means excluding it from autogenerate first. Until then the honest state is this
+    docstring plus ``test_profiles``'s pin, which says what the value is and refuses to
+    call it a safeguard."""
 
     active_policy_id: Mapped[int] = mapped_column(ForeignKey("policy.id"))
 
