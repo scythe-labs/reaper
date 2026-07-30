@@ -8,11 +8,14 @@
 // These drive the hook directly. Both cases need two polls in flight at once with control
 // over which settles first, which is not something a rendered panel lets you arrange.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { act, render, renderHook, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { announce, Announcer } from "../announce";
 import type { PinPollResult } from "./PlexPin";
-import { usePlexPinPoll } from "./PlexPin";
+import { CHOOSE_SERVER_SAID, usePlexPinPoll } from "./PlexPin";
 
 // The real `announce` and the real `Announcer`, with a counter around the call. Counting matters
 // here and the rendered regions cannot do it: they alternate, hold one sentence at a time, and
@@ -202,6 +205,84 @@ describe("a wait that is taking longer than usual", () => {
       expect(vi.mocked(announce).mock.calls.map(([t]) => t)).toEqual([REASON, SECOND]);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+// The other transition this flow reaches on a timer: the account owns several servers, so the
+// wait is replaced by a picker. Both callers announced it, in their own words, from their own
+// handlers -- and the pair had already been out of step once, with Settings speaking and the
+// login screen silent (#177, rule 72). One declaration in the hook is what makes them agree by
+// construction rather than by whoever edits one of them next remembering the other (rule 144).
+describe("the account that owns several servers", () => {
+  beforeEach(() => {
+    vi.mocked(announce).mockClear();
+  });
+
+  const said = () =>
+    screen
+      .getAllByRole("status")
+      .map((n) => n.textContent)
+      .filter((t) => t !== "");
+
+  it("is announced for a caller that passes no handler at all", async () => {
+    // Deliberately no `onChooseServer`. A caller cannot reach the picker without the sentence,
+    // which is the whole point of moving it off the two handlers that used to carry it.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { poll, answer } = deferredPolls();
+      render(<Announcer />);
+      const { result } = renderHook(() =>
+        usePlexPinPoll({ poll, onOk: vi.fn(), onFailed: vi.fn(), onTimedOut: vi.fn() }),
+      );
+      act(() => result.current.begin(42));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      await act(async () => {
+        answer().ok({
+          status: "choose_server",
+          servers: [{ name: "Server", machine_identifier: "m1" }],
+        });
+      });
+
+      // Both halves, the way the reason above is checked: the list is held for the picker to
+      // render, and the sentence reached a real region.
+      expect(result.current.servers).toHaveLength(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200);
+      });
+      expect(said()).toContain(CHOOSE_SERVER_SAID);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Rule 144, as a guard rather than a comment asking the next author to remember. The hook says
+// this sentence for every caller now, so a caller that ALSO says it makes the operator hear it
+// twice -- and each file's own tests stay green either way, because neither can see the other
+// one speaking. This is what one declaration is worth, so it fails by name in the file that
+// broke it.
+//
+// Bounded, per rule 147: a substring match reads the sentence however it is spelled around it --
+// a bare literal, a template, a constant re-declared by hand -- but only while it is spelled out.
+// A caller composing it from pieces would pass, which is why the anchor asserts the declaration
+// is still where the two checks below think it is, rather than letting the walk quietly empty.
+describe("who is allowed to say the picker sentence", () => {
+  const read = (name: string) =>
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), name), "utf8");
+
+  it("is this hook, and neither of the two screens driving it", () => {
+    expect(read("PlexPin.tsx")).toContain(`= "${CHOOSE_SERVER_SAID}"`);
+
+    for (const caller of ["Login.tsx", "PlexPanel.tsx"]) {
+      expect(
+        read(caller).includes(CHOOSE_SERVER_SAID),
+        `${caller} states the picker sentence itself. The hook already announces it for every ` +
+          `caller, so this one says it twice. Delete the local copy (#177, rules 72 and 144).`,
+      ).toBe(false);
     }
   });
 });

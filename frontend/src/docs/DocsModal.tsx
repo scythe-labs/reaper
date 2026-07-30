@@ -5,6 +5,7 @@
 // built from the registry, so a new doc appears here with no change to this file.
 
 import { useEffect, useMemo, useRef } from "react";
+import { announce } from "../announce";
 import { ModalShell } from "../components/ModalShell";
 import { docSections } from "./blocks";
 import { DocBody } from "./DocBody";
@@ -48,6 +49,23 @@ export function DocsModal({
     }
     pane.scrollTop = 0;
   }, [docId, anchor, nonce]);
+
+  // Picking a different doc swaps the whole article while focus stays on the index button that
+  // swapped it, so nothing moved and nothing spoke. The pane carries the doc's title as its
+  // accessible name (below), but a name that changes on an element the operator is not standing
+  // on is announced nowhere -- the index and the pane are siblings, and only one of them had
+  // the news (#177). So say which doc is in the pane now.
+  //
+  // Edge-triggered on the doc, and seeded with the one it opened on: opening the modal is the
+  // operator's own press and `ModalShell` already moves focus into the dialog, so announcing
+  // there would talk over it. An anchor jump inside one doc is deliberately silent too -- the
+  // article is the same article, and the scroll is the answer to the press.
+  const saidDocRef = useRef(docId);
+  useEffect(() => {
+    if (docId === saidDocRef.current) return;
+    saidDocRef.current = docId;
+    announce(`Showing ${doc.title}.`);
+  }, [docId, doc.title]);
 
   return (
     <ModalShell title={"Help & docs"} onClose={onClose} className="docs-modal">

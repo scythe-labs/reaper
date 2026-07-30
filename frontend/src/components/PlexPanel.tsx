@@ -279,13 +279,12 @@ export function PlexPanel({
       announce(said);
       done();
     },
-    // A poll, not a press. The picker replaces the "waiting for Plex" block on a timer, so there
-    // is usually nothing focused to recover -- pressing "Link with Plex" already destroyed itself
-    // one state earlier -- and moving focus off a timer is a steal rather than a recovery, which
-    // is the line `useDialogFocus` draws for the same reason. So this site gets the news and NOT
-    // a `.focus()`: the sign-in finished and there is now a choice waiting.
-    onChooseServer: () =>
-      announce("Signed in with Plex. Choose which server Reaper should manage."),
+    // The picker's announcement is `usePlexPinPoll`'s, not this panel's. It was written here
+    // first and then a second time on the login screen, in that screen's own words -- one fact
+    // spelled out twice, which is what rule 144 asks to be generated from a single declaration
+    // (`CHOOSE_SERVER_SAID`). Saying it here as well would say it twice, and
+    // `PlexPin.test.tsx` fails by name if this file states it again.
+    //
     // A sign-in that never completed is a failure, not status: it goes to `plexError`
     // so it renders as an error, not in the gray slot "Linked to ..." uses.
     onTimedOut: () => {

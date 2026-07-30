@@ -10,6 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { announce } from "../announce";
 import { api } from "../api";
 import { phaseLabel } from "./ScanBar";
 import { BrandMark } from "../brand/BrandMark";
@@ -43,7 +44,17 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   const scanning = scanState?.running ?? false;
   const wasScanning = useRef(false);
   useEffect(() => {
-    if (wasScanning.current && !scanning) void queryClient.invalidateQueries();
+    if (wasScanning.current && !scanning) {
+      void queryClient.invalidateQueries();
+      // The first scan ends on a one-second poll, not on anything the operator did, and the
+      // whole panel changes when it does: "Your first scan is running" becomes "You're all
+      // set" and the button relabels from "Go to the app" to "Go to the review queue". None
+      // of that was announced, so an operator using a screen reader had no way to learn the
+      // scan they were told could take a while had finished, short of re-reading the page on
+      // a guess (#177). Said at the transition, not on every render, so a panel that mounts
+      // already-scanned stays quiet.
+      announce("Your first scan finished. Reaper has scanned your library.");
+    }
     wasScanning.current = scanning;
   }, [scanning, queryClient]);
 

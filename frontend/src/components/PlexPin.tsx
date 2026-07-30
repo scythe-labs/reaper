@@ -13,6 +13,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import type { PlexServerChoice } from "../api";
 
+/** What the app says when a sign-in lands on the server picker.
+ *
+ *  One declaration because there are two callers. The login screen and the Settings link panel
+ *  both reach this state through this hook, and each said this sentence in its own handler, in
+ *  its own words -- two hand-written copies of one fact, which is the drift rule 144 asks to be
+ *  generated from a single declaration instead. They had already been out of step once: the
+ *  Settings panel announced the picker and the login screen, the identical transition through
+ *  the identical hook, said nothing at all (#177, rule 72).
+ *
+ *  Exported because `PlexPin.test.tsx` reads the two callers' source and fails by name in
+ *  whichever one states it again. */
+export const CHOOSE_SERVER_SAID = "Signed in with Plex. Choose which server Reaper should manage.";
+
 /** Poll every two seconds. The wait is a person staring at a browser tab, so the faster
  *  of the two intervals this replaced wins: two seconds still costs at most 150 requests
  *  to our own backend over the five-minute deadline, and both sign-in paths now feel the
@@ -133,6 +146,12 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
               stop();
               setRetrying(null);
               setServers(result.servers ?? []);
+              // Said here for the same reason the retry reason above is: this is the one copy
+              // both sign-in paths share, so a third caller inherits the announcement instead
+              // of forgetting it (rule 72) -- which is not hypothetical, since the login screen
+              // is exactly the caller that forgot it. Told and NOT focused: the picker replaces
+              // the wait on a timer, so moving focus here is a steal rather than a recovery.
+              announce(CHOOSE_SERVER_SAID);
               h.onChooseServer?.(result.servers ?? []);
             } else {
               // "pending" or "retrying" -- neither is final, so keep polling. Only
@@ -189,6 +208,9 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
           h.onOk(result);
         } else if (result.status === "choose_server") {
           setServers(result.servers ?? []);
+          // The pick can land back on the picker (an account whose server list changed under
+          // it), and that arrives the same way: on an answer, not on a press.
+          announce(CHOOSE_SERVER_SAID);
           h.onChooseServer?.(result.servers ?? []);
         } else {
           begin(pinId, machineId);

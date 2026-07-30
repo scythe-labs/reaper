@@ -3,9 +3,9 @@
 // The one behavior that matters on the first-run screen: once the first scan is running you
 // can leave for the app immediately, instead of being held on the wizard until it finishes.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { SetupWizard } from "./SetupWizard";
@@ -103,5 +103,65 @@ describe("SetupWizard first scan", () => {
     expect(screen.queryByRole("button", { name: /run first scan/i })).not.toBeInTheDocument();
     await person.click(screen.getByRole("button", { name: /go to the app/i }));
     expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The first scan ends on a one-second poll rather than on anything the operator did, and it
+// changes the whole panel when it does -- the heading, the paragraph and the button's label.
+// None of it was announced, so the one screen a new operator cannot skip past finished its one
+// long operation in silence (#177).
+const { announceSpy } = vi.hoisted(() => ({ announceSpy: vi.fn() }));
+vi.mock("../announce", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../announce")>()),
+  announce: announceSpy,
+}));
+
+describe("the first scan finishing", () => {
+  beforeEach(() => {
+    announceSpy.mockClear();
+  });
+
+  it("says so, because nothing the operator did ended it", async () => {
+    // The scan status is polled every second while it runs, and the settled panel only appears
+    // once that poll has answered AND the invalidation it triggers has refetched the setup
+    // read. Written first as a bare `findByText`, which raced its own default 1000ms window
+    // against that same 1000ms interval: it passed at 1013ms on one run and failed outright
+    // after a rebase moved the timings. So the clock is driven here rather than waited on --
+    // rule 133, a test may not rest on a wall clock production also samples.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      apiMock.setupStatus.mockResolvedValue(READY);
+      apiMock.scanStatus.mockResolvedValue(RUNNING);
+      renderWizard();
+      expect(await screen.findByText(/your first scan is running/i)).toBeInTheDocument();
+
+      // The scan lands. Both reads answer the settled state from here on.
+      apiMock.setupStatus.mockResolvedValue({ ...READY, has_scanned: true, complete: true });
+      apiMock.scanStatus.mockResolvedValue(IDLE);
+
+      // Past the one-second poll, and past the refetch its invalidation starts.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(screen.getByText(/you're all set/i)).toBeInTheDocument();
+      expect(announceSpy.mock.calls).toEqual([
+        ["Your first scan finished. Reaper has scanned your library."],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays quiet on a panel that mounts already-scanned", async () => {
+    // The edge trigger's other half: arriving at a finished scan is not news, and a wizard
+    // re-rendered by any of its sibling panels must not re-announce a scan that ended before
+    // the operator got here.
+    apiMock.setupStatus.mockResolvedValue({ ...READY, has_scanned: true, complete: true });
+    apiMock.scanStatus.mockResolvedValue(IDLE);
+    renderWizard();
+    expect(await screen.findByText(/you're all set/i)).toBeInTheDocument();
+
+    expect(announceSpy).not.toHaveBeenCalled();
   });
 });

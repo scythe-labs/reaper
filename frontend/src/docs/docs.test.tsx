@@ -5,7 +5,7 @@
 
 import { render, screen } from "@testing-library/react";
 import { useEffect } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GATE_META } from "../components/policyMeta";
 import { expectNoA11yViolations } from "../test/a11y";
 import { docSections } from "./blocks";
@@ -203,5 +203,76 @@ describe("the protections table", () => {
 
     expect(listed.length).toBeGreaterThan(0);
     expect(listed.filter((label) => !known.has(label))).toEqual([]);
+  });
+});
+
+// Picking a doc from the index swaps the whole article beside it while focus stays on the
+// index button that swapped it. The pane is named for the doc it holds, but a name changing on
+// an element the operator is not standing on is announced nowhere, so the reading pane changed
+// under them in silence (#177).
+const { announceSpy } = vi.hoisted(() => ({ announceSpy: vi.fn() }));
+vi.mock("../announce", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../announce")>()),
+  announce: announceSpy,
+}));
+
+describe("switching docs in the reading pane", () => {
+  beforeEach(() => {
+    announceSpy.mockClear();
+  });
+
+  /** The modal is a controlled component: the parent owns `docId` and swaps it on navigate. */
+  const renderAt = (docId: string) =>
+    render(
+      <DocsModal
+        docId={docId}
+        anchor={undefined}
+        nonce={1}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+
+  it("says which doc is in the pane now", () => {
+    const second = DOCS.find((d) => d.id !== DOCS[0]!.id)!;
+    const { rerender } = renderAt(DOCS[0]!.id);
+
+    rerender(
+      <DocsModal
+        docId={second.id}
+        anchor={undefined}
+        nonce={2}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+
+    expect(announceSpy.mock.calls).toEqual([[`Showing ${second.title}.`]]);
+  });
+
+  it("stays quiet on the doc it opened at, which the operator asked for by pressing", () => {
+    // `ModalShell` already moves focus into the dialog on open; announcing here would talk
+    // over it, and the operator knows which page they asked for.
+    renderAt("understanding-policy");
+
+    expect(announceSpy).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet on a jump to a section of the doc already open", () => {
+    // The article is the same article and the scroll is the answer to the press, so the only
+    // thing an announcement here would add is noise on every entry in the jump list.
+    const { rerender } = renderAt("understanding-policy");
+
+    rerender(
+      <DocsModal
+        docId="understanding-policy"
+        anchor="whats-in-a-policy"
+        nonce={2}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
+
+    expect(announceSpy).not.toHaveBeenCalled();
   });
 });
