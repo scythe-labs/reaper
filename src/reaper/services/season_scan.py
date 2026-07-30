@@ -622,29 +622,24 @@ def build_season_facts(
         # (engine/dormancy.py), the same one the movie scan, the backtest and the prior
         # calibration use (rule 3); we never fabricate a Known dormancy from the horizon.
         #
-        # Where this lane does NOT mirror the movie path: here a play is enough on its own.
-        # With no arrival date but a play in scope, the first arm below measures from that
-        # play and the season is judged. `snapshot.build_facts` takes Unknown the moment
-        # added_at is missing, whatever history it holds. Only the both-missing arm matches
-        # it: a season with neither a play nor an added-at goes Unknown -- which protects --
-        # exactly as a movie with no added-at date does.
+        # A play is enough on its own: with no arrival date but a play in scope
+        # `reference_instant` measures from that play and the season is judged. The movie path
+        # takes the same branch as of #272 -- the thaw for a record missing `added_at` moved
+        # into `engine/dormancy.py`, so this lane no longer has to force it by passing the
+        # play as the arrival date, and the both-missing case is one shared answer rather than
+        # a matching arm in each caller.
         if watch_blind_reason is not None:
-            # Before either measurable arm, and for the same reason as the movie path: a
-            # re-added season carries a fresh added_at, so the arm below would measure a
+            # Before the measurement, and it has to stay there, for the same reason as the
+            # movie path: a re-added season carries a fresh added_at while its earlier plays
+            # stay filed under the key it no longer holds, so the measurement would read a
             # confident, tiny dormancy off the one input that still looks readable when the
             # plays behind it are not.
             dormancy = Unknown(reason=watch_blind_reason, source="tautulli")
-        elif last_played is not None:
-            reference = reference_instant(
-                last_played=last_played, added_at=last_played, horizon=horizon
+        elif (
+            reference := reference_instant(
+                last_played=last_played, added_at=season_added_at, horizon=horizon
             )
-            dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
-        elif season_added_at is not None:
-            reference = reference_instant(
-                last_played=None, added_at=season_added_at, horizon=horizon
-            )
-            dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
-        else:
+        ) is None:
             # Matched to a Plex season, but no arrival date and no play history, so dormancy
             # cannot be measured and the season abstains: kept to be safe, never reaped. Warn
             # so "why isn't this season reapable" is answerable from the log, the same as the
@@ -657,6 +652,9 @@ def build_season_facts(
                 plex_rating_key=plex_rating_key,
             )
             dormancy = Unknown(reason="no added-at date for this season", source="tautulli")
+        else:
+            dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
+
         if watch_blind_reason is not None:
             recent = Unknown(reason=watch_blind_reason, source="tautulli")
             all_time = Unknown(reason=watch_blind_reason, source="tautulli")

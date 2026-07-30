@@ -143,6 +143,32 @@ class TestDormancyIsDerivedOnce:
         assert reference_instant(last_played=None, added_at=added, horizon=horizon) == horizon
         assert reference_instant(last_played=None, added_at=NOW, horizon=horizon) == NOW
 
+    def test_a_play_alone_is_enough_with_no_arrival_date(self) -> None:
+        """The thaw the two lanes used to spell differently (#272, #257).
+
+        Dormancy *is* days since the last play, so a missing arrival date is not on its own a
+        reason to refuse to measure. `snapshot.build_facts` used to take Unknown the moment
+        `added_at` was missing whatever history it held, while `season_scan` measured from the
+        play -- one derived value, two thaw rules. The helper owns the branch now (rule 104),
+        so both lanes get this answer.
+        """
+        played = NOW - timedelta(days=10)
+        assert (
+            reference_instant(last_played=played, added_at=None, horizon=NOW - timedelta(days=365))
+            == played
+        )
+
+    def test_neither_a_play_nor_an_arrival_date_measures_from_nothing(self) -> None:
+        """The one state that genuinely cannot be measured, and the only one that may thaw to
+        Unknown. Returning the horizon here instead would fabricate a Known dormancy out of a
+        record we hold no evidence about -- which is the epoch-0 failure wearing a later date,
+        and it condemns. `None` is what makes each lane render it as Unknown, which blocks both
+        dormancy gates and abstains, so the item is kept."""
+        assert (
+            reference_instant(last_played=None, added_at=None, horizon=NOW - timedelta(days=365))
+            is None
+        )
+
     def test_it_floors_rather_than_rounds(self) -> None:
         """Dormancy sits on the condemn lane, so reducing its precision must move it toward
         LESS pressure (rule 31). An item an hour short of a 90-day floor stays kept."""

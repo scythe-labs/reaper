@@ -737,8 +737,9 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
     """The root of the shallow-mirror family, and the one member that had no warning (#217).
 
     Dormancy is clamped to the mirror, so the most dormant any item can read IS the reach:
-    ``dormancy.reference_instant`` is ``last_played or max(added_at, horizon)`` and all three
-    arms are at most the reach. ``MinDormancyGate`` PROTECTs anything under its threshold and
+    ``dormancy.reference_instant`` measures from ``last_played``, else ``max(added_at,
+    horizon)``, else nothing at all, and both measurable arms are at most the reach.
+    ``MinDormancyGate`` PROTECTs anything under its threshold and
     PROTECT beats everything in ``decide_verdict``, so a floor above the reach holds the whole
     library on age alone until the mirror catches up. On the shipped 1095-day floor that is
     every operator with under three years of history.

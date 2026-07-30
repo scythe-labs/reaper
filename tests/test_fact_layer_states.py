@@ -54,13 +54,14 @@ def _facts(
     *,
     imdb: dict[str, object] | None = None,
     membership_index: lists.MembershipIndex | None = None,
+    last_played: dict[int, datetime] | None = None,
 ):
     return build_facts(
         item,
         ScanContext(horizon=datetime(2019, 1, 1, tzinfo=UTC)),
         membership_index=membership_index or _EMPTY_INDEX,
         imdb=imdb or {},  # type: ignore[arg-type]
-        last_played={},
+        last_played=last_played if last_played is not None else {},
         watchers_window={10: 0},
         watchers_all_time={10: 0},
         whitelisted=set(),
@@ -160,20 +161,40 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
 
 
 class TestAMatchedItemWithNoArrivalDateIsWarned:
-    """Matched to Plex but no ``added_at``: dormancy cannot be measured, so the item
-    abstains and shows only as kept-to-be-safe, never on the reap list. A warning names
-    it so "why isn't this reapable" is answerable from the log, the same as an unmatched
-    item."""
+    """Matched to Plex but nothing to measure dormancy from, so the item abstains and shows
+    only as kept-to-be-safe, never on the reap list. A warning names it so "why isn't this
+    reapable" is answerable from the log, the same as an unmatched item.
 
-    def test_a_matched_movie_with_no_added_at_is_warned(self) -> None:
+    "Nothing to measure from" means no arrival date AND no play (#272, #257). This lane used
+    to stop at the missing arrival date whatever history it held, while the season lane
+    measured from the play -- one derived value with two thaw rules. The thaw is now
+    ``engine.dormancy.reference_instant``'s, so both lanes take one branch.
+    """
+
+    def test_a_matched_movie_with_neither_an_added_at_nor_a_play_is_warned(self) -> None:
         with capture_logs() as logs:
-            facts = _facts(_raw(added_at=None))
+            facts = _facts(_raw(added_at=None), last_played={})
 
         assert isinstance(facts.days_observed_unwatched, Unknown)
         warned = [e for e in logs if e["event"] == "scan.no_added_at"]
         assert len(warned) == 1
         assert warned[0]["log_level"] == "warning"
         assert warned[0]["media_type"] == "movie"
+
+    def test_no_added_at_but_a_play_measures_from_the_play_and_is_silent(self) -> None:
+        """The divergence itself: same evidence, and this lane used to answer Unknown where
+        the season lane answered with a number. Neither lane had a test for it, because both
+        no-arrival-date tests pinned the play absent (#257). The item is judged now, and the
+        warning must not fire -- it says dormancy could not be measured, and it was."""
+        with capture_logs() as logs:
+            facts = _facts(_raw(added_at=None), last_played={10: utcnow() - timedelta(days=12)})
+
+        assert isinstance(facts.days_observed_unwatched, Known)
+        # A range, not an equality: production samples its own `utcnow()` and comparing two
+        # samples of the clock it reads is rule 133's flake. The 2019 horizon would give
+        # thousands of days, so this discriminates the play from every fallback.
+        assert 11 <= facts.days_observed_unwatched.value <= 13
+        assert [e for e in logs if e["event"] == "scan.no_added_at"] == []
 
     def test_a_matched_movie_with_an_added_at_is_not_warned(self) -> None:
         with capture_logs() as logs:

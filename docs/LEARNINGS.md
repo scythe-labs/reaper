@@ -1530,8 +1530,9 @@ against. Recent watchers has an obvious one, the policy's popularity window. All
 watchers needs the item's whole life on the server, and the tempting shortcut —
 `Facts.days_observed_unwatched`, which is already there and needs no plumbing — cannot serve.
 
-**It can never exceed the reach.** `dormancy.reference_instant` returns
-`last_played or max(added_at, horizon)`. A never-played item is therefore measured from the
+**It can never exceed the reach.** `dormancy.reference_instant` measures from `last_played`,
+else `max(added_at, horizon)`, else nothing at all (no number, so no bound to exceed). A
+never-played item is therefore measured from the
 mirror's edge whenever it predates the mirror, and a played one is measured from a play the
 mirror by definition holds. Either way `days_observed_unwatched <= history_reach_days` for
 every item, so `reach >= dormancy` is true always and a guard written that way fires never.
@@ -2090,6 +2091,37 @@ reissued to something else, but the one invariant that needs no key at all. All-
 evidence cannot fall, so a count that drops to zero (or a last play that moves earlier) is a
 transition no library can perform, and the honest answer is `Unknown` rather than a measured
 zero. A never-watched item reads zero on every scan, so it never trips it.
+## A missing arrival date is a reachable branch nobody reaches (2026-07-30)
+
+Two scan lanes thawed one derived value two ways: the movie lane took `Unknown` dormancy the
+moment Plex reported no `added_at`, while the season lane measured from the last play and
+judged the season (#272, #257). Joining them means the movie lane judges items it used to
+keep, which is the condemn direction, so the question was how many items that moves.
+
+**Measured before changing anything, read-only against a live library.** Every stored snapshot,
+counting rows whose dormancy came back unreadable and splitting them by cause:
+
+| population | rows | unreadable dormancy | of those, missing `added_at` |
+| --- | --- | --- | --- |
+| movies, 41 snapshots | six figures | 977 | **0** |
+| seasons, 41 snapshots | five figures | 372 | **0** |
+
+⇒ **The arm is reachable and never reached.** Every unreadable dormancy in [redacted] rows came
+from an item with no Plex rating key at all (an ambiguous or unmatched title), not from a
+matched item missing its date — a correlation that is exact, not approximate: zero rows held an
+unreadable dormancy *and* a clean Plex bind. The `scan.no_added_at` warning, which exists to
+name this state, has never fired in the log either.
+
+So the consolidation moved no observed verdict, and the branch it removed was costing what a
+branch costs — two lanes to keep in agreement, and a why-panel telling the operator dormancy
+could not be measured with a play for that item in scope.
+
+**The transferable part is the instrument, not the zero.** The count came from
+`candidate.facts_json` and `explanation_json` on stored snapshots rather than from a fresh scan,
+so a question about how often a branch fires is answerable in seconds over months of history
+without touching the live servers. `facts_json` is sparse on older rows (~58% of movie rows
+carry it), which is what made the `explanation_json` cross-check worth running: it covers every
+row, and agreeing with the sparse measurement is what rules out a sampling artifact.
 
 ## Prior art
 

@@ -269,37 +269,46 @@ def build_facts(
     if rating_key is None:
         dormancy = Unknown(reason=no_key_reason, source="plex")
     elif watch_blind_reason is not None:
-        # Checked BEFORE added_at, because a re-added file has a fresh added_at and would
-        # otherwise measure a confident, tiny dormancy off it -- the one input that still
-        # looks readable when the plays behind it are not.
+        # Checked BEFORE the measurement below, and it has to stay there: a re-added file
+        # carries a fresh added_at while its earlier plays stay filed under the key it no
+        # longer holds, so the measurement would read a confident, tiny dormancy off the one
+        # input that still looks readable when the plays behind it are not.
         dormancy = Unknown(reason=watch_blind_reason, source="tautulli")
-    elif item.added_at is None:
-        # Matched to Plex, but Plex reports no arrival date. This lane takes Unknown on that
-        # alone -- not because nothing could be measured: `last_played` is in scope right
-        # here, and the season lane (`season_scan.build_season_facts`) does measure from a
-        # play when the arrival date is missing. This one does not, and the item abstains: it
-        # appears only as "kept to be safe", never on the reap list. Warn so "why isn't this
-        # reapable" is answerable from the log, the same as an unmatched item. Rare: a
-        # matched Plex item almost always carries an added_at.
-        log.warning(
-            "scan.no_added_at",
-            media_type="movie",
-            media_key=item.media_key,
-            title=item.title,
-            imdb_id=item.imdb_id or None,
-            tmdb_id=item.tmdb_id,
-            plex_rating_key=rating_key,
-        )
-        dormancy = Unknown(reason="no added-at date", source="tautulli")
     else:
         # Through the one shared derivation (engine/dormancy.py), so the season scan, the
-        # backtest and the prior calibration all measure this the same way (rule 3).
+        # backtest and the prior calibration all measure this the same way (rule 3) -- and
+        # since #272 the *thaw* is shared too, so a missing arrival date resolves identically
+        # on both lanes. A play alone is enough: `reference_instant` measures from it, and
+        # only an item with neither a play nor an arrival date comes back with nothing to
+        # measure from. This lane used to take Unknown the moment `added_at` was missing,
+        # whatever history it held, while `season_scan.build_season_facts` measured from the
+        # play -- one value, two thaw rules, and a why-panel here saying dormancy could not be
+        # measured with a play for that item in scope.
         reference = reference_instant(
             last_played=last_played.get(rating_key),
             added_at=item.added_at,
             horizon=context.horizon,
         )
-        dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
+        if reference is None:
+            # Matched to Plex, but Plex reports no arrival date and no play is in scope, so
+            # there is genuinely nothing to measure from and the item abstains: it appears
+            # only as "kept to be safe", never on the reap list. Warn so "why isn't this
+            # reapable" is answerable from the log, the same as an unmatched item. Rare: a
+            # matched Plex item almost always carries an added_at. The reason string is a key
+            # into WhyPanel's copy map (rule 144) and is the same state the season lane's
+            # both-missing arm reports, so the two lanes now say one thing.
+            log.warning(
+                "scan.no_added_at",
+                media_type="movie",
+                media_key=item.media_key,
+                title=item.title,
+                imdb_id=item.imdb_id or None,
+                tmdb_id=item.tmdb_id,
+                plex_rating_key=rating_key,
+            )
+            dormancy = Unknown(reason="no added-at date", source="tautulli")
+        else:
+            dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
 
     # --- popularity ---------------------------------------------------------
     recent: Observation[int]

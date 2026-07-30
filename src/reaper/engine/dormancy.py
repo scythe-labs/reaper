@@ -21,20 +21,54 @@ item one hour short of a 90-day floor stays kept for that hour.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import overload
+
+
+@overload
+def reference_instant(
+    *, last_played: datetime | None, added_at: datetime, horizon: datetime
+) -> datetime: ...
+
+
+@overload
+def reference_instant(
+    *, last_played: datetime | None, added_at: datetime | None, horizon: datetime
+) -> datetime | None: ...
 
 
 def reference_instant(
-    *, last_played: datetime | None, added_at: datetime, horizon: datetime
-) -> datetime:
-    """The instant dormancy is measured from.
+    *, last_played: datetime | None, added_at: datetime | None, horizon: datetime
+) -> datetime | None:
+    """The instant dormancy is measured from, or ``None`` when there is no such instant.
 
     The last play if there is one. Failing that, whichever is *later* of when the item
     arrived and how far back the watch mirror reaches -- never epoch 0, and never a date
     before our evidence begins. A mirror that only goes back a year cannot honestly say a
     file has been ignored for five, so an item older than the mirror is measured from the
     mirror's edge and reads as "not watched within our reach".
+
+    **The thaw lives here, not in the callers** (rule 104). A record with neither a play nor
+    an arrival date has nothing to measure from, and this returns ``None`` for it so each
+    lane renders one shared answer as its own ``Unknown`` -- which blocks both dormancy gates
+    and abstains, so the item is kept. A play alone is enough: dormancy *is* days since the
+    last play, so a missing arrival date is not on its own a reason to refuse to measure.
+
+    That last sentence used to be true of one lane only. `snapshot.build_facts` took Unknown
+    the moment ``added_at`` was missing, whatever history it held, while
+    `season_scan.build_season_facts` measured from the play and judged the season -- one
+    derived value with two thaw rules, and the movie lane's why-panel telling the operator
+    dormancy could not be measured with a play for that item in scope. Measured before the
+    lanes were joined: across 41 stored snapshots and [redacted] candidate rows, the movie
+    lane's ``added_at``-missing arm was reached zero times, so no observed verdict moved
+    (`docs/LEARNINGS.md`). The overloads let the two callers that narrow ``added_at``
+    themselves (`engine/backtest.py`, `engine/calibration.py`) keep a non-optional result
+    without a None-check that cannot fire.
     """
-    return last_played or max(added_at, horizon)
+    if last_played is not None:
+        return last_played
+    if added_at is None:
+        return None
+    return max(added_at, horizon)
 
 
 def dormancy_days(reference: datetime, *, now: datetime) -> int:

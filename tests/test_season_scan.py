@@ -694,11 +694,29 @@ class TestBuildSeasonFacts:
         assert facts.days_observed_unwatched.value < 30
 
     def test_a_resolved_season_with_no_arrival_date_is_unknown_dormancy(self) -> None:
-        """A season whose own arrival date could not be read has its dormancy Unknown --
-        never a Known dormancy fabricated from the horizon. Mirrors the movie path's
-        added_at=None branch; Unknown then forces the dormancy gates to protect."""
+        """A season with neither an arrival date nor a play has its dormancy Unknown -- never a
+        Known dormancy fabricated from the horizon. Unknown then forces the dormancy gates to
+        protect. Both inputs are pinned absent deliberately: a play alone is enough to measure
+        from, which is what the next test covers."""
         facts = _facts(season_added_at=None, last_played=None)
         assert isinstance(facts.days_observed_unwatched, Unknown)
+
+    def test_no_arrival_date_but_a_play_measures_from_the_play(self) -> None:
+        """The state neither lane had a test for (#257), on the lane that got it right.
+
+        Both existing no-arrival-date tests pin `last_played=None`, so the divergence they
+        were meant to cover was invisible: this lane measured from the play while the movie
+        lane discarded it and abstained. Dormancy IS days since the last play, so the play
+        alone is a real measurement -- and the number must come from the play, not the horizon,
+        which is 4000 days back in this fixture and would read as far more pressure.
+        """
+        facts = _facts(season_added_at=None, last_played=utcnow() - timedelta(days=12))
+
+        assert isinstance(facts.days_observed_unwatched, Known)
+        # A range, not an equality: production samples its own `utcnow()`, and comparing two
+        # samples of the clock it reads is rule 133's flake. 4000 is what the horizon would
+        # give, so this discriminates the play from the fallback by three orders of magnitude.
+        assert 11 <= facts.days_observed_unwatched.value <= 13
 
 
 # ---------------------------------------------------------------------------
