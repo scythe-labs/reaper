@@ -281,6 +281,45 @@ class TestRecallAndForget:
     async def test_forgetting_an_empty_table_reports_zero(self, session: AsyncSession) -> None:
         assert await watch_evidence.forget_all(session) == 0
 
+    async def test_forget_one_takes_that_title_and_leaves_the_rest(
+        self, session: AsyncSession
+    ) -> None:
+        # The whole point of #275: before this existed, clearing one stale mark meant
+        # `forget_all`, which discards every real mark protecting every other title. So the
+        # assertion that matters is the SECOND one -- what survives, not what went.
+        await watch_evidence.record(
+            session,
+            {"radarr:1:5": Reading(4, NOW), "sonarr:1:9:2": Reading(2, NOW)},
+            now=NOW,
+        )
+        assert await watch_evidence.forget_one(session, "radarr:1:5") is True
+        marks = await watch_evidence.recall_all(session)
+        assert set(marks) == {"sonarr:1:9:2"}
+        assert marks["sonarr:1:9:2"].watchers_all_time == 2
+
+    async def test_forgetting_a_title_with_no_mark_is_not_an_error(
+        self, session: AsyncSession
+    ) -> None:
+        # A title can be held for reasons that are not a mark, and an operator can press this
+        # twice. Both must report "there was nothing" rather than failing.
+        assert await watch_evidence.forget_one(session, "radarr:1:404") is False
+
+    async def test_a_forgotten_title_reads_honestly_again(self, session: AsyncSession) -> None:
+        # The behavior the operator is buying, driven end to end through the real check
+        # rather than asserted off the row: the mark is what makes `went_blind` fire, so
+        # after the escape the same falling reading must come back clean (rule 118).
+        await watch_evidence.record(session, {"radarr:1:5": Reading(4, NOW)}, now=NOW)
+        fallen = Reading(0, None)
+        marks = await watch_evidence.recall_all(session)
+        assert (
+            watch_evidence.went_blind(marks.get("radarr:1:5"), fallen)
+            == watch_evidence.BLIND_REASON
+        )
+
+        await watch_evidence.forget_one(session, "radarr:1:5")
+        marks = await watch_evidence.recall_all(session)
+        assert watch_evidence.went_blind(marks.get("radarr:1:5"), fallen) is None
+
 
 # ---------------------------------------------------------------------------
 # What the two fact builders do with the flag. Both lanes, deliberately in one place:
@@ -420,6 +459,33 @@ class TestTheStartFreshRoute:
             for n in range(6)
         ]
         assert codes == [403] * 5 + [429]
+
+    def test_one_title_can_be_forgotten_without_touching_the_others(
+        self, client: TestClient
+    ) -> None:
+        """The per-title escape over the wire (#275), and the blast radius is the assertion.
+
+        The global reset above is what this exists to avoid: an operator clearing one stale
+        record should not lose the records holding every other title back.
+        """
+        engine = sa_create_engine(client.app.state.settings.sync_database_url)  # type: ignore[attr-defined]
+        with engine.begin() as conn:
+            for n in (5, 6):
+                conn.execute(
+                    text(
+                        "INSERT INTO watch_high_water "
+                        "(media_key, watchers_all_time, last_played_at, updated_at) "
+                        "VALUES (:k, 3, NULL, 1)"
+                    ),
+                    {"k": f"radarr:1:{n}"},
+                )
+        engine.dispose()
+
+        assert client.delete("/api/settings/watch-evidence/radarr:1:5").json() == {"removed": True}
+        # The other title's record is untouched, which is the whole difference from the reset.
+        assert client.get("/api/settings/watch-evidence").json()["titles"] == 1
+        # Idempotent, same as the reset: pressing it again reports nothing to remove.
+        assert client.delete("/api/settings/watch-evidence/radarr:1:5").json() == {"removed": False}
 
 
 def _insert_snapshot(client: TestClient, *, blind: int | None) -> None:

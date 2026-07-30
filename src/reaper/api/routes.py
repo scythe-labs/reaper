@@ -1189,7 +1189,7 @@ async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
         # The rows an abstain could not choose between. Read through the one match thaw
         # (rule 104) rather than a second copy of the same json.loads, so the links and the
         # replay can never disagree about which rows the operator was shown.
-        candidate_rating_keys=_replayed_match(row).get("match_candidates", ()),
+        candidate_rating_keys=_replayed_evidence(row).get("match_candidates", ()),
     )
     return LinksOut(
         plex=links.plex,
@@ -1711,9 +1711,13 @@ async def validate_policy(request: Request, payload: PolicyValidateIn) -> Policy
 _SIM_YIELD_EVERY = 500
 
 
-def _replayed_match(row: Candidate) -> dict[str, Any]:
-    """The Plex match kwargs ``judge_facts`` needs, read back off the row's frozen
-    explanation so a replay rebuilds the same match block the scan stored.
+def _replayed_evidence(row: Candidate) -> dict[str, Any]:
+    """The evidence kwargs ``judge_facts`` needs, read back off the row's frozen explanation
+    so a replay rebuilds what the scan stored rather than re-deriving or dropping it.
+
+    Two things, both evidence rather than policy, and both parsed from one read of the stored
+    JSON: the Plex match block, and whether the scan found this title's recorded plays
+    unreadable (``watch_blind``, #275). A policy edit changes neither.
 
     Identity is evidence, not policy: a policy edit cannot change which Plex row an item was
     bound to, so the replay must carry the stored answer rather than re-deriving it or (as it
@@ -1731,14 +1735,21 @@ def _replayed_match(row: Candidate) -> dict[str, Any]:
     try:
         stored = json.loads(row.explanation_json or "{}")
         match = stored.get("match") if isinstance(stored, dict) else None
+        # Read before the match branches below, because the two are independent: a row whose
+        # match block is missing or malformed can still carry a perfectly good reading, and
+        # dropping the flag with the match would silently withdraw the escape from it.
+        # Anything that is not a bool thaws to None, never False (rules 96 and 142).
+        raw_blind = stored.get("watch_blind") if isinstance(stored, dict) else None
     except (ValueError, TypeError):
         match = None
+        raw_blind = None
+    blind: dict[str, Any] = {"watch_blind": raw_blind if isinstance(raw_blind, bool) else None}
     if match is None:
-        return {}
+        return blind
     if not isinstance(match, dict):
         # Present but unreadable -- the shape `condemned.MATCH_UNREADABLE` exists for. Assert
         # the conservative status rather than dropping to "no match block recorded".
-        return {"match_status": identity.MatchStatus.UNMATCHED}
+        return {**blind, "match_status": identity.MatchStatus.UNMATCHED}
 
     def _enum[T: enum.StrEnum](kind: type[T], value: object) -> T | None:
         try:
@@ -1765,6 +1776,7 @@ def _replayed_match(row: Candidate) -> dict[str, Any]:
         "match_candidates": tuple(k for k in candidates if isinstance(k, int))
         if isinstance(candidates, list)
         else (),
+        **blind,
     }
 
 
@@ -1880,7 +1892,7 @@ async def _replay_simulation(
             # that had nothing to do with the match. Once the block stopped holding, the
             # match became the whole interlock on the stored path and the only one this
             # path was not carrying (rule 3/22).
-            **_replayed_match(row),
+            **_replayed_evidence(row),
         )
         score_value = judged.score
         verdict = effective_fate(judged, override)

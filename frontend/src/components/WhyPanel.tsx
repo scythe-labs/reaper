@@ -18,8 +18,10 @@
 // And it renders for PROTECTED items too, showing the score it is overriding. A tool
 // that only explains its deletions cannot be trusted about its keeps.
 
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import {
+  api,
   type CandidateDetail,
   type GateOutcome,
   type Links,
@@ -993,6 +995,18 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
   );
 }
 
+/** What goes stale the moment one title's watch record is forgotten, each with the surface it
+ *  feeds. Read off the queries themselves rather than guessed: this panel is fed by
+ *  `["candidate", id]` (App.tsx) and the queue by its `["candidates"]` pages (ReviewQueue), so
+ *  both re-read; `["watch-evidence"]` is the Settings count of stored records, which really
+ *  does drop by one here -- the same key its global Forget invalidates (PlexPanel).
+ *
+ *  What this does NOT do is re-judge the row: the verdict and its reasons are frozen snapshot
+ *  data, so the refetch returns the same explanation and the notice stays up until a scan
+ *  reads the title again. Nothing here says otherwise, and the button's help text claims only
+ *  which plays get used. */
+const WATCH_RECORD_STALE = [["candidate"], ["candidates"], ["watch-evidence"]];
+
 export function WhyPanel({
   item,
   onClose,
@@ -1011,6 +1025,18 @@ export function WhyPanel({
   // be wrong about beside a size cell that already says the size is unknown.
   const holdsBack = useHoldsBackUnmeasured().holdsBack;
   const headingId = useId();
+
+  // Accept what Reaper can see today for THIS title, the narrow twin of Settings' global
+  // Forget. It discards the high-water record and nothing else: no file is deleted and no
+  // removal is approved, the title simply goes back to being judged on its current plays
+  // (`api.settings.forget_watch_evidence_for`).
+  const queryClient = useQueryClient();
+  const forgetWatchRecord = useMutation({
+    mutationFn: () => api.forgetWatchEvidenceFor(item.media_key),
+    onSuccess: () => {
+      for (const queryKey of WATCH_RECORD_STALE) void queryClient.invalidateQueries({ queryKey });
+    },
+  });
 
   const mediaLabel = item.media_type === "season" ? "TV season" : item.media_type;
 
@@ -1104,6 +1130,57 @@ export function WhyPanel({
           Reaper couldn't read why it judged this one, so the reasons below are missing. Run a scan
           to rebuild them. Nothing is removed on a reason Reaper can't show.
         </Notice>
+      )}
+
+      {/* The one hold the operator can lift from here, so the escape lives beside the sentence
+          that names it (rule 42) rather than on the Settings page, where the only control is
+          the whole-library one.
+
+          `=== true`, never truthy: the field is three-state, and `false` (the scan looked and
+          the reading was honest) and `null` (a row scanned before the field existed, which is
+          what the server actually sends for one) both mean this control must not appear.
+          Offering to discard a watch record on a row that cannot say whether it needs one is
+          the wrong direction, so "cannot tell" shows nothing.
+
+          `standing`: this is part of the page for as long as the title is held that way, not a
+          reaction to anything the operator pressed, so it is read in document order rather than
+          interrupting on every render of the panel. The failure below it is the opposite -- it
+          answers a press -- and stays an alert. */}
+      {explanation.watch_blind === true && (
+        <>
+          <Notice tone="warn" standing as="div">
+            Plays Reaper recorded earlier are no longer readable. The file may have been added to
+            your library again, and Reaper could not match it to your watch history.
+            <div className="watch-blind-act">
+              {/* Rule 85: the confirmation fires on SETTLED state, never at issuance. It also
+                  has to exist at all. This panel is reading the scan's frozen explanation, so
+                  the notice above still says "held" after the record is gone -- a refetch
+                  returns the same `watch_blind: true` until the next scan re-judges the row.
+                  Leaving the button at its resting label there tells the operator nothing
+                  happened, and the next press asks the server to forget a record that is
+                  already gone. So the action is replaced by what will happen instead. */}
+              {forgetWatchRecord.isSuccess ? (
+                <p className="help">Reaper will judge this title on what it can see now.</p>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="ghost sm"
+                    disabled={forgetWatchRecord.isPending}
+                    onClick={() => forgetWatchRecord.mutate()}
+                  >
+                    {/* The label carries the pending state, so the control gates itself: a
+                        press that lands while the first is in flight would forget a record
+                        that is already gone and report a second, contradictory answer. */}
+                    {forgetWatchRecord.isPending ? "Using…" : "Use what Reaper sees now"}
+                  </button>
+                  <p className="help">Use the plays visible today for this title only.</p>
+                </>
+              )}
+            </div>
+          </Notice>
+          {forgetWatchRecord.isError && <Notice tone="error">That didn't save. Try again.</Notice>}
+        </>
       )}
 
       <Verdict item={item} />

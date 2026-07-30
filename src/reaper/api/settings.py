@@ -1143,6 +1143,30 @@ async def reset_watch_evidence(
     return WatchEvidenceResetOut(forgotten=forgotten)
 
 
+@router.delete("/watch-evidence/{media_key}", tags=[api_tags.PLEX])
+async def forget_watch_evidence_for(request: Request, media_key: str) -> dict[str, bool]:
+    """Accept what Reaper can see now for ONE title, and judge it on that from the next scan.
+
+    The narrow twin of the reset above. Reaper holds a title back when the plays it recorded
+    earlier stop being readable, because it cannot tell that from a title nobody watched. The
+    usual cause is a file that left the library and came back: Plex gives it a new id and the
+    earlier plays stay filed under the old one.
+
+    Two other events read the same way and are not that -- removing a duplicate copy of a
+    title held twice, and rebuilding a Radarr or Sonarr database so a different title inherits
+    the record. Nothing in the scan can tell the three apart, which is why this is a control
+    the operator presses rather than something Reaper decides.
+
+    Returns whether a record existed. Removing one does NOT delete anything and does not
+    approve a removal: the title goes back to being judged by the policy on its current plays,
+    like any other.
+    """
+    async with _factory(request)() as session:
+        removed = await watch_evidence.forget_one(session, media_key)
+        await session.commit()
+    return {"removed": removed}
+
+
 @router.put("/plex/libraries", tags=[api_tags.PLEX])
 async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list[PlexLibraryOut]:
     """Turn libraries on or off. The keys name the enabled set; everything else stored

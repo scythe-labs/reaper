@@ -302,6 +302,18 @@ export interface Explanation {
    *  is N" clause rather than print a number that is not the operator's setting. */
   threshold: number | null;
   coverage: number;
+  /** Whether this title is held because the plays Reaper recorded earlier stopped being
+   *  readable. The panel offers the per-title escape on it, and on nothing else: the reason
+   *  text beside it is operator copy and will be reworded (rule 92).
+   *
+   *  Three-state (rule 142), and only `true` may show the control. `false` is the positive
+   *  claim that the scan took a reading and it was honest. **`null` is "cannot tell"** -- a
+   *  row scanned before the key existed, or an item with no reading to judge -- and it is what
+   *  actually arrives for such a row: `Explanation` defaults the field to `None` and nothing
+   *  sets `exclude_none`, so the server serializes it as `null`. The `?` is defense against a
+   *  shape the server does not emit. Both read as "cannot tell", never as `false`, because
+   *  offering to discard a watch record on a guess is the wrong direction. */
+  watch_blind?: boolean | null;
   signals: SignalContribution[];
   keeps?: KeepContribution[];
   /** Why it is being kept. */
@@ -1465,6 +1477,14 @@ export const api = {
    *  restore: it withdraws a protection from every title at once. */
   resetWatchEvidence: (password: string) =>
     post<{ forgotten: number }>("/api/settings/watch-evidence/reset", { password }),
+  /** The narrow twin of the reset: forget what was recorded for ONE title, so the next scan
+   *  judges it on the plays it can see today. Answers whether a record existed. Removing one
+   *  deletes nothing and approves nothing. No password, because the blast radius is the one
+   *  title named in the path -- the gate above is priced on losing every record at once. The
+   *  key is a media key, which carries colons, so it is encoded like every other path-borne
+   *  key here. */
+  forgetWatchEvidenceFor: (media_key: string) =>
+    del<{ removed: boolean }>(`/api/settings/watch-evidence/${encodeURIComponent(media_key)}`),
 
   leavingSoonSettings: () => request<LeavingSoonSettings>("/api/settings/leaving-soon"),
   setLeavingSoonSettings: (body: { enabled?: boolean; allow_unarmed?: boolean }) =>

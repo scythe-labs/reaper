@@ -1030,6 +1030,11 @@ async def scan(
             merged_rating_keys=item.merged_rating_keys,
             match_candidates=item.match_candidates,
             override=whitelist.effective_override(item.media_key, override_map),
+            # Typed onto the stored explanation so the panel can offer the per-title escape
+            # (#275) without reading the reason text. False, not None: this scan took a
+            # reading and it was honest. None is reserved for a row scanned before the key
+            # existed, and for an item that had no reading to judge at all.
+            watch_blind=blind_reason is not None if reading is not None else None,
         )
         if verdict == "condemn":
             condemned += 1
@@ -1101,6 +1106,15 @@ async def scan(
             match_candidates=judgment.match_candidates,
             extra_results=(judgment.guard_result,),
             override=whitelist.effective_override(judgment.media_key, override_map),
+            # Rule 72: the season lane reads its history by the season's own Plex key, so the
+            # same fall is detectable here and the escape must be offerable on it too. The
+            # season's reading is decided in `season_scan` before the show roll-up, so this
+            # reads the judgment rather than recomputing it.
+            watch_blind=(
+                judgment.watch_blind_reason is not None
+                if judgment.watch_reading is not None
+                else None
+            ),
         )
         if verdict == "condemn":
             condemned += 1
@@ -1281,6 +1295,7 @@ def judge_facts(
     match_status: identity.MatchStatus | None = None,
     merged_rating_keys: tuple[int, ...] = (),
     match_candidates: tuple[int, ...] = (),
+    watch_blind: bool | None = None,
 ) -> PolicyJudgment:
     """Evaluate, score, round, decide, explain -- the whole judgment, storing nothing.
 
@@ -1326,6 +1341,7 @@ def judge_facts(
             match_status=match_status,
             merged_rating_keys=merged_rating_keys,
             match_candidates=match_candidates,
+            watch_blind=watch_blind,
         ),
     )
 
@@ -1382,6 +1398,7 @@ def _judge_item(
     match_candidates: tuple[int, ...] = (),
     extra_results: Sequence[GateResult] = (),
     override: str | None = None,
+    watch_blind: bool | None = None,
 ) -> str:
     """Evaluate one item's gates and signals, store its candidate, return its EFFECTIVE fate.
 
@@ -1425,6 +1442,7 @@ def _judge_item(
         match_status=match_status,
         merged_rating_keys=merged_rating_keys,
         match_candidates=match_candidates,
+        watch_blind=watch_blind,
     )
 
     session.add(
@@ -1534,6 +1552,7 @@ def _explain(
     match_status: identity.MatchStatus | None = None,
     merged_rating_keys: tuple[int, ...] = (),
     match_candidates: tuple[int, ...] = (),
+    watch_blind: bool | None = None,
 ) -> str:
     """The why-panel.
 
@@ -1562,6 +1581,15 @@ def _explain(
             "keep_discount": round(item_score.keep_discount, 1),
             "threshold": policy.condemn_at,
             "coverage": round(item_score.coverage, 3),
+            # Whether THIS item was held because plays recorded earlier stopped being
+            # readable. Typed, because the panel offers the per-title escape (#275) on it and
+            # the only other way to know is to match `watch_evidence.BLIND_REASON` inside an
+            # observation's reason, which is operator copy and will be reworded (rule 92).
+            #
+            # Three-state, never a bare bool (rule 142): a row scanned before this shipped has
+            # no key and thaws to None, which the panel reads as "cannot tell" and shows no
+            # control for. False is the positive claim that this item read honestly.
+            "watch_blind": watch_blind,
             "match": {
                 # status is what the UI reads: "matched" -> stay quiet, anything else -> a
                 # plain "kept to be safe" notice, worded per status (MatchStatus says what

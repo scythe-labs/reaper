@@ -181,6 +181,17 @@ class Explanation(BaseModel):
     be read at all and the panel is showing the degraded fallback (routes._explanation_out):
     the panel omits its "your threshold is N" clause rather than print an invented figure."""
     coverage: float
+    watch_blind: bool | None = None
+    """Whether this title is held because plays recorded earlier stopped being readable.
+
+    The panel offers the per-title escape on it (#275). Typed rather than read off an
+    observation's reason text, which is operator copy and will be reworded (rule 92).
+
+    Three-state (rule 142): ``None`` is "cannot tell" -- a row scanned before the key existed,
+    or an item with no reading to judge -- and shows no control, because offering to discard a
+    record on a guess is the wrong direction. ``False`` is the positive claim that the scan
+    took a reading and it was honest.
+    """
     match: MatchOut | None = None
 
     signals: list[SignalContribution]

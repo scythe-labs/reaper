@@ -488,6 +488,22 @@ a.rating-chip:hover {
   }
 }
 
+/* The per-title escape inside the watch-blind warning (WhyPanel). It sits INSIDE the notice
+   for the same reason `.trash-ack` does: the control is bound to the warning that motivates
+   it, the way help text binds to the one control it explains. Its rule is drawn from the
+   notice's own border color, so it reads as part of the warning rather than a separate
+   control -- amber here, because a `warn` notice's border is `--unknown`. */
+.watch-blind-act {
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid color-mix(in srgb, var(--unknown) 35%, transparent);
+}
+/* The help sits directly beneath its one button (rule 45), not beside it: the notice is as
+   narrow as the panel, and a second column would put the sentence on four lines. */
+.watch-blind-act .help {
+  margin-top: 0.35rem;
+}
+
 .verdict {
   margin: 0.9rem 0;
   padding: 0.7rem 0.85rem;

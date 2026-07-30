@@ -8,7 +8,8 @@
 //      it argued for keeping the file.
 //   3. The rules that did not apply are tucked away, never dropped.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type CandidateDetail, type GateOutcome, type SignalContribution } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -17,7 +18,13 @@ import { testQueryClient } from "../test/queryClient";
 import { WhyPanel, allocateShares } from "./WhyPanel";
 
 vi.mock("../api", () => ({
-  api: { override: vi.fn(), clearOverride: vi.fn(), profile: vi.fn(), general: vi.fn() },
+  api: {
+    override: vi.fn(),
+    clearOverride: vi.fn(),
+    profile: vi.fn(),
+    general: vi.fn(),
+    forgetWatchEvidenceFor: vi.fn(),
+  },
 }));
 
 // The panel reads two settings on its own, through hooks no test here names: the unmeasured
@@ -26,6 +33,7 @@ vi.mock("../api", () => ({
 beforeEach(() => {
   vi.mocked(api.profile).mockResolvedValue(DEFAULT_PROFILE);
   vi.mocked(api.general).mockResolvedValue(DEFAULT_GENERAL);
+  vi.mocked(api.forgetWatchEvidenceFor).mockResolvedValue({ removed: true });
 });
 
 function signal(over: Partial<SignalContribution> & { id: string }): SignalContribution {
@@ -388,7 +396,6 @@ describe("the scoring receipt", () => {
   });
 
   it("folds a long group past six rows, without moving its total", async () => {
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     show(detail(pushRows(12)));
 
@@ -467,7 +474,6 @@ describe("the protection blocks", () => {
   ];
 
   it("rests the cleared list folded, and opens it on click", async () => {
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     const base = detail(WORKED_ROWS);
     show(
@@ -928,7 +934,6 @@ describe("the season footer's own-vs-show decision", () => {
   });
 
   it("clears the season's OWN key when its lit button is pressed, even under a show spare", async () => {
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     // Own reap against a whole-show spare: the season's own decision wins and it will go.
     show(
@@ -943,6 +948,100 @@ describe("the season footer's own-vs-show decision", () => {
     await user.click(screen.getByRole("button", { name: /Reaping/ }));
     // The season key, never the show key -- the whole-show spare is untouched.
     expect(api.clearOverride).toHaveBeenCalledWith("sonarr:1:2:3");
+  });
+});
+
+// The per-title escape from a hold nothing else on this screen can lift (#275). Reaper keeps the
+// most watch evidence it has ever measured for a title, so plays that stop being readable hold it
+// back on every scan -- and until this the only way out was Settings' whole-library Forget, which
+// discards the record for every title at once.
+//
+// It renders on ONE of the field's three states. `true` is the positive claim that this row's
+// recorded plays went unreadable. `false` is a reading the scan took and trusted. `null` is a row
+// that cannot say either way -- a scan older than the field -- and it is what the server actually
+// sends for one, since `Explanation` defaults it to `None` and nothing sets `exclude_none`. Both
+// of the last two must show nothing: discarding a watch record on a guess is a guess in the
+// direction that lets a file be deleted.
+describe("the watch-record escape", () => {
+  const BODY = /Plays Reaper recorded earlier are no longer readable/i;
+  const PRESS = "Use what Reaper sees now";
+
+  /** The panel for a row whose `watch_blind` is exactly this. Required rather than defaulted,
+   *  so every call site names the state it means (the `conflictDetail` reasoning above). */
+  const blindDetail = (watchBlind: boolean | null) =>
+    detail(WORKED_ROWS, {
+      explanation: { ...detail(WORKED_ROWS).explanation, watch_blind: watchBlind },
+    });
+
+  it("offers the escape on a title whose recorded plays went unreadable", () => {
+    show(blindDetail(true));
+
+    expect(screen.getByText(BODY)).toBeVisible();
+    expect(screen.getByRole("button", { name: PRESS })).toBeInTheDocument();
+    // The help binds to that one button and says what pressing it uses (rule 45).
+    expect(screen.getByText("Use the plays visible today for this title only.")).toBeVisible();
+  });
+
+  it("offers nothing when the scan took a reading and it was honest", () => {
+    show(blindDetail(false));
+
+    expect(screen.queryByText(BODY)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: PRESS })).not.toBeInTheDocument();
+  });
+
+  it("offers nothing on a row that cannot say either way", () => {
+    // The case that matters, and the one a truthy test passes on by accident in the other
+    // direction: every row frozen before the field shipped arrives here as an explicit `null`.
+    // Offering to discard the record for one of them would act on nothing anybody measured.
+    show(blindDetail(null));
+
+    expect(screen.queryByText(BODY)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: PRESS })).not.toBeInTheDocument();
+  });
+
+  it("offers nothing when the key never arrived at all", () => {
+    // The shape the server does not emit, which `api.ts` types with `?` as defense only. Pinned
+    // apart from the `null` case so a refactor to `=== undefined` cannot pass on one of them.
+    show(detail(WORKED_ROWS));
+
+    expect(screen.queryByText(BODY)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: PRESS })).not.toBeInTheDocument();
+  });
+
+  it("forgets the record under this item's own key", async () => {
+    const user = userEvent.setup();
+    show(blindDetail(true));
+
+    const press = screen.getByRole("button", { name: PRESS });
+    // Rule 137: user-event reports a press on a disabled control as a success, so a test that
+    // acts one turn early dispatches nothing and then fails on the state it never produced.
+    await waitFor(() => expect(press).toBeEnabled());
+    await user.click(press);
+
+    await waitFor(() => expect(api.forgetWatchEvidenceFor).toHaveBeenCalledWith("sonarr:1:2:3"));
+    // Rule 85: the confirmation appears only once the write has settled, and it REPLACES the
+    // control. The panel reads the scan's frozen explanation, so the warning above it still
+    // says "held" until a rescan re-judges the row -- leaving the button at its resting label
+    // there would read as "nothing happened" and invite a second press on a record that is
+    // already gone.
+    expect(
+      await screen.findByText("Reaper will judge this title on what it can see now."),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: PRESS })).not.toBeInTheDocument();
+  });
+
+  it("says a failed write failed, rather than swallowing it", async () => {
+    vi.mocked(api.forgetWatchEvidenceFor).mockRejectedValue(new Error("no"));
+    const user = userEvent.setup();
+    show(blindDetail(true));
+
+    const press = screen.getByRole("button", { name: PRESS });
+    await waitFor(() => expect(press).toBeEnabled());
+    await user.click(press);
+
+    expect(await screen.findByText("That didn't save. Try again.")).toBeVisible();
+    // The warning and its control stay put: the record is still there to discard.
+    expect(screen.getByRole("button", { name: PRESS })).toBeEnabled();
   });
 });
 

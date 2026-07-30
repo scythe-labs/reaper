@@ -363,26 +363,43 @@ any change to its column tuple, `plex.py` parses raw guids to `ExternalIds` and 
 `plex://` string to match on, and the guid would still not identify one item. Deliberately
 deferred as not worth the lift (#269). Separately, `snapshot._fold_merged_watch_stats` unions a
 merged group's counts onto the canonical item, so removing a duplicate listing is a real fall
-with no churn behind it; it reads as unreadable and holds that title until the record is
-discarded. Both are keep-direction, and both are stated in `services/watch_evidence.py` rather
-than papered over.
+with no churn behind it; it reads as unreadable and holds that title. Both are keep-direction,
+and both are stated in `services/watch_evidence.py` rather than papered over.
 
-**The escape hatch is required, not a convenience.** Rebuild a library without repairing its
-history and every watched title reads zero at once, so every one is held and nothing is reapable
-— correct, and unusable. Settings → Plex discards the record, two-step and behind the admin
-password, with a standing warning saying what it costs. Deliberately not paired with a cache
-rebuild, which was the first design and was wrong: the mirror is a faithful copy, so re-syncing
-fetches the same stale rows back. The repair is at the source, in Tautulli's Fix Metadata screen.
+**The escape hatch is required, not a convenience, and it comes in two widths.** Rebuild a
+library without repairing its history and every watched title reads zero at once, so every one
+is held and nothing is reapable — correct, and unusable. Settings → Plex discards the whole
+record, two-step and behind the admin password, with a standing warning saying what it costs.
+Deliberately not paired with a cache rebuild, which was the first design and was wrong: the
+mirror is a faithful copy, so re-syncing fetches the same stale rows back. The repair is at the
+source, in Tautulli's Fix Metadata screen.
 
 **The password is the same one that arms deletion**, on the same lockout, and it was added after
-the two-step shipped alone. Discarding the record is the only control in Settings that withdraws
-a protection from every title at once: the mark is what separates "plays we can no longer read"
-from "nobody ever watched this", so the scan after a discard scores every churned title as never
-watched and `MIN_DORMANCY`, `SERVER_POPULARITY` and `DATA_HORIZON` all stop holding it. No file
-goes when it is pressed, which is why a typed confirmation phrase would be theater — but a stray
-click or a stale tab reaching it is the same failure arming has, and it gets the same answer.
-With no admin password set the control is not offered and the route refuses, pointing at the
-password step rather than at a password to guess.
+the two-step shipped alone. Discarding the whole record is the only control in Settings that
+withdraws a protection from every title at once: the mark is what separates "plays we can no
+longer read" from "nobody ever watched this", so the scan after a discard scores every churned
+title as never watched and `MIN_DORMANCY`, `SERVER_POPULARITY` and `DATA_HORIZON` all stop
+holding it. No file goes when it is pressed, which is why a typed confirmation phrase would be
+theater — but a stray click or a stale tab reaching it is the same failure arming has, and it
+gets the same answer. With no admin password set the control is not offered and the route
+refuses, pointing at the password step rather than at a password to guess. **The narrow twin
+below takes no password**, and the asymmetry is the whole point: the gate is priced on losing
+every mark at once, so charging it for one title would push an operator with one stale record
+toward the control that clears the library.
+
+The **per-title** escape is the why panel's, and it exists because the global one was the only
+exit (#275). Two ordinary events leave a mark describing something its item no longer is —
+removing a duplicate listing, and rebuilding an *arr database so a different title inherits the
+record — and clearing either one cost every real mark in the library, which is a protection loss
+reached by doing the one thing the UI offered. `watch_evidence.forget_one` is the narrow twin.
+
+**Why it is a control and not an inference.** Both events present exactly as a real churn does:
+a fall with no key change to explain it. Recording an identity beside the mark was tried on
+paper and rejected — an operator correcting a wrong match in Radarr changes the identity under a
+live mark, so discarding it there would withdraw the protection at the moment it was working,
+and the scan cannot tell that from an *arr rebuild. A person knows which happened. The scan does
+not, so the escape is a button rather than a rule, and "delete marks not seen this scan" stays
+refused: it erases the protection during an *arr outage, the exact failure the guard exists for.
 
 ## Delete mode
 

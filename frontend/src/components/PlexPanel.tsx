@@ -1033,8 +1033,8 @@ export function PlexPanel({
                   <span className="set-label">Recorded watch history</span>
                   <p className="help">
                     Reaper holds back a title whose plays stop being readable. After a library
-                    rebuild that can be every title at once. Forget the record to start from what
-                    Plex holds now.
+                    rebuild that can be every title at once, and this clears them all. For one
+                    title, use the button on its reasons panel instead.
                   </p>
                   {/* Five states, all explicit (rule 17/36). The three that are not the form
                       all fail closed: this control withdraws a protection, so a safety read

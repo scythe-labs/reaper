@@ -29,10 +29,13 @@ every Plex listing merged into it, so a title held twice (a 1080p and a 4K copy 
 id) carries both listings' watchers. Remove the duplicate listing, or let Plex re-match so the
 bind is no longer ``MERGED_LISTINGS``, and the next scan reads the canonical key alone: a
 genuine fall, with no key churn behind it. It reads as blind and the mark cannot be lowered, so
-that title stays held until the operator discards the record. Keep direction, so no file is at
-risk, and it is stated here rather than worked around because the fix -- recording under the
-union of ``merged_rating_keys`` -- would key the mark on a group whose membership is exactly
-what changed.
+that title stays held. Keep direction, so no file is at risk, and it is stated here rather than
+worked around because the fix -- recording under the union of ``merged_rating_keys`` -- would
+key the mark on a group whose membership is exactly what changed.
+
+The operator's way out of it is :func:`forget_one`, offered on the title's own why panel, which
+is why this is a stated limit rather than an open defect: a person can tell this from a real
+churn, and nothing on the read side can (#275).
 
 **Why the mark outlives the snapshots.** Comparing against the previous snapshot alone
 would let the first blind scan write zero as the new baseline; after that 0 -> 0 is not a
@@ -236,6 +239,48 @@ async def forget_all(session: AsyncSession) -> int:
     result = await session.execute(delete(WatchHighWater))
     gone = int(getattr(result, "rowcount", 0) or 0)
     log.info("watch_evidence.forgotten", marks=gone)
+    return gone
+
+
+async def forget_one(session: AsyncSession, media_key: str) -> bool:
+    """Drop one title's mark, and report whether there was one. The per-title "start fresh".
+
+    The narrow twin of :func:`forget_all`, and the reason both exist (#275). A mark is only
+    ever raised, so one that stops describing its item holds that item back on every later
+    scan, and until this existed the only exit was :func:`forget_all` -- which discards every
+    real mark in the library to clear one stale one. That is a protection loss reached by an
+    operator doing the one thing the UI offered.
+
+    Two ordinary events leave a mark describing something its item no longer is, and neither
+    is a Plex key churn, so the check cannot see past either one:
+
+    * a title held twice (1080p and 4K on one tmdb id) carries both listings' watchers via
+      ``snapshot._fold_merged_watch_stats``; remove the duplicate and the canonical key alone
+      reads lower, a genuine fall with nothing behind it;
+    * ``media_key`` is ``<source>:<instance>:<arr id>`` and an *arr id is a row id, so
+      rebuilding a Radarr or Sonarr database restarts them from 1 and a different title
+      inherits the mark, reading unreadable from its first scan.
+
+    **Why this is the operator's decision and not a rule.** Both of the above present exactly
+    as a real churn does: a fall with no key change to explain it. Nothing on the read side can
+    tell them apart -- an identity recorded beside the mark cannot either, because an operator
+    correcting a wrong match in Radarr changes the identity under a live mark, and discarding
+    it there would withdraw the protection at the moment it was working. A person knows which
+    happened; the scan does not. So the escape is a control, not an inference.
+
+    Deliberately NOT "delete marks not seen this scan": that erases the protection during an
+    *arr outage, which is the failure this whole guard exists to prevent.
+
+    The next scan takes whatever it reads as the new baseline. If that reading carries no
+    evidence, :func:`record` writes no row at all and the item is judged on what is visible,
+    which is exactly what the operator asked for.
+    """
+    result = await session.execute(
+        delete(WatchHighWater).where(WatchHighWater.media_key == media_key)
+    )
+    gone = bool(getattr(result, "rowcount", 0) or 0)
+    # The media_key is an internal coordinate, never a title or a path.
+    log.info("watch_evidence.forgotten_one", media_key=media_key, existed=gone)
     return gone
 
 

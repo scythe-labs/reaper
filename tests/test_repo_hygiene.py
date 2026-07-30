@@ -984,8 +984,10 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # Then 112: the Plex panel's watch-history group added three at once, which is one group's full
 # set -- a never-loaded error, an action failure, and a standing warning that says what pressing
 # the control costs.
+# Then 114: the why-panel's per-title twin of that control (#275) -- a standing warning carrying
+# the button, and the action failure beside it.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 112
+_EXPECTED_NOTICES = 114
 
 
 def _shipped_tsx() -> list[Path]:
