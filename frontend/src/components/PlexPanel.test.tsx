@@ -294,6 +294,108 @@ describe("linking with Plex", () => {
   });
 });
 
+// Every read below the connection form means "of the currently LINKED server", and not one of the
+// four is qualified by a machine identifier, so a row cached against the old server answers for
+// the new one. All three paths that change which server that is therefore have to refresh the
+// whole set; two of them refreshed the status row alone, so unlinking and then linking a DIFFERENT
+// server painted the previous server's libraries and their enabled flags -- and "Movies" and
+// "TV Shows" collide across servers, so the wrong list looked like the right one (#205).
+//
+// **These pin the invalidation, not the symptom, and the symptom is not reachable from here.** It
+// needs a cached row to still be FRESH when the query re-enables, and freshness is the one thing
+// this tree does not share with production: the app sets `staleTime: 30_000` app-wide (`main.tsx`)
+// while `testQueryClient` leaves it at 0, so under the suite every re-enable refetches whatever
+// anyone invalidated and the grid is right either way. Reproducing it would mean giving the client
+// production's staleTime, which pins a fixture as much as the panel. So each path is asserted to
+// have said the whole set is no longer trusted, which is the fix, and reverting either caller to
+// `["plex"]` + `["setup"]` fails here (rule 118: it does not read as a proof of the grid).
+describe("changing which server is linked", () => {
+  /** The four keys that mean "of the currently linked server". Written out rather than imported
+   *  from the panel, so a key quietly dropped from `invalidateAllPlex` fails instead of moving
+   *  the expectation with it (rule 119). */
+  const OF_THE_LINKED_SERVER = [
+    ["plex"],
+    ["plex-resources"],
+    ["plex-libraries"],
+    ["leaving-soon-settings"],
+  ];
+
+  /** A mount whose invalidations the test can read back. The spy calls THROUGH, so the panel
+   *  still refetches its status and the link path below reaches its linked render. */
+  function renderRecordingInvalidations(): string[] {
+    apiMock.plexResources.mockResolvedValue({
+      source: "plex.tv",
+      servers: [
+        { name: "Example server", machine_identifier: "machine-1", current: true, connections: [] },
+      ],
+    });
+    const client = testQueryClient();
+    const invalidated: string[] = [];
+    const passThrough = client.invalidateQueries.bind(client);
+    vi.spyOn(client, "invalidateQueries").mockImplementation((filters) => {
+      invalidated.push(JSON.stringify(filters?.queryKey));
+      return passThrough(filters);
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <PlexPanel />
+      </QueryClientProvider>,
+    );
+    return invalidated;
+  }
+
+  function expectWholeSetDropped(invalidated: string[]) {
+    for (const key of OF_THE_LINKED_SERVER) {
+      expect(
+        invalidated,
+        `${JSON.stringify(key)} is not "of the linked server" any more`,
+      ).toContain(JSON.stringify(key));
+    }
+  }
+
+  it("stops trusting every row about the old server when you unlink", async () => {
+    const user = userEvent.setup();
+    apiMock.plexUnlink.mockResolvedValue(undefined);
+    const invalidated = renderRecordingInvalidations();
+    const unlink = await screen.findByRole("button", { name: "Unlink" });
+
+    // What the panel reads back afterwards: there is no linked server now.
+    apiMock.plexStatus.mockResolvedValue(
+      status({ linked: false, name: null, connection_uri: null }),
+    );
+    await user.click(unlink);
+
+    await waitFor(() => expect(apiMock.plexUnlink).toHaveBeenCalledTimes(1));
+    await waitFor(() => expectWholeSetDropped(invalidated));
+  });
+
+  it("stops trusting them when a link lands, too", async () => {
+    apiMock.plexStatus.mockResolvedValue(
+      status({ linked: false, name: null, connection_uri: null }),
+    );
+    // The sign-in finishes on the first poll, which is the path an operator takes.
+    apiMock.plexLinkPoll.mockResolvedValue({ status: "ok", server: status(), servers: null });
+    const invalidated = renderRecordingInvalidations();
+    const start = await screen.findByRole("button", { name: "Link with Plex" });
+
+    // `fireEvent`, not user-event: the poll runs on a two-second interval, so this needs fake
+    // timers, and user-event schedules its own on the real clock (the shape the timed-out test
+    // above uses).
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(start);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0); // the PIN request settles
+        await vi.advanceTimersByTimeAsync(2100); // the first poll, which comes back linked
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expectWholeSetDropped(invalidated);
+  });
+});
+
 describe("the signed-in account label", () => {
   it("never flashes the server name while the account name is loading", async () => {
     let resolveResources: (value: unknown) => void = () => {};
@@ -578,10 +680,14 @@ describe("the certificate check", () => {
 // The panel's own status read got this split in #140; these two did not, so an undivided
 // `isError` traded the whole library grid, and separately both Leaving Soon switches, for one
 // error paragraph while React Query still held the last good answer. Every trigger is a success
-// path: `invalidateAllPlex` fires after a server switch -- its one caller, not the three this
-// comment used to name (#196) -- and returning to the section past `staleTime` refetches on its
-// own. Each is pinned in both directions, because a fix that only deleted the `isError` arm would
-// leave a genuinely-unread group claiming to be empty rather than unread.
+// path: `invalidateAllPlex` fires on all three paths that change which server is linked -- a
+// switch, a link and an unlink -- and returning to the section past `staleTime` refetches on its
+// own. For most of this comment's life the switch was its only caller and the other two refreshed
+// the status row alone, which is the bug #205 fixed; the count here has been wrong in both
+// directions since, so the callers are now pinned by name in "changing which server is linked"
+// below rather than counted in prose. Each group is pinned in both directions, because a fix that
+// only deleted the `isError` arm would leave a genuinely-unread group claiming to be empty rather
+// than unread.
 describe("the groups below the form, through a failed refetch", () => {
   /** A cold mount whose queryClient the test keeps, so it can invalidate one key by hand. */
   function renderWithClient() {

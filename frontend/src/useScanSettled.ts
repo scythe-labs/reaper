@@ -31,6 +31,13 @@ export const SCAN_SETTLED_KEYS: string[][] = [
   ["simulate"], // "What this would do", re-decided against the new snapshot
   ["vocabulary-values"], // the genre/library value lists, drawn from the scan's items
   ["schedule"], // the scan job's own last-run line
+  // A scan syncs watch history first, so it moves the reach the popularity-window warning is
+  // computed from. The fresh 0 in the simulator and the sentence explaining that 0 arrive from
+  // the same event, and refreshing only the former shows the count without the reason. The key
+  // is structurally unchanged across a scan, so nothing else re-keys this query. It sat in a
+  // second copy of this effect inside `PolicyEditor` instead of here, which is the divergence
+  // the paragraph above forbids: the list's whole value is being the single place (#205).
+  ["validate"], // the policy editor's warnings, re-derived against the new watch history
 ];
 
 /** Refresh everything that hangs off the snapshot when a scan finishes.

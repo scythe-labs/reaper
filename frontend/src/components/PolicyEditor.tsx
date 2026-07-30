@@ -998,24 +998,12 @@ export function PolicyEditor({
     refetchInterval: (query) => (query.state.data?.running ? 1000 : false),
   });
   const scanning = scanState?.running ?? false;
-  // A ref, not useMemo: this is persistent mutable storage across renders, and useMemo is
-  // only a performance hint React may discard -- if it did, the running->stopped transition
-  // that refreshes the simulator would be missed. Matches ScanBar/SetupWizard.
-  const wasScanning = useRef(false);
-  useEffect(() => {
-    // When a scan finishes, the stored scores are fresh -- re-simulate.
-    if (wasScanning.current && !scanning) {
-      void queryClient.invalidateQueries({ queryKey: ["simulate"] });
-      void queryClient.invalidateQueries({ queryKey: ["snapshot"] });
-      // And re-validate. A scan syncs watch history first, so it is the one thing that
-      // moves the reach the popularity-window warning is computed from -- the fresh 0 in
-      // the simulator and the sentence explaining that 0 arrive from the same event, and
-      // invalidating only the former shows the count without the reason. The key is
-      // structurally unchanged across a scan, so nothing else re-keys this query.
-      void queryClient.invalidateQueries({ queryKey: ["validate"] });
-    }
-    wasScanning.current = scanning;
-  }, [scanning, queryClient]);
+  // No running->stopped effect here. This panel used to carry its own copy, invalidating
+  // `simulate`, `snapshot` and `validate` off its own ref -- the first two already refreshed by
+  // the shell's `useScanSettled`, and the third refreshed ONLY here, which is what let
+  // `SCAN_SETTLED_KEYS` claim to be the single place while missing a key that reads from the
+  // scan (#205, rule 79). All three are in that list now, the shell cannot be unmounted by a
+  // scan, and both read the same `["scanStatus"]` cache, so the transition is the same one.
 
   // A mutation, not a fire-and-forget async onClick: a "Scan now" that fails must say so
   // in the stale notice, or the button appears to do nothing at all.

@@ -130,6 +130,17 @@ export function PlexPanel({
     setVerifySeededFrom(savedVerify);
   }, [savedVerify]);
 
+  // Every key that means "of the currently linked server". Declared up here, above the first
+  // caller, because all three paths that change WHICH server that is have to run it: the four
+  // reads below are not qualified by a machine identifier, so a row cached against the old
+  // server answers for the new one until its staleTime runs out (30s libraries, 60s resources).
+  const invalidateAllPlex = () => {
+    void queryClient.invalidateQueries({ queryKey: ["plex"] });
+    void queryClient.invalidateQueries({ queryKey: ["plex-resources"] });
+    void queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
+    void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] });
+  };
+
   const saveWebUrl = useMutation({
     mutationFn: () => api.setPlexWebUrl(webUrl.trim()),
     // Re-seed from the response rather than leaving it to the effect above (rule 39). Clearing
@@ -165,9 +176,15 @@ export function PlexPanel({
     },
   });
 
+  // Ends a link attempt, however it ended. It refreshes the whole set rather than the status row
+  // alone: linking is one of the three ways the linked server changes, so the library grid, the
+  // server picker and the Leaving Soon settings all answer for a server that is no longer the one
+  // on screen. Unlinking then linking a DIFFERENT server used to paint the previous server's
+  // libraries and their enabled flags, and "Movies" and "TV Shows" collide across servers, so the
+  // wrong list looked like the right one (#205).
   const done = () => {
     setLinking(false);
-    void queryClient.invalidateQueries({ queryKey: ["plex"] });
+    invalidateAllPlex();
     void queryClient.invalidateQueries({ queryKey: ["setup"] });
   };
 
@@ -219,9 +236,12 @@ export function PlexPanel({
 
   const unlink = useMutation({
     mutationFn: api.plexUnlink,
+    // The same whole-set refresh `done` does, and for the same reason: after this there is no
+    // linked server, so every row that meant "of the linked server" is about a server Reaper can
+    // no longer reach (#205).
     onSuccess: () => {
       setPlexError(null);
-      void queryClient.invalidateQueries({ queryKey: ["plex"] });
+      invalidateAllPlex();
       void queryClient.invalidateQueries({ queryKey: ["setup"] });
     },
     onError: (e: Error) => setPlexError(e.message),
@@ -236,13 +256,6 @@ export function PlexPanel({
     staleTime: 60_000,
     retry: false,
   });
-
-  const invalidateAllPlex = () => {
-    void queryClient.invalidateQueries({ queryKey: ["plex"] });
-    void queryClient.invalidateQueries({ queryKey: ["plex-resources"] });
-    void queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
-    void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] });
-  };
 
   const switchServer = useMutation({
     // Carry the operator's current certificate-check choice, so switching to a
@@ -778,13 +791,17 @@ export function PlexPanel({
               per-library Switch and the Refresh button for one paragraph while React Query still
               held the last good list (#166).
 
-              Ordinary things reach it. `invalidateAllPlex` invalidates this key, and it has
-              exactly ONE caller, `switchServer.onSuccess` -- the comment here used to name three,
-              adding a link and an unlink it does not fire on (#196). `SetupWizard` reaches it by
-              a second route: it fires a bare `invalidateQueries()` when the first scan ends, and
-              it renders this panel on that same screen, so every key refetches with the last good
-              list in hand. A link is NOT one of them: this query is `enabled: linked`, so linking
-              mounts the read for the first time, and a failure there is the never-loaded arm.
+              Ordinary things reach it. `invalidateAllPlex` invalidates this key, and all three
+              paths that change which server is linked now call it: `switchServer.onSuccess`,
+              `done` (the link path) and `unlink.onSuccess`. For most of this comment's life it
+              had exactly one caller and the other two invalidated the status row alone, so the
+              grid answered for the previous server (#205); an earlier comment named all three
+              anyway, which #196 corrected down to the one that was true at the time. `SetupWizard`
+              reaches it by a second route: it fires a bare `invalidateQueries()` when the first
+              scan ends, and it renders this panel on that same screen, so every key refetches
+              with the last good list in hand. A link still cannot land on the STALE arm here:
+              this query is `enabled: linked`, so linking mounts the read for the first time, and
+              a failure there is the never-loaded arm.
 
               The list is a read, not a draft, so what is lost is smaller than the General panel's
               typed value -- but a switch the operator cannot see is a library they cannot turn
