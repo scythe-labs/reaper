@@ -222,7 +222,7 @@ export function ServiceModal({
    *  matches what was tested, so any edit to an address, a key or a certificate setting takes the
    *  result down with it. Every field here is one the test's answer depends on: add a field to the
    *  request above and add it here too (rule 143). */
-  const testedWith = () => [kind, baseUrl(), apiKey, ssl ? verifyCert : true].join(" ");
+  const testedWith = () => [kind, baseUrl(), apiKey, ssl ? verifyCert : true].join(" ");
   // Only Sonarr and Radarr delete, so only they carry the re-download switch.
   const isArr = kind === "radarr" || kind === "sonarr";
 

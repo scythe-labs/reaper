@@ -723,7 +723,7 @@ export function GeneralPanel({
                   Discard puts both back, and neither is written until Save.
 
                   Both halves also stop taking presses while the save is in flight, for the
-                  same reason: `onSuccess` re-seeds this mode from the response (:235), so a
+                  same reason: `save`'s `onSuccess` re-seeds this mode from the response, so a
                   press landing in the gap was overwritten and the bar cleared in the same
                   flush, leaving nothing that said so (#151). */}
               <Segmented
@@ -2847,19 +2847,19 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   // nothing to lose on the way out, so each one says why -- verified in the tree, not assumed.
   const dirtyPanels: Record<Panel, boolean> = {
     general: generalDirty,
-    // Its drafts live in `ServiceModal`, inside `ModalShell` (ServiceModal.tsx:481), whose scrim
+    // Its drafts live in `ServiceModal`, inside a `ModalShell`, whose scrim
     // covers the rail and whose `trapTab` keeps Tab inside, so the switch cannot be reached while
     // one is open. A draft added to the panel BEHIND the modal would need to report.
     services: false,
     plex: plexDirty,
-    // Same shape as services: the job editor is a `ModalShell` (:1905).
+    // Same shape as services: the job editor (`ScheduleModal`) is a `ModalShell` too.
     jobs: false,
     notifications: webhookDirty,
     security: securityDirty,
     backup: backupDirty,
     // Holds view filters, and its one stored setting saves the moment it changes
-    // (LogsPanel.tsx:242), so there is never an unsaved edit to lose. LogsPanel carries the other
-    // half of this note: a draft added there is invisible from this file.
+    // (`LogsPanel`'s `setLevel`), so there is never an unsaved edit to lose. That file carries the
+    // other half of this note: a draft added there is invisible from here.
     logs: false,
     // Read-only.
     about: false,

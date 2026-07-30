@@ -50,6 +50,65 @@ def _live_docs() -> list[Path]:
 
 INSTRUCTION_FILES = [REPO / "CLAUDE.md", *sorted((REPO / ".claude" / "rules").glob("*.md"))]
 
+
+# Tab, newline and carriage return are the only control characters source here is allowed to hold.
+# Everything else in the C0 range, plus DEL, is invisible in an editor and in a diff.
+_ALLOWED_CONTROL_BYTES = frozenset(b"\t\n\r")
+
+
+def _source_files_to_scan() -> list[Path]:
+    """Every hand-written source and instruction file, for the byte-level scan below."""
+    trees = [
+        *SRC.rglob("*.py"),
+        *TESTS.rglob("*.py"),
+        *FRONTEND_SRC.rglob("*.ts"),
+        *FRONTEND_SRC.rglob("*.tsx"),
+        *FRONTEND_SRC.rglob("*.css"),
+        *_live_docs(),
+        *INSTRUCTION_FILES,
+    ]
+    return sorted({p for p in trees if p.is_file()})
+
+
+def test_no_source_file_holds_an_invisible_control_character() -> None:
+    """A stray control byte blinds every grep-shaped gate in this file, silently.
+
+    A NUL reached a string literal in ``ServiceModal.tsx`` during #178 -- as the separator in a
+    ``.join()``, so it was syntactically fine and behaved correctly. ``tsc``, ``eslint``,
+    ``prettier`` and 809 vitest tests all passed on it. What broke was **reading**: ``grep`` classes
+    a file holding a NUL as binary and reports no matches at all rather than an error, and ``file``
+    called it ``data``. So `grep -n ModalShell ServiceModal.tsx` came back empty on a file that
+    imports it on line 21.
+
+    That is the whole failure: this suite's guards are source-text scans, and rule 147 bounds them
+    by the syntax they can parse. A file grep silently declines to read is absent from every one of
+    them while they all stay green -- the same shape as a member dropping out of a walk (rule 145),
+    reached by a route no matcher can see. Hence a byte-level check, which is the only kind that can
+    catch it.
+    """
+    offenders: list[str] = []
+    for path in _source_files_to_scan():
+        blob = path.read_bytes()
+        first = next(
+            (
+                i
+                for i, b in enumerate(blob)
+                if (b < 0x20 or b == 0x7F) and b not in _ALLOWED_CONTROL_BYTES
+            ),
+            None,
+        )
+        if first is not None:
+            line = blob.count(b"\n", 0, first) + 1
+            offenders.append(
+                f"{path.relative_to(REPO).as_posix()}:{line} holds 0x{blob[first]:02x}"
+            )
+    assert not offenders, (
+        "invisible control characters in source, which make grep treat the file as binary and "
+        "report no matches -- so every text-scanning guard in this file goes quiet on it:\n"
+        + "\n".join(offenders)
+    )
+
+
 # A rule definition opens a line as ``**12.`` or ``**3 / 22.``
 _RULE_DEF = re.compile(r"^\*\*(\d+(?:\s*/\s*\d+)*)\.\s")
 # A citation in code: "rule 28", "rules 4/71", "rule #2".
