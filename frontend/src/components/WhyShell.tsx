@@ -70,7 +70,7 @@ export function WhyShell({
   onClose: () => void;
   children: ReactNode;
 }) {
-  const panelRef = useRef<HTMLElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const modal = useMediaQuery(PANEL_OVERLAY_QUERY);
 
   useDialogFocus(panelRef, modal);
@@ -105,11 +105,24 @@ export function WhyShell({
   }, [modalOpen]);
 
   return (
-    <aside
+    <div
       ref={panelRef}
       className="why"
-      // Above the overlay boundary this is a plain <aside> (complementary), named but not modal.
-      role={modal ? "dialog" : undefined}
+      // One element in both bands, naming its own role in each: a side region beside the list
+      // above the boundary, a modal dialog over it below. It was an <aside> taking `role="dialog"`
+      // on the lower band, which browsers and screen readers do honor but ARIA in HTML does not
+      // permit -- a sectioning element cannot be a dialog, so the panel was invalid markup at
+      // exactly the width where it makes its strongest claim (#232).
+      //
+      // The <aside> was load-bearing for a second reason, and that is why this took a pass rather
+      // than a character: it SCOPED the `<header class="why-head">` each panel renders inside it.
+      // A <header> is the page's banner unless a sectioning element encloses it, and `role` does
+      // not scope it -- only the element does. So swapping in a div made `.why-head` a banner on
+      // all six panels, nested inside a landmark. The panels answer that by not being headers:
+      // that row is a plain div now, which is all it ever was in the accessibility tree, since a
+      // scoped <header> maps to `generic`. A seventh panel bringing its own <header> back is
+      // caught by the axe audit each panel already carries, not by this comment.
+      role={modal ? "dialog" : "complementary"}
       aria-modal={modal || undefined}
       aria-labelledby={headingId}
       tabIndex={-1}
@@ -117,6 +130,6 @@ export function WhyShell({
     >
       <WhyClose onClose={onClose} />
       {children}
-    </aside>
+    </div>
   );
 }

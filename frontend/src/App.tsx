@@ -576,9 +576,9 @@ export function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: 
     <WhyShell headingId={headingId} onClose={onClose}>
       {error ? (
         <>
-          <header className="why-head">
+          <div className="why-head">
             <h2 id={headingId}>Something went wrong</h2>
-          </header>
+          </div>
           <Notice tone="error">
             Couldn't load the reasons for this item. The item itself is unaffected. Close this panel
             and click the item to try again.

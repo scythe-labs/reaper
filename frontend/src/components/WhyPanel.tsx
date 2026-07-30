@@ -1094,7 +1094,7 @@ export function WhyPanel({
         </button>
       )}
 
-      <header className="why-head">
+      <div className="why-head">
         <div>
           <h2 id={headingId}>
             {/* The title itself opens the item in Plex when it can; a title Reaper
@@ -1150,7 +1150,7 @@ export function WhyPanel({
             <JumpPill href={item.links.sonarr} label="Sonarr" />
           </p>
         </div>
-      </header>
+      </div>
 
       <MetaLine item={item} />
       <RatingsRow ratings={item.ratings} links={item.links} />

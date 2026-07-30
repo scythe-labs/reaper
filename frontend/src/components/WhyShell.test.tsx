@@ -93,9 +93,9 @@ function Harness() {
       <input type="search" aria-label="A box outside the panel" />
       {open && (
         <WhyShell headingId="why-heading" onClose={() => setOpen(false)}>
-          <header className="why-head">
+          <div className="why-head">
             <h2 id="why-heading">{NAME}</h2>
-          </header>
+          </div>
           <input aria-label="A box inside the panel" />
           <button>A control inside the panel</button>
         </WhyShell>
@@ -120,19 +120,13 @@ describe("the reasons panel shell, audited", () => {
     await screen.findByRole("heading", { name: NAME });
     // `document.body`, not the render container: on a phone the shell is a modal over the page,
     // and what a modal owes a screen reader is a claim about the whole document.
-    await expectNoA11yViolations(document.body, {
-      skip: {
-        // Real, minor, and open as #232 rather than patched here. Below the boundary the panel
-        // is an `<aside>` claiming `role="dialog"`, which is not a role that element may take.
-        // Both repairs were tried and each broke something this suite already guarantees:
-        // making it a plain div unscopes the `<header>` every panel renders inside it, so
-        // `.why-head` is read as the page's banner across all six; switching the element per
-        // band remounts the panel when a phone rotates, which drops focus and fails "does not
-        // treat a screen resize as a close". The role IS honored by screen readers, so the
-        // suppression costs the operator nothing the override did not already cost them.
-        "aria-allowed-role": "aside claiming role=dialog below 1100px, tracked in #232",
-      },
-    });
+    //
+    // Audited with nothing skipped. This call used to suppress `aria-allowed-role` for #232: the
+    // shell was an `<aside>` taking `role="dialog"` on the lower band, which is not a role a
+    // sectioning element may take. It is a div naming its own role in both bands now, and the
+    // `<header>` the <aside> used to scope is a plain div in all six panels, so neither half of
+    // that trade is still owed.
+    await expectNoA11yViolations(document.body);
   });
 });
 

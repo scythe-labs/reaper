@@ -68,8 +68,7 @@ Last verified against the code: 2026-07-26.
    Still open: **#177** `aria-busy` unused, the docs pane swapping articles unannounced, and
    roughly fifty middot separators in running text across sixteen files; **#189** five policy
    warnings bound to a list rather than a control, held until option 2 is measured on a real
-   screen reader; **#232** the reasons panel is an `<aside>` claiming `role="dialog"`, suppressed
-   because both repairs break something the suite guarantees.
+   screen reader.
 6. **The stylesheet split has four optional stages left** (`docs/CSS_SPLIT_PLAN.md`). The cut
    itself landed: 31 files under `frontend/src/styles/`, load order declared by `index.css` and
    load-bearing. Left: naming the control-standard padding and the 12 unnamed `z-index` values;

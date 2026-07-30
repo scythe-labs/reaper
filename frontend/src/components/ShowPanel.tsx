@@ -66,7 +66,7 @@ export function ShowPanel({
     <WhyShell headingId={headingId} onClose={onClose}>
       {group.poster_url && <WhyHero posterUrl={group.poster_url} />}
 
-      <header className="why-head">
+      <div className="why-head">
         <div>
           <h2 id={headingId}>
             {group.links.plex ? (
@@ -101,7 +101,7 @@ export function ShowPanel({
             <JumpPill href={group.links.seerr} label="Seerr" />
           </p>
         </div>
-      </header>
+      </div>
 
       {group.summary && <Synopsis text={group.summary} />}
 

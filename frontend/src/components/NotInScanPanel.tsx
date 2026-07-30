@@ -59,12 +59,12 @@ export function NotInScanPanel({
 
   return (
     <WhyShell headingId={headingId} onClose={onClose}>
-      <header className="why-head">
+      <div className="why-head">
         <div>
           <h2 id={headingId}>Not in the last scan</h2>
           <p className="why-sub muted">{sub}</p>
         </div>
-      </header>
+      </div>
 
       {isPending ? (
         <p className="scales-foot muted">Loading…</p>

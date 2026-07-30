@@ -256,7 +256,7 @@ export function ScalesPanel({
 
   return (
     <WhyShell headingId={headingId} onClose={onClose}>
-      <header className="why-head">
+      <div className="why-head">
         <div className="scales-head-id">
           <span className="fair-avatar" aria-hidden="true">
             {initial(detail.name)}
@@ -269,7 +269,7 @@ export function ScalesPanel({
             </p>
           </div>
         </div>
-      </header>
+      </div>
 
       <section className="block">
         <h3>The balance</h3>
@@ -409,9 +409,9 @@ export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClos
     <WhyShell headingId={headingId} onClose={onClose}>
       {error ? (
         <>
-          <header className="why-head">
+          <div className="why-head">
             <h2 id={headingId}>Something went wrong</h2>
-          </header>
+          </div>
           <Notice tone="error">
             Couldn't load this person's requests. Close this panel and click the card to try again.
           </Notice>
