@@ -22,7 +22,7 @@ const { apiMock } = vi.hoisted(() => ({
     leavingSoonSettings: vi.fn(),
     setLeavingSoonSettings: vi.fn(),
     syncLeavingSoon: vi.fn(),
-    setPlexWebUrl: vi.fn(),
+    setPlexSettings: vi.fn(),
     plexSetConnection: vi.fn(),
     plexSwitchServer: vi.fn(),
     plexUnlink: vi.fn(),
@@ -112,7 +112,7 @@ beforeEach(() => {
     allow_unarmed: false,
     last: null,
   });
-  apiMock.setPlexWebUrl.mockResolvedValue(status());
+  apiMock.setPlexSettings.mockResolvedValue(status());
   apiMock.plexSetConnection.mockResolvedValue(status());
   apiMock.plexLinkStart.mockResolvedValue({ pin_id: 1, auth_url: "https://plex.tv/link/pin" });
   apiMock.plexLinkPoll.mockResolvedValue({ status: "pending", server: null, servers: null });
@@ -492,7 +492,7 @@ describe("what leaving this panel would lose", () => {
       within(box.parentElement as HTMLElement).getByRole("button", { name: "Save" }),
     );
 
-    expect(apiMock.setPlexWebUrl).toHaveBeenCalledWith("");
+    expect(apiMock.setPlexSettings).toHaveBeenCalledWith({ web_url: "" });
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
     expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv");
   });
@@ -630,7 +630,7 @@ describe("what leaving this panel would lose", () => {
 
     await user.click(toggle);
 
-    expect(apiMock.setPlexWebUrl).not.toHaveBeenCalled();
+    expect(apiMock.setPlexSettings).not.toHaveBeenCalled();
     await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
   });
 
@@ -655,11 +655,13 @@ describe("the certificate check", () => {
     const user = userEvent.setup();
     // The saved value follows the server, so the save has to answer with the new one or
     // the refetch would flip the switch straight back on.
-    apiMock.setPlexWebUrl.mockImplementation(async (_url: string, verify?: boolean) => {
-      const next = status({ verify_tls: verify ?? true });
-      apiMock.plexStatus.mockResolvedValue(next);
-      return next;
-    });
+    apiMock.setPlexSettings.mockImplementation(
+      async (patch: { web_url?: string; verify_tls?: boolean }) => {
+        const next = status({ verify_tls: patch.verify_tls ?? true });
+        apiMock.plexStatus.mockResolvedValue(next);
+        return next;
+      },
+    );
     renderPanel();
 
     const toggle = await screen.findByRole("switch", { name: "Check the server's certificate" });
@@ -672,6 +674,28 @@ describe("the certificate check", () => {
     expect(row).not.toBeNull();
     // Inside the same row as its switch, not adrift below the whole group.
     expect(within(row as HTMLElement).getByRole("switch")).toBe(toggle);
+  });
+
+  it("sends the certificate check and nothing else", async () => {
+    // It used to send the saved web address beside it, read from `["plex"]`'s cached row, and the
+    // route wrote every field it received. So a cached row that had gone out of date -- a failed
+    // refetch this panel deliberately renders through, or another tab editing the address --
+    // reverted the operator's address without a word, and every "open in Plex" link in the app
+    // then pointed at plex.tv. `web_url` is what must be ABSENT, so this asserts the exact
+    // payload rather than the switch's own value, which was never the part that was wrong (#204).
+    const user = userEvent.setup();
+    apiMock.setPlexSettings.mockResolvedValue(status({ verify_tls: false }));
+    renderPanel();
+
+    const toggle = await screen.findByRole("switch", { name: "Check the server's certificate" });
+    await user.click(toggle);
+
+    await waitFor(() => expect(apiMock.setPlexSettings).toHaveBeenCalledTimes(1));
+    expect(apiMock.setPlexSettings).toHaveBeenCalledWith({ verify_tls: false });
+    const [patch] = apiMock.setPlexSettings.mock.calls[0] as [Record<string, unknown>];
+    expect(Object.keys(patch), "the address is not this control's to write").toEqual([
+      "verify_tls",
+    ]);
   });
 });
 

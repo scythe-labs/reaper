@@ -5,7 +5,7 @@
 // sends the map they see, and a list that could not be read fails to a visible notice, never a
 // silent empty list.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Instance, PlexLibrary, RootFolder, SeerrService } from "../api";
@@ -156,6 +156,66 @@ describe("ServiceModal HD/4K library map", () => {
     await waitFor(() => expect(selectForFolder("/tv").value).toBe("TV"));
     // A folder already saved is not a suggestion, so no tag.
     expect(screen.queryByText("suggested")).not.toBeInTheDocument();
+  });
+
+  // Saving REBUILDS the map from the folders in hand, which is how an entry for a folder the *arr
+  // no longer has gets dropped. That is right while the list is current and destructive when it is
+  // merely out of date: a refetch that fails keeps the last good list, the grid deliberately stays
+  // on screen with the stale line over it, and `.data` is truthy the whole time -- so the old
+  // `.data` test could not tell the two apart and Save pruned against a list nobody had confirmed
+  // (#204). The map is what tells an HD copy from a 4K one. Both directions are pinned, because a
+  // fix that stopped pruning altogether would leave a folder that IS gone mapped forever.
+  describe("pruning the stored map", () => {
+    /** The modal with a stored map wider than the folder list that lands, keeping the client so
+     *  the test can fail the refetch behind the grid. */
+    function renderWithStaleableFolders() {
+      const instance = sonarr({ plex_library_map: { "/tv": "TV", "/archive": "TV 4K" } });
+      apiMock.instanceRootFolders.mockResolvedValue([{ path: "/tv", suggested_library: "TV" }]);
+      apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+      apiMock.updateInstance.mockResolvedValue(instance);
+      const queryClient = testQueryClient();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <ServiceModal kind="sonarr" instance={instance} onClose={vi.fn()} />
+        </QueryClientProvider>,
+      );
+      return queryClient;
+    }
+
+    async function savedMap(): Promise<Record<string, string> | undefined> {
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(apiMock.updateInstance).toHaveBeenCalled());
+      const body = apiMock.updateInstance.mock.calls[0]![1] as {
+        plex_library_map?: Record<string, string>;
+      };
+      return body.plex_library_map;
+    }
+
+    it("drops a folder the instance no longer has, on a list it just read", async () => {
+      renderWithStaleableFolders();
+      await waitFor(() => expect(selectForFolder("/tv").value).toBe("TV"));
+
+      // The read succeeded, so "/archive is not in the list" is an answer, not a gap.
+      expect(await savedMap()).toEqual({ "/tv": "TV" });
+    });
+
+    it("keeps it when the folder list is only out of date", async () => {
+      const queryClient = renderWithStaleableFolders();
+      await waitFor(() => expect(selectForFolder("/tv").value).toBe("TV"));
+
+      apiMock.instanceRootFolders.mockRejectedValue(new Error("unreachable"));
+      await act(async () => {
+        await queryClient.invalidateQueries({ queryKey: ["instance-root-folders"] });
+      });
+      // The stale line is up and the grid is still there, which is the state the guard is about.
+      expect(
+        await screen.findByText(/couldn't check this instance's folders/i),
+      ).toBeInTheDocument();
+      expect(selectForFolder("/tv")).toBeInTheDocument();
+
+      // Nothing confirmed /archive is gone, so the save does not delete it.
+      expect(await savedMap()).toEqual({ "/tv": "TV", "/archive": "TV 4K" });
+    });
   });
 
   it("shows a notice, not an empty list, when the folders can't be read", async () => {

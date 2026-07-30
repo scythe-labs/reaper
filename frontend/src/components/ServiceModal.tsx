@@ -399,31 +399,43 @@ export function ServiceModal({
         if (apiKey) body.api_key = apiKey; // blank keeps the stored key
         if (ssl) body.verify_tls = verifyCert; // over plain http the setting is moot; keep it stored
         if (isArr) body.add_import_exclusion = addExclusion;
-        // Send the map only when a folder list has been read: build it from the folders in hand
-        // (dropping any stale ones) and their non-empty picks. A list that NEVER landed leaves
-        // `.data` undefined, and the map is then omitted entirely so the stored one survives.
+        // Send the map only when a folder list has been read, and PRUNE it only against a list
+        // that is current. Rebuilding from the folders in hand is what drops entries for folders
+        // the *arr no longer has, which is right -- until the list is merely out of date, and
+        // then it drops entries for folders that still exist. The map is what tells an HD copy
+        // from a 4K one, and this is the modal's Save doing it silently.
         //
-        // That is the whole of what this guard does, and the sentence here used to claim more:
-        // "if the folders could not be read, omit it entirely" reads as covering a failure, and
-        // this tests `.data`, not `.error`. A refetch that fails keeps the last good list, so the
-        // map is still rebuilt from it -- correct while the *arr's folders have not changed, and a
-        // silent drop of any stored entry whose folder is missing from the stale list when they
-        // have (#196 for the comment, #204 for the guard).
+        // The read is stale, not absent, exactly when a refetch failed with the last good list
+        // still held: React Query keeps it, the grid below deliberately stays on screen with the
+        // stale line over it, and `.data` is truthy throughout -- so testing `.data` cannot tell
+        // the two apart (#196 named the comment that claimed it did; this is the guard, #204).
+        //
+        // On a stale list the operator's own picks still save: withholding those would drop an
+        // edit they can see, which is the same silent loss from the other side. What is withheld
+        // is the DELETION of entries nothing has confirmed are gone, so both directions fail
+        // toward keeping the mapping.
         if (mapEditable && rootFolders.data) {
+          const paths = rootFolders.isError
+            ? Object.keys(libMap)
+            : rootFolders.data.map((f) => f.path);
           const map: Record<string, string> = {};
-          for (const f of rootFolders.data) {
-            const chosen = libMap[f.path];
-            if (chosen) map[f.path] = chosen;
+          for (const path of paths) {
+            const chosen = libMap[path];
+            if (chosen) map[path] = chosen;
           }
           body.plex_library_map = map;
         }
-        // Same contract, and the same limit, for the Seerr service map: sent when a service list
-        // has been read, dropping unset services; omitted only when none ever landed.
+        // Same contract, same limit, same reasoning for the Seerr service map (rule 72): sent when
+        // a service list has been read, pruned only against one that is current, and omitted only
+        // when none ever landed.
         if (seerrMapEditable && seerrServices.data) {
+          const keys = seerrServices.isError
+            ? Object.keys(serviceMap)
+            : seerrServices.data.map((s) => svcKey(s));
           const map: Record<string, number> = {};
-          for (const s of seerrServices.data) {
-            const chosen = serviceMap[svcKey(s)];
-            if (chosen) map[svcKey(s)] = chosen;
+          for (const key of keys) {
+            const chosen = serviceMap[key];
+            if (chosen) map[key] = chosen;
           }
           body.service_instance_map = map;
         }

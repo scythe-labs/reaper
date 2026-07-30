@@ -30,7 +30,7 @@ const { apiMock } = vi.hoisted(() => ({
     leavingSoonSettings: vi.fn(),
     setLeavingSoonSettings: vi.fn(),
     syncLeavingSoon: vi.fn(),
-    setPlexWebUrl: vi.fn(),
+    setPlexSettings: vi.fn(),
     plexSetConnection: vi.fn(),
     plexSwitchServer: vi.fn(),
     plexUnlink: vi.fn(),
@@ -405,7 +405,7 @@ describe("leaving Plex or Notifications with something unsaved", () => {
 
     expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
     expect(switchNotice()).toBeNull();
-    expect(apiMock.setPlexWebUrl).not.toHaveBeenCalled();
+    expect(apiMock.setPlexSettings).not.toHaveBeenCalled();
   });
 
   it("switches straight through when the Plex web address still matches the stored one", async () => {

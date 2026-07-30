@@ -192,12 +192,23 @@ class PlexStatusOut(BaseModel):
     Plex Web default until the operator overrides it."""
 
 
+# A comment, not the docstring: this class's docstring is the schema description in the API
+# reference an operator can browse, so the incident lives here and the plain sentence lives there.
+#
+# Both fields need three states, and `web_url` had two. `str = ""` could not tell "I am not
+# changing the address" from "reset it to the hosted default", so every caller wrote the address
+# whether it meant to or not (rule 1). The browser's certificate switch was such a caller and
+# filled the field from its CACHED status row, so flipping a setting about certificates wrote back
+# an address that may have moved since -- silently reverting it, and pointing every "open in Plex"
+# link in the app at plex.tv (#204). `None` means keep; `""` still means reset.
 class PlexUpdateIn(BaseModel):
-    """The editable Plex settings: the display web address (empty resets to the hosted
-    default) and, once linked, the certificate check (omitted keeps the stored value)."""
+    """The editable Plex settings. Send only what you are changing: a field you leave out
+    keeps its stored value."""
 
-    web_url: str = ""
+    web_url: str | None = None
+    """Where "open in Plex" links point. An empty string puts it back to the hosted default."""
     verify_tls: bool | None = None
+    """Whether to check the linked server's TLS certificate."""
 
 
 class PlexLinkStartOut(BaseModel):
@@ -641,12 +652,16 @@ async def plex_status(request: Request) -> PlexStatusOut:
 @router.put("/plex", tags=[api_tags.PLEX])
 async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexStatusOut:
     """Save the Plex settings: the "open in Plex" web address (empty resets to the
-    hosted default) and, once a server is linked, the certificate check."""
-    cleaned = payload.web_url.strip()
+    hosted default) and, once a server is linked, the certificate check. Each field is
+    independent, and one left out is left alone."""
+    cleaned = payload.web_url.strip() if payload.web_url is not None else None
     if cleaned and not (cleaned.startswith("https://") or cleaned.startswith("http://")):
         raise HTTPException(422, "The Plex web address must start with https:// or http://.")
     async with _factory(request)() as session:
-        await app_settings.set_plex_web_url(session, cleaned or None)
+        # Only when the caller sent the field. `cleaned` is `None` for "not sent" and `""` for
+        # "reset to the hosted default", and those are different requests (rule 1).
+        if cleaned is not None:
+            await app_settings.set_plex_web_url(session, cleaned or None)
         if payload.verify_tls is not None:
             server = (await session.execute(select(PlexServer))).scalars().first()
             if server is None:

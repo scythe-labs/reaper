@@ -837,9 +837,48 @@ class TestPlexLinkChoice:
         assert captured["verify"] is False
         assert client.get("/api/settings/plex").json()["verify_tls"] is False
 
-        flipped = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": True})
+        # Only the field being changed, which is what the switch sends (#204).
+        flipped = client.put("/api/settings/plex", json={"verify_tls": True})
         assert flipped.status_code == 200
         assert flipped.json()["verify_tls"] is True
+
+    def test_saving_one_plex_setting_leaves_the_other_alone(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        """The route is a patch, and `web_url` needs three states to be one.
+
+        It had two: `str = ""` could not tell "I am not changing the address" from "reset it
+        to the hosted default", so every caller wrote the address whether it meant to or
+        not. The certificate switch in the browser was such a caller and filled the field
+        from a CACHED status row, so flipping a setting about certificates reverted an
+        address that had moved since -- silently, and every "open in Plex" link in the app
+        then pointed at plex.tv (#204). Rule 1: omitted is not the same as empty.
+        """
+        self._mock_plextv(httpx2_mock)
+        start = client.post("/api/settings/plex/link/start").json()
+        client.post(
+            "/api/settings/plex/link/poll",
+            json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
+        )
+
+        stored = "https://plex.example.net:32400"
+        assert client.put("/api/settings/plex", json={"web_url": stored}).status_code == 200
+
+        # The certificate switch's request. It says nothing about the address.
+        kept = client.put("/api/settings/plex", json={"verify_tls": False})
+        assert kept.status_code == 200
+        assert kept.json()["web_url"] == stored
+        assert kept.json()["verify_tls"] is False
+
+        # And the address save says nothing about the certificate check.
+        again = client.put("/api/settings/plex", json={"web_url": stored})
+        assert again.json()["verify_tls"] is False
+
+        # An explicit empty string is still the operator asking for the hosted default back,
+        # which is the request `None` had been standing in for.
+        reset = client.put("/api/settings/plex", json={"web_url": ""})
+        assert reset.status_code == 200
+        assert reset.json()["web_url"] == "https://app.plex.tv"
 
     def test_a_server_that_is_briefly_unreachable_keeps_the_sign_in_alive(
         self, client: TestClient, httpx2_mock: respx.Router

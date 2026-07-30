@@ -142,7 +142,7 @@ export function PlexPanel({
   };
 
   const saveWebUrl = useMutation({
-    mutationFn: () => api.setPlexWebUrl(webUrl.trim()),
+    mutationFn: () => api.setPlexSettings({ web_url: webUrl.trim() }),
     // Re-seed from the response rather than leaving it to the effect above (rule 39). Clearing
     // the box is how the help says to go back to the hosted default, and it saves the empty
     // string: the route stores that as "unset" and reports back the SAME default string it was
@@ -158,10 +158,16 @@ export function PlexPanel({
     onError: (e: Error) => setWebUrlError(e.message),
   });
 
-  // Flip the stored certificate check on the linked server. Sends the SAVED web
-  // address, never the box's half-typed one, so this toggle cannot save a URL edit.
+  // Flip the stored certificate check on the linked server. It sends the certificate check and
+  // NOTHING else, which is the only way it cannot touch the address: it used to send
+  // `savedWebUrl` beside it, so that the box's half-typed draft could not be saved by mistake --
+  // but `savedWebUrl` is `["plex"]`'s cached row, and the route wrote whatever arrived. So a
+  // switch about certificates wrote an address it has nothing to do with, and a cached row that
+  // had gone out of date (a failed refetch this panel deliberately renders through, or another
+  // tab editing the address) reverted the operator's address without a word, pointing every
+  // "open in Plex" link in the app at plex.tv. The route keeps a field it was not sent (#204).
   const saveVerify = useMutation({
-    mutationFn: (next: boolean) => api.setPlexWebUrl(savedWebUrl, next),
+    mutationFn: (next: boolean) => api.setPlexSettings({ verify_tls: next }),
     onSuccess: () => {
       setPlexError(null);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });

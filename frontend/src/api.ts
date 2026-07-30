@@ -1434,8 +1434,16 @@ export const api = {
    * Save the Plex settings. An empty web_url resets to the hosted default; verify_tls
    * (only valid once linked) flips the certificate check, omitted keeps it.
    */
-  setPlexWebUrl: (web_url: string, verify_tls?: boolean) =>
-    put<PlexStatus>("/api/settings/plex", { web_url, verify_tls }),
+  /** Save one or both Plex settings. A PATCH: a field left out is left alone, so a control
+   *  sends what it changes and nothing else.
+   *
+   *  It took `(web_url, verify_tls)` and sent both fields always, which meant the
+   *  certificate switch had to supply an address -- and the only one it had was the
+   *  browser's cached status row, so it wrote that back over whatever was stored (#204).
+   *  `web_url: ""` still resets the address to the hosted Plex Web default; omitting it is
+   *  now how a caller says nothing about it. */
+  setPlexSettings: (patch: { web_url?: string; verify_tls?: boolean }) =>
+    put<PlexStatus>("/api/settings/plex", patch),
   plexLinkStart: () => post<PlexLinkStart>("/api/settings/plex/link/start", {}),
   plexLinkPoll: (pin_id: number, machine_identifier?: string, verify_tls?: boolean) =>
     post<PlexLinkPoll>("/api/settings/plex/link/poll", {

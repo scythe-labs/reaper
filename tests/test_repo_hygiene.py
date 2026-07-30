@@ -1043,7 +1043,12 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/ReapConfirm.tsx": 2,
     "frontend/src/components/ReapPlan.tsx": 3,
     "frontend/src/components/ReviewQueue.tsx": 3,
-    "frontend/src/components/ServiceModal.tsx": 4,
+    # 4 render branches, plus 2 in the save handler (#204). Those two are neither of the
+    # questions the docstring below names: they ask "may I PRUNE against this list", where a
+    # failed read means the list is merely out of date and pruning would delete a stored
+    # mapping nothing confirmed is gone. The render branches beside them already keep their
+    # grid and say it may be stale, which is why `.data` alone could not answer this.
+    "frontend/src/components/ServiceModal.tsx": 6,
     "frontend/src/components/Settings.tsx": 8,
     "frontend/src/components/SetupWizard.tsx": 1,
     "frontend/src/components/queueSettings.tsx": 1,
