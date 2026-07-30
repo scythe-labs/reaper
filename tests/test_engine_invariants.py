@@ -11,23 +11,29 @@ Hypothesis generators are deliberately biased toward the values that break thing
 
 from __future__ import annotations
 
+import ast
+import inspect
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from reaper.engine import fields
+from reaper.engine import fields, gates
 from reaper.engine.gates import (
     ABSTAIN,
     PROTECT,
     CuratedListGate,
+    DataHorizonGate,
     Evaluation,
     Facts,
+    Gate,
     GateConfig,
     GateId,
     GateResult,
+    MinDormancyGate,
     RatingFloorGate,
     RatingRule,
     ServerPopularityGate,
@@ -253,6 +259,123 @@ class TestUnknownNeverCondemns:
         assert result.value == 0.0
         assert result.coverage == 0.0
         assert evaluate_all(ALL_GATES, blind).blocked is True
+
+
+#: Every fact the catalog's gates can read is readable here, so a case below is the only
+#: thing unreadable in its own run. Deliberately not `_rating_facts` or `_popularity_facts`:
+#: both leave fields `Absent` that a gate under test would then block on for a reason the
+#: case never named.
+_ALL_READABLE = Facts(
+    title="A Film",
+    days_observed_unwatched=Known(value=1200.0, source="t"),
+    distinct_watchers=Known(value=0, source="t"),
+    distinct_watchers_all_time=Known(value=0, source="t"),
+    size_bytes=Known(value=1, source="t"),
+    imdb_rating_tenths=Known(value=90, source="t"),
+    imdb_votes=Known(value=5000, source="t"),
+    season_rank=Absent(source="t"),
+    is_streaming_now=Known(value=False, source="t"),
+    is_managed=Known(value=True, source="t"),
+    in_curated_list=Absent(source="t"),
+    is_whitelisted=Known(value=False, source="t"),
+    # Deeper than the popularity window, or that gate blocks on its reach instead of on
+    # the watcher count this table is about, and every row would pass for the wrong reason.
+    history_reach_days=Known(value=4000.0, source="t"),
+)
+
+#: One row per `gates._blocked` call site: the gate, and the fact that call reads.
+#: `RatingFloorGate` reads two and so has two rows. Reconciled against the catalog by
+#: `test_every_fail_closed_guard_in_the_catalog_has_a_case` below, so a gate that gains a
+#: guard fails here until it gains a row.
+FAIL_CLOSED_GUARDS: list[tuple[Gate, str]] = [
+    (RatingFloorGate(rules=(_IMDB_BAR,)), "imdb_rating_tenths"),
+    (RatingFloorGate(rules=(_IMDB_BAR,)), "imdb_votes"),
+    (StreamingNowGate(GateConfig(GateId.STREAMING_NOW)), "is_streaming_now"),
+    (ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)), "distinct_watchers"),
+    (WhitelistGate(GateConfig(GateId.WHITELISTED)), "is_whitelisted"),
+    (CuratedListGate(GateConfig(GateId.CURATED_LIST)), "in_curated_list"),
+    (MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1095)), "days_observed_unwatched"),
+    (DataHorizonGate(GateConfig(GateId.DATA_HORIZON)), "days_observed_unwatched"),
+]
+
+_GUARD_IDS = [f"{gate.__class__.__name__}.{field}" for gate, field in FAIL_CLOSED_GUARDS]
+
+
+def _blocked_call_sites() -> set[tuple[str, str]]:
+    """Every `_blocked(...)` call in the gate catalog, as (class, fact field).
+
+    Read out of the source rather than hand-listed, so the population the table below claims
+    to cover is the population that exists (rule 145). The shape it accepts is asserted, not
+    assumed (rule 147): a guard spelled some other way than ``_blocked(self.id, facts.x, …)``
+    fails the walk instead of dropping out of it, which would quietly shrink both the scan
+    and the table it is reconciled against.
+    """
+    source = Path(inspect.getfile(gates)).read_text()
+    sites: set[tuple[str, str]] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            if not (isinstance(call.func, ast.Name) and call.func.id == "_blocked"):
+                continue
+            observed = call.args[1]
+            assert isinstance(observed, ast.Attribute), f"{node.name}: {ast.dump(observed)}"
+            assert isinstance(observed.value, ast.Name) and observed.value.id == "facts"
+            sites.add((node.name, observed.attr))
+    return sites
+
+
+class TestEveryFailClosedGuardKeepsTheFile:
+    """`gates._blocked` at each call site, driven one gate at a time.
+
+    The property above cannot stand in for these. It reads `if result.blocked:` over whatever
+    the sweep produced, so deleting a guard yields *fewer* blocked results and the conditional
+    over the smaller set still holds -- green, while the gate it covered stopped failing
+    closed. Rule 118: where the guard upstream makes a branch indiscriminable, drive the
+    interlock directly.
+
+    What each case pins is the difference between "we could not check this protection" and
+    "this protection did not fire", which is the whole of rule 93 at the gate layer.
+    """
+
+    @pytest.mark.parametrize(("gate", "field"), FAIL_CLOSED_GUARDS, ids=_GUARD_IDS)
+    def test_an_unreadable_fact_blocks_the_gate(self, gate: Gate, field: str) -> None:
+        """An Unknown input abstains *and* raises the blocked flag, naming its own cause.
+
+        The "could not check" prefix is load-bearing beyond this assertion: `api.routes._chip`
+        routes a detail starting with it to "Some checks couldn't run" rather than "left for
+        you to decide", and `WhyPanel` splits it into check and cause.
+        """
+        outage = Unknown(reason="the source is down", source="t")
+        unreadable = replace(_ALL_READABLE, **{field: outage})  # type: ignore[arg-type]
+
+        result = gate.evaluate(unreadable)
+
+        assert result.blocked is True
+        assert result.outcome == ABSTAIN
+        assert result.detail.startswith("could not check")
+        assert "the source is down" in result.detail
+
+    @pytest.mark.parametrize(("gate", "field"), FAIL_CLOSED_GUARDS, ids=_GUARD_IDS)
+    def test_a_readable_fact_does_not_block_the_gate(self, gate: Gate, field: str) -> None:
+        """The other half, without which the case above holds for a gate that blocks on
+        everything. `_ALL_READABLE` answers every one of these fields, so the only thing
+        separating the two runs is the Unknown."""
+        result = gate.evaluate(_ALL_READABLE)
+
+        assert result.blocked is False, field
+
+    def test_every_fail_closed_guard_in_the_catalog_has_a_case(self) -> None:
+        """The table covers the guards that exist, not the guards it was written against.
+
+        Set equality both ways: a gate that gains a `_blocked` call fails until it gains a
+        row, and a row whose guard was deleted fails rather than passing vacuously.
+        """
+        assert _blocked_call_sites() == {
+            (gate.__class__.__name__, field) for gate, field in FAIL_CLOSED_GUARDS
+        }
 
 
 class TestScoreBounds:
