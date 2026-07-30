@@ -52,10 +52,13 @@ Last verified against the code: 2026-07-26.
    engines are complete and tested; none is reachable, and nothing in `src/` imports
    `engine.backtest`. The backtest needs `POST /api/policy/backtest` plus a minimal UI, and
    `calibration.derive` needs that route to call it and pass the result in, since `backtest.run`
-   takes its prior as an injected argument and never calls `derive`. The `rescued` count models
-   grace as a delay before deletion, which production does not do, so it is a best case: fix or
-   label it when wiring. Until they ship the live simulator is the threshold-tuning surface, and
-   no operator copy may name the backtest or promise a fitted prior (rule 25).
+   never calls `derive`. Three things the route must inject, none reachable from `engine/`: the
+   prior; the watch-blind map, from `watch_evidence`'s marks, or a churned title replays on a
+   confident zero; and `ensure_schema` before the first mirror read, since `backtest._plays` and
+   `calibration.derive` query it raw (#283). The `rescued` count models grace as a delay before
+   deletion, which production does not do, so it is a best case: fix or label it when wiring.
+   Until they ship the live simulator is the threshold-tuning surface, and no operator copy may
+   name the backtest or promise a fitted prior (rule 25).
 4. **Size-truth leftovers** (`docs/SIZE_TRUTH_PLAN.md`): a real-data pass reading
    `scan.size_source_tally`, recorded as ratios in `LEARNINGS.md` (Stage 4, which gates Stage 6);
    `"size_bytes"` added to `DEGRADABLE` in `tests/_policy_lab.py`; and the test-only

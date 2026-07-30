@@ -240,15 +240,23 @@ async def derive(
 
     for key in rating_keys:
         arrived = added_at.get(key)
-        if arrived is None or arrived > cutoff:
+        if arrived is not None and arrived > cutoff:
             continue  # It did not exist yet. Judging it would be fiction.
 
         # The one dormancy derivation (engine/dormancy.py), shared with the live scan, the
         # season scan and the backtest -- so an item cannot bucket by one arithmetic here
-        # and score by another there.
+        # and score by another there. The *thaw* is shared too, since #277: this loop used to
+        # drop a record with no arrival date before asking, which is a second thaw rule
+        # wearing a filter's clothes. It matters more here than anywhere, because this
+        # population is the baseline the scorer is measured against and the docstring above
+        # requires it to be exactly the set the scorer judges -- and the live scan judges an
+        # item on a play alone. Dropping those items would compute the prior over one
+        # population and the lift over another, which is mistake 1 in this module's header.
         reference = reference_instant(
             last_played=before.get(key), added_at=arrived, horizon=horizon
         )
+        if reference is None:
+            continue  # Neither a play nor an arrival date: nothing to measure from.
         dormant = dormancy_days(reference, now=cutoff)
         if dormant < 0:
             continue

@@ -21,19 +21,6 @@ item one hour short of a 90-day floor stays kept for that hour.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import overload
-
-
-@overload
-def reference_instant(
-    *, last_played: datetime | None, added_at: datetime, horizon: datetime
-) -> datetime: ...
-
-
-@overload
-def reference_instant(
-    *, last_played: datetime | None, added_at: datetime | None, horizon: datetime
-) -> datetime | None: ...
 
 
 def reference_instant(
@@ -60,9 +47,17 @@ def reference_instant(
     dormancy could not be measured with a play for that item in scope. Measured before the
     lanes were joined: across 41 stored snapshots and ~[redacted] movie rows -- the only rows that
     can reach a movie-lane arm, out of [redacted] counted in all -- that arm was reached zero
-    times, so no observed verdict moved (`docs/LEARNINGS.md`). The overloads let the two
-    callers that narrow ``added_at`` themselves (`engine/backtest.py`,
-    `engine/calibration.py`) keep a non-optional result without a None-check that cannot fire.
+    times, so no observed verdict moved (`docs/LEARNINGS.md`).
+
+    **All four callers take the same thaw**, which is what makes this one derivation rather
+    than one helper with four dialects. The two rehearsal engines used to be the exception:
+    `engine/backtest.py` and `engine/calibration.py` each dropped a record with no arrival
+    date *before* asking, so a `datetime` overload existed to spare them a None-check that
+    could not fire. That narrowing was itself the second thaw rule -- a movie with no arrival
+    date and a play 400 days ago is condemned by a live scan and never entered the rehearsal
+    at all, so the replay under-reported exactly what production would remove. Both now ask
+    here and read ``None`` as the answer, the overload has no caller left, and the signature
+    says the one true thing about every lane.
     """
     if last_played is not None:
         return last_played

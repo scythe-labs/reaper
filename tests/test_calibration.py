@@ -116,6 +116,39 @@ class TestDerive:
 
         assert prior.population == 0
 
+    async def test_a_film_with_no_arrival_date_is_bucketed_on_its_play(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The baseline must cover exactly the set the scorer judges (#277).
+
+        The live scan measures dormancy from a play alone, so a record Plex reports no
+        arrival date for is judged there. This loop used to drop it before asking
+        `reference_instant`, which is a second thaw rule wearing a filter's clothes -- and
+        here it is mistake 1 from this module's header: the prior would be computed over one
+        population and the lift over another.
+        """
+        keys = set(range(1, 41))
+        added: dict[int, datetime] = {}  # not one of them has an arrival date
+
+        for row, k in enumerate(keys, start=1):
+            await _play(engine, row, k, CUTOFF - timedelta(days=1200))
+
+        prior = await derive(
+            engine, rating_keys=keys, cutoff=CUTOFF, horizon=HORIZON, added_at=added
+        )
+
+        assert prior.population == 40, "a play is an instant to measure from"
+        assert next(b for b in prior.buckets if b.low == 1095).samples == 40
+
+    async def test_a_film_with_neither_a_play_nor_an_arrival_date_is_still_excluded(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The narrowing goes, the honesty stays: nothing to measure from is not a sample,
+        and padding a bucket with it would drag the whole curve toward never-rewatched."""
+        prior = await derive(engine, rating_keys={1}, cutoff=CUTOFF, horizon=HORIZON, added_at={})
+
+        assert prior.population == 0
+
 
 async def _episode_play(engine: AsyncEngine, row_id: int, show_key: int, when: datetime) -> None:
     """One per-episode play. TV history rows carry the show only as the grandparent."""

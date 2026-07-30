@@ -39,6 +39,7 @@ A backtest flatters itself if you are not careful. Two rules:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -50,12 +51,21 @@ from reaper.clock import from_epoch
 from reaper.engine.calibration import NotCalibratedError, RewatchPrior
 from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
 from reaper.engine.gates import Evaluation, Facts, Gate, evaluate_all
-from reaper.engine.observation import Absent, Known
+from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody
 from reaper.engine.signals import SignalConfig, score
 from reaper.engine.verdict import decide_verdict
 
 log = structlog.get_logger(__name__)
+
+#: Why ``days_since_added`` is unreadable for a record Plex reports no arrival date for.
+#: The same state the live movie lane calls ``snapshot.NO_ADDED_AT_REASON``, spelled again
+#: here because ``engine/`` imports nothing from ``services/`` and this module is on the
+#: engine side of that line. Deliberately NOT a copy of an operator-facing sentence (rule
+#: 144): no panel renders a backtest, so this string reaches a reader only through a stored
+#: explanation that does not exist. If a route ever renders one, it wants a CAUSE_COPY entry
+#: and this comment is the wrong answer.
+NO_ADDED_AT_REASON = "no added-at date"
 
 
 @dataclass(frozen=True)
@@ -121,6 +131,15 @@ class BacktestResult:
 
     considered: int = 0
     skipped_not_yet_added: int = 0
+
+    skipped_nothing_to_measure: int = 0
+    """Items with neither a play nor an arrival date, so dormancy has no instant to count
+    from (``dormancy.reference_instant`` returns None).
+
+    Counted apart from ``skipped_not_yet_added`` because they are not a statement about the
+    cutoff: the item may well have existed, and a later scan that learns its arrival date
+    judges it normally. Folding the two together would report a policy's coverage as bounded
+    by the replay date when it is really bounded by the evidence."""
 
     blocked_unreadable: int = 0
     """Items a protection could not be *checked* on, so no verdict was earned.
@@ -259,6 +278,11 @@ class BacktestResult:
             f"  protected            {self.protected:,} items",
             f"  could not judge      {self.skipped_not_yet_added:,} (not yet added at the cutoff)",
         ]
+        if self.skipped_nothing_to_measure:
+            lines += [
+                f"  no date to count from {self.skipped_nothing_to_measure:,} "
+                "(never played, and no arrival date, so dormancy has no start)",
+            ]
         if self.blocked_unreadable:
             share = self.blocked_unreadable / self.considered if self.considered else 0.0
             lines += [
@@ -359,12 +383,21 @@ def facts_as_of(
     cutoff: datetime,
     horizon: datetime,
     popularity_window_days: int = 365,
+    watch_blind_reason: str | None = None,
 ) -> Facts | None:
     """Rebuild an item's facts as they stood on ``cutoff``.
 
     Returns None when the item cannot honestly be judged at that date.
+
+    ``watch_blind_reason`` is the rehearsal's copy of ``snapshot.build_facts``'s parameter of
+    the same name, and it exists for the same reason: the plays this replay reads are the
+    item's history only if the mirror can still see them. When the caller knows they fell
+    away -- a re-added file carries a fresh rating key while its earlier plays stay filed
+    under the old one -- the reading here is not a quiet zero but an unreadable one, and the
+    replay must refuse it exactly as the live scan does. Left unset the replay trusts the
+    mirror, which is right for every item whose history never churned.
     """
-    if item.added_at is None or item.added_at > cutoff:
+    if item.added_at is not None and item.added_at > cutoff:
         return None  # It did not exist yet. Judging it would be fiction.
 
     past = [p for p in plays if p[1] <= cutoff]
@@ -376,31 +409,63 @@ def facts_as_of(
     window_start = cutoff - timedelta(days=popularity_window_days)
     recent_watchers = {p[0] for p in past if p[1] >= window_start}
 
-    # The derived field, through the one shared derivation (engine/dormancy.py) the live
-    # scan and the prior calibration also use. It used to be computed here as a float while
-    # calibration floored, so the same item could bucket one side of a threshold and score
-    # the other -- and a backtest that does not measure dormancy the way the scan does is
-    # not a rehearsal of anything.
-    reference = reference_instant(last_played=last_played, added_at=item.added_at, horizon=horizon)
-    days_unwatched = dormancy_days(reference, now=cutoff)
-
-    if days_unwatched < 0:
-        return None
+    dormancy: Observation[float]
+    recent: Observation[int]
+    all_time: Observation[int]
+    if watch_blind_reason is not None:
+        # Checked BEFORE the measurement, exactly where `snapshot.build_facts` checks it and
+        # for the same reason: every input below still looks readable when the plays behind
+        # them are not, so measuring first would write a confident Known(0) watchers and
+        # maximum dormancy -- the precise reading the live scan now refuses to trust. Both
+        # counts go with it, because one mirror answered all three.
+        dormancy = Unknown(reason=watch_blind_reason, source="tautulli")
+        recent = Unknown(reason=watch_blind_reason, source="tautulli")
+        all_time = Unknown(reason=watch_blind_reason, source="tautulli")
+    else:
+        # The derived field, through the one shared derivation (engine/dormancy.py) the live
+        # scan and the prior calibration also use. It used to be computed here as a float
+        # while calibration floored, so the same item could bucket one side of a threshold
+        # and score the other -- and a backtest that does not measure dormancy the way the
+        # scan does is not a rehearsal of anything. Since #277 the *thaw* is shared too: this
+        # lane used to drop a record with no arrival date before asking, which quietly held
+        # its own second thaw rule and kept a whole population out of the rehearsal.
+        reference = reference_instant(
+            last_played=last_played, added_at=item.added_at, horizon=horizon
+        )
+        if reference is None:
+            # Neither a play nor an arrival date, so there is nothing to measure dormancy
+            # from and no honest rehearsal to run. `run` counts it separately from an item
+            # that simply did not exist yet: the two are both skips, but only one of them is
+            # a statement about the date.
+            return None
+        days_unwatched = dormancy_days(reference, now=cutoff)
+        if days_unwatched < 0:
+            return None
+        dormancy = Known(value=days_unwatched, source="tautulli")
+        recent = Known(value=len(recent_watchers), source="tautulli")
+        all_time = Known(value=len(all_time_watchers), source="tautulli")
 
     return Facts(
         title=item.title,
-        days_observed_unwatched=Known(value=days_unwatched, source="tautulli"),
-        distinct_watchers=Known(value=len(recent_watchers), source="tautulli"),
-        distinct_watchers_all_time=Known(value=len(all_time_watchers), source="tautulli"),
+        days_observed_unwatched=dormancy,
+        distinct_watchers=recent,
+        distinct_watchers_all_time=all_time,
         # Measured from the cutoff, not from today: a replay standing at last April had
         # only the history that existed then, and the popularity gate must be as unable to
         # see past the horizon in rehearsal as it is in the live scan.
         history_reach_days=Known(value=history_reach_days(horizon, now=cutoff), source="tautulli"),
         # Measured from the cutoff too, for the same reason: at that date the item had
         # been on the server for exactly this long, and an all-time count needs the mirror
-        # to span it (``Facts.days_since_added``). ``added_at`` is non-None and at or
-        # before the cutoff -- the guard at the top of this function returns None otherwise.
-        days_since_added=Known(value=dormancy_days(item.added_at, now=cutoff), source="plex"),
+        # to span it (``Facts.days_since_added``). Unknown without an arrival date, the same
+        # reading `snapshot.build_facts` gives it: this is the one field a play cannot stand
+        # in for, since how long the mirror must reach back is a question about the arrival
+        # and nothing else answers it. Unknown withholds the all-time count's protection
+        # rather than asserting a span nobody measured.
+        days_since_added=(
+            Known(value=dormancy_days(item.added_at, now=cutoff), source="plex")
+            if item.added_at is not None
+            else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
+        ),
         size_bytes=Known(value=item.size_bytes, source="radarr"),
         # Stated plainly: today's ratings. IMDb scores move slowly and there is no
         # historical archive, so pretending to know the 2025 value would be fiction.
@@ -461,8 +526,18 @@ async def run(
     users: dict[int, str] | None = None,
     grace_days: int = 14,
     prior: RewatchPrior | None = None,
+    watch_blind_reasons: Mapping[int, str] | None = None,
 ) -> BacktestResult:
     """Replay ``policy`` as of ``cutoff`` and measure what it would have cost.
+
+    ``watch_blind_reasons`` maps a rating key to why its plays are unreadable, for the items
+    whose history the mirror can no longer show in full (``services.watch_evidence``). It is
+    the caller's to supply because the high-water marks it is derived from live in the
+    database of record, which this layer does not open; unsupplied, every item is read as
+    honestly measured. Passing it is what keeps the rehearsal from scoring a churned item on
+    a confident zero that the live scan would refuse -- and refusing there matters twice
+    over, because the same churn hides the LATER plays, so a replay that condemns such an
+    item records no regret for it either and reports the policy as safer than it is.
 
     ``grace_days`` matters here because this replay **models the window as a delay before
     deletion** (``deleted_at = cutoff + grace_days``) and counts a play inside it as a
@@ -478,6 +553,7 @@ async def run(
         prior=prior,
     )
     names = users or {}
+    blind = watch_blind_reasons or {}
     deleted_at = cutoff + timedelta(days=grace_days)
 
     popularity_window = policy.popularity_window_days()
@@ -499,9 +575,16 @@ async def run(
             cutoff=cutoff,
             horizon=horizon,
             popularity_window_days=popularity_window,
+            watch_blind_reason=blind.get(item.rating_key),
         )
         if facts is None:
-            result.skipped_not_yet_added += 1
+            # Split on the item's own arrival date rather than re-deriving the branch inside
+            # `facts_as_of`: an item with a date was refused for something about the cutoff,
+            # and one without was refused for having no instant to measure from at all.
+            if item.added_at is not None:
+                result.skipped_not_yet_added += 1
+            else:
+                result.skipped_nothing_to_measure += 1
             continue
 
         result.considered += 1

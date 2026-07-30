@@ -11,22 +11,29 @@ from __future__ import annotations
 from datetime import timedelta
 
 from reaper.clock import utcnow
-from reaper.engine.backtest import BacktestResult, Item, facts_as_of, rewatch_prior
+from reaper.engine.backtest import (
+    NO_ADDED_AT_REASON,
+    BacktestResult,
+    Item,
+    facts_as_of,
+    rewatch_prior,
+)
 from reaper.engine.calibration import Bucket, RewatchPrior
 from reaper.engine.gates import GateConfig, GateId, ServerPopularityGate
-from reaper.engine.observation import Known
+from reaper.engine.observation import Known, Unknown
 
 NOW = utcnow()
 CUTOFF = NOW - timedelta(days=365)
 HORIZON = NOW - timedelta(days=3000)
 
 
-def _item(added_days_ago: int = 1000) -> Item:
+def _item(added_days_ago: int | None = 1000) -> Item:
+    """``added_days_ago=None`` is a record Plex reports no arrival date for."""
     return Item(
         rating_key=1,
         title="A Film",
         size_bytes=8_000_000_000,
-        added_at=NOW - timedelta(days=added_days_ago),
+        added_at=None if added_days_ago is None else NOW - timedelta(days=added_days_ago),
         imdb_rating_tenths=73,
         imdb_votes=500_000,
     )
@@ -245,6 +252,117 @@ class TestPopularityIsWindowed:
         assert facts is not None
         assert isinstance(facts.distinct_watchers, Known)
         assert facts.distinct_watchers.value == 1
+
+
+class TestARecordWithNoArrivalDateIsStillRehearsed:
+    """The rehearsal takes the live scan's thaw, not one of its own (#277).
+
+    `reference_instant` measures from a play alone, so a missing arrival date is not on its
+    own a reason to refuse. This lane used to drop those records before asking, which is a
+    second thaw rule wearing a filter's clothes: a movie with no arrival date and an old play
+    is condemned by a live scan and never entered the rehearsal at all, so the replay
+    under-reported precisely what production would remove.
+    """
+
+    def test_a_play_is_enough_to_judge_a_record_with_no_arrival_date(self) -> None:
+        """The whole defect, in one item. 500 days before NOW is 135 before the cutoff."""
+        plays = [(7, NOW - timedelta(days=500))]
+
+        facts = facts_as_of(_item(added_days_ago=None), plays, cutoff=CUTOFF, horizon=HORIZON)
+
+        assert facts is not None, "a record with a play has an instant to measure from"
+        assert isinstance(facts.days_observed_unwatched, Known)
+        assert round(facts.days_observed_unwatched.value) == 135
+
+    def test_that_record_reports_no_span_for_its_all_time_count(self) -> None:
+        """The one field a play cannot stand in for: how far back the mirror must reach for
+        an all-time count is a question about the arrival, and Unknown withholds the
+        protection rather than asserting a span nobody measured (rule 93)."""
+        facts = facts_as_of(
+            _item(added_days_ago=None),
+            [(7, NOW - timedelta(days=500))],
+            cutoff=CUTOFF,
+            horizon=HORIZON,
+        )
+
+        assert facts is not None
+        assert isinstance(facts.days_since_added, Unknown)
+        assert facts.days_since_added.reason == NO_ADDED_AT_REASON
+
+    def test_neither_a_play_nor_an_arrival_date_is_still_refused(self) -> None:
+        """The narrowing goes, the honesty stays: with no instant to measure from there is
+        no rehearsal to run, and inventing one would score the item on nothing."""
+        assert facts_as_of(_item(added_days_ago=None), [], cutoff=CUTOFF, horizon=HORIZON) is None
+
+    def test_a_play_after_the_cutoff_does_not_thaw_it(self) -> None:
+        """`past` is filtered to the cutoff first, so a play the replay must not see cannot
+        smuggle the record in through the arrival-date arm either."""
+        plays = [(7, NOW - timedelta(days=30))]  # 335 days AFTER the cutoff
+
+        assert (
+            facts_as_of(_item(added_days_ago=None), plays, cutoff=CUTOFF, horizon=HORIZON) is None
+        )
+
+
+class TestTheReplayRefusesPlaysTheMirrorCanNoLongerShow:
+    """The rehearsal's copy of `snapshot.build_facts`'s blind arms (#277).
+
+    A re-added file carries a fresh rating key while its earlier plays stay filed under the
+    old one, so "no rows" is ambiguous between churn and a genuinely unwatched item. The live
+    scan refuses to read that as zero; so must the replay, and doubly so, because the same
+    churn hides the LATER plays -- a replay that condemns such an item records no regret for
+    it either and reports the policy as safer than it is.
+    """
+
+    BLIND = "plays recorded on an earlier scan are no longer readable"
+
+    def test_dormancy_and_both_counts_go_unknown_together(self) -> None:
+        """One mirror answered all three, so one doubt withdraws all three."""
+        facts = facts_as_of(
+            _item(added_days_ago=2000),
+            [(7, CUTOFF - timedelta(days=10))],
+            cutoff=CUTOFF,
+            horizon=HORIZON,
+            watch_blind_reason=self.BLIND,
+        )
+
+        assert facts is not None
+        for observation in (
+            facts.days_observed_unwatched,
+            facts.distinct_watchers,
+            facts.distinct_watchers_all_time,
+        ):
+            assert isinstance(observation, Unknown)
+            assert observation.reason == self.BLIND
+
+    def test_the_doubt_beats_a_reading_that_would_have_measured(self) -> None:
+        """Checked BEFORE the measurement, not after it. The same item read honestly comes
+        back Known, so this pins the order rather than an item that had nothing to say."""
+        item, plays = _item(added_days_ago=2000), [(7, CUTOFF - timedelta(days=10))]
+
+        honest = facts_as_of(item, plays, cutoff=CUTOFF, horizon=HORIZON)
+        assert honest is not None
+        assert isinstance(honest.days_observed_unwatched, Known)
+
+        blinded = facts_as_of(
+            item, plays, cutoff=CUTOFF, horizon=HORIZON, watch_blind_reason=self.BLIND
+        )
+        assert blinded is not None
+        assert isinstance(blinded.days_observed_unwatched, Unknown)
+
+    def test_a_blind_item_is_still_rehearsed_rather_than_dropped(self) -> None:
+        """Unknown blocks the dormancy gates and abstains, which keeps the file. Dropping it
+        instead would take it out of the coverage count as well, hiding the population this
+        doubt exists for from the one report that should show it."""
+        facts = facts_as_of(
+            _item(added_days_ago=None),
+            [],
+            cutoff=CUTOFF,
+            horizon=HORIZON,
+            watch_blind_reason=self.BLIND,
+        )
+
+        assert facts is not None, "no arrival date and no readable play is still a rehearsal"
 
 
 # A TestTheRequesterGateIsNotApplied class lived here, pinning that a backtest leaves

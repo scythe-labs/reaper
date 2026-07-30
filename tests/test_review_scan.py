@@ -16,6 +16,7 @@ Covers the findings addressed in the scan lane of the code review:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
@@ -39,7 +40,7 @@ from reaper.engine.gates import Facts, GateId
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.ratings import Rating, RatingSource
-from reaper.services import history_sync
+from reaper.services import history_sync, watch_evidence
 from reaper.services.library_index import _RETIRED_DEGRADE_FLOOR, _RETIRED_DEGRADE_SHARE
 from reaper.services.season_scan import build_tv_index
 from reaper.services.snapshot import (
@@ -1038,6 +1039,70 @@ class TestTheBacktestVerdictMatchesProduction:
         # charge for it and says so by scoring the item lower.
         assert deep.considered == short.considered == 1
         assert short.condemned_bytes <= deep.condemned_bytes
+
+
+class TestTheRunCarriesTheBlindnessTheLiveScanWould:
+    """`run` hands each item's blind reason to the fact builder, and counts what it skipped.
+
+    The parameter is the caller's to supply because the high-water marks behind it live in
+    the database of record, which the engine layer does not open. That makes it exactly the
+    shape rule 141 warns about: unsupplied it defaults to None, which is also what a correct
+    pass produces for an unaffected item, so only a test that supplies a *different* value
+    can tell a plumbed argument from an omitted one.
+    """
+
+    async def test_the_blind_reason_reaches_the_fact_builder_for_its_item_alone(
+        self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two items, one blind. Reading the kwarg with ``.get`` means an omission fails on
+        the VALUE that was used rather than raising KeyError, which would pass for the wrong
+        reason (rule 141). The second item pins that the map is consulted per item and not
+        applied to the whole run."""
+        seen: list[str | None] = []
+        real_facts_as_of = bt.facts_as_of
+
+        def _spy(*args: object, **kwargs: object) -> Facts | None:
+            seen.append(kwargs.get("watch_blind_reason"))  # type: ignore[arg-type]
+            return real_facts_as_of(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(bt, "facts_as_of", _spy)
+        other = replace(_bt_item(), rating_key=2, title="Another Film")
+
+        await run(
+            cache_engine,
+            [_bt_item(), other],
+            DEFAULT_MOVIE_POLICY,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=3000),
+            watch_blind_reasons={1: watch_evidence.BLIND_REASON},
+        )
+
+        assert seen == [watch_evidence.BLIND_REASON, None]
+
+    async def test_a_record_with_nothing_to_measure_from_is_not_called_not_yet_added(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Two skips that mean different things (#277). One item arrived after the cutoff;
+        the other has no arrival date and no play at all, so dormancy has no instant to
+        count from. Folding both into ``skipped_not_yet_added`` would report the replay's
+        coverage as bounded by its date when it is really bounded by the evidence."""
+        too_new = replace(_bt_item(), rating_key=1, added_at=NOW - timedelta(days=10))
+        no_date = replace(_bt_item(), rating_key=2, added_at=None)
+
+        result = await run(
+            cache_engine,
+            [too_new, no_date],
+            DEFAULT_MOVIE_POLICY,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=3000),
+        )
+
+        assert result.considered == 0
+        assert result.skipped_not_yet_added == 1
+        assert result.skipped_nothing_to_measure == 1
+        assert "no date to count from 1" in result.summary()
 
 
 # ---------------------------------------------------------------------------
