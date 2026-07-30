@@ -1151,12 +1151,21 @@ async def build_person_detail(
 
         # Title-level fate on the seasons they asked for: reclaimable if ANY is effectively
         # condemned (a show is on the reap lane if any season is, rule 48); else abstain if any
-        # abstains and is not itself spared; else protect (a spared item reads as kept, rule 61).
+        # is still UNDECIDED; else protect (a hand-kept item reads as kept, rule 61).
+        #
+        # "Undecided" is no hand override at all, which is what ``condemned.effective_verdict``
+        # -- the queue's classifier and the one this label must agree with -- leaves at its scan
+        # verdict. Every other case it answers itself: a spare keeps the file, a reap the engine
+        # WILL honor took the branch above, and a reap it will NOT honor (streaming right now, a
+        # file no *arr manages, a bad Plex match, an unreadable explanation) also keeps it. That
+        # last one is what this branch used to miss: it asked "not spared" rather than "not
+        # decided", so a held reap read as "Left to decide" beside a file Reaper had settled on
+        # keeping, and the row's jump opened the one lane the title is not in.
         if eff_condemned:
             verdict = _CONDEMN
             recl_items += 1
             recl_bytes += sum(c.size_bytes or 0 for c in eff_condemned)
-        elif any(c.verdict == "abstain" and c.override != "spare" for c in scoped):
+        elif any(c.verdict == "abstain" and c.override is None for c in scoped):
             verdict = "abstain"
         else:
             verdict = "protect"

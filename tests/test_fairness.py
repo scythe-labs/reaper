@@ -14,12 +14,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
+from typing import get_args
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from reaper.api.fairness import _person_out, _row_out
+from reaper.api.schemas import OverrideIn
 from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import (
     MediaRequest,
@@ -34,7 +36,8 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
-from reaper.services import fairness, history_sync
+from reaper.services import fairness, history_sync, whitelist
+from reaper.services.condemned import effective_verdict
 from reaper.services.fairness import (
     UNMATCHED_AFTER_SCAN,
     UNMATCHED_NO_ID,
@@ -43,6 +46,10 @@ from reaper.services.fairness import (
     WatchEvidence,
     roll_up,
 )
+
+# The canonical stored-explanation shapes, kept in the suite that pins what a hand reap does
+# with each rather than transcribed here (rule 119).
+from tests.test_override_truth import STRUCTURAL, stored_explanation
 
 GB = 1024**3
 NOW = utcnow()
@@ -1498,3 +1505,114 @@ class TestBuildPersonDetail:
         assert row.played_by_them == detail.played_by_them == 1
         await main.dispose()
         await cache.dispose()
+
+
+#: A hand reap the engine will NOT honor: a structural stop fired, so the file is kept.
+HELD = STRUCTURAL
+#: A hand reap nothing refuses, so the engine honors it and the file is reclaimable.
+HONORED = stored_explanation()
+
+
+class TestTheDrawerFateMatchesTheQueueLane:
+    """A title's fate on Scales is the lane the review queue files it under -- the same
+    ``condemned.effective_verdict``, never a second reading of the same row (rule 3/22/77).
+
+    The drawer prints one of three words beside a title AND routes the jump into Review on
+    it, so a disagreement is read twice: the operator is told the file is undecided, and
+    clicking it opens the one lane the title is not in.
+    """
+
+    async def _decided_abstain(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        *,
+        decision: str | None,
+        explanation: str = HELD,
+    ) -> None:
+        """Turn the fixture's one candidate into an abstain carrying ``decision`` by hand."""
+        async with factory() as session:
+            row = (await session.execute(select(Candidate))).scalars().one()
+            row.verdict = "abstain"
+            row.explanation_json = explanation
+            if decision is not None:
+                session.add(
+                    WhitelistEntry(
+                        media_key=row.media_key,
+                        title=row.title,
+                        decision=decision,
+                        note=None,
+                        created_at=NOW,
+                    )
+                )
+            await session.commit()
+
+    async def _fate_and_lane(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        cache: AsyncEngine,
+    ) -> tuple[str, str]:
+        """The drawer's word for the fixture's title, and the queue's lane for the same row."""
+        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+        assert detail is not None
+        (title,) = detail.titles
+        async with factory() as session:
+            row = (await session.execute(select(Candidate))).scalars().one()
+            decisions = await whitelist.overrides(session)
+            # The queue's own classifier, run on the same row (rule 119: the real function,
+            # never a transcription of it).
+            lane = effective_verdict(row, decisions)
+        return title.verdict, lane
+
+    async def test_a_hand_reap_the_engine_holds_reads_as_kept_not_undecided(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """The reap is held because a structural stop fired (it is streaming right now), so
+        the engine keeps the file. Scales called this "Left to decide" while the queue filed
+        it under Kept, and the row's jump opened Limbo -- the one list it is not in."""
+        factory, cache = report_env
+        await self._decided_abstain(factory, decision="reap", explanation=HELD)
+        fate, lane = await self._fate_and_lane(factory, cache)
+        assert lane == "protect"
+        assert fate == lane
+
+    async def test_an_engine_honored_hand_reap_still_reads_as_reclaimable(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """The other arm of the same override: nothing structural fired, so the engine honors
+        the reap and both surfaces say condemn. Pins that agreement was not bought by making
+        every hand-reaped abstain read as kept."""
+        factory, cache = report_env
+        await self._decided_abstain(factory, decision="reap", explanation=HONORED)
+        fate, lane = await self._fate_and_lane(factory, cache)
+        assert lane == "condemn"
+        assert fate == lane
+
+    @pytest.mark.parametrize(
+        "decision", [None, *get_args(OverrideIn.model_fields["decision"].annotation)]
+    )
+    async def test_every_hand_decision_lands_on_the_same_lane_as_the_queue(
+        self,
+        report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine],
+        decision: str | None,
+    ) -> None:
+        """Driven over the whole decision vocabulary the API accepts, read off
+        ``OverrideIn.decision`` rather than listed here, so a third kind of hand decision
+        fails this until Scales is taught what lane it lands in (rule 103). ``None`` is the
+        untouched row, the one case that really is still undecided.
+
+        The reap here is one the engine holds, which is the case the two surfaces disagreed
+        on; its honored twin is pinned above.
+        """
+        factory, cache = report_env
+        await self._decided_abstain(factory, decision=decision, explanation=HELD)
+        fate, lane = await self._fate_and_lane(factory, cache)
+        assert fate == lane
+        # And the words themselves, so agreement on a wrong answer cannot pass: only an
+        # untouched row is still undecided.
+        assert lane == ("abstain" if decision is None else "protect")
