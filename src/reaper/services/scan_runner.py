@@ -137,7 +137,6 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
                     gate=setting.gate,
                     enabled=True,
                     threshold=setting.threshold,
-                    secondary=setting.secondary,
                     window_days=setting.window_days,
                 )
             )

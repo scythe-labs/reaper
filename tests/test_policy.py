@@ -19,6 +19,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
+from reaper.api.routes import _policy_out, _to_body
 from reaper.api.schemas import GateSettingIn
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
@@ -2588,3 +2589,56 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
         warnings = inspect(DEFAULT_TV_POLICY, ProfileSettings(), history_reach_days=1200.0)
 
         assert [w.field for w in warnings] == ["flag_keep_conflicts"]
+
+
+class TestSecondaryStaysOnTheWire:
+    """``GateSetting.secondary`` is a dead number that still cannot be deleted (issue #259).
+
+    Its docstring names three independent reasons; these pin the two that a future cleanup
+    pass would actually trip over, because both fail silently in production rather than at
+    the diff. Named from ``engine.policy.GateSetting.secondary`` (rules 7/24).
+    """
+
+    @staticmethod
+    def _legacy_body() -> dict[str, object]:
+        """A body from before the rating bar moved off the gate row: the RATING_FLOOR
+        setting still carries the old floor plus vote floor. Every install seeded before
+        that move has one."""
+        raw = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        for gate in raw["gates"]:
+            if gate["gate"] == GateId.RATING_FLOOR.value:
+                gate["threshold"], gate["secondary"] = 75, 1000
+        return raw
+
+    def test_a_stored_body_carrying_secondary_still_loads(self) -> None:
+        """``Frozen`` forbids extra keys and ``profiles.active_policy`` has no
+        drop-unknown retry, so deleting the field would turn every saved policy into a
+        ValidationError and fall the operator back to shipped defaults (rule 65)."""
+        body = PolicyBody.model_validate(self._legacy_body())
+
+        assert [g.secondary for g in body.gates if g.gate is GateId.RATING_FLOOR] == [1000]
+
+    def test_the_wire_round_trip_preserves_every_hash(self) -> None:
+        """The trap ``schema_version`` already fell into: the scan records the STORED body's
+        hash while the simulator hashes the one round-tripped through ``api.schemas``. Drop
+        ``secondary`` from ``GateSettingIn`` and a body carrying a nonzero value reads as
+        "needs a fresh scan" that scanning can never clear, because the stored side keeps
+        the number the wire threw away. ``_NON_BEHAVIORAL_FIELDS`` cannot exempt it -- that
+        filter is top-level and this field is nested inside ``gates``.
+        """
+        stored = PolicyBody.model_validate(self._legacy_body())
+
+        # The exact production round trip: PolicyBody -> PolicyIn (the wire) -> PolicyBody.
+        wire = _policy_out(
+            stored, name="test", requests_app_configured=True, settings=ProfileSettings()
+        )
+        returned = _to_body(wire.body)
+
+        assert returned.policy_hash() == stored.policy_hash()
+        assert returned.scoring_hash() == stored.scoring_hash()
+        assert returned.evidence_hash() == stored.evidence_hash()
+
+    def test_the_wire_still_declares_it(self) -> None:
+        """The direct statement of the same fact, so the reason survives even if someone
+        rewrites the round trip above."""
+        assert "secondary" in GateSettingIn.model_fields

@@ -91,7 +91,26 @@ class GateSetting(Frozen):
     enabled: bool = True
 
     threshold: int = 0
+
     secondary: int = 0
+    """Dead as a *number* -- it held the rating gate's vote floor until that bar moved to
+    ``keep_rating_rules``, and nothing reads it now except ``recover_rating_rules``, off the
+    raw stored dict. It still cannot be deleted, and each reason bites on its own (issue #259):
+
+    * ``Frozen`` forbids extra keys, and every stored body was serialized *with* this key.
+      ``services.profiles.active_policy`` validates ``body_json`` with no drop-unknown retry,
+      so deleting the field turns every saved policy into a ``ValidationError`` and falls the
+      operator back to shipped defaults -- their own safety values silently replaced (rule 65).
+    * It is inside ``policy_hash``, ``scoring_hash`` and ``evidence_hash``, all three of which
+      hash ``model_dump()``. ``_NON_BEHAVIORAL_FIELDS`` cannot exempt it: that filter runs over
+      TOP-LEVEL keys and this one is nested in ``gates``.
+    * Dropping it from the WIRE alone (``api.schemas.GateSettingIn``) is the same trap
+      ``schema_version`` fell into: the scan records the stored body's hash while the simulator
+      hashes the round-tripped one, so a body carrying a nonzero value here reads as "needs a
+      fresh scan" that scanning cannot clear. Every install seeded before the bar moved carries
+      one. ``tests.test_policy.TestSecondaryStaysOnTheWire`` fails if the wire drops it.
+
+    Retiring it needs a migration that rewrites stored bodies, not a field deletion."""
 
     window_days: int = Field(default=365, ge=1)
     """How far back "recently" reaches, for gates that count activity.
