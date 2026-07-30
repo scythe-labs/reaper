@@ -26,7 +26,7 @@ import respx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.api.runs import _planned_candidates
+from reaper.api.runs import _planned_candidates, _run_out
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import ActiveStream, PlexError, PlexSectionPaths
 from reaper.clock import utcnow
@@ -3617,6 +3617,46 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         error = ((await _steps(session, run.id))[0].error or "").lower()
         assert "could not reach it again" in error
         assert "still there" not in error
+
+    async def test_the_reason_reaches_the_browser_from_the_journal(
+        self, session: AsyncSession
+    ) -> None:
+        """A reopened run carries why the step failed, not just that it did (#260).
+
+        The executor writes one sentence twice: durably to ``action_step.error``, and into
+        the in-memory ``StepOutcome`` the run report is built from. That report lives on
+        ``app.state`` and is gone after a restart or the next run, so the durable copy was
+        the only one left -- and it was on no response schema, which made a run reopened
+        from history show a failed step with no reason while rule 26's audit record held
+        it. Driven through the same failure as the test above, then read back through the
+        detail route's own builder.
+
+        The HTTP half of this pair is ``test_api``'s
+        ``test_a_failed_step_reads_back_why_it_failed``, which drives the route rather than
+        the builder; this one is what proves a REAL executor failure populates it, where
+        that one writes the row itself.
+        """
+
+        class UnreachableAfterDelete(FakeRadarr):
+            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
+                if movie_id in self._deleted:
+                    raise IntegrationError("radarr", "timed out", status=None)
+                return await super().movie_by_id(movie_id)
+
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        # Planned and not yet sent: nothing has failed, so every step says nothing at all,
+        # rather than an empty string the browser would have to tell apart from a reason.
+        planned = await _run_out(session, run)
+        assert planned.steps and all(s.error is None for s in planned.steps)
+
+        await _real(session, run, _gateway(radarr={1: UnreachableAfterDelete()}))
+
+        out = await _run_out(session, run)
+        failed = [s for s in out.steps if s.state == StepState.FAILED.value]
+        assert failed, "the scenario stopped failing a step, so this proves nothing"
+        assert "could not reach it again" in (failed[0].error or "").lower()
 
     async def test_a_season_delete_that_cannot_be_re_read_is_charged_too(
         self, session: AsyncSession
