@@ -478,3 +478,81 @@ class TestYearInSearch:
     def test_a_year_alone_narrows_to_that_year(self, client: TestClient) -> None:
         # Not "every row": 2017 is Delta's release year and nothing else here, so Echo stays out.
         assert self._found(client, "2017") == {"Example Delta 2049"}
+
+
+class TestSearchIsLiteralText:
+    """What the operator types means itself, not a SQL pattern.
+
+    ``%`` and ``_`` are the two characters ``LIKE`` reserves, and the term went into the
+    pattern unescaped, so both were live wildcards: ``a_pha`` matched "Example Alpha". It only
+    ever over-matched -- a title genuinely containing ``%`` still found itself, because the
+    wildcard matches the empty string -- which is why it went unnoticed. Issue #303.
+
+    The fixture holds the pairs that tell a literal from a wildcard: two titles one underscore
+    apart, and one containing a real ``%`` and a real backslash.
+    """
+
+    @pytest.fixture
+    def client(self, tmp_path: Path) -> Iterator[TestClient]:
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        now = utcnow()
+        with Session(engine) as session:
+            snap = Snapshot(
+                created_at=now, policy_hash="c" * 64, horizon_at=now, item_count=3, degraded=False
+            )
+            session.add(snap)
+            session.flush()
+            session.add_all(
+                [
+                    _candidate(snapshot_id=snap.id, media_key="radarr:1:30", title="Example Alpha"),
+                    _candidate(
+                        snapshot_id=snap.id, media_key="radarr:1:31", title="Example Alpaca"
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id,
+                        media_key="radarr:1:32",
+                        title="Example 100% Complete",
+                    ),
+                    _candidate(
+                        snapshot_id=snap.id, media_key="radarr:1:33", title="Example A\\B Sequel"
+                    ),
+                ]
+            )
+            session.commit()
+        engine.dispose()
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            yield c
+
+    def _found(self, client: TestClient, term: str) -> set[str]:
+        return _titles(client.get("/api/candidates", params={"search": term}).json())
+
+    def test_an_underscore_matches_only_an_underscore(self, client: TestClient) -> None:
+        # As a wildcard this found "Example Alpha". As a literal it finds nothing, because no
+        # title here contains one.
+        assert self._found(client, "a_pha") == set()
+        # The control: the same search with the real character finds the row.
+        assert self._found(client, "alpha") == {"Example Alpha"}
+
+    def test_a_percent_matches_only_a_percent(self, client: TestClient) -> None:
+        # As a wildcard this spanned the gap and matched "Example 100% Complete".
+        assert self._found(client, "Example%Complete") == set()
+
+    def test_a_title_containing_a_percent_is_found_by_typing_it(self, client: TestClient) -> None:
+        # The direction the old behavior got right by accident, and the one an escape can
+        # break: this also pins that the backslash is escaped BEFORE the `%`. Escaping them
+        # the other way round turns the escape into a literal backslash plus a live wildcard,
+        # and this row stops matching its own name.
+        assert self._found(client, "100% Complete") == {"Example 100% Complete"}
+
+    def test_a_backslash_means_a_backslash(self, client: TestClient) -> None:
+        # The escape character itself has to survive being searched for.
+        assert self._found(client, "A\\B") == {"Example A\\B Sequel"}
+
+    def test_a_lone_wildcard_is_not_a_way_to_list_everything(self, client: TestClient) -> None:
+        # A bare "%" used to be every row in the lane. It is now a search for one character,
+        # and exactly one title here has it.
+        assert self._found(client, "%") == {"Example 100% Complete"}
+        assert self._found(client, "_") == set()

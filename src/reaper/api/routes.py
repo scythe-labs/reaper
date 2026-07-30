@@ -231,6 +231,21 @@ def _split_search_year(term: str) -> tuple[str, int | None]:
     return term[: match.start()].strip(), int(match["year"])
 
 
+def _like_literal(text_: str) -> str:
+    """Make a typed search term mean itself inside a ``LIKE`` pattern.
+
+    ``%`` and ``_`` are the two characters ``LIKE`` reserves, so an operator typing either got
+    a wildcard rather than the character: ``a_pha`` found "Example Alpha", and any ``%`` in a
+    term silently widened it. It only ever over-matched, which is why nobody noticed.
+
+    The backslash goes first and cannot be reordered: escaping ``%`` before ``\\`` would turn
+    the escape it just added into a literal backslash followed by a live wildcard. Callers pair
+    this with ``escape="\\\\"`` on the comparison, and the ``%`` wrappers they add around the
+    result are deliberately NOT escaped -- those are the wildcards doing the substring search.
+    """
+    return text_.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @router.get("/candidates", tags=[api_tags.REVIEW])
 async def list_candidates(
     request: Request,
@@ -304,8 +319,12 @@ async def list_candidates(
             term = search.strip()
 
             def matches(text_: str) -> ColumnElement[bool]:
-                pattern = f"%{text_}%"
-                return or_(Candidate.title.ilike(pattern), Candidate.group_title.ilike(pattern))
+                # The term is escaped to mean itself; the wrappers are the wildcards.
+                pattern = f"%{_like_literal(text_)}%"
+                return or_(
+                    Candidate.title.ilike(pattern, escape="\\"),
+                    Candidate.group_title.ilike(pattern, escape="\\"),
+                )
 
             stem, year = _split_search_year(term)
             if year is None:
