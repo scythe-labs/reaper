@@ -286,13 +286,21 @@ function KeptNotice({
  *  is null for exactly these rows -- the identical dead end this component exists to close. */
 export function MatchCandidates({ links }: { links: Links }) {
   const candidates = links.match_candidates ?? [];
-  if (candidates.length === 0) return null;
+  // Two ways to have nothing to offer, and only the first was checked. `JumpPill` renders
+  // null for a null href, so a row whose candidates all lack BOTH a Plex and a Tautulli link
+  // -- no Plex server row or no `plex_web_url`, and no enabled Tautulli, at render time --
+  // left the lead sentence standing over an empty row, ending on a colon. That is the exact
+  // dead end this component was added to close, reached one step later (#209).
+  if (!candidates.some((candidate) => candidate.plex ?? candidate.tautulli)) return null;
   const numbered = candidates.length > 1;
 
   return (
     <span className="match-candidates">
       <span className="match-candidates-lead">
-        Reaper saw {candidates.length} possible matches:
+        {/* The count decides the noun. The component already asserts a single-candidate case
+            exists -- `numbered` drops the number for it -- while the lead said "1 possible
+            matches" right beside it (#209). */}
+        Reaper saw {candidates.length} possible {numbered ? "matches" : "match"}:
       </span>
       {candidates.map((candidate, i) => (
         // The rating key: unique among siblings and a stable server id (rule 19), where the

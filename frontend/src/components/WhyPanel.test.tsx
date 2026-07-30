@@ -699,6 +699,61 @@ describe("the verdict headline", () => {
     );
   });
 
+  // The next two are branches of `MatchCandidates` itself, so they are driven here, where it
+  // lives. `ShowPanel`'s pair above and below cover the other thing -- that the show panel
+  // wires the same component to the same links -- which is a different claim (rule 72).
+  it("says match, not matches, when there was only one row to choose between", () => {
+    // The component already asserts this case exists: `numbered` drops the "1" from the pill
+    // labels for it, while the lead sentence beside it read "1 possible matches" (#209).
+    show(
+      detail(WORKED_ROWS, {
+        links: {
+          ...detail(WORKED_ROWS).links,
+          match_candidates: [{ rating_key: 555, plex: "https://plex.example/555", tautulli: null }],
+        },
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          match: { status: "ambiguous", detail: null, rating_key: null },
+        },
+      }),
+    );
+    expect(screen.getByText(/Reaper saw 1 possible match:/i)).toBeInTheDocument();
+    expect(screen.queryByText(/possible matches/i)).not.toBeInTheDocument();
+    // One candidate, so the pill is "Plex" -- "Plex 1" alone reads as a label for a row.
+    expect(screen.getByRole("link", { name: /^Plex/ })).toHaveAttribute(
+      "href",
+      "https://plex.example/555",
+    );
+  });
+
+  it("says nothing at all when it has no row it could offer to open", () => {
+    // Neither app reachable at render time: no Plex server row (or no plex_web_url) and no
+    // enabled Tautulli, for an item scanned when at least one was configured. `JumpPill`
+    // renders null for a null href, so the lead used to stand over an empty row, ending on a
+    // colon -- the dead end this component exists to close, reached one step later (#209).
+    show(
+      detail(WORKED_ROWS, {
+        links: {
+          ...detail(WORKED_ROWS).links,
+          match_candidates: [
+            { rating_key: 555, plex: null, tautulli: null },
+            { rating_key: 777, plex: null, tautulli: null },
+          ],
+        },
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          match: { status: "ambiguous", detail: null, rating_key: null },
+        },
+      }),
+    );
+    // The "kept to be safe" notice still explains why the file was kept; what goes is the
+    // sentence promising rows to open.
+    expect(
+      screen.getByText(/This looks like more than one thing in your Plex/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/possible match/i)).not.toBeInTheDocument();
+  });
+
   it("shows no candidate row on an item Reaper did tie to one Plex entry", () => {
     show(detail(WORKED_ROWS));
     expect(screen.queryByText(/possible matches/i)).not.toBeInTheDocument();
