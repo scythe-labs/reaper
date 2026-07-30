@@ -425,6 +425,46 @@ class TestRatingGate:
         assert result.blocked is False
         assert "no IMDb rating" in result.detail
 
+    @pytest.mark.parametrize(
+        ("unreadable", "check"),
+        [
+            ("imdb_rating_tenths", "could not check the IMDb rating"),
+            ("imdb_votes", "could not check the IMDb vote count"),
+        ],
+        ids=["the-rating", "the-vote-count"],
+    )
+    def test_an_unreadable_imdb_number_blocks_where_a_missing_one_does_not(
+        self, unreadable: str, check: str
+    ) -> None:
+        """Rule 93 at the gate: ``Absent`` is "we looked and there is no rating", which the
+        test above pins as a clean ABSTAIN; ``Unknown`` is "we could not read IMDb at all",
+        and that must fail closed and BLOCK, or a dataset outage silently withdraws this
+        protection from every title carrying it.
+
+        Nothing discriminated the two arms. ``_rating_facts`` hardcodes both numbers
+        ``Absent``, so no test in this class could reach the ``Unknown`` one, and
+        ``TestUnknownNeverCondemns``'s property is stated as *if* blocked *then* abstain --
+        deleting the guard produces FEWER blocked results, which a conditional over a
+        smaller set still satisfies. Driven by a mutation run (#243): with the guard
+        removed, these same facts come back unblocked, so the assertion below is the only
+        thing standing between an IMDb outage and a library-wide loss of the rating keep.
+
+        Both halves are here rather than split, because the contrast IS the claim: one
+        observation kind blocks and the other does not, on facts identical otherwise.
+        """
+        gate = RatingFloorGate(rules=(_IMDB_BAR,))
+        facts = _rating_facts(())  # no rating either way; only the observation kind differs
+
+        assert gate.evaluate(facts).blocked is False  # Absent: nothing to keep it on
+
+        result = gate.evaluate(
+            replace(facts, **{unreadable: Unknown(reason="dataset down", source="imdb")})
+        )
+
+        assert result.blocked is True
+        assert result.outcome == ABSTAIN
+        assert check in result.detail
+
     def test_a_second_source_can_keep_a_title_imdb_would_not(self) -> None:
         """The point of multi-source: a film below the IMDb bar but above the Rotten
         Tomatoes critics bar is kept, on ANY-of matching."""

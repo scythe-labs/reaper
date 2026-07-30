@@ -671,6 +671,132 @@ class TestTheDangerousConfigDetector:
 
         assert any("Did you mean 7.0" in w.message for w in warnings)
 
+    def test_the_rating_keep_says_so_when_it_has_no_sources_to_keep_on(self) -> None:
+        """Rating keep on with an empty source list keeps nothing, and looks configured.
+
+        This is the state the #241 shims exist to repair, so the warning about it has to
+        hold. Nothing pinned it: a mutation run (#243) found that making the branch never
+        fire survives the whole suite. The stock inversion mutant dies, but only because it
+        makes the warning fire on healthy policies, which the shipped-default tests catch --
+        the deleting direction, the one that costs the operator a protection they can see
+        switched on, was undefended.
+
+        Both discriminators are here so the assertion cannot be satisfied by a warning that
+        fires unconditionally: the same gate turned off says nothing, and the same gate with
+        a source says nothing.
+        """
+        enabled_with_no_sources = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR),))
+
+        warnings = inspect(enabled_with_no_sources, ProfileSettings())
+
+        complaint = [w for w in warnings if w.field == "keep_rating_rules"]
+        assert len(complaint) == 1
+        assert complaint[0].severity == "warn"
+        assert "not keeping anything" in complaint[0].message
+
+        off = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR, enabled=False),))
+        assert not [w for w in inspect(off, ProfileSettings()) if w.field == "keep_rating_rules"]
+
+        stocked = _policy(
+            gates=(GateSetting(gate=GateId.RATING_FLOOR),),
+            keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1000),),
+        )
+        assert not [
+            w for w in inspect(stocked, ProfileSettings()) if w.field == "keep_rating_rules"
+        ]
+
+    @pytest.mark.parametrize(
+        ("anchor", "kind", "build"),
+        [
+            (
+                "protect_conditions",
+                "protection",
+                lambda field: {
+                    "protect_conditions": (ConditionSpec(field=field, op=Op.GTE, value=1),)
+                },
+            ),
+            (
+                "custom_condemn",
+                'rule "my rule"',
+                lambda field: {
+                    "custom_condemn": (
+                        GradedCondemnSpec(name="my rule", field=field, weight=40, saturate_at=1000),
+                    ),
+                    # The removal budget still has to total 100 with the rule's 40 in it.
+                    "signals": (
+                        SignalSetting(signal=SignalId.UNWATCHED, weight=60, saturate_at=730),
+                    ),
+                },
+            ),
+            (
+                "graded_keeps",
+                'keep rule "my rule"',
+                lambda field: {
+                    "graded_keeps": (
+                        GradedKeepSpec(
+                            name="my rule", field=field, max_discount=10, floor=0, saturate_at=10
+                        ),
+                    )
+                },
+            ),
+        ],
+        ids=["a protection", "a removal rule", "a graded keep"],
+    )
+    @pytest.mark.parametrize(
+        ("media_type", "unreadable", "label", "where", "readable"),
+        [
+            ("tv", "release_age", "Age since release", "seasons", "season_rank"),
+            ("movie", "season_rank", "How far back the season is", "movies", "release_age"),
+        ],
+        ids=["a movie-only field on a TV policy", "a TV-only field on a movie policy"],
+    )
+    def test_a_rule_on_a_field_this_media_type_cannot_read_is_called_out(
+        self,
+        anchor: str,
+        kind: str,
+        build: Callable[[str], dict[str, object]],
+        media_type: str,
+        unreadable: str,
+        label: str,
+        where: str,
+        readable: str,
+    ) -> None:
+        """Rule 107's warning, which nothing drove at all.
+
+        ``Condition.validate_for`` checks the lane, the operator and the type but not the
+        media type, so a rule saved before a field was narrowed keeps validating and simply
+        stops being offered. A protection then reads as "checked, did not fire" forever, and
+        a removal rule is worse than inert: its points still count toward the fixed
+        100-point denominator, so it holds down every score in that policy.
+
+        A mutation run (#243) found four survivors in this one branch, and the shape of the
+        split is the proof: deleting the ``BY_KEY.get`` lookup DIES (NameError on the next
+        line, for any rule at all), while deleting either statement past the ``continue``
+        SURVIVES, still raising NameError. So the suite drove rules through the loop and
+        never once drove one the media type cannot read -- ``inspect`` could be made to
+        crash outright and stay green.
+
+        Every arm is therefore driven here, because they fail separately: all three anchors
+        (only the named two build the ``"name"`` clause), and both directions of the
+        media-type test, whose ``==`` was free to invert and tell a TV operator their rule
+        cannot be read "for movies".
+        """
+        body = _policy(media_type=media_type, **build(unreadable))
+
+        warnings = inspect(body, ProfileSettings())
+
+        complaint = [w for w in warnings if w.field == anchor]
+        assert len(complaint) == 1
+        assert complaint[0].severity == "danger"
+        assert complaint[0].message.startswith(
+            f"Your {kind} uses {label}, which Reaper cannot read for {where},"
+        )
+
+        # The same rule on the policy that CAN read the field is silent -- otherwise the
+        # assertion above is satisfied by a warning that fires on every rule.
+        fine = _policy(media_type=media_type, **build(readable))
+        assert not [w for w in inspect(fine, ProfileSettings()) if w.field == anchor]
+
     def test_disabling_the_streaming_gate_is_dangerous(self) -> None:
         body = _policy(gates=(GateSetting(gate=GateId.STREAMING_NOW, enabled=False),))
 
@@ -1101,16 +1227,28 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
     def test_the_cause_clause_is_the_one_the_why_panel_prints(self) -> None:
         """Rule 144: this sentence has a sibling. ``ServerPopularityGate.evaluate`` puts
-        the same shortfall in front of the same operator on every blocked row, off the
-        same ``gates.history_shortfall`` helper. Restating it here in different words
-        would let the editor and the why panel describe one mirror two ways.
+        the same shortfall in front of the same operator, off the same
+        ``gates.history_shortfall`` helper. Restating it here in different words would let
+        the editor and the why panel describe one mirror two ways.
 
         If this fails, the two copies have drifted: fix them together, in
         ``engine/policy.py:inspect`` and ``engine/gates.py:ServerPopularityGate.evaluate``.
+
+        **What it pins, stated exactly, because it was read as more than it is** (#243
+        asked whether this is a tautological oracle, since it computes its expectation by
+        calling the helper both sides call). It is not: rule 119 requires an agreement test
+        to call the real function rather than transcribe it, and the shared value here is a
+        whole sentence, so a reworded copy in ``inspect`` fails on the spot. But it pins
+        AGREEMENT only -- reword ``history_shortfall`` and both sides move together, silently
+        -- and it drives ONE blocked row, so it says nothing about the others (rule 145).
+        The claim was "every blocked row", which is a population proven against one member;
+        it now says what it drives.
         """
         reach = 90.0
         expected = history_shortfall(Known(value=reach, source="tautulli"), float(self.WINDOW))
-        assert expected is not None  # the fixture is a genuine shortfall
+        # Truthy, not merely non-None: "" is a legal str that every ``in`` below accepts, so
+        # a helper degrading to an empty sentence would satisfy this test vacuously.
+        assert expected
 
         message = self._window_warnings(self._pop(), reach=reach)[0].message
         blocked = ServerPopularityGate(
