@@ -237,11 +237,12 @@ describe("Fairness", () => {
     // a reader said the punctuation as part of the control (#177). Hidden, not removed -- it is
     // drawn exactly as before. Asserted as the WHOLE name: the substring matcher above was
     // already satisfied by the broken one, which is how this sat here.
-    // The four spans carry no whitespace between them, so the name runs together. That is a
-    // separate defect, filed rather than papered over here: pinning the real string keeps this
-    // assertion able to fail, where a regex would hide both problems at once.
+    // The four spans carry explicit separators, so the name reads as four things rather than
+    // one run-on word -- and the leading count is heard as a number instead of fusing to the
+    // label (#284). Asserted as the WHOLE name for the same reason as the chevron above: the
+    // substring matcher was already satisfied by the broken string.
     expect(tile).toHaveAccessibleName(
-      "40Not in the last scanrequested since, or filtered outSee what these are",
+      "40 Not in the last scan requested since, or filtered out See what these are",
     );
     await userEvent.click(tile);
     expect(onOpenUnmatched).toHaveBeenCalled();

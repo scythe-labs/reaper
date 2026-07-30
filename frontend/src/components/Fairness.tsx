@@ -216,9 +216,15 @@ export function Fairness({
       // those claim nothing either. What tells the operator it opened is the panel itself, which
       // names itself and, on a phone where it covers the screen, takes focus (WhyShell).
     >
-      <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>
-      <span className="fair-stat-lbl">Not in the last scan</span>
-      <span className="fair-stat-sub">requested since, or filtered out</span>
+      {/* The `{" "}` between each span is load-bearing, not formatting. A name is computed by
+          concatenating the text of the children, and JSX drops the newline between two
+          elements -- so with the spans merely stacked, this control announced as one run-on
+          word ("40Not in the last scanrequested since...") and the count an operator is being
+          asked to act on was not heard as a number at all (#284). A whitespace-only anonymous
+          flex item is not rendered (CSS Flexbox 4.1), so the tile draws exactly as before. */}
+      <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>{" "}
+      <span className="fair-stat-lbl">Not in the last scan</span>{" "}
+      <span className="fair-stat-sub">requested since, or filtered out</span>{" "}
       <span className="fair-stat-more">
         See what these are <span aria-hidden="true">›</span>
       </span>
