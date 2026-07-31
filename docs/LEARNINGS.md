@@ -1738,13 +1738,25 @@ commit with no bound. Whoever reconsiders that is changing registry policy, not 
 
 **Where the rule lives now (2026-07-31).** The measurement above was taken against the
 previous forge, whose registry applied this as an org-level setting. GitHub has no equivalent
-setting, so the same policy is a scheduled job, `.github/workflows/registry-retention.yml`,
-and the conclusion is unchanged: `:dev` and `:latest` are kept, everything else goes after a
-week. Two differences worth knowing. The job also sweeps **untagged** digests, which the old
-rule left to accumulate. And it ships **disabled**, as a dry run: its filters could not be
-verified against a registry that did not exist yet, and a first run that is wrong is not
-recoverable from its own output, so it prints what it would delete until someone reads a run
-and arms it.
+setting, so the same policy is a scheduled job, `.github/workflows/registry-retention.yml`:
+`:dev` and `:latest` are kept, everything else goes after a week, and **untagged** digests are
+swept too, which the old rule left to accumulate. It ships as a dry run, because its selection
+could not be checked against a registry that did not exist yet.
+
+**The old rule had a hole, and it was inherited before anyone noticed.** A pull request's image
+is published so a reviewer can pull and run the exact change. Aging it out on a timer means a
+review left open past the cut-off loses the artifact it exists for, which costs more than the
+disk it saves. The keep set therefore reads the tracker: every `pr-<n>` whose pull request is
+still **open** is protected regardless of age, and only a closed PR's image ages out.
+
+**A retention filter can fail by not filtering, which reads as success.** The obvious action for
+this, `snok/container-retention-policy`, documents that its `!` and `*` operators do not work
+with the automatic `GITHUB_TOKEN` — a temporal token cannot reach the list-packages endpoint
+they need. An `image-tags: "!dev !latest"` written against that token does not error. It stops
+excluding, so the two tags it names become deletion candidates and the job reports success
+while doing the one thing it was added to prevent. That is why the keep set is computed in the
+workflow instead of expressed as filters, and it is the same shape as rules 38/117 and 93: a
+guard that reads as live while covering nothing.
 
 ## The Tautulli library cache lags Plex in BOTH directions (2026-07-29)
 
