@@ -4563,3 +4563,58 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                 assert stored.finished_at is not None
         finally:
             await engine.dispose()
+
+
+class TestTwoMarksInARowBothReachTheDisk:
+    """Each ``_mark_*`` is its own commit (rule 26), so the row it wrote must be on disk
+    before the next one runs -- not merely in the identity map.
+
+    The two halves of a mark disagree about when they happen. The Core ``UPDATE`` runs when
+    it is executed; the ``setattr`` that mirrors it onto the ORM row leaves that row DIRTY,
+    and the session is built ``autoflush=False``, so nothing flushes it until some later
+    ``commit()`` does. The next mark's ``commit()`` is that later one -- and its flush ran
+    AFTER its own Core ``UPDATE``, overwriting the column just written with the previous
+    mark's values, inside the same transaction.
+
+    Driven through ``_mark_sent`` and ``_mark_verified`` directly (rule 118): the corruption
+    lasts exactly one commit, and every public path takes a third commit that repairs it
+    before a test could look. Reading it back through an engine of this test's own is the
+    whole point -- the run's session answers from memory, where the row is always right.
+    """
+
+    async def test_the_second_mark_does_not_write_the_first_ones_values_back(
+        self, tmp_path: Path
+    ) -> None:
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                snapshot_id = await _snapshot_one(setup, media_key="radarr:1:1", rating_key=701)
+                run = await _plan(setup, snapshot_id)
+                run_id = run.id
+                await setup.commit()
+
+            async with factory() as run_session:
+                executor = Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: FakeRadarr()}),
+                    armed_recheck=_armed_forever,
+                )
+                step = (await _steps(run_session, run_id))[0]
+                step_id = step.id
+                # The season path's real sequence: sent, then verified, with no commit of
+                # anyone else's in between to paper over the ordering.
+                await executor._mark_sent(step)
+                await executor._mark_verified(step, {"gone": True})
+
+            async with factory() as fresh:
+                stored = await fresh.get(ActionStep, step_id)
+                assert stored is not None
+                # Not SENT with a verified_at beside it, which is what the flush wrote back.
+                assert stored.state is StepState.VERIFIED
+                assert stored.verified_at is not None
+                assert stored.verification_json == '{"gone": true}'
+        finally:
+            await engine.dispose()

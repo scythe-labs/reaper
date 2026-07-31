@@ -1189,6 +1189,14 @@ class Executor:
         """
         for attempt in (1, 2):
             try:
+                # Pending ORM writes go FIRST, and this flush is not optional. The session is
+                # built ``autoflush=False`` (``db.session.create_session_factory``), so
+                # ``execute()`` does not flush on its own -- and ``commit()`` does, at the end.
+                # Without this, a Core UPDATE below lands and is then overwritten inside the
+                # same transaction by the flush that ``commit()`` runs, carrying whatever the
+                # PREVIOUS ``_mark`` had set on the row. That is how a step committed as
+                # VERIFIED came to sit on disk reading SENT with a ``verified_at`` beside it.
+                await self._session.flush()
                 for statement in write:
                     await self._session.execute(statement)
                 await self._session.commit()
