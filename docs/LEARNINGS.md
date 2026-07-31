@@ -248,6 +248,39 @@ fields that change the answer, and a lossy round trip through a wire schema must
 a round trip. `tests/test_simulate_hardening.py::TestTheWireRoundTripPreservesBothHashes`
 asserts on the hashes rather than a field list, so it fails for any future dropped field.
 
+### 14. `sizeOnDisk` measures a folder — **wrong, in both \*arrs, and it cost a planned feature**
+
+Settled by reading Sonarr's and Radarr's own source on 2026-07-30, not by measuring, which is
+the point of the entry. Sonarr's `seasons[].statistics.sizeOnDisk` comes from
+`SeriesStatisticsRepository.EpisodeFilesBuilder()` as `SUM(COALESCE("Size", 0))` selected `FROM
+"EpisodeFiles"` and grouped by series and season. Radarr's movie `sizeOnDisk` is the same shape:
+`MovieStatisticsRepository.MovieFilesBuilder()`, `SUM(COALESCE("Size", 0))` over `MovieFiles`.
+Neither ever stats a directory.
+
+That kills a premise the tree had adopted in five places and `STATUS.md` had ranked as its
+sharpest open item: that a season's frozen size is a *folder* while the executor's live re-read
+sums episode *files*, so the growth interlock was comparing two quantities and had been silently
+desensitized. Sonarr's statistic and `GET /api/v3/episodefile?seriesId=` read the same table and
+the same column, so the two sides always matched and the interlock's blind band was only the
+tolerance `_grew_materially` declares. `SIZE_TRUTH_PLAN.md` Stage 5 existed to repair that and
+would have changed no number; Stage 6 rested on the same error for movies, where `sizeOnDisk`
+and `movieFile.size` are equal for the ordinary one-file movie, so its rung 2 could recover
+nothing by construction. Both were dropped.
+
+⇒ **The error survived seven review passes because the claim was checked against the field
+name and then copied.** Nobody had to be careless: each of the five sites was written by
+someone reading one of the other four, and an adversarial pass that re-reads the tree finds
+five agreeing statements, which is what agreement looks like when it is wrong. Six of seven
+audit agents confirmed it on this evidence, several citing the executor comment that *makes*
+the claim as the proof of it. **A fact about someone else's service is verified at that
+service, or it is not verified** — vendored spec, upstream source, or a live probe. This is
+rule 144's failure mode with an external subject: the copies vouch for each other.
+
+⇒ The direction that survives is the opposite one, and it is filed as **#317**: Radarr's number
+sums tracked `MovieFiles` rows while `MoviesDeletedEvent` removes `movie.Path` recursively, so
+extras and artwork are freed and never counted, and a byte cap that under-counts does not fire.
+Magnitude unmeasured; that is what the issue asks for.
+
 ---
 
 

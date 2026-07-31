@@ -1851,9 +1851,12 @@ def _movie_file_path(movie: Mapping[str, Any]) -> str | None:
 def _reported_size(movie: Mapping[str, Any]) -> int | None:
     """Radarr's ``sizeOnDisk`` for a movie it says it holds, or ``None``.
 
-    ``sizeOnDisk`` covers the movie's folder (file plus extras), which is the number the
-    reclaim estimate and the byte cap want. Distinct from :func:`_movie_file_size`, which
-    reads ``movieFile.size`` for file-to-file identity comparison.
+    ``sizeOnDisk`` is a ``SUM`` over the movie's tracked ``MovieFiles`` rows, not a folder
+    walk, and it is the best number Radarr offers for the reclaim estimate and the byte
+    cap. The delete removes the movie folder, so bytes no row tracks are freed and never
+    counted here; issue #317 carries the question of whether that gap is material.
+    Distinct from :func:`_movie_file_size`, which reads ``movieFile.size`` for file-to-file
+    identity comparison.
 
     Missing or zero is ``None``, never ``0``: see ``RawItem.size_bytes``.
     """

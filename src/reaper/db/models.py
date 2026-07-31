@@ -406,32 +406,36 @@ class Snapshot(Base):
 class SizeSource(enum.StrEnum):
     """Which measurement ``Candidate.size_bytes`` holds.
 
-    Load-bearing, not decoration. The ladder mixes two different quantities -- a folder
-    and the files inside it -- and the executor's growth interlock compares the frozen
-    size against a live re-read. Without provenance it cannot pick the live counterpart
-    that matches, so it would compare a folder against a sum of files and read a real
-    growth as a shrink. See ``executor._grew_materially``.
+    Load-bearing, not decoration. The executor's growth interlock compares the frozen size
+    against a live re-read, and without provenance it cannot tell whether the two measure
+    the same thing; a size compared against a different quantity reads a real growth as a
+    shrink. See ``executor._measures``, whose allow-lists are exhaustive and fail closed,
+    which is why the members nothing writes are kept rather than deleted.
 
     Never exposed on the wire: the UI says "Size unknown", never a source key.
     """
 
     SONARR_FILES = "sonarr-files"
-    """Summed episode files for one season. The exact quantity a season delete frees,
-    because a season is removed file by file."""
+    """Summed episode files for one season, gathered file by file. Never written: Sonarr's
+    season statistic below is already this same sum."""
 
     SONARR = "sonarr"
-    """A season folder, from Sonarr's season statistics. A close proxy for the files."""
+    """One season's episode files, summed by Sonarr. ``statistics.sizeOnDisk`` is a ``SUM``
+    over the ``EpisodeFiles`` table, not a folder walk, so it is the quantity a season
+    delete frees."""
 
     RADARR = "radarr"
-    """A movie folder, which is what a movie delete removes."""
+    """One movie's tracked file rows, summed by Radarr. ``sizeOnDisk`` is likewise a ``SUM``,
+    over ``MovieFiles``. The delete removes the movie folder, which may hold bytes no row
+    tracks, so this can under-state what a delete frees (issue #317)."""
 
     RADARR_FILE = "radarr-file"
-    """The movie file alone. A LOWER BOUND on the folder, so display only: it can never
-    make an item plannable. A bound that under-counts a byte cap stops the cap firing,
-    which deletes more than the operator allowed."""
+    """The movie file alone. Never written, and display only if it ever is: it reads one
+    file where ``RADARR`` sums every row, so it can measure less, and a size that
+    under-counts a byte cap stops the cap firing, which deletes more than was allowed."""
 
     PLEX = "plex"
-    """The matched Plex listing's file. A lower bound, exactly as ``RADARR_FILE``."""
+    """The matched Plex listing's file. Never written, exactly as ``RADARR_FILE``."""
 
 
 class Candidate(Base):

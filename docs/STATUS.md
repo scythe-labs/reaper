@@ -12,7 +12,7 @@
 > **Closed work leaves this file.** A shipped fix is not state; its record is the tracker and the
 > code. What stays is something still true, still open, or still constraining what may be built.
 
-Last verified against the code: 2026-07-26.
+Last verified against the code: 2026-07-30.
 
 ## Milestones
 
@@ -23,12 +23,12 @@ Last verified against the code: 2026-07-26.
 | **M2a** IMDb ratings dataset | ✅ done |
 | **M2b** Curated lists (IMDb Top 250, *arr tags, Plex collections) | ✅ done |
 | **M3a** Scoring engine — gates, signals, observations | ✅ done |
-| **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | 🟡 see open 2 |
-| **M3c** Backtest — replay against the operator's own watch history | 🟡 see open 3 |
+| **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | 🟡 see open 1 |
+| **M3c** Backtest — replay against the operator's own watch history | 🟡 see open 2 |
 | **M3d** Field registry + authorable protect rules | ✅ done |
 | **M3e** Snapshot pipeline + REST API + polled progress | ✅ done |
-| **M3f** Signal quality — lift metric, size removed, dormancy gate | 🟡 see open 3 |
-| **M3g** Calibration — rewatch prior from the operator's own history | 🟡 see open 3 |
+| **M3f** Signal quality — lift metric, size removed, dormancy gate | 🟡 see open 2 |
+| **M3g** Calibration — rewatch prior from the operator's own history | 🟡 see open 2 |
 | **M4** React SPA — review queue, why-panel, policy editor, live simulator | ✅ done |
 | **M5** The reap loop — journal, planner, executor, canary, caps | ✅ done |
 | **M6** Season pruning | ✅ done |
@@ -41,14 +41,8 @@ Last verified against the code: 2026-07-26.
 
 ## Open work
 
-1. **The season growth interlock is desensitized.** *(Deletion path — the sharpest open item.)*
-   Season sizes come from the Sonarr season *folder* statistic while the executor re-reads summed
-   episode *files*, so the frozen and live sides measure different quantities; the folder is the
-   larger number, so a real growth reads as a shrink. `SizeSource.SONARR_FILES` exists and nothing
-   in `src/` writes it; preferring it at scan time is the repair. Stage 5 of
-   `docs/SIZE_TRUTH_PLAN.md`.
-2. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
-3. **The backtest (M3c), its lift metric (M3f), and the calibration prior (M3g).** All three
+1. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
+2. **The backtest (M3c), its lift metric (M3f), and the calibration prior (M3g).** All three
    engines are complete and tested; none is reachable, and nothing in `src/` imports
    `engine.backtest`. The backtest needs `POST /api/policy/backtest` plus a minimal UI, and
    `calibration.derive` needs that route to call it and pass the result in, since `backtest.run`
@@ -59,16 +53,16 @@ Last verified against the code: 2026-07-26.
    deletion, which production does not do, so it is a best case: fix or label it when wiring.
    Until they ship the live simulator is the threshold-tuning surface, and no operator copy may
    name the backtest or promise a fitted prior (rule 25).
-4. **Size-truth leftovers** (`docs/SIZE_TRUTH_PLAN.md`): a real-data pass reading
+3. **Size-truth leftovers** (`docs/SIZE_TRUTH_PLAN.md`): a real-data pass reading
    `scan.size_source_tally`, recorded as ratios in `LEARNINGS.md` (Stage 4, which gates Stage 6);
    `"size_bytes"` added to `DEGRADABLE` in `tests/_policy_lab.py`; and the test-only
    `snapshot.candidates()` deleted, a standing rule 38 violation with no caller in `src/`.
-5. **The screen-reader sweep is partly landed.** What landed and why each shape was chosen is
+4. **The screen-reader sweep is partly landed.** What landed and why each shape was chosen is
    `docs/history/SCREEN_READER_SWEEP.md`; the guard's own measurement is in `docs/LEARNINGS.md`.
    Still open: **#177** the scan and simulator waits pass unannounced; **#189** five policy
    warnings bound to a list rather than a control, held until option 2 is measured on a real
    screen reader.
-6. **The stylesheet split has four optional stages left** (`docs/CSS_SPLIT_PLAN.md`). The cut
+5. **The stylesheet split has four optional stages left** (`docs/CSS_SPLIT_PLAN.md`). The cut
    itself landed: 31 files under `frontend/src/styles/`, load order declared by `index.css` and
    load-bearing. Left: naming the control-standard padding and the 12 unnamed `z-index` values;
    rehoming `.notice` and `.qty` out of the sections they were appended into; a type and space

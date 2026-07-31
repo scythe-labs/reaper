@@ -578,19 +578,18 @@ def _deletable(
 
 
 #: Which stored measurements the movie send path may compare against its live re-read.
-#: It reads Radarr's ``sizeOnDisk``, the movie FOLDER, so only a folder measurement is
-#: like-for-like. A file-only bound (``RADARR_FILE``, ``PLEX``) measures something
-#: smaller and must never be planned in the first place; if one arrives here anyway, it
-#: is kept rather than compared against a different quantity.
+#: It reads Radarr's ``sizeOnDisk``, which sums the movie's tracked file rows, and the
+#: live side reads the same field, so ``RADARR`` is like-for-like. ``RADARR_FILE`` and
+#: ``PLEX`` read a single file where that sums every row, so they can measure less; if one
+#: arrives here anyway it is kept rather than compared against a different quantity.
 _MOVIE_COMPARABLE = frozenset({SizeSource.RADARR})
 
-#: And for seasons, which delete file by file and re-read the summed episode files.
-#: ``SONARR_FILES`` is that same quantity. ``SONARR`` is the season FOLDER and is a known
-#: mismatch: the folder side is the larger number, so the comparison reads as a shrink and
-#: the growth interlock has been desensitized since it was written. It stays admissible
-#: because it is the only season measurement Reaper takes today, and removing it would
-#: keep every season. Preferring ``SONARR_FILES`` at scan time is what actually repairs
-#: the interlock, and is deliberately a separate change.
+#: And for seasons, which delete file by file and re-read the summed episode files. Both
+#: members are that same quantity: Sonarr's ``seasons[].statistics.sizeOnDisk`` is not a
+#: folder walk but a ``SUM`` over the ``EpisodeFiles`` table grouped by series and season,
+#: which is the same table and column ``GET /api/v3/episodefile?seriesId=`` returns row by
+#: row. So the frozen and live sides already match, and the interlock's blind band is only
+#: the tolerance ``_grew_materially`` declares.
 _SEASON_COMPARABLE = frozenset({SizeSource.SONARR_FILES, SizeSource.SONARR})
 
 
