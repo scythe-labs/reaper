@@ -258,6 +258,12 @@ action shas. Review it like any other, and read it as a proposal rather than a v
 major version of a Python or npm package comes as its own pull request, so it can be argued
 with separately from the week's patches.
 
+A release has to be two weeks old before it is offered at all. A compromised package looks
+exactly like a good one on the day it ships, and the wait is what gives somebody else time to
+find that. Base images are the exception at three days, because there a new digest is usually
+the security patch. Neither delay applies to a fix for a published advisory, which arrives at
+once.
+
 ### Every timestamp is an integer
 
 Timestamps are UTC instants stored as integer unix epochs (`src/reaper/db/types.py`) and

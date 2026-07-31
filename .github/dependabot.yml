@@ -26,6 +26,21 @@ version: 2
 #   3. A group is one pull request and one CI run. Ungrouped, a quiet week of npm patches
 #      is a dozen of each, and `docker build` runs for every one of them.
 #
+# Every entry quarantines a release before proposing it (`cooldown`), because the thing this
+# file automates is also an attack: a compromised release looks exactly like a good one on the
+# day it ships, and taking it the same morning is the whole payload. The delay is what lets
+# somebody else find it first. Two facts make the cost bearable: **cooldown does not apply to
+# Dependabot security updates**, so an advisory-backed fix still arrives at once, and the
+# window only delays a proposal, never a hand-written bump.
+#
+# The window is 14 days everywhere except `docker`, which is 3. That asymmetry is deliberate
+# and runs against the grain, so it is worth stating: for npm, uv and actions a new release is
+# arbitrary publisher code and waiting costs nothing, but a new base image digest usually IS
+# the security patch, Alpine or Debian rebuilt against a fixed libc. Holding those 14 days
+# would mean knowingly shipping an unpatched layer for a fortnight to guard against a
+# compromise of Docker Official Images, trading a likely exposure for an unlikely one.
+# tests/test_repo_hygiene.py pins both numbers, so lowering one is a deliberate act.
+#
 # `docker-compose.yml` is deliberately not watched. The only image it names is Reaper's own,
 # on the moving `:dev` tag that an operator is meant to follow; pinning that to a digest
 # would freeze installs on whatever was current the day the pull request landed.
@@ -44,6 +59,8 @@ updates:
       day: "monday"
       time: "05:00"
       timezone: "Etc/UTC"
+    cooldown:
+      default-days: 14
     # One pull request for all of them. They are a handful of actions across the workflows
     # in this directory, and reviewing them together is reviewing one diff.
     groups:
@@ -77,6 +94,8 @@ updates:
       day: "monday"
       time: "05:00"
       timezone: "Etc/UTC"
+    cooldown:
+      default-days: 3
     groups:
       base-images:
         patterns: ["*"]
@@ -102,6 +121,8 @@ updates:
       day: "monday"
       time: "05:00"
       timezone: "Etc/UTC"
+    cooldown:
+      default-days: 14
     groups:
       python:
         patterns: ["*"]
@@ -121,6 +142,8 @@ updates:
       day: "monday"
       time: "05:00"
       timezone: "Etc/UTC"
+    cooldown:
+      default-days: 14
     groups:
       # `typescript` and `typescript-eslint` can only move together. typescript-eslint pins a
       # `typescript` peer range, so a TypeScript major raised on its own fails `npm ci` at

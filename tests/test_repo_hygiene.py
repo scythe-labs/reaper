@@ -1143,6 +1143,41 @@ def test_every_dependency_manifest_is_watched_by_dependabot() -> None:
     )
 
 
+#: How long a release is quarantined before Dependabot will propose it, per ecosystem. Pinned
+#: rather than floored, because the interesting direction is *down*: a window quietly lowered to
+#: nothing reads the same as a window that was never there, and both leave the config looking
+#: like it has a quarantine. `docker` is deliberately the odd one, and its reason is in
+#: `.github/dependabot.yml` beside the number. Changing either value here is the point at which
+#: someone has to say why.
+_EXPECTED_COOLDOWN_DAYS = {
+    "github-actions": 14,
+    "docker": 3,
+    "uv": 14,
+    "npm": 14,
+}
+
+
+def test_every_ecosystem_quarantines_a_release_before_proposing_it() -> None:
+    """A compromised release looks exactly like a good one on the day it ships.
+
+    The delay is the whole defense: it is what lets somebody else find the compromise before
+    this repository merges it. So an ecosystem added later with no ``cooldown`` is not a
+    smaller version of this protection, it is none of it, and nothing else in the tree would
+    say so. Dependabot security updates ignore cooldown, so an advisory-backed fix is not
+    delayed by any of these numbers.
+    """
+    declared = {
+        str(u.get("package-ecosystem")): (u.get("cooldown") or {}).get("default-days")
+        for u in _dependabot_updates()
+    }
+    assert declared == _EXPECTED_COOLDOWN_DAYS, (
+        f"cooldown windows are {declared},\nexpected {_EXPECTED_COOLDOWN_DAYS}.\n"
+        "A `None` means that ecosystem declares no cooldown at all and will take a release the\n"
+        "morning it ships. If you meant to change a window, change it here too and say why in\n"
+        "the pull request; if an ecosystem is new, give it one."
+    )
+
+
 def _accepted_title_types() -> set[str]:
     """The Conventional Commit types ``pr-validation.yml`` lets a pull request title carry."""
     workflow = yaml.safe_load(PR_TITLE_WORKFLOW.read_text(encoding="utf-8"))
