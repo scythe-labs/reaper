@@ -694,6 +694,12 @@ class TestTheDangerousConfigDetector:
         Both discriminators are here so the assertion cannot be satisfied by a warning that
         fires unconditionally: the same gate turned off says nothing, and the same gate with
         a source says nothing.
+
+        The third discriminator is the field, and it is now load-bearing rather than
+        incidental. Since #189 a per-bar complaint carries ``keep_rating_rules.<source>.floor``
+        and only this card-level one carries the bare name, so ``== "keep_rating_rules"`` is
+        what separates the two. A ``startswith`` here would have gone on passing while the
+        card-level warning stopped firing, answered by a bar's warning instead.
         """
         enabled_with_no_sources = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR),))
 
@@ -705,15 +711,52 @@ class TestTheDangerousConfigDetector:
         assert "not keeping anything" in complaint[0].message
 
         off = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR, enabled=False),))
-        assert not [w for w in inspect(off, ProfileSettings()) if w.field == "keep_rating_rules"]
+        assert not [
+            w for w in inspect(off, ProfileSettings()) if w.field.startswith("keep_rating_rules")
+        ]
 
         stocked = _policy(
             gates=(GateSetting(gate=GateId.RATING_FLOOR),),
             keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1000),),
         )
         assert not [
-            w for w in inspect(stocked, ProfileSettings()) if w.field == "keep_rating_rules"
+            w
+            for w in inspect(stocked, ProfileSettings())
+            if w.field.startswith("keep_rating_rules")
         ]
+
+    def test_each_bar_warning_names_the_bar_it_is_about(self) -> None:
+        """A complaint about one bar names that bar, so the page can put it on its own box.
+
+        ``PolicyEditor``'s ``keep_rating_rules`` anchor claims this family by its
+        ``keep_rating_rules.`` prefix, and each bar row points ``aria-describedby`` at
+        ``keep_rating_rules.<source>.floor`` in full (#189). The sibling cases in this file
+        assert on the MESSAGE, which carries the source's label and would stay green while the
+        field went back to naming the card -- putting every complaint on every bar, which is
+        the misattribution the issue was filed on.
+
+        Two sources, on the two scales, warned about at once: with one bar a field that
+        returned a constant would pass. The population assertion is the rule 145 half -- a
+        third producer given the bare field is one this page has never bound, and a
+        flag-shaped check cannot report a member it was never told to look for. The card's own
+        complaint is absent by construction here, because the list is not empty.
+        """
+        body = _policy(
+            gates=(GateSetting(gate=GateId.RATING_FLOOR),),
+            keep_rating_rules=(
+                RatingRuleSpec(source=RatingSource.IMDB, floor=96, min_votes=1000),
+                RatingRuleSpec(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=8),
+            ),
+        )
+        expected = {
+            "keep_rating_rules.imdb.floor",
+            "keep_rating_rules.rotten_tomatoes_critic.floor",
+        }
+
+        fields = {w.field for w in inspect(body, ProfileSettings())}
+
+        assert expected <= fields
+        assert {f for f in fields if f.startswith("keep_rating_rules")} == expected
 
     @pytest.mark.parametrize(
         ("anchor", "kind", "build"),

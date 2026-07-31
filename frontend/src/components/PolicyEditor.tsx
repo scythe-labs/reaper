@@ -385,6 +385,20 @@ function describeBar(rule: RatingRule): string {
   return `${(rule.floor / 10).toFixed(1)} on ${meta.label}${votes}`;
 }
 
+/** The field name the server gives a warning about ONE setting of ONE rating bar.
+ *  `engine/policy.py` builds every member of this family as
+ *  `f"keep_rating_rules.{source}.{setting}"`, the same shape as the `gates.` family above and
+ *  for the same reason: the source keys the row uniquely, because `PolicyBody` refuses two
+ *  rules on one source. The suffix is typed off `RatingRule` so a setting the server cannot
+ *  send does not compile (rule 144).
+ *
+ *  Generic over the source and the setting on purpose. Three warnings arrive today, all about
+ *  `floor`; one about a vote floor would bind here with no change. The card's own complaint,
+ *  which is about no bars existing at all, is not in this family and stays on the block. */
+function ratingWarningField(source: string, setting: keyof Omit<RatingRule, "source">): string {
+  return `keep_rating_rules.${source}.${setting}`;
+}
+
 /** One editable bar, as a row of the shared aligned table: the source name in the common
  *  column, then its threshold (and vote floor, where the source counts votes) in the
  *  app's one quantity control. */
@@ -392,12 +406,23 @@ function RatingBarRow({
   rule,
   onChange,
   onRemove,
+  warnings,
 }: {
   rule: RatingRule;
   onChange: (r: RatingRule) => void;
   onRemove: () => void;
+  /** Every warning rendered at the `keep_rating_rules` anchor, unfiltered. `warningsDescribing`
+   *  numbers ids by position within THAT list, so narrowing before handing it over would point
+   *  each box at the wrong notice. */
+  warnings: PolicyWarning[];
 }) {
   const meta = RATING_META[rule.source];
+  // What this row's boxes point `aria-describedby` at. The block rendering these sits under the
+  // whole list of bars, so reaching one meant browsing the card in document order (#189). The
+  // filter is what keeps a complaint about IMDb off the Rotten Tomatoes row -- the worry the
+  // issue was filed on, answered by the field rather than by a grouping decision.
+  const describes = (setting: keyof Omit<RatingRule, "source">) =>
+    warningsDescribing("keep_rating_rules", warnings, [ratingWarningField(rule.source, setting)]);
   return (
     <div className="bar-line">
       <span className="bar-src">{meta.label}</span>
@@ -413,6 +438,7 @@ function RatingBarRow({
               step={0.1}
               width="narrow"
               ariaLabel={`${meta.label} score out of 10`}
+              describedBy={describes("floor")}
               onChange={(v) => onChange({ ...rule, floor: Math.round(v * 10) })}
             />
             {meta.votes && (
@@ -424,6 +450,7 @@ function RatingBarRow({
                   min={0}
                   step={100}
                   ariaLabel={`${meta.label} vote floor`}
+                  describedBy={describes("min_votes")}
                   onChange={(v) => onChange({ ...rule, min_votes: Math.max(0, v) })}
                 />
               </>
@@ -438,6 +465,7 @@ function RatingBarRow({
             step={1}
             width="narrow"
             ariaLabel={`${meta.label} percentage`}
+            describedBy={describes("floor")}
             onChange={(v) => onChange({ ...rule, floor: v })}
           />
         )}
@@ -473,7 +501,11 @@ function RatingFloorRow({
   rules: RatingRule[];
   match: "any" | "all";
   mediaType: "movie" | "tv";
-  /** Server-side policy warnings anchored to the rating rules (field keep_rating_rules).
+  /** Every warning the `keep_rating_rules` anchor claims: the card's own, plus one per bar.
+   *  Read twice below, by the block under the list and by each row in it, from this ONE array
+   *  -- `warningsDescribing` numbers ids by position within it, so the two ends must never be
+   *  handed different lists (#189).
+   *
    *  `PolicyWarning`, not a structural subset of it: the looser type is what let this card
    *  render its own copy of `WarnBlock`'s markup, since the value it held could not be handed
    *  to the shared component. */
@@ -521,6 +553,7 @@ function RatingFloorRow({
                 <RatingBarRow
                   key={rule.source}
                   rule={rule}
+                  warnings={warnings}
                   onChange={(r) => onRules(rules.map((x, j) => (j === i ? r : x)))}
                   onRemove={() => {
                     bars.removing(i);
@@ -822,7 +855,16 @@ export type WarningAnchor = {
 const ANCHORS = [
   { id: "condemn_at", fields: ["condemn_at"] },
   { id: "gates", fields: ["gates.server_popularity.window_days"], prefix: "gates." },
-  { id: "keep_rating_rules", fields: ["keep_rating_rules"], guard: "ratingGate" },
+  // Mixed, the way `keep_last` is: the bare field is the card's own complaint (the protection
+  // is on with no sources), and the family under it is one bar each. Only the family binds to
+  // a control -- the card-level one names two remedies and there is no single box to point it
+  // at, which is where `PolicyEditor.test.tsx`'s `unbound` says so out loud (#189).
+  {
+    id: "keep_rating_rules",
+    fields: ["keep_rating_rules", "keep_rating_rules.imdb.floor"],
+    prefix: "keep_rating_rules.",
+    guard: "ratingGate",
+  },
   // `flag_keep_conflicts` rides this anchor rather than earning its own: this block is the
   // last thing in the season card, directly under that switch's row, so the warning about
   // shows older than the watch mirror (#224) already renders beside the control its help text
