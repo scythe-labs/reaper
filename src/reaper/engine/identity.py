@@ -231,7 +231,7 @@ def _split_guid(guid: str) -> tuple[str | None, str | int | None]:
 
     Handles the new-agent form (``imdb://tt1234567``, ``tmdb://12345``, ``tvdb://999``) and
     the legacy single-guid form (``com.plexapp.agents.imdb://tt1234567?lang=en``,
-    ``com.plexapp.agents.themoviedb://12345``, ``com.plexapp.agents.thetvdb://73141/1/2``),
+    ``com.plexapp.agents.themoviedb://12345``, ``com.plexapp.agents.thetvdb://99999/1/2``),
     stripping any ``?query`` and path tail. Non-external agents (``plex://``,
     ``com.plexapp.agents.none``, ``local://``) legitimately carry no external id and return
     ``(None, None)`` so they never contribute a Tier-1 signal.
