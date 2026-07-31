@@ -278,25 +278,32 @@ mixing: half a translated manual is worse than an English one.
 
 ### Stage 6 — the translation platform
 
+> **The tie-breakers below were inverted by the move to GitHub (2026-07-31), so this
+> recommendation is no longer settled and is left standing only until someone re-runs it.** Two
+> of the three reasons Weblate won were about *not* being on GitHub: Crowdin's sync would have
+> had to be rebuilt on the old forge's Actions, and Weblate's native support for that forge
+> avoided a self-hosted instance. Reaper now runs on GitHub Actions, where Crowdin's ecosystem
+> already fits and where Weblate's GitHub backend is at least as good as the one that won it
+> this slot. Only the third reason survives the move untouched. Nothing here is wrong about
+> Weblate; the comparison simply no longer discriminates the way it did, and re-deciding is
+> cheaper before the stage is taken up than after a sync exists.
+
 **Hosted Weblate, on the Libre plan**, on the Audiobookshelf and Uptime Kuma precedent, which is
 where community-scale self-hosted projects land. Crowdin is the alternative and is what the
-larger projects use, but its ecosystem is GitHub-Action-shaped and the sync would have to be
-rebuilt on Gitea Actions.
+larger projects use.
 
 Three things this depends on, all checked rather than assumed:
 
 - **The Libre plan is gratis for public projects** and carries the 160k-string limit. Reaper's
   ~1,000 source strings are two orders of magnitude under it.
 - **Reaper is AGPL-3.0-or-later**, an OSI-approved license.
-- **Weblate speaks Gitea natively.** `GiteaRepository` in `weblate/vcs/git.py` is a first-class
-  merge-request backend ("This will push changes and create a Gitea pull request"), so the
-  unanimous workflow from §2 — bot opens a PR with completed translations — works here without
-  GitHub and without a self-hosted Weblate.
+- **Weblate speaks GitHub natively**, as it did the previous forge, so the unanimous workflow
+  from §2 — bot opens a PR with completed translations — works without a self-hosted Weblate.
 
-**Reaper being public at release is what makes this the answer**, and that is settled. Two
-practical requirements remain and are the things to confirm when the stage is actually taken up:
-hosted Weblate has to reach the Gitea host over the internet, and it needs its own account there
-with push rights on a translations branch. Neither is a design question.
+**Reaper being public at release is what makes this the answer**, and that is settled. One
+practical requirement remains and is the thing to confirm when the stage is actually taken up:
+hosted Weblate needs its own account with push rights on a translations branch. Reaching the
+host over the internet was the other, and the move to GitHub retired it.
 
 Also this stage: the CONTRIBUTING note that non-English files are overwritten, and the CI sync.
 

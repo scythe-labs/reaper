@@ -4,7 +4,7 @@
 that survived a first read but whose trigger nobody proved — is filed as an issue labeled
 `Status/Need More Info`, carrying no `Reviewed/` label and a *What would settle it* section
 naming the evidence it wants. `SKILL.md`'s *Opening issues* section holds the mechanics, and
-`tea issue list -L "Status/Need More Info"` is the list this file used to be.
+`gh issue list --label "Status/Need More Info"` is the list this file used to be.
 
 Nothing was stranded by the switch: Open was already empty at `03b707d`, the pass that settled
 the last eight entries.

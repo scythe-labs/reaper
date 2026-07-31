@@ -94,7 +94,7 @@ cycle and returns nothing. No hit means report. Each row records the commit it w
 if the cited code has changed since, the refutation is stale and the candidate is live again.
 Two sections after the index are *not* refutations and bind nothing — the file says which.
 
-**Up front, list the open questions: `tea issue list -L "Status/Need More Info"`.** Those are the
+**Up front, list the open questions: `gh issue list --label "Status/Need More Info"`.** Those are the
 other outcome — candidates a previous pass raised and could not prove, so they were filed as
 questions rather than as defects. Each body carries a *What would settle it* section naming the
 evidence it wants. If this pass can supply that evidence cheaply, do: settling one is worth more
@@ -182,8 +182,10 @@ Commit each fix as its own story, with the test that pins it, per `CLAUDE.md`.
 
 Every finding this run does not fix goes to the tracker, so a session that dies does not take
 the work with it — confirmed ones as defects, unproven ones as questions, and nothing to a
-reference file. Gitea, via `tea` — the remote is not GitHub, so `gh` and any `--comment` flow do
-not reach it.
+reference file. GitHub, via `gh`. The remote used to be a private forge that `gh` could not
+reach, which is why this section once banned it and why `/code-review --comment` was unusable;
+both now work, so a finding can also land as an inline PR comment where that fits better than
+an issue.
 
 **One issue per fix, not per finding.** This is `CLAUDE.md`'s commit rule pointed at the
 tracker: one commit tells one story, so one issue describes one commit. If two findings would
@@ -264,17 +266,17 @@ it. "Needs verification" settles nothing and leaves the issue open forever.
 
 It leaves that state in one command, which is the whole reason it is an issue and not prose:
 
-- **Proven.** `tea issue edit <n> --add-labels "Reviewed/Confirmed"`, then a *second* call with
-  `--remove-labels "Status/Need More Info"` — `--add-labels` takes precedence over
-  `--remove-labels` in one invocation, so a combined command silently keeps the old label.
+- **Proven.** `gh issue edit <n> --add-label "Reviewed/Confirmed" --remove-label "Status/Need
+  More Info"`. One call does both, verified against this tracker; the old forge's client needed
+  two, because there an add silently beat a remove in the same invocation.
   Nothing is re-filed; the issue keeps its number, its body, and its history. **Promoting it
   edits the body too, naming what settled it** — the test that was written, the journey that
   was driven — and strikes the sentence that said nobody had. A body still reading "was not
   demonstrated" under a `Reviewed/Confirmed` label is a false statement about the work, which
   is rule 134's standard pointed at the tracker. Two issues promoted in the same second were
   not both demonstrated.
-- **Refuted, or stale because the cited code moved.** `tea issue edit <n> --add-labels
-  "Reviewed/Invalid"`, then `tea issue close <n>`, then append the reasoning to
+- **Refuted, or stale because the cited code moved.** `gh issue edit <n> --add-label
+  "Reviewed/Invalid"`, then `gh issue close <n>`, then append the reasoning to
   `references/refuted.md` naming the issue number. Leave `Status/Need More Info` on it as the
   record of how it arrived; the list above filters open issues, so a closed one drops out on its
   own. That file, not the closed issue, is what stops the next pass re-raising it — a pass reads
@@ -296,7 +298,8 @@ goes into a tracking issue that *lists* them, never into a single issue that *is
 cap is biting, the usual cause is a class that was filed a site at a time; merge it and the
 count falls on its own.
 
-**Check for duplicates first** (`tea issue list --state all`). Re-running a review must not
+**Check for duplicates first** (`gh issue list --state all --search "<class-slug>"`, which
+searches bodies and so matches the fingerprint below). Re-running a review must not
 re-file what is already open. Each body carries a stable fingerprint line to match on:
 
 ```
@@ -322,18 +325,24 @@ Filing a fresh issue for a candidate an earlier pass already asked about leaves 
 sitting open beside its own answer, and the next pass has to settle it twice.
 
 Create with the reviewed commit pinned, so a finding read against a stale tree is detectable,
-and **labeled**, so it is reachable by the views the tracker is actually read through:
+and **labeled**, so it is reachable by the views the tracker is actually read through. `gh` has
+no field for the reviewed sha, so it goes in the body beside the fingerprint — a `reviewed:`
+line, which the duplicate search above can also match on:
 
 ```
-tea issue create --title "<outcome, in plain language>" \
-  --description "<body>" --referenced-version "$(git rev-parse --short HEAD)" \
-  --labels "Kind/Bug,Priority/Critical,Reviewed/Confirmed"     # unproven: "…,Status/Need More Info"
+gh issue create --title "<outcome, in plain language>" \
+  --body "<body>
+
+finding:  <path>:<symbol> — <short-slug>
+class:    <mechanism-slug>
+reviewed: $(git rev-parse --short HEAD)" \
+  --label "Kind/Bug,Priority/Critical,Reviewed/Confirmed"      # unproven: "…,Status/Need More Info"
 ```
 
 **Three labels, one from each axis, on every issue filed.** An unlabeled issue is missing from
 every "what is critical" and "what is a bug" filter, which is where the backlog gets triaged
 from — so it is findable only by someone already scrolling past it, which is the same failure
-as not filing it. `tea labels` lists what exists; never invent one, and if nothing fits, say so
+as not filing it. `gh label list` lists what exists; never invent one, and if nothing fits, say so
 in the run summary rather than filing bare. A label name with spaces survives the comma split,
 so `Status/Need More Info` needs no escaping beyond the quotes already there.
 

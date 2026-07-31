@@ -203,24 +203,23 @@ written to reassure, so it fails toward telling the operator the app is safer th
   git rebase origin/dev` immediately before pushing, then re-run the gates: a branch that was
   current when it was cut can still merge into a tree its tests were never run against.
 - **A pull request carries its `Kind/` and `Priority/` labels, same vocabulary as an issue**
-  (`tea pr create -L "Kind/Bug,Priority/Critical"`, or `tea pr edit <n> --add-labels` after the
-  fact). A PR closing an issue inherits that issue's two; `Reviewed/` is issue triage and stays
-  off a PR. Reviewers filter the queue the same way the backlog is filtered, and an unlabeled
-  PR is missing from it.
-- **Landing a branch into `dev` is CI-gated, and the style is `rebase`.** Poll the API for the
-  branch head's status before merging (a fresh PR sits `pending` for minutes), then `tea pr
-  merge --style rebase <n>`, which keeps the commit message you wrote; `merge` (the default) and
-  `squash` both compose a new one from the PR title and body and throw that text away. Three
-  round-trip costs:
-  a **draft will not merge** and there is no ready-for-review flag, so strip the `WIP:` prefix
-  with `tea pr edit <n> --title "…"`; `tea` has no `--delete-branch`, so `git push origin
-  --delete <branch>` after; and **a rebase-merge lands a sha CI never tested**, since the branch
-  replays onto whatever `dev` is now, so landing several PRs back to back ends with the gates
-  re-run on the merged `dev` rather than three green per-branch runs.
+  (`gh pr create --label "Kind/Bug,Priority/Critical"`, or `gh pr edit <n> --add-label` after
+  the fact). A PR closing an issue inherits that issue's two; `Reviewed/` is issue triage and
+  stays off a PR. Reviewers filter the queue the same way the backlog is filtered, and an
+  unlabeled PR is missing from it.
+- **Landing a branch into `dev` is CI-gated, and the style is `rebase`.** Check the run with
+  `gh pr checks <n>` before merging (a fresh PR sits pending for minutes; `--watch` blocks until
+  it settles), then `gh pr merge --rebase --delete-branch <n>`, which keeps the commit messages
+  you wrote; `--merge` and `--squash` both compose a new one from the PR title and body and
+  throw that text away. One round-trip cost survives the move to GitHub: **a rebase-merge lands
+  a sha CI never tested**, since the branch replays onto whatever `dev` is now, so landing
+  several PRs back to back ends with the gates re-run on the merged `dev` rather than three
+  green per-branch runs. A **draft still will not merge**, but `gh pr ready <n>` clears it, so
+  a `WIP:` title is a label for humans and no longer a thing to strip.
 - **`main` is release-only.** Never push to `main` directly. Promote `dev` with a pull request
   from `dev` → `main`, **squash-merged**, so `main` reads as a sequence of releases while the
-  granular history lives on `dev`: `tea pr create --base main --head dev`, then `tea pr merge
-  --style squash <n>`, and delete any temporary feature branch after.
+  granular history lives on `dev`: `gh pr create --base main --head dev`, then `gh pr merge
+  --squash <n>`, and delete any temporary feature branch after.
 
 ## Verification gates (these mirror CI)
 
@@ -252,24 +251,19 @@ warnings and unhandled rejections are invisible exactly where you would act on t
 --disableConsoleIntercept` to see them locally, or read the CI log. Rule 135 is the standing
 answer: a test with something to tell you must fail, not warn.
 
-**Asking whether CI is green** is far cheaper than reading a log: `$B/commits/<sha>/status`
-returns a combined `state` plus one entry per job, and it is the merge gate above. A read-only
-`curl` with tea's token is the sanctioned way to get it; anything that *changes* a PR goes
-through `tea`. **Which jobs appear depends on what the commit touched.** `ci.yml` (`check`,
-`frontend`, `docker`) ignores exactly the paths `docs.yml` (`hygiene`, the repo-hygiene test
-alone) claims — `docs/**`,
-`**.md`, `.claude/**` — so a docs-only commit reports `hygiene` alone, and a missing `docker`
-there is a skipped lane, not a stall. The two lists are complementary; edit one and you must
-edit the other.
+**Asking whether CI is green** is far cheaper than reading a log: `gh pr checks <n>` lists one
+row per job with its conclusion, and it is the merge gate above. **Which jobs appear depends on
+what the commit touched.** `ci.yml` (`check`, `frontend`, `docker`) ignores exactly the paths
+`docs.yml` (`hygiene`, the repo-hygiene test alone) claims — `docs/**`, `**.md`, `.claude/**` —
+so a docs-only commit reports `hygiene` alone, and a missing `docker` there is a skipped lane,
+not a stall. The two lists are complementary; edit one and you must edit the other.
 
-**Reading a CI log.** Gitea Actions, so `gh` does not reach it and `tea` has no log subcommand.
-Fetch with tea's token (macOS: `~/Library/Application Support/tea/config.yml`, *not*
-`~/.config/tea/`) against `$B` = `<host>/api/v1/repos/<owner>/reaper`. **The `id` in
-`$B/actions/tasks` is a task id; `$B/actions/jobs/<id>/logs` wants a job id** — mixing them
-returns an unrelated job's log, which reads as a real answer and cost one wrong diagnosis
-already. Go through `$B/actions/runs/<run>/jobs` (the run id is the tail of a task's `url`) and
-confirm `head_sha` against `git rev-parse HEAD`. Log timestamps are runner-local and trail the API's UTC by hours; match on the sha,
-never the clock.
+**Reading a CI log.** `gh run view --log-failed` is almost always the whole answer: it prints
+only the failing steps. `gh run list --branch <branch>` finds the run, `gh run view <id> --log`
+dumps it in full, and `gh run watch <id>` blocks until it finishes. **Confirm the run is for the
+sha you think it is** (`gh run view <id> --json headSha`, against `git rev-parse HEAD`) — a
+rebase-merge or a fresh push means the newest run for a branch is often not the commit you are
+holding, which is the one way to read a green log for someone else's code and believe it.
 
 **Both halves of the tree are machine-formatted, so never hand-argue style.** `ruff format` owns
 Python, prettier owns `frontend/`, both run in CI, and they share one width (prettier's
