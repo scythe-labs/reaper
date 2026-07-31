@@ -598,8 +598,8 @@ def _measures(candidate: Candidate, comparable: frozenset[SizeSource]) -> bool:
 
     An exhaustive allow-list with a fail-closed default: a source this build does not
     recognize, or none at all, answers False and the item is kept. The alternative is an
-    unwritten ``else`` branch that either skips every such item or, worse, compares a
-    folder against a sum of files and calls the difference growth.
+    unwritten ``else`` branch that either skips every such item or, worse, weighs a single
+    file against a sum of every file and calls the difference growth.
     """
     return candidate.size_source in comparable
 
@@ -1942,8 +1942,8 @@ class Executor:
         # -- and it is a shared method, not inline. Do not collapse it to ``size_confirmed``:
         # that drops the comparable-quantity check, which is what keeps a Plex or Radarr
         # measurement that reached a season row from being weighed against a sum of Sonarr
-        # episode files. ``SONARR``, the season folder, is a KNOWN mismatch that the set
-        # admits anyway -- see the note on ``_SEASON_COMPARABLE`` for why.
+        # episode files. Both members the set DOES admit are that same sum -- see the note
+        # on ``_SEASON_COMPARABLE``, and learning 14 for the measurement behind it.
         approved_size = candidate.size_bytes
         if not self._may_send_unmeasured(candidate, _SEASON_COMPARABLE):
             return self._mark_skipped(
@@ -2532,8 +2532,8 @@ class Executor:
           interlock unavailable. That is the protection they traded away deliberately, and
           it is why the allowance is a count: the byte caps cannot bound this item either;
         * anything else -> keep. No size and no allowance, or a size that measures a
-          different quantity (a file where the live read is a folder), which would make a
-          normal folder read as growth.
+          different quantity (one file where the live read sums every file), which would
+          make an ordinary read look like growth.
 
         Read from settings HERE, at execute time, not from the plan. An operator who
         lowers the allowance to 0 between approval and execute gets those items kept;

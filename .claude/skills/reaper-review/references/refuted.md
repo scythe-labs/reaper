@@ -335,3 +335,18 @@ whole `RatingFloorRow` is conditionally mounted by the IIFE at `:1587-1590`. It 
 because `:957` folds both into one boolean — `some((g) => g.gate === "rating_floor" &&
 g.enabled)`. A conjunction fits one guard, so the type limit does not bind and the fold is the
 idiom. Widening `guard` to a set and composing the walk's page states buys nothing over it.
+
+**`executor.py:_grew_materially` — the season growth interlock compares a frozen Sonarr season
+*folder* against a live sum of episode *files*, so it is desensitized (issue #263).** Refuted
+twice over, at the service rather than in the tree. **Upstream:** Sonarr's
+`SeriesStatisticsRepository.EpisodeFilesBuilder()` is `SUM(COALESCE("Size", 0)) AS SizeOnDisk`
+`FROM "EpisodeFiles"`, grouped by series and season, on `v4.0.18.2978` and unchanged in shape
+across every stable tag from v3 to `v4.0.19.2995`; Radarr's `MovieStatisticsRepository` is the
+same over `MovieFiles`. In neither tree does `IDiskProvider.GetFolderSize` have a production
+call site at all — its only reference outside the declaration is a test asserting it is never
+called. **Measured:** every season on two live Sonarr `4.0.18.2978` instances, read both ways,
+**every one of the several thousand matched to the byte**, ratio exactly 1.000000. So the frozen and live halves
+are one quantity and the blind band is only the tolerance `_grew_materially` declares. Pinned to
+`f6ddf24`. Note the *shape* of the error rather than the conclusion: five sites agreed with each
+other because each was written from one of the others, and the claim was never checked against
+Sonarr. See learning 14.

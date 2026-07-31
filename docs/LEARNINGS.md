@@ -250,12 +250,19 @@ asserts on the hashes rather than a field list, so it fails for any future dropp
 
 ### 14. `sizeOnDisk` measures a folder — **wrong, in both \*arrs, and it cost a planned feature**
 
-Settled by reading Sonarr's and Radarr's own source on 2026-07-30, not by measuring, which is
-the point of the entry. Sonarr's `seasons[].statistics.sizeOnDisk` comes from
+First settled by reading Sonarr's and Radarr's own source on 2026-07-30, then confirmed on the
+*release tags* an operator runs and **measured against two live instances** (#263, the ratio
+below). Sonarr's `seasons[].statistics.sizeOnDisk` comes from
 `SeriesStatisticsRepository.EpisodeFilesBuilder()` as `SUM(COALESCE("Size", 0))` selected `FROM
 "EpisodeFiles"` and grouped by series and season. Radarr's movie `sizeOnDisk` is the same shape:
 `MovieStatisticsRepository.MovieFilesBuilder()`, `SUM(COALESCE("Size", 0))` over `MovieFiles`.
-Neither ever stats a directory.
+Neither ever stats a directory — in fact `IDiskProvider.GetFolderSize` has no production call
+site in either tree, its only reference outside the declaration being a test that asserts it is
+never called. Unchanged in shape across every Sonarr stable tag from v3 to `v4.0.19.2995`, and
+in Radarr since `v5.3.6.8612`; **before that Radarr had no statistics repository at all** and
+served `MovieResource.ToResource`'s `model.MovieFile?.Size ?? 0`, a single row rather than a
+sum, which is a real difference for a multi-file movie on Radarr below 5.3 and still not a
+folder walk.
 
 That kills a premise the tree had adopted in five places and `STATUS.md` had ranked as its
 sharpest open item: that a season's frozen size is a *folder* while the executor's live re-read
@@ -266,6 +273,17 @@ tolerance `_grew_materially` declares. The size-truth plan's Stage 5 existed to 
 would have changed no number; Stage 6 rested on the same error for movies, where `sizeOnDisk`
 and `movieFile.size` are equal for the ordinary one-file movie, so its rung 2 could recover
 nothing by construction. Both were dropped.
+
+⇒ **The ratio, measured.** Every season on two live Sonarr 4.0.18 instances was read both ways
+— `seasons[].statistics.sizeOnDisk` against the summed sizes from `GET
+/api/v3/episodefile?seriesId=`, using the executor's own `_payload_size` and `_season_number`.
+**Every season matched to the byte, all several thousand of them**, ratio exactly 1.000000, no
+so much as one byte and none where the statistic was missing. On Radarr 6.4.0 the same read over
+the same read over every movie holding a file gave `sizeOnDisk == movieFile.size` for every one,
+premise from the other side: the number tracks file rows, so folder bytes no row tracks are not
+in it. The one edge the probe could not exercise is Sonarr's `COALESCE("Size", 0)` on a
+NULL-size file, which no season in either library had; it resolves toward keeping, because
+`_payload_size` refuses a zero and the season is held back.
 
 ⇒ **The error survived seven review passes because the claim was checked against the field
 name and then copied.** Nobody had to be careless: each of the five sites was written by
