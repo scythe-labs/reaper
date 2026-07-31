@@ -120,9 +120,14 @@ response carrying a null or malformed body is not a genuine empty either.
   snapshot-global and a degraded snapshot is un-plannable outright, so one unsizable movie
   would block the operator's entire run — the wrong blast radius. The compensating control is
   narrower and stronger: that item alone is held back from every plan (`planner.build_plan`)
-  and refused again at send (`executor.size_confirmed`), and the operator is told the count and
-  which items. This covers the item's own size only; a source that fails to *respond* still
-  degrades.
+  and refused again at send (`executor._may_send_unmeasured`, which also requires the frozen
+  size to measure the same quantity the live re-read will), and the operator is told the count
+  and which items. **Neither refusal is unconditional** — both yield to the owner's allowance
+  (`ProfileSettings.max_unmeasured_per_run`): above zero a bounded number are planned, are
+  charged to the item caps, and are sent with the growth interlock unavailable. `size_confirmed`
+  is the *counting*-side predicate (`_deletable`, `api.runs._planned_candidates`) and is not the
+  send refusal; collapsing the send back to it drops the comparable-quantity half. This covers
+  the item's own size only; a source that fails to *respond* still degrades.
 - *Sanctioned exception:* a source that can only ever *add* condemn evidence (the batch
   enrichment in `season_scan`) may log instead of degrading, because losing it can only lower
   pressure, which is the keep direction; the comment must say so. A source whose loss can
