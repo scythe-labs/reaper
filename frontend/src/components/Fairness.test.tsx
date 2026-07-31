@@ -6,8 +6,9 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { act, type ReactElement } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Announcer } from "../announce";
 import type { FairnessReport, RequesterRow } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
@@ -46,6 +47,19 @@ function renderWithClient(ui: ReactElement) {
   const client = testQueryClient();
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
+
+/** What an operator would hear from the app's shared region. Empty when it has said nothing. */
+const spokenText = () =>
+  screen
+    .queryAllByRole("status")
+    .map((r) => r.textContent)
+    .join("");
+
+// Rule 133: fake timers left standing are inherited by the next test in the file, and by every
+// file after it in the same worker.
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("PersonCard", () => {
   it("leads with the reclaimable disk and opens the person's breakdown", async () => {
@@ -196,7 +210,43 @@ describe("Fairness", () => {
   it("says it is loading rather than rendering nothing", () => {
     apiMock.fairness.mockReturnValue(new Promise(() => {}));
     renderWithClient(<Fairness />);
-    expect(screen.getByRole("status")).toHaveTextContent(/gathering requests/i);
+    expect(screen.getByText(/gathering requests/i)).toBeInTheDocument();
+  });
+
+  // The affordance no longer carries a live region of its own: it was mounted in the same
+  // commit as its text, which several readers never announce, so it read as correct and said
+  // nothing (#332). What replaced it is a wait spoken through the always-mounted region only
+  // once the wait has been one, so both halves are pinned -- silent while it is quick, spoken
+  // when it drags. Asserting only the second would pass against a spinner that announces on
+  // every mount, which is the noise this shape exists to avoid.
+  it("stays silent while the wait is short", () => {
+    vi.useFakeTimers();
+    apiMock.fairness.mockReturnValue(new Promise(() => {}));
+    renderWithClient(
+      <>
+        <Announcer />
+        <Fairness />
+      </>,
+    );
+
+    act(() => void vi.advanceTimersByTime(1999));
+
+    expect(spokenText()).toBe("");
+  });
+
+  it("says the wait out loud once it has run long", () => {
+    vi.useFakeTimers();
+    apiMock.fairness.mockReturnValue(new Promise(() => {}));
+    renderWithClient(
+      <>
+        <Announcer />
+        <Fairness />
+      </>,
+    );
+
+    act(() => void vi.advanceTimersByTime(2000));
+
+    expect(spokenText()).toMatch(/still gathering requests/i);
   });
 
   it("surfaces a load failure explicitly", async () => {

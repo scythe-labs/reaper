@@ -20,6 +20,10 @@
 // above every route, is the shape that makes `polite` work. Polite and not assertive: a save that
 // worked must not cut off whatever the operator is reading.
 //
+// The app's six loading affordances were the same bug and were swept the same way (#332, rule
+// 72), through `useSlowWait` below -- with the extra clause that a wait is only worth saying
+// once it has been one.
+//
 // **Why two regions.** Saying the same sentence twice is two announcements, and a text node that
 // does not change is not announced -- the second save would be as silent as the bug this
 // replaces. So the message alternates between two always-mounted regions: whichever one receives
@@ -41,7 +45,7 @@
 // The deletion path makes it broader than that one press: it speaks at each stage of a run whose
 // status polls every second, beside every other surface in the app.
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 type Spoken = {
   text: string;
@@ -137,6 +141,40 @@ export function announce(text: string): void {
   if (listeners.size === 0) return;
   pending.push(text);
   if (drainTimer === null) drain();
+}
+
+/** How long a wait runs before it is worth saying out loud.
+ *
+ *  Not tuned against a reader: it is the point where silence stops reading as "the press did
+ *  nothing yet" and starts reading as "the press did nothing". A lazily-loaded route lands well
+ *  under this on any ordinary connection, so the common case stays quiet. Long enough that a
+ *  fast page never speaks, short enough that a stalled one does not leave the operator deciding
+ *  whether the app is dead. */
+const SLOW_WAIT_MS = 2000;
+
+/** Say a wait out loud once it has run long enough to be worth interrupting for.
+ *
+ *  **The decision this encodes** (#332): a loading affordance is markup, and a wait speaks only
+ *  when it is slow. Seven of them used to carry a live region of their own, mounted in the same
+ *  commit as their text -- the shape several readers never announce, which is why `Notice` had
+ *  to reach for `role="alert"` and why `ReviewQueue`'s two toasts dropped their role and came
+ *  here instead (#177). Repairing them by announcing on mount would have been the other error:
+ *  a spinner that speaks on every route change is noise, and most of these are gone inside a
+ *  few hundred milliseconds. So the affordance keeps the picture, this keeps the sentence, and
+ *  the sentence is only said when there was really something to wait for.
+ *
+ *  Pass the sentence while the wait is on and `null` when it is not, so the call sits above
+ *  every branch of a component that renders its loading state conditionally. Unmounting or
+ *  passing `null` before the wait is up cancels it, which is what makes a fast load silent.
+ *
+ *  Rule 85's sibling: that rule keeps a success from being claimed at issuance; this keeps a
+ *  wait from being announced before it is one. */
+export function useSlowWait(sentence: string | null): void {
+  useEffect(() => {
+    if (sentence === null) return;
+    const timer = setTimeout(() => announce(sentence), SLOW_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [sentence]);
 }
 
 /** The two live regions themselves. Mounted once, at the app root, above every branch -- so it

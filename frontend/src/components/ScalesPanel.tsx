@@ -9,6 +9,7 @@
 // its real card in Review, exactly like the old reclaimable chips did.
 
 import { useId, useState } from "react";
+import { useSlowWait } from "../announce";
 import type { PersonDetail, PersonTitle, QuotaLine, Verdict } from "../api";
 import { bytes, carriesYear, count, date, itemBytes, titleWithYear } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
@@ -421,6 +422,9 @@ export function ScalesPanel({
  *  Mirrors the why-panel's fallback. */
 export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
   const headingId = useId();
+  // Null on the failure arm, which reaches `Notice`'s `role="alert"` and speaks for itself.
+  // Mirrors `WhyPanelFallback` (rule 72).
+  useSlowWait(error ? null : "Still gathering this person's requests.");
   return (
     <WhyShell headingId={headingId} onClose={onClose}>
       {error ? (
@@ -433,7 +437,8 @@ export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClos
           </Notice>
         </>
       ) : (
-        <div className="why-loading" role="status" aria-live="polite">
+        // Live region dropped, sentence moved to `announce.tsx` (#332), as in `WhyPanelFallback`.
+        <div className="why-loading">
           <span className="spinner spinner-lg" aria-hidden="true" />
           {/* The loading branch has no heading to point at, so the lead carries the name. A
               panel named "Gathering their requests…" is what is true at that moment. */}

@@ -12,7 +12,7 @@ import {
   useState,
 } from "react";
 import { applyAccent } from "./accent";
-import { announce, Announcer } from "./announce";
+import { announce, Announcer, useSlowWait } from "./announce";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
 import { Login } from "./components/Login";
@@ -52,11 +52,18 @@ const SetupWizard = lazy(async () => ({
   default: (await import("./components/SetupWizard")).SetupWizard,
 }));
 
-/** What a route shows while its chunk is on the way. The app's own spinner, announced, so a
- *  slow network reads as loading rather than as a blank page. */
+/** What a route shows while its chunk is on the way. The app's own spinner, and, on a slow
+ *  network, a sentence -- so a wait that runs long reads as loading rather than as a blank page.
+ *
+ *  It used to carry `role="status" aria-live="polite"` of its own, mounted in the same commit as
+ *  "Loading…", which is the shape several readers never announce (#332). The picture is markup;
+ *  the sentence goes through the always-mounted region in `announce.tsx`, and only once the wait
+ *  has actually been one. This component mounts only while the chunk is in flight, so its unmount
+ *  is what cancels a fast load's announcement. */
 function RouteLoading() {
+  useSlowWait("Still loading. Reaper is fetching this page.");
   return (
-    <div className="fair-loading" role="status" aria-live="polite">
+    <div className="fair-loading">
       <span className="spinner spinner-xl" aria-hidden="true" />
       <p className="fair-loading-lead">Loading…</p>
     </div>
@@ -567,6 +574,10 @@ export function UserMenu({ user }: { user: AuthUser }) {
  *  or a failed fetch would strand the reader in split view. */
 export function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
   const headingId = useId();
+  // Above the branch, and null on the failure arm: that arm reaches `Notice`'s `role="alert"`,
+  // which speaks on its own, so a wait sentence arriving beside it would say two things about
+  // one state (rule 146 -- what this reports has to be re-read in every state it renders).
+  useSlowWait(error ? null : "Still loading what Reaper saw about this item.");
   return (
     <WhyShell headingId={headingId} onClose={onClose}>
       {error ? (
@@ -580,7 +591,10 @@ export function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: 
           </Notice>
         </>
       ) : (
-        <div className="why-loading" role="status" aria-live="polite">
+        // No live region here any more: it was mounted in the same commit as its text, which is
+        // the shape several readers never announce (#332). The sentence goes through the shared
+        // region in `announce.tsx`, once the wait has run long.
+        <div className="why-loading">
           <span className="spinner spinner-lg" aria-hidden="true" />
           {/* No heading in this branch, so the lead carries the panel's name. */}
           <p className="why-loading-lead" id={headingId}>
@@ -1107,9 +1121,16 @@ function Authed({ user }: { user: AuthUser }) {
     queryFn: api.setupStatus,
   });
 
+  // Above the early return, so the hook order holds whichever branch renders (rule 146).
+  useSlowWait(isLoading ? "Still loading Reaper." : null);
+
   if (isLoading) {
     return (
-      <div className="auth-screen" role="status">
+      // `role="status"` with no `aria-live` at all used to sit here, which is the markup
+      // `Notice.tsx`'s own comment documents as reading correct and staying silent (#332). The
+      // sr-only word stays: it is read in document order like any other text, and the sentence
+      // for a wait that runs long goes through `announce.tsx`.
+      <div className="auth-screen">
         {/* The spinner is the whole screen, and ARIA does not expose a name on a plain span, so
             the aria-label this used to carry reached nobody: Reaper's first screen announced as
             an empty page. The word goes in the tree instead of on the element. */}
@@ -1166,6 +1187,8 @@ export function App() {
     staleTime: 0,
   });
 
+  useSlowWait(isLoading ? "Still loading Reaper." : null);
+
   // One expression rather than the three early returns this used to be, so `Announcer` is a
   // sibling of every branch instead of three copies of itself (rule 72). It has to sit above
   // the whole gate: a polite region only speaks reliably when it was already in the DOM before
@@ -1190,9 +1213,14 @@ export function App() {
     <>
       <Announcer />
       {isLoading ? (
-        <div className="auth-screen" role="status">
+        <div className="auth-screen">
           <div className="auth-aurora" aria-hidden="true" />
-          {/* Same as the setup gate above (rule 72). */}
+          {/* Same as the setup gate above, live region dropped and all (rule 72, #332). The
+              sentence reaches `Announcer` even here, where it is this branch's SIBLING rather
+              than its ancestor: both mount in the same commit, and the wait is only spoken
+              `SLOW_WAIT_MS` later, by which time the region has been in the DOM the whole time.
+              Pre-existing the message is the property that matters, not pre-existing the
+              spinner. */}
           <span className="spinner spinner-lg" aria-hidden="true" />
           <span className="sr-only">Loading Reaper…</span>
         </div>
