@@ -2136,3 +2136,41 @@ def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
         "these files are named in an axe-audit map but no longer mount a tree:\n"
         + "\n".join(f"  {f}" for f in missing)
     )
+
+
+def test_the_plex_sign_in_window_has_a_page_that_closes_it() -> None:
+    """The forward path, the page it names, and the two callers that ask for it agree.
+
+    Reaper closes the Plex sign-in window by having plex.tv forward it to a page whose
+    only job is ``window.close()``. Nothing fails loudly when that breaks: the sign-in
+    still works and the window simply stays open, which is the bug it was built to fix
+    (#372). So the three halves are pinned to each other here rather than left to a
+    rename.
+    """
+    forward_path = re.search(
+        r'^PLEX_FORWARD_PATH = "([^"]+)"$', (SRC / "api" / "schemas.py").read_text(), re.M
+    )
+    assert forward_path, "PLEX_FORWARD_PATH is gone from api/schemas.py"
+    page = REPO / "frontend" / "public" / forward_path.group(1).lstrip("/")
+
+    assert page.is_file(), (
+        f"PLEX_FORWARD_PATH names {forward_path.group(1)}, but frontend/public/{page.name} "
+        "does not exist. plex.tv would forward the sign-in window to a 404."
+    )
+    assert "window.close()" in page.read_text(), (
+        f"{page.name} is what closes the Plex sign-in window, and it no longer calls "
+        "window.close(). The window is opened with noopener, so nothing else can."
+    )
+
+    # The browser names its own origin (the server's Host is rewritten by every proxy in
+    # front of it), so a caller that stops sending one silently stops closing its window.
+    callers = (FRONTEND_SRC / "api.ts").read_text()
+    for route in ("/api/auth/plex/start", "/api/settings/plex/link/start"):
+        # The body is whatever follows the path on that line. Matching a balanced argument
+        # list would reject `plexForward()` on its own parenthesis (rule 147).
+        call = re.search(rf'"{re.escape(route)}",([^\n]+)', callers)
+        assert call, f"{route} is no longer posted from api.ts under a matchable spelling"
+        assert "plexForward()" in call.group(1), (
+            f"{route} stopped sending the browser's origin, so the window it opens will "
+            "never close. Both Plex start routes send plexForward()."
+        )

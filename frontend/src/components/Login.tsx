@@ -71,11 +71,11 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
       // of the very page that takes the operator's Reaper password (S-4). The window is
       // sized here only as a hint; noopener is what matters.
       //
-      // We used to hold the returned handle and close the popup ourselves once the sign-in
-      // landed. noopener makes window.open return null, so that is gone, deliberately: the
-      // handle we held and the handle plex.tv held were the same relationship, and the
-      // browser grants close() *because* of it. The Plex window stays up until the operator
-      // closes it, which is already what the Settings link flow does.
+      // noopener also means window.open returns null, so this page holds nothing to close
+      // the window with. It does not need to: `auth_url` carries a forwardUrl back to
+      // Reaper's own /plex-done.html, and that page closes the window it is loaded in. A
+      // script-opened window may close ITSELF with no opener, so keeping plex.tv off this
+      // page and closing the window it opened are not the trade they were taken for (#372).
       window.open(auth_url, "_blank", "width=620,height=760,noopener");
       pin.begin(pin_id);
     } catch (e) {

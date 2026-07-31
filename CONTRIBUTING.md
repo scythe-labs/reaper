@@ -115,7 +115,7 @@ and it is the one that has to be green before a pull request can merge. Seeing j
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src/reaper                 # src only; tests are not type-checked
-uv run pytest
+uv run pytest -n auto                  # what CI runs; ~45s against ~5min single-threaded
 uv run alembic upgrade head            # then `alembic check` for model/migration drift
 
 npm --prefix frontend run lint         # eslint
@@ -126,6 +126,12 @@ npm --prefix frontend run build        # tsc --noEmit, then vite build
 
 Run the writing form of both formatters before you stage: `uv run ruff format .` and
 `npm --prefix frontend run format`. Formatting is the most common reason CI goes red.
+
+**Pass `-n auto`.** The suite is a few thousand tests and one worker takes minutes where the
+whole machine takes seconds, which is the difference between running it before every commit
+and running it once at the end. Drop the flag only to debug a single test, where `-s` and
+`--pdb` need one worker. A test that fails only under `-n auto` is a test leaking
+process-global state into the next worker, not a reason to stop using it.
 
 **Judge a gate by its exit code.** A pipeline reports its last command's status, so
 `npm --prefix frontend run build | tail -4` prints `tail`'s success while a failing compile

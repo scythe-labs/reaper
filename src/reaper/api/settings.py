@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api import tags as api_tags
 from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin_password
+from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
 from reaper.auth.sessions import resolve_session_from_cookies
@@ -761,10 +762,12 @@ async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexS
 
 
 @router.post("/plex/link/start", tags=[api_tags.PLEX])
-async def plex_link_start(request: Request) -> PlexLinkStartOut:
+async def plex_link_start(
+    request: Request, payload: PlexStartIn = NO_PLEX_FORWARD
+) -> PlexLinkStartOut:
     async with _factory(request)() as session:
         safety = await app_settings.runtime_safety(session, _settings(request))
-    start = await start_link(_factory(request), safety=safety)
+    start = await start_link(_factory(request), safety=safety, forward_url=payload.forward_url())
     return PlexLinkStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 
 

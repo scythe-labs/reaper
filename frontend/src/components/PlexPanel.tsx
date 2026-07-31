@@ -305,6 +305,9 @@ export function PlexPanel({
     try {
       const start = await api.plexLinkStart();
       setAuthUrl(start.auth_url);
+      // noopener keeps plex.tv from reaching this page, and `auth_url` carries a
+      // forwardUrl to /plex-done.html so the window still closes itself. Same pair as
+      // Login.PlexButton, which explains the two halves (#372).
       window.open(start.auth_url, "_blank", "noopener");
       pin.begin(start.pin_id);
     } catch (e) {

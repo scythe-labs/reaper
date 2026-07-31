@@ -339,6 +339,34 @@ deliberately left alone, since at the resolution an operator reads it the number
 hedging twenty strings would cost more than the 0.2% it describes. `docs/DECISIONS.md` under
 *Size acquisition* carries that call and the folder walk that was declined with it.
 
+### 15. `noopener` costs you the close — **only the opener's half of it**
+
+Reaper opens the Plex sign-in window with `noopener`, so plex.tv holds no `window.opener`
+handle on the page that takes the operator's Reaper password. That was recorded as buying the
+protection at the price of the auto-close, on reasoning that sounds airtight: a browser permits
+`close()` on a cross-origin window *because* you are still its opener, so severing the opener
+drops the close along with it.
+
+Half of that is right. The **opener** does lose its handle, unavoidably: with `noopener`,
+`window.open` returns `null`, so there is nothing to call `close()` on, and no amount of care
+recovers it. What does not follow is that the window cannot be closed. A window opened by a
+script may close **itself**, opener or not — Chromium gates `close()` on `opened_by_dom ||
+history.length <= 1`, and `window.open` sets `opened_by_dom` whether or not `noopener` was
+passed.
+
+Measured rather than reasoned: a `noopener` popup that reported `opener === null` and had
+pushed its session history to two entries closed itself on `window.close()`. The control, the
+same page with `close()` swapped for a no-op, reported back that it was still open — so the
+silence in the first run was the window going away, not the report failing. Reaper now has
+plex.tv forward that window to a page of its own whose only job is to close it, and keeps the
+protection.
+
+The generalizable shape: **"A and B cannot both be had" is a claim about a mechanism, and it is
+worth asking which side of the mechanism the constraint actually sits on.** Here it sat on the
+opener's handle, and the fix was to stop needing one. This one had been settled prose in a
+commit message for months, and it took an operator asking "we opened it, why can we not close
+it?" to get it tested.
+
 ---
 
 

@@ -11,8 +11,9 @@ route and forces its response model to resolve.
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from reaper.engine.explanation import (
     Explanation,
@@ -1041,6 +1042,65 @@ class OverrideIn(BaseModel):
     spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
     """For a spare, how long to keep it: ``0`` (default) forever, a positive count that many
     days. Ignored for a reap, which never expires."""
+
+
+PLEX_FORWARD_PATH = "/plex-done.html"
+"""Where plex.tv sends the sign-in window when it is finished.
+
+A static page in ``frontend/public``, served from the SPA build, whose whole job is to
+close the window it is loaded in. That is the only way Reaper can shut that window: it
+is opened with ``noopener`` so plex.tv cannot reach the page holding the operator's
+Reaper password, which also means ``window.open`` hands back no handle to close it with.
+A script-opened window may still close *itself*, so the close moves into the window.
+
+``tests/test_repo_hygiene.py`` pins this constant against the file that has to exist for
+it and against the two callers that ask for it, because a rename here is silent: the
+sign-in still works, the window just stops closing.
+"""
+
+
+class PlexStartIn(BaseModel):
+    """Where to send the sign-in window afterward. Both Plex start routes take it.
+
+    The browser names its own origin because the server cannot. Reaper sits behind
+    whatever reverse proxy the operator runs, and in development behind Vite's ``/api``
+    proxy, which rewrites ``Host`` to the API's own port -- so a URL built from the
+    request would forward the window to an address the operator is not on. Only the
+    browser knows where it is.
+
+    Origin only, path appended here, so this can name a host but never a target. It
+    carries no secret either way: plex.tv is told where to send the window, and the token
+    is never in that URL. Absent means an older cached SPA is calling, and the sign-in
+    works exactly as before with the window left open.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    forward_origin: str | None = None
+
+    @field_validator("forward_origin")
+    @classmethod
+    def _bare_http_origin(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("expected an http or https origin")
+        if parsed.path or parsed.params or parsed.query or parsed.fragment:
+            raise ValueError("expected an origin with no path")
+        return value
+
+    def forward_url(self) -> str | None:
+        """The full address to hand plex.tv, or None when the caller named no origin."""
+        return None if self.forward_origin is None else self.forward_origin + PLEX_FORWARD_PATH
+
+
+NO_PLEX_FORWARD = PlexStartIn()
+"""The body a caller that named no origin gets: an older cached SPA, or a script.
+
+Both start routes default to it, so the sign-in works with the window left open rather
+than 422-ing on a missing body. Shared safely because the model is frozen.
+"""
 
 
 class HealthOut(BaseModel):
