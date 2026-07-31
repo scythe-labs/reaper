@@ -278,16 +278,25 @@ mixing: half a translated manual is worse than an English one.
 
 ### Stage 6 — the translation platform
 
-**Weblate**, on the Audiobookshelf and Uptime Kuma precedent, which is where community-scale
-self-hosted projects land. Crowdin is the alternative and is what the larger projects use.
+**Hosted Weblate, on the Libre plan**, on the Audiobookshelf and Uptime Kuma precedent, which is
+where community-scale self-hosted projects land. Crowdin is the alternative and is what the
+larger projects use, but its ecosystem is GitHub-Action-shaped and the sync would have to be
+rebuilt on Gitea Actions.
 
-**This is the stage with an unresolved constraint, and it needs deciding before Stage 4 rather
-than after.** Reaper lives on a self-hosted Gitea, not GitHub. Weblate integrates with any git
-remote, so a self-hosted Weblate is straightforward, but hosted.weblate.org's free libre-project
-tier expects a publicly reachable repository. Crowdin's ecosystem is GitHub-Action-shaped and
-would need the sync driven by Gitea Actions instead. **Whether the repo will be public at
-release determines which of these is even available**, and it is the one question here I cannot
-answer from the code.
+Three things this depends on, all checked rather than assumed:
+
+- **The Libre plan is gratis for public projects** and carries the 160k-string limit. Reaper's
+  ~1,000 source strings are two orders of magnitude under it.
+- **Reaper is AGPL-3.0-or-later**, an OSI-approved license.
+- **Weblate speaks Gitea natively.** `GiteaRepository` in `weblate/vcs/git.py` is a first-class
+  merge-request backend ("This will push changes and create a Gitea pull request"), so the
+  unanimous workflow from §2 — bot opens a PR with completed translations — works here without
+  GitHub and without a self-hosted Weblate.
+
+**Reaper being public at release is what makes this the answer**, and that is settled. Two
+practical requirements remain and are the things to confirm when the stage is actually taken up:
+hosted Weblate has to reach the Gitea host over the internet, and it needs its own account there
+with push rights on a translations branch. Neither is a design question.
 
 Also this stage: the CONTRIBUTING note that non-English files are overwritten, and the CI sync.
 
@@ -316,10 +325,11 @@ overlap this and should be sequenced with it rather than against it.
 
 ## 9. Open questions
 
-1. **Will the repository be public at release?** Decides Weblate-hosted against self-hosted, and
-   gates Stage 6. The only blocker I cannot resolve from the code.
-2. **Which locales first?** Affects nothing structural, but a first non-English locale is the
+1. **Which locales first?** Affects nothing structural, but a first non-English locale is the
    only real test of Stages 1 through 4.
-3. **Is any `Unknown(reason=…)` value persisted in a frozen snapshot in a released build?** Sets
+2. **Is any `Unknown(reason=…)` value persisted in a frozen snapshot in a released build?** Sets
    how much back-compat Stage 3 carries. Issue #302 asks the same question about one entry.
-4. **MessageFormat 2.0 status.** Unfinished research; writing ICU today is portable regardless.
+3. **MessageFormat 2.0 status.** Unfinished research; writing ICU today is portable regardless.
+
+**Settled 2026-07-30:** the repository will be public at release, which is what makes hosted
+Weblate available and closes the only question that gated a stage.
