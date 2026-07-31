@@ -45,9 +45,10 @@ def reference_instant(
     `season_scan.build_season_facts` measured from the play and judged the season -- one
     derived value with two thaw rules, and the movie lane's why-panel telling the operator
     dormancy could not be measured with a play for that item in scope. Measured before the
-    lanes were joined: across 41 stored snapshots and ~[redacted] movie rows -- the only rows that
-    can reach a movie-lane arm, out of [redacted] counted in all -- that arm was reached zero
-    times, so no observed verdict moved (`docs/LEARNINGS.md`).
+    lanes were joined: across 41 stored snapshots and a six-figure count of movie rows -- the
+    only rows that can reach a movie-lane arm, out of a larger count still over both media
+    types -- that arm was reached zero times, so no observed verdict moved
+    (`docs/LEARNINGS.md`).
 
     **All four callers take the same thaw**, which is what makes this one derivation rather
     than one helper with four dialects. The two rehearsal engines used to be the exception:

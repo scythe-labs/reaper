@@ -6,7 +6,7 @@ capping the list and hiding the tail (the bug: "thousands scanned, fewer than a 
 shown"). The endpoint now returns a page of ``limit`` rows at ``offset`` and reports the
 full filtered set -- a count and a byte total measured *before* the page window -- in the
 ``X-Total-Count`` and ``X-Total-Bytes`` headers, so the header can read the whole set's count
-only a page is on the wire.
+while only a page is on the wire.
 """
 
 from __future__ import annotations

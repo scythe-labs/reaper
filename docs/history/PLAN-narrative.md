@@ -1598,13 +1598,14 @@ the next follow-ups.
 ### Newest — the review queue is paged (the whole library is visible again)
 
 A library runs to thousands of protected titles, but `/api/candidates` returned at most 500
-rows and the frontend fetched a single page — so a [redacted]-item scan showed as fewer than a
-thousand (the Spared tab, ~[redacted] items, was silently truncated to 500). Fixed: the endpoint
-now returns a page of `limit` rows at `offset` and reports the **full filtered set** — a count
-and a byte total, measured before the page window — in the `X-Total-Count` / `X-Total-Bytes`
-response headers. The frontend uses `useInfiniteQuery`, shows the server totals in the header
-("[redacted] items · [redacted]"), and pulls the next page as the render window nears the end of what
-it has. Grouping stays correct because seasons are grouped over the whole accumulated list, and
+rows and the frontend fetched a single page — so a scan of several thousand items showed as
+fewer than a thousand (the Spared tab, nearly all of that scan, was silently truncated to 500).
+Fixed: the endpoint now returns a page of `limit` rows at `offset` and reports the **full
+filtered set** — a count and a byte total, measured before the page window — in the
+`X-Total-Count` / `X-Total-Bytes` response headers. The frontend uses `useInfiniteQuery`, shows
+the server totals in the header (the item count beside the byte total), and pulls the next page
+as the render window nears the end of what it has. Grouping stays correct because seasons are
+grouped over the whole accumulated list, and
 the score tiebreak keeps a show's seasons adjacent across a page boundary. Verified live:
 scrolling grew the rendered list 40 → 301 → [redacted] with no stall, header count exact.
 `tests/test_candidate_pagination.py` pins the header totals and offset paging.
@@ -2114,8 +2115,8 @@ naming two Plex listings, because the operator keeps that title in *both* an HD 
 show section. On a **movie** the resolver breaks that tie with the file's exact byte size.
 On a **show** it never could: a show is bound by its folder, both sections name the folder
 identically, and Plex reports no size for a folder. Every such title abstained forever.
-Measured live: 6 of [redacted] series, 13 of [redacted] season rows, all 3 titles the operator keeps
-in both libraries. Details and the measurement in `docs/LEARNINGS.md`.
+Measured live: 0.6% of series and the same share of season rows, 6 and 13 of them, all 3
+titles the operator keeps in both libraries. Details and the measurement in `docs/LEARNINGS.md`.
 
 **The safety model was never in question — worth stating plainly.** An ambiguous item does
 *not* read as "nobody watched it". `season_scan` writes `Unknown` (not `0`) for dormancy,
@@ -2544,8 +2545,8 @@ the normalization `100·P/D` collapses to `P`, so the number typed is the number
 moves by, and it matches the keep lane. **The arithmetic is unchanged.** Both shipped
 defaults already summed to 100, and a proportional rescale is score-preserving by
 construction — verified on a real library: every movie re-scored with zero change; every season
-seasons with a worst change under a point from integer rounding, four of which crossed the
-threshold, all four toward sparing.
+with a worst change under a point from integer rounding, four of which crossed the threshold,
+all four toward sparing.
 
 Equality, not `<=`. Under-allocating stretches the lane exactly as over-allocating shrinks
 it, and one outage touching both lanes can net *upward* because keeps stay absolute while

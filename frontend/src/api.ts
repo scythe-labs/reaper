@@ -1385,8 +1385,9 @@ const del = <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE"
 export const api = {
   latestSnapshot: () => request<Snapshot>("/api/snapshots/latest"),
   /** One page of the review queue. The full filtered totals (count + bytes, before the page
-   *  window) ride along in response headers, so the queue can show "[redacted] items, [redacted]"
-   *  without loading them all. Paged because a library runs to thousands of protected titles. */
+   *  window) ride along in response headers, so the queue can show the whole set's count and
+   *  byte total without loading them all. Paged because a library runs to thousands of
+   *  protected titles. */
   candidates: async (
     verdict: Verdict,
     q: CandidateQuery = {},

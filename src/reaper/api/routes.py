@@ -269,7 +269,7 @@ async def list_candidates(
     and asks for the next page as it scrolls. The full size of the filtered set (a count and a
     byte total, both *before* the page window) is returned in the ``X-Total-Count`` and
     ``X-Total-Bytes`` response headers, so the queue can show the whole set's count and byte
-    having loaded them all.
+    total without having loaded them all.
 
     Default order is by score, then by size -- so the biggest wins among the safest
     deletions come first. Size ranks the candidates the score has already chosen; it never

@@ -278,11 +278,11 @@ nothing by construction. Both were dropped.
 — `seasons[].statistics.sizeOnDisk` against the summed sizes from `GET
 /api/v3/episodefile?seriesId=`, using the executor's own `_payload_size` and `_season_number`.
 **Every season matched to the byte, all several thousand of them**, ratio exactly 1.000000, no
-so much as one byte and none where the statistic was missing. On Radarr 6.4.0 the same read over
+season differing by so much as one byte and none where the statistic was missing. On Radarr 6.4.0
 the same read over every movie holding a file gave `sizeOnDisk == movieFile.size` for every one,
-premise from the other side: the number tracks file rows, so folder bytes no row tracks are not
-in it. The one edge the probe could not exercise is Sonarr's `COALESCE("Size", 0)` on a
-NULL-size file, which no season in either library had; it resolves toward keeping, because
+which is #317's premise from the other side: the number tracks file rows, so folder bytes no row
+tracks are not in it. The one edge the probe could not exercise is Sonarr's `COALESCE("Size", 0)`
+on a NULL-size file, which no season in either library had; it resolves toward keeping, because
 `_payload_size` refuses a zero and the season is held back.
 
 ⇒ **The error survived seven review passes because the claim was checked against the field
@@ -310,16 +310,16 @@ that every tracked file sat under its own movie folder.
 the main library: median ratio 1.0002, p75 1.0005, p90 1.012, p99 1.041, max 1.111, and 1.002
 aggregated over the sample. Twenty-three folders in two hundred were 1% or more, two were 5% or
 more. On the second, smaller library one folder measured 1.44 — tens of gigabytes of untracked
-a single file.
+bytes in a single file.
 
 ⇒ **The excess is not artwork rounding, which is why the median is the wrong summary.** By count
 the untracked files are overwhelmingly images, about three in four in the sample, but by bytes
-are **74% video**: 26 untracked video files carried three quarters of the excess, and 12% of the
-excess sat in a subfolder rather than beside the movie. Artwork was 25%, subtitles 1.4%, metadata
-0.06%. The distribution is a floor of a few hundred kilobytes of posters on nearly every folder,
-plus a heavy tail wherever an extra, a trailer or an untracked rip sits in the folder. A margin
-sized to the median buys nothing and a margin sized to the tail would eat most of the operator's
-cap, which is why neither was added.
+they are **74% video**: 26 untracked video files carried three quarters of the excess, and 12%
+of the excess sat in a subfolder rather than beside the movie. Artwork was 25%, subtitles 1.4%,
+metadata 0.06%. The distribution is a floor of a few hundred kilobytes of posters on nearly every
+folder, plus a heavy tail wherever an extra, a trailer or an untracked rip sits in the folder. A
+margin sized to the median buys nothing and a margin sized to the tail would eat most of the
+operator's cap, which is why neither was added.
 
 ⇒ **The season side has no counterpart, and the reason is the delete's shape, not the number's.**
 A season prune deletes `EpisodeFiles` rows one at a time and the statistic sums those same rows,
@@ -472,13 +472,15 @@ backfilled old event (a history import, a delayed play) lands with an old date, 
 rows we already hold, where early termination would miss it.
 
 The right lever was the **`after` date filter**: `after=<our newest day>` returns only
-the delta (~200 rows against [redacted]), and `INSERT OR REPLACE` on the stable `row_id` makes
-a one-day overlap free. Backfill is then caught by a **nightly full sweep**. Per-scan
+the delta (a couple hundred rows against a six-figure history), and `INSERT OR REPLACE` on
+the stable `row_id` makes a one-day overlap free. Backfill is then caught by a **nightly
+full sweep**. Per-scan
 history sync went from ~3 minutes to sub-second, verified live.
 
 Two things the probe also settled, each a latent bug:
 - **`row_id` is null only for live/in-progress sessions** (they cluster at the newest
-  end; ~10 across a [redacted] history). Skipping them is correct -- they are not history yet.
+  end; on the order of ten across the whole history). Skipping them is correct -- they are
+  not history yet.
 - **The regression check was a silent no-op.** It compared our *own mirror's* row count
   before/after, but we write with `INSERT OR REPLACE` and never delete, so the mirror
   only grows -- the check could never fire. A Tautulli reset/prune (the #1 mass-deletion
@@ -736,8 +738,8 @@ The discriminator that *was* available had been thrown away one function earlier
 the path. Measured across all three: leaf identical, **parent folder different, shared
 suffix depth exactly 1**. Keeping the full path and comparing *trailing segments* (never
 whole paths — the mount roots differ, which is why `to_basename` exists) separates them
-cleanly. Re-running the real resolver over the live library: **ambiguous 6 → 0, matched
-972 → 978, unmatched unchanged at 112.**
+cleanly. Re-running the real resolver over the live library: **ambiguous 6 → 0, all six
+moving into the matched set, and the unmatched count unchanged.**
 
 ⇒ Two rules fall out. A discriminator must not be normalized away *before* the place
 that needs it. And on any split library, the segment **above** the leaf is the only thing
@@ -1764,9 +1766,10 @@ outcomes, and the second is worse than the one that was reported:
   not exist, so a live file collects maximum condemn pressure at full coverage from an item
   that is gone, with every watch-history protection reporting checked-and-did-not-fire.
 
-Proportions on that library, for calibration rather than alarm: 14 of ~[redacted] items abstained
-as ambiguous, of which 1 was the disagreement shape. The spine held ~[redacted] movie rows. So the
-veto arm is rare; the originating arm is invisible from the queue by construction, since a
+Proportions on that library, for calibration rather than alarm: roughly two items in a thousand
+abstained as ambiguous, 14 of them, of which 1 was the disagreement shape, and movies were about
+three fifths of the spine. So the veto arm is rare; the originating arm is invisible from the
+queue by construction, since a
 phantom bind produces an ordinary-looking condemned row.
 
 The negative result worth recording: **"absent from the sweep" is not by itself evidence of
@@ -2156,7 +2159,7 @@ cannot help: the mirror is faithfully copying rows that are themselves stale.
 
 **Why the fix is not "key the mirror on the guid".** Measured against a live library: live movie
 items outnumber their distinct guids, and **about one guid in twenty-five sits on more than one
-live rating key** — the same title held twice, HD and [redacted]. A guid does not identify one item, so a
+live live rating key** — the same title held twice, HD and [redacted]. A guid does not identify one item, so a
 guid-keyed mirror would pool two separate candidates' plays. `media_key` does separate them:
 of 21 titles present twice, all 21 carry two distinct `media_key`s *and* two distinct rating
 keys. History rows do carry a guid (100% of a 5,000-row window, from
@@ -2185,8 +2188,9 @@ has had no time to be orphaned. Roughly one mid-history movie in twenty is affec
 server whose operator has never run a deletion through Reaper at all.
 
 **The instrument that found nothing, and why it was the wrong one.** Across 31 stored snapshots
-no `media_key` changed its `plex_rating_key` — 0 of [redacted] movies and 0 of [redacted] seasons. Read as
-reassurance that would have been wrong: those snapshots span **6.7 days** and every `reap_run` in
+no `media_key` changed its `plex_rating_key` — zero, across every movie and every season the
+library holds. Read as reassurance that would have been wrong: those snapshots span **6.7 days**
+and every `reap_run` in
 that window is still `PLANNED`, so nothing was deleted and no file came back. The window
 contained none of the trigger. Reaper's own scan history can only see churn it was running
 across; Tautulli's history reaches back years, which is why it could answer.
@@ -2212,8 +2216,9 @@ counting rows whose dormancy came back unreadable and splitting them by cause:
 | movies, 41 snapshots | six figures | 977 | **0** |
 | seasons, 41 snapshots | five figures | 372 | **0** |
 
-⇒ **The arm is reachable and never reached.** Every unreadable dormancy in [redacted] rows came
-from an item with no Plex rating key at all (an ambiguous or unmatched title), not from a
+⇒ **The arm is reachable and never reached.** Every unreadable dormancy across both populations,
+hundreds of thousands of rows between them, came from an item with no Plex rating key at all (an
+ambiguous or unmatched title), not from a
 matched item missing its date — a correlation that is exact, not approximate: zero rows held an
 unreadable dormancy *and* a clean Plex bind. The `scan.no_added_at` warning, which exists to
 name this state, has never fired in the log either.

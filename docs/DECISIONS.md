@@ -350,8 +350,8 @@ deciles of a six-figure history, on a server that had never run a deletion throu
 remembered key to stay trustworthy after Plex may have reissued it to something else, and
 `metadata_items.id` is a SQLite integer id, not a never-reused handle. *Keying the mirror on the
 guid* was measured unsafe: about one guid in twenty-five in that library sits on more than one
-live rating key, the same title held twice in HD and [redacted], so a guid does not identify one item
-guid-keyed read pools two separate candidates' plays. What is left is the one invariant needing
+live rating key, the same title held twice in HD and 4K, so a guid does not identify one item
+and a guid-keyed read pools two separate candidates' plays. What is left is the one invariant needing
 no key at all — **all-time watch evidence cannot fall** — so a count dropping to zero, or a last
 play moving earlier in time, is a transition no library performs and those facts read `Unknown`.
 A never-watched item reads zero on every scan, and 0 → 0 is not a fall, which is what makes the

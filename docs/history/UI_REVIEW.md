@@ -275,8 +275,8 @@ is a 375px `<iframe>` of the app injected into the page -- a true 371px viewport
 ### Batch 6, copy (S2, S3, U3, U7, U8, U9, U10, U11, U12, U14, U15, U18, U19, I1)
 
 Fourteen sentences an operator reads while deciding what to delete. Every one of them said
-something that was not true of the code underneath it. Proof sheet (verbatim before/after,
-plus the measurements behind the four that are not just strings):
+something that was not true of the code underneath it. A proof sheet was assembled alongside
+this batch, holding each sentence verbatim before and after plus the measurements behind the
 four that are not just strings; it was a review artifact and is not kept with the repository.
 
 - **S2 corrects the copy, not the fence** -- the backend's own comment says the allowlist is
@@ -699,9 +699,9 @@ bare `vh` in the stylesheet.
 - [x] **B5 [high]** `frontend/src/components/ReapBreakdown.tsx:120,160-163` · `reapCount` (:105)
   correctly subtracts the unmeasured hold-back for the headline and the "Will be reaped" total, but
   the movie/season split at :161 prints raw `data.movies` / `data.seasons` and the ledger rows above
-  resolve to `will_reap`, so the same page states two different totals. With 569 effective condemned
-  of which 4 are unmeasured, the headline reads 565 while the split reads "402 movies · 167 TV
-  seasons" = 569 and the arithmetic 543 − 12 + 38 = 569. Worse, the empty-state gate at :120 tests
+  resolve to `will_reap`, so the same page states two different totals. With N effective condemned
+  of which 4 are unmeasured, the headline reads N − 4 while the split's movie and season figures
+  sum to N, as does the ledger arithmetic above them. Worse, the empty-state gate at :120 tests
   `data.will_reap`, so when *every* condemned item is unmeasured the page renders a full ledger
   totaling 0. Rules 62 and 30. **Fix:** return the split over the plannable set (add
   `movies_unknown`/`seasons_unknown` in `services.breakdown.reap_breakdown`) and subtract them under
