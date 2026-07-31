@@ -53,11 +53,13 @@ Last verified against the code: 2026-07-30.
    deletion, which production does not do, so it is a best case: fix or label it when wiring.
    Until they ship the live simulator is the threshold-tuning surface, and no operator copy may
    name the backtest or promise a fitted prior (rule 25).
-3. **The screen-reader sweep is partly landed.** What landed and why each shape was chosen is
+3. **The screen-reader sweep is landed.** What landed and why each shape was chosen is
    `docs/history/SCREEN_READER_SWEEP.md`; the guard's own measurement is in `docs/LEARNINGS.md`.
-   Still open: **#177** the scan and simulator waits pass unannounced; **#189** five policy
-   warnings bound to a list rather than a control, held until option 2 is measured on a real
-   screen reader.
+   A scroll container is now held reachable by a stylesheet-driven gate, not by memory.
+   Still open: **#189** five policy warnings bound to a list rather than a control, held until
+   option 2 is measured on a real screen reader; **#332** seven loading regions built with their
+   own text; **#333** the value suggester's active option scrolls out of sight; **#334** whether
+   an alert may carry its own button, which needs a real reader to settle.
 4. **The stylesheet split has four optional stages left** (`docs/CSS_SPLIT_PLAN.md`). The cut
    itself landed: 31 files under `frontend/src/styles/`, load order declared by `index.css` and
    load-bearing. Left: naming the control-standard padding and the 12 unnamed `z-index` values;
