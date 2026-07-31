@@ -11,6 +11,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { ScanRow } from "./ScanBar";
 
@@ -96,6 +97,17 @@ describe("starting a library scan", () => {
 
     expect(await screen.findByText(/the scan didn't start/i)).toBeInTheDocument();
     expect(announceSpy).not.toHaveBeenCalled();
+  });
+
+  it("has no accessibility violations while it runs", async () => {
+    // The running state is the one worth auditing: it is the state the row spends minutes in,
+    // and it is the one that swaps a schedule line for a progress bar and disables the control
+    // the operator pressed.
+    apiMock.scanStatus.mockResolvedValue(RUNNING);
+    const { container } = renderRow();
+
+    await screen.findByRole("progressbar");
+    await expectNoA11yViolations(container);
   });
 
   it("gives the running bar a name and a value a reader can land on", async () => {

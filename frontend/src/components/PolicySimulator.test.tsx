@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { expectNoA11yViolations } from "../test/a11y";
 import { RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 
 function renderNotice(props: Partial<Parameters<typeof StaleNotice>[0]> = {}) {
@@ -38,6 +39,18 @@ describe("the wait the simulator shows while a rescan runs", () => {
 
     expect(screen.getByRole("heading", { name: RESCAN_HEADING })).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: RESCAN_HEADING })).toBeInTheDocument();
+  });
+
+  it("has no accessibility violations in either of its two states", async () => {
+    // Both, because this notice is really two screens sharing a container: a waiting state with
+    // a progress bar and no control, and a resting one whose only content is the button that
+    // starts the scan.
+    const waiting = renderNotice();
+    await expectNoA11yViolations(waiting.container);
+    waiting.unmount();
+
+    const resting = renderNotice({ scanning: false });
+    await expectNoA11yViolations(resting.container);
   });
 
   it("says the changes are in a SECOND scan when one was already running", () => {
