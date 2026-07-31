@@ -291,9 +291,9 @@ four that are not just strings; it was a review artifact and is not kept with th
   history. `PUT /api/logs/level` was already refused by the write allowlist. Two pytest
   assertions, both proven to fail without the change.
 - **U3** builds `tvKeepClauses` beside `keepClauses`, each clause pushed only when its own
-  switch is on. **Proved on real data:** this server's saved TV policy has the season floor at 0
-  and "keep a show's first season" off, so the old line read "always keeps the newest 0 seasons
-  of a show and anyone's mid-binge" -- both false -- on the sentence you scan before arming. It
+  switch is on. **Proved against a real saved TV policy with both switches off:** the old line
+  read "always keeps the newest 0 seasons of a show and anyone's mid-binge" -- both false -- on
+  the sentence you scan before arming. It
   now reads "always keeps anyone's mid-binge". The gate clauses are deliberately NOT folded into
   the TV list: they read as conditions ("keeps anything watched by 3+ people") and these read as
   things ("keeps the newest 2 seasons"), and one list cannot carry both grammars in a line that
@@ -382,7 +382,7 @@ different words, so a test that went back to parsing the text fails.
 
 - **P3** was the big one. `GET /api/runs` built a full `RunOut` per row, and each one re-read
   the whitelist, the profile and the entire condemned candidate set of that run's snapshot.
-  Timed against 12 stored runs: **570 ms -> 6 ms**. The list is now `RunSummaryOut`, seven
+  Timed against a page of stored runs: **570 ms -> 6 ms**. The list is now `RunSummaryOut`, seven
   stored fields, and opening a row fetches that one plan. It was dishonest as well as slow: a
   finished run's confirmation phrase was recomputed against TODAY's overrides, describing a
   plan nobody ever approved, so the history row drops it and states the run's state in plain
@@ -396,7 +396,7 @@ different words, so a test that went back to parsing the text fails.
   per-card `isSelected` (which made the object per-card and defeated memoization outright).
   `useDefaultSpareDays` / `useHoldsBackUnmeasured` now read one shared subscription
   (`queueSettings.tsx`) instead of opening a query observer per control -- roughly a thousand
-  of them on two keys with 400 cards and their seasons expanded.
+  of them on two keys with a few hundred cards and their seasons expanded.
 
 **A real bug the perf work exposed, not caused.** With the queue no longer re-rendering
 freely, `useReviewFreshness`'s "a silent refresh failed, so nudge instead of leaving the list
@@ -549,8 +549,8 @@ field and clicking the Settings tab leaves the typed value intact, while a genui
 still clears the focus and lands on General with no jump replayed. B26 both ways: the warning
 appears beneath the box the moment the box reads 5 and clears the moment it reads 0. PR7: with the
 removal lane off budget and grace edited, Save is live, the bar says "Save writes pace and limits
-only", and the applies-when line is the pace one. B28's agreement was read off a real person's
-card and panel (both figures matched); the divergent case is the unit test's.
+only", and the applies-when line is the pace one. B28's agreement was read off a real card and
+the panel it opens (both figures matched); the divergent case is the unit test's.
 
 ---
 
@@ -900,9 +900,9 @@ bare `vh` in the stylesheet.
 - [x] **B27 [medium]** `frontend/src/components/Fairness.tsx:212-247` · The "Not in the last scan"
   tile — the one affordance that explains why Scales is empty — is nested inside the
   `data.rows.length > 0` branch, so it is hidden exactly when it is needed. With a fresh portal or
-  unbackfilled ids, `rows` is `[]` and `not_in_scan` is 40, and the page shows only "No available
-  requests are in the last scan yet."; the 40 unmatched requests and the button that explains them
-  are suppressed. **Fix:** move the `not_in_scan > 0` tile out of the `rows.length > 0` block.
+  unbackfilled ids, `rows` is `[]` while `not_in_scan` is nonzero, and the page shows only "No
+  available requests are in the last scan yet."; the unmatched requests and the button that
+  explains them are suppressed. **Fix:** move the `not_in_scan > 0` tile out of the `rows.length > 0` block.
 
 - [x] **B28 [medium]** `frontend/src/components/Fairness.tsx:46-49` vs
   `frontend/src/components/ScalesPanel.tsx:206-209` · The card divides by `requests_made`, the panel
@@ -1087,10 +1087,11 @@ bare `vh` in the stylesheet.
   `toGroups(data)` and every derived array (`shownGroups`, `shownKeys`, `shownItems`,
   `allShownSelected`) are recomputed on every render with no `useMemo`, and `onSet`/`onClear`/
   `cardSelect` are freshly allocated, so no card can ever be memoized. Drag-selecting across a list
-  scrolled to ~400 cards runs one full re-render per `pointerenter`, each re-folding every fetched
-  candidate into groups and re-rendering every drawn card. **Fix:** `useMemo` the fold on `[data]`,
-  memoize `shownGroups`/`shownKeys` on `[groups, visible]`, `useCallback` the handlers, and wrap
-  `MovieCard`/`ShowCard` in `React.memo` (the `select` object must then be memoized too).
+  scrolled to a few hundred cards runs one full re-render per `pointerenter`, each re-folding
+  every fetched candidate into groups and re-rendering every drawn card. **Fix:** `useMemo` the
+  fold on `[data]`, memoize `shownGroups`/`shownKeys` on `[groups, visible]`, `useCallback` the
+  handlers, and wrap `MovieCard`/`ShowCard` in `React.memo` (the `select` object must then be
+  memoized too).
 
 - [x] **P2 [medium]** `frontend/src/components/ReviewQueue.tsx:1743-1751,1898-1907` · With "Expand
   seasons by default" on, every drawn `ShowCard` mounts a `SeasonList` that fires its own
@@ -1267,7 +1268,7 @@ bare `vh` in the stylesheet.
   3865, 3877, 3928, 4610, 5224, 6040, 6155, 6685, 7568, 7595, 7629, 8044 · `--faint` carries real text
   against its own token comment at :27-30, which states outright "Never put text on --faint" and
   documents that it clears no AA ratio in either theme (light 2.30-2.62:1, dark 3.17-3.52:1). Affected
-  readable strings include `.rb-of` ("of 12 titles"), `.jobrow-sched`, `.jobrow-last.is-never` ("never
+  readable strings include `.rb-of` ("of N titles"), `.jobrow-sched`, `.jobrow-last.is-never` ("never
   run"), `.nis-noname`, `.scales-title-meta`, `.dz-hint`, the entire docs index (`.docs-index-h`,
   `.docs-index-item small`, `.docs-index-foot`), and `.dd-phase`. The previous review fixed the
   then-known uses; every surface built since re-adopted the token. **Fix:** switch all 18 to

@@ -103,8 +103,8 @@ tree-shaking is a known-common user error. It also adds a build-time codegen ste
 `project.inlang/` directory. inlang has meanwhile become "Opral (inlang & lix)", with i18n one
 application of a change-control platform rather than the company.
 
-**`react-intl-universal` — rejected.** Bus factor 1, a seven-month silent stretch ending only
-weeks ago, no hooks or Context (so a locale change does not re-render), untyped keys, and it
+**`react-intl-universal` — rejected.** Bus factor 1, a seven-month silent stretch ending in
+mid-2026, no hooks or Context (so a locale change does not re-render), untyped keys, and it
 augments the global `String` interface in every consuming file.
 
 **FormatJS / `react-intl` — viable, second choice.** Real ICU, healthy. Heavier, and its

@@ -448,7 +448,7 @@ building, and shaped the bundle.
 warns). The cache database is left out: it is not a source of truth and rebuilds on the next scan.
 The snapshot is `VACUUM INTO` -- a consistent read inside one transaction, so a scan writing
 mid-backup cannot tear it, and it compacts: a real live DB became an archive roughly **11x**
-(~11x), which is why the panel shows no size number (the honest compressed size is not knowable
+smaller, which is why the panel shows no size number (the honest compressed size is not knowable
 without building, and showing the uncompressed one misleads by 10x). The manifest stamps the Alembic
 revision (`alembic_version`) for the restore side to gate on. `manifest.json` is written first in the
 tar so a restore can read it from the front of the stream without unpacking the database behind it.
@@ -458,10 +458,11 @@ API-key read-denylist (`api.middleware._API_KEY_READ_DENY`) -- a leaked automati
 plenty but never pull the keys to everything -- and, like every `/api` route, needs a session.
 Built off the event loop (`asyncio.to_thread`); the archive streams from a temp dir removed when the
 stream ends; downloading records `last_backup_at` for the panel. New UI: a `Backup` settings tab and
-`BackupPanel`, mocked as an artifact and approved before code, then driven end-to-end (real [redacted]
-DB -> valid [redacted] archive, all four members, manifest revision == head, key+salt bundled, light +
-dark). New: `services/backup.py`, `api/backup.py`, `app_settings.get/set_last_backup_at`. The About
-page's DB sizing now delegates to the one `backup.db_size_on_disk` so the two never drift.
+`BackupPanel`, mocked as an artifact and approved before code, then driven end-to-end (a real live
+DB -> a valid archive an order of magnitude smaller, all four members, manifest revision == head,
+key+salt bundled, light + dark). New: `services/backup.py`, `api/backup.py`,
+`app_settings.get/set_last_backup_at`. The About page's DB sizing now delegates to the one
+`backup.db_size_on_disk` so the two never drift.
 
 **Phase 2 (shipped):** see the entry above. Restore now stages an uploaded backup and swaps it in on
 the next restart, gated behind the admin password. The "same path serves first-time setup" idea
@@ -520,10 +521,11 @@ The rule is updated in CLAUDE.md and the migrations row below.
 
 ### The caps are switchable, and a toggle that did nothing is gone
 
-Two operator questions in one pass. First: a dry run aborted at "569 over the per-run cap of 10"
-even after the operator thought they had turned limits off. They had not: the only toggle in
-*Pace and limits* was **"Ask me before every run deletes anything"** (`require_approval`), which is
-a different control. Second, following from that: what does that toggle even do?
+Two operator questions in one pass. First: a dry run aborted because the condemned set ran hundreds
+of items over the per-run cap, even after the operator thought they had turned limits off. They had
+not: the only toggle in *Pace and limits* was **"Ask me before every run deletes anything"**
+(`require_approval`), which is a different control. Second, following from that: what does that
+toggle even do?
 
 **The assumption that turned out wrong.** `require_approval` looked like a safety gate. It gated
 nothing. Traced across the whole codebase (adversarially, twice): its entire footprint was one
@@ -544,7 +546,7 @@ unknown-size allowance), so gating there disables them completely; dry-run and e
 because both walk the same `_check_caps`. The abort copy now points to *Policy → Pace and limits*
 and names the off switch, instead of only "raise the cap." In the UI the caps matrix is hidden (not
 disabled) while the toggle is off, with an amber "no cap on run size" notice; grace and unknown-size
-stay put. Drove it end to end: on the real 569-item set, a dry run aborts with caps on and
+stay put. Drove it end to end: on the real condemned set, a dry run aborts with caps on and
 **completes** with caps off; the old approval toggle is gone.
 
 **Upgrade-safe, without a migration.** Removing a field from a Pydantic model with
@@ -561,10 +563,10 @@ interlock weakened).
 
 ### The Reap page stopped being a grace list, and became a breakdown
 
-The operator pushed back on the Reap page's grace panel: it listed only 20 of ~570 counting-down
-titles, each with a *cancel* link -- an arbitrary slice, and *cancel* was just "spare this file",
-the exact action the review queue already owns. Two questions: why a partial list you can manage,
-and why that ability here at all.
+The operator pushed back on the Reap page's grace panel: it listed only the first 20 of hundreds of
+counting-down titles, each with a *cancel* link -- an arbitrary slice, and *cancel* was just
+"spare this file", the exact action the review queue already owns. Two questions: why a partial
+list you can manage, and why that ability here at all.
 
 **The assumption that turned out wrong.** The grace countdown reads like a gate -- "waits out 14
 days before it is eligible to be reaped" -- but `build_plan` and the executor never check
@@ -585,8 +587,8 @@ precedent, reading `state == "adds"` (with a positive-contribution fallback for 
 the "Update now" action and status followed, and a library that fails to sync is written to the
 logs (`leaving_soon.problems`), not shown inline. The Reap page keeps one line pointing to it. The
 `/api/grace` endpoint and `services/grace` stay (the shelf still uses the service); only the Reap
-page's use of them is gone. Drove it end to end: on real data, 595 condemned − 26 hand-spared =
-569 net, and the by-reason bars render from stored signals.
+page's use of them is gone. Drove it end to end: on real data the ledger balances (condemned, minus
+hand-spares, plus hand-reaps, equals the net), and the by-reason bars render from stored signals.
 
 ### You could not un-decide a TV season, only movies
 
@@ -598,7 +600,7 @@ verified) confirmed the shape and found its twins.
 own, or inherited from a whole-show spare -- but its clear/set acted on the season's OWN key, so
 when a show-level spare was what kept the season, clearing the season key changed nothing. A
 movie has no show, so its effective override IS its own key; that is why movies always worked.
-The real data had 5 whole-show spares, so the operator hit it immediately.
+The real data carried several whole-show spares, so the operator hit it immediately.
 
 **The twins (same class), all fixed together:**
 
@@ -633,9 +635,9 @@ membership: a spare takes the item off the list and deletes its clock, so a late
 a FRESH window (rule 4). The deliberate spare is a real departure, not a transient scan outage,
 so the delete forces the reset that `_apply_first_flag`'s gap heuristic would not.
 
-Verified against a copy of the operator's real DB through the production `_candidate_out`: 58
-inherited seasons read effective=spare / own=None / show=spare, and the seasons spared on their
-own key read own=spare. Two audit findings deferred by choice: two lesser grace-clock edges and
+Verified against a copy of a real DB through the production `_candidate_out`: every inherited
+season read effective=spare / own=None / show=spare, and the seasons spared on their own key
+read own=spare. Two audit findings deferred by choice: two lesser grace-clock edges and
 the bulk "N selected" count (a show card standing for many seasons). All gates green: ruff,
 mypy, 1707 pytest, alembic no-drift, eslint, 122 vitest, vite build.
 
@@ -1002,8 +1004,8 @@ standing.
 
 Both were driven against the running app, not just tests: the editor's warnings still
 render and `/api/policy/validate` still answers with the added session (the negative case
-is live, since a Seerr is connected here), and the app boots and serves behind the
-rewritten guard, which is `lifespan` and `http` both proving themselves every request.
+is live), and the app boots and serves behind the rewritten guard, which is `lifespan`
+and `http` both proving themselves every request.
 
 ### Review pass 2: the deliberately-held items, closed
 
@@ -1227,11 +1229,10 @@ fresh database (what CI builds) it passes clean.
 
 ### Earlier — the scan's wall clock was sequential waiting, and most of it is gone
 
-Measured end to end against a real dual-instance library (movies + TV, all six
-integrations live): the scan dropped to roughly **a fifth** of its previous wall time,
-with byte-identical verdict counts before and after and a non-degraded snapshot both
-ways. Two distinct fixes carried it, and the second only became visible after honestly
-measuring the first:
+Measured end to end against a real library with every integration connected: the scan
+dropped to roughly **a fifth** of its previous wall time, with byte-identical verdict
+counts before and after and a non-degraded snapshot both ways. Two distinct fixes
+carried it, and the second only became visible after honestly measuring the first:
 
 1. The structural work below (concurrent gather, batched per-item database work)
    barely moved the total at first, because both the old and new pipelines were
@@ -1428,9 +1429,9 @@ live "X of Y shows have no removable season" advisory (fed by `GET /api/snapshot
 `keep_last_scope` segmented control, and a `season_lookahead` input; and the why-panel gained a
 "leaning toward keeping" block. Verified end to end in a logged-in browser against a real scan:
 authored a `genre contains …` remove rule → validate/save/reload round-tripped 200, the advisory
-read live off 222 shows, and the scorer-version bump correctly made the simulator refuse stale
-numbers ("needs a fresh scan"); no console errors; the demo rule was then removed to restore the
-policy.
+read live off the full show library, and the scorer-version bump correctly made the simulator
+refuse stale numbers ("needs a fresh scan"); no console errors; the demo rule was then removed to
+restore the policy.
 
 Green: ruff, mypy, **905 backend tests** (new `test_custom_condemn.py` plus extended season/history
 coverage), `alembic check` clean (no new drift — no ORM columns changed; the policy is JSON and the
@@ -1607,7 +1608,8 @@ the server totals in the header (the item count beside the byte total), and pull
 as the render window nears the end of what it has. Grouping stays correct because seasons are
 grouped over the whole accumulated list, and
 the score tiebreak keeps a show's seasons adjacent across a page boundary. Verified live:
-scrolling grew the rendered list 40 → 301 → [redacted] with no stall, header count exact.
+scrolling grew the rendered list page after page into the thousands with no stall, and the
+header count stayed exact.
 `tests/test_candidate_pagination.py` pins the header totals and offset paging.
 
 ### Earlier — the manual override list: spare *and* reap, by item or by whole show
@@ -1769,8 +1771,8 @@ the live library before fixing, and re-verified after.
   "requested only" filter returned nothing. The wiring was correct in current code; the stored
   snapshots simply predated it. A fresh scan fills both: seasons now carry the show key and
   fold into one expandable card, and ~5% of movies + their requesters show a "requested by".
-- **"Requested only" on the reap tab is legitimately empty — so it now says why.** Every
-  requested title on this library was watched, so it is *protected*, not reaped; the filter was
+- **"Requested only" on the reap tab is legitimately empty — so it now says why.** Requested
+  media tends to get watched, so those titles are *protected*, not reaped; the filter was
   right, the blank was just confusing. The empty state now explains it and points at Spared.
 - **The mobile why-panel silently never applied its own styles.** A `@media (max-width:900px)`
   override sat *before* the base `.why { position: sticky }` rule; media queries add no
@@ -1974,9 +1976,9 @@ Two findings fell out of the probe, both now encoded in the client:
 ## The reap loop (M5) — dry-run complete
 
 The planner and executor exist and were exercised end to end against the live library:
-a plan of **419 delete steps** was built from the real condemned set, the canary
-correctly ordered first, and a dry run walked every step — recording the exact Radarr
-call each would make — while sending nothing and deleting nothing.
+a plan of **several hundred delete steps** was built from the real condemned set, the
+canary correctly ordered first, and a dry run walked every step — recording the exact
+Radarr call each would make — while sending nothing and deleting nothing.
 
 The interlocks, all built and tested:
 
@@ -2063,10 +2065,10 @@ revisions) before any code.
   extended); season titles compose with a middot now, and the queue strips both separators
   so old snapshots still render.
 - *Verified live* against a real library (a fresh several-thousand-item scan, presets
-  restored, the two saves proven independent with the policy hash unmoved, autocomplete
-  serving real genres). Found in passing: smooth `scrollIntoView` can silently no-op, so
-  the rail jumps instantly; the deletion "why blocked" note pointed at the old Settings
-  location and was fixed.
+  staged and restored, the two saves proven independent with the policy hash unmoved,
+  autocomplete serving real genres). Found in passing: smooth `scrollIntoView` can
+  silently no-op, so the rail jumps instantly; the deletion "why blocked" note pointed at
+  the old Settings location and was fixed.
 
 ## The identity join and the why-panel honesty pass
 
@@ -2111,19 +2113,20 @@ Tautulli, but the item shows none, and it has no Plex link"). The investigation 
 the safety model held perfectly and found one honest gap plus one unrelated UI bug.
 
 **What was actually happening.** The item was `AMBIGUOUS`, not unmatched: one TVDB id
-naming two Plex listings, because the operator keeps that title in *both* an HD and a [redacted]
-show section. On a **movie** the resolver breaks that tie with the file's exact byte size.
-On a **show** it never could: a show is bound by its folder, both sections name the folder
-identically, and Plex reports no size for a folder. Every such title abstained forever.
-Measured live: 0.6% of series and the same share of season rows, 6 and 13 of them, all 3
-titles the operator keeps in both libraries. Details and the measurement in `docs/LEARNINGS.md`.
+naming two Plex listings, because on a split library the same title sits in *both* an
+HD and a 4K show section. On a **movie** the resolver breaks that tie with the file's
+exact byte size. On a **show** it never could: a show is bound by its folder, both
+sections name the folder identically, and Plex reports no size for a folder. Every such
+title abstained forever.
+Measured live: 0.6% of series and the same share of season rows, every one of them a title
+listed in both libraries. Details and the measurement in `docs/LEARNINGS.md`.
 
 **The safety model was never in question — worth stating plainly.** An ambiguous item does
 *not* read as "nobody watched it". `season_scan` writes `Unknown` (not `0`) for dormancy,
 watchers and streaming; `signals.score()` is unsigned, so those weights stay in the
 denominator and the missing evidence can only *lower* the score; the four dependent gates
 land in `protections_unknown`, and `decide_verdict` abstains on a blocked protection before
-the score is read, with the coverage floor as a second backstop. All 13 rows scored 7-18
+the score is read, with the coverage floor as a second backstop. Every such row scored 7-18
 against a threshold of 70 and stored `protect`. Fail-closed, exactly as designed.
 
 **The fix.** The discriminator existed and was being thrown away one function earlier:
@@ -2132,9 +2135,10 @@ keeps the full path on `PlexFile.path`, the *arr side passes its own full path, 
 `identity._narrow_by_path_depth` compares **trailing segments** — never whole paths, since
 the mount roots differ. A listing binds only by being *strictly* deeper than every other;
 a tie, an unreadable path, or a leaf-only match still abstains. Verified end to end against
-the live library: ambiguous 6 → 0, matched 972 → 978, unmatched unchanged at 112.
+the live library: the ambiguous rows fell to zero, each one landing in the matched set, and
+the unmatched count did not move.
 
-**Narrowed 2026-07-19 by code review B-2, so those numbers no longer hold.** The comparison
+**Narrowed 2026-07-19 by code review B-2, so that result no longer holds.** The comparison
 may not consume either side's mount root: two *arr instances mapped to the same container
 path made the *arr's own root name look like evidence, and it bound the wrong copy.
 
@@ -2383,8 +2387,8 @@ Everything here came from one annotated-screenshot review of the queue against l
   Both default to the old behavior. All four fields ride the policy hash, so the
   simulator honestly refuses stale numbers until the next scan.
 - **The "request filter does not work" report was honest data, badly presented.** The
-  filter worked; on the condemned tab zero items carried a requester (requested media
-  gets watched; watched media is not condemned), so "Requested" showed a bare empty page
+  filter worked; on the condemned tab no item carried a requester (requested media tends
+  to get watched; watched media is not condemned), so "Requested" showed a bare empty page
   and "Not requested" changed nothing. Fixes: every active filter renders as a removable
   chip above the list, and a filtered-empty queue now says how many items the filters
   hide, with a one-tap clear. The requested data itself was fine (~6% of the snapshot
@@ -2460,11 +2464,11 @@ the engine is faithful to the mirrors; `scripts/validate_ingest.py` (read-only) 
 the mirrors are faithful to the *sources* — live Tautulli history (row counts,
 last-played, watchers, and the mid-binge guard's episode-index/completion inputs), the
 raw IMDb TSV (byte-exact full copy), and live Radarr/Sonarr (sizes, quality, ids,
-genres, content-season sets, independently recomputed ranks). Run against the six live
-dev instances: zero ingest bugs; the only diffs were plays since the last sync (a scan
-re-syncs first) and upstream genre edits after the scan, plus one validation artifact
-worth knowing: `get_history` prepends live sessions but excludes them from
-`recordsTotal`, so naive last-page pagination hides the oldest rows. See LEARNINGS,
+genres, content-season sets, independently recomputed ranks). Run against a real library
+with every integration connected: zero ingest bugs; the only diffs were plays since the
+last sync (a scan re-syncs first) and upstream genre edits after the scan, plus one
+validation artifact worth knowing: `get_history` prepends live sessions but excludes them
+from `recordsTotal`, so naive last-page pagination hides the oldest rows. See LEARNINGS,
 "The ingest is faithful to the sources".
 
 ## The whole-frontend UI/UX review pass (all 82 findings)
@@ -2537,8 +2541,9 @@ A condemn `weight` and a keep `max_discount` were the same integer meaning diffe
 things. `score()` normalizes by the sum of enabled weights, so a condemn weight is a
 **share of a running total**: adding a second rule silently shrinks the first. A keep's
 discount was always **literal points** off the finished score. Same visual grammar in the
-editor, different unit, and nothing said so. A real tuned TV policy was found summing to 240,
-so a rule written as 20 delivered 8. The drift is what real tuning produces, not an edge case.
+editor, different unit, and nothing said so. A real tuned TV policy was found summing to more
+than twice `MAX_SCORE`, so a rule written as 20 delivered under half of that. The drift is what
+real tuning produces, not an edge case.
 
 Removal weights now total exactly `MAX_SCORE`, enforced in `PolicyBody`. At a total of 100
 the normalization `100·P/D` collapses to `P`, so the number typed is the number the score
@@ -3103,7 +3108,7 @@ adversarial-review pass; and an end-to-end browser drive.
 ## Per-copy "requested by" via a Seerr service -> instance map (done, gates green)
 
 **The problem.** "Requested by" joins Seerr to a candidate on tmdb/tvdb, which is a *union*:
-a title kept in two libraries (a main one and a restricted one for a specific group) shares
+a title kept in two libraries (for example a general one and a restricted one) shares
 one tmdb, so every copy showed everyone who asked for the title, not who asked for *that* copy.
 The rating-key join can't fix it (Overseerr has one non-4K `ratingKey` slot, so it collapses),
 and Seerr stores no file path. What a request *does* carry is the *arr's own item id
@@ -3136,9 +3141,9 @@ scoring FACT) is untouched.
 exactly-one-or-none). Edit-Seerr modal grows a "Requested-by instances" section in the library-map
 grammar (per-service instance select, "suggested" tag that clears on pick, save sends what's shown,
 unreadable list -> notice not empty). `SeerrService`/`decode_service_instance_map` treat a bad body
-as `{}` (rule 32). Serves the real 2-Seerr / 2-Sonarr, main-vs-restricted-library setup: the clean
-1:1:1 case where the map is tiny and unambiguous. **Incorporated improvement #1** (the rating-key
-join) as tier 2 rather than discarding it: the Plex `ratingKey` is unique per server and copy-true
+as `{}` (rule 32). Serves the two-portal, two-Sonarr case: the clean 1:1:1 shape, where the map
+is small and unambiguous. **Incorporated improvement #1** (the rating-key join) as tier 2 rather
+than discarding it: the Plex `ratingKey` is unique per server and copy-true
 for a portal scanning only its own library, so it earns the zero-config default; it fails only
 when a portal scans several libraries (Overseerr keeps one non-4K slot per title per portal, so it
 collapses to whichever copy it synced last -- see LEARNINGS), which is exactly the case the
@@ -3186,7 +3191,7 @@ place," not "without a word."
 
 **Gates:** ruff/mypy clean, 1973 backend tests (+1), frontend tests +1 (a queue toast test),
 alembic upgrade+check clean (no drift), frontend lint/build clean. Driven end-to-end in a real
-browser against real data (snapshot 26, 193 condemned): baseline quiet, nudge on a mid-review
+browser against a real scan and its condemned set: baseline quiet, nudge on a mid-review
 scan, Show latest clears it, idle-at-top refreshes silently *with the toast* (pinned 18px off the
 viewport bottom, centered, self-clearing), dismiss to the marker -- all verified.
 

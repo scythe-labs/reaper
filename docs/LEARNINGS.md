@@ -731,7 +731,7 @@ So every such title abstained. Measured on a live library: **0.6% of series and 
 share of season rows, 6 and 13 of them, 3 titles × 2 instances** — every one of them the only
 titles the operator keeps in both libraries. The failure set is exactly "titles
 duplicated across two enabled show sections"; nothing about the titles themselves
-mattered (two were documentaries and one carried a parenthesized year, all coincidence).
+mattered.
 
 The discriminator that *was* available had been thrown away one function earlier:
 `clients/plex.py` reduced each Location to `to_basename(path)` and discarded the rest of
@@ -1164,8 +1164,8 @@ checked explicitly: query `/api/v2/resources` **with that user's own token** and
 token — which is what makes it a real check, and why it must never be your stored admin
 token.)
 
-For calibration: Maintainerr ships with **no auth at all**; Seerr trusts whoever logs in
-first.
+For calibration, as of 2026-07 and at default settings: Maintainerr shipped **no auth of
+its own**, and Seerr trusts whoever logs in first.
 
 ---
 
@@ -2624,9 +2624,12 @@ list with no classification reads as work left undone, and the next person re-de
 
 ## Prior art
 
-- **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
-  rule-join), and rule evaluation is order-dependent set algebra with no precedence:
-  `A OR B AND C` always means `(A OR B) AND C`.
+Read as of 2026-07, at default settings. These are live projects and any of them may have
+moved since; the point below is about a shape these designs share, not a scorecard.
+
+- **Maintainerr** — shipped no auth of its own. Its `operator` field is overloaded
+  (section-join vs rule-join), and rule evaluation is order-dependent set algebra with no
+  precedence: `A OR B AND C` always means `(A OR B) AND C`.
 - **Janitorr #234, "deleted half of library"** — a user wrote
   `movie-expiration: {100: 10d}` believing it meant *"only when 100% full"*. It means
   *"while free disk is below 100% — i.e. always — delete everything older than 10 days"*.
