@@ -4264,6 +4264,35 @@ class _RadarrThatLosesTheDatabase(FakeRadarr):
             self._lock.arm()
 
 
+class _RadarrThatFailsTheItemAndTheDatabase(FakeRadarr):
+    """Fails the item in a way the run normally survives, and breaks the next commit with it.
+
+    The point is WHICH commit then fails. Every ``_mark_*`` of this item is already
+    committed -- ``_mark_sent`` went before the call -- and an ``IntegrationError`` is a
+    mapped failure, so ``_fail`` only stages FAILED in memory. That leaves the per-item
+    commit in ``_run_deletes`` as the one that breaks, on an item the run would otherwise
+    walk straight past.
+    """
+
+    def __init__(self, lock: _CommitsThatFail, *, on_movie: int) -> None:
+        super().__init__()
+        self._lock = lock
+        self._on_movie = on_movie
+
+    async def delete_movie(
+        self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+    ) -> None:
+        if movie_id != self._on_movie:
+            await super().delete_movie(
+                movie_id, delete_files=delete_files, add_exclusion=add_exclusion
+            )
+            return
+        # The call really was made, so the test can say how far the run got.
+        self.delete_calls.append(movie_id)
+        self._lock.arm()
+        raise IntegrationError("radarr", "the delete could not be confirmed")
+
+
 class _PlexThatLosesTheDatabase(FakePlex):
     """Arms the commit failure from the streaming veto, which spares the item.
 
@@ -4466,6 +4495,60 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                 assert steps["radarr:1:1"].file_removed_at is not None, (
                     "the stamp was dropped, so the rolling budget never charges these bytes"
                 )
+        finally:
+            await engine.dispose()
+
+    async def test_an_acted_on_item_whose_journal_will_not_write_stops_the_run_too(
+        self, tmp_path: Path
+    ) -> None:
+        """The halt on the real-delete branch, which nothing reached (rule 118).
+
+        Its sibling on the SKIPPED branch has a test; this one did not, because every other
+        test here arms at ``_mark_file_removed`` and so halts through ``_JournalWriteError``
+        out of ``_mark``, never reaching the ``journalled`` check at all. So this arms the one
+        commit the others do not: a mapped failure the run would normally walk past, whose
+        per-item commit is the one that breaks.
+
+        **The reason is the assertion that discriminates, not the delete count.** Delete the
+        two lines and this run still stops before the third file, because the transaction is
+        dead by then and the next item's own re-reads fail -- one item later, on an error that
+        says nothing about the journal, and only because BOTH attempts failed here. Where the
+        session survives (a rollback that works and a ``_revive`` that does not) nothing stops
+        the walk at all. What this pins is that the run halts AT the unwritten journal and
+        says so, rather than wandering on to fail for some unrelated reason.
+        """
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                run = await self._three(setup)
+                run_id = run.id
+                await setup.commit()
+
+            async with factory() as run_session:
+                lock = _CommitsThatFail(run_session, run_id, times=2)
+                radarr = _RadarrThatFailsTheItemAndTheDatabase(lock, on_movie=2)
+                report = await Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: radarr}),
+                    armed_recheck=_armed_forever,
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                ).execute(run_id)
+
+            assert lock.fired == 2, "both the commit and its retry must have failed"
+            # The third file is the assertion: the run stopped rather than deleting more it
+            # also could not record.
+            assert radarr.delete_calls == [1, 2]
+            assert report.state is RunState.ABORTED
+            assert "could not save its record" in (report.aborted_reason or "")
+
+            async with factory() as fresh:
+                stored = await fresh.get(ReapRun, run_id)
+                assert stored is not None
+                assert stored.state is RunState.ABORTED
         finally:
             await engine.dispose()
 
