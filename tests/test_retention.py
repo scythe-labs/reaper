@@ -179,7 +179,16 @@ class TestWhatTheSweepMayNotTake:
     ) -> None:
         """The journal is the audit trail and a run's approval is bound to the exact rows
         it was planned against, so the oldest scan in the database stays if a run points at
-        it -- whatever the run's state, and however far past the window it falls."""
+        it -- whatever the run's state, and however far past the window it falls.
+
+        This is a SAFETY interlock, not deference to the schema's RESTRICT.
+        ``executor._rolling_30d_deletions`` prices the operator's rolling delete budget by
+        joining each action step back to the candidate row of the snapshot its own run was
+        planned against, on a soft ``media_key`` with no foreign key behind it. The join is
+        an inner one, so a swept candidate does not raise -- it drops that past deletion out
+        of the tally, and the cap lets the next run spend past what the operator set
+        (rule 5/30). Narrow this exclusion to live or recent runs and that is what happens.
+        """
         ids = await _seed(factory, 6, items=2)
         async with factory() as session:
             session.add(
@@ -199,7 +208,10 @@ class TestWhatTheSweepMayNotTake:
         assert removed == 3
         assert await _snapshot_ids(factory) == [ids[0], *ids[-2:]]
         # Its candidates are the rows the run's approval was bound to, so they stay too.
-        assert await _candidate_count(factory) == 6
+        assert await _candidate_count(factory) == 6, (
+            "executor._rolling_30d_deletions joins its action steps back to these rows to "
+            "price the rolling delete cap; losing them makes the cap read light"
+        )
 
     async def test_operator_decisions_outlive_the_scans_that_surfaced_them(
         self, factory: async_sessionmaker[AsyncSession]

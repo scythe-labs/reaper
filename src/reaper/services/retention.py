@@ -9,25 +9,39 @@ two apart.
 A scan is a snapshot (``services.snapshot``): every item's evidence is frozen and hashed
 before anything is scored, so one ``Candidate`` row is written per item per scan whatever
 its verdict -- condemn, abstain and protect alike. That is the design and it stays. What
-was missing is the other half of it. Nothing ever deleted a snapshot, and every read path
-takes only the newest one, so the table grew by the whole library on every scan and the
-database grew without limit (#315). Measured, a row costs about 4 KB, two thirds of it the
-frozen ``facts_json`` and the why-panel's ``explanation_json``, so a six-thousand-item
-library added roughly 24 MB per scan forever.
+was missing is the other half of it. Nothing ever deleted a snapshot, and the queue reads
+only the newest one, so the table grew by the whole library on every scan and the database
+grew without limit (#315). Measured, a row costs about 4 KB, two thirds of it the frozen
+``facts_json`` and the why-panel's ``explanation_json``, so a six-thousand-item library
+added roughly 24 MB per scan forever.
 
 This trims the table to the newest :data:`KEEP_SNAPSHOTS` and lets the schema do the
 deleting: ``Candidate.snapshot_id`` is ``ondelete="CASCADE"`` and ``db.session`` turns
-SQLite's foreign keys on, so dropping a snapshot row drops its candidates with it. Nothing
-else hangs off either table -- the whole foreign-key graph into ``snapshot`` is that
-cascade plus ``ReapRun``'s ``RESTRICT``.
+SQLite's foreign keys on, so dropping a snapshot row drops its candidates with it. The
+whole foreign-key graph into ``snapshot`` is that cascade plus ``ReapRun``'s ``RESTRICT``,
+and nothing at all points at ``candidate``.
+
+**What that graph does not show is the reader this module most has to answer to.**
+``ActionStep.media_key`` is a soft join with no foreign key behind it, and
+``executor._rolling_30d_deletions`` uses it to price the operator's rolling delete budget:
+it joins each step back to the candidate row of the snapshot ITS OWN RUN was planned
+against, across every run in the trailing thirty days. An inner join, so a missing
+candidate row does not fail -- it drops that deletion out of the tally, the cap reads light
+and the executor spends past what the operator set (rule 5/30). What keeps it whole is the
+run exclusion below, and nothing else. It is therefore a *safety* interlock and not the
+deference to a schema raise it can look like, and narrowing it -- to live runs, to recent
+runs -- silently unprices the cap. ``executor`` and ``api.runs`` read a run's own snapshot
+the same way, and ``api.whitelist._resolve_title`` reads across all history unbounded.
 
 **Two things are never swept, and both are the keep direction.**
 
 *A snapshot a run is bound to.* ``ReapRun.snapshot_id`` is ``ondelete="RESTRICT"``, so the
 schema refuses to drop one anyway; this module excludes them up front rather than leaning
 on that raise, because a run's approval is bound to the exact rows it was planned against
-(``services.planner``) and the journal is the audit trail. They are excluded whatever the
-run's state: a finished run's record is the part an operator goes back to read.
+(``services.planner``), the journal is the audit trail, and the rolling delete cap is
+priced off those same candidate rows (above). They are excluded whatever the run's state: a
+finished run's record is the part an operator goes back to read, and the cap looks thirty
+days back through runs that finished long ago.
 
 *An operator's own decision.* Hand spares and forced reaps live in ``WhitelistEntry``,
 keyed by ``media_key`` and deliberately "a decision about a file, not a property of the
@@ -59,8 +73,9 @@ from reaper.db.models import ReapRun, Snapshot
 log = structlog.get_logger(__name__)
 
 #: How many of the newest scans survive a sweep. Everything older goes, unless a run is
-#: bound to it. Thirty is roughly a month of nightly scanning, which is far more than any
-#: read path uses -- every one of them takes the single newest snapshot. The cost is
+#: bound to it. A COUNT, not a duration: thirty is about a month of nightly scanning, a day
+#: and a half of hourly, and no time at all on an install scanned by hand. Far more than
+#: the queue uses, which takes the single newest. The cost is
 #: linear and worth knowing before raising it: at ~4 KB per item per scan, thirty scans of
 #: a six-thousand-item library is about 700 MB, and of a twenty-thousand-item library
 #: about 2.4 GB.
