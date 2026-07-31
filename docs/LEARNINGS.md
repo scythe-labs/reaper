@@ -262,7 +262,7 @@ sharpest open item: that a season's frozen size is a *folder* while the executor
 sums episode *files*, so the growth interlock was comparing two quantities and had been silently
 desensitized. Sonarr's statistic and `GET /api/v3/episodefile?seriesId=` read the same table and
 the same column, so the two sides always matched and the interlock's blind band was only the
-tolerance `_grew_materially` declares. `SIZE_TRUTH_PLAN.md` Stage 5 existed to repair that and
+tolerance `_grew_materially` declares. The size-truth plan's Stage 5 existed to repair that and
 would have changed no number; Stage 6 rested on the same error for movies, where `sizeOnDisk`
 and `movieFile.size` are equal for the ordinary one-file movie, so its rung 2 could recover
 nothing by construction. Both were dropped.

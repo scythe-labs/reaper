@@ -1,23 +1,31 @@
-# Size truth: making an unreadable size stop being a number
+# Size truth: making an unreadable size stop being a number — archived
 
-> **LIVE — 4 of 9 stages remain.** Stages 1, 2, 3, 3b and 3c are shipped and verified in code.
-> Most of what follows is therefore the record of work already done; the open items are:
+> **FROZEN 2026-07-30. Do not follow any instruction in this file.** Stages 1, 2, 3, 3b and 3c
+> shipped and are in the code. Stages 4 through 7 were retired unbuilt: an audit read Sonarr's
+> and Radarr's own source and found the premise under Stages 5 and 6 false. `sizeOnDisk` is not
+> a folder walk in either service, it is a `SUM` over the file table, so the season growth
+> interlock this plan set out to repair was already comparing one quantity against itself. The
+> finding is learning 14 in `docs/LEARNINGS.md`; the decisions worth keeping are under **Size
+> acquisition** in `docs/DECISIONS.md`. What survives as open work is issues **#317** (a byte
+> cap that may under-count a movie folder's untracked bytes), **#320** and **#321**. Never edit
+> this file to bring it up to date.
 >
-> 1. **Stage 5 — the only correctness fix left, and it is on the deletion path.** Season sizes
->    still come from the Sonarr season *folder* statistic, not summed episode files, so the
->    frozen and live sides of the season growth interlock measure different quantities.
->    `executor.py`'s `_SEASON_COMPARABLE` comment says it outright: the interlock "has been
->    desensitized since it was written." `SizeSource.SONARR_FILES` exists and is written by
->    nothing in `src/`. Preferring it at scan time is the repair.
-> 2. **Stage 4** — a real-data pass reading `scan.size_source_tally`, recorded as ratios in
->    `docs/LEARNINGS.md`. Cheap, and it gates Stage 6.
-> 3. **Stage 7** — add `"size_bytes"` to `DEGRADABLE` in `tests/_policy_lab.py`, and delete the
->    test-only `snapshot.candidates()` (no caller in `src/`; a standing rule 38 violation).
-> 4. **Stage 6** — movie lower bounds. Optional, low predicted yield, gated on Stage 4.
->    Discardable unless Stage 4 says otherwise.
+> **Four instructions here are actively unsafe now, which is why it is frozen rather than
+> slimmed.** Stage 2 says to regenerate the Alembic baseline; that baseline is frozen and
+> editing it silently skips every existing database. §4.5 and §4.7 say to hand-roll
+> `.notice.notice-warn`; a repo-hygiene test now bans it, and every notice goes through the
+> `Notice` component that announces itself. Stage 5 and §3 say to add a rule 28 exception to
+> `CLAUDE.md`; rule 28 lives in `.claude/rules/backend.md` and already carries one. Four write
+> targets point at `docs/PLAN.md`, deleted in `4eccb71`.
 >
-> Two now-forbidden instructions in the body have been corrected in place and marked. Every
-> cross-file `file:line` citation below has drifted since 2026-07-19; treat them as hints.
+> The body also contradicts itself on a wired field name — §4.4 says `held_back_unknown_size`,
+> which is what shipped, while §4.7 and Stage 3b say `held_back_unmeasured`, which is only a
+> structlog event. Every cross-file `file:line` citation drifted long before the freeze.
+>
+> **What it is still good for**: §2 and §3 are the reasoning behind a column that is load-bearing
+> on the deletion path, and the header lessons below — re-read every docstring asserting an
+> invariant a later stage relaxes, and the browser pass earns its cost — are why the shipped
+> stages landed correct.
 
 
 

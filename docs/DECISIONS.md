@@ -731,3 +731,53 @@ VERDICT: CONDEMN   score 91/100  (threshold 70)
 A tool that only explains its deletions cannot be trusted about its keeps. So every protection
 that was checked and did *not* fire is shown too, which is what makes the record auditable
 rather than a verdict handed down.
+
+
+## Size acquisition
+
+**Choice: Sonarr or Radarr's own total, never a stand-in.**
+
+`Candidate.size_bytes` is the accounting column: it feeds the byte caps, the reclaim estimate
+and the number printed beside the confirmation phrase. It therefore has to *measure* what a
+delete would free, and a bound is not a measurement. Only the service that will perform the
+delete is allowed to say. Every other source Reaper already holds was considered and rejected,
+and each rejection is cheap to re-litigate by accident, so they are written down here.
+
+**No Plex season or episode fetch.** A show listing carries no `Media` element, `PlexClient`
+has no children method for seasons or episodes (`collection_children` is the only one), and
+season rating keys come from Tautulli rather than Plex. Reaching them through plexapi objects
+would reload per item, which is the blowup `clients/plex.py` was rewritten to avoid. Sonarr's
+episode files are cheaper and authoritative.
+
+**No Tautulli `file_size`.** The sweep carries it, and it reports `0` for every show-level row
+while lagging for movies. Adopting it would reintroduce exactly the zero-means-unknown trap the
+nullable column exists to remove.
+
+**No new movie-file route on `RadarrClient`.** Unverifiable from this repo — no OpenAPI spec is
+vendored — and unnecessary, because `movieFile` already rides on the list payload that
+`snapshot`'s helpers parse. The same argument retired `includeEpisodeFile=true` on the episodes
+call: `episode_files(series_id)` is verified by production use in `executor._send_season`.
+
+**Never sum `PlexItem.files`, and never sum across `merged_rating_keys`.** Both over-state, and
+on the deletion lane an over-stated size is the direction that spends a byte cap on bytes that
+were never there. `_parse_sweep_element` flattens every Part of every Media into one tuple, so
+an optimized copy inflates the sum; merged listings are byte-identical twins of one file, so N
+listings yields N times the bytes.
+
+**Never read the size from `facts_json` per consumer.** It is nullable by design, so it cannot
+be a sole source, and reading it there splits one fact across two stores that can disagree. The
+column is the accounting surface and holds the accounting truth.
+
+**An unmeasurable size is stored NULL, never a sentinel.** A `-1`, or a `0` beside a
+`size_known` flag, is the same defect wearing a different number: every arithmetic site accepts
+it silently and produces a wrong total, and it holds only for as long as every call site
+remembers to ask. A NULL makes the sites that forget raise. The repo had already made this call
+once for `watch_event.watched_status`. Existing stored zeros were not backfilled or
+reinterpreted — they are irrecoverably ambiguous, `Candidate` rows are snapshot-scoped, and the
+next scan regenerates them.
+
+The refusal that follows from all of this lands at the **planner**, not the verdict: rule 22
+keeps condemn/abstain/protect in one function, the scoring lane is already honest about an
+unknown size, and feeding an accounting column back into the decision would make a verdict
+depend on which acquisition rung fired. Whether an item can be safely *acted on* is a different
+question from what the evidence says.

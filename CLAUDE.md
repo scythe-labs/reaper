@@ -348,6 +348,6 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
   five places in `src/`: `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py`, and
   `api/routes.py`. Read it before touching any of them, and before the rewatch curve in
   `engine/backtest.py`.
-- `docs/SIZE_TRUTH_PLAN.md` — the one feature plan still live (4 of 9 stages remain).
-- `docs/history/` — frozen: the retired plan narrative and the review passes, including the
+- `docs/CSS_SPLIT_PLAN.md` — the one feature plan still live (4 optional stages remain).
+- `docs/history/` — frozen: the retired plan narratives and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.

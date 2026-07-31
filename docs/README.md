@@ -91,7 +91,6 @@ auto-memory note to explain the product, move it here.
 | `DECISIONS.md` | knowledge | **live** — one section per daggered `STATUS.md` row |
 | `LEARNINGS.md` | knowledge | **live** — append by topic |
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
-| `SIZE_TRUTH_PLAN.md` | state (one feature) | **live** — 4 of 9 stages remain; archive it when they land |
 | `CSS_SPLIT_PLAN.md` | state (one feature) | **live** — 3 of 7 stages landed; the last 4 are optional |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `history/PLAN-narrative.md` | history | frozen — the retired living plan |
@@ -99,3 +98,4 @@ auto-memory note to explain the product, move it here.
 | `history/CODE_REVIEW_PHASES.md` | history | frozen — 10/10 phases done |
 | `history/UI_REVIEW.md` | history | frozen — 92/94 findings fixed |
 | `history/SCREEN_READER_SWEEP.md` | history | frozen — the sweep's narrative; open half in `STATUS.md` |
+| `history/SIZE_TRUTH_PLAN.md` | history | frozen — 5 stages shipped, 4 retired on a false premise |

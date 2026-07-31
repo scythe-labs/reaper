@@ -53,10 +53,10 @@ Last verified against the code: 2026-07-30.
    deletion, which production does not do, so it is a best case: fix or label it when wiring.
    Until they ship the live simulator is the threshold-tuning surface, and no operator copy may
    name the backtest or promise a fitted prior (rule 25).
-3. **Size-truth leftovers** (`docs/SIZE_TRUTH_PLAN.md`): a real-data pass reading
-   `scan.size_source_tally`, recorded as ratios in `LEARNINGS.md` (Stage 4, which gates Stage 6);
-   `"size_bytes"` added to `DEGRADABLE` in `tests/_policy_lab.py`; and the test-only
-   `snapshot.candidates()` deleted, a standing rule 38 violation with no caller in `src/`.
+3. **A byte cap may under-count what a movie delete frees (#317).** Radarr's `sizeOnDisk` sums
+   tracked file rows while the delete removes the movie folder, so extras and artwork are freed
+   uncounted, and a cap that under-counts does not fire. Direction established from Radarr's
+   source, magnitude unmeasured. The season side is unestablished. Learning 14 has the shape.
 4. **The screen-reader sweep is partly landed.** What landed and why each shape was chosen is
    `docs/history/SCREEN_READER_SWEEP.md`; the guard's own measurement is in `docs/LEARNINGS.md`.
    Still open: **#177** the scan and simulator waits pass unannounced; **#189** five policy
@@ -87,6 +87,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Delete mode | **A notice window, not a gate** † |
 | Autonomy | An **earned grant keyed to `policy_hash`** — any edit reverts to approval-required |
 | Caps | **Four**: items + bytes, per-run + rolling 30-day |
+| Size acquisition | **Sonarr or Radarr's own total, never a stand-in** † |
 | Kill switch | **Asymmetric, not one-way** † |
 | Section nav | **Its own grammar, not the pill track** † |
 | Settings saves | **One save bar on General**, the policy editor's `.savebar` reused † |
