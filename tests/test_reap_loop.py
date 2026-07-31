@@ -79,15 +79,42 @@ GB = 1024**3
 
 
 @pytest.fixture
-async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
+async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """The engine behind ``session``, so a test can open a SECOND session on the same file.
+
+    A run's durable state cannot be read back through the session that wrote it. The factory
+    is built ``expire_on_commit=False`` (``db/session.py``), so ``session.get(ReapRun, ...)``
+    answers out of the identity map without going to the database: the row it returns is the
+    one already in memory, and the assertion holds whether or not anything was ever committed
+    (#340). Take this fixture beside ``session`` and read through ``_stored_run``.
+    """
     settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+    yield create_session_factory(engine)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def session(factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:
     async with factory() as s:
         yield s
-    await engine.dispose()
+
+
+async def _stored_run(factory: async_sessionmaker[AsyncSession], run_id: int) -> ReapRun:
+    """The run row as the DATABASE has it, read through a session nothing in the test wrote.
+
+    The point of the second session is its empty identity map: this ``get`` issues a SELECT,
+    so a terminal state the executor only ever set in memory reads as the value on disk
+    instead of as the value it meant to write. Detached on return, with every column already
+    loaded (rule 118: an assertion that cannot fail for the reason it names is worse than
+    none).
+    """
+    async with factory() as fresh:
+        stored = await fresh.get(ReapRun, run_id)
+        assert stored is not None, f"run {run_id} is not on disk at all"
+        return stored
 
 
 async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int | None]]) -> int:
@@ -381,9 +408,14 @@ class TestASeasonDryRunsAsAWholeSequence:
     'files gone, still monitored' re-downloads what we removed, so the file delete is last
     and the executor treats the three steps as one item, not three."""
 
-    async def test_all_three_steps_are_skipped_and_shown(self, session: AsyncSession) -> None:
+    async def test_all_three_steps_are_skipped_and_shown(
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
         snapshot_id = await _snapshot_with(session, [("sonarr:1:42:3", 4 * GB)])
         run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
+        # Committed as PLANNED before the dry run, so the read below is a real question:
+        # anything the dry run consumed would have to overwrite this.
+        await session.commit()
 
         report = await Executor(
             session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
@@ -402,13 +434,11 @@ class TestASeasonDryRunsAsAWholeSequence:
 
         # A dry run consumes nothing: the run stays PLANNED and every step stays PENDING, so
         # the plan can still be dry-run again and, crucially, executed for real afterwards.
-        refreshed = await session.get(ReapRun, run.id)
-        assert refreshed is not None and refreshed.state is RunState.PLANNED
-        steps = (
-            (await session.execute(select(ActionStep).where(ActionStep.run_id == run.id)))
-            .scalars()
-            .all()
-        )
+        # Read through a session the executor never touched, since its own would answer both
+        # of these from its identity map without asking the database (#340).
+        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
+        async with factory() as fresh:
+            steps = await _steps(fresh, run.id)
         assert steps and all(s.state is StepState.PENDING for s in steps)
 
     async def test_a_mixed_movie_and_season_plan_dry_runs_both(self, session: AsyncSession) -> None:
@@ -457,12 +487,15 @@ class TestTheManifestGuard:
 
 
 class TestCapsAbortNeverTruncate:
-    async def test_a_run_over_the_item_cap_aborts_entirely(self, session: AsyncSession) -> None:
+    async def test_a_run_over_the_item_cap_aborts_entirely(
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
         """The whole run stops -- it does not delete the part that fits. Truncating would
         make *which* items die depend on sort order."""
         condemned = [(f"radarr:1:{i}", 1 * GB) for i in range(5)]
         snapshot_id = await _snapshot_with(session, condemned)
         run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
+        await session.commit()  # PLANNED on disk before the dry run, so the read below asks
 
         settings = ProfileSettings(max_items_per_run=3, max_items_per_30d=100)
         report = await Executor(
@@ -475,9 +508,7 @@ class TestCapsAbortNeverTruncate:
         assert report.deleted_items == 0
         # This is a DRY run, so the abort is a *finding*, not a consumed run: the row stays
         # PLANNED and re-runnable, so raising the cap and running again just works.
-        stored = await session.get(ReapRun, run.id)
-        assert stored is not None
-        assert stored.state is RunState.PLANNED
+        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
 
     async def test_caps_off_lets_a_run_over_the_cap_proceed(self, session: AsyncSession) -> None:
         """With the caps switched off, a plan larger than the per-run cap no longer aborts:
@@ -521,10 +552,10 @@ class TestCapsAbortNeverTruncate:
         assert report.aborted_reason is None
 
     async def test_a_real_run_over_the_cap_marks_the_run_aborted(
-        self, session: AsyncSession
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """A REAL run over the cap, by contrast, does consume the run: the row is marked
-        ABORTED (and still nothing is deleted)."""
+        ABORTED **on disk** (and still nothing is deleted)."""
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 1 * GB, 702)]
         )
@@ -540,8 +571,7 @@ class TestCapsAbortNeverTruncate:
         ).execute(run.id)
 
         assert report.state is RunState.ABORTED
-        stored = await session.get(ReapRun, run.id)
-        assert stored is not None and stored.state is RunState.ABORTED
+        assert (await _stored_run(factory, run.id)).state is RunState.ABORTED
 
     async def test_a_run_over_the_byte_cap_aborts(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_with(
@@ -1592,7 +1622,7 @@ class TestStopMidRun:
         assert radarr.delete_calls == [1]  # it ran to completion, not halted on the blip
 
     async def test_a_hard_cancel_marks_aborted_and_defers_the_trash_purge(
-        self, session: AsyncSession
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """A hard cancel mid-run (the app shutting down, or a force-stop) is not the graceful
         Stop -- it arrives as CancelledError, not ExecutionError -- and the executor must still
@@ -1632,9 +1662,9 @@ class TestStopMidRun:
         with pytest.raises(asyncio.CancelledError):
             await _real(session, run, _gateway(radarr={1: radarr}, plex=plex))
 
-        refreshed = await session.get(ReapRun, run.id)
-        assert refreshed is not None
-        assert refreshed.state is RunState.ABORTED  # not left EXECUTING
+        # On disk, not merely on the session's copy of the row: a shutdown is exactly when
+        # an in-memory terminal state buys nothing.
+        assert (await _stored_run(factory, run.id)).state is RunState.ABORTED  # not EXECUTING
         # The path-scoped refresh already fired with the delete, mid-run -- that is not part
         # of the shutdown work.
         assert plex.refreshed == [("Movies", "/movies/One (2001)")]  # the first item's path
@@ -3208,7 +3238,9 @@ class TestRollingThirtyDayCaps:
         assert "30 days" in (report.aborted_reason or "")
         assert radarr.delete_calls == []  # nothing was deleted: abort, never truncate
 
-    async def test_a_dry_run_reports_the_same_rolling_refusal(self, session: AsyncSession) -> None:
+    async def test_a_dry_run_reports_the_same_rolling_refusal(
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
         settings = self._settings()
         first_snapshot = await _snapshot_one(
             session, media_key="radarr:1:1", rating_key=701, size=300 * 10**9
@@ -3220,12 +3252,13 @@ class TestRollingThirtyDayCaps:
             session, media_key="radarr:1:2", rating_key=702, size=300 * 10**9
         )
         second = await _plan(session, second_snapshot)
+        await session.commit()  # PLANNED on disk before the dry run, so the read below asks
         report = await self._execute(session, second.id, settings, dry=True)
 
         assert report.state is RunState.ABORTED
         assert "30 days" in (report.aborted_reason or "")
-        # And the dry run did not consume the plan.
-        assert (await session.get(ReapRun, second.id)).state is RunState.PLANNED  # type: ignore[union-attr]
+        # And the dry run did not consume the plan -- on disk, not in the session's copy.
+        assert (await _stored_run(factory, second.id)).state is RunState.PLANNED
 
     async def test_the_rolling_item_cap_counts_past_verified_items(
         self, session: AsyncSession
@@ -3301,11 +3334,12 @@ class TestAPolicyEditVoidsAPendingPlan:
         assert report.state is RunState.COMPLETED
 
     async def test_tightening_the_policy_after_approval_refuses_the_run(
-        self, session: AsyncSession
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
     ) -> None:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
         await self._tighten(session)
+        await session.commit()  # PLANNED on disk before the refusal, so the read below asks
 
         radarr = FakeRadarr()
         # A refusal, not an abort: like the manifest re-check this runs before the run is
@@ -3314,9 +3348,9 @@ class TestAPolicyEditVoidsAPendingPlan:
             await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert radarr.delete_calls == []  # nothing was sent
-        refreshed = await session.get(ReapRun, run.id)
-        assert refreshed is not None
-        assert refreshed.state is RunState.PLANNED  # still runnable after a re-scan
+        # On disk: a refused run that claimed EXECUTING and could not roll it back is exactly
+        # the state that would make "still runnable after a re-scan" false.
+        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
 
     async def test_the_dry_run_proves_the_same_refusal(self, session: AsyncSession) -> None:
         """A simulation that still said "would delete" would send the operator to the real
@@ -4126,7 +4160,7 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
         return await _plan(session, snapshot_id)
 
     async def test_a_raw_error_journals_the_item_and_halts_the_run(
-        self, session: AsyncSession
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
     ) -> None:
         run = await self._three(session)
 
@@ -4152,8 +4186,9 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
         steps = {s.media_key: s for s in await _steps(session, run.id)}
         assert steps["radarr:1:2"].state is StepState.FAILED  # not left SENT forever
         assert steps["radarr:1:2"].file_removed_at is not None  # and the removal is charged
-        stored = await session.get(ReapRun, run.id)
-        assert stored is not None and stored.state is RunState.ABORTED
+        # The terminal state on disk, which is the half of "not wedged" that outlives the
+        # process holding the session.
+        assert (await _stored_run(factory, run.id)).state is RunState.ABORTED
 
     async def test_a_mapped_failure_still_lets_the_run_carry_on(
         self, session: AsyncSession
