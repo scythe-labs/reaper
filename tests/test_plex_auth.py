@@ -9,8 +9,6 @@ library. Maintainerr has no auth at all; Seerr trusts whoever logs in first.
 
 from __future__ import annotations
 
-import asyncio
-
 import httpx
 import pytest
 import respx
@@ -260,22 +258,10 @@ class TestWaitingForAnApprovedPin:
 
     The sleeps are recorded rather than waited out, which is what makes the pacing assertable
     at all: a honored ``Retry-After`` is invisible if the only observable is that the call
-    eventually returned.
+    eventually returned. The ``slept`` fixture (``conftest.py``) records them and owns the
+    clock they advance, so every window below is counted in the delays the loop asked for
+    rather than in how long the machine took to ask.
     """
-
-    @pytest.fixture
-    def slept(self, monkeypatch: pytest.MonkeyPatch) -> list[float]:
-        """Every delay the loop asks for, in order. Still instant (conftest already
-        replaced ``asyncio.sleep``); this only writes the number down on the way past."""
-        recorded: list[float] = []
-        instant = asyncio.sleep
-
-        async def _record(delay: float, result: object = None) -> object:
-            recorded.append(delay)
-            return await instant(0, result)
-
-        monkeypatch.setattr(asyncio, "sleep", _record)
-        return recorded
 
     async def test_a_token_that_arrives_on_a_later_poll_is_returned(
         self, httpx2_mock: respx.Router, slept: list[float]
@@ -349,39 +335,42 @@ class TestWaitingForAnApprovedPin:
     async def test_the_deadline_clips_a_backoff_the_server_chose(
         self, httpx2_mock: respx.Router, slept: list[float]
     ) -> None:
-        """A twenty-second backoff inside a short window sleeps what is LEFT of the window
-        and then reports the sign-in as not completed. It never sits inside a sleep the
-        server chose, past the deadline the caller set.
+        """A twenty-second backoff is honored while the window has room for it, then clipped
+        to the fifteen seconds left, and the sign-in is reported as not completed. It never
+        sits inside a sleep the server chose, past the deadline the caller set.
 
-        The window is a fifth of a second because the suite's global ``asyncio.sleep`` patch
-        makes every sleep instant while ``loop.time()`` keeps advancing for real -- so the
-        loop spins through the whole remaining window in wall-clock. Testing the deadline at
-        its 300s default would take 300 seconds.
+        The window is spent in sleeps, not in wall clock: ``slept`` advances the clock by
+        each delay, so the two below are what closes it. Asserting against a real 200ms
+        window measured the machine instead, and lost the race under load (#346).
         """
-        window = 0.2
         httpx2_mock.get(PIN_URL).mock(
             return_value=httpx.Response(429, headers={"Retry-After": "20"}, json={})
         )
         async with PlexTvClient(CID, safety=SAFETY) as client:
-            token = await client.wait_for_pin(77, timeout=window)
+            token = await client.wait_for_pin(77, timeout=35.0)
 
         assert token is None
-        assert slept, "it polled at least once before giving up"
-        assert all(delay <= window for delay in slept), slept
+        assert slept == [20.0, 15.0]
 
     async def test_an_unapproved_pin_gives_up_at_the_deadline(
-        self, httpx2_mock: respx.Router
+        self, httpx2_mock: respx.Router, slept: list[float]
     ) -> None:
-        """Nobody approved it. The loop returns "not completed" rather than raising, so the
-        route above can tell the browser to keep waiting or start over."""
+        """Nobody approved it. The loop polls at its own interval for the whole window, then
+        returns "not completed" rather than raising, so the route above can tell the browser
+        to keep waiting or start over.
+
+        Three intervals of window buys exactly three polls, which is the assertion. Racing a
+        real 50ms window instead left the poll count to the machine (#346).
+        """
         route = httpx2_mock.get(PIN_URL).mock(
             return_value=httpx.Response(200, json={"id": 77, "authToken": None})
         )
         async with PlexTvClient(CID, safety=SAFETY) as client:
-            token = await client.wait_for_pin(77, timeout=0.05)
+            token = await client.wait_for_pin(77, timeout=3 * PIN_POLL_INTERVAL)
 
         assert token is None
-        assert route.call_count >= 1
+        assert route.call_count == 3
+        assert slept == [PIN_POLL_INTERVAL] * 3
 
     async def test_a_real_failure_is_not_swallowed_as_back_pressure(
         self, httpx2_mock: respx.Router
