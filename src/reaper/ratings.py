@@ -195,7 +195,9 @@ def from_plex(
     Values arrive already normalized: Plex serves every rating slot on a 0-10
     scale whatever the source (measured -- see the module docstring), so an 84%
     Rotten Tomatoes score is ``"8.4"`` here. Raw percentages are a Radarr shape,
-    handled in :func:`from_radarr`, never divided out of a Plex value.
+    handled in :func:`from_radarr`. One exception below rescales a Plex value
+    anyway, for a percentage-shaped source arriving above 10; what that is for,
+    and the band where it is not known to be right, is written at the branch.
     """
     if value in (None, ""):
         return None
@@ -216,11 +218,29 @@ def from_plex(
         # never condemn -- so it is dropped rather than guessed at.
         return None
 
-    # Plex's contract is 0-10 for every slot, so the value passes through
-    # undivided: dividing a Tomatometer here (as Radarr's raw percentages need)
-    # turned an 84% audience score into 0.84, displayed as 8%. Defensively, a
-    # percentage-shaped source above 10 can only be a raw percentage from an
-    # agent that skipped Plex's normalization -- the value itself proves the scale.
+    # Plex's contract is 0-10 for every slot, so a value at or below 10 passes through
+    # undivided: dividing a Tomatometer here (as Radarr's raw percentages need) turned an
+    # 84% audience score into 0.84, displayed as 8%. Above 10 the contract is already
+    # broken, and this rescales defensively, on the reasoning that a percentage-shaped
+    # source that high can only be a raw percentage from an agent which skipped Plex's
+    # normalization -- the value itself proving the scale.
+    #
+    # Right for the shapes it was written for (84, 96, 100) and for a genuinely low
+    # Tomatometer, where 11 means 11% and 1.1 is the correct reading. **Not known to be
+    # right just above the boundary** (issue #244): 10.1 becomes 1.01 and the panel prints
+    # "10%" for a title the server reported 10.1 for, where the competing reading is that a
+    # value a hair over 10 is a 0-10 score with a rounding artifact and is out of contract,
+    # which is what already happens to a NON-percentage source at 10.1 four lines down -- it
+    # is dropped, and the panel says there is no rating rather than printing a number nothing
+    # produced (rule 96). Both readings withdraw the protection, so no file turns on this;
+    # they differ in what the operator is told. Settling it needs the distribution a real
+    # library serves in (10, 15], which no stored evidence here retains -- `ratings_json`
+    # keeps a display projection with no provenance and no raw value. Until then neither
+    # answer is pinned by a test, because a test asserting either would read as a proof that
+    # it is correct (rule 118). What IS measured, in docs/LEARNINGS.md: a live sweep of every
+    # movie and show section found thousands of values under imdb://, themoviedb:// and
+    # rottentomatoes:// images with not one above 10 -- so on that server this branch never
+    # fires at all, and the ambiguous band is unreached rather than resolved.
     if number > 10 and source in _PERCENTAGE_SOURCES:
         number /= 10.0
     if not 0.0 <= number <= 10.0:
