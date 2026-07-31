@@ -869,6 +869,135 @@ class TestTheDangerousConfigDetector:
         assert inspect(DEFAULT_MOVIE_POLICY, ProfileSettings()) == []
 
 
+class TestWhereEachDetectorThresholdActuallySits:
+    """The same four warnings above, driven at the value they turn on rather than well
+    inside it. Issue #243, and every row of it was real.
+
+    The tests above drive 96 against ``>= 90``, 7 against ``<= 20``, 7 against ``< 30`` and
+    20 against ``<= 30``. Each one proves the warning exists somewhere in its region and
+    none of them can say where the edge is, so a mutation run moved every threshold a point
+    in both directions, swapped ``>=`` for ``>``, and the suite stayed green through all of
+    it. An operator setting a bar of exactly 9.0 is the one this costs: dead center of the
+    misconfiguration these sentences exist to catch, and one point outside every case that
+    was driven.
+
+    So each threshold is driven at the value and one step either side. The rendered number
+    is asserted too, not only the sentence: ``rule.floor / 10`` converts the stored tenths
+    for display and survived becoming ``/ 9``, ``/ 11`` and ``* 10``, which is the same
+    divisor drift #241 found one layer down in ``RatingFloorGate``.
+    """
+
+    #: Enough votes to build a rule on a source that counts them. Not a threshold under
+    #: test here, and deliberately not the shipped 1000 (rule 141).
+    VOTES = 250
+
+    def _bar(self, source: RatingSource, floor: int, votes: int) -> PolicyBody:
+        return _policy(
+            gates=(GateSetting(gate=GateId.RATING_FLOOR),),
+            keep_rating_rules=(RatingRuleSpec(source=source, floor=floor, min_votes=votes),),
+        )
+
+    def _said(self, body: PolicyBody, **kwargs: object) -> list[str]:
+        return [w.message for w in inspect(body, ProfileSettings(), **kwargs)]  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(("floor", "shown"), [(89, None), (90, "9.0"), (91, "9.1")])
+    def test_the_bar_that_protects_almost_nothing_starts_at_nine_point_oh(
+        self, floor: int, shown: str | None
+    ) -> None:
+        """8.9 is a high bar somebody may well mean. 9.0 is where we say so."""
+        loud = self._said(self._bar(RatingSource.IMDB, floor, self.VOTES))
+
+        if shown is None:
+            assert loud == []
+        else:
+            assert len(loud) == 1
+            assert "will protect almost nothing" in loud[0]
+            assert f"bar of {shown} " in loud[0]
+
+    @pytest.mark.parametrize(("floor", "shown"), [(19, "1.9"), (20, "2.0"), (21, None)])
+    def test_the_bar_that_protects_everything_stops_at_two_point_oh(
+        self, floor: int, shown: str | None
+    ) -> None:
+        """The mirror image, and the arm that catches someone typing 7 meaning 7.0."""
+        loud = self._said(self._bar(RatingSource.IMDB, floor, self.VOTES))
+
+        if shown is None:
+            assert loud == []
+        else:
+            assert len(loud) == 1
+            assert "protects essentially everything" in loud[0]
+            assert f"bar of {shown} " in loud[0]
+
+    @pytest.mark.parametrize(("floor", "shown"), [(19, "19%"), (20, "20%"), (21, None)])
+    def test_a_percentage_bar_read_on_the_ten_point_scale_is_called_out(
+        self, floor: int, shown: str | None
+    ) -> None:
+        """The arm nothing drove at all: neither of its two sentences appeared anywhere in
+        ``tests/``, and all six of its mutants survived, including the whole comparison
+        inverted. A Rotten Tomatoes bar of 8 means 8%, which keeps the library.
+
+        The number is a percentage here and NOT divided, so this also pins that the two
+        arms did not merge: the sibling above would render the same floor as ``2.0``.
+        """
+        loud = self._said(self._bar(RatingSource.ROTTEN_TOMATOES_CRITIC, floor, 0))
+
+        if shown is None:
+            assert loud == []
+        else:
+            assert len(loud) == 1
+            assert "protects almost everything" in loud[0]
+            assert f"bar of {shown} " in loud[0]
+
+    def test_a_high_percentage_bar_is_an_ordinary_setting_and_stays_quiet(self) -> None:
+        """91 is loud out of ten and unremarkable as a percentage, so it separates the two
+        arms in the direction the case above cannot: a mutant merging them fires here."""
+        assert self._said(self._bar(RatingSource.ROTTEN_TOMATOES_CRITIC, 91, 0)) == []
+        assert self._said(self._bar(RatingSource.IMDB, 91, self.VOTES)) != []
+
+    @pytest.mark.parametrize(("days", "loud"), [(29, True), (30, False), (31, False)])
+    def test_a_watch_window_reads_as_very_short_below_one_month(
+        self, days: int, loud: bool
+    ) -> None:
+        """A long reach is stated so this is the only window warning in play: the same
+        control feeds a shortfall lane that fires when the history is shallower."""
+        body = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=days),)
+        )
+
+        said = self._said(body, history_reach_days=800.0)
+
+        assert bool(said) is loud
+        if loud:
+            assert f"A {days}-day watch window is very short" in said[0]
+
+    def test_a_very_short_window_on_a_gate_that_is_off_says_nothing(self) -> None:
+        """The switch, not only the number. With the gate off the window falls back to the
+        365-day default, so there is nothing on the page to warn about."""
+        off = _policy(
+            gates=(
+                GateSetting(
+                    gate=GateId.SERVER_POPULARITY, threshold=2, window_days=29, enabled=False
+                ),
+            )
+        )
+
+        assert self._said(off, history_reach_days=800.0) == []
+
+    @pytest.mark.parametrize(("condemn_at", "loud"), [(29, True), (30, True), (31, False)])
+    def test_the_threshold_that_condemns_almost_everything_stops_at_thirty(
+        self, condemn_at: int, loud: bool
+    ) -> None:
+        """The one ``danger`` on this list, so severity is asserted rather than presence
+        alone: demoting it to a ``warn`` is the same protection lost, more quietly."""
+        flagged = inspect(_policy(condemn_at=condemn_at), ProfileSettings())
+
+        assert bool(flagged) is loud
+        if loud:
+            assert flagged[0].field == "condemn_at"
+            assert flagged[0].severity == "danger"
+            assert f"A threshold of {condemn_at} condemns almost everything" in flagged[0].message
+
+
 class TestADormancyFloorDeeperThanTheWatchHistory:
     """The root of the shallow-mirror family, and the one member that had no warning (#217).
 

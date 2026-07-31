@@ -2481,6 +2481,55 @@ nominal one plus half the spread on average. The general shape: **a conditional 
 firing schedule that is not correlated with what it skips on**, and an exact-multiple interval is
 correlated with everything on a cron.
 
+## A threshold driven well inside its region cannot say where its edge is (2026-07-30)
+
+`inspect`, the dangerous-config detector, is one 900-line function because every warning the
+policy editor prints is a branch in it: 321 mutants, **244 killed, 77 survived**. It is the
+largest zone here by a distance and worth the ceiling, because the ceiling is per *answer*
+rather than per file — splitting it by warning would report slice kill rates that no longer
+add up to a statement about the detector.
+
+The four boundary rows left on #243 were all real, and so was a fifth nobody had listed. What
+makes them worth writing down is that **four of the five already had a test on them**, and
+every one of those tests drove the threshold from well inside its own region:
+
+| the branch | what the suite drove | what nothing could tell |
+| --- | --- | --- |
+| `rule.floor >= 90` | 96 | 89 from 90 from 91, or `>=` from `>` |
+| `rule.floor <= 20` | 7 | 19 from 20 from 21 |
+| `window_days < 30` | 7 | 29 from 30 from 31 |
+| `condemn_at <= 30` | 20 | 29 from 30 from 31 |
+
+96 proves a warning exists somewhere above 90 and says nothing about where. So all three
+mutants on each line survived — the constant a point either way, and the operator relaxed —
+and the operator this costs is the one setting a bar of exactly 9.0: dead center of the
+mistake the sentence exists to catch, and one point outside every case that was driven. **An
+example is evidence a region is non-empty; only a pair either side of the value is evidence
+about the edge.** Coverage cannot see this at all, and neither can a reading of the tests: the
+line is reached, the assertion is real, and the number it drives is the whole defect.
+
+Two other shapes came out of the same run, both already familiar:
+
+- **The undriven arm.** `is_percentage_source(rule.source)`'s true branch — the Rotten
+  Tomatoes mix-up, where typing 8 for 80% sets a bar that keeps the library — had no test at
+  all. Its two sentences appeared nowhere in `tests/`, and all seven of its mutants survived,
+  including deleting the guard outright. It sits four lines above a sibling that *is* tested,
+  which is the rule 72 shape: the copy someone read is the copy someone pinned.
+- **The divisor, for the third time.** `rule.floor / 10` converts stored tenths for display
+  and survived becoming `/ 9`, `/ 11` and `* 10` at both of its sites, so a configured 7.5
+  could render as 8.3 while the gate went on enforcing 7.5. #241 found the identical shape one
+  layer down in `RatingFloorGate`. A unit conversion is where a boundary corpus pays twice:
+  the same case that locates the edge also pins the number the operator reads.
+
+**The static read's record, now that every row has been run.** #243 was filed as a question
+(`Status/Need More Info`) rather than a defect, on the grounds that reading tests to guess what
+they pin is unreliable. It was: nine of eleven rows were real, two were refuted — and *both*
+misses were in the reassuring direction, predicting an undefended branch that turned out
+defended. That is the safer way to be wrong, and it is still the reason the label was right.
+The row that moved the other way is the sharpest of the set: the IMDb fail-closed guard was
+reported closed once, on a run whose operators could not express deleting an `if` at all, and
+came back real the moment they could.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

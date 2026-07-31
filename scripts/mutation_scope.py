@@ -4,17 +4,21 @@ Not a coverage tool and not a score. It answers one question per mutant -- *if t
 silently stopped doing its job, would the suite fail?* -- and a survivor is a branch nothing
 is defending. `docs/LEARNINGS.md` records what the first run found.
 
-Run it:
+Run it, one zone per run:
 
-    uv run python scripts/mutation_scope.py --zone policy-repair-shims
-    uv run python scripts/mutation_scope.py --zone policy-save-boundary
-    uv run python scripts/mutation_scope.py --zone engine-gates
+    uv run python scripts/mutation_scope.py --zone <name>
+    uv run python scripts/mutation_scope.py --help    # every zone there is
+
+The names are not listed here on purpose. `--zone` is `choices=sorted(ZONES)`, so `--help`
+answers off the declaration and a copy in this docstring could only ever drift from it --
+it already had, silently omitting a shipped zone (rule 144).
 
 Add a zone to `ZONES` below: the module, the functions (`Class.method` for a method), the tests
 that could plausibly kill a mutant in them, and a probe. **Scope by function, not by file.**
 The two shims are 60 mutants and three minutes, the save boundary 78; the same operators over
 all of `policy.py` would be past a thousand, which is how an exercise like this stops being
-run at all.
+run at all. One function can still be big -- `inspect` alone is 321 -- and that is the ceiling
+worth paying, because it is a ceiling per *answer* rather than per file.
 
 Two passes per mutant:
 
@@ -1011,6 +1015,111 @@ print(json.dumps({"order": order, "cases": cases}))
 """
 
 
+#: `inspect` is the dangerous-config detector: it refuses nothing and deletes nothing, it
+#: only *speaks*. So the whole answer is the sentences, and the probe records every warning
+#: verbatim -- a corpus recording counts would call a reworded remedy no change.
+#:
+#: The direction rule is which way a survivor moves the operator. A mutant that DROPS a
+#: warning leaves someone staring at a page that looks fine while a bar of 0.7 keeps
+#: everything or a threshold of 20 condemns it; one that ADDS a warning to a healthy policy
+#: is noise, and noise is what teaches an operator to ignore the panel. Dropping is worse,
+#: and `severity` is part of each recorded answer because a `danger` demoted to a `warn` is
+#: the same loss in a quieter form.
+#:
+#: **The corpus is boundary-driven, not example-driven** (#243). Every branch below was
+#: reachable by the old suite, and every one of them was driven only well inside its region
+#: -- 96 against `>= 90`, 7 against `<= 20`, 20 against `<= 30` -- which is a corpus that
+#: cannot tell `>=` from `>`. Each threshold here is driven at the value, one either side.
+INSPECT_PROBE = r"""
+import json
+from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    DEFAULT_TV_POLICY,
+    GateId,
+    GateSetting,
+    PolicyBody,
+    ProfileSettings,
+    RatingRuleSpec,
+    SignalSetting,
+    inspect,
+)
+from reaper.engine.signals import SignalId
+from reaper.ratings import RatingSource
+
+cases, order = {}, []
+
+# Every warning the page would print, in order, severity and field included.
+def record(name, body, **kwargs):
+    order.append(name)
+    try:
+        got = inspect(body, kwargs.pop("settings", None) or ProfileSettings(), **kwargs)
+    except Exception as exc:
+        cases[name] = f"RAISED {type(exc).__name__}: {' '.join(str(exc).split())[:160]}"
+        return
+    cases[name] = [f"{w.severity}|{w.field}|{w.message}" for w in got]
+
+def policy(**overrides):
+    base = {
+        "media_type": "movie",
+        "condemn_at": 70,
+        "gates": (GateSetting(gate=GateId.WHITELISTED),),
+        "signals": (SignalSetting(signal=SignalId.UNWATCHED, weight=100, saturate_at=730),),
+    }
+    return PolicyBody(**{**base, **overrides})
+
+# --- the control. A shipped default that starts warning is a mutant caught by direction
+# alone, and without it a corpus of deliberately-broken policies cannot tell "this branch
+# stopped firing" from "this branch now fires everywhere".
+record("default-movie", DEFAULT_MOVIE_POLICY)
+record("default-tv", DEFAULT_TV_POLICY)
+
+# --- the rating bar, on a source read out of ten: `floor >= 90` and `floor <= 20` ---
+def rating_bar(source, floor, votes):
+    return policy(
+        gates=(GateSetting(gate=GateId.RATING_FLOOR),),
+        keep_rating_rules=(RatingRuleSpec(source=source, floor=floor, min_votes=votes),),
+    )
+
+for floor in (19, 20, 21, 89, 90, 91):
+    record(f"ten-scale-bar-{floor}", rating_bar(RatingSource.IMDB, floor, 1000))
+
+# --- the same bar on a percentage source, which takes the OTHER arm and no vote floor.
+# Nothing in `tests/` drove this arm at all: its two sentences appear in no test file.
+for floor in (19, 20, 21):
+    record(
+        f"percentage-bar-{floor}",
+        rating_bar(RatingSource.ROTTEN_TOMATOES_CRITIC, floor, 0),
+    )
+# The arm each floor does NOT take, so a mutant merging the two is visible: 91 is loud on
+# the ten-point scale and silent as a percentage, where 91% is an ordinary bar.
+record("percentage-bar-91", rating_bar(RatingSource.ROTTEN_TOMATOES_CRITIC, 91, 0))
+
+# --- the watch window: `window_days < 30`, and the gate switch that gates it ---
+def window(days, enabled=True):
+    return policy(
+        gates=(
+            GateSetting(
+                gate=GateId.SERVER_POPULARITY, threshold=2, window_days=days, enabled=enabled
+            ),
+        )
+    )
+
+for days in (29, 30, 31):
+    # Reach is stated and long, so the short-window warning is the only one in play rather
+    # than the shortfall lane the same window feeds.
+    record(f"window-{days}", window(days), history_reach_days=800.0)
+    # The merged remedy: the same boundary read a second time, down a different branch.
+    record(f"window-{days}-short-history", window(days), history_reach_days=3.0)
+record("window-29-gate-off", window(29, enabled=False), history_reach_days=800.0)
+
+# --- the condemn threshold: `condemn_at <= 30`, the one `danger` on this list ---
+for at in (29, 30, 31):
+    record(f"condemn-at-{at}", policy(condemn_at=at))
+
+print(json.dumps({"order": order, "cases": cases}))
+"""
+
+
 ZONES: dict[str, Zone] = {
     "policy-repair-shims": Zone(
         module=Path("src/reaper/engine/policy.py"),
@@ -1108,6 +1217,25 @@ ZONES: dict[str, Zone] = {
             "tests/test_policy.py",
         ),
         probe=RATINGS_PROBE,
+    ),
+    # One function, and the largest zone here by a distance: `inspect` is 900 lines because
+    # every warning the policy editor prints is a branch in it. Splitting it by warning was
+    # the alternative and it would report per-slice kill rates that no longer add up to an
+    # answer about the detector, so it is scoped whole.
+    "policy-inspect": Zone(
+        module=Path("src/reaper/engine/policy.py"),
+        functions=("inspect",),
+        tests=(
+            "tests/test_policy.py",
+            "tests/test_custom_condemn.py",
+            "tests/test_season_pruning.py",
+            "tests/test_policy_permutations.py",
+            # The route that hands these warnings to the editor. It kills nothing the file
+            # above does not, and it is here because a mutant that changes the SHAPE of a
+            # warning breaks at the serializer rather than at an assertion.
+            "tests/test_api.py::TestPolicyValidation",
+        ),
+        probe=INSPECT_PROBE,
     ),
 }
 DEFAULT_ZONE = "policy-repair-shims"
