@@ -46,6 +46,15 @@ restores it, or the next xdist worker inherits it. Re-reading the wall clock pro
 reads is rule 119's environmental accident on a timer: freeze the clock or assert a range,
 never sample twice and compare.
 
+**Where the suite has already neutered the delay, elapsed time cannot fail at all** — so the
+range is not the safe half of that choice. `conftest.py` makes every `asyncio.sleep` instant,
+which returns an unclipped `sleep(86400)` exactly as fast as a clipped one: three pin-poll
+tests asserting the call came back quickly passed with the deadline interlock deleted, and a
+fourth read a real 200ms window that held ~1,073 polls idle and 11 under load (#346). Take
+`conftest.py`'s `slept` fixture, which owns `loop.time()` and advances it by each delay, and
+assert the delay that was asked for: that is the behavior, where elapsed time is a
+measurement of the machine (rule 118, for anything bounded by a deadline).
+
 **135. A module mock answers everything the tree under test reads, and a gap fails the run —
 because a warning cannot.** `vi.mock("../api", …)` hands every consumer `undefined` for what it
 omits, including reads no test in the file names; React Query renders that as a failed read, so
