@@ -82,6 +82,13 @@ def is_percentage_source(source: RatingSource) -> bool:
 
 
 #: Operator-facing names for each source. Never a raw enum value or an id in the UI.
+#:
+#: **Every label is written for the position after a preposition** -- ``on {label}``, ``no
+#: rating on {label}`` -- which is why ``UNKNOWN`` carries its own article. Putting one
+#: after an article instead produces "A IMDb bar" and "A an unknown source bar", both of
+#: which shipped (#338). So place a label after a preposition, never after ``a``/``an``/
+#: ``the``: the article then governs a literal noun and cannot disagree with the value.
+#: ``test_engine_invariants`` drives every member through the sentences that render one.
 SOURCE_LABELS: dict[RatingSource, str] = {
     RatingSource.IMDB: "IMDb",
     RatingSource.TMDB: "TMDb",

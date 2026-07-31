@@ -312,7 +312,7 @@ class RatingRuleSpec(Frozen):
             # votes -- a number that means nothing. The same refusal the single-source gate
             # carried, now per source that actually counts votes.
             raise ValueError(
-                f"A vote floor of 0 makes the {source_label(self.source)} bar meaningless: it "
+                f"A vote floor of 0 makes the bar on {source_label(self.source)} meaningless: it "
                 "would protect a high score drawn from a handful of votes. Use at least 1 "
                 "(1000 is a sensible default)."
             )
@@ -1133,7 +1133,7 @@ def inspect(
                             field="keep_rating_rules",
                             severity="warn",
                             message=(
-                                f"A {label} bar of {rule.floor}% protects almost everything. "
+                                f"A bar of {rule.floor}% on {label} protects almost everything. "
                                 "This field is a percentage: for 80% enter 80, not 8."
                             ),
                         )
@@ -1145,7 +1145,7 @@ def inspect(
                             field="keep_rating_rules",
                             severity="warn",
                             message=(
-                                f"A {label} bar of {rule.floor / 10:.1f} will protect almost "
+                                f"A bar of {rule.floor / 10:.1f} on {label} will protect almost "
                                 "nothing: very few titles rate that highly."
                             ),
                         )
@@ -1156,7 +1156,7 @@ def inspect(
                             field="keep_rating_rules",
                             severity="warn",
                             message=(
-                                f"A {label} bar of {rule.floor / 10:.1f} protects essentially "
+                                f"A bar of {rule.floor / 10:.1f} on {label} protects essentially "
                                 "everything. Did you mean 7.0?"
                             ),
                         )
@@ -1683,12 +1683,15 @@ def inspect(
     # itself in that case, and stacking both told the operator to raise and to lower the same
     # number in adjacent sentences.
     if very_short and short is None:
+        # "A {n}-day window" would read "A 8-day" at 8, 11 and 18, all reachable under 30.
+        # The article governs "watch window" instead, so no value can disagree with it (#338).
+        window_text = f"{window_days} day" if window_days == 1 else f"{window_days} days"
         warnings.append(
             PolicyWarning(
                 field=f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
                 severity="warn",
                 message=(
-                    f"A {window_days}-day watch window is very short: almost nothing gets "
+                    f"A watch window of {window_text} is very short: almost nothing gets "
                     "watched inside it, so the few-recent-watchers pressure applies to nearly "
                     "your whole library. A year is the usual setting."
                 ),

@@ -54,7 +54,7 @@ from reaper.engine.policy import (
 )
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
-from reaper.ratings import RatingSource
+from reaper.ratings import RatingSource, is_percentage_source, source_label
 from reaper.services.scan_runner import GATE_TYPES, build_gates
 from reaper.services.season_pruning import SeasonStats, plan_series_prune
 
@@ -954,21 +954,67 @@ class TestWhereEachDetectorThresholdActuallySits:
         assert self._said(self._bar(RatingSource.ROTTEN_TOMATOES_CRITIC, 91, 0)) == []
         assert self._said(self._bar(RatingSource.IMDB, 91, self.VOTES)) != []
 
-    @pytest.mark.parametrize(("days", "loud"), [(29, True), (30, False), (31, False)])
+    @pytest.mark.parametrize("source", list(RatingSource), ids=[s.value for s in RatingSource])
+    def test_every_source_names_itself_after_a_preposition_never_after_an_article(
+        self, source: RatingSource
+    ) -> None:
+        """Each of these sentences places a source label, and the label has to fit where it
+        lands.
+
+        The cases above drive IMDb and Rotten Tomatoes critics only, which is the population
+        that made "A IMDb bar of 9.6" read as correct English to everyone who checked it
+        (#338): "A Rotten Tomatoes bar" is fine, and IMDb was never rendered in a case that
+        asserted the article. ``UNKNOWN`` is the sharper one -- its label is the phrase "an
+        unknown source", so the same sentence doubled the article into "A an unknown source
+        bar" -- and it is reachable through the API even though the editor offers five
+        sources.
+
+        So this sweeps the whole enum rather than the two members that motivated the fix
+        (rule 145), and pins the position contract ``ratings.SOURCE_LABELS`` documents: the
+        label follows a preposition, so the article governs "bar" and cannot disagree with
+        whatever the label turns out to be. A revert to the article form drops "on <label>"
+        and fails here for every source at once.
+        """
+        pct = is_percentage_source(source)
+        loud = self._said(self._bar(source, 19, 0 if pct else self.VOTES))
+
+        assert len(loud) == 1
+        shown = "19%" if pct else "1.9"
+        assert loud[0].startswith(f"A bar of {shown} on {source_label(source)} ")
+
+    @pytest.mark.parametrize(
+        ("days", "span"),
+        [
+            (1, "1 day"),
+            (8, "8 days"),
+            (11, "11 days"),
+            (18, "18 days"),
+            (29, "29 days"),
+            (30, None),
+            (31, None),
+        ],
+    )
     def test_a_watch_window_reads_as_very_short_below_one_month(
-        self, days: int, loud: bool
+        self, days: int, span: str | None
     ) -> None:
         """A long reach is stated so this is the only window warning in play: the same
-        control feeds a shortfall lane that fires when the history is shallower."""
+        control feeds a shortfall lane that fires when the history is shallower.
+
+        The sweep used to drive 29, 30 and 31 alone, which is why "A 8-day watch window"
+        shipped (#338): every value that needs "An" sits below 29 and none was reachable
+        from this table. The article now governs "watch window", a literal noun no value
+        can disagree with, so what these cases pin is that the number stays out of its
+        scope -- and 1 pins the singular the plural spelling would have gotten wrong.
+        """
         body = _policy(
             gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=days),)
         )
 
         said = self._said(body, history_reach_days=800.0)
 
-        assert bool(said) is loud
-        if loud:
-            assert f"A {days}-day watch window is very short" in said[0]
+        assert bool(said) is (span is not None)
+        if span is not None:
+            assert f"A watch window of {span} is very short" in said[0]
 
     def test_a_very_short_window_on_a_gate_that_is_off_says_nothing(self) -> None:
         """The switch, not only the number. With the gate off the window falls back to the
@@ -1430,7 +1476,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         # The shortfall is the one that survives -- it names the live outcome, and the
         # short-window advice describes pressure that cannot land while nothing is flagged.
         assert "Nothing will be flagged for removal" in message
-        assert "A 7-day watch window is very short" not in message
+        assert "A watch window of 7 days is very short" not in message
         # Its remedy no longer points the way the other end pushes back on.
         assert "Lower this window" not in message
         assert "a shorter window would leave almost nothing counted as watched" in message
@@ -1444,7 +1490,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert "very short" not in outrun_only
 
         short_only = self._window_warnings(self._pop(window_days=7), reach=800.0)[0].message
-        assert "A 7-day watch window is very short" in short_only
+        assert "A watch window of 7 days is very short" in short_only
         assert "A year is the usual setting." in short_only
         assert "Nothing will be flagged for removal" not in short_only
 

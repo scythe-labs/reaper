@@ -536,6 +536,32 @@ _BAR_TEXT: dict[RatingSource, str] = {
     RatingSource.UNKNOWN: "7.5 on an unknown source from 1,000 votes",
 }
 
+#: How "we found no rating at all from this source" reads for every source, written from
+#: the spec the same way. Keyed on the whole enum for the same reason (rule 145), and
+#: pinning the same position contract: the label follows a preposition, never an article
+#: or a bare "no", which is what rendered "no an unknown source rating" (#338).
+_MISS_TEXT: dict[RatingSource, str] = {
+    source: f"no rating on {label} (you keep {bar})"
+    for source, label, bar in (
+        (RatingSource.IMDB, "IMDb", "7.5 on IMDb from 1,000 votes"),
+        (RatingSource.TMDB, "TMDb", "7.5 on TMDb from 1,000 votes"),
+        (
+            RatingSource.ROTTEN_TOMATOES_CRITIC,
+            "Rotten Tomatoes critics",
+            "Rotten Tomatoes critics 75%",
+        ),
+        (
+            RatingSource.ROTTEN_TOMATOES_AUDIENCE,
+            "Rotten Tomatoes audience",
+            "Rotten Tomatoes audience 75%",
+        ),
+        (RatingSource.METACRITIC, "Metacritic", "Metacritic 75%"),
+        (RatingSource.TRAKT, "Trakt", "7.5 on Trakt from 1,000 votes"),
+        (RatingSource.TVDB, "TVDB", "7.5 on TVDB from 1,000 votes"),
+        (RatingSource.UNKNOWN, "an unknown source", "7.5 on an unknown source from 1,000 votes"),
+    )
+}
+
 
 class TestRatingGate:
     @pytest.mark.parametrize(
@@ -605,6 +631,27 @@ class TestRatingGate:
         than the sources it was written against."""
         assert set(_BAR_TEXT) == set(RatingSource)
 
+    @pytest.mark.parametrize("source", list(_MISS_TEXT), ids=[s.value for s in _MISS_TEXT])
+    def test_each_source_reads_as_english_where_the_item_has_no_rating_at_all(
+        self, source: RatingSource
+    ) -> None:
+        """The miss phrase places a label too, and placed it after "no" until #338.
+
+        "no IMDb rating" reads fine, which is how this survived; "no an unknown source
+        rating" does not, and the operator meets it in the why-panel under the checks that
+        did not fire -- beside a file they are deciding whether to delete. The label now
+        follows a preposition here as it does in ``describe_bar`` above, so the sentence
+        holds for whatever a label turns out to be.
+        """
+        bar = RatingRule(source=source, floor=75, min_votes=1000)
+
+        assert RatingFloorGate(rules=(bar,))._miss_phrase(bar, None) == _MISS_TEXT[source]
+
+    def test_the_table_of_miss_phrases_covers_every_source(self) -> None:
+        """Same set equality as the word orders above: a source added to the enum owes a
+        decision about how it reads with no rating, not a default that happens to parse."""
+        assert set(_MISS_TEXT) == set(RatingSource)
+
     def test_a_policy_with_no_bars_set_says_nothing_is_configured(self) -> None:
         """A rating gate switched on with an empty rule set still owes the operator a
         sentence.
@@ -644,7 +691,7 @@ class TestRatingGate:
 
         assert result.outcome == ABSTAIN
         assert result.blocked is False
-        assert "no IMDb rating" in result.detail
+        assert "no rating on IMDb" in result.detail
 
     @pytest.mark.parametrize(
         ("unreadable", "check"),

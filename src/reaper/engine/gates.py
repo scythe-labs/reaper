@@ -435,7 +435,7 @@ class RatingFloorGate:
         """Why one bar was not cleared, with the item's own numbers where we have them --
         the "checked and did not fire, with the numbers" explainability the panel needs."""
         if rating is None:
-            return f"no {source_label(rule.source)} rating (you keep {rule.describe_bar()})"
+            return f"no rating on {source_label(rule.source)} (you keep {rule.describe_bar()})"
         too_few_votes = (
             rule.min_votes > 0
             and rating.has_meaningful_vote_count
