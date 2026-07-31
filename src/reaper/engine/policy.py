@@ -1295,8 +1295,12 @@ def inspect(
             )
         )
 
-    protect_spans = {span for _, span in blocking}
     window_blockers = [c for c, span in blocking if span is ReachSpan.POPULARITY_WINDOW]
+    # Kept as a list for the same reason its window twin is (rule 72): the branch below has to
+    # COUNT these, and a set of spans cannot say how many conditions produced it. It read
+    # ``ReachSpan.ITEM_LIFETIME in protect_spans`` and printed a singular sentence for any
+    # number of them, which is issue #157 surviving on the sibling lane.
+    lifetime_blockers = [c for c, span in blocking if span is ReachSpan.ITEM_LIFETIME]
     owner_protect_on_window = bool(window_blockers)
     # Derived once and read by both lanes below (rule 104). The protect lane additionally
     # requires a reader on the window, which is what ``short`` adds; the lean lane does not,
@@ -1397,21 +1401,29 @@ def inspect(
     # of waiting moves it. It survived because it reads as harmless boilerplate beside a remedy
     # that does work, which is precisely how an operator ends up taking the half that never
     # resolves.
-    if (
-        ReachSpan.ITEM_LIFETIME in protect_spans
-        and history_reach_days is not None
-        and reach_clears_dormancy
-    ):
+    #
+    # And it is COUNTED, for the reason the window branch above is (issue #157, rule 72): two
+    # rules on this span are constructible -- one field carries it, ``ITEM_LIFETIME`` sits on
+    # the spec and not on the value, and ``PolicyBody`` validates the pair -- so a singular
+    # "remove that rule" was factually wrong for any number above one. Removing one leaves this
+    # sentence byte-identical while a live protection is gone, with nothing saying the pick was
+    # wrong. No label is joined the way the window branch joins its own: every condition here is
+    # on the one field, so the label would be the same word repeated and discriminates nothing.
+    # The titles are named "those" in the remedy rather than "them", which now has two plural
+    # nouns in front of it to refer back to.
+    if lifetime_blockers and history_reach_days is not None and reach_clears_dormancy:
+        many = len(lifetime_blockers) > 1
+        subject = f"Your {len(lifetime_blockers)} keep rules" if many else "Your keep rule"
         warnings.append(
             PolicyWarning(
                 field="protect_conditions",
                 severity="warn",
                 message=(
                     "Titles added before your watch history starts won't be flagged for "
-                    "removal. Your keep rule counts everyone who has ever watched a title, and "
-                    "Reaper can't count plays from before your history begins, so it holds "
-                    "those titles instead of guessing. Remove that rule if you want them "
-                    "judged."
+                    f"removal. {subject} {'count' if many else 'counts'} everyone who has ever "
+                    "watched a title, and Reaper can't count plays from before your history "
+                    "begins, so it holds those titles instead of guessing. Remove "
+                    f"{'those rules' if many else 'that rule'} if you want those titles judged."
                 ),
             )
         )

@@ -2035,9 +2035,15 @@ class TestTheOtherReachShortfallLanes:
     (rule 140).
     """
 
-    def _all_time_rule(self, *, op: Op = Op.GTE) -> PolicyBody:
+    def _all_time_rule(self, *, op: Op = Op.GTE, count: int = 1) -> PolicyBody:
+        """``count`` rules on the one field carrying this span, which is constructible: the
+        span sits on the ``FieldSpec``, not on the value, so every distinct bar is another
+        blocker. Defaults to one, because every case below but the counting pair asks about
+        the branch and not about how many rules reached it."""
         return _policy(
-            protect_conditions=(ConditionSpec(field="watchers_all_time", op=op, value=1),)
+            protect_conditions=tuple(
+                ConditionSpec(field="watchers_all_time", op=op, value=i + 1) for i in range(count)
+            )
         )
 
     def _lean(self, field: str, discount: int) -> PolicyBody:
@@ -2092,7 +2098,37 @@ class TestTheOtherReachShortfallLanes:
         [flagged] = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
 
         assert "Wait for it to build up" not in flagged.message
-        assert flagged.message.endswith("Remove that rule if you want them judged.")
+        assert flagged.message.endswith("Remove that rule if you want those titles judged.")
+
+    def test_it_counts_the_rules_it_is_asking_the_operator_to_remove(self) -> None:
+        """Issue #157, on the lane that never got the fix (rule 72).
+
+        The window branch 40 lines above says why a singular "remove that rule" is not safe to
+        leave implicit: two rules on one span are constructible, so removing one leaves the
+        sentence byte-identical while a live protection is gone, and nothing says the pick was
+        wrong. This branch answered on ``ReachSpan.ITEM_LIFETIME in protect_spans`` -- a SET of
+        spans, which cannot say how many conditions produced it -- and printed the singular for
+        any number of them.
+
+        Swept rather than pinned at one number: the singular is a real arm and the plural has
+        to hold past two, so the count is read out of the sentence for each (rule 141, since a
+        fixture at the one value the old code got right cannot fail).
+        """
+        for count in (1, 2, 3, 7):
+            [flagged] = self._warnings_on(
+                self._all_time_rule(count=count), "protect_conditions", reach=90.0
+            )
+
+            if count == 1:
+                assert "Your keep rule counts" in flagged.message
+                assert flagged.message.endswith("Remove that rule if you want those titles judged.")
+            else:
+                assert f"Your {count} keep rules count" in flagged.message
+                assert flagged.message.endswith(
+                    "Remove those rules if you want those titles judged."
+                )
+            # Never the other number's sentence: the bug was one arm serving both.
+            assert ("keep rules" in flagged.message) is (count > 1)
 
     def test_the_op_decides_it_here_exactly_as_it_does_on_the_window(self) -> None:
         """``lte`` leaves an item already over the bar settled, so it stays condemnable.
