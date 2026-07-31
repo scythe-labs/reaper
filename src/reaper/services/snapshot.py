@@ -2564,13 +2564,3 @@ async def protection_sync_degradations(
                     "unprotected, so nothing may be deleted from this scan"
                 )
     return reasons
-
-
-async def candidates(
-    session: AsyncSession, snapshot_id: int, *, verdict: str | None = None
-) -> list[Candidate]:
-    stmt = select(Candidate).where(Candidate.snapshot_id == snapshot_id)
-    if verdict:
-        stmt = stmt.where(Candidate.verdict == verdict)
-    stmt = stmt.order_by(Candidate.score.desc(), Candidate.size_bytes.desc())
-    return list((await session.execute(stmt)).scalars().all())

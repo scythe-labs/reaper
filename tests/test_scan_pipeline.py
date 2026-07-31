@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
@@ -28,7 +28,14 @@ from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import FirstFlagged, SizeSource, Snapshot, WatchHighWater, WhitelistEntry
+from reaper.db.models import (
+    Candidate,
+    FirstFlagged,
+    SizeSource,
+    Snapshot,
+    WatchHighWater,
+    WhitelistEntry,
+)
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.observation import Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
@@ -43,7 +50,25 @@ from reaper.services import (
 )
 from reaper.services.condemned import reap_is_effective
 from reaper.services.scan_runner import _allowed_sections, build_gates
-from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, candidates, scan
+from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, scan
+
+
+async def candidates(
+    session: AsyncSession, snapshot_id: int, *, verdict: str | None = None
+) -> list[Candidate]:
+    """A snapshot's judged rows, ranked the way the review queue ranks them.
+
+    A test-local read, not a production one: nothing in ``src/`` needs it, so it lived in
+    ``services/snapshot`` for twelve callers that are all in this file (#320). It defends
+    nothing -- it is a plain SELECT -- and a plain SELECT sitting in a deletion-path service
+    reads as production reach it never had.
+    """
+    stmt = select(Candidate).where(Candidate.snapshot_id == snapshot_id)
+    if verdict:
+        stmt = stmt.where(Candidate.verdict == verdict)
+    stmt = stmt.order_by(Candidate.score.desc(), Candidate.size_bytes.desc())
+    return list((await session.execute(stmt)).scalars().all())
+
 
 NOW = utcnow().replace(microsecond=0)
 LONG_AGO = NOW - timedelta(days=2000)
