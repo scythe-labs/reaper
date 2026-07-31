@@ -105,6 +105,12 @@ interface are encrypted at rest and redacted from logs.
 
 These mirror CI. Run the relevant ones while you work, and the full set before you push.
 
+On a pull request, CI decides which of them apply from the files you changed: a change to
+documentation runs the repository hygiene test, and a change to code runs the Python suite,
+the frontend suite, and an image build. The check named **CI gate** collects whichever ran,
+and it is the one that has to be green before a pull request can merge. Seeing jobs marked
+*skipped* beside it is the system working.
+
 ```bash
 uv run ruff check .
 uv run ruff format --check .
