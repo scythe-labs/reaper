@@ -1,0 +1,98 @@
+name: ⚠️ Reaper made the wrong call
+description: It flagged media that should have been kept, or its explanation does not match reality.
+labels: ["Kind/Bug", "Area/Safety"]
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the report that matters most here, so it has its own form.
+
+        Reaper is built so that every ambiguity resolves toward keeping the file. A wrong
+        call means something in that chain is off, and the explanation Reaper showed you is
+        usually enough to find it.
+
+        **If files were already removed, say so in the first box.** That changes how quickly
+        this gets looked at.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What Reaper decided, and what it should have decided
+      description: >
+        Describe the media in whatever way you are comfortable with. A shape works better
+        than a name: a series you finished two years ago, a film watched once by one person
+        last month.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-far
+    attributes:
+      label: How far did it get
+      options:
+        - It was flagged, and I caught it in review
+        - It reached an approved plan, and I caught it before running
+        - It ran as a dry run, so nothing was sent
+        - Files were actually removed
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-record
+    attributes:
+      label: What the explanation showed
+      description: >
+        Open the item and look at Reaper's explanation. It lists every signal that pushed
+        toward removal and every protection that was checked and did not fire. A screenshot
+        of that panel is the single most useful thing you can attach. If you would rather
+        type it out, the signals and the protections are the parts worth having.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reality
+    attributes:
+      label: What Reaper got wrong about it
+      description: >
+        Which specific claim in that explanation does not match reality? For example, it
+        read as never watched but you watched it last week, or a protection you expected to
+        fire was not listed at all.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown under Settings → About, next to the word Reaper.
+      placeholder: "dev (a1b2c3d)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: sources
+    attributes:
+      label: Where your watch history comes from
+      description: >
+        Which of Plex, Tautulli, Sonarr, and Radarr are connected, and whether any of them
+        were unreachable or recently rebuilt. History that moved or went missing explains a
+        large share of these reports.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        Anything from the scan that produced this decision. Formatted as code automatically.
+      render: shell
+
+  - type: checkboxes
+    id: search-existing
+    attributes:
+      label: Before you post
+      options:
+        - label: I searched the existing issues and did not find this one.
+          required: true
+        - label: I have read and agree to the [Code of Conduct](https://github.com/scythe-labs/reaper/blob/dev/CODE_OF_CONDUCT.md).
+          required: true

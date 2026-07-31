@@ -1,0 +1,89 @@
+name: 🐛 Bug report
+description: Something in Reaper is broken or behaves in a way you did not expect.
+labels: ["Kind/Bug"]
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        If Reaper flagged the wrong media, or explained a decision in a way that looks wrong,
+        please go back and pick **Reaper made the wrong call** instead. That form asks for the
+        evidence needed to chase it down.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in order. Include the page or the command if it matters.
+      placeholder: |
+        1. Go to [...]
+        2. Click [...]
+        3. See [...]
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown under Settings → About, next to the word Reaper.
+      placeholder: "dev (a1b2c3d)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How are you running it
+      options:
+        - Docker Compose, published image
+        - Docker Compose, built from source
+        - Unraid template
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        Anything Reaper printed around the time this happened. Formatted as code
+        automatically, so backticks are not needed. Reaper redacts API keys from its own
+        logs, so a paste is normally safe to share as-is.
+      render: shell
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      description: Only needed if the problem is in the web interface.
+      placeholder: "Firefox 141, Safari on iOS 18"
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Anything else
+      description: >
+        Screenshots, the shape of your library, or anything you noticed that might be
+        related. Feel free to blur or rename real titles.
+
+  - type: checkboxes
+    id: search-existing
+    attributes:
+      label: Before you post
+      options:
+        - label: I searched the existing issues and did not find this one.
+          required: true
+        - label: I have read and agree to the [Code of Conduct](https://github.com/scythe-labs/reaper/blob/dev/CODE_OF_CONDUCT.md).
+          required: true
