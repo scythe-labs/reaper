@@ -139,14 +139,24 @@ async def sweep_old_snapshots(
         raise ValueError(f"keep must be at least 1, got {keep}")
 
     removed = 0
-    for _ in range(MAX_SWEEP_BATCHES):
-        async with session_factory() as session:
-            doomed = list((await session.execute(_doomed(keep).limit(SWEEP_BATCH))).scalars().all())
-            if not doomed:
-                return removed
-            await session.execute(delete(Snapshot).where(Snapshot.id.in_(doomed)))
-            await session.commit()
-        removed += len(doomed)
+    try:
+        for _ in range(MAX_SWEEP_BATCHES):
+            async with session_factory() as session:
+                doomed = list(
+                    (await session.execute(_doomed(keep).limit(SWEEP_BATCH))).scalars().all()
+                )
+                if not doomed:
+                    return removed
+                await session.execute(delete(Snapshot).where(Snapshot.id.in_(doomed)))
+                await session.commit()
+            removed += len(doomed)
+    except Exception:
+        # The batches already committed are kept and the caller's log says only that this
+        # firing failed, so without this the drain that matters -- thousands of scans, on
+        # the upgrade -- reports the same way whether it dropped none of them or all but
+        # the last. The count is the difference between waiting and intervening.
+        log.warning("retention.sweep_interrupted", removed=removed)
+        raise
 
     log.warning("retention.sweep_backstop_hit", removed=removed, batches=MAX_SWEEP_BATCHES)
     return removed

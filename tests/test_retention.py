@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.clock import utcnow
@@ -276,6 +276,39 @@ class TestPreexistingInstalls:
         assert removed == backlog
         assert await _snapshot_ids(factory) == ids[-2:]
         assert await _candidate_count(factory) == 2
+
+    async def test_a_drain_that_dies_part_way_says_how_far_it_got(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The scheduler logs only that the firing failed, so on the upgrade drain -- the
+        one case this is written for -- a sweep that dropped none of thousands and one that
+        dropped all but the last read identically. The batches already committed stay
+        either way; what the count changes is whether an operator waits or intervenes."""
+        events: list[tuple[str, int]] = []
+        monkeypatch.setattr(
+            retention.log,
+            "warning",
+            lambda event, **kw: events.append((event, kw.get("removed", -1))),
+        )
+        await _seed(factory, retention.SWEEP_BATCH * 2 + 1, items=1)
+        calls = {"n": 0}
+        real = retention._doomed
+
+        def _fails_on_the_third_batch(keep: int) -> Select[tuple[int]]:
+            calls["n"] += 1
+            if calls["n"] > 2:
+                raise OSError("database is locked")
+            return real(keep)
+
+        monkeypatch.setattr(retention, "_doomed", _fails_on_the_third_batch)
+
+        with pytest.raises(OSError, match="database is locked"):
+            await retention.sweep_old_snapshots(factory, keep=1)
+
+        assert events == [("retention.sweep_interrupted", retention.SWEEP_BATCH * 2)]
+        assert len(await _snapshot_ids(factory)) == 1
 
     async def test_the_drain_stops_at_the_backstop_and_resumes_next_firing(
         self,
