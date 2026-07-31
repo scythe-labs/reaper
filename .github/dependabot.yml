@@ -122,6 +122,16 @@ updates:
       time: "05:00"
       timezone: "Etc/UTC"
     groups:
+      # `typescript` and `typescript-eslint` can only move together. typescript-eslint pins a
+      # `typescript` peer range, so a TypeScript major raised on its own fails `npm ci` at
+      # resolution and can never go green however long it waits: #364 was that pull request,
+      # red from the moment it opened, and splitting the two is what made it unmergeable
+      # rather than merely early. This group carries no `update-types`, so majors are included
+      # and arrive as the one change that can actually pass, the week the peer range widens.
+      #
+      # It is listed first because a dependency joins the first group whose patterns match.
+      typescript:
+        patterns: ["typescript", "typescript-eslint", "@typescript-eslint/*"]
       frontend:
         patterns: ["*"]
         update-types: ["minor", "patch"]
