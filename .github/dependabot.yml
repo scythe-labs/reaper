@@ -158,6 +158,19 @@ updates:
       frontend:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # TypeScript 7 is deferred, not declined. Grouping the toolchain above is necessary but
+      # not sufficient: a group bundles the updates that EXIST, and it cannot make
+      # typescript-eslint move when no release of it accepts TypeScript 7 yet. So Dependabot
+      # raises `typescript` alone, `npm ci` fails at peer resolution before any compile, and
+      # the pull request is red the moment it opens. #364 was that, and #368 was it again
+      # after the group landed.
+      #
+      # Lifting this is one line, and it is NOT left to memory:
+      # tests/test_repo_hygiene.py pins typescript-eslint's locked `typescript` peer range and
+      # fails the day it changes, which is the day to check whether this can go.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     labels: ["Kind/Frontend", "Kind/Chore", "Priority/Low"]
     commit-message:
       prefix: "build"
