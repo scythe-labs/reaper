@@ -24,7 +24,7 @@ from reaper.api import tags as api_tags
 from reaper.api.schemas import OverrideIn, SpareIn, WhitelistEntryOut
 from reaper.clock import utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot, WhitelistEntry
-from reaper.services import whitelist
+from reaper.services import retention, whitelist
 from reaper.services.condemned import reap_is_effective
 from reaper.services.profiles import active_profile_settings
 from reaper.services.snapshot import record_first_flagged_bulk
@@ -51,11 +51,24 @@ def _out(entry: WhitelistEntry) -> WhitelistEntryOut:
 
 
 async def _resolve_title(session: AsyncSession, media_key: str) -> str:
-    """The display title for an override key, read from its latest candidate.
+    """The display title for an override key, read from its latest surviving candidate.
 
     The title is never trusted from the client -- the media_key is the identity, and an
-    override for a key no scan has ever seen is more likely a bug than an intention (404).
-    A show-level key matches on ``group_key`` and prefers the show's title over a season's.
+    override for a key none of the kept scans holds is more likely a bug than an intention
+    (404). A show-level key matches on ``group_key`` and prefers the show's title over a
+    season's.
+
+    **``services.retention`` is what bounds "kept".** The select spans every snapshot
+    deliberately, because the question is "do we know this item" and not "is it in the
+    queue" -- but the sweep leaves only the newest ``KEEP_SNAPSHOTS`` to span. So the
+    refusal claims no more than that, a missing record, never that no scan ever held one,
+    and it names the window it speaks for. A scan COUNT, not a duration, which is why the
+    copy reads it off the constant the sweep honors (#326).
+
+    Nothing reaches the refusal today. Every SPA path passes a key drawn from the current
+    queue (``WhyPanel``, ``ShowPanel``, and ``ReviewQueue``'s bulk bar), and an API key is
+    refused both write routes outright by ``api.middleware._API_KEY_WRITES``, which admits
+    scanning, planning, the policy and the profile and nothing else.
     """
     candidate = (
         await session.execute(
@@ -66,7 +79,11 @@ async def _resolve_title(session: AsyncSession, media_key: str) -> str:
         )
     ).scalar_one_or_none()
     if candidate is None:
-        raise HTTPException(404, "No scanned item has that identity; nothing to override.")
+        raise HTTPException(
+            404,
+            "Reaper has no record of that item. "
+            f"It keeps only the last {retention.KEEP_SNAPSHOTS} scans.",
+        )
     if candidate.group_key == media_key and candidate.group_title:
         return candidate.group_title
     return candidate.title
