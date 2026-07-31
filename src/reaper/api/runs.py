@@ -594,8 +594,22 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 # log shows the start even if the process dies mid-run.
                 log.info("reap.started", run_id=run_id, planned=status.total)
                 report = await executor.execute(run_id)
-                await run_session.commit()
-            status.report = _report_out(report)
+                # Published FIRST, ahead of anything else that can raise. The report is the
+                # operator's only account of what happened to each file, and the executor has
+                # already made the run's own state and journal durable, so nothing below is
+                # load-bearing for it. The commit used to sit in front of this line and take
+                # the report down with it whenever the database was the thing that had gone
+                # wrong -- leaving phase "error" and a bare string in place of exactly the
+                # record rule 111's catch-all exists to preserve (#327).
+                status.report = _report_out(report)
+                try:
+                    # Belt and braces: the executor commits its own journal per item and its
+                    # terminal row at the end, so this only flushes the run object it left in
+                    # the session. Never fatal -- there is nothing here that is not already
+                    # on disk, and the run is over either way.
+                    await run_session.commit()
+                except Exception as exc:
+                    log.warning("reap.trailing_commit_failed", run_id=run_id, error=str(exc))
             status.phase = "aborted" if report.state == RunState.ABORTED else "complete"
             status.deleted_items = report.deleted_items
             status.deleted_bytes = report.deleted_bytes

@@ -2529,6 +2529,7 @@ defended. That is the safer way to be wrong, and it is still the reason the labe
 The row that moved the other way is the sharpest of the set: the IMDb fail-closed guard was
 reported closed once, on a run whose operators could not express deleting an `if` at all, and
 came back real the moment they could.
+
 ## A failed commit takes the whole identity map with it (2026-07-30)
 
 Measured while fixing the wedge in #327, where one failed step commit left a reap `EXECUTING`
