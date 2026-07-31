@@ -22,12 +22,13 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 
 from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import FirstFlagged, SizeSource, WatchHighWater, WhitelistEntry
+from reaper.db.models import FirstFlagged, SizeSource, Snapshot, WatchHighWater, WhitelistEntry
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.observation import Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
@@ -774,6 +775,100 @@ class TestAStoredSizeSaysWhereItCameFrom:
             for f in (await session.execute(text("SELECT media_key FROM first_flagged"))).all()
         }
         assert flagged == set()
+
+
+class TestTheScanCountsHowOftenItCouldNotMeasure:
+    """``scan.size_source_tally`` is the only place Reaper reports how often it could not
+    measure an item, and it is a log line rather than a column, so nothing downstream goes
+    red when a refactor drops it (#321).
+
+    Two facts hold it up here. It fires exactly once per scan, and its buckets partition
+    the items the scan judged -- the same set the candidate rows come from -- so a rung
+    that quietly stops being counted lands as a sum that no longer reconciles. The class
+    above pins the stored ``size_source`` column; this pins the measurement taken over it.
+
+    The miss bucket is reported at zero rather than omitted, which is the half that is a
+    behavior change: a ``Counter`` drops an absent key, so an operator grepping the line
+    for ``unmeasured`` could not tell "none" from "never emitted."
+    """
+
+    @staticmethod
+    def _tally(logs: list[dict[str, Any]]) -> dict[str, Any]:
+        """The one tally event, or a failure naming how many there actually were."""
+        events = [e for e in logs if e["event"] == "scan.size_source_tally"]
+        assert len(events) == 1, f"one tally per scan, got {len(events)}"
+        return events[0]
+
+    async def _scan_both_lanes(
+        self,
+        session: AsyncSession,
+        cache_engine: AsyncEngine,
+        *,
+        movies: list[dict[str, Any]],
+        series: list[dict[str, Any]],
+    ) -> tuple[Snapshot, dict[str, Any]]:
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        with capture_logs() as logs:
+            snapshot = await scan(
+                cache_engine,
+                session,
+                radarrs=[
+                    RadarrSource(client=_FakeRadarr(movies), instance_id=1, name="hd")  # type: ignore[arg-type]
+                ],
+                sonarrs=[
+                    season_scan.SonarrSource(client=_FakeSonarr(series), instance_id=1, name="tv")
+                ],
+                tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                    movies=_movie_spine(), shows=_show_spine(), children=_show_children()
+                ),
+                movie_policy=DEFAULT_MOVIE_POLICY,
+                movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+                tv_policy=DEFAULT_TV_POLICY,
+                tv_gates=build_gates(DEFAULT_TV_POLICY),
+            )
+        await session.commit()
+        return snapshot, self._tally(logs)
+
+    async def test_one_tally_per_scan_partitions_everything_it_judged(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Every movie and every content-bearing season falls in exactly one bucket."""
+        snapshot, tally = await self._scan_both_lanes(
+            session, cache_engine, movies=_movie_payloads(), series=_series_payloads()
+        )
+
+        judged = len(await candidates(session, snapshot.id))
+        assert judged == 8  # three movies, five content-bearing seasons
+        assert tally["snapshot"] == snapshot.id
+        assert tally["total"] == judged
+        assert sum(tally["sources"].values()) == judged
+
+        # Every fixture item carries a size, so both rungs are full and nothing missed.
+        assert tally["sources"] == {"radarr": 3, "sonarr": 5, "unmeasured": 0}
+        # Stated twice on purpose: the dict above would still read as correct with the key
+        # gone, and this is the assertion whose failure names the ambiguity (#321).
+        assert "unmeasured" in tally["sources"], "a scan that missed nothing must say so as 0"
+
+    async def test_the_miss_bucket_counts_an_unmeasured_item_in_either_lane(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """One movie and one season nobody sized, so a lane that stopped counting its own
+        misses cannot hide behind the other lane still counting them."""
+        movies = _movie_payloads()
+        del movies[0]["sizeOnDisk"]  # hasFile, no size: the partial payload
+        series = _series_payloads()
+        for season in series[0]["seasons"]:
+            if season["seasonNumber"] == 2:
+                del season["statistics"]["sizeOnDisk"]
+
+        snapshot, tally = await self._scan_both_lanes(
+            session, cache_engine, movies=movies, series=series
+        )
+
+        judged = len(await candidates(session, snapshot.id))
+        assert tally["sources"] == {"radarr": 2, "sonarr": 4, "unmeasured": 2}
+        assert sum(tally["sources"].values()) == judged == tally["total"]
 
 
 class TestAStaleMirrorDegradesTheSnapshot:

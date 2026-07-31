@@ -921,7 +921,13 @@ async def scan(
     # Which rung of the size ladder actually fired, counted across the whole scan. This
     # answers a question nothing in Reaper has ever measured: how often is a size simply
     # not reported? Counts only, never a title or a path.
-    size_sources: Counter[str] = Counter()
+    #
+    # The miss bucket is seeded so it is reported as 0 rather than omitted (#321). It is the
+    # one number an operator greps this line for, and a `Counter` drops an absent key, so
+    # "nothing went unmeasured" and "the line was never emitted" would read identically. A
+    # rung is left unseeded on purpose: absent there genuinely means it did not fire, and
+    # seeding every member would print `sonarr: 0` on a Radarr-only install.
+    size_sources: Counter[str] = Counter({_UNMEASURED: 0})
 
     # Scoring is pure in-memory now (no per-item I/O), so this measures the CPU cost of
     # judging every movie and season -- kept apart from the source-read wall above so a
