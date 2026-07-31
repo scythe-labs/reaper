@@ -148,17 +148,19 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: [check, frontend]
-    env:
-      # Empty unless the operator has configured the secret; the push step keys off this.
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      # The registry host and image path are derived from the run context, never hardcoded:
-      # this workflow has to be correct for any operator who forks Reaper onto their own
-      # Gitea. Docker requires a lowercase image path, but repo owners are commonly
-      # capitalized, so the repository slug is lowercased here. A branch name may contain
-      # "/", which is not a legal tag character, so it is folded to "-".
+      # The image path is derived from the run context, never hardcoded, so this
+      # workflow is correct for anyone who forks Reaper. The registry is the one
+      # thing that cannot be derived: GITHUB_SERVER_URL is github.com, which is
+      # not a registry, so ghcr.io is named outright. Docker requires a lowercase
+      # image path, but repo owners are commonly capitalized, so the repository
+      # slug is lowercased here. A branch name may contain "/", which is not a
+      # legal tag character, so it is folded to "-".
       #
       # A pull request publishes as "pr-<number>" so it can be pulled and tested. That
       # cannot collide with a branch tag, and it says plainly what the image is. The tag
@@ -168,7 +170,7 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.number }}
         run: |
-          echo "IMAGE=${GITHUB_SERVER_URL#https://}/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
             echo "TAG=pr-${PR_NUMBER}" >> "$GITHUB_ENV"
           else
@@ -193,27 +195,19 @@ jobs:
         if: github.ref_name == 'main'
         run: docker tag "${IMAGE}:${TAG}" "${IMAGE}:latest"
 
-      # Gitea's automatic Actions token cannot write packages: basic auth accepts it, but
-      # it carries an empty access scope, and reqPackageAccess demands read/write:package.
-      # Publishing therefore needs an operator-provided token with the write:package scope,
-      # stored as the REGISTRY_TOKEN secret. Without it the image is still built and
-      # verified above -- the gate that matters -- and only the publish is skipped.
+      # The automatic GITHUB_TOKEN publishes here, given the packages: write
+      # permission declared on this job, so no operator-provided secret is needed
+      # and a fresh fork publishes to its own namespace with no setup.
       #
-      # Pull requests publish too, so a reviewer can pull and run the exact image, but only
-      # when the PR comes from this repository. A fork must never be able to publish under
-      # this registry path, and whether Gitea withholds secrets from fork runs is not a
-      # thing to depend on -- so the branch is checked here rather than assumed upstream.
+      # Pull requests publish too, so a reviewer can pull and run the exact image,
+      # but only when the PR comes from this repository. On a fork PR the token is
+      # read-only and the push would fail rather than leak, but failing a gate on a
+      # contributor's first PR is its own cost, so the branch is checked here.
       - name: Push image
         if: >-
-          env.REGISTRY_TOKEN != '' &&
-          (github.event_name == 'push' ||
-           github.event.pull_request.head.repo.full_name == github.repository)
+          github.event_name == 'push' ||
+          github.event.pull_request.head.repo.full_name == github.repository
         run: |
-          echo "${REGISTRY_TOKEN}" | \
-            docker login "${GITHUB_SERVER_URL#https://}" --username "${GITHUB_ACTOR}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
           docker push --all-tags "${IMAGE}"
-
-      - name: Warn when publishing is not configured
-        if: env.REGISTRY_TOKEN == ''
-        run: |
-          echo "::warning::Image built but not published: the REGISTRY_TOKEN secret is unset. Add a token with the write:package scope to publish ${IMAGE}:${TAG}."
