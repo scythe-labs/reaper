@@ -1124,13 +1124,21 @@ def inspect(
             )
         for rule in body.keep_rating_rules:
             label = source_label(rule.source)
+            # Every warning below is about ONE bar's number, so it names that bar rather than
+            # the card: the editor can then render it against the box that fixes it instead of
+            # in a stack under the whole list, where reaching it meant browsing the page in
+            # document order (#189). The source keys the row uniquely -- ``PolicyBody`` refuses
+            # two rules on one source -- which is the same guarantee the gate id gives the
+            # ``gates.{gate}.{setting}`` family this mirrors. The empty-list warning above keeps
+            # the bare field, because there is no bar for it to be about.
+            bar = f"keep_rating_rules.{rule.source.value}.floor"
             if is_percentage_source(rule.source):
                 # A percentage source read on the 0-10 scale is the usual mix-up: typing 8
                 # meaning "80%" sets an 8% bar that keeps everything.
                 if rule.floor <= 20:
                     warnings.append(
                         PolicyWarning(
-                            field="keep_rating_rules",
+                            field=bar,
                             severity="warn",
                             message=(
                                 f"A bar of {rule.floor}% on {label} protects almost everything. "
@@ -1142,7 +1150,7 @@ def inspect(
                 if rule.floor >= 90:
                     warnings.append(
                         PolicyWarning(
-                            field="keep_rating_rules",
+                            field=bar,
                             severity="warn",
                             message=(
                                 f"A bar of {rule.floor / 10:.1f} on {label} will protect almost "
@@ -1153,7 +1161,7 @@ def inspect(
                 if rule.floor <= 20:
                     warnings.append(
                         PolicyWarning(
-                            field="keep_rating_rules",
+                            field=bar,
                             severity="warn",
                             message=(
                                 f"A bar of {rule.floor / 10:.1f} on {label} protects essentially "
