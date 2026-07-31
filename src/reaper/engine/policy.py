@@ -92,25 +92,15 @@ class GateSetting(Frozen):
 
     threshold: int = 0
 
-    secondary: int = 0
-    """Dead as a *number* -- it held the rating gate's vote floor until that bar moved to
-    ``keep_rating_rules``, and nothing reads it now except ``recover_rating_rules``, off the
-    raw stored dict. It still cannot be deleted, and each reason bites on its own (issue #259):
-
-    * ``Frozen`` forbids extra keys, and every stored body was serialized *with* this key.
-      ``services.profiles.active_policy`` validates ``body_json`` with no drop-unknown retry,
-      so deleting the field turns every saved policy into a ``ValidationError`` and falls the
-      operator back to shipped defaults -- their own safety values silently replaced (rule 65).
-    * It is inside ``policy_hash``, ``scoring_hash`` and ``evidence_hash``, all three of which
-      hash ``model_dump()``. ``_NON_BEHAVIORAL_FIELDS`` cannot exempt it: that filter runs over
-      TOP-LEVEL keys and this one is nested in ``gates``.
-    * Dropping it from the WIRE alone (``api.schemas.GateSettingIn``) is the same trap
-      ``schema_version`` fell into: the scan records the stored body's hash while the simulator
-      hashes the round-tripped one, so a body carrying a nonzero value here reads as "needs a
-      fresh scan" that scanning cannot clear. Every install seeded before the bar moved carries
-      one. ``tests.test_policy.TestSecondaryStaysOnTheWire`` fails if the wire drops it.
-
-    Retiring it needs a migration that rewrites stored bodies, not a field deletion."""
+    #: No ``secondary`` here. It held the rating gate's vote floor until that bar moved to
+    #: ``keep_rating_rules``, and the model stopped declaring it once migration
+    #: ``e6f708192a3b`` had rewritten every stored body where the number was inert (issue
+    #: #266). Two kinds of body still carry the key and neither reaches this model with it:
+    #: a row the migration deliberately skipped, because the number is the last copy of a
+    #: rating bar ``recover_rating_rules`` has yet to put back, and any body predating the
+    #: migration on a database it has not reached. ``drop_retired_gate_keys`` strips it in
+    #: both shims. Do not re-add a field here to accommodate a stored key: ``Frozen`` is
+    #: ``extra="forbid"`` on purpose, and the strip is what keeps that honest.
 
     window_days: int = Field(default=365, ge=1)
     """How far back "recently" reaches, for gates that count activity.
@@ -877,6 +867,31 @@ def _join_and(parts: list[str]) -> str:
     return f"{', '.join(parts[:-1])} and {parts[-1]}"
 
 
+#: Gate keys that stored bodies still carry and the model no longer declares. ``secondary``
+#: held the rating gate's vote floor until that bar moved to ``keep_rating_rules``; the
+#: migration ``e6f708192a3b`` rewrote every body where the number was inert, and deliberately
+#: left the ones where it is still the only copy of an operator's bar, so those arrive here.
+_RETIRED_GATE_KEYS = frozenset({"secondary"})
+
+
+def drop_retired_gate_keys(body: dict[str, Any]) -> None:
+    """Strip keys the model no longer declares, in place, from every gate row.
+
+    ``PolicyBody`` is ``extra="forbid"``, so a body a shim hands back still carrying one of
+    these does not load. Both shims read the *raw* stored dict and both must do this, or the
+    repair they exist to perform is the thing that fails (rules 72, 104): ``rebalance`` would
+    return ``None`` and throw away the operator's tuning, and ``recover_rating_rules`` would
+    raise into a handler that only logs, so a rating bar would stop being recovered in silence.
+    """
+    gates = body.get("gates")
+    if not isinstance(gates, list):
+        return
+    for gate in gates:
+        if isinstance(gate, dict):
+            for key in _RETIRED_GATE_KEYS:
+                gate.pop(key, None)
+
+
 def rebalance(raw: object) -> dict[str, Any] | None:
     """A stored policy body rescaled so its removal weights total exactly 100.
 
@@ -913,6 +928,7 @@ def rebalance(raw: object) -> dict[str, Any] | None:
         if not isinstance(raw, dict):
             return None
         body: dict[str, Any] = copy.deepcopy(raw)
+        drop_retired_gate_keys(body)
         parts: list[dict[str, Any]] = [
             *(body.get("signals") or []),
             *(body.get("custom_condemn") or []),
@@ -956,6 +972,13 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
     the editor on it as an unsaved draft -- never a silent substitution of an operator's
     own safety value (rule 65).
 
+    ``secondary`` is read here off the raw stored dict and is no longer a field on
+    ``GateSetting``; migration ``e6f708192a3b`` deliberately skipped exactly the rows this
+    still fires on, because the number is the only surviving copy of their bar. So the body
+    handed back goes through ``drop_retired_gate_keys`` first: ``Frozen`` forbids extra keys,
+    and a body returned with one raises into a caller that only logs, which would stop the
+    recovery in silence.
+
     What it keys on, and why not ``schema_version``: affected bodies already carry
     ``schema_version: 2`` (it was 2 before the move too), so the version cannot tell them
     apart. The trigger is the raw key ``keep_rating_rules`` being **absent** -- an explicit
@@ -987,6 +1010,7 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
         if not 1 <= floor <= 100 or min_votes < 1:
             return None
         body = copy.deepcopy(raw)
+        drop_retired_gate_keys(body)
         body["keep_rating_rules"] = [
             {"source": RatingSource.IMDB.value, "floor": floor, "min_votes": min_votes}
         ]

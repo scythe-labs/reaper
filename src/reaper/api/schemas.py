@@ -536,7 +536,6 @@ class GateSettingIn(BaseModel):
     gate: GateId
     enabled: bool = True
     threshold: int = 0
-    secondary: int = 0
     window_days: int = Field(default=365, ge=1)
 
     @field_validator("gate")

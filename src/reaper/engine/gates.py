@@ -349,8 +349,8 @@ class GateConfig:
     #: ``PolicyBody.keep_rating_rules``, where it is now ``RatingRule.min_votes``, read by
     #: ``RatingFloorGate.evaluate`` and the ``_miss_phrase`` helper it calls. After the move no
     #: gate read ``secondary``, and ``scan_runner`` was copying a dead number into every gate it
-    #: built. The policy body still stores it -- see ``policy.GateSetting.secondary`` for why
-    #: that one cannot follow.
+    #: built. The policy body has since dropped it too, via migration ``e6f708192a3b`` -- see
+    #: ``policy.drop_retired_gate_keys`` for the stored bodies that still carry the key.
 
     window_days: int = 365
     """How far back "recently" reaches, for gates that count activity.

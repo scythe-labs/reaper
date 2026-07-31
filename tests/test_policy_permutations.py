@@ -531,7 +531,7 @@ class TestUnknownDegradation:
         for g in policy.gates:
             entry = g.model_dump(mode="json")
             if g.gate is GateId.RATING_FLOOR:
-                entry.update(threshold=rng.randint(1, 100), secondary=rng.randint(1, 10000))
+                entry.update(threshold=rng.randint(1, 100))
             elif g.gate is GateId.MIN_DORMANCY:
                 entry.update(threshold=rng.randint(365, 4000))
             elif g.gate is GateId.SERVER_POPULARITY:
@@ -1058,7 +1058,7 @@ def _mutant_body(rng: random.Random) -> dict:
         roll = rng.random()
         if roll < 0.2 and body["gates"]:
             gate = rng.choice(body["gates"])
-            gate[rng.choice(("threshold", "secondary", "window_days"))] = rng.choice(
+            gate[rng.choice(("threshold", "window_days"))] = rng.choice(
                 (-3, 0, 1, 75, 365, 1095, 10**6)
             )
             gate["enabled"] = rng.random() > 0.25
@@ -1145,7 +1145,6 @@ def legal_policies(draw: st.DrawFn) -> PolicyBody:
         entry["enabled"] = draw(st.booleans())
         if g.gate is GateId.RATING_FLOOR:
             entry["threshold"] = draw(st.integers(1, 100))
-            entry["secondary"] = draw(st.integers(1, 3_000_000))
         elif g.gate is GateId.MIN_DORMANCY:
             entry["threshold"] = draw(st.integers(365, 10_000))
         elif g.gate is GateId.SERVER_POPULARITY:

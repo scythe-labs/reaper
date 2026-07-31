@@ -407,7 +407,6 @@ export interface GateSetting {
   gate: string;
   enabled: boolean;
   threshold: number;
-  secondary: number;
   window_days: number;
 }
 

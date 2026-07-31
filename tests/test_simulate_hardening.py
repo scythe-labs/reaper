@@ -74,7 +74,7 @@ from ._auth import login
 GATES: list[dict[str, Any]] = [
     {"gate": "whitelisted"},
     {"gate": "min_dormancy", "threshold": 1095},
-    {"gate": "rating_floor", "threshold": 75, "secondary": 1000},
+    {"gate": "rating_floor", "threshold": 75},
 ]
 SIGNALS: list[dict[str, Any]] = [
     {"signal": "unwatched", "weight": 100, "saturate_at": 1825, "floor": 365}

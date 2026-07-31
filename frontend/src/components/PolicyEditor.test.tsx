@@ -552,7 +552,6 @@ describe("the gate that counts recent watchers", () => {
             gate: "server_popularity",
             enabled: true,
             threshold: 3,
-            secondary: 0,
             window_days: 365,
           },
         ],
@@ -583,7 +582,6 @@ describe("the gate that counts recent watchers", () => {
               gate: "server_popularity",
               enabled: true,
               threshold: 3,
-              secondary: 0,
               window_days: 365,
             },
           ],
@@ -637,7 +635,6 @@ describe("the gate that counts recent watchers", () => {
               gate: "server_popularity",
               enabled: false,
               threshold: 3,
-              secondary: 0,
               window_days: 365,
             },
           ],
@@ -685,7 +682,6 @@ describe("the gate that counts recent watchers", () => {
             gate: "server_popularity",
             enabled: false,
             threshold: 3,
-            secondary: 0,
             window_days: 365,
           },
         ],
@@ -721,7 +717,7 @@ describe("PolicyEditor warning anchors", () => {
 
   const ratingBody = (enabled: boolean): PolicyBody => ({
     ...body(),
-    gates: [{ gate: "rating_floor", enabled, threshold: 70, secondary: 1000, window_days: 365 }],
+    gates: [{ gate: "rating_floor", enabled, threshold: 70, window_days: 365 }],
   });
 
   /** The two page states each guard is checked in, plus the accessible name of a control that
@@ -1008,7 +1004,7 @@ describe("the controls a screen reader has to tell apart", () => {
     renderEditor({
       body: {
         ...body(),
-        gates: [{ gate: "whitelisted", enabled: true, threshold: 0, secondary: 0, window_days: 0 }],
+        gates: [{ gate: "whitelisted", enabled: true, threshold: 0, window_days: 0 }],
       },
     });
 

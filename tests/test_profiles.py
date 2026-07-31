@@ -250,8 +250,19 @@ class TestACorruptPolicyBodyNeverRaises:
         self, session: AsyncSession
     ) -> None:
         """The fallback must not swallow the repairable case: a body written before removal
-        weights had to total 100 keeps the operator's own tuning."""
+        weights had to total 100 keeps the operator's own tuning.
+
+        The gate row still carries the retired ``secondary`` key, because this is the one
+        path that reaches ``rebalance`` without ``recover_rating_rules`` having stripped it
+        first: a rating bar already moved, so no recovery fires, on a database the
+        ``secondary`` migration has not reached. ``PolicyBody`` is ``extra="forbid"``, so
+        without ``drop_retired_gate_keys`` in ``rebalance`` itself the repair returns
+        ``None`` and the operator's tuning is thrown away (rule 118).
+        """
         legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        for gate in legacy["gates"]:
+            if gate["gate"] == "rating_floor":
+                gate["secondary"] = 1000
         for signal in legacy["signals"]:
             signal["weight"] *= 2
 

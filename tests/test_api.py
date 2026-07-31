@@ -53,7 +53,7 @@ from ._auth import login
 DEFAULT_GATES = [
     {"gate": "whitelisted"},
     {"gate": "min_dormancy", "threshold": 1095},
-    {"gate": "rating_floor", "threshold": 75, "secondary": 1000},
+    {"gate": "rating_floor", "threshold": 75},
     {"gate": "server_popularity", "threshold": 3},
 ]
 #: One signal carrying the whole 100-point budget (PolicyBody._weights_total_one_hundred).
@@ -1336,7 +1336,7 @@ class TestTheSimulatorRefusesToGuess:
         loosened = [
             {"gate": "whitelisted"},
             {"gate": "min_dormancy", "threshold": 1095},
-            {"gate": "rating_floor", "threshold": 60, "secondary": 1000},  # was 75
+            {"gate": "rating_floor", "threshold": 60},  # was 75
             {"gate": "server_popularity", "threshold": 3},
         ]
         result = self._simulate(client, _policy(gates=loosened))

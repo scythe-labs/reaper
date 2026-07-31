@@ -1469,7 +1469,6 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
                     gate=g.gate,
                     enabled=g.enabled,
                     threshold=g.threshold,
-                    secondary=g.secondary,
                     window_days=g.window_days,
                 )
                 for g in payload.gates
@@ -1584,7 +1583,6 @@ def _policy_out(
                     gate=g.gate,
                     enabled=g.enabled,
                     threshold=g.threshold,
-                    secondary=g.secondary,
                     window_days=g.window_days,
                 )
                 for g in body.gates
