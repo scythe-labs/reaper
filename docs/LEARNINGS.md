@@ -2467,6 +2467,20 @@ pins a read snapshot. And when the app writes *first* it holds the lock and the 
 that waits, so the asymmetric timeouts (30 s for the vacuum, 5 s for the app) are not themselves
 the defect — the duration is.
 
+**Gating a job on "is something else busy" turns an unjittered interval into a permanent skip.**
+Measured against the pinned APScheduler 3.11.3: an `IntervalTrigger` computes the next fire from
+the previous *scheduled* time, so a twelve-hour interval fires at the same second of the same two
+hours forever, and a run that lands 47 minutes late still produces the same next time. The phase
+is therefore fixed for the life of the process, and since twelve hours is an exact multiple of an
+hour, a scan on a cron whose period divides twelve hours collides with every firing or with none.
+Once the compaction was gated (above), a collision stopped meaning "runs twelve hours later" and
+started meaning "never runs again" — the failure a skip-and-retry design is supposed to rule out.
+`jitter` is the fix and is applied as `uniform(0, jitter)` on top of the previous *jittered* time,
+so the phase walks forward rather than settling; the cost is that the effective interval is the
+nominal one plus half the spread on average. The general shape: **a conditional skip needs a
+firing schedule that is not correlated with what it skips on**, and an exact-multiple interval is
+correlated with everything on a cron.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

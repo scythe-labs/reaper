@@ -96,7 +96,8 @@ SESSION_SWEEP_INTERVAL_S = 12 * 60 * 60
 SNAPSHOT_SWEEP_JOB_ID = "sweep_old_snapshots"
 SNAPSHOT_SWEEP_INTERVAL_S = 12 * 60 * 60
 
-#: How long after boot the first sweep runs. An ``IntervalTrigger`` given no start date
+#: The floor on how long after boot the first sweep runs; ``SNAPSHOT_SWEEP_JITTER_S`` adds
+#: up to half an hour on top. An ``IntervalTrigger`` given no start date
 #: first fires a whole interval in, which for the session sweep is fine -- an expired
 #: session authorizes nothing whether or not its row is still there, so the table sitting
 #: there another twelve hours costs nothing. This one is different in exactly the case it
@@ -105,6 +106,20 @@ SNAPSHOT_SWEEP_INTERVAL_S = 12 * 60 * 60
 #: it come back is the wrong answer. Minutes, not seconds, so the first sweep and its
 #: possible vacuum stay out of the way of the startup ratings catch-up.
 SNAPSHOT_SWEEP_STARTUP_DELAY_S = 5 * 60
+
+#: Spread on every firing, so the sweep never settles at a fixed time of day. Without it an
+#: ``IntervalTrigger`` fires at the same second forever: twelve hours is an exact multiple of
+#: an hour, and a firing that runs late does not shift the phase, because the next one is
+#: computed from the scheduled time and not the actual one. A scan on a cron whose period
+#: divides twelve hours therefore either misses every firing or collides with all of them.
+#: That was harmless until the compaction was gated on a live scan or reap (#325): now a
+#: collision skips ``retention.compact_if_fragmented`` at *every* firing, so an upgraded
+#: install's freed pages stay on disk for the life of the process and the gate's own promise
+#: that the next firing reattempts is false. APScheduler adds ``uniform(0, jitter)`` to the
+#: previous *jittered* time, so the phase walks forward instead of settling anywhere new.
+#: The session sweep shares the interval and needs none of this: it has no skip branch, so
+#: it runs whatever it collides with, and a fixed phase costs it nothing (rule 72).
+SNAPSHOT_SWEEP_JITTER_S = 30 * 60
 
 
 #: Skip a scheduled ratings refresh when the dataset was synced this recently. IMDb
@@ -308,9 +323,15 @@ async def sweep_old_snapshots(
     range ``retention.KEEP_SNAPSHOTS`` documents as the steady state, so this needs no unusual
     storage to bite (#325). A scan loses every source read it made, since it commits once at
     the end; a reap loses a journal step and wedges (#327). Both outrank housekeeping, so the
-    housekeeping yields. The next firing reattempts, by the same argument as the paragraph
-    above -- this skips the compaction, never the sweep, whose batches are short writes that
-    take the lock no longer than the app's own.
+    housekeeping yields. This skips the compaction, never the sweep, whose batches are short
+    writes that take the lock no longer than the app's own.
+
+    **What makes the next firing a real reattempt is the jitter, not the interval.** A bare
+    twelve-hour interval fires at the same second of the same two hours forever, so a scan on
+    a cron whose period divides twelve hours would collide with every firing or none -- and a
+    collision would mean the compaction never ran again, not that it ran twelve hours later.
+    ``SNAPSHOT_SWEEP_JITTER_S`` is what keeps that from being a permanent skip; the reasoning
+    is on the constant.
     """
     try:
         removed = await retention.sweep_old_snapshots(session_factory)
@@ -564,6 +585,7 @@ def build_scheduler(
         IntervalTrigger(
             seconds=SNAPSHOT_SWEEP_INTERVAL_S,
             start_date=utcnow() + timedelta(seconds=SNAPSHOT_SWEEP_STARTUP_DELAY_S),
+            jitter=SNAPSHOT_SWEEP_JITTER_S,
         ),
         args=[session_factory, data_dir, reap_running],
         id=SNAPSHOT_SWEEP_JOB_ID,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from itertools import pairwise
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -225,6 +226,56 @@ class TestTheSchedulerIsUpkeepOnly:
 
         assert 0 < wait <= scheduler.SNAPSHOT_SWEEP_STARTUP_DELAY_S
         assert wait < scheduler.SNAPSHOT_SWEEP_INTERVAL_S
+        await engine.dispose()
+
+    async def test_the_snapshot_sweep_never_settles_on_a_fixed_time_of_day(
+        self, tmp_path: Path
+    ) -> None:
+        """Twelve hours is an exact multiple of an hour, so an unjittered interval fires at
+        the same second forever -- and a firing that runs late does not move it, because the
+        next one is computed from the scheduled time rather than the actual one. That was
+        harmless until the compaction was gated on a live scan or reap (#325): a scan on a
+        cron whose period divides twelve hours now collides with every firing or with none,
+        and a collision means the vacuum never runs again rather than running twelve hours
+        later, so an upgraded install's freed pages stay on disk for the life of the process.
+
+        Asserted on the fire times, not on the trigger's ``jitter`` attribute: the attribute
+        reads the same whether or not the trigger honors it (rule 118). Consecutive firings
+        must land at different offsets within the interval, and each gap must still sit
+        inside one interval plus the spread, so a jitter large enough to reorder firings or
+        small enough to round away would both fail."""
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        sched = scheduler.build_scheduler(
+            engine,
+            tmp_path,
+            session_factory=create_session_factory(engine),
+            secret_box=SecretBox(resolve_secret_key(settings)),
+            timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
+        )
+        trigger = next(
+            j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID
+        ).trigger
+
+        fires = []
+        previous = None
+        for _ in range(6):
+            previous = trigger.get_next_fire_time(previous, trigger.start_date)
+            fires.append(previous)
+
+        phases = {
+            (fire - trigger.start_date).total_seconds() % scheduler.SNAPSHOT_SWEEP_INTERVAL_S
+            for fire in fires
+        }
+        assert len(phases) == len(fires)
+        for earlier, later in pairwise(fires):
+            gap = (later - earlier).total_seconds()
+            assert (
+                scheduler.SNAPSHOT_SWEEP_INTERVAL_S
+                <= gap
+                <= scheduler.SNAPSHOT_SWEEP_INTERVAL_S + scheduler.SNAPSHOT_SWEEP_JITTER_S
+            )
         await engine.dispose()
 
     async def test_the_snapshot_sweep_is_handed_the_folder_the_database_is_in(
