@@ -91,6 +91,16 @@ def _release_scan() -> None:
     _scan_running = False
 
 
+def scan_running() -> bool:
+    """Whether a scan holds the claim right now.
+
+    Read by ``scheduler.sweep_old_snapshots``, which must not start a ``VACUUM`` while a scan
+    is gathering: the scan writes its whole result in one commit at the end, and a write lock
+    it waits only 5s for (``db.session``) can cost it every source read it made (#325).
+    """
+    return _scan_running
+
+
 #: Every gate the catalog knows how to build. A gate in a policy with no entry here
 #: would be a protection that silently does not fire, so the builder raises instead.
 #: RATING_FLOOR is absent on purpose: it takes a set of per-source bars from the policy

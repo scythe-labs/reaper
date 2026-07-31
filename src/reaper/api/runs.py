@@ -419,6 +419,18 @@ def _reap_status(app: FastAPI) -> ReapStatus:
     return status
 
 
+def reap_in_flight(app: FastAPI) -> bool:
+    """Whether a reap is mid-run, for callers that must not take the database write lock.
+
+    Reads the status without creating one, so a predicate can be asked before any reap has
+    ever started. ``scheduler.sweep_old_snapshots`` is the caller: a reap commits its journal
+    per step (rule 26) and a lock it loses leaves the run wedged (#327), so the housekeeping
+    ``VACUUM`` yields to it rather than the other way round.
+    """
+    status: ReapStatus | None = getattr(app.state, "reap_status", None)
+    return status is not None and status.running
+
+
 def _preflight_refusal(gateway: ReapGateway) -> str | None:
     """The executor's client-presence refusals, checked synchronously so the endpoint returns
     them immediately (a clear 409) instead of only through the status poll after the task has

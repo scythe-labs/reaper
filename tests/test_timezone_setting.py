@@ -121,7 +121,12 @@ class TestReschedulingMovesEveryJob:
         factory = create_session_factory(engine)
         box = SecretBox(resolve_secret_key(settings))
         sched = scheduler.build_scheduler(
-            engine, tmp_path, session_factory=factory, secret_box=box, timezone=ZoneInfo("UTC")
+            engine,
+            tmp_path,
+            session_factory=factory,
+            secret_box=box,
+            timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
         )
         sched.start()
         try:
@@ -165,7 +170,12 @@ class TestReschedulingMovesEveryJob:
         factory = create_session_factory(engine)
         box = SecretBox(resolve_secret_key(settings))
         sched = scheduler.build_scheduler(
-            engine, tmp_path, session_factory=factory, secret_box=box, timezone=ZoneInfo("UTC")
+            engine,
+            tmp_path,
+            session_factory=factory,
+            secret_box=box,
+            timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
         )
         sched.start()
         try:

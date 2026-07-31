@@ -15,17 +15,21 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from reaper.api.runs import ReapStatus
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import Instance, InstanceKind
 from reaper.db.session import create_engine, create_session_factory
+from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
-from reaper.services import app_settings, imdb_dataset, retention, scheduler
+from reaper.services import app_settings, imdb_dataset, retention, scan_runner, scheduler
 from reaper.services.imdb_dataset import ImdbRatings
 
 
@@ -169,6 +173,7 @@ class TestTheSchedulerIsUpkeepOnly:
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
         )
         # build_scheduler returns an unstarted scheduler; jobs are inspectable without
         # starting it, and there is nothing to shut down.
@@ -213,6 +218,7 @@ class TestTheSchedulerIsUpkeepOnly:
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
             timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
         )
         job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
         wait = (job.trigger.start_date - utcnow()).total_seconds()
@@ -243,12 +249,62 @@ class TestTheSchedulerIsUpkeepOnly:
             session_factory=factory,
             secret_box=SecretBox(resolve_secret_key(settings)),
             timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
         )
 
         job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
 
-        assert list(job.args) == [factory, sweep_dir]
+        assert list(job.args)[:2] == [factory, sweep_dir]
         await engine.dispose()
+
+    async def test_the_snapshot_sweep_is_handed_a_way_to_ask_whether_a_reap_is_live(
+        self, tmp_path: Path
+    ) -> None:
+        """A reap's live flag lives on app state, which the scheduler has no handle on, so it
+        arrives as a predicate. Wired wrong it would still have the right arity, and the job
+        would compact straight through a reap (#325).
+
+        The predicate is passed answering True, which no default could produce -- a job wired
+        to a placeholder would read False here (rule 141)."""
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        sched = scheduler.build_scheduler(
+            engine,
+            tmp_path,
+            session_factory=create_session_factory(engine),
+            secret_box=SecretBox(resolve_secret_key(settings)),
+            timezone=ZoneInfo("UTC"),
+            reap_running=lambda: True,
+        )
+
+        job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
+
+        assert job.args[2]() is True
+        await engine.dispose()
+
+    def test_the_predicate_the_real_app_wires_reads_the_live_reap(self, tmp_path: Path) -> None:
+        """The test above proves the job calls whatever it was handed, which a placeholder
+        would satisfy just as well. This boots the real app and pins the whole chain --
+        ``main`` to ``api.runs.reap_in_flight`` to ``app.state.reap_status`` -- so the
+        interlock cannot be wired to something that never says True (#325).
+
+        Driven in both states off one predicate object, because a lambda captured before the
+        status existed would answer False forever and read as correct in the False case."""
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        sync_engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(sync_engine)
+        sync_engine.dispose()
+
+        app = create_app(settings)
+        with TestClient(app):
+            job = next(
+                j for j in app.state.scheduler.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID
+            )
+            asks_the_app = job.args[2]
+
+            assert asks_the_app() is False
+            app.state.reap_status = ReapStatus(running=True)
+            assert asks_the_app() is True
 
     async def test_compaction_is_attempted_on_a_firing_that_swept_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -273,9 +329,45 @@ class TestTheSchedulerIsUpkeepOnly:
         monkeypatch.setattr(retention, "sweep_old_snapshots", _swept_nothing)
         monkeypatch.setattr(retention, "compact_if_fragmented", _record)
 
-        await scheduler.sweep_old_snapshots(None, tmp_path)  # type: ignore[arg-type]
+        await scheduler.sweep_old_snapshots(None, tmp_path, lambda: False)  # type: ignore[arg-type]
 
         assert attempted == [tmp_path]
+
+    @pytest.mark.parametrize("live", ["scan", "reap"])
+    async def test_compaction_yields_to_a_live_scan_or_reap_but_the_sweep_still_runs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live: str
+    ) -> None:
+        """``VACUUM`` rewrites the whole file under the write lock and every app connection
+        waits only 5s for it (``db.session``). Measured on local NVMe with the app's own
+        pragmas, a 2.4 GB database vacuums for 8s and the concurrent write fails -- a size
+        inside the range ``retention.KEEP_SNAPSHOTS`` documents as the steady state, so it
+        needs no unusual storage. A scan loses every source read it made, since it commits
+        once at the end; a reap loses a journal step and wedges (#325, #327).
+
+        Both arms are pinned because they read two different flags from two different homes,
+        so one wired and one not is the likely half-fix. The sweep itself is asserted to have
+        run in both: its batches are short writes, and skipping them would let the database
+        grow without limit again (#315), which is a bigger harm than a deferred vacuum."""
+        swept, attempted = [], []
+
+        async def _sweep(_factory: object) -> int:
+            swept.append(True)
+            return 3
+
+        async def _compact(data_dir: Path) -> bool:
+            attempted.append(data_dir)
+            return True
+
+        monkeypatch.setattr(retention, "sweep_old_snapshots", _sweep)
+        monkeypatch.setattr(retention, "compact_if_fragmented", _compact)
+        monkeypatch.setattr(scan_runner, "_scan_running", live == "scan")
+
+        await scheduler.sweep_old_snapshots(  # type: ignore[arg-type]
+            None, tmp_path, lambda: live == "reap"
+        )
+
+        assert swept == [True]
+        assert attempted == []
 
     async def test_a_sweep_that_raises_does_not_escape_the_job(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -289,7 +381,7 @@ class TestTheSchedulerIsUpkeepOnly:
 
         monkeypatch.setattr(retention, "sweep_old_snapshots", _boom)
 
-        await scheduler.sweep_old_snapshots(None, tmp_path)  # type: ignore[arg-type]
+        await scheduler.sweep_old_snapshots(None, tmp_path, lambda: False)  # type: ignore[arg-type]
 
     async def test_the_snapshot_sweep_is_not_operator_schedulable(self) -> None:
         """Same argument as the session sweep: an off switch on it could only ever let the

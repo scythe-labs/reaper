@@ -28,6 +28,7 @@ first ratings load can take a while -- never stacks a second copy on top of itse
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta, tzinfo
 from pathlib import Path
 
@@ -280,6 +281,7 @@ async def sweep_expired_sessions(
 async def sweep_old_snapshots(
     session_factory: async_sessionmaker[AsyncSession],
     data_dir: Path,
+    reap_running: Callable[[], bool],
 ) -> None:
     """Trim the scan history to the retention window. Not operator-schedulable (see the id).
 
@@ -298,12 +300,31 @@ async def sweep_old_snapshots(
     compaction lost to a full disk, a locked database or a canceled shutdown would never
     be reattempted until a new scan pushed the count past the window again, which on an
     install whose auto-scan is off is never.
+
+    **It is gated on a live scan or reap, though, and that is a different argument.** The
+    ``VACUUM`` rewrites the whole file under the write lock, and every app connection waits
+    only 5s for it (``db.session``). Measured on local NVMe with the app's own pragmas, a
+    2.4 GB database vacuums for 8s and the concurrent write fails -- and 2.4 GB is inside the
+    range ``retention.KEEP_SNAPSHOTS`` documents as the steady state, so this needs no unusual
+    storage to bite (#325). A scan loses every source read it made, since it commits once at
+    the end; a reap loses a journal step and wedges (#327). Both outrank housekeeping, so the
+    housekeeping yields. The next firing reattempts, by the same argument as the paragraph
+    above -- this skips the compaction, never the sweep, whose batches are short writes that
+    take the lock no longer than the app's own.
     """
     try:
         removed = await retention.sweep_old_snapshots(session_factory)
         if removed:
             log.info("scheduler.snapshots_swept", removed=removed)
-        if await retention.compact_if_fragmented(data_dir):
+        # Checked here rather than at the top of the job: the sweep runs first and, on the
+        # upgrade drain this feature exists for, it runs for a while. A check made before it
+        # would be answering about a moment that has passed.
+        busy = "a scan is running" if scan_runner.scan_running() else None
+        if busy is None and reap_running():
+            busy = "a reap is running"
+        if busy is not None:
+            log.info("scheduler.compaction_skipped", reason=busy)
+        elif await retention.compact_if_fragmented(data_dir):
             log.info("scheduler.database_compacted")
     except Exception as exc:
         # The sweep commits per batch, so a failure part-way through keeps whatever it
@@ -504,6 +525,7 @@ def build_scheduler(
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
     timezone: tzinfo,
+    reap_running: Callable[[], bool],
 ) -> AsyncIOScheduler:
     """Wire the nightly jobs. The caller starts it and holds it on app state.
 
@@ -543,7 +565,7 @@ def build_scheduler(
             seconds=SNAPSHOT_SWEEP_INTERVAL_S,
             start_date=utcnow() + timedelta(seconds=SNAPSHOT_SWEEP_STARTUP_DELAY_S),
         ),
-        args=[session_factory, data_dir],
+        args=[session_factory, data_dir, reap_running],
         id=SNAPSHOT_SWEEP_JOB_ID,
         replace_existing=True,
     )

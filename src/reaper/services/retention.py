@@ -206,6 +206,13 @@ def _compact_sync(db_path: Path) -> bool:
 async def compact_if_fragmented(data_dir: Path) -> bool:
     """Return freed pages to the filesystem, but only when there are enough to matter.
 
+    **The caller decides whether now is the moment, and must.** The rewrite holds the write
+    lock for its whole duration, which passes the 5s every app connection waits
+    (``db.session``) somewhere above a gigabyte on local NVMe, so a scan or reap writing
+    across it loses that write (#325, #327). ``scheduler.sweep_old_snapshots`` is the only
+    caller and gates on both; a second caller owes the same gate, since nothing here can see
+    them.
+
     Runs in a worker thread: rewriting a multi-hundred-megabyte file would otherwise stall
     the event loop for the whole vacuum, exactly as ``services.backup`` found for
     ``VACUUM INTO``. Raises whatever SQLite raises -- a disk with no room for the second

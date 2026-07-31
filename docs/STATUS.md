@@ -107,4 +107,5 @@ cannot flip an item's fate mid-run. The why-panel explains every verdict in both
 worked example is under **Why-panel scope** in `docs/DECISIONS.md`.
 
 Only the **newest 30 scans** are kept (`services.retention`, swept twice daily; a scan a run is
-bound to stays regardless). Nothing may be built that reads scan history past that window.
+bound to stays regardless). Nothing may be built that reads scan history past that window. Its
+compaction defers to a live scan or reap: past 1.2 GB the `VACUUM` outlasts the app's 5s wait.

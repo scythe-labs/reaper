@@ -2448,6 +2448,25 @@ with a reader open. The trap is that every *logical* measure agrees the compacti
 `page_count` falls, `freelist_count` reaches zero, and the vacuum raises nothing, so only a
 `stat().st_size` over the directory can tell the two apart — which is why the test asserts bytes.
 
+**The vacuum starves a concurrent app write past about 1.2 GB, and that is local NVMe.** Measured
+with the real `_compact_sync`, the real engine and its connect listener, databases built at ~4 KB
+a row with 35% on the freelist so the true gate opens, and the app's connection pooled before the
+sweep fires: 519 MB vacuums in 1.5 s and the write lands after 1.3 s; 1.2 GB takes 5.0 s and the
+write lands after 5.3 s; 2.4 GB takes 8.0 s and the write fails with `database is locked` at
+5.7 s. Ordinary API traffic fails alongside it, because `_configure_sqlite`'s first statement is
+`PRAGMA journal_mode=WAL`, which wants the lock too. The number that matters is not 2.4 GB but
+where it sits: `KEEP_SNAPSHOTS` documents 700 MB and 2.4 GB as the *steady state* for a six- and
+a twenty-thousand-item library, so the larger of the module's own two figures already loses on
+the fastest storage an operator could have, and the upgrade drain vacuums a file larger still.
+Hence the caller-side gate in `scheduler.sweep_old_snapshots` (#325).
+
+Two negative results from the same harness, both worth not re-deriving. The failure is a plain
+`busy_timeout` expiry and **not** `SQLITE_BUSY_SNAPSHOT`: a session that reads and then writes
+waits its 5 s like any other, because pysqlite opens no transaction for a `SELECT` and so nothing
+pins a read snapshot. And when the app writes *first* it holds the lock and the vacuum is the one
+that waits, so the asymmetric timeouts (30 s for the vacuum, 5 s for the app) are not themselves
+the defect — the duration is.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

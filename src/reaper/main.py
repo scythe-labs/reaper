@@ -38,7 +38,7 @@ from reaper.api.plex_trash import router as plex_trash_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
 from reaper.api.routes import router
-from reaper.api.runs import profile_router
+from reaper.api.runs import profile_router, reap_in_flight
 from reaper.api.runs import router as runs_router
 from reaper.api.scan import router as scan_router
 from reaper.api.settings import router as settings_router
@@ -211,6 +211,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         session_factory=factory,
         secret_box=box,
         timezone=scheduler_tz,
+        # A reap's live flag lives on app state, which the scheduler has no handle on. Passed
+        # as a predicate rather than read at wiring time so the snapshot sweep asks the
+        # question when it is about to take the write lock, not twelve hours earlier (#325).
+        reap_running=lambda: reap_in_flight(app),
     )
     # Track which jobs are executing before the scheduler starts, so the very first firing
     # is seen. The Jobs page reads this to show an honest "running now" per job.
