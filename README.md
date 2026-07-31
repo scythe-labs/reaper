@@ -257,9 +257,9 @@ the evenings to build it.
 
 A large share of this codebase was written with AI assistance. I direct that work, read
 what comes back, and decide what ships. The architecture, the safety model, and the
-standard for what is good enough here are mine. A great deal of the typing is not. The
-engineering rules the project follows grew out of exactly this: they are the written-down
-result of reviewing that output and finding every way it went wrong.
+standard for what is good enough here are mine. The engineering rules the project
+follows grew out of exactly this: they are the written-down result of reviewing that
+output and finding every way it went wrong.
 
 Two reasons to say so plainly. You are trusting this program with files you cannot get
 back, so how it was made is your business. And it sets a fair expectation if you open a
@@ -278,7 +278,7 @@ Setup instructions, the verification gates, commit conventions, and the AI polic
 Bug reports and questions are welcome:
 [open an issue](https://github.com/scythe-labs/reaper/issues/new/choose) or start a
 [discussion](https://github.com/scythe-labs/reaper/discussions). Security problems go
-through [SECURITY.md](SECURITY.md) rather than the public tracker.
+through [SECURITY.md](SECURITY.md), which opens a private report.
 
 ## License
 

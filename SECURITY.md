@@ -18,8 +18,8 @@ what happens once they do. Proof-of-concept code is welcome and never required.
 
 ### What to expect
 
-Reaper is a hobby project maintained by one person, so response times are best effort
-rather than contractual. In practice that means an acknowledgement within a few days and
+Reaper is a hobby project maintained by one person, so response times are best effort.
+In practice that means an acknowledgement within a few days and
 an honest estimate once the problem is understood. If a report sits without a reply for a
 week, a nudge on the same advisory thread is entirely reasonable.
 
@@ -44,8 +44,9 @@ If you are looking for somewhere to start, these carry the weight:
   one route that deletes requires both the armed host and an exact confirmation phrase that
   is recomputed on the server from the plan's contents.
 - **The transport guard.** `GuardedTransport` refuses any mutating request unless deletion
-  is armed on the host and the intent was written to the journal first, which is a property
-  of the machine rather than of the browser talking to it (`src/reaper/clients/`).
+  is armed on the host and the intent was written to the journal first. Arming is a
+  property of the machine itself, which a browser has no way to reach
+  (`src/reaper/clients/`).
 - **Backup and restore.** A backup carries key material, and restore writes to the settings
   that control everything above (`src/reaper/services/backup.py`,
   `src/reaper/services/restore.py`).

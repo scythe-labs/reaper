@@ -33,7 +33,7 @@ Delete the line that does not apply.
 
 Reaper removes files that nobody can get back. A change that alters scoring,
 gates, the planner, or the executor is read with that in mind, and saying so
-up front makes the review faster rather than slower.
+up front makes the review faster.
 -->
 
 ## Checklist
@@ -47,6 +47,6 @@ up front makes the review faster rather than slower.
 <!--
 One line. "None", "drafted by Claude Code and reviewed line by line", and
 "I used an assistant to understand the codebase, the patch is mine" are all
-fine answers. It tells a reviewer where to look harder, and this project is
-built with AI assistance itself, so it carries no stigma here.
+fine answers. It tells a reviewer where to look harder. This project is built
+with AI assistance itself, so the answer is welcome whatever it says.
 -->

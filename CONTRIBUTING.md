@@ -28,7 +28,7 @@ If you want to know who writes this and how, the README has an honest answer und
   place for setup help, ideas that are still forming, and anything that is not yet an issue.
 - **Fix the docs.** Instructions that did not work are a bug.
 
-Security problems go through [SECURITY.md](SECURITY.md) rather than the public tracker.
+Security problems go through [SECURITY.md](SECURITY.md), which opens a private report.
 
 Everyone taking part agrees to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -37,7 +37,7 @@ Everyone taking part agrees to the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## AI assistance
 
 Reaper is built with AI assistance, so using an assistant to write code here is ordinary and
-carries no stigma. Disclose it, understand it, and you are welcome.
+welcome. Disclose it, understand it, and you are on solid ground.
 
 **Understand what you are submitting.** You should be able to explain why it works, and
 answer a question about it next week. This is the entire standard. Everything below is a
@@ -121,14 +121,14 @@ npm --prefix frontend run build        # tsc --noEmit, then vite build
 Run the writing form of both formatters before you stage: `uv run ruff format .` and
 `npm --prefix frontend run format`. Formatting is the most common reason CI goes red.
 
-**Read the exit code rather than the tail of the output.** A pipeline reports its last
-command's status, so `npm --prefix frontend run build | tail -4` prints `tail`'s success
-while a failing compile scrolls past, and anything chained after it with `&&` then runs on a
-broken tree. Run each gate on its own and check `$?`. Piping to `head` is worse, since it
+**Judge a gate by its exit code.** A pipeline reports its last command's status, so
+`npm --prefix frontend run build | tail -4` prints `tail`'s success while a failing compile
+scrolls past, and anything chained after it with `&&` then runs on a broken tree. Run each
+gate on its own and check `$?`. Piping to `head` carries the same hazard and adds one: it
 kills the writer partway and reports that as the result.
 
 When a change is visible in the running app, click through it. Green tests and a working
-feature are different claims.
+feature are two separate claims, and each is worth making on its own evidence.
 
 ---
 
@@ -138,8 +138,8 @@ feature are different claims.
 
 `dev` is the default branch and everything lands there first. `main` is release-only.
 
-Cut your branch from the current `dev` rather than from whatever your working copy is
-sitting on:
+Cut your branch from the current `dev`, asking the remote what current means. A local
+`dev` is a cached answer, and a session refreshes it only when you say so:
 
 ```bash
 git fetch origin
@@ -330,4 +330,4 @@ recorded as ratios and shapes.
 If you are pointing an agent at this repository, [AGENTS.md](AGENTS.md) is its entry point.
 It carries the architecture, the safety model, and the numbered engineering rules the
 codebase cites by number. This guide holds the conventions, and the agent instructions defer
-to it rather than restating it, so there is one copy of each rule to keep current.
+to it, so there is one copy of each rule to keep current.
