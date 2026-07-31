@@ -1671,8 +1671,10 @@ export const api = {
   // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.
   // `whitelist`, `spare` and `unspare` used to sit here too, uncalled by anything: three
   // more ways to write the same safety-adjacent row, with nothing to tell a reader which
-  // one the app actually used (rule 38, R-6). Their routes are still served, for the
-  // API-key lane.
+  // one the app actually used (rule 38, R-6). Their routes are still served, but only the
+  // READ is reachable by an API key: `_API_KEY_WRITES` admits scanning, planning, the
+  // policy and the profile, so a key meets a 403 on both writes. This line offered the
+  // lane all three, and #326 was filed against the refusal that mistake implied.
   /** Override a verdict by hand -- spare (keep) or reap (force onto the list). A show's
    *  media_key covers all its seasons. `spareDays` is how long a spare keeps it: 0 = forever,
    *  a positive count that many days; ignored for a reap. */

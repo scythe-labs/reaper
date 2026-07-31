@@ -31,7 +31,9 @@ and the executor spends past what the operator set (rule 5/30). What keeps it wh
 run exclusion below, and nothing else. It is therefore a *safety* interlock and not the
 deference to a schema raise it can look like, and narrowing it -- to live runs, to recent
 runs -- silently unprices the cap. ``executor`` and ``api.runs`` read a run's own snapshot
-the same way, and ``api.whitelist._resolve_title`` reads across all history unbounded.
+the same way, and ``api.whitelist._resolve_title`` reads across all history to answer "do
+we know this item", a read this bounds rather than breaks: its refusal is worded for the
+bound and names it as a scan count (#326).
 
 **Two things are never swept, and both are the keep direction.**
 

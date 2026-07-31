@@ -598,6 +598,15 @@ class TestTheApiKeyLane:
         assert _api_key_allowed("PUT", "/api/settings/safety") is False
         assert _api_key_allowed("PUT", "/api/settings/general") is False
         assert _api_key_allowed("PUT", "/api/settings/plex/connection") is False
+        # Recording a decision by hand is a signed-in act, not an automation one, and the
+        # read is the only part of the keep list a key gets. Pinned because #326 rests on
+        # it: the 404 those two writes can raise is reachable from no script, which is what
+        # settled it as a wording fix rather than a behavior one.
+        assert _api_key_allowed("GET", "/api/whitelist") is True
+        assert _api_key_allowed("POST", "/api/whitelist") is False
+        assert _api_key_allowed("POST", "/api/override") is False
+        assert _api_key_allowed("DELETE", "/api/whitelist/{media_key}") is False
+        assert _api_key_allowed("DELETE", "/api/override/{media_key}") is False
 
 
 class TestTheDocsLockdown:
