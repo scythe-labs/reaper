@@ -11,6 +11,7 @@ These are filesystem checks -- no app boot, no fixtures, no network.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -1175,6 +1176,65 @@ def test_every_ecosystem_quarantines_a_release_before_proposing_it() -> None:
         "A `None` means that ecosystem declares no cooldown at all and will take a release the\n"
         "morning it ships. If you meant to change a window, change it here too and say why in\n"
         "the pull request; if an ecosystem is new, give it one."
+    )
+
+
+#: typescript-eslint's declared ``typescript`` peer range, as locked in
+#: ``frontend/package-lock.json``. TypeScript 7 falls outside it, which is the entire reason
+#: ``.github/dependabot.yml`` ignores TypeScript majors.
+#:
+#: Pinned as an exact string rather than parsed, deliberately. A range parser here would be a
+#: second semver implementation written to be believed, and the failure it could hide is the
+#: one that matters: a widened range that this test reads as still-narrow leaves the deferral
+#: in place forever with nobody looking. An exact match cannot do that. It is over-eager by
+#: design, firing on any change to the range including one that still excludes 7, because the
+#: cost of that is a minute of reading and the cost of the other direction is being stranded on
+#: TypeScript 5 indefinitely.
+_TS_ESLINT_PEER_ON_TYPESCRIPT = ">=4.8.4 <6.1.0"
+FRONTEND_LOCK = REPO / "frontend" / "package-lock.json"
+
+
+def test_the_typescript_deferral_still_has_a_reason() -> None:
+    """A deferral that outlives its cause is just a dependency nobody updates any more.
+
+    ``.github/dependabot.yml`` declines TypeScript majors because typescript-eslint pins a
+    peer range that excludes TypeScript 7, so a lone ``typescript`` bump cannot install, let
+    alone build. That is a fact about somebody else's package, it will stop being true without
+    anyone here doing anything, and the config cannot notice. This is what notices.
+
+    When it fails, read typescript-eslint's new range. If it admits 7, delete the ``ignore``
+    for ``typescript`` and let the grouped bump through. If it does not, update the constant.
+    """
+    lock = json.loads(FRONTEND_LOCK.read_text(encoding="utf-8"))
+    entries = [
+        meta
+        for name, meta in lock.get("packages", {}).items()
+        if name.endswith("node_modules/typescript-eslint")
+    ]
+    assert len(entries) == 1, (
+        f"expected exactly one locked typescript-eslint, found {len(entries)}. The lockfile's\n"
+        "shape changed; fix this walk before trusting the assertion below."
+    )
+    peer = (entries[0].get("peerDependencies") or {}).get("typescript")
+    assert peer == _TS_ESLINT_PEER_ON_TYPESCRIPT, (
+        f"typescript-eslint's typescript peer range is now {peer!r},\n"
+        f"was {_TS_ESLINT_PEER_ON_TYPESCRIPT!r} when TypeScript majors were deferred.\n\n"
+        "If the new range admits 7.x, the block is gone: drop the `typescript` entry from\n"
+        "`ignore` in .github/dependabot.yml and let the grouped toolchain bump through.\n"
+        "If it still excludes 7.x, update the constant above and leave the ignore alone."
+    )
+
+    ignored = {
+        entry.get("dependency-name")
+        for update in _dependabot_updates()
+        if update.get("package-ecosystem") == "npm"
+        for entry in (update.get("ignore") or [])
+    }
+    assert "typescript" in ignored, (
+        "typescript-eslint still pins a peer range that excludes TypeScript 7, so a lone\n"
+        "`typescript` major cannot install. Dependabot will raise one every week and it will\n"
+        "be red every week (#364, then #368). Keep the ignore until this test tells you the\n"
+        "range moved."
     )
 
 
