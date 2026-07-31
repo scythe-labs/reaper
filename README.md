@@ -246,96 +246,39 @@ and paste the code there. It is single-use and expires in 15 minutes. The split 
 deliberate — a code baked into the URL would be recorded verbatim in every reverse proxy's
 access log, which is precisely where you do not want the key to your admin account.
 
-## Development
+## How Reaper is built
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.13+.
+This is a hobby project, and you should know that before you point it at a library you
+care about.
 
-```bash
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+I work professionally in tech and have written Python for more than ten years. Software
+engineering is not my job title, and Reaper exists because I wanted it to exist and had
+the evenings to build it.
 
-cp .env.example .env.local      # no key needed; one is generated on first boot
+A large share of this codebase was written with AI assistance. I direct that work, read
+what comes back, and decide what ships. The architecture, the safety model, and the
+standard for what is good enough here are mine. A great deal of the typing is not. The
+engineering rules the project follows grew out of exactly this: they are the written-down
+result of reviewing that output and finding every way it went wrong.
 
-alembic upgrade head
-uvicorn reaper.main:create_app --factory --no-proxy-headers --reload --port 8420
-```
+Two reasons to say so plainly. You are trusting this program with files you cannot get
+back, so how it was made is your business. And it sets a fair expectation if you open a
+pull request: I read what lands here and I can answer for it, and I am learning in the
+open, so a well-argued disagreement is welcome and is often right.
 
-```bash
-ruff check . && ruff format --check .
-mypy src/reaper
-pytest
-```
+The safety model is the part that gets the most scrutiny, and it is built to hold whoever
+is typing. Deletion happens through one route, behind two independent layers, and every
+ambiguity resolves toward keeping the file.
 
-**Never commit credentials.** `.env.local` is gitignored. API keys entered in the web
-UI are Fernet-encrypted at rest and redacted from logs.
+## Contributing
 
-### The web UI
+Setup instructions, the verification gates, commit conventions, and the AI policy are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-```bash
-cd frontend
-npm install
-npm run dev          # http://localhost:5173, proxies /api to the app on :8420
-```
-
-```bash
-npm run lint && npm run format:check
-npm run test
-npm run build        # tsc --noEmit, then vite build
-```
-
-Both languages are machine-formatted and both are checked in CI: `ruff format` for Python,
-prettier for `frontend/`, sharing one width (100). Run `npm run format` and `ruff format .`
-before committing rather than matching style by hand. `.git-blame-ignore-revs` lists the
-whitespace-only commits; `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per
-clone keeps `git blame` pointing at the commit that changed a line's meaning.
-
-In production there is no separate server: `npm run build` emits `frontend/dist`, and
-FastAPI serves it via `app.frontend()` as low-priority routes — the `/api` routes are
-matched first, and anything else falls back to `index.html`. Both dev and production
-therefore talk to a *same-origin* `/api`, so there is no CORS configuration anywhere
-and nothing to accidentally loosen.
-
-Eight dependencies, deliberately: React, React-DOM, TanStack Query, and the build
-toolchain. No component library and no CSS framework. This is a tool that can delete a
-media library, and every transitive package is something that ends up in the bundle
-that renders the delete button.
-
-### Time
-
-Every timestamp is a **UTC instant stored as an integer unix epoch**
-(`src/reaper/db/types.py`), presented to Python as a timezone-aware `datetime`.
-
-This is not a micro-optimization — it removes a bug class rather than guarding
-against one. SQLite stores no timezone, so `DateTime(timezone=True)` is silently a
-no-op there: aware datetimes go in, naive ones come back, and a naive/aware
-comparison is either a `TypeError` or — worse — quietly wrong by your UTC offset.
-Since every deletion decision rests on *when was this last watched*, quietly wrong
-is the failure that matters. An integer cannot carry that ambiguity. It is also the
-format Tautulli and Plex already speak.
-
-Reading the database by hand:
-
-```sql
-SELECT datetime(first_flagged_at, 'unixepoch') FROM first_flagged;
-```
-
-`reaper.clock` is the only sanctioned boundary. Note `from_epoch()` maps `0` and
-`""` to `None`: Tautulli and Plex use them for *never played*, and coercing that to
-1970 would read as *maximally stale* — condemning exactly the media that must not
-be touched.
-
-### Two things that cannot be changed later
-
-The metadata naming convention (`src/reaper/db/base.py`) and Alembic's
-`render_as_batch=True` (`alembic/env.py`). SQLite cannot drop an unnamed
-constraint, so without both, future migrations fail and the only fix is rewriting
-the entire migration history.
-
-`tests/test_migrations.py` guards both halves. It imports the real `NAMING_CONVENTION` and
-proves a named constraint can be dropped under batch mode, and it runs the real
-`alembic/env.py` to capture what that file actually passes to `context.configure()`, at
-both the offline and online call sites. Flipping `render_as_batch` to `False` fails that
-test today, rather than surfacing years from now in the first migration that needs it.
+Bug reports and questions are welcome:
+[open an issue](https://github.com/scythe-labs/reaper/issues/new/choose) or start a
+[discussion](https://github.com/scythe-labs/reaper/discussions). Security problems go
+through [SECURITY.md](SECURITY.md) rather than the public tracker.
 
 ## License
 
