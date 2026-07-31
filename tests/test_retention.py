@@ -277,6 +277,31 @@ class TestPreexistingInstalls:
         assert await _snapshot_ids(factory) == ids[-2:]
         assert await _candidate_count(factory) == 2
 
+    async def test_the_drain_stops_at_the_backstop_and_resumes_next_firing(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The runaway guard on the drain loop, which is the only bound on it -- without a
+        test, replacing the bounded loop with ``while True`` is green (rule 118).
+
+        The batch ceiling is lowered rather than a 50,000-snapshot backlog built, and it
+        stops mid-drain deliberately: the returned count must be what this pass actually
+        removed, and the leftovers must still be there for the next firing to take, since
+        the sweep's whole recovery story is that it commits per batch and resumes."""
+        backlog = retention.SWEEP_BATCH * 3
+        ids = await _seed(factory, backlog + 1, items=1)
+        monkeypatch.setattr(retention, "MAX_SWEEP_BATCHES", 2)
+
+        removed = await retention.sweep_old_snapshots(factory, keep=1)
+
+        assert removed == retention.SWEEP_BATCH * 2
+        assert await _snapshot_ids(factory) == ids[removed:]
+
+        monkeypatch.setattr(retention, "MAX_SWEEP_BATCHES", 5)
+        assert await retention.sweep_old_snapshots(factory, keep=1) == retention.SWEEP_BATCH
+        assert await _snapshot_ids(factory) == ids[-1:]
+
 
 class TestCompaction:
     """``VACUUM`` is what actually hands disk back, since SQLite never returns freed pages
