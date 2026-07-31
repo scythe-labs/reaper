@@ -59,9 +59,14 @@ jobs:
       # resolved from): a mutable tag on a third-party action is a supply-chain door
       # into the job that builds and publishes the deletion-capable image.
       #
+      # The comment names the exact release, not the major. `astral-sh/setup-uv` stopped
+      # publishing major and minor tags at v8 for that same supply-chain reason, so `# v9`
+      # would name a tag that does not exist. `.github/dependabot.yml` is what moves these
+      # now, and it rewrites the sha and the comment together.
+      #
       # Full history, because this job's whole purpose is to diff against a base commit
       # that a shallow clone would not contain.
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -125,7 +130,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Caching depends on job containers being able to reach the runner's cache server.
       # It only works while the runner shares a network with them (container.network on
@@ -134,7 +139,7 @@ jobs:
       # misses is far from free: it once cost this job ~40s and `frontend` ~9m per run, to
       # fetch nothing. If those timeouts reappear, suspect the runner's network, not this.
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
 
@@ -182,10 +187,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # See the note on caching in `check`.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
           cache: npm
@@ -228,10 +233,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.prose == 'true'
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
 
@@ -259,7 +264,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The image path is derived from the run context, never hardcoded, so this
       # workflow is correct for anyone who forks Reaper. The registry is the one

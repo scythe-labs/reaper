@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+version: 2
+
+# The thing that moves a pin.
+#
+# Rule 15 requires the shipped artifact to build from digest-pinned base images, sha-pinned
+# actions and the committed lockfiles, which is what makes two builds weeks apart the same
+# build. The cost is that a pin never moves on its own: the digest that made the build
+# reproducible is the same digest that holds it on an unpatched layer, so a base image
+# rebuilt against a fixed libc is one nobody picks up. Nothing else in this repository
+# updates them, and a pin nobody updates is the failure the pin was supposed to prevent.
+#
+# Three facts about this repository shape every entry below.
+#
+#   1. `.github/workflows/pr-validation.yml` requires a pull request title to parse as a
+#      Conventional Commit, because a squash-merge makes that title the permanent commit
+#      message. Dependabot titles its pull requests "Bump x from a to b" by default, which
+#      does not parse, so `commit-message.prefix` is load-bearing rather than decoration:
+#      without it every pull request opened from this file fails a required check. The
+#      prefix has to stay a type that workflow accepts, and it is not written down there,
+#      so tests/test_repo_hygiene.py holds the two files to each other.
+#   2. A pull request here carries a `Kind/` and a `Priority/` label, because that is how
+#      the queue is filtered and an unlabeled pull request is missing from it. Dependabot
+#      applies only labels that already exist in the repository and silently drops the
+#      rest, so renaming a label makes these go quiet rather than fail.
+#   3. A group is one pull request and one CI run. Ungrouped, a quiet week of npm patches
+#      is a dozen of each, and `docker build` runs for every one of them.
+#
+# `docker-compose.yml` is deliberately not watched. The only image it names is Reaper's own,
+# on the moving `:dev` tag that an operator is meant to follow; pinning that to a digest
+# would freeze installs on whatever was current the day the pull request landed.
+#
+# CodeQL was raised alongside this and is a separate decision (#356).
+
+updates:
+  # Pinned action shas. A mutable tag on a third-party action is a supply-chain door into
+  # the job that builds and publishes the deletion-capable image, which is why they are
+  # pinned; this is what keeps the pins current. Dependabot rewrites the sha and the `# v4`
+  # comment beside it together.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Etc/UTC"
+    # One pull request for all of them. They are a handful of actions across the workflows
+    # in this directory, and reviewing them together is reviewing one diff.
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: ["Area/CI", "Kind/Chore", "Priority/Low"]
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    open-pull-requests-limit: 5
+
+  # The two digest-pinned base images in the Dockerfile.
+  #
+  # The uv image's tag (`python3.13-bookworm-slim`) carries no version to bump, so it moves
+  # by digest alone, which is exactly the patched-layer case this file exists for. `node`'s
+  # tag does carry one, so a major bump can arrive here: that needs `node-version` in
+  # `ci.yml` moved with it, or the image builds on a Node the tests never ran on.
+  # tests/test_repo_hygiene.py fails the pull request that moves only one of the two.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Etc/UTC"
+    groups:
+      base-images:
+        patterns: ["*"]
+    labels: ["Area/CI", "Kind/Chore", "Priority/Low"]
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    open-pull-requests-limit: 5
+
+  # uv.lock, which is what the image installs from. The upper bounds in pyproject.toml are
+  # deliberate (starlette < 2, apscheduler < 4) and the resolver honors them, so nothing
+  # here has to restate them as an `ignore`.
+  #
+  # Patch and minor arrive grouped; a major falls out of the group and gets its own pull
+  # request, because a major is a change to review on its own and not one line in twelve.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Etc/UTC"
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels: ["Kind/Backend", "Kind/Chore", "Priority/Low"]
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    open-pull-requests-limit: 5
+
+  # frontend/package-lock.json. The direct dependencies are few by design (the dependency
+  # budget in CONTRIBUTING.md), so the grouped pull request stays small enough to read.
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Etc/UTC"
+    groups:
+      frontend:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels: ["Kind/Frontend", "Kind/Chore", "Priority/Low"]
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    open-pull-requests-limit: 5

@@ -37,9 +37,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # The eight types this repository actually uses, plus the three from the
-          # Conventional Commits spec that it has not needed yet. Adding a type here is
-          # cheaper than a contributor guessing which one is allowed.
+          # The full Conventional Commits set, not a subset: adding a type here is cheaper
+          # than a contributor guessing which one is allowed.
+          #
+          # This list is also where `.github/dependabot.yml` gets its `commit-message`
+          # prefixes. A Dependabot pull request is titled from that prefix and gated here
+          # like any other, so a type dropped from this list is a required check that fails
+          # on every automated dependency bump, days later, for a reason nothing connects
+          # back to this edit. tests/test_repo_hygiene.py fails when the two disagree.
           types: |
             feat
             fix

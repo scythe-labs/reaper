@@ -252,6 +252,12 @@ toolchain. No component library and no CSS framework. This is a tool that can de
 library, and every transitive package ends up in the bundle that renders the delete button.
 Adding one is a conversation worth having in the pull request.
 
+Keeping the ones we have current is not your job: `.github/dependabot.yml` opens a grouped
+pull request each Monday for the lockfiles, the Dockerfile's base images, and the pinned
+action shas. Review it like any other, and read it as a proposal rather than a verdict. A
+major version of a Python or npm package comes as its own pull request, so it can be argued
+with separately from the week's patches.
+
 ### Every timestamp is an integer
 
 Timestamps are UTC instants stored as integer unix epochs (`src/reaper/db/types.py`) and

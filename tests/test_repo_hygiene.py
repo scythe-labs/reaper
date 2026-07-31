@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -1020,6 +1021,215 @@ def test_scoped_rule_files_declare_their_paths(path: Path) -> None:
     assert text.startswith("---\n"), f"{path.name} needs YAML frontmatter"
     frontmatter = text.split("---", 2)[1]
     assert "paths:" in frontmatter, f"{path.name} must scope itself with a paths: list"
+
+
+# --- the pins, and the one thing that moves them -------------------------------------------
+#
+# Rule 15 pins the shipped artifact: digest-pinned base images, sha-pinned action shas, an
+# install from the committed lockfiles. `.github/dependabot.yml` is the only thing in the
+# repository that moves any of them, and it fails silently in both directions. An ecosystem
+# nobody added simply never raises a pull request, which looks exactly like a week with no
+# updates; and a pull request it does raise can die on a required check whose reason lives in
+# a different file nobody was editing. These three check both halves.
+
+DEPENDABOT = REPO / ".github" / "dependabot.yml"
+PR_TITLE_WORKFLOW = REPO / ".github" / "workflows" / "pr-validation.yml"
+
+#: The manifest filenames Dependabot can watch, and the ecosystem each one demands. The
+#: workflows directory is handled separately in the walk below, because `github-actions` is
+#: declared at the repository root rather than at `.github/workflows`, so it is the one
+#: ecosystem whose directory is not the manifest's own parent.
+_ECOSYSTEM_BY_MANIFEST = {
+    "uv.lock": "uv",
+    "package-lock.json": "npm",
+    "Dockerfile": "docker",
+    "docker-compose.yml": "docker-compose",
+}
+
+#: Left unwatched on purpose, so that an unwatched manifest is either named here or a failure.
+#: `docker-compose.yml` names one image, Reaper's own, on the moving `:dev` tag an operator is
+#: meant to follow; pinning that to a digest would freeze their install on whatever happened to
+#: be current the day the pull request landed.
+_UNWATCHED_MANIFESTS = {"docker-compose.yml"}
+
+#: Reconciled by hand against the tree: the two lockfiles, the Dockerfile, the compose file and
+#: the workflows directory. Pinned because the two-way check below cannot tell a manifest that
+#: complies from one the walk stopped seeing (rule 145) -- renaming `Dockerfile` to
+#: `Containerfile` empties the discovered side and orphans nothing, so every other assertion
+#: here passes while the image base is no longer watched by anything.
+_EXPECTED_MANIFEST_KINDS = {
+    ("github-actions", "/"),
+    ("docker", "/"),
+    ("docker-compose", "/"),
+    ("uv", "/"),
+    ("npm", "/frontend"),
+}
+
+
+def _dependabot_updates() -> list[dict]:
+    """Every ``updates:`` entry in ``.github/dependabot.yml``.
+
+    A parsed list, not a text scan, so unlike the walks elsewhere in this file its population
+    cannot quietly shrink behind a matcher that stopped reading a spelling. What *can* shrink
+    is the file itself, which is what the caller below reconciles against the tree.
+    """
+    assert DEPENDABOT.is_file(), (
+        "nothing moves the pins: .github/dependabot.yml is missing, so the digests rule 15\n"
+        "requires stay on whatever layer they were pinned to."
+    )
+    config = yaml.safe_load(DEPENDABOT.read_text(encoding="utf-8"))
+    updates = config.get("updates") if isinstance(config, dict) else None
+    assert isinstance(updates, list) and updates, (
+        ".github/dependabot.yml parses but declares no updates:, which updates nothing."
+    )
+    return updates
+
+
+def _manifest_kinds_in_tree() -> dict[str, tuple[str, str]]:
+    """Each ``(ecosystem, directory)`` this checkout demands, keyed by the file demanding it.
+
+    The walk is ``_repo_text_files``, which is scoped to this checkout and skips
+    ``node_modules``; a vendored lockfile is not a manifest this repository maintains.
+    """
+    found: dict[str, tuple[str, str]] = {}
+    for path, _ in _repo_text_files():
+        relative = path.relative_to(REPO)
+        if relative.parts[:2] == (".github", "workflows") and path.suffix in {".yml", ".yaml"}:
+            found[relative.as_posix()] = ("github-actions", "/")
+            continue
+        ecosystem = _ECOSYSTEM_BY_MANIFEST.get(path.name)
+        if ecosystem is None:
+            continue
+        parent = relative.parent.as_posix()
+        found[relative.as_posix()] = (ecosystem, "/" if parent == "." else f"/{parent}")
+    return found
+
+
+def test_every_dependency_manifest_is_watched_by_dependabot() -> None:
+    """A manifest this repository maintains is watched, or it is named as excused.
+
+    This is the failure the config exists to prevent, recurring: a second lockfile arrives, a
+    frontend workspace is added, and nothing raises a pull request for it. The absence looks
+    identical to a quiet week, which is why it needs a test rather than attention.
+    """
+    in_tree = _manifest_kinds_in_tree()
+    kinds = set(in_tree.values())
+    assert kinds == _EXPECTED_MANIFEST_KINDS, (
+        f"the manifest walk found {sorted(kinds)},\nexpected {sorted(_EXPECTED_MANIFEST_KINDS)}.\n"
+        "If you ADDED a manifest, give it an updates: entry and add its kind to the set above.\n"
+        "If you did not, one dropped out of the walk -- a rename that _ECOSYSTEM_BY_MANIFEST no\n"
+        "longer spells. The two checks below cannot see that: they compare the config against\n"
+        "this walk, so a manifest missing from both halves reads as agreement."
+    )
+
+    watched = {
+        (str(u.get("package-ecosystem")), str(u.get("directory"))) for u in _dependabot_updates()
+    }
+    unwatched = sorted(
+        f"  {name} needs a {ecosystem} entry at {directory}"
+        for name, (ecosystem, directory) in in_tree.items()
+        if (ecosystem, directory) not in watched and name not in _UNWATCHED_MANIFESTS
+    )
+    assert not unwatched, (
+        "these manifests have nothing keeping them current:\n"
+        + "\n".join(unwatched)
+        + "\n\nAdd the entry, or name the file in _UNWATCHED_MANIFESTS with the reason."
+    )
+
+    orphaned = sorted(f"  {ecosystem} at {directory}" for ecosystem, directory in watched - kinds)
+    assert not orphaned, (
+        "these updates: entries watch a manifest that is not in the tree, so they update\n"
+        "nothing and read as coverage:\n" + "\n".join(orphaned)
+    )
+
+
+def _accepted_title_types() -> set[str]:
+    """The Conventional Commit types ``pr-validation.yml`` lets a pull request title carry."""
+    workflow = yaml.safe_load(PR_TITLE_WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["title"]["steps"]
+    declared = next(s["with"]["types"] for s in steps if "types" in (s.get("with") or {}))
+    return set(declared.split())
+
+
+def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None:
+    """Rule 144: one fact about how a pull request must look, written in two files.
+
+    A squash-merge makes the pull request title the permanent commit message, so
+    ``pr-validation.yml`` gates it as a Conventional Commit; Dependabot's own default title
+    ("Bump x from a to b") does not parse, and ``commit-message.prefix`` is what fixes that.
+    Neither file names the other, and the failure lands days later on a pull request nobody
+    opened, so a type dropped from that workflow's list reads as Dependabot being broken.
+
+    The labels are the same shape of fact: the queue is filtered by ``Kind/`` and
+    ``Priority/``, and Dependabot applies only labels that already exist and drops the rest
+    without a word, so a renamed label makes these pull requests invisible rather than red.
+    """
+    accepted = _accepted_title_types()
+    assert accepted, (
+        "no types parsed out of pr-validation.yml, so the check below would accept anything.\n"
+        "The step's shape changed; fix _accepted_title_types before trusting this test."
+    )
+
+    problems: list[str] = []
+    for update in _dependabot_updates():
+        where = f"{update.get('package-ecosystem')} at {update.get('directory')}"
+        prefix = (update.get("commit-message") or {}).get("prefix")
+        if prefix not in accepted:
+            problems.append(
+                f"  {where}: commit-message.prefix {prefix!r} is not a type pr-validation.yml\n"
+                f"    accepts ({', '.join(sorted(accepted))}), so every pull request it opens\n"
+                "    fails the title check."
+            )
+        labels = update.get("labels") or []
+        if not any(label.startswith("Kind/") for label in labels):
+            problems.append(
+                f"  {where}: no Kind/ label, so the pull request is missing from the queue"
+            )
+        priorities = [label for label in labels if label.startswith("Priority/")]
+        if len(priorities) != 1:
+            problems.append(f"  {where}: needs exactly one Priority/ label, has {priorities}")
+    assert not problems, "dependabot.yml opens pull requests that do not fit here:\n" + "\n".join(
+        problems
+    )
+
+
+#: Both spellings of "which Node major" in this checkout: the image's ``FROM node:24-alpine``
+#: and the workflow's ``node-version: "24"``. The quote is optional on the second because yaml
+#: reads the bare form identically, and a matcher that only accepts quotes goes blind on an
+#: edit that is not even a change (rule 147).
+_NODE_MAJOR = re.compile(r"""(?:FROM\s+node:|node-version:\s*)["']?(\d+)""")
+
+#: The Dockerfile and ci.yml. Pinned because the agreement assertion below is vacuously true
+#: on one site, or on none (rule 145).
+_EXPECTED_NODE_SITES = 2
+
+
+def test_the_node_major_is_the_same_in_the_image_and_in_ci() -> None:
+    """The image builds the bundle on the Node the frontend job tested it on.
+
+    Two files name a Node major and nothing held them together, which cost nothing while both
+    only moved by hand. Dependabot moves the Dockerfile's: ``node``'s tag carries a version, so
+    a major bump arrives as a pull request that edits one of the two. Left alone, ``npm run
+    build`` in CI proves a bundle on one runtime and the shipped image builds it on another.
+    """
+    sites = [
+        (path.relative_to(REPO), lineno, match.group(1))
+        for path, text in _repo_text_files()
+        for lineno, line in enumerate(text.splitlines(), 1)
+        if (match := _NODE_MAJOR.search(line))
+    ]
+    assert len(sites) == _EXPECTED_NODE_SITES, (
+        f"expected {_EXPECTED_NODE_SITES} declarations of the Node major, found {len(sites)}:\n"
+        + "\n".join(f"  {p}:{n} -> {v}" for p, n, v in sites)
+        + "\n\nIf you ADDED one, bump the number so it is covered. If you did not, one dropped\n"
+        "out of the walk and the agreement below no longer reads it."
+    )
+    majors = {version for _, _, version in sites}
+    assert len(majors) == 1, (
+        "the Node major disagrees between the image and CI:\n"
+        + "\n".join(f"  {p}:{n} -> {v}" for p, n, v in sites)
+        + "\n\nMove both together, or CI tests the bundle on a runtime the image does not use."
+    )
 
 
 # --- the docs discipline -----------------------------------------------------------------
