@@ -849,6 +849,33 @@ class TestTheDangerousConfigDetector:
         assert "delete" not in message
         assert "reap list" in message
 
+    def test_the_gate_off_warnings_carry_the_whole_gates_field(self) -> None:
+        """The page routes on the whole string, not on the tail these siblings match.
+
+        ``PolicyEditor``'s ``gates`` anchor claims this family by its ``gates.`` prefix,
+        which is what renders the warning beside the protections list instead of at the foot
+        of the page, and the row's own boxes point ``aria-describedby`` at
+        ``gates.<gate>.<setting>`` in full (#189). The two assertions above match with
+        ``endswith``, so dropping or renaming the prefix would leave them green while moving
+        the warning off the switch it is about.
+
+        Second assertion is the population, not a second spelling of the first (rule 145): a
+        third protection warned about on its switch is a field this page has never bound, and
+        a flag-shaped check cannot report one it was never told to look for.
+        """
+        body = _policy(
+            gates=(
+                GateSetting(gate=GateId.STREAMING_NOW, enabled=False),
+                GateSetting(gate=GateId.DATA_HORIZON, enabled=False),
+            )
+        )
+        expected = {"gates.streaming_now.enabled", "gates.data_horizon.enabled"}
+
+        fields = {w.field for w in inspect(body, ProfileSettings())}
+
+        assert expected <= fields
+        assert {f for f in fields if f.endswith(".enabled")} == expected
+
     def test_a_very_low_threshold_is_dangerous(self) -> None:
         warnings = inspect(_policy(condemn_at=20), ProfileSettings())
 

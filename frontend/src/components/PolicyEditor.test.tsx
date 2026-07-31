@@ -720,6 +720,25 @@ describe("PolicyEditor warning anchors", () => {
     gates: [{ gate: "rating_floor", enabled, threshold: 70, window_days: 365 }],
   });
 
+  /** The four protections the server warns about, each in the switch position its warning
+   *  actually fires in: the two thresholds are warned about only while their gate is ON (a
+   *  gate that is off holds nothing, and its box is not rendered), and the two switches only
+   *  while theirs is OFF. So this is not an arrangement chosen to make boxes appear -- it is
+   *  the one page state all four warnings can reach an operator in at once.
+   *
+   *  The default fixture ships no gates at all, which is why the `gates` binding needs its
+   *  own state rather than the unguarded one: the block under the list renders either way,
+   *  but the rows carrying its boxes do not. */
+  const gatesBody: PolicyBody = {
+    ...body(),
+    gates: [
+      { gate: "min_dormancy", enabled: true, threshold: 1095, window_days: 365 },
+      { gate: "server_popularity", enabled: true, threshold: 2, window_days: 365 },
+      { gate: "streaming_now", enabled: false, threshold: 0, window_days: 365 },
+      { gate: "data_horizon", enabled: false, threshold: 0, window_days: 365 },
+    ],
+  };
+
   /** The two page states each guard is checked in, plus the accessible name of a control that
    *  exists on the held branch ONLY. That control is what pins a guard's name to the mount
    *  condition it claims to be: without it these cases would assert a guard against itself.
@@ -765,6 +784,17 @@ describe("PolicyEditor warning anchors", () => {
       message: `anchor probe: ${field}`,
     }));
 
+  /** The same probe, one per field the binding table below names -- which for a `prefix`
+   *  anchor is wider than the anchor's own `fields`, and for every other one is the same list
+   *  by the assertion in that case. Same message shape either way, so a probe reads the same
+   *  wherever it turns up on the page. */
+  const boundProbes = (controls: Record<string, string>): PolicyWarning[] =>
+    Object.keys(controls).map((field) => ({
+      field,
+      severity: "warn",
+      message: `anchor probe: ${field}`,
+    }));
+
   /** Claimed by no anchor, so it proves the stack is rendering at all in the same render.
    *  Without it, a page showing no warnings whatsoever would fail the cases below for a
    *  reason none of their messages name. */
@@ -805,21 +835,53 @@ describe("PolicyEditor warning anchors", () => {
     });
   }
 
-  // The anchors whose warning has ONE control that fixes it, and that control's accessible
-  // name. The other five warn about a LIST or a card -- the signal sliders, the gate rows, the
-  // rule editors -- where there is no single box to point at and binding every child would
-  // read the whole card's complaints at each of them. Deliberately partial, and named here so
-  // the boundary is a decision on the page rather than an omission (#174).
+  // The anchors whose warnings each have ONE control that fixes them, and that control's
+  // accessible name. FIVE of the nine are here; the four that are not warn about a LIST or a
+  // card -- the signal sliders, the two rule editors, the rating card -- where there is no
+  // single box to point at and binding every child would read the whole card's complaints at
+  // each of them. Deliberately partial, and named here so the boundary is a decision on the
+  // page rather than an omission (#174).
   //
-  // `in_progress` joined the bound side rather than the list: it claims one field and its
-  // remedy ("lower this to match your history") names one box, so leaving it unbound would
-  // have added a sixth item to the backlog that comment describes rather than a considered
-  // boundary.
-  // Keyed by FIELD, not by anchor: `keep_last` claims two, and each is fixed from a different
+  // Two of the five earned their place rather than arriving with one obvious box:
+  //
+  // `in_progress` claims one field and its remedy ("lower this to match your history") names
+  // one box, so leaving it unbound would have added an item to the backlog above rather than a
+  // considered boundary.
+  //
+  // `gates` looks like a list and is not one: every warning in that family names one setting
+  // of one protection, so each already has the single owning box the other four lack, and
+  // binding them needed no judgment about what a group should say (#189). It is the shape the
+  // remaining four would have to be given on the server to join this table.
+  //
+  // Keyed by FIELD, not by anchor: `keep_last` claims three, and each is fixed from a different
   // control. Bound to the anchor as a whole, the seasons box spoke the scope control's
   // complaint and the scope control said nothing.
-  const BOUND: { anchor: WarningAnchorId; controls: Record<string, string> }[] = [
+  const BOUND: {
+    anchor: WarningAnchorId;
+    controls: Record<string, string>;
+    /** The page state these boxes exist in, where the anchor's own guard does not name it.
+     *  `gates` is the one: its block is unguarded and renders on the default fixture, but
+     *  that fixture ships no protections, so the rows holding its boxes are not there. */
+    drive?: Drive;
+  }[] = [
     { anchor: "condemn_at", controls: { condemn_at: "Put a title on the list once it scores" } },
+    {
+      anchor: "gates",
+      // The four the server sends today, each named by `engine/policy.py` as
+      // `gates.<protection>.<setting>`. `PolicyEditor` binds them generically off the gate id
+      // in the served body, so a fifth protection warning about one of these three settings
+      // binds with no frontend change -- which is also why this list cannot prove the binding
+      // covers every BOX a row draws. The walk below that one does.
+      controls: {
+        "gates.min_dormancy.threshold": "Give every title time to be rewatched threshold",
+        "gates.server_popularity.window_days": "How far back recent plays count",
+        "gates.streaming_now.enabled": "Never touch something playing right now",
+        "gates.data_horizon.enabled": "Stop if the unwatched time can't be read",
+      },
+      drive: async (warnings) => {
+        renderEditor({ body: gatesBody }, pace, null, warnings);
+      },
+    },
     {
       anchor: "keep_last",
       controls: {
@@ -843,21 +905,48 @@ describe("PolicyEditor warning anchors", () => {
     },
   ];
 
-  for (const { anchor: id, controls } of BOUND) {
+  it("binds five of the nine anchors, and walks each one it binds", () => {
+    // Rule 145: this table is flag-shaped the same way the anchor list is. An entry deleted
+    // takes both of its cases away with it and every assertion left still passes, so the count
+    // is what says an anchor stopped being bound. Move it in the same commit that binds one or
+    // gives one up, and move the sentence above it too -- the four it describes are 9 minus
+    // this.
+    expect(BOUND).toHaveLength(5);
+    expect(new Set(BOUND.map((b) => b.anchor)).size).toBe(BOUND.length);
+  });
+
+  /** The state a bound anchor's boxes are driven in: its own entry says so where the default
+   *  and the guard states do not put them on the page. */
+  const driveBound = (entry: (typeof BOUND)[number], anchor: WarningAnchor): Drive =>
+    entry.drive ?? (anchor.guard ? GUARDS[anchor.guard].held : unguarded);
+
+  for (const entry of BOUND) {
+    const { anchor: id, controls } = entry;
     it(`lets each ${id} control speak the warning that is about IT`, async () => {
       // The warning was rendered beside the box and the box never mentioned it, so reaching it
       // meant leaving the control to go looking. Asserted as the accessible DESCRIPTION, which
       // is what a reader computes: an `aria-describedby` naming an id that is not on the page
       // would satisfy an attribute check and still say nothing.
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
-      const mine = probes(anchor);
+      const mine = boundProbes(controls);
 
-      // Every field this anchor claims has a control named above, so widening an anchor
-      // without giving its new field somewhere to speak from fails here rather than silently
-      // hanging the warning off whichever control was already bound.
-      expect(Object.keys(controls).sort()).toEqual([...anchor.fields].sort());
+      // Every field this anchor DECLARES has a control named above, so widening `fields`
+      // without giving the new one somewhere to speak from fails here rather than silently
+      // hanging its warning off whichever control was already bound.
+      for (const field of anchor.fields) expect(Object.keys(controls)).toContain(field);
+      // And nothing here is bound that the anchor does not claim: a field misspelled above
+      // points its box at an id no notice on this page ever carries, which is the failure the
+      // description assertions below would report as a missing binding rather than a typo.
+      for (const field of Object.keys(controls)) expect(anchorClaims(anchor, field)).toBe(true);
+      // Exactly the declared fields, for every anchor that can state them. A `prefix` anchor
+      // claims an open family and its `fields` holds one member as a probe, so the table names
+      // more of the family than the declaration can (`gates`, four settings across four
+      // protections); the two checks above are what still holds it to the claim.
+      if (anchor.prefix === undefined) {
+        expect(Object.keys(controls).sort()).toEqual([...anchor.fields].sort());
+      }
 
-      await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...mine, catchAll]);
+      await driveBound(entry, anchor)([...mine, catchAll]);
 
       // Wait for the WARNING, not for the box: validation is debounced, so the control is on
       // the page a beat before there is anything for it to describe itself with, and asserting
@@ -886,8 +975,8 @@ describe("PolicyEditor warning anchors", () => {
       // "blocks a save" and marked three controls invalid over values the app saves happily,
       // so this arm is what keeps the encoding from coming back.
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
-      const blocking = probes(anchor).map((w) => ({ ...w, severity: "danger" as const }));
-      await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...blocking, catchAll]);
+      const blocking = boundProbes(controls).map((w) => ({ ...w, severity: "danger" as const }));
+      await driveBound(entry, anchor)([...blocking, catchAll]);
       await screen.findByText(blocking[0]!.message);
 
       for (const name of Object.values(controls)) {
@@ -895,6 +984,59 @@ describe("PolicyEditor warning anchors", () => {
       }
     });
   }
+
+  it("leaves no box in a protection's row that its own warning cannot reach", async () => {
+    // The `gates` entry above names the four fields the SERVER sends today, and rule 145 is
+    // exactly why that is not the whole proof: those four cannot see a fifth control added to
+    // `GateRow` with no binding, because a field nobody sends yet has no probe to go missing.
+    // So the population walked here is the other one -- every box one row draws -- counted and
+    // reconciled by hand against what that row renders.
+    //
+    // `server_popularity` is the row that draws all of them: the switch, a threshold, and the
+    // look-back window with its unit picker. The three probes are driven together, which the
+    // server never does (each fires on a different fault), because the claim under test is
+    // about the row's wiring and not about which faults co-occur.
+    //
+    // Names, not just a count: a count alone passes when a box is renamed out of one binding
+    // and into another's.
+    const BOXES: Record<string, string | null> = {
+      "Keep what your users actually watch": "gates.server_popularity.enabled",
+      "Keep what your users actually watch threshold": "gates.server_popularity.threshold",
+      "How far back recent plays count": "gates.server_popularity.window_days",
+      // Deliberately unbound, and the one exemption on this row. `QuantityInput` says why: the
+      // unit is a control that announces itself and its own value, so binding the pair's
+      // complaint to it as well would say the same sentence twice on the way through.
+      "How far back recent plays count unit": null,
+    };
+    const probed: PolicyWarning[] = Object.values(BOXES)
+      .filter((field): field is string => field !== null)
+      .map((field) => ({ field, severity: "warn", message: `anchor probe: ${field}` }));
+
+    renderEditor({ body: gatesBody }, pace, null, [...probed, catchAll]);
+    await screen.findByText(probed[0]!.message);
+
+    const row = screen.getByLabelText("Keep what your users actually watch").closest("li")!;
+    // A container query rather than a role query, deliberately: the point is to collect boxes
+    // this walk does not already know about, and a role query only finds the roles it was
+    // told to ask for. `<button>` is in the list for the same reason and matches nothing here.
+    const boxes = Array.from(row.querySelectorAll("input, select, textarea, button"));
+    const named = Object.keys(BOXES).map((name) => within(row).getByLabelText(name));
+    expect(boxes).toHaveLength(named.length);
+    for (const box of boxes) expect(named).toContain(box);
+
+    for (const [name, field] of Object.entries(BOXES)) {
+      const box = within(row).getByLabelText(name);
+      if (field === null) {
+        expect(box).not.toHaveAccessibleDescription(/anchor probe/);
+        continue;
+      }
+      expect(box).toHaveAccessibleDescription(new RegExp(`anchor probe: ${field}`));
+      for (const other of probed) {
+        if (other.field === field) continue;
+        expect(box).not.toHaveAccessibleDescription(new RegExp(other.message));
+      }
+    }
+  });
 
   for (const anchor of WARNING_ANCHORS) {
     const guard = anchor.guard;

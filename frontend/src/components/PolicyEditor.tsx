@@ -237,15 +237,50 @@ function WarnBlock({
   );
 }
 
+/** The field name the server gives a warning about ONE setting of ONE protection.
+ *  `engine/policy.py` builds every member of this family as `f"gates.{gate}.{setting}"`, where
+ *  the setting is a field of the gate row itself -- which is why the suffix is typed off
+ *  `GateSetting` rather than spelled out here: the shape both ends already share is the
+ *  declaration, so a suffix the server cannot send does not compile (rule 144).
+ *
+ *  Generic over the gate id on purpose. Four of these arrive today, one per protection, and a
+ *  fifth protection warning about any of the three settings binds here with no change;
+ *  anything this cannot reach still renders in the `gates` block under the list. */
+function gateWarningField(gate: string, setting: keyof Omit<GateSetting, "gate">): string {
+  return `gates.${gate}.${setting}`;
+}
+
 /** One protection: a switch, a plain-English label and help, and -- where it has one -- a
  *  threshold in the units a person thinks in. */
-function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSetting) => void }) {
+function GateRow({
+  gate,
+  onChange,
+  warnings,
+}: {
+  gate: GateSetting;
+  onChange: (g: GateSetting) => void;
+  /** Every warning rendered at the `gates` anchor, unfiltered. `warningsDescribing` numbers
+   *  ids by position within THAT list, so narrowing before handing it over would point each
+   *  box at the wrong notice. */
+  warnings: PolicyWarning[];
+}) {
   const meta = GATE_META[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
+  // What this row's boxes point `aria-describedby` at. The block rendering these sits under
+  // the whole list, so reaching one meant browsing the page in document order: a keyboard
+  // operator moving control to control never met it (#189). Every gate warning the server
+  // sends names one setting of one protection, so each lands on exactly the box that fixes
+  // it -- rule 42's sentence, delivered to a reader standing on the control.
+  const describes = (setting: keyof Omit<GateSetting, "gate">) =>
+    warningsDescribing("gates", warnings, [gateWarningField(gate.gate, setting)]);
 
   return (
     <li className="rule-row">
       <label className="toggle rule-toggle">
-        <Switch checked={gate.enabled} onChange={(enabled) => onChange({ ...gate, enabled })} />
+        <Switch
+          checked={gate.enabled}
+          onChange={(enabled) => onChange({ ...gate, enabled })}
+          describedBy={describes("enabled")}
+        />
         <span className="rule-name">{meta.label}</span>
       </label>
       {meta.help && <p className="help rule-help">{meta.help}</p>}
@@ -258,6 +293,7 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
             units={TIME_UNITS}
             min={5}
             ariaLabel={`${meta.label} threshold`}
+            describedBy={describes("threshold")}
             onChange={(v) => onChange({ ...gate, threshold: v })}
           />
         </div>
@@ -271,6 +307,7 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
             min={1}
             width="narrow"
             ariaLabel={`${meta.label} threshold`}
+            describedBy={describes("threshold")}
             onChange={(v) => onChange({ ...gate, threshold: v })}
           />
         </div>
@@ -289,6 +326,7 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
               units={TIME_UNITS}
               min={1}
               ariaLabel="How far back recent plays count"
+              describedBy={describes("window_days")}
               onChange={(v) => onChange({ ...gate, window_days: v })}
             />
           </div>
@@ -771,7 +809,11 @@ export type WarningAnchor = {
    *  why a claim cannot go unprobed: it is one list, not two. */
   readonly fields: readonly string[];
   /** Claimed as a family as well: any field starting with this. `fields` then holds one real
-   *  member of the family, since a probe has to be a field the server could actually send. */
+   *  member of the family, since a probe has to be a field the server could actually send.
+   *
+   *  The family is open, so it is the one shape whose fields cannot all be listed here, and
+   *  `PolicyEditor.test.tsx`'s binding table is allowed to name more of it than `fields` does
+   *  -- every member it names must still be one this anchor claims. */
   readonly prefix?: string;
   /** The mount condition this anchor's `WarnBlock` sits under, where it has one. */
   readonly guard?: WarningGuard;
@@ -990,6 +1032,10 @@ export function PolicyEditor({
   const unanchoredWarnings = allWarnings.filter(
     (w) => !anchors.some((a) => anchorClaims(a, w.field)),
   );
+  // Read twice -- by the block under the protections list, and by every row in it, since each
+  // row's boxes describe themselves from the same list the block renders. One call, so the two
+  // ends cannot be handed different positions to number ids from (#189).
+  const gateWarnings = warningsAt("gates");
 
   // A background scan, so the "Scan now" button in the stale notice actually does something.
   const { data: scanState } = useQuery({
@@ -1609,10 +1655,12 @@ export function PolicyEditor({
             // rows (the tags card and the rating card), so the visual weight says which
             // protections have more to configure. They are skipped here.
             if (gate.gate === "whitelisted" || gate.gate === "rating_floor") return null;
-            return <GateRow key={gate.gate} gate={gate} onChange={setGate} />;
+            return (
+              <GateRow key={gate.gate} gate={gate} onChange={setGate} warnings={gateWarnings} />
+            );
           })}
         </ul>
-        <WarnBlock anchor="gates" warnings={warningsAt("gates")} />
+        <WarnBlock anchor="gates" warnings={gateWarnings} />
 
         {(() => {
           const i = draft.gates.findIndex((g) => g.gate === "rating_floor");
