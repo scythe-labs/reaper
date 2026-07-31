@@ -1736,6 +1736,16 @@ Resolved by dropping the pinning offer from the README, `docker-compose.yml` and
 template rather than by widening the keep pattern, which would retain roughly one image per
 commit with no bound. Whoever reconsiders that is changing registry policy, not docs.
 
+**Where the rule lives now (2026-07-31).** The measurement above was taken against the
+previous forge, whose registry applied this as an org-level setting. GitHub has no equivalent
+setting, so the same policy is a scheduled job, `.github/workflows/registry-retention.yml`,
+and the conclusion is unchanged: `:dev` and `:latest` are kept, everything else goes after a
+week. Two differences worth knowing. The job also sweeps **untagged** digests, which the old
+rule left to accumulate. And it ships **disabled**, as a dry run: its filters could not be
+verified against a registry that did not exist yet, and a first run that is wrong is not
+recoverable from its own output, so it prints what it would delete until someone reads a run
+and arms it.
+
 ## The Tautulli library cache lags Plex in BOTH directions (2026-07-29)
 
 The Plex index a scan matches against is a union: Tautulli's cached `get_library_media_info`

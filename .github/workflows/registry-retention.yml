@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Registry retention
+
+# CI publishes an image on every push, so the registry grows without bound: one
+# tagged version per commit, one per pull request, plus an untagged digest for
+# every rebuild. The previous forge applied this as an org-level cleanup rule.
+# GitHub has no equivalent setting, so the policy has to be a job.
+#
+# The policy is the one docs/LEARNINGS.md documents: the moving tags are kept
+# forever, everything else goes after a week. That is why the install docs offer
+# `:dev` and `:latest` and no longer offer a short-sha tag to pin -- a pinned sha
+# keeps working until something re-pulls it on a host with no layers cached, and
+# then meets `manifest-unknown`. Identifying which build is running never needed
+# the tag to survive: the About page reads REAPER_GIT_SHA off the running image.
+#
+# Widening the keep pattern instead would retain roughly one image per commit
+# with no bound. Whoever reconsiders that is changing registry policy, not docs.
+
+on:
+  schedule:
+    # Weekly, at a time no human is waiting on it. The cut-off is what decides
+    # what goes, not the cadence, so a missed week deletes the same set later.
+    - cron: "17 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "List what would be deleted without deleting it"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      # Deleting a version of a package owned by this repository. Nothing here
+      # writes to the repository itself.
+      packages: write
+    steps:
+      - name: Apply the retention policy
+        uses: snok/container-retention-policy@d3bdcf5ce9b05f685154e4a16c39233b245e3d53 # v3.1.0
+        with:
+          account: ${{ github.repository_owner }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: reaper
+
+          # `!` excludes. These three are the tags the install docs name, so they
+          # are the ones an operator can be pulling right now; they are never
+          # considered regardless of age.
+          image-tags: "!dev !latest !main"
+
+          # Untagged digests are the bulk of the growth -- every rebuild of an
+          # existing tag orphans one -- and selecting only tagged versions would
+          # leave them accumulating forever while the job reported success.
+          tag-selection: both
+
+          cut-off: 7d
+
+          # A second, independent floor. The tag filter above depends on the tags
+          # being spelled as expected; this one does not depend on anything, so a
+          # filter that silently stops matching still cannot empty the registry.
+          keep-n-most-recent: 10
+
+          # ARMING THIS JOB: leave true until one scheduled run has been read.
+          # The filters cannot be verified against a registry that does not exist
+          # yet, and a first run that is wrong is not recoverable from its own
+          # output. Read the run's "would have deleted" list, confirm `dev` and
+          # `latest` are absent from it, then set this to false.
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run || true }}
