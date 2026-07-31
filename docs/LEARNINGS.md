@@ -2572,6 +2572,20 @@ added for the recovered-and-continued case specifically: the tests that existed 
 *unrecoverable* path, where nothing replays anyway. **A recovery path needs a test that
 recovers and carries on, not only one that gives up** (rule 118).
 
+**The mirror of that clobber, found by a review pass and not by any test: mixing a Core
+`UPDATE` with a dirty ORM row in one commit lets the commit undo the statement.** Syncing the
+instance after a write (the paragraph above) leaves that row *dirty*, and the session is built
+`autoflush=False`, so nothing flushes it until some later `commit()` does. The next write's
+`commit()` is that later one — and its flush runs AFTER its own `UPDATE` has executed, so the
+unit of work re-issues the previous values over the column just written, inside the same
+transaction. Measured: a step committed as VERIFIED sat on disk reading SENT with a
+`verified_at` beside it, a row that contradicts itself in the journal that is the only record
+of what was removed. It is repaired by the following commit, so the whole exposure is a process
+death inside a one-commit window — invisible to every test that reads the row at the end, and
+to the run's own session, which answers from memory where the row was always right. **The order
+is the fix: flush the pending ORM writes first, then execute the Core statements, then commit.**
+Two ways to write one row will interleave; deciding which goes first is not optional.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
