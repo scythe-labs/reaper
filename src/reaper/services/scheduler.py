@@ -287,17 +287,22 @@ async def sweep_old_snapshots(
     this having run, and a database busy with a scan must not stop the scheduler. The
     worst case of a skipped firing is that the next one has one more scan to drop.
 
-    Compaction is attempted only after a sweep that actually removed something, and it
+    Compaction is attempted on every firing, not only one that swept something, and it
     declines unless the freed share is large enough to be worth an exclusive lock
-    (``retention.compact_if_fragmented``). In the steady state that is never; on the first
-    firing after an install upgrades with months of scans behind it, that is the run that
-    hands the disk space back.
+    (``retention.compact_if_fragmented``). In the steady state it declines, at the cost of
+    three pragmas; on the first firing after an install upgrades with months of scans
+    behind it, that is the run that hands the disk space back.
+
+    **Gating it on this firing's sweep would make that run the only one.** The upgrade
+    drains the whole backlog at once, so every later firing removes nothing -- and a
+    compaction lost to a full disk, a locked database or a canceled shutdown would never
+    be reattempted until a new scan pushed the count past the window again, which on an
+    install whose auto-scan is off is never.
     """
     try:
         removed = await retention.sweep_old_snapshots(session_factory)
-        if not removed:
-            return
-        log.info("scheduler.snapshots_swept", removed=removed)
+        if removed:
+            log.info("scheduler.snapshots_swept", removed=removed)
         if await retention.compact_if_fragmented(data_dir):
             log.info("scheduler.database_compacted")
     except Exception as exc:

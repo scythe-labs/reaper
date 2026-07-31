@@ -25,7 +25,7 @@ from reaper.db.base import Base
 from reaper.db.models import Instance, InstanceKind
 from reaper.db.session import create_engine, create_session_factory
 from reaper.secrets import resolve_secret_key
-from reaper.services import app_settings, imdb_dataset, scheduler
+from reaper.services import app_settings, imdb_dataset, retention, scheduler
 from reaper.services.imdb_dataset import ImdbRatings
 
 
@@ -220,6 +220,76 @@ class TestTheSchedulerIsUpkeepOnly:
         assert 0 < wait <= scheduler.SNAPSHOT_SWEEP_STARTUP_DELAY_S
         assert wait < scheduler.SNAPSHOT_SWEEP_INTERVAL_S
         await engine.dispose()
+
+    async def test_the_snapshot_sweep_is_handed_the_folder_the_database_is_in(
+        self, tmp_path: Path
+    ) -> None:
+        """The compaction opens ``data_dir / "reaper.db"`` with a raw sqlite3 connection, so
+        a wrong folder here does not fail: it CREATES an empty second database there and
+        vacuums that, while the real one is never compacted. The arity is the same either
+        way, so APScheduler's own argument check cannot see it.
+
+        The scheduler is given a folder that is not the engine's (rule 141) -- pinning the
+        path the engine was built from would hold just as well if the job derived its own.
+        """
+        db_dir, sweep_dir = tmp_path / "db", tmp_path / "swept"
+        db_dir.mkdir()
+        settings = Settings(data_dir=db_dir, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        sched = scheduler.build_scheduler(
+            engine,
+            sweep_dir,
+            session_factory=factory,
+            secret_box=SecretBox(resolve_secret_key(settings)),
+            timezone=ZoneInfo("UTC"),
+        )
+
+        job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
+
+        assert list(job.args) == [factory, sweep_dir]
+        await engine.dispose()
+
+    async def test_compaction_is_attempted_on_a_firing_that_swept_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gating compaction on this firing's sweep would make the upgrade firing the only
+        one that could ever hand disk back: it drains the whole backlog at once, so every
+        later firing removes nothing. A compaction lost to a full disk, a locked database
+        or a canceled shutdown would then never be reattempted until a new scan pushed the
+        count past the window, which on an install with auto-scan off is never.
+
+        ``compact_if_fragmented`` is already gated on its own thresholds, so calling it
+        every firing costs three pragmas when it declines."""
+        attempted: list[Path] = []
+
+        async def _swept_nothing(_factory: object) -> int:
+            return 0
+
+        async def _record(data_dir: Path) -> bool:
+            attempted.append(data_dir)
+            return False
+
+        monkeypatch.setattr(retention, "sweep_old_snapshots", _swept_nothing)
+        monkeypatch.setattr(retention, "compact_if_fragmented", _record)
+
+        await scheduler.sweep_old_snapshots(None, tmp_path)  # type: ignore[arg-type]
+
+        assert attempted == [tmp_path]
+
+    async def test_a_sweep_that_raises_does_not_escape_the_job(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A database busy with a scan must not stop the scheduler, and nothing downstream
+        depends on this having run -- the worst case of a skipped firing is that the next
+        one has one more scan to drop."""
+
+        async def _boom(_factory: object) -> int:
+            raise OSError("database is locked")
+
+        monkeypatch.setattr(retention, "sweep_old_snapshots", _boom)
+
+        await scheduler.sweep_old_snapshots(None, tmp_path)  # type: ignore[arg-type]
 
     async def test_the_snapshot_sweep_is_not_operator_schedulable(self) -> None:
         """Same argument as the session sweep: an off switch on it could only ever let the
