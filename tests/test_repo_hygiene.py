@@ -1204,13 +1204,19 @@ _NODE_MAJOR = re.compile(r"""(?:FROM\s+node:|node-version:\s*)["']?(\d+)""")
 _EXPECTED_NODE_SITES = 2
 
 
-def test_the_node_major_is_the_same_in_the_image_and_in_ci() -> None:
-    """The image builds the bundle on the Node the frontend job tested it on.
+def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> None:
+    """The image builds the bundle on the Node the frontend job tested it on, and it is an LTS.
 
     Two files name a Node major and nothing held them together, which cost nothing while both
     only moved by hand. Dependabot moves the Dockerfile's: ``node``'s tag carries a version, so
     a major bump arrives as a pull request that edits one of the two. Left alone, ``npm run
     build`` in CI proves a bundle on one runtime and the shipped image builds it on another.
+
+    The parity is the second half of the same fact, and it is checked rather than remembered
+    because "take the newest major" is wrong for Node specifically: only even majors are
+    promoted to LTS, and an odd one is end-of-life within about eight months. The first pull
+    request ``.github/dependabot.yml`` ever opened proposed 24 to 25, two months after 25 had
+    died. The config now declines to raise that; this declines to merge it however it arrives.
     """
     sites = [
         (path.relative_to(REPO), lineno, match.group(1))
@@ -1229,6 +1235,12 @@ def test_the_node_major_is_the_same_in_the_image_and_in_ci() -> None:
         "the Node major disagrees between the image and CI:\n"
         + "\n".join(f"  {p}:{n} -> {v}" for p, n, v in sites)
         + "\n\nMove both together, or CI tests the bundle on a runtime the image does not use."
+    )
+    (major,) = majors
+    assert int(major) % 2 == 0, (
+        f"Node {major} is an odd major, which Node never promotes to LTS and retires within\n"
+        "about eight months. Move to the next EVEN major once it reaches LTS, rather than to\n"
+        "the newest one that exists: https://github.com/nodejs/Release#release-schedule"
     )
 
 
