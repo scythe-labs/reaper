@@ -46,6 +46,7 @@ from reaper.engine.policy import (
     combine_hashes,
 )
 from reaper.main import create_app
+from reaper.services import retention
 from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
@@ -360,6 +361,32 @@ class TestTheRunsApi:
             ).status_code
             == 422
         )
+
+    def test_an_unknown_key_is_refused_for_what_reaper_can_actually_know(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``_resolve_title`` used to answer "No scanned item has that identity", which
+        ``services.retention`` made false: the sweep keeps only the newest
+        ``KEEP_SNAPSHOTS``, so a scan may well have held the item and Reaper discarded the
+        row. The refusal now claims only what survives -- no record -- and names the window
+        as the scan COUNT it is, since 30 scans is a month of nightly scanning and no fixed
+        time at all on an install scanned by hand (#326).
+
+        The count is patched off its default so an assertion cannot pass against a
+        transcribed 30: the copy has to read the constant the sweep itself honors, and a
+        hardcoded one fails here (rule 141).
+        """
+        monkeypatch.setattr(retention, "KEEP_SNAPSHOTS", 7)
+
+        for route, payload in (
+            ("/api/whitelist", {"media_key": "radarr:1:never-scanned"}),
+            ("/api/override", {"media_key": "radarr:1:never-scanned", "decision": "spare"}),
+        ):
+            refused = client.post(route, json=payload)
+            assert refused.status_code == 404, refused.text
+            assert refused.json()["detail"] == (
+                "Reaper has no record of that item. It keeps only the last 7 scans."
+            )
 
     def test_a_plan_shows_the_literal_steps_and_the_confirmation_phrase(
         self, client: TestClient
