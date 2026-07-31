@@ -258,12 +258,15 @@ answer: a test with something to tell you must fail, not warn.
 
 **Asking whether CI is green** is far cheaper than reading a log: `gh pr checks <n>` lists one
 row per job with its conclusion, and it is the merge gate above. **Which jobs appear depends on
-what the commit touched.** `ci.yml` (`check`, `frontend`, `docker`) ignores exactly the paths
-`docs.yml` (`hygiene`, the repo-hygiene test alone) claims — `docs/**`, `**.md`, `.claude/**` —
-so a docs-only commit reports `hygiene` alone, and a missing `docker` there is a skipped lane,
-not a stall. The two lists are complementary; edit one and you must edit the other.
-`pr-validation.yml` sits outside that split: it runs on every pull request whatever the paths,
-and it reads the title alone.
+what the commit touched.** `ci.yml`'s `changes` job classifies the diff once, against the only
+path list left in the repository (`docs/**`, `.claude/**` and `*.md` are prose, everything else
+is code), and every other job reads that verdict: a prose-only commit runs `hygiene` alone, a
+code-only commit runs `check`, `frontend` and `docker`, and a commit touching both runs
+everything. **A skipped job publishes no check run at all**, which is why the required check is
+`CI gate` — it runs on every commit, counts a skipped lane as a pass and a cancelled one as a
+failure, and is the one job whose absence means something is genuinely wrong.
+`pr-validation.yml` is separate, runs on every pull request whatever the paths, and reads the
+title alone.
 
 **Reading a CI log.** `gh run view --log-failed` is almost always the whole answer: it prints
 only the failing steps. `gh run list --branch <branch>` finds the run, `gh run view <id> --log`
