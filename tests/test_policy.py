@@ -1530,6 +1530,20 @@ class TestRequestedOnlyScopeWithoutSeerr:
 
         assert not [w for w in warnings if w.field == "keep_last_scope"]
 
+    @pytest.mark.parametrize("seasons", [1, 2])
+    def test_the_floor_counts_as_on_from_its_very_first_season(self, seasons: int) -> None:
+        """One season is where the floor starts deciding things, and it was never driven:
+        the cases here run 0 and 2, so ``keep_last_seasons > 0`` was free to become ``> 1``
+        and go silent at exactly one season, where the scope quietly behaves as "all shows"
+        (#337)."""
+        warnings = inspect(
+            self._tv(keep_last_seasons=seasons), ProfileSettings(), requests_app_configured=False
+        )
+
+        spoken = [w for w in warnings if w.field == "keep_last_scope"]
+        assert len(spoken) == 1
+        assert f"keeping the last {seasons} seasons of every show" in spoken[0].message
+
     def test_it_is_silent_when_the_floor_is_off(self) -> None:
         """At 0 seasons the floor never fires, so its scope decides nothing and saying
         the scope is being ignored would be noise about a setting that does nothing."""
@@ -2711,6 +2725,25 @@ class TestAHoldTheWatchHistoryCannotEstablish:
             [flagged] = self._hold_warnings(body, reach=10.0)
             assert f"place for {expected} after they last watched" in flagged.message
 
+    def test_a_one_day_hold_still_takes_the_shortfall_copy(self) -> None:
+        """The boundary between the two cause clauses, one step below every case here.
+
+        ``in_progress_hold_days <= 0`` was free to become ``<= 1``, which prints "at 0 days a
+        viewer's place is held forever" about a hold of one day. Nothing caught it, because
+        the only mirror short enough to fall behind a one-day hold is shorter than a day, and
+        no other case wants one (#337). No dormancy floor here for the same reason: any floor
+        the gate accepts needs a reach that already spans a day.
+
+        Narrowing that same guard to ``== 0`` is left untested and is not a gap (rule 118):
+        ``in_progress_hold_days`` is ``ge=0``, so no saveable value tells the two apart.
+        """
+        body = self._tv(in_progress_hold_days=1, gates=(GateSetting(gate=GateId.WHITELISTED),))
+
+        [flagged] = self._hold_warnings(body, reach=0.5)
+
+        assert "place for 1 day after they last watched" in flagged.message
+        assert "held forever" not in flagged.message
+
     def test_the_journey_that_used_to_end_on_a_silent_page(self) -> None:
         """The whole point of the issue: clearing the window warning must not clear this one.
 
@@ -2998,3 +3031,477 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
         warnings = inspect(DEFAULT_TV_POLICY, ProfileSettings(), history_reach_days=1200.0)
 
         assert [w.field for w in warnings] == ["flag_keep_conflicts"]
+
+
+class TestTheUnmeasuredAllowanceWarning:
+    """The ``max_unmeasured_per_run`` lane, which had no test at any point (#337).
+
+    Nothing in tests/ named this message, so ``> 0`` inverted, or the guard deleted, removed
+    the warning outright and the mutation run never noticed. The direction that costs the
+    operator is the warning going silent: an operator raising the allowance is then never
+    told the size caps cannot cover those items, which is the one fact that makes the
+    setting understandable.
+    """
+
+    def _spoken(self, allowance: int) -> list[PolicyWarning]:
+        return [
+            w
+            for w in inspect(_policy(), ProfileSettings(max_unmeasured_per_run=allowance))
+            if w.field == "max_unmeasured_per_run"
+        ]
+
+    def test_the_default_allowance_of_zero_says_nothing(self) -> None:
+        """Nothing unmeasured is deleted, so there is nothing to warn about. This is the
+        discriminator: without it the case below is satisfied by a warning that always
+        fires."""
+        assert self._spoken(0) == []
+
+    @pytest.mark.parametrize("allowance", [1, 2, 10])
+    def test_it_starts_at_the_first_item_allowed_through(self, allowance: int) -> None:
+        """One is where it turns on, not some larger number, and the count is rendered.
+
+        10 is the highest the default profile permits: the allowance may not exceed
+        ``max_items_per_run``, which ships at 10. The sweep therefore runs from the first
+        legal value to the last, and excludes the default 0 deliberately, since that is the
+        silent arm above (rule 141).
+        """
+        spoken = self._spoken(allowance)
+
+        assert len(spoken) == 1
+        assert spoken[0].severity == "warn"
+        assert f"delete up to {allowance} items it can't measure" in spoken[0].message
+        assert "GB caps won't cover them" in spoken[0].message
+
+
+class TestTheTwoSizeFootguns:
+    """Removing titles for being large, through a hand-written rule and through the built-in
+    signal. Both lanes had no test at any point (#337).
+
+    Deleting either guard dropped a danger silently, and moving a weight comparison the other
+    way raised a danger about a size rule at weight 0 -- which the field's own docstring says
+    is off, its weight out of the denominator entirely.
+    """
+
+    def _rule(self, weight: int) -> PolicyBody:
+        return _policy(
+            signals=(
+                SignalSetting(signal=SignalId.UNWATCHED, weight=100 - weight, saturate_at=730),
+            ),
+            custom_condemn=(
+                GradedCondemnSpec(
+                    name="the big ones", field="size_bytes", weight=weight, saturate_at=10
+                ),
+            ),
+        )
+
+    def _signal(self, weight: int) -> PolicyBody:
+        return _policy(
+            signals=(
+                SignalSetting(signal=SignalId.UNWATCHED, weight=100 - weight, saturate_at=730),
+                SignalSetting(signal=SignalId.SIZE, weight=weight, saturate_at=10),
+            )
+        )
+
+    @pytest.mark.parametrize("weight", [1, 40])
+    def test_a_hand_written_size_rule_is_a_danger_at_any_live_weight(self, weight: int) -> None:
+        """One point is where it turns on. The rule is named, because the operator typed
+        that name and it is what they have to find on the card."""
+        spoken = [
+            w for w in inspect(self._rule(weight), ProfileSettings()) if w.severity == "danger"
+        ]
+
+        assert len(spoken) == 1
+        assert spoken[0].field == "custom_condemn"
+        assert '"the big ones" removes things for being large' in spoken[0].message
+        assert "not whether anyone wants the title" in spoken[0].message
+
+    def test_a_size_rule_at_weight_zero_is_off_and_says_nothing(self) -> None:
+        """Weight 0 removes the rule's weight from the denominator, so it adds no pressure at
+        all. Warning about it sends the operator to a control that is already doing nothing."""
+        assert [
+            w for w in inspect(self._rule(0), ProfileSettings()) if w.severity == "danger"
+        ] == []
+
+    @pytest.mark.parametrize("weight", [1, 40])
+    def test_the_built_in_size_signal_is_a_danger_at_any_live_weight(self, weight: int) -> None:
+        """The same footgun through the slider, which had no warning at all while the
+        hand-written equivalent got a danger one, and whose docstring claimed the UI warned
+        about it (rule 24). The rendered weight is asserted, not just the sentence."""
+        spoken = [
+            w for w in inspect(self._signal(weight), ProfileSettings()) if w.severity == "danger"
+        ]
+
+        assert len(spoken) == 1
+        assert spoken[0].field == "signals"
+        assert f'"Large files" is adding {weight} points toward removal' in spoken[0].message
+
+    def test_the_built_in_size_signal_at_weight_zero_says_nothing(self) -> None:
+        assert [
+            w for w in inspect(self._signal(0), ProfileSettings()) if w.severity == "danger"
+        ] == []
+
+
+class TestTheKeepLastSeasonsWarning:
+    """ "Keeping the last N seasons ... TV pruning is effectively off". No test named this
+    message, and all six of its mutants survived (#337)."""
+
+    def _spoken(self, body: PolicyBody) -> list[PolicyWarning]:
+        return [w for w in inspect(body, ProfileSettings()) if w.field == "keep_last_seasons"]
+
+    @pytest.mark.parametrize(("seasons", "spoken"), [(9, False), (10, True), (11, True)])
+    def test_ten_is_where_pruning_is_effectively_off(self, seasons: int, spoken: bool) -> None:
+        """Nine is a floor somebody may well mean; ten is where most shows are covered
+        entirely. ``>=`` to ``>`` moved that edge by one and nothing said so."""
+        warnings = self._spoken(_policy(media_type="tv", keep_last_seasons=seasons))
+
+        if not spoken:
+            assert warnings == []
+        else:
+            assert len(warnings) == 1
+            assert warnings[0].severity == "warn"
+            assert f"Keeping the last {seasons} seasons" in warnings[0].message
+            assert "TV pruning is effectively off" in warnings[0].message
+
+    def test_a_movie_policy_never_raises_it(self) -> None:
+        """The media-type test was free to invert: ``==`` to ``!=`` tells a movie operator
+        their season floor has switched TV pruning off, on a policy with no seasons in it."""
+        assert self._spoken(_policy(media_type="movie", keep_last_seasons=20)) == []
+
+
+class TestTheKeepPointsTotalWarning:
+    """ "Your keep rules can subtract up to N points". ``>=`` to ``==`` survived, because the
+    only case that fired it sat exactly on the boundary: ``_lean(..., 70)`` against the
+    shipped ``condemn_at`` of 70 (#337, and the same shape as the four rows of #243).
+    """
+
+    def _keeps(self, *discounts: int, condemn_at: int = 70) -> list[PolicyWarning]:
+        return [
+            w
+            for w in inspect(
+                _policy(
+                    condemn_at=condemn_at,
+                    graded_keeps=tuple(
+                        GradedKeepSpec(
+                            name=f"keep {i}",
+                            field="imdb_rating",
+                            max_discount=d,
+                            floor=0,
+                            saturate_at=10,
+                        )
+                        for i, d in enumerate(discounts)
+                    ),
+                ),
+                ProfileSettings(),
+            )
+            if w.field == "graded_keeps"
+        ]
+
+    @pytest.mark.parametrize(("total", "spoken"), [(69, False), (70, True), (80, True)])
+    def test_it_fires_at_the_threshold_and_above_it(self, total: int, spoken: bool) -> None:
+        """80 against a threshold of 70 is the case ``==`` let through: keeps well past the
+        threshold, warning about nothing. ``imdb_rating`` carries no reach span, so the lean
+        lane cannot answer for this anchor instead."""
+        warnings = self._keeps(total)
+
+        if not spoken:
+            assert warnings == []
+        else:
+            assert len(warnings) == 1
+            assert f"subtract up to {total} points" in warnings[0].message
+            assert "remove threshold of 70" in warnings[0].message
+
+    def test_the_total_is_summed_across_rules(self) -> None:
+        """Two keeps of 40 reach the same threshold one keep of 80 does: ``score()``
+        subtracts the sum, so testing each rule alone leaves the arity-two case silent."""
+        assert "subtract up to 80 points" in self._keeps(40, 40)[0].message
+
+
+class TestWhoTheEmptyListWarningBlamesAndWhereItSendsThem:
+    """The condemn lane under a short mirror: which weight counts as watcher-dependent, what
+    happens when a blocked boolean rule stands alone, and which card the operator is sent to.
+
+    Every fixture in this lane used ``recent_watchers`` with a ``FEW_WATCHERS`` weight beside
+    it, so the span filter itself was never driven and the boolean-alone state was never
+    built (#337). Three consequences, all of them silent: a rule on a field that reads no
+    watchers counted toward an inflated point total, a blocked boolean rule on its own emptied
+    the reap list and said nothing, and the anchor pointed at whichever card the fixtures
+    happened to agree on.
+
+    90 days against the 365-day window is the shortfall throughout, and no dormancy floor is
+    set, so ``reach_clears_dormancy`` holds and the lane speaks.
+
+    **What this lane deliberately leaves untested, and why** (rule 118). Three constructs
+    here cannot be told apart by any input, so a case for them would be a proof of nothing:
+
+    * ``weight`` is ``ge=0`` at the save boundary, so ``> 0`` widened to ``>= 0`` and
+      ``<= 0`` narrowed to ``< 0`` or ``== 0`` are the same test over every value that can
+      be saved.
+    * ``condemn_spec is None`` is unreachable: both condemn specs refuse an unknown field at
+      construction, so the ``or`` in front of it never decides anything.
+    * ``withheld > 0 or never_earned > 0`` widened to ``>=`` admits only the all-zero case,
+      where the ceiling is the full 100 points and the verdict is ``condemn`` regardless, so
+      the branch it lets through is silent anyway.
+    """
+
+    REACH = 90.0
+
+    def _spoken(self, body: PolicyBody) -> list[PolicyWarning]:
+        return [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=self.REACH)
+            if w.message.startswith("Nothing will be flagged for removal.")
+        ]
+
+    def _blocked_boolean(
+        self, weight: int = 40, rules: int = 1, condemn_at: int = 70
+    ) -> PolicyBody:
+        """A boolean removal rule that can never earn its weight under a shortfall, and NO
+        ``FEW_WATCHERS`` weight beside it -- which is the state no fixture built.
+
+        ``lte`` is the operator that cannot: a match is exactly the outcome more history
+        could overturn, so ``evaluate`` blocks it, and no item earns the weight at all.
+        """
+        each = weight // rules
+        return _policy(
+            condemn_at=condemn_at,
+            signals=(
+                SignalSetting(signal=SignalId.UNWATCHED, weight=100 - weight, saturate_at=730),
+            ),
+            custom_condemn=tuple(
+                BooleanCondemnSpec(
+                    name=f"quiet {i}", field="recent_watchers", op=Op.LTE, value=2 + i, weight=each
+                )
+                for i in range(rules)
+            ),
+        )
+
+    def test_a_blocked_boolean_rule_on_its_own_still_empties_the_list_out_loud(self) -> None:
+        """No withheld weight at all, and 40 points that no item can earn: the score ceiling
+        is 60 against a threshold of 70, so the reap list is empty. Three mutants suppressed
+        the warning for exactly this state, because the second half of ``withheld > 0 or
+        never_earned > 0`` had nothing driving it."""
+        spoken = self._spoken(self._blocked_boolean())
+
+        assert len(spoken) == 1
+        assert "40 of your 100 removal points" in spoken[0].message
+        assert "only 60 points are left to judge on" in spoken[0].message
+
+    def test_it_sends_a_blocked_boolean_rule_to_the_card_that_holds_it(self) -> None:
+        """None of the weight is on the signals card, so the operator goes to the rules card.
+
+        This is what ``withheld + never_earned`` is for: flipping the ``+`` to a ``-`` makes
+        the comparison ``0 >= -40``, true, and sends the operator to a slider that holds none
+        of the points they have to move.
+        """
+        assert self._spoken(self._blocked_boolean())[0].field == "custom_condemn"
+
+    def test_the_plural_turns_on_at_the_second_blocked_rule(self) -> None:
+        """One rule, then two, on the PARTIAL branch: the list is not empty, and the titles
+        missing from it are the ones the rules were written to find.
+
+        ``never_earned_rules > 1`` was free to become ``< 1`` or ``> 2`` because no case ever
+        built the second rule. This branch names no rule -- two rules on one field are
+        constructible, so a singular would read as a wrong instruction -- which leaves the
+        count as the only thing carrying the plural.
+
+        60 blocked points against a threshold of 40 is what reaches this arm: the score
+        ceiling still clears the threshold, so the list is genuinely not empty, while the
+        coverage those points take with them falls to 40% against the 50% floor.
+        """
+
+        def said(rules: int) -> list[str]:
+            return [
+                w.message
+                for w in inspect(
+                    self._blocked_boolean(weight=60, rules=rules, condemn_at=40),
+                    ProfileSettings(),
+                    history_reach_days=self.REACH,
+                )
+            ]
+
+        assert any("Your removal rule won't flag the titles it was" in m for m in said(1))
+        assert any("Your removal rules won't flag the titles they were" in m for m in said(2))
+
+    def _split_across_both_cards(
+        self, on_the_slider: int, on_a_rule: int, condemn_at: int = 70
+    ) -> PolicyBody:
+        return _policy(
+            condemn_at=condemn_at,
+            signals=(
+                SignalSetting(
+                    signal=SignalId.UNWATCHED,
+                    weight=100 - on_the_slider - on_a_rule,
+                    saturate_at=730,
+                ),
+                SignalSetting(signal=SignalId.FEW_WATCHERS, weight=on_the_slider, saturate_at=3),
+            ),
+            custom_condemn=(
+                GradedCondemnSpec(
+                    name="quiet ones", field="recent_watchers", weight=on_a_rule, saturate_at=5
+                ),
+            ),
+        )
+
+    def test_the_anchor_is_decided_by_the_share_and_not_by_an_offset(self) -> None:
+        """One point below the tie, which is the only place the slider's running total can be
+        read as a number rather than as a comparison.
+
+        24 against 26 sits a single point under half: the rules card holds more, so that is
+        where the operator goes. Starting the tally at 1 instead of 0 tips exactly this split
+        and nothing else, which is why every other case here agrees with it.
+        """
+        spoken = self._spoken(self._split_across_both_cards(24, 26))
+
+        assert len(spoken) == 1
+        assert spoken[0].field == "custom_condemn"
+
+    def test_the_list_empties_on_lost_coverage_as_well_as_on_lost_points(self) -> None:
+        """The other half of what ``decide_verdict`` is asked here, and the half no case
+        drove: 40 points left against a threshold of 31 CLEARS the threshold, and the reap
+        list is still empty because the coverage those 60 withheld points took with them
+        falls to 40% against the 50% floor.
+
+        Only the coverage arm can say so. Turning the share into a product makes the coverage
+        figure enormous, every item reads as fully covered, and the operator is told their
+        rules merely miss some titles instead of that nothing will be flagged at all.
+        """
+        spoken = self._spoken(self._split_across_both_cards(60, 0, condemn_at=31))
+
+        assert len(spoken) == 1
+        assert spoken[0].field == "signals"
+        assert "60 of your 100 removal points" in spoken[0].message
+        assert "only 40 points are left to judge on" in spoken[0].message
+
+    def test_a_single_withheld_point_is_still_a_withheld_point(self) -> None:
+        """The lowest live weight there is, on both routes into the total.
+
+        Every ``> 0`` guard in this lane was free to become ``> 1``, and a one-point weight
+        is the only value that tells the two apart. It needs a threshold of 100 to be
+        visible: below that, one point of ceiling is never what stops an item condemning, so
+        the warning has nothing to say either way (rule 141).
+        """
+        slider = self._split_across_both_cards(1, 0, condemn_at=100)
+        rule = self._blocked_boolean(weight=1, condemn_at=100)
+
+        assert [w.field for w in self._spoken(slider)] == ["signals"]
+        assert [w.field for w in self._spoken(rule)] == ["custom_condemn"]
+        assert all("1 of your 100 removal points" in w.message for w in self._spoken(slider))
+        assert all("only 99 points are left to judge on" in w.message for w in self._spoken(rule))
+
+    def test_the_operator_is_sent_to_whichever_card_holds_more_of_the_weight(self) -> None:
+        """25 on the built-in slider against 40 on a custom rule: the rules card holds more,
+        so that is where the points have to move (rule 42).
+
+        The shipped fixtures were 5/50, 50/5 and 25/25, which agree whether the comparison
+        doubles the signals share or triples it. This split does not: doubling gives 50
+        against 65 and points at the rules, tripling gives 75 and points at the slider.
+        """
+        body = _policy(
+            signals=(
+                SignalSetting(signal=SignalId.UNWATCHED, weight=35, saturate_at=730),
+                SignalSetting(signal=SignalId.FEW_WATCHERS, weight=25, saturate_at=3),
+            ),
+            custom_condemn=(
+                GradedCondemnSpec(
+                    name="quiet ones", field="recent_watchers", weight=40, saturate_at=5
+                ),
+            ),
+        )
+
+        spoken = self._spoken(body)
+
+        assert len(spoken) == 1
+        assert spoken[0].field == "custom_condemn"
+        assert "65 of your 100 removal points" in spoken[0].message
+
+    def test_a_rule_that_reads_no_watchers_is_not_counted_as_watcher_dependent(self) -> None:
+        """The span filter itself, which no fixture drove: every rule in this lane was on
+        ``recent_watchers``, so dropping the ``ReachSpan.POPULARITY_WINDOW`` test changed
+        nothing any test could see.
+
+        Without it a positive-weight rule on ANY field counts toward the withheld total, and
+        an operator whose rules never look at watchers is told their reap list is empty
+        because of a watch window. ``days_unwatched`` carries no reach span at all, so no
+        amount of missing history bounds it.
+        """
+        body = _policy(
+            signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=60, saturate_at=730),),
+            custom_condemn=(
+                GradedCondemnSpec(
+                    name="long unwatched", field="days_unwatched", weight=40, saturate_at=900
+                ),
+            ),
+        )
+
+        assert self._spoken(body) == []
+
+
+class TestTheGradedKeepRemedyReadsAsASentence:
+    """The remedy the lean-lane warning ends on, and the sentence in front of it.
+
+    The tests on this lane assert its first and last sentences, both literals, and never the
+    middle one, so the capitalization that joins them was free to drop or to re-slice --
+    rendering "...won't be flagged for removal. your keep rule ..." (or YOur, our, Yur) with
+    nothing failing. The remedy's own boundary was undriven too: the only no-headroom case
+    used ``condemn_at=100``, so ``headroom < 1`` and the point/points plural both sat one
+    step outside every case (#337).
+
+    The ``total`` initializer above these branches is left untested and is not a gap (rule
+    118): every branch that reads it assigns it first, so its starting value is dead.
+    """
+
+    def _keep(self, field: str, discount: int, condemn_at: int = 70) -> PolicyBody:
+        return _policy(
+            condemn_at=condemn_at,
+            graded_keeps=(
+                GradedKeepSpec(
+                    name="my lean", field=field, max_discount=discount, floor=0, saturate_at=10
+                ),
+            ),
+        )
+
+    def _said(self, body: PolicyBody) -> str:
+        spoken = [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=90.0)
+            if w.field == "graded_keeps"
+        ]
+        assert len(spoken) == 1
+        return spoken[0].message
+
+    def test_the_lifetime_only_branch_renders_as_three_whole_sentences(self) -> None:
+        """The exact message, because the middle sentence is assembled rather than written.
+
+        Its lead clause is absent on this branch -- the cause clause belongs to the window
+        branch -- so the sentence starts on "your" and is capitalized in code. Asserting the
+        whole string is what pins that: a substring check on either end holds while the join
+        between them renders lowercase.
+        """
+        assert self._said(self._keep("watchers_all_time", 40)) == (
+            "Titles added before your watch history starts won't be flagged for removal. "
+            'Your keep rule "my lean" takes all 40 of its points off them. '
+            "Set it to 30 points or less."
+        )
+
+    @pytest.mark.parametrize(
+        ("condemn_at", "remedy"),
+        [
+            (100, "remove that rule."),
+            (99, "set it to 1 point or less."),
+            (98, "set it to 2 points or less."),
+            (70, "set it to 30 points or less."),
+        ],
+    )
+    def test_the_remedy_names_a_number_the_control_will_actually_take(
+        self, condemn_at: int, remedy: str
+    ) -> None:
+        """``max_discount`` is ``ge=1``, so at a headroom of 0 every settable value is too
+        high and the remedy has to drop to "remove that rule".
+
+        One point of headroom is the case nothing drove, and it decides two things at once:
+        whether a number may be named at all, and whether it is "1 point" or "1 points". At
+        98 the operator was being told to set a rule to "2 point or less".
+        """
+        assert self._said(self._keep("recent_watchers", 40, condemn_at=condemn_at)).endswith(
+            f"Wait for it to build up, or {remedy}"
+        )

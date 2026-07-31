@@ -2586,6 +2586,37 @@ to the run's own session, which answers from memory where the row was always rig
 is the fix: flush the pending ORM writes first, then execute the Core statements, then commit.**
 Two ways to write one row will interleave; deciding which goes first is not optional.
 
+## Two lanes with no test look exactly like eight with a weak one (2026-07-31)
+
+Closing #337's rows took `inspect` from **53 survivors of 341 to 9**, and the interesting part
+is what the 53 were made of. Two of the eleven lanes had no test at any point — nothing in
+`tests/` named the "delete up to N items it can't measure" sentence or either of the two size
+footguns — while the other nine had a test that reached the branch and could not discriminate
+it. **In a coverage report those two states are the same green.** They are also the same green
+in a survivor count, which is why the count alone was never the finding.
+
+**The fixture that agrees with itself is the recurring shape.** Every case in the condemn lane
+built `recent_watchers` with a `FEW_WATCHERS` weight beside it, so three separate things went
+undriven at once: the span filter (no rule on a field that reads no watchers), the blocked
+boolean standing alone (no case with `withheld == 0`), and the anchor that decides which editor
+card the operator is sent to — its three fixtures were 5/50, 50/5 and 25/25, splits that agree
+whether the comparison doubles the signals share or triples it. One fixture family, chosen once
+for the first test in the lane, and every later test inherited its blind spots.
+
+**Half of a two-armed decision can hide behind the other.** `decide_verdict` is asked for score
+*and* coverage here, and no case ever let coverage be the deciding one: every fixture put the
+score under the threshold, so turning the coverage share into a product changed nothing. The
+case that discriminates is the awkward one — 40 points left against a threshold of 31, clearing
+the threshold while the coverage those withheld points took with them falls under the floor.
+
+**Nine survivors are the right number to stop at, and saying why is the work.** All nine are
+unreachable rather than untested: `weight` and `in_progress_hold_days` are `ge=0` at the save
+boundary, so `> 0`/`>= 0` and `<= 0`/`== 0` are the same test over every saveable value; both
+condemn specs refuse an unknown field at construction, so the `is None` arm beside them never
+decides anything; and one initializer is dead because every branch that reads it assigns it
+first. Each is classified in the test docstring that owns it (rule 118), because a survivor
+list with no classification reads as work left undone, and the next person re-derives it.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
