@@ -113,9 +113,16 @@ def _view(user: AppUser) -> UserView:
 
 
 async def start_plex_login(
-    session_factory: async_sessionmaker[AsyncSession], *, safety: RuntimeSafety
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    safety: RuntimeSafety,
+    forward_url: str | None = None,
 ) -> PlexLoginStart:
-    """Create a PIN and return the URL to open. Records the pending login."""
+    """Create a PIN and return the URL to open. Records the pending login.
+
+    ``forward_url`` is where plex.tv sends the sign-in window when the operator is done,
+    which is how that window gets closed (``schemas.PLEX_FORWARD_PATH``).
+    """
     async with session_factory() as session:
         cid = await client_identifier(session)
         # Opportunistically drop stale pendings so the table cannot grow without
@@ -140,7 +147,7 @@ async def start_plex_login(
         )
         await session.commit()
 
-    return PlexLoginStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid))
+    return PlexLoginStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid, forward_url))
 
 
 async def poll_plex_login(

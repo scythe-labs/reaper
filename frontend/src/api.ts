@@ -1382,6 +1382,19 @@ const put = <T>(path: string, body: unknown): Promise<T> =>
 
 const del = <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE" });
 
+/** Where plex.tv should send the sign-in window once the operator is done with it.
+ *
+ *  That page closes the window, which is the only way Reaper can: the window is opened
+ *  with `noopener` so plex.tv cannot reach the page holding the operator's Reaper
+ *  password, and that also means `window.open` hands back nothing to close it with. A
+ *  script-opened window may still close itself (#372).
+ *
+ *  The browser has to name its own origin because the server cannot: Vite's dev proxy and
+ *  any reverse proxy rewrite `Host`, so a URL built server-side points at an address the
+ *  operator is not on. It sends the origin only and the backend appends the path, so both
+ *  Plex start routes forward to the same place without either caller restating it. */
+const plexForward = () => ({ forward_origin: window.location.origin });
+
 export const api = {
   latestSnapshot: () => request<Snapshot>("/api/snapshots/latest"),
   /** One page of the review queue. The full filtered totals (count + bytes, before the page
@@ -1474,7 +1487,7 @@ export const api = {
    *  now how a caller says nothing about it. */
   setPlexSettings: (patch: { web_url?: string; verify_tls?: boolean }) =>
     put<PlexStatus>("/api/settings/plex", patch),
-  plexLinkStart: () => post<PlexLinkStart>("/api/settings/plex/link/start", {}),
+  plexLinkStart: () => post<PlexLinkStart>("/api/settings/plex/link/start", plexForward()),
   plexLinkPoll: (pin_id: number, machine_identifier?: string, verify_tls?: boolean) =>
     post<PlexLinkPoll>("/api/settings/plex/link/poll", {
       pin_id,
@@ -1695,7 +1708,7 @@ export const api = {
   // --- auth ---------------------------------------------------------------
   me: () => request<AuthUser>("/api/auth/me"),
   authContext: () => request<AuthContext>("/api/auth/context"),
-  plexStart: () => post<PlexStart>("/api/auth/plex/start", {}),
+  plexStart: () => post<PlexStart>("/api/auth/plex/start", plexForward()),
   plexPoll: (pin_id: number, machine_identifier?: string) =>
     post<PlexPoll>("/api/auth/plex/poll", { pin_id, machine_identifier }),
   localLogin: (username: string, password: string) =>

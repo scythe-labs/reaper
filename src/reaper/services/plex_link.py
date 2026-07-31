@@ -394,13 +394,19 @@ class LinkStart:
 
 
 async def start_link(
-    session_factory: async_sessionmaker[AsyncSession], *, safety: RuntimeSafety
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    safety: RuntimeSafety,
+    forward_url: str | None = None,
 ) -> LinkStart:
     """Begin an in-app link: create a PIN and return the URL for the browser to open.
 
     This is the Settings-page twin of the setup flow. The backend polls; the browser
     never handles a token. Purpose ``"link"`` keeps these pendings distinct from the
     ``"login"`` ones, so a re-link cannot be mistaken for a sign-in.
+
+    ``forward_url`` is where plex.tv sends the window when the operator is done, which is
+    how that window gets closed (``schemas.PLEX_FORWARD_PATH``).
     """
     async with session_factory() as session:
         cid = await client_identifier(session)
@@ -424,7 +430,7 @@ async def start_link(
         )
         await session.commit()
 
-    return LinkStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid))
+    return LinkStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid, forward_url))
 
 
 async def poll_link(

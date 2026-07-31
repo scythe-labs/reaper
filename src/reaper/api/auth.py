@@ -28,6 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api import tags as api_tags
+from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
     clear_session_cookie,
@@ -277,7 +278,7 @@ async def me(request: Request) -> UserOut:
 
 
 @router.post("/plex/start")
-async def plex_start(request: Request) -> PlexStartOut:
+async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -> PlexStartOut:
     """Begin a Plex sign-in: mint a PIN and hand back the URL to approve it on.
 
     Rate-limited per address before any work happens. Every call writes a pending row and
@@ -286,7 +287,9 @@ async def plex_start(request: Request) -> PlexStartOut:
     operator out of Plex sign-in entirely (S-1).
     """
     _rate_limited(plex_start_limit, _client_ip(request))
-    start = await start_plex_login(_factory(request), safety=_safety(request))
+    start = await start_plex_login(
+        _factory(request), safety=_safety(request), forward_url=payload.forward_url()
+    )
     return PlexStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 
 

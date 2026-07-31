@@ -146,3 +146,27 @@ describe("every call goes through the one wrapper", () => {
     click.mockRestore();
   });
 });
+
+describe("starting a Plex sign-in", () => {
+  // The window plex.tv opens is closed by a page plex.tv forwards it to, and the address of
+  // that page can only come from the browser: every proxy in front of Reaper rewrites Host,
+  // so a URL the server builds points somewhere the operator is not (#372).
+  const sent = (fetchMock: ReturnType<typeof vi.fn>) =>
+    JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+
+  it.each([
+    ["sign-in", () => api.plexStart()],
+    ["the Settings re-link", () => api.plexLinkStart()],
+  ])("tells the server where this browser is, for %s", async (_name, call) => {
+    const fetchMock = reply(JSON.stringify({ pin_id: 1, auth_url: "https://app.plex.tv/auth" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await call();
+
+    // window.location.origin under jsdom. Asserted against the live value rather than a
+    // literal, because pinning "http://localhost:3000" would pass just as well if the code
+    // sent a hardcoded string instead of asking the browser.
+    expect(sent(fetchMock)).toEqual({ forward_origin: window.location.origin });
+    expect(window.location.origin).toBeTruthy();
+  });
+});
