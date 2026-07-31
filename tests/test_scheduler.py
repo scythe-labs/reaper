@@ -179,8 +179,11 @@ class TestTheSchedulerIsUpkeepOnly:
             "full_history_sweep",
             # Housekeeping, deliberately absent from the operator's Jobs list: deleting
             # sessions whose window has already closed is not a choice to hand over, and an
-            # off switch on it could only ever let the table grow (PR-13).
+            # off switch on it could only ever let the table grow (PR-13). Trimming the
+            # scan history is off it on the same argument (#315), and deletes rows Reaper
+            # wrote about itself -- never a file, an *arr or Plex.
             scheduler.SESSION_SWEEP_JOB_ID,
+            scheduler.SNAPSHOT_SWEEP_JOB_ID,
         }
         # Every job is a refresh/sweep. Nothing here touches the executor or an *arr
         # delete -- automated deletion is gated behind an autonomy grant, not a cron entry.
@@ -194,6 +197,36 @@ class TestTheSchedulerIsUpkeepOnly:
                 or ("sweep" in job.func.__name__)
             )
         await engine.dispose()
+
+    async def test_the_snapshot_sweep_runs_shortly_after_boot_not_a_full_interval_in(
+        self, tmp_path: Path
+    ) -> None:
+        """An install upgrading with months of scans behind it has a database that is
+        mostly dead weight now, so an interval trigger's default first fire -- a whole
+        twelve hours in -- is the wrong answer. Pinned against the interval rather than a
+        literal, so raising one cannot quietly turn the delay back into a full period."""
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        sched = scheduler.build_scheduler(
+            engine,
+            tmp_path,
+            session_factory=create_session_factory(engine),
+            secret_box=SecretBox(resolve_secret_key(settings)),
+            timezone=ZoneInfo("UTC"),
+        )
+        job = next(j for j in sched.get_jobs() if j.id == scheduler.SNAPSHOT_SWEEP_JOB_ID)
+        wait = (job.trigger.start_date - utcnow()).total_seconds()
+
+        assert 0 < wait <= scheduler.SNAPSHOT_SWEEP_STARTUP_DELAY_S
+        assert wait < scheduler.SNAPSHOT_SWEEP_INTERVAL_S
+        await engine.dispose()
+
+    async def test_the_snapshot_sweep_is_not_operator_schedulable(self) -> None:
+        """Same argument as the session sweep: an off switch on it could only ever let the
+        database grow, which is the state it exists to end (#315). Nothing reads a scan
+        older than the newest one, so there is no window an operator would want to widen."""
+        assert scheduler.SNAPSHOT_SWEEP_JOB_ID not in scheduler.SCHEDULABLE_JOB_IDS
+        assert scheduler.SNAPSHOT_SWEEP_JOB_ID not in scheduler.DEFAULT_MAINTENANCE_CRONS
 
 
 @pytest.fixture

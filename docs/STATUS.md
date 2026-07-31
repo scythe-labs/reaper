@@ -109,3 +109,6 @@ roughly its slowest source plus the judge loop, which is in-memory per item.
 A scan is a snapshot: all evidence is frozen and hashed before scoring, so a transient timeout
 cannot flip an item's fate mid-run. The why-panel explains every verdict in both directions; the
 worked example is under **Why-panel scope** in `docs/DECISIONS.md`.
+
+Only the **newest 30 scans** are kept (`services.retention`, swept twice daily; a scan a run is
+bound to stays regardless). Nothing may be built that reads scan history past that window.

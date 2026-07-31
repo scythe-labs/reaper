@@ -13,10 +13,13 @@ So this scheduler exists to do the unglamorous upkeep:
   first scan (and every scan until a day boundary happened to pass) would degrade.
 * **Refresh the curated lists** (the IMDb Top 250) daily, independent of scans.
 
-**This scheduler never deletes anything.** It only downloads and caches. Deletion runs
-happen through the executor, under the destructive-action guard, and are not scheduled
-here -- automated deletion is an M8 concern gated behind an earned autonomy grant, and
-wiring it to a timer before that machinery exists would be exactly the wrong shortcut.
+**This scheduler never deletes media.** Deletion runs happen through the executor, under
+the destructive-action guard, and are not scheduled here -- automated deletion is an M8
+concern gated behind an earned autonomy grant, and wiring it to a timer before that
+machinery exists would be exactly the wrong shortcut. It does delete Reaper's *own*
+bookkeeping, which is a different thing entirely and needs no arming: expired auth
+sessions, and scans older than the retention window (``services.retention``). Neither
+touches a file, an *arr, or Plex.
 
 APScheduler 3.x (4.x is still alpha). ``AsyncIOScheduler`` shares the app's event loop,
 and ``coalesce=True`` + ``max_instances=1`` mean a job that overruns its interval -- a
@@ -42,7 +45,14 @@ from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
-from reaper.services import app_settings, history_sync, imdb_dataset, lists, scan_runner
+from reaper.services import (
+    app_settings,
+    history_sync,
+    imdb_dataset,
+    lists,
+    retention,
+    scan_runner,
+)
 from reaper.services.imdb_dataset import ImdbRatings
 
 log = structlog.get_logger(__name__)
@@ -74,6 +84,26 @@ SCHEDULABLE_JOB_IDS: tuple[str, ...] = (SCAN_JOB_ID, *MAINTENANCE_JOB_IDS)
 #: this belongs at, so it never has to be re-based when the server time zone changes.
 SESSION_SWEEP_JOB_ID = "sweep_expired_sessions"
 SESSION_SWEEP_INTERVAL_S = 12 * 60 * 60
+
+#: Trimming the scan history is housekeeping for the same reason, and stays off the
+#: schedulable list on the same argument: an off switch here could only ever let the
+#: database grow, which is the state that made it grow without limit in the first place
+#: (#315). Nothing reads a scan older than the newest one, so there is no window an
+#: operator would want to widen and nothing they lose by this running. Twelve-hourly on
+#: an interval rather than a cron, again like the session sweep -- there is no hour of the
+#: day this belongs at, so a time-zone change never has to re-base it.
+SNAPSHOT_SWEEP_JOB_ID = "sweep_old_snapshots"
+SNAPSHOT_SWEEP_INTERVAL_S = 12 * 60 * 60
+
+#: How long after boot the first sweep runs. An ``IntervalTrigger`` given no start date
+#: first fires a whole interval in, which for the session sweep is fine -- an expired
+#: session authorizes nothing whether or not its row is still there, so the table sitting
+#: there another twelve hours costs nothing. This one is different in exactly the case it
+#: was written for: an install upgrading with months of scans behind it has a database
+#: that is mostly dead weight *now*, and making the operator wait half a day to see any of
+#: it come back is the wrong answer. Minutes, not seconds, so the first sweep and its
+#: possible vacuum stay out of the way of the startup ratings catch-up.
+SNAPSHOT_SWEEP_STARTUP_DELAY_S = 5 * 60
 
 
 #: Skip a scheduled ratings refresh when the dataset was synced this recently. IMDb
@@ -245,6 +275,35 @@ async def sweep_expired_sessions(
             log.info("scheduler.sessions_swept", removed=removed)
     except Exception as exc:
         log.warning("scheduler.session_sweep_failed", error=str(exc))
+
+
+async def sweep_old_snapshots(
+    session_factory: async_sessionmaker[AsyncSession],
+    data_dir: Path,
+) -> None:
+    """Trim the scan history to the retention window. Not operator-schedulable (see the id).
+
+    Swallows its own failures like every other job here: nothing downstream depends on
+    this having run, and a database busy with a scan must not stop the scheduler. The
+    worst case of a skipped firing is that the next one has one more scan to drop.
+
+    Compaction is attempted only after a sweep that actually removed something, and it
+    declines unless the freed share is large enough to be worth an exclusive lock
+    (``retention.compact_if_fragmented``). In the steady state that is never; on the first
+    firing after an install upgrades with months of scans behind it, that is the run that
+    hands the disk space back.
+    """
+    try:
+        removed = await retention.sweep_old_snapshots(session_factory)
+        if not removed:
+            return
+        log.info("scheduler.snapshots_swept", removed=removed)
+        if await retention.compact_if_fragmented(data_dir):
+            log.info("scheduler.database_compacted")
+    except Exception as exc:
+        # The sweep commits per batch, so a failure part-way through keeps whatever it
+        # already dropped and the next firing continues from there.
+        log.warning("scheduler.snapshot_sweep_failed", error=str(exc))
 
 
 async def scheduled_scan(
@@ -471,6 +530,16 @@ def build_scheduler(
         IntervalTrigger(seconds=SESSION_SWEEP_INTERVAL_S),
         args=[session_factory],
         id=SESSION_SWEEP_JOB_ID,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        sweep_old_snapshots,
+        IntervalTrigger(
+            seconds=SNAPSHOT_SWEEP_INTERVAL_S,
+            start_date=utcnow() + timedelta(seconds=SNAPSHOT_SWEEP_STARTUP_DELAY_S),
+        ),
+        args=[session_factory, data_dir],
+        id=SNAPSHOT_SWEEP_JOB_ID,
         replace_existing=True,
     )
     return scheduler

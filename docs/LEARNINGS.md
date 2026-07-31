@@ -2348,6 +2348,39 @@ assertion is an exact string rather than an enum. That reads as brittle and is t
 string is the whole difference between the two arms, and rule 21 already says the operator has
 to be able to read it.
 
+## What a frozen snapshot actually costs on disk (2026-07-30)
+
+Freezing every item's evidence before scoring is what makes a verdict honest, and the price of it
+had never been measured. It is **about 4 KB per item per scan**, and it is paid on every item,
+not only the condemned ones: a scan writes one row per movie and per season whatever the verdict.
+So the whole library's storage cost is charged again on every scan, and with nothing deleting old
+scans the database grew without limit — measured at roughly **24 MB per scan for a
+six-thousand-item library**, which is ~8 GB a year scanning nightly and ~200 GB scanning hourly.
+
+**Two JSON columns are two thirds of it**, in equal halves: the frozen `facts_json` and the
+why-panel's `explanation_json`, each averaging about 1.5 KB. The rest is small, with one
+avoidable member — the *arr `overview` blurb is copied verbatim into every generation, ~275 B
+per item per scan for a string that essentially never changes.
+
+Three shapes worth knowing before anyone optimizes this:
+
+- **The redundancy is real but not total.** Distinct `(item, facts_json)` pairs were about a
+  third of all rows, so evidence genuinely does change between scans — roughly a 3× win from
+  content-addressing, not the 30× a naive "it's the same library" intuition suggests.
+- **The blobs compress ~24× with plain gzip** (~19× more with zstd at level 19). They are
+  repetitive structured JSON, so compression is far and away the cheapest lever available.
+- **Retention beats both.** Compression and dedup change the *slope*; only a bound changes the
+  shape. `services.retention` keeps the newest 30, so the cost stops being a function of how long
+  the install has existed and becomes one of library size alone — about 700 MB for six thousand
+  items, about 2.4 GB for twenty thousand. That is the number to weigh before raising the window,
+  and it is why 30 is a constant rather than an operator setting.
+
+The negative result worth recording: **`VACUUM` after every sweep is not worth its lock.** In the
+steady state a sweep frees one snapshot of thirty, some 3%, and SQLite reuses those pages on the
+next scan anyway — so compaction is gated behind both a share and an absolute floor, and in
+practice fires once, on the first sweep after an install that had been keeping every scan
+upgrades.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
