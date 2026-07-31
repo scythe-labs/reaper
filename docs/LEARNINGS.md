@@ -2529,6 +2529,47 @@ defended. That is the safer way to be wrong, and it is still the reason the labe
 The row that moved the other way is the sharpest of the set: the IMDb fail-closed guard was
 reported closed once, on a run whose operators could not express deleting an `if` at all, and
 came back real the moment they could.
+## A failed commit takes the whole identity map with it (2026-07-30)
+
+Measured while fixing the wedge in #327, where one failed step commit left a reap `EXECUTING`
+on disk forever. Four things about async SQLAlchemy that a reading of the code does not
+suggest, each confirmed against a real engine with Reaper's own pragmas:
+
+- **A failed `commit()` does not just fail.** It leaves a transaction that is neither
+  committed nor rolled back, so every later `commit()` on that session raises
+  `PendingRollbackError` whether or not the original fault has cleared. The wedge was
+  therefore never a race on how long the write lock was held: the terminal write failed
+  because of the *first* failure, not because of any contention of its own.
+- **It expires every row the session ever loaded, not the one that failed.** Reading a
+  previously-loaded attribute afterwards raises rather than returning the value it still had a
+  line earlier. So the code path after a failed commit is not merely unable to write, it
+  cannot read either, and handlers that build an error record out of the row they were acting
+  on fail inside the `except`.
+- **`rollback()` is the only way back, and it expires everything too.** Under asyncio that is
+  a harder state than under sync, where the same attribute read would quietly re-`SELECT`: an
+  implicit lazy load cannot be awaited from attribute access, so it raises `MissingGreenlet`.
+  Anything a run still needs after a rollback must therefore be held as plain values, or
+  reloaded explicitly.
+- **A `SELECT` repopulates expired rows in place; `Session.get()` does not.** Two queries
+  revive a whole run's rows, which is far cheaper than refreshing object by object. `get()`
+  returns the expired instance from the identity map and the first attribute read on it
+  raises, which reads as a bug in the caller.
+
+**A negative result worth keeping: `expire_all()` is the wrong tool for syncing after a Core
+`UPDATE`.** Writing the terminal state as `update(...).values(...)` goes around the identity
+map, so the session keeps answering with the pre-run state. `expire_all()` fixes that and
+breaks the *caller*, whose own handle on the row is now expired and raises on the next read.
+Setting the columns on the instance after the write costs nothing, does no IO even when the
+instance is expired, and touches nothing the caller did not already own.
+
+**And a clobber that only the mutation test found.** Once a mark recovers by rolling back and
+replaying its `UPDATE`, the loaded row disagrees with the database, because the rollback
+discarded the assignment and the replay bypassed the identity map. A later capture of that row
+then writes the stale value back over the recovered one, so a `file_removed_at` that had just
+been rescued came out NULL. Deleting the replay entirely left the suite green until a test was
+added for the recovered-and-continued case specifically: the tests that existed all drove the
+*unrecoverable* path, where nothing replays anyway. **A recovery path needs a test that
+recovers and carries on, not only one that gives up** (rule 118).
 
 ## Prior art
 

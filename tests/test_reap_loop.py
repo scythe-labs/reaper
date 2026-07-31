@@ -24,6 +24,7 @@ import httpx
 import pytest
 import respx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api.runs import _planned_candidates, _run_out
@@ -60,6 +61,7 @@ from reaper.services.executor import (
     _Delete,
     _grew_materially,
     _row_timestamp,
+    _Terminal,
 )
 from reaper.services.planner import (
     MediaRef,
@@ -4194,3 +4196,370 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
 
         assert report.state is RunState.COMPLETED
         assert report.deleted_items == 1
+
+
+class _CommitsThatFail:
+    """Makes a bounded number of one session's commits fail the way a held write lock does.
+
+    The failure is a REAL flush error (``path`` is NOT NULL), not a raise in front of a
+    healthy commit, because what is being pinned is what the session does *after* a commit
+    fails: SQLAlchemy leaves a transaction that is neither committed nor rolled back, every
+    later commit on it raises ``PendingRollbackError`` whether or not the original fault has
+    cleared, and the in-memory writes riding on it are discarded. A raise in front of a live
+    transaction reproduces none of that and would pass against the wedged code.
+
+    Armed by the *arr fake mid-item rather than by counting commits, so each test names the
+    moment it is aiming at and does not drift when a commit is added or removed upstream.
+    """
+
+    def __init__(self, session: AsyncSession, run_id: int, *, times: int = 1) -> None:
+        self._session = session
+        self._run_id = run_id
+        self._remaining = times
+        self._armed = False
+        self.fired = 0
+        self._real = session.commit
+        session.commit = self._commit  # type: ignore[method-assign]
+
+    def arm(self) -> None:
+        self._armed = True
+
+    async def _commit(self) -> None:
+        if self._armed and self._remaining > 0:
+            self._remaining -= 1
+            self.fired += 1
+            self._session.add(
+                ActionStep(
+                    run_id=self._run_id,
+                    media_key="poison",
+                    ordinal=99,
+                    kind="radarr_delete",
+                    method="DELETE",
+                    path=None,  # NOT NULL: the flush inside commit() raises
+                    idempotency_key=f"poison-{self.fired}",
+                    created_at=utcnow(),
+                )
+            )
+        await self._real()
+
+
+class _RadarrThatLosesTheDatabase(FakeRadarr):
+    """Arms the commit failure the instant a file is really gone.
+
+    ``delete_movie`` has returned, ``_movie_is_gone`` reads no database, so the very next
+    commit is the one stamping ``file_removed_at`` -- the worst moment for one to fail, and
+    the one the report names as outliving the run.
+    """
+
+    def __init__(self, lock: _CommitsThatFail, *, on_movie: int) -> None:
+        super().__init__()
+        self._lock = lock
+        self._on_movie = on_movie
+
+    async def delete_movie(
+        self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+    ) -> None:
+        await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
+        if movie_id == self._on_movie:
+            self._lock.arm()
+
+
+class _PlexThatLosesTheDatabase(FakePlex):
+    """Arms the commit failure from the streaming veto, which spares the item.
+
+    A spared item commits no marks of its own, so the very next commit is the per-item one
+    in ``_run_deletes`` -- the other place a journal write can fail, and the one that carries
+    the SKIPPED marks.
+    """
+
+    def __init__(self, lock: _CommitsThatFail, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._lock = lock
+
+    async def active_streams(self) -> list[ActiveStream]:
+        streams = await super().active_streams()
+        self._lock.arm()
+        return streams
+
+
+async def _fresh_engine(tmp_path: Path) -> tuple[Any, async_sessionmaker[AsyncSession]]:
+    """An engine of this test's own, so durable state can be read back through a session the
+    executor never touched. The run's own session answers from its identity map
+    (``expire_on_commit=False``) and cannot tell a durable write from a discarded one."""
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    engine = create_engine(settings)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    return engine, create_session_factory(engine)
+
+
+class TestAFailedJournalCommitDoesNotWedgeTheRun:
+    """A commit on the deletion path can fail: the housekeeping vacuum holding SQLite's write
+    lock, a full disk, any transient error. Once one did, the run was left EXECUTING on disk
+    permanently, with a step still SENT for a file that was already gone, and nothing in the
+    app able to reconcile it -- ``execute()`` refuses any non-PLANNED run, no startup path
+    reads EXECUTING, and retention never sweeps a run-bound snapshot.
+
+    It was never a race on how long the fault lasted. A failed commit leaves the session
+    holding a transaction that is neither committed nor rolled back: every later commit on it
+    raises whether or not the lock has been released, every row it loaded is expired, and the
+    in-memory writes riding on it are discarded. The one statement that would have recorded
+    the terminal state sat under ``except Exception: log.warning`` and was swallowed.
+
+    So these break the transaction FOR REAL rather than raising in front of a healthy one.
+    That distinction is the test: a bare raise leaves a working session, recovers by itself,
+    and passes against the wedged code (rule 118).
+    """
+
+    @staticmethod
+    async def _three(session: AsyncSession) -> ReapRun:
+        snapshot_id = await _snapshot_many(
+            session,
+            [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702), ("radarr:1:3", 3 * GB, 703)],
+        )
+        return await _plan(session, snapshot_id)
+
+    async def test_one_failed_commit_is_recovered_and_the_run_finishes(
+        self, tmp_path: Path
+    ) -> None:
+        """The fault the report describes, cleared: the run rolls back, replays the write and
+        carries on to a normal COMPLETED finish.
+
+        The stamp is the assertion that matters. ``_mark_file_removed`` is the commit being
+        broken here, and losing it leaves a file gone with nothing on disk saying so -- those
+        bytes drop out of ``_rolling_30d_deletions``, the rolling budget reads light, and a
+        later run spends past what the operator set (rule 5/30). That is the part of a failed
+        commit that outlives the run.
+        """
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                run = await self._three(setup)
+                run_id = run.id
+                await setup.commit()
+
+            async with factory() as run_session:
+                lock = _CommitsThatFail(run_session, run_id)
+                radarr = _RadarrThatLosesTheDatabase(lock, on_movie=2)
+                report = await Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: radarr}),
+                    armed_recheck=_armed_forever,
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                ).execute(run_id)
+
+            assert lock.fired == 1, "the test did not actually break a commit"
+            assert report.state is RunState.COMPLETED
+            assert report.deleted_items == 3
+            assert radarr.delete_calls == [1, 2, 3]
+
+            async with factory() as fresh:
+                stored = await fresh.get(ReapRun, run_id)
+                assert stored is not None
+                assert stored.state is RunState.COMPLETED
+                steps = {s.media_key: s for s in await _steps(fresh, run_id)}
+                assert [s.state for s in steps.values()] == [StepState.VERIFIED] * 3
+                # The write that failed, on disk anyway.
+                assert steps["radarr:1:2"].file_removed_at is not None
+        finally:
+            await engine.dispose()
+
+    async def test_a_journal_that_stays_unwritable_ends_the_run_aborted_on_disk(
+        self, tmp_path: Path
+    ) -> None:
+        """The wedge itself. One retry is what the executor offers, not a promise, so when the
+        write still will not land the run stops -- and the run row says ABORTED on disk rather
+        than EXECUTING forever, which is the whole of #327."""
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                run = await self._three(setup)
+                run_id = run.id
+                await setup.commit()
+
+            async with factory() as run_session:
+                lock = _CommitsThatFail(run_session, run_id, times=2)
+                radarr = _RadarrThatLosesTheDatabase(lock, on_movie=1)
+                report = await Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: radarr}),
+                    armed_recheck=_armed_forever,
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                ).execute(run_id)
+
+            assert lock.fired == 2, "both the commit and its retry must have failed"
+            assert report.state is RunState.ABORTED
+            # It stopped rather than deleting more it also could not record.
+            assert radarr.delete_calls == [1]
+            reason = report.aborted_reason or ""
+            assert "could not save its record" in reason
+            assert "stays removed" in reason
+
+            async with factory() as fresh:
+                stored = await fresh.get(ReapRun, run_id)
+                assert stored is not None
+                assert stored.state is RunState.ABORTED, "the run was left wedged in EXECUTING"
+                assert stored.aborted_reason == reason
+                assert stored.finished_at is not None
+        finally:
+            await engine.dispose()
+
+    async def test_a_recovered_per_item_commit_still_journals_the_item(
+        self, tmp_path: Path
+    ) -> None:
+        """The other commit on the path, recovered rather than halted.
+
+        A spared item writes no marks of its own -- ``_mark_skipped`` only sets attributes --
+        so the per-item commit in ``_run_deletes`` is the one that fails here, and the
+        rollback that revives the session discards exactly those attributes. Only the row
+        capture taken before the commit can put them back. Without it the commit succeeds
+        writing NOTHING, and the step is left PENDING on disk: a journal that reads as an
+        interrupted run with work still to do, for an item that was deliberately kept.
+        """
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                run = await self._three(setup)
+                run_id = run.id
+                await setup.commit()
+
+            async with factory() as run_session:
+                lock = _CommitsThatFail(run_session, run_id)
+                radarr = FakeRadarr()
+                plex = _PlexThatLosesTheDatabase(lock, streams=[_stream(rating_key=701)])
+                report = await Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: radarr}, plex=plex),
+                    armed_recheck=_armed_forever,
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                ).execute(run_id)
+
+            assert lock.fired == 1
+            assert report.state is RunState.COMPLETED
+            assert report.skipped == 1
+            assert radarr.delete_calls == [2, 3]  # the run carried on past the recovery
+
+            async with factory() as fresh:
+                steps = {s.media_key: s for s in await _steps(fresh, run_id)}
+                assert steps["radarr:1:1"].state is StepState.SKIPPED, (
+                    "the spare was discarded by the recovery rollback and never replayed"
+                )
+                assert steps["radarr:1:1"].error
+                assert steps["radarr:1:2"].state is StepState.VERIFIED
+        finally:
+            await engine.dispose()
+
+    async def test_a_spared_item_whose_journal_will_not_write_stops_the_run_too(
+        self, tmp_path: Path
+    ) -> None:
+        """The other commit on the path, and the other halt. An item spared by the streaming
+        veto writes no marks of its own, so the per-item commit in ``_run_deletes`` is the one
+        that fails -- and a skip returns to the top of the loop, so it needs its own check or
+        the run walks on with an unwritable database."""
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                run = await self._three(setup)
+                run_id = run.id
+                await setup.commit()
+
+            async with factory() as run_session:
+                lock = _CommitsThatFail(run_session, run_id, times=2)
+                radarr = FakeRadarr()
+                plex = _PlexThatLosesTheDatabase(lock, streams=[_stream(rating_key=701)])
+                report = await Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: radarr}, plex=plex),
+                    armed_recheck=_armed_forever,
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                ).execute(run_id)
+
+            assert lock.fired == 2
+            assert report.state is RunState.ABORTED
+            assert radarr.delete_calls == []  # nothing was ever sent
+            assert "could not save its record" in (report.aborted_reason or "")
+
+            async with factory() as fresh:
+                stored = await fresh.get(ReapRun, run_id)
+                assert stored is not None and stored.state is RunState.ABORTED
+        finally:
+            await engine.dispose()
+
+    async def test_the_terminal_write_lands_on_a_transaction_that_already_failed(
+        self, tmp_path: Path
+    ) -> None:
+        """The reported shape, in one place and with no run around it: kill the transaction,
+        then ask the executor to record the terminal state.
+
+        Driven through ``_commit_and_finalize`` directly because the tests above cannot say
+        *which* write recovered, and this is the write with no second chance (rule 118).
+        Nothing reconciles a run left EXECUTING. It used to be a bare
+        ``await self._session.commit()`` under ``except Exception: log.warning``, so it raised
+        ``PendingRollbackError`` and the warning swallowed it.
+        """
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                snapshot_id = await _snapshot_one(setup, media_key="radarr:1:1", rating_key=701)
+                run = await _plan(setup, snapshot_id)
+                run_id = run.id
+                run.state = RunState.EXECUTING
+                await setup.commit()
+
+            async with factory() as run_session:
+                executor = Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: FakeRadarr()}),
+                    armed_recheck=_armed_forever,
+                )
+                # Break the transaction exactly as a failed step commit does.
+                run_session.add(
+                    ActionStep(
+                        run_id=run_id,
+                        media_key="poison",
+                        ordinal=99,
+                        kind="radarr_delete",
+                        method="DELETE",
+                        path=None,  # NOT NULL
+                        idempotency_key="poison",
+                        created_at=utcnow(),
+                    )
+                )
+                with pytest.raises(IntegrityError):
+                    await run_session.commit()
+                # The state the wedge was made of: nothing can be committed on this session
+                # any more, however long ago the original fault cleared.
+                with pytest.raises(PendingRollbackError):
+                    await run_session.commit()
+
+                await executor._commit_and_finalize(
+                    run_id, _Terminal(RunState.ABORTED, "the run stopped early", utcnow())
+                )
+
+            async with factory() as fresh:
+                stored = await fresh.get(ReapRun, run_id)
+                assert stored is not None
+                assert stored.state is RunState.ABORTED
+                assert stored.aborted_reason == "the run stopped early"
+                assert stored.finished_at is not None
+        finally:
+            await engine.dispose()

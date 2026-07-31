@@ -109,7 +109,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
-from sqlalchemy import or_, select, update
+from sqlalchemy import Update, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -509,6 +509,99 @@ class _Delete:
         return self.steps[-1]
 
 
+#: Why a run stops when it could not write its own journal. The database is the only record
+#: of what was removed, so a run that cannot write it stops rather than deleting more that it
+#: also could not record.
+_JOURNAL_HALT = (
+    "Reaper could not save its record of what it just did, so it stopped before touching "
+    "anything else. Anything already removed stays removed. Check the free space and "
+    "permissions on Reaper's data folder, then scan again."
+)
+
+
+class _JournalWriteError(RuntimeError):
+    """A journal write did not land, even after a rollback and a retry.
+
+    Deliberately not an :class:`ExecutionError` and deliberately caught nowhere in the item
+    path: every handler down there turns an exception into a *recorded* item outcome, and
+    recording is precisely what is not working. Two of them would make it worse -- the
+    ``ExecutionError`` handler in ``_send_for_real`` treats it as one item's problem and lets
+    the run walk on, and any handler that builds an outcome reads the item's rows, which a
+    rollback has just expired.
+
+    So it unwinds to ``execute()``, which records the run's terminal state through a path
+    that touches no ORM row at all.
+    """
+
+
+@dataclass(frozen=True)
+class _Terminal:
+    """A run's final row, as plain values rather than attributes on the ORM object.
+
+    The terminal write is the one that has to land even when the session's transaction has
+    already died, and recovering from that means ``rollback()`` -- which expires every ORM
+    object in the session. So these travel where a rollback cannot reach them; see
+    :meth:`Executor._commit_journal`.
+    """
+
+    state: RunState
+    aborted_reason: str | None
+    finished_at: datetime
+
+
+@dataclass(frozen=True)
+class _JournalRow:
+    """One step's journal columns, read off the ORM object *before* a commit that may fail.
+
+    Same reason as :class:`_Terminal`, and the same hazard: after a rollback these attributes
+    are expired, so reading one raises ``MissingGreenlet`` rather than quietly reloading it.
+    Captured first, replayed as an ``UPDATE`` after.
+
+    It carries ``file_removed_at`` for a specific reason. That stamp is committed by
+    :meth:`Executor._mark_file_removed` the moment a delete is confirmed, and that commit is
+    itself one of the ones that can fail -- which loses the record that a file is gone while
+    the file stays gone. Those bytes then drop out of
+    :meth:`Executor._rolling_30d_deletions`, the rolling delete budget reads light, and a
+    later run spends past what the operator set. That is rule 5/30 failing open, and it is
+    the part of a failed commit that outlives the run.
+    """
+
+    id: int
+    state: StepState
+    error: str | None
+    sent_at: datetime | None
+    verified_at: datetime | None
+    verification_json: str | None
+    file_removed_at: datetime | None
+
+    @classmethod
+    def of(cls, step: ActionStep) -> _JournalRow:
+        return cls(
+            id=step.id,
+            state=step.state,
+            error=step.error,
+            sent_at=step.sent_at,
+            verified_at=step.verified_at,
+            verification_json=step.verification_json,
+            file_removed_at=step.file_removed_at,
+        )
+
+    def replay(self) -> Update:
+        return (
+            update(ActionStep)
+            .where(ActionStep.id == self.id)
+            .values(
+                state=self.state,
+                error=self.error,
+                sent_at=self.sent_at,
+                verified_at=self.verified_at,
+                verification_json=self.verification_json,
+                file_removed_at=self.file_removed_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+
+
 async def _load(session: AsyncSession, run_id: int) -> tuple[ReapRun, list[ActionStep]]:
     run = await session.get(ReapRun, run_id)
     if run is None:
@@ -775,9 +868,15 @@ class Executor:
         # typed confirmation both counted it), so the per-item checks intersect against it
         # and can only ever remove items, never add one that was never authorized.
         self._effective_keys: set[str] = set()
+        # What ``_revive`` re-reads. Set once the run is loaded; None before that, when there
+        # is nothing loaded to revive.
+        self._run_id: int | None = None
+        self._snapshot_id: int | None = None
 
     async def execute(self, run_id: int) -> RunReport:
         run, steps = await _load(self._session, run_id)
+        self._run_id = run_id
+        self._snapshot_id = run.snapshot_id
         report = RunReport(run_id=run_id, dry_run=self._dry_run, state=run.state)
 
         # Only a PLANNED run may be executed. A run left in EXECUTING is one whose process
@@ -936,6 +1035,13 @@ class Executor:
             # plan over the winner's journal. The commit also makes EXECUTING durable, so
             # a process that dies mid-run leaves a run that says so instead of rolling
             # back to PLANNED as if nothing had been deleted.
+            #
+            # The one commit on this path deliberately NOT routed through _commit_journal
+            # (rule 72's sweep). It sits ahead of the guarded block, so a failure here raises
+            # out of execute() with the claim rolled back, the run still PLANNED, and nothing
+            # sent -- already the keep-the-file answer, and a retry would only re-attempt a
+            # claim the operator can simply make again. Everything after this point has files
+            # at stake and gets the recovery.
             started = utcnow()
             claimed = await self._session.execute(
                 update(ReapRun)
@@ -961,6 +1067,13 @@ class Executor:
         # Set by the cancel path so the finally below commits the run's state but does NOT
         # sit in Plex's settle-wait. See _commit_and_finalize.
         canceled = False
+        # The row this run must leave behind, decided by whichever handler below runs and
+        # written by the finally. Held as plain values, NOT as attributes on ``run``: if a
+        # journal commit has already failed, recording the terminal state means rolling the
+        # session back first, and a rollback expires every ORM object in it. The old code
+        # set ``run.state`` in each handler and SQLAlchemy discarded every one of those
+        # writes on a dead transaction, which is how a run stayed EXECUTING forever (#327).
+        terminal: _Terminal | None = None
         try:
             # -- interlock 3: caps abort the whole run ----------------------
             # Inside the guarded block, so a breach becomes a visible ABORTED report the
@@ -971,15 +1084,22 @@ class Executor:
             await self._check_rolling_caps(deletes)
             await self._run_deletes(deletes, report, run.approved_at)
             report.state = RunState.COMPLETED
-            if not self._dry_run:
-                run.state = RunState.COMPLETED
-                run.finished_at = utcnow()
+            terminal = _Terminal(RunState.COMPLETED, None, utcnow())
         except ExecutionError as exc:
             report.state = RunState.ABORTED
             report.aborted_reason = str(exc)
-            if not self._dry_run:
-                run.state = RunState.ABORTED
-                run.aborted_reason = str(exc)
+            terminal = _Terminal(RunState.ABORTED, str(exc), utcnow())
+        except _JournalWriteError:
+            # A step's own journal write did not land even after the retry, so the run stopped
+            # where it stood. Handled apart from the catch-all below only for the copy: this
+            # is a known shape with a known remedy, not an unexpected error, and the operator
+            # is told what to check. The terminal write below does not depend on the session
+            # being healthy, which is the whole point of it going through _commit_journal.
+            log.warning("reap.journal_halt", run_id=run_id)
+            report.state = RunState.ABORTED
+            report.aborted_reason = _JOURNAL_HALT
+            terminal = _Terminal(RunState.ABORTED, _JOURNAL_HALT, utcnow())
+            return report
         except asyncio.CancelledError:
             # A hard cancel -- the app shutting down, or a force-stop that did not go
             # through the graceful Stop (which raises ExecutionError above). Record it as an
@@ -990,9 +1110,7 @@ class Executor:
             canceled = True
             report.state = RunState.ABORTED
             report.aborted_reason = "The run was stopped before it finished."
-            if not self._dry_run:
-                run.state = RunState.ABORTED
-                run.aborted_reason = report.aborted_reason
+            terminal = _Terminal(RunState.ABORTED, report.aborted_reason, utcnow())
             raise
         except Exception as exc:
             # The catch-all, and the last thing standing between a surprise and a wedged
@@ -1011,9 +1129,7 @@ class Executor:
             log.warning("reap.unexpected_error", run_id=run_id, error=str(exc), exc_info=True)
             report.state = RunState.ABORTED
             report.aborted_reason = f"The run stopped on an unexpected error: {exc}"
-            if not self._dry_run:
-                run.state = RunState.ABORTED
-                run.aborted_reason = report.aborted_reason
+            terminal = _Terminal(RunState.ABORTED, report.aborted_reason, utcnow())
             return report
         finally:
             # Runs on EVERY exit -- COMPLETED, a graceful abort, and a hard cancel alike --
@@ -1021,28 +1137,140 @@ class Executor:
             # outcome made durable and their stale Plex entries cleared. Previously this sat
             # after the try/except and an unexpected exception (or a cancel from
             # backgrounding the run) skipped it, orphaning Plex entries and leaving the run
-            # EXECUTING. See _commit_and_finalize for why it is best-effort.
+            # EXECUTING. See _commit_and_finalize for why the purge is best-effort.
+            #
+            # ``run_id``, never ``run.id``: by here the session may have been rolled back to
+            # recover from a failed journal write, which expires every ORM object, and
+            # reading an expired attribute raises MissingGreenlet instead of reloading it.
             if not self._dry_run:
-                await self._commit_and_finalize(canceled=canceled)
+                await self._commit_and_finalize(run_id, terminal, canceled=canceled)
+                if terminal is not None:
+                    # The row was written as a Core UPDATE, which goes around the identity
+                    # map, and this session is ``expire_on_commit=False`` -- so a caller
+                    # still holding ``run`` would otherwise keep reading the state it had
+                    # while the run was going. Set AFTER the write, never before: an ORM
+                    # mutation ahead of it would be the discarded write this whole change
+                    # exists to stop depending on. Setting a column on an expired instance
+                    # loads nothing, so this is safe even after a recovery rollback.
+                    run.state = terminal.state
+                    run.aborted_reason = terminal.aborted_reason
+                    run.finished_at = terminal.finished_at
 
         return report
 
-    async def _commit_and_finalize(self, *, canceled: bool = False) -> None:
+    async def _commit_journal(self, *, what: str, write: Sequence[Update]) -> bool:
+        """Land one set of journal writes, surviving a transaction that has already failed.
+
+        Rule 26 wants every journal and state-transition write on the deletion path durable
+        at each step, and each is its own commit. What that left uncovered is a commit that
+        *raises*: the session is then holding a transaction neither committed nor rolled
+        back, so every later commit on it raises ``PendingRollbackError`` whether or not the
+        original fault has cleared, and SQLAlchemy discards the in-memory attribute writes
+        that were riding on it ("Session's state has been changed on a non-active
+        transaction - this state will be discarded"). One step commit failing under a held
+        write lock therefore used to take the run's own terminal write down with it, and the
+        run stayed EXECUTING on disk with a step still SENT, files already gone, and nothing
+        in the app able to reconcile it (#327).
+
+        ``rollback()`` is what makes the session usable again, so the retry does that first.
+        It also EXPIRES every ORM object in the session, which is why the values travel in
+        ``write`` as statements rather than as mutations of rows: after the rollback, reading
+        one of those attributes would raise ``MissingGreenlet`` rather than reload it. The
+        same statements run on both attempts, so there is one spelling of the write, not a
+        durable one and a recovery one that can drift apart.
+
+        Two attempts, no sleep between them. SQLite's ``busy_timeout`` (5s, see
+        ``db.session._configure_sqlite``) already waits inside each, and a caller with a file
+        to keep safe should not be held longer than that on a database that is not answering.
+
+        Returns whether the writes are on disk. Never raises: every caller has a
+        keep-the-file answer to a journal it cannot write, and none of them is to wedge the
+        run.
+        """
+        for attempt in (1, 2):
+            try:
+                for statement in write:
+                    await self._session.execute(statement)
+                await self._session.commit()
+            except Exception as exc:
+                log.warning(
+                    "reap.journal_commit_failed", what=what, attempt=attempt, error=str(exc)
+                )
+            else:
+                if attempt == 2:
+                    log.info("reap.journal_recovered", what=what)
+                return True
+            if attempt == 2:
+                break
+            try:
+                await self._session.rollback()
+                await self._revive()
+            except Exception as exc:
+                log.error("reap.journal_rollback_failed", what=what, error=str(exc))
+                break
+        # The write that would have recorded the trouble is itself the write that failed, so
+        # the log is the only place this fact can still be put.
+        log.error("reap.journal_unrecoverable", what=what)
+        return False
+
+    async def _revive(self) -> None:
+        """Reload every row this run still works from, after a rollback expired them all.
+
+        A rollback is the only thing that makes a session live again after a failed commit,
+        and it expires every object in the identity map. Under asyncio that is not a
+        reloadable state: the next attribute read anywhere in the run raises
+        ``MissingGreenlet`` (or ``PendingRollbackError`` before the rollback) instead of
+        quietly fetching, because a lazy load cannot be awaited from an attribute access. It
+        is not confined to the row that failed either -- one rollback expires the whole
+        identity map, so the items still ahead in the walk are just as dead as the current
+        one.
+
+        Two queries put it all back, because a ``SELECT`` repopulates the expired attributes
+        of the rows it returns. Cheap, and only ever reached on the recovery path.
+        """
+        if self._run_id is None or self._snapshot_id is None:
+            return
+        await self._session.execute(select(ActionStep).where(ActionStep.run_id == self._run_id))
+        await self._session.execute(
+            select(Candidate).where(Candidate.snapshot_id == self._snapshot_id)
+        )
+
+    async def _commit_and_finalize(
+        self, run_id: int, terminal: _Terminal | None, *, canceled: bool = False
+    ) -> None:
         """Make the run's final state durable, then purge Plex's now-stale entries.
 
         The final state is committed BEFORE the purge: the purge can wait on Plex scans for
-        a while, and the outcome must already be durable by then. Best-effort and never
-        fatal to the run's outcome -- a failed final commit leaves a recoverable EXECUTING
-        run (re-planned from a fresh scan), and a failed purge leaves a cosmetic lingering
-        Plex entry, never a lost file. The per-item VERIFIED marks are already committed
-        durably in the delete loop, so this final commit only persists the terminal state.
+        a while, and the outcome must already be durable by then. The per-item marks are
+        already committed durably in the delete loop, so this only persists the terminal row.
+
+        It is written as an explicit ``UPDATE`` carrying plain values, and retried through
+        :meth:`_commit_journal`, because this is the write whose failure has no second
+        chance. Nothing reconciles a run left EXECUTING: ``execute()`` refuses any non-PLANNED
+        run, no startup path touches the state, and retention never sweeps a run-bound
+        snapshot. It used to be an ORM mutation under ``except Exception: log.warning``, so a
+        failed commit was swallowed and the run wedged (#327).
+
+        Keyed on the run id alone, with no ``WHERE state = ...`` guard. Rule 26 wants state
+        transitions guarded, and the EXECUTING claim in ``execute()`` is that guard: it is
+        what proves this executor owns the row, and there is no second writer to race. A
+        condition here could only ever *decline* to record a terminal state, which is the
+        wedge itself.
+
+        ``terminal`` is None only when something that is not an ``Exception`` escaped the run
+        and no handler above ran -- the process going down under it. That case deliberately
+        writes no terminal state: EXECUTING is the *correct* durable record of a run that was
+        interrupted with a step possibly still in flight, and it is what a reconciler would
+        need to see. It is also not the wedge this method exists to prevent, which is a run
+        that finished and could not say so. The pending journal writes are still committed.
 
         Purge runs on a COMPLETED or an ABORTED run alike, because a canary can fail its
         exclusion check *after* its file is already gone; it is gated on a section actually
         having been refreshed (a file really was removed), and _finalize_plex never raises.
+        A failed purge leaves a cosmetic lingering Plex entry, never a lost file.
 
-        ``canceled`` is the one case it is skipped. A hard cancel is the container going
-        down, and the purge polls ``is_refreshing`` for up to
+        ``canceled`` is the one case the purge is skipped. A hard cancel is the container
+        going down, and the purge polls ``is_refreshing`` for up to
         ``_plex_settle_attempts * _plex_settle_delay`` PER affected section before it can
         even decide -- so honoring it here would hold shutdown open for tens of seconds
         inside the cancellation, and might empty a section's trash while the process is
@@ -1050,10 +1278,21 @@ class Executor:
         recorded; only the cosmetic tidy-up is deferred, to Plex's own scheduled scan or to
         the next run over the same section.
         """
-        try:
-            await self._session.commit()
-        except Exception as exc:  # pragma: no cover - defensive; a failed final commit re-plans
-            log.warning("reap.final_commit_failed", error=str(exc))
+        await self._commit_journal(
+            what="the run's final state",
+            write=[
+                update(ReapRun)
+                .where(ReapRun.id == run_id)
+                .values(
+                    state=terminal.state,
+                    aborted_reason=terminal.aborted_reason,
+                    finished_at=terminal.finished_at,
+                )
+                .execution_options(synchronize_session=False)
+            ]
+            if terminal is not None
+            else [],
+        )
         if canceled:
             if self._affected_sections:
                 log.info("reap.trash_purge_deferred", sections=len(self._affected_sections))
@@ -1220,13 +1459,37 @@ class Executor:
             if not self._dry_run:
                 await self._refresh_overrides()
             outcome = await self._one_delete(delete, is_canary=index == 0, approved_at=approved_at)
+            # The rest of this iteration works off ``outcome`` and this local, never off
+            # ``delete.candidate`` or a step, because the commit below may have to roll the
+            # session back to recover -- and a rollback expires every ORM object, turning the
+            # next attribute read into a MissingGreenlet rather than a reload. ``outcome``
+            # already carries the media key and the title as plain strings; the approved size
+            # is the one figure it does not, so it is read here while the row still answers.
+            approved_size = delete.candidate.size_bytes
+            journalled = True
             if not self._dry_run:
                 # Every item's step marks (VERIFIED, FAILED, SKIPPED) are made durable
                 # before the next item is attempted. A crash mid-run must never roll back
                 # the record of files that are already gone.
-                await self._session.commit()
+                #
+                # Read off the rows FIRST, as plain values. Recovering from a failed commit
+                # means a rollback, and a rollback expires every one of these ORM objects --
+                # so what gets replayed has to be captured while they can still be read. The
+                # capture is also what carries a ``file_removed_at`` whose own commit was the
+                # one that failed: without it the record that a file is gone is lost while
+                # the file stays gone, those bytes drop out of ``_rolling_30d_deletions``,
+                # and a later run spends past the operator's budget (rule 5/30).
+                rows = [_JournalRow.of(step) for step in delete.steps]
+                journalled = await self._commit_journal(
+                    what=f"the journal for {outcome.media_key}",
+                    write=[row.replay() for row in rows],
+                )
+            # Recorded BEFORE any halt below. This used to be an unguarded commit, so a
+            # failed one raised past here and the item it had just acted on was missing from
+            # the report entirely -- the operator was shown a bare error instead of the
+            # account of what happened, which is exactly the record rule 111 exists to keep.
             report.record(outcome)
-            if delete.candidate.media_key in acted_on:
+            if outcome.media_key in acted_on:
                 done += 1
             # A per-item trace of the run's decisions -- verified, skipped or failed -- so a
             # reap can be followed line by line with Debug on. At debug, not info: a capped
@@ -1234,15 +1497,17 @@ class Executor:
             # and the run summary carry their own louder lines.
             log.debug(
                 "reap.item",
-                media_key=delete.candidate.media_key,
-                title=delete.candidate.title,
+                media_key=outcome.media_key,
+                title=outcome.title,
                 state=outcome.state.value,
                 dry_run=self._dry_run,
             )
 
             if outcome.state == StepState.SKIPPED:
                 report.skipped += 1
-                self._emit_progress(done, total, report, delete.candidate.title)
+                self._emit_progress(done, total, report, outcome.title)
+                if not journalled:
+                    raise ExecutionError(_JOURNAL_HALT)
                 continue  # a skip touched no file, so it does not consume the canary
 
             # From here the item was really acted on (verified or failed).
@@ -1256,7 +1521,7 @@ class Executor:
                 # everything. They describe different sets by necessity, and the report
                 # carries the difference rather than letting the byte figure imply it is
                 # the whole story.
-                if (freed := delete.candidate.size_bytes) is not None:
+                if (freed := approved_size) is not None:
                     report.deleted_bytes += freed
                 else:
                     report.deleted_unmeasured += 1
@@ -1264,7 +1529,16 @@ class Executor:
             # Emit AFTER this item's counters update, so the polled status shows the real
             # running tally, and BEFORE the canary halt below, so a failed test item's count
             # is reported before the run aborts.
-            self._emit_progress(done, total, report, delete.candidate.title)
+            self._emit_progress(done, total, report, outcome.title)
+
+            # A journal Reaper could not write stops the run wherever it happens, ahead of
+            # the canary and unclassified-failure halts below, because it is the more basic
+            # failure: those two describe what a delete did, and this one says the record of
+            # what it did is not on disk. Carrying on would delete more files that also could
+            # not be recorded, and an unrecorded removal is one the rolling budget never
+            # charges (rule 5/30).
+            if not journalled:
+                raise ExecutionError(_JOURNAL_HALT)
 
             if outcome.state == StepState.FAILED and first_real_attempt:
                 # The canary -- the first real deletion -- misbehaved. Halt the whole run:
@@ -1272,12 +1546,12 @@ class Executor:
                 # is a plan we do not understand.
                 log.warning(
                     "reap.canary_failed",
-                    media_key=delete.candidate.media_key,
-                    title=delete.candidate.title,
+                    media_key=outcome.media_key,
+                    title=outcome.title,
                     detail=outcome.detail,
                 )
                 raise ExecutionError(
-                    f'The first item, the test item ("{delete.candidate.title}"), did not '
+                    f'The first item, the test item ("{outcome.title}"), did not '
                     f"finish the way Reaper expected: {outcome.detail}. Stopping now, "
                     "before anything else is touched."
                 )
@@ -1291,12 +1565,12 @@ class Executor:
             if outcome.halts_run:
                 log.warning(
                     "reap.unclassified_item_failure",
-                    media_key=delete.candidate.media_key,
-                    title=delete.candidate.title,
+                    media_key=outcome.media_key,
+                    title=outcome.title,
                     detail=outcome.detail,
                 )
                 raise ExecutionError(
-                    f'The run stopped at "{delete.candidate.title}". Reaper could not tell '
+                    f'The run stopped at "{outcome.title}". Reaper could not tell '
                     "what went wrong there, so it did not touch anything after it. Anything "
                     "already removed stays removed. The details are in the run's own list "
                     "and in the log."
@@ -1672,6 +1946,10 @@ class Executor:
         except ExecutionError as exc:
             # A missing instance route. Same treatment: fail this item, not the world.
             return failed(str(exc))
+        except _JournalWriteError:
+            # Straight past every handler here, including the catch-all below. See the class:
+            # they all answer by recording an outcome, and this is the failure to record.
+            raise
         except Exception as exc:
             # The catch-all, one level below execute()'s. A surprise here can land AFTER the
             # file is already gone (a raw transport error out of a client on the re-read that
@@ -2007,11 +2285,15 @@ class Executor:
                 season=ref.season,
             )
             await self._mark_verified(unmonitor, {"unmonitor_sent": True})
-            self._mark_step_failed(
+            self._stage_step_failed(
                 verify, "the season is still monitored after the unmonitor; not deleting files"
             )
-            self._mark_step_skipped(delete_step, "unmonitor unverified")
-            await self._session.commit()
+            self._stage_step_skipped(delete_step, "unmonitor unverified")
+            # The two staged writes above are left to ``_run_deletes``'s per-item commit,
+            # which runs before the next item is attempted and can recover a failed one.
+            # A bare commit here could not: nothing was deleted on this path, but a raise
+            # out of it still killed the session's transaction and took the run's terminal
+            # write with it.
             checks.append(StepCheck("Deleted the season's episode files", False))
             return StepOutcome(
                 media_key=delete_step.media_key,
@@ -2434,21 +2716,65 @@ class Executor:
                 await asyncio.sleep(self._plex_settle_delay)
 
     # -- journal state transitions -----------------------------------------
+    #
+    # The three ``_mark_*`` helpers below COMMIT (rule 26). The two ``_stage_*`` ones after
+    # them, and ``_fail`` and ``_mark_skipped``, only write attributes in memory; the
+    # per-item ``_commit_journal`` in ``_run_deletes`` is what makes those durable. The line
+    # matters, and it used to be invisible: every one of these was called a mark, so a
+    # reader checking rule 26 against the group found durable-looking names over writes that
+    # a rollback discards.
+
+    async def _mark(self, step: ActionStep, what: str, **values: object) -> None:
+        """Apply one step-state transition to the row and to the database, durably (rule 26).
+
+        The values are set on the ORM object *and* carried in an explicit ``UPDATE``, out of
+        one dict, so the in-memory row and the durable one cannot come to say different
+        things. The statement is the half that survives: recovering from a failed commit
+        means a rollback, and a rollback discards what was set on the row.
+
+        Raises :class:`_JournalWriteError` when the write does not land even after that
+        retry, which is the fail-closed direction at every call site -- see the class.
+        """
+        step_id = step.id
+        landed = await self._commit_journal(
+            what=what,
+            write=[
+                update(ActionStep)
+                .where(ActionStep.id == step_id)
+                .values(**values)
+                .execution_options(synchronize_session=False)
+            ],
+        )
+        if not landed:
+            raise _JournalWriteError(_JOURNAL_HALT)
+        # Applied to the row only once it is on disk, and never before: a rollback inside the
+        # recovery would have discarded an earlier assignment, leaving the row disagreeing
+        # with the database it just wrote. That disagreement is not cosmetic -- ``_JournalRow``
+        # captures these rows and replays them, so a stale value here is written back OVER the
+        # good one, which is how a recovered ``file_removed_at`` came out NULL. Any future
+        # write that goes around the identity map owes the row the same courtesy.
+        for key, value in values.items():
+            setattr(step, key, value)
 
     async def _mark_sent(self, step: ActionStep) -> None:
         # COMMITTED, not merely flushed: the SENT mark is the durable declaration of
         # intent, written before the request leaves the process. If the process dies
         # between this commit and the verify, the journal still shows exactly which call
         # was in flight -- a flush inside a run-long transaction would roll back with it.
-        step.state = StepState.SENT
-        step.sent_at = utcnow()
-        await self._session.commit()
+        #
+        # It is also the one mark whose failure must stop the send: the caller dispatches
+        # the delete on the next line, and ``_JournalWriteError`` unwinds past it, so an
+        # intent that could not be journalled is never carried out.
+        await self._mark(step, "sent", state=StepState.SENT, sent_at=utcnow())
 
     async def _mark_verified(self, step: ActionStep, verification: dict[str, Any]) -> None:
-        step.state = StepState.VERIFIED
-        step.verified_at = utcnow()
-        step.verification_json = json.dumps(verification)
-        await self._session.commit()
+        await self._mark(
+            step,
+            "verified",
+            state=StepState.VERIFIED,
+            verified_at=utcnow(),
+            verification_json=json.dumps(verification),
+        )
 
     async def _mark_file_removed(self, step: ActionStep) -> None:
         """Record that this step's file is really gone, whatever the step's state ends up.
@@ -2461,16 +2787,20 @@ class Executor:
 
         Committed immediately, like ``_mark_sent``: this is the durable record that a file
         is gone, and a flush inside the run-long transaction would roll back with a crash
-        that happened after the file was already deleted (rule 26).
+        that happened after the file was already deleted (rule 26). It is also the write
+        whose loss outlives the run -- a file gone with no stamp is bytes the rolling 30-day
+        budget never charges (rule 5/30) -- so it gets the same rollback-and-replay as the
+        rest rather than being left to a commit that may never come.
         """
-        step.file_removed_at = utcnow()
-        await self._session.commit()
+        await self._mark(step, "file removed", file_removed_at=utcnow())
 
-    def _mark_step_failed(self, step: ActionStep, reason: str) -> None:
+    def _stage_step_failed(self, step: ActionStep, reason: str) -> None:
+        """In memory only. Durable once ``_run_deletes`` commits this item's journal."""
         step.state = StepState.FAILED
         step.error = reason
 
-    def _mark_step_skipped(self, step: ActionStep, reason: str) -> None:
+    def _stage_step_skipped(self, step: ActionStep, reason: str) -> None:
+        """In memory only. Durable once ``_run_deletes`` commits this item's journal."""
         step.state = StepState.SKIPPED
         step.error = reason
 
@@ -2483,7 +2813,14 @@ class Executor:
         file_removed: bool = False,
         halts_run: bool = False,
     ) -> StepOutcome:
-        """Fail this item: mark any not-yet-terminal step FAILED, and record why.
+        """Fail this item: set any not-yet-terminal step FAILED, and record why.
+
+        Written in memory, like ``_mark_skipped`` and the two ``_stage_*`` helpers, and made
+        durable by ``_run_deletes``'s per-item ``_commit_journal`` before the next item is
+        attempted. Not a rule 26 exemption: rule 26 asks that the write be committed at each
+        step, not that this function be the one to do it. What matters is that a rollback
+        discards what is set here, which is why the per-item commit reads these rows into
+        ``_JournalRow`` before committing them and can replay them if it has to.
 
         A step already VERIFIED (an unmonitor that took, say) keeps its state -- it really
         did happen. Only the steps that did not reach a terminal state are marked FAILED,
@@ -2553,8 +2890,9 @@ class Executor:
         return False
 
     def _mark_skipped(self, delete: _Delete, reason: str, check: str | None = None) -> StepOutcome:
-        """Spare the whole item. In a REAL run, mark every one of its not-yet-terminal steps
-        SKIPPED (not just the last): a season sparing that left its unmonitor step PENDING
+        """Spare the whole item. In a REAL run, set every one of its not-yet-terminal steps
+        SKIPPED (not just the last) -- in memory, durable at the per-item commit, exactly as
+        in ``_fail``: a season sparing that left its unmonitor step PENDING
         would read to a future reconciler as an interrupted run with work still to do. In a
         dry run, mutate nothing -- the simulation must leave the plan runnable -- and only
         report the skip.
