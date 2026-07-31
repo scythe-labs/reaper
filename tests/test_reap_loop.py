@@ -4412,6 +4412,63 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         finally:
             await engine.dispose()
 
+    async def test_a_halted_item_whose_file_is_gone_is_still_named_and_still_stamped(
+        self, tmp_path: Path
+    ) -> None:
+        """The same halt as above, read for what it leaves behind rather than for the run row.
+
+        The halt fires from inside the send, so no ``StepOutcome`` was ever built and the
+        item fell out of the report entirely: the sheet said "0 souls reclaimed" beside an
+        abort reading "Anything already removed stays removed", with nothing naming the file
+        that went. ``library_changed`` was False with it, so the post-run rescan never fired
+        and the queue kept offering a file that is gone (rule 111).
+
+        The stamp is the other half. Both attempts fail inside the seconds the fault is live,
+        and the database is writable again by the time the run winds up -- the terminal write
+        proves it, landing on the very same session. So the write that was taken down is
+        tried once more there. Losing it leaves a file gone with nothing on disk saying so,
+        and those bytes never charge the rolling 30-day budget (rule 5/30).
+        """
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                run = await self._three(setup)
+                run_id = run.id
+                await setup.commit()
+
+            async with factory() as run_session:
+                lock = _CommitsThatFail(run_session, run_id, times=2)
+                radarr = _RadarrThatLosesTheDatabase(lock, on_movie=1)
+                report = await Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: radarr}),
+                    armed_recheck=_armed_forever,
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                ).execute(run_id)
+
+            assert lock.fired == 2, "both the commit and its retry must have failed"
+            assert radarr.delete_calls == [1], "the file really did go"
+
+            # The operator is told which file went, not handed an empty sheet.
+            assert [o.media_key for o in report.outcomes] == ["radarr:1:1"]
+            assert report.outcomes[0].state is StepState.FAILED
+            assert report.outcomes[0].file_removed is True
+            # ... and the rescan fires, so the queue stops offering it.
+            assert report.removed_unconfirmed == 1
+            assert report.library_changed is True
+
+            async with factory() as fresh:
+                steps = {s.media_key: s for s in await _steps(fresh, run_id)}
+                assert steps["radarr:1:1"].file_removed_at is not None, (
+                    "the stamp was dropped, so the rolling budget never charges these bytes"
+                )
+        finally:
+            await engine.dispose()
+
     async def test_a_recovered_per_item_commit_still_journals_the_item(
         self, tmp_path: Path
     ) -> None:

@@ -872,6 +872,16 @@ class Executor:
         # is nothing loaded to revive.
         self._run_id: int | None = None
         self._snapshot_id: int | None = None
+        # Journal writes whose own commit did not land, kept as statements so the end of the
+        # run can try them once more. A fault that broke one commit is usually gone seconds
+        # later -- the vacuum finished, the disk was freed -- and the write it took down is
+        # the record that a file is off disk. See ``_commit_and_finalize``.
+        self._unwritten: list[Update] = []
+        # Whether the item being walked right now has really had its file removed. Tracked
+        # here, off the ORM, because the one path that needs to read it is the one where the
+        # journal cannot be written and every row is expired. Reset per item by
+        # ``_run_deletes``.
+        self._file_is_gone = False
 
     async def execute(self, run_id: int) -> RunReport:
         run, steps = await _load(self._session, run_id)
@@ -1219,6 +1229,13 @@ class Executor:
         # The write that would have recorded the trouble is itself the write that failed, so
         # the log is the only place this fact can still be put.
         log.error("reap.journal_unrecoverable", what=what)
+        # Kept for one last try at the end of the run. Both attempts happened inside the
+        # seconds the fault was live; by the time the run winds up, a vacuum has finished or
+        # a disk has been freed, and the same statements land. Without this the values were
+        # simply dropped -- and the terminal write, which is retried, was observed to succeed
+        # moments later on the very same session, proving the database had come back while
+        # the record that a file was removed stayed lost (rule 5/30).
+        self._unwritten.extend(write)
         return False
 
     async def _revive(self) -> None:
@@ -1286,6 +1303,11 @@ class Executor:
         recorded; only the cosmetic tidy-up is deferred, to Plex's own scheduled scan or to
         the next run over the same section.
         """
+        # Drained BEFORE the terminal write and sent in a commit of their own, never bundled
+        # with it. The terminal write is the one with no second chance, and a replay statement
+        # that failed for its own reasons would otherwise take it down and re-open the wedge.
+        pending = list(self._unwritten)
+        self._unwritten.clear()
         await self._commit_journal(
             what="the run's final state",
             write=[
@@ -1301,6 +1323,13 @@ class Executor:
             if terminal is not None
             else [],
         )
+        if pending:
+            # Second and last try for the journal rows whose own commit did not land. The run
+            # is over, so nothing else writes these rows and replaying them cannot race; what
+            # it buys is a ``file_removed_at`` that survives, because a file gone with no
+            # stamp is bytes the rolling 30-day budget never charges and a later run spends
+            # past what the operator set (rule 5/30).
+            await self._commit_journal(what="the journal writes that did not land", write=pending)
         if canceled:
             if self._affected_sections:
                 log.info("reap.trash_purge_deferred", sections=len(self._affected_sections))
@@ -1466,7 +1495,37 @@ class Executor:
             # what is sent, never add one the operator never authorized.
             if not self._dry_run:
                 await self._refresh_overrides()
-            outcome = await self._one_delete(delete, is_canary=index == 0, approved_at=approved_at)
+            # Read while the rows still answer, for the handler below: a journal halt unwinds
+            # through a session whose objects a rollback has expired, so nothing down there
+            # may touch the ORM. ``_file_is_gone`` is per item and belongs to this one.
+            media_key, kind = delete.terminal.media_key, delete.terminal.kind
+            title = delete.candidate.title
+            self._file_is_gone = False
+            try:
+                outcome = await self._one_delete(
+                    delete, is_canary=index == 0, approved_at=approved_at
+                )
+            except _JournalWriteError:
+                # The item is recorded even though its journal is not, and this is the only
+                # place that can do it: the halt fires from inside the send, so no
+                # ``StepOutcome`` was ever built and the walk below never runs. Leaving it out
+                # showed the operator "0 souls reclaimed" beside an abort reading "Anything
+                # already removed stays removed", with nothing naming the file that went; and
+                # a removal missing from the report leaves ``library_changed`` False, so the
+                # post-run rescan never fires and the queue keeps offering a file that is gone
+                # (rule 111).
+                report.record(
+                    StepOutcome(
+                        media_key=media_key,
+                        kind=kind,
+                        state=StepState.FAILED,
+                        detail=_JOURNAL_HALT,
+                        title=title,
+                        checks=[StepCheck(_JOURNAL_HALT, False)],
+                        file_removed=self._file_is_gone,
+                    )
+                )
+                raise
             # The rest of this iteration works off ``outcome`` and this local, never off
             # ``delete.candidate`` or a step, because the commit below may have to roll the
             # session back to recover -- and a rollback expires every ORM object, turning the
@@ -2800,6 +2859,11 @@ class Executor:
         budget never charges (rule 5/30) -- so it gets the same rollback-and-replay as the
         rest rather than being left to a commit that may never come.
         """
+        # Set BEFORE the write, and never conditional on it landing. Reaching this method at
+        # all means the delete is confirmed and the file is off disk; that fact is true
+        # whether or not it can be written down, and the journal-halt handler in
+        # ``_run_deletes`` has no other way to learn it once every row is expired.
+        self._file_is_gone = True
         await self._mark(step, "file removed", file_removed_at=utcnow())
 
     def _stage_step_failed(self, step: ActionStep, reason: str) -> None:
