@@ -118,11 +118,25 @@ const SITES: Site[] = [
       "a native <select> cannot wrap: the closed control clips its selected option to its own " +
       "width, and no property reaches inside it. So this is the one shape in the table where " +
       "rule 139's own remedy does not exist, and truncation is not a choice being made here. " +
-      "What CAN be fixed is the width the control is left with, and that is what moved: the " +
-      "grid stacks below 640px so the picker gets the whole row instead of the remainder after " +
-      "a long folder path (measured on a 390px phone: 41.4px before, not one character of the " +
-      "library legible; 220.1px after). A title longer than a full-width picker still clips. " +
-      "#250",
+      "The control's own width was widened as far as it goes -- the grid stacks below 640px so " +
+      "the picker gets the whole row rather than the remainder after a long folder path " +
+      "(measured on a 390px phone: 41.4px before, not one character of the library legible; " +
+      "220.1px after, #250) -- and that bounded the harm without removing it, because the " +
+      "failure is a ratio between the name and any finite width. The name itself is no longer " +
+      "trapped in here: `.pl-echo` below states it as text that CAN wrap, which is where rule " +
+      "139 is satisfied for this value. What still clips is this control, and only this " +
+      "control. #306",
+  },
+  {
+    // Why a second row rather than a wider `.pl-select` one: these are two elements carrying
+    // one value, and only this one can honor the rule. Keeping them apart is what makes the
+    // exemption above narrow -- it now exempts a control, not a value.
+    what:
+      "the chosen Plex library and the chosen Sonarr or Radarr connection again, restated " +
+      "under the picker as text, because the picker itself cannot wrap them",
+    selectors: [".pl-echo"],
+    classInTsx: "pl-echo",
+    seenIn: ["components/ServiceModal.tsx"],
   },
   {
     what: "the name of the backup file the operator dropped or picked",
@@ -432,11 +446,12 @@ describe("the stylesheet: text the operator did not choose", () => {
   it("walks the population it claims to, and says how big that is", () => {
     // Rule 145: a flag-shaped assertion cannot tell a member that complies from one that fell out
     // of the walk, so the size of the walk is pinned by hand. Reconciled against the table above:
-    // 10 sites that already carried the fix, 11 from #219, 5 from #220 (one of them exempt), and
-    // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for).
-    expect(SITES.length).toBe(27);
+    // 10 sites that already carried the fix, 11 from #219, 5 from #220 (one of them exempt),
+    // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for), and `.pl-echo` from
+    // #306, the wrapping restatement that carries the value the exempt control cannot.
+    expect(SITES.length).toBe(28);
     expect(SITES.filter((s) => s.exempt).length).toBe(2);
-    // And the blocks those 27 sites actually resolve to. Twenty-two sites resolve to one block
+    // And the blocks those 28 sites actually resolve to. Twenty-three sites resolve to one block
     // each; the other five are `.about-kv dd` (its own, plus a margin under 560px), the requested
     // chip (`.chip`, its own, and the rule it shares with `.lib-chip`), `.lib-chip` (its own and
     // that shared rule again), the unnumbered season (the base and the modifier), and `.pl-root`
@@ -444,7 +459,7 @@ describe("the stylesheet: text the operator did not choose", () => {
     // the control standard every `.field-sm` box rides, its own width rule, and the unset tint.
     // If this moves, a selector joined or left a row -- check it was meant to, then update it.
     const blocks = SITES.reduce((n, s) => n + matchesOf(s).length, 0);
-    expect(blocks).toBe(35);
+    expect(blocks).toBe(36);
   });
 });
 

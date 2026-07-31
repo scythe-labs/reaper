@@ -358,7 +358,11 @@ button.danger:hover:not(:disabled) {
 .pl-pick {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  /* Wraps so `.pl-echo` can take a line of its own under the control. The row gap is tighter
+     than the column gap on purpose: the echo belongs to the picker directly above it, and at
+     an even 0.5rem it floated between its own row and the next one. */
+  flex-wrap: wrap;
+  gap: 0.3rem 0.5rem;
   min-width: 0;
 }
 .pl-pick .pl-select {
@@ -369,6 +373,18 @@ button.danger:hover:not(:disabled) {
 /* "Not set" reads as the quiet, unchosen state. */
 .pl-select.unset {
   color: var(--muted);
+}
+/* The chosen library or connection, restated as text the box cannot clip. A native <select>
+   trims its selected option to its own width and no property reaches inside it, so this is the
+   only surface in this grid where rule 139's `overflow-wrap` can actually apply -- which is why
+   the name is said here rather than merely given a wider control. `flex-basis: 100%` puts it on
+   its own line under the picker; quiet, because it is a second copy of something already on
+   screen, and the row it rescues is the one where that copy is the only legible one. */
+.pl-echo {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 /* A suggested-but-unconfirmed row: a soft accent pill that clears once the operator picks. */
 .pl-suggested {

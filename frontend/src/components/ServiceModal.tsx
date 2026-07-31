@@ -322,6 +322,12 @@ export function ServiceModal({
   // Seerr numbers Sonarr and Radarr services in SEPARATE lists (both from 0), so the map key
   // must be kind + id, not the id alone -- else a sonarr and a radarr service collide.
   const svcKey = (s: SeerrService) => `${s.kind}:${s.service_id}`;
+  // The connection name currently chosen for a service, or undefined when it is on "Not set".
+  // The picker stores the instance id, so the name the operator actually read has to be looked
+  // back up; the library picker beside it needs no equivalent, because there the option's value
+  // IS its title.
+  const chosenInstanceName = (s: SeerrService): string | undefined =>
+    instanceOptions(s.kind).find((i) => String(i.id) === String(serviceMap[svcKey(s)] ?? ""))?.name;
 
   // Prefill each unmapped service with its suggested instance, marked "suggested" until the
   // operator confirms it. A service already in the stored map is left as saved, never
@@ -731,6 +737,21 @@ export function ServiceModal({
                         {suggestedRoots.has(f.path) && (
                           <span className="pl-suggested">suggested</span>
                         )}
+                        {/* The chosen library, said again as ordinary wrapping text. A native
+                            <select> clips its selected option to its own width and nothing
+                            reaches inside it, so two libraries sharing a long prefix render as
+                            one string in the control -- on the screen that decides which folder
+                            Reaper matches to which library (#306). This is the one shape rule
+                            139's remedy does reach. `aria-hidden` because the select already
+                            announces its full selected option: the clipping is visual, so the
+                            repair is too, and saying it twice would be the only thing a screen
+                            reader noticed. Rendered only when set, since "Not set" is legible
+                            at any width. */}
+                        {libMap[f.path] && (
+                          <span className="pl-echo" aria-hidden="true">
+                            {libMap[f.path]}
+                          </span>
+                        )}
                       </div>
                     </Fragment>
                   ))}
@@ -828,6 +849,13 @@ export function ServiceModal({
                         </select>
                         {suggestedServices.has(svcKey(s)) && (
                           <span className="pl-suggested">suggested</span>
+                        )}
+                        {/* The chosen connection, on exactly the terms as the library picker
+                            above (rule 72). */}
+                        {chosenInstanceName(s) && (
+                          <span className="pl-echo" aria-hidden="true">
+                            {chosenInstanceName(s)}
+                          </span>
                         )}
                       </div>
                     </Fragment>

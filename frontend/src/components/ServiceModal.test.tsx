@@ -126,6 +126,40 @@ describe("ServiceModal HD/4K library map", () => {
     expect(screen.getAllByText("suggested")).toHaveLength(2);
   });
 
+  it("states the chosen library as text, so two long names cannot read alike", async () => {
+    // #306. A native <select> clips its selected option to the control's width and cannot wrap,
+    // so two libraries differing only past the visible prefix render as one string in the box.
+    // The restatement under it is the only surface here that rule 139 can reach, and this is
+    // the assertion that it carries the WHOLE name: truncating it too would pass a test that
+    // only checked the value was present somewhere.
+    const shared = "Movies Archive Second Floor Overflow";
+    renderModal(
+      sonarr(),
+      [
+        { path: "/tv-4k", suggested_library: `${shared} 4K` },
+        { path: "/tv-hd", suggested_library: `${shared} HD` },
+      ],
+      [
+        { key: 1, title: `${shared} 4K`, kind: "show", enabled: true },
+        { key: 2, title: `${shared} HD`, kind: "show", enabled: true },
+      ],
+    );
+    await waitFor(() => expect(selectForFolder("/tv-4k").value).toBe(`${shared} 4K`));
+
+    const echoed = [...document.querySelectorAll(".pl-echo")].map((e) => e.textContent ?? "");
+    expect(echoed).toEqual([`${shared} 4K`, `${shared} HD`]);
+    // The property the operator actually depends on, stated as itself: no two rows read alike.
+    expect(new Set(echoed).size).toBe(echoed.length);
+  });
+
+  it("says nothing under a folder still on 'Not set'", async () => {
+    // The restatement is a rescue for a value that clips, and "Not set" is legible at every
+    // width. Rendering it anyway would put a second copy of nothing on every unmapped row.
+    renderModal(sonarr(), [{ path: "/tv", suggested_library: null }]);
+    await waitFor(() => expect(selectForFolder("/tv").value).toBe(""));
+    expect(document.querySelectorAll(".pl-echo")).toHaveLength(0);
+  });
+
   it("clears the 'suggested' tag once the operator picks a value", async () => {
     renderModal(sonarr(), [{ path: "/tv-4k", suggested_library: "TV 4K" }]);
     await waitFor(() => expect(selectForFolder("/tv-4k").value).toBe("TV 4K"));
@@ -339,6 +373,30 @@ function selectForService(name: string, media: "TV" | "Movies" = "TV"): HTMLSele
 }
 
 describe("ServiceModal multi-Seerr service map", () => {
+  it("states the chosen connection as text too, on the same terms as the library picker", async () => {
+    // Rule 72: the two grids are declared twins, and #306 is a defect of the shape they share.
+    // This picker stores the instance id while the operator read its name, so the restatement
+    // is looked back up rather than read off the map -- a lookup that silently returns nothing
+    // would leave this row bare while the library row above it was fixed.
+    const shared = "Sonarr Second Floor Overflow";
+    renderSeerrModal(
+      seerr(),
+      [
+        { service_id: 2, kind: "sonarr", name: "Main TV", is_4k: false, suggested_instance_id: 3 },
+        { service_id: 5, kind: "sonarr", name: "Spare TV", is_4k: false, suggested_instance_id: 4 },
+      ],
+      [
+        sonarr({ id: 3, kind: "sonarr", name: `${shared} 4K` }),
+        sonarr({ id: 4, kind: "sonarr", name: `${shared} HD` }),
+      ],
+    );
+    await waitFor(() => expect(selectForService("Main TV").value).toBe("3"));
+
+    const echoed = [...document.querySelectorAll(".pl-echo")].map((e) => e.textContent ?? "");
+    expect(echoed).toEqual([`${shared} 4K`, `${shared} HD`]);
+    expect(new Set(echoed).size).toBe(echoed.length);
+  });
+
   it("prefills a service with its suggested instance, tagged 'suggested'", async () => {
     renderSeerrModal(seerr(), [
       { service_id: 2, kind: "sonarr", name: "Main TV", is_4k: false, suggested_instance_id: 3 },
