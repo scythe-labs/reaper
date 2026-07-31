@@ -45,13 +45,21 @@ class SeasonStats:
     episode_file_count: int
 
     size_on_disk: int | None
-    """Bytes the season occupies, or ``None`` when Sonarr reported files but no size.
+    """Bytes the season's episode files hold, or ``None`` when Sonarr reported files but
+    no size.
 
     ``None`` is not zero. A season with ``episode_file_count > 0`` and no ``sizeOnDisk``
     is a partial statistics payload, not an empty season -- and carried as ``0`` it
     becomes an affirmative measurement: it reads as maximum pressure on a size signal
     and silently withdraws any "keep large files" rule. ``has_content`` deliberately
     reads the file COUNT, not this, so "does it hold files" survives an unreadable size.
+
+    Episode FILES, not the season folder: the statistic sums the same ``EpisodeFiles``
+    rows a season prune deletes one by one, so the number and what the delete frees are
+    one quantity. That is why #317's movie gap has no season counterpart -- there the
+    delete takes the whole folder while the number counts files. Measured too: a season
+    folder held 0.008% more than its files at the median, all of it sidecars the prune
+    does not touch anyway.
 
     The movie path draws the same line (``services.snapshot._reported_size``); see
     ``tests/test_fact_layer_states.py``.

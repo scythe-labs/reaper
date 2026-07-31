@@ -195,7 +195,7 @@ export const understandingPolicy: Doc = {
       ],
     ),
     p(
-      'Caps stop the whole run when crossed, never removing just the part that fits, and the rolling 30-day limits bound any sequence of runs. Turning off "Limit how much each run removes" drops those four, the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
+      'Caps stop the whole run when crossed, never removing just the part that fits, and the rolling 30-day limits count every run in the window, not just this one. Turning off "Limit how much each run removes" drops those four, the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
     ),
 
     h3("Movies and TV are tuned separately", "movies-tv"),

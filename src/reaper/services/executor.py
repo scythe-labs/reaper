@@ -1066,9 +1066,12 @@ class Executor:
         caps, or the run ABORTS before it starts.
 
         Abort, never truncate, for the same reason as the per-run caps: a truncated run
-        makes what gets deleted depend on sort order. This is the enforcement that makes
-        the configured monthly budget arithmetically unreachable -- no sequence of runs
-        can exceed it, because each run is admitted only if the whole of it still fits.
+        makes what gets deleted depend on sort order. This is the enforcement that keeps
+        the configured monthly budget out of reach -- no sequence of runs is admitted past
+        it, because each run is admitted only if the whole of it still fits. Exact in
+        ITEMS. In BYTES it is a close bound and not an equality, because the sizes summed
+        here are what the *arr tracks and a movie delete removes the whole folder
+        (``ProfileSettings``'s caps comment carries the measured margin, #317).
         Checked in dry run too, so the simulation proves the same refusal a real run
         would hit. Skipped entirely while ``caps_enabled`` is off: the rolling budget is a
         run-size cap like the others, so the one switch governs it too.

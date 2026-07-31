@@ -787,10 +787,18 @@ class ProfileSettings(Frozen):
     keeping the file, which is why the timing makes the hash unnecessary here.
     """
 
-    #: Four caps, not two. The rolling BYTE cap is what makes a 4 TB incident
-    #: arithmetically unreachable: no sequence of runs can exceed it. The per-run caps
-    #: are enforced by ``executor._check_caps`` and the rolling 30-day caps by
+    #: Four caps, not two. The rolling BYTE cap is what keeps a 4 TB incident out of
+    #: reach: no sequence of runs is admitted past it, because each run is admitted only
+    #: if the whole of it still fits. The per-run caps are enforced by
+    #: ``executor._check_caps`` and the rolling 30-day caps by
     #: ``Executor._check_rolling_caps``, both aborting (never truncating) before any send.
+    #:
+    #: What the BYTE caps count is what Sonarr and Radarr track, and for a movie that is
+    #: the file rather than the folder the delete removes, so a run can free a little more
+    #: than the cap admitted. Measured at 0.2% of a sampled library and heavy-tailed, since
+    #: the untracked bytes are mostly extras rather than artwork (``snapshot._reported_size``,
+    #: #317). Read them as a close bound, not an equality. The ITEM caps have no such gap,
+    #: and neither does the season side.
     max_items_per_run: int = Field(default=10, ge=1, le=1000)
     max_bytes_per_run: int = Field(default=500 * 1_000_000_000, ge=1)
     max_items_per_30d: int = Field(default=100, ge=1)

@@ -478,8 +478,13 @@ class TestFloorsThatCannotBeZero:
 
 
 class TestCaps:
-    """Four caps, not two. The rolling BYTE cap is what makes a multi-terabyte
-    incident arithmetically unreachable: no sequence of runs can exceed it."""
+    """Four caps, not two. The rolling BYTE cap is what keeps a multi-terabyte incident
+    out of reach: no sequence of runs is admitted past it.
+
+    Exact in ITEMS, a close bound in BYTES: the sizes it charges are what the *arr tracks,
+    and a movie delete takes the whole folder (#317, learning 14b). Do not restore "no
+    sequence of runs can exceed it" here -- it was one of three copies of a claim the
+    measurement refuted."""
 
     def test_defaults_are_conservative(self) -> None:
         settings_ = ProfileSettings()

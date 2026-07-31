@@ -738,10 +738,36 @@ rather than a verdict handed down.
 **Choice: Sonarr or Radarr's own total, never a stand-in.**
 
 `Candidate.size_bytes` is the accounting column: it feeds the byte caps, the reclaim estimate
-and the number printed beside the confirmation phrase. It therefore has to *measure* what a
-delete would free, and a bound is not a measurement. Only the service that will perform the
-delete is allowed to say. Every other source Reaper already holds was considered and rejected,
-and each rejection is cheap to re-litigate by accident, so they are written down here.
+and the number printed beside the confirmation phrase. It therefore has to measure what a
+delete would free as closely as anything available can, and only the service that will perform
+the delete is allowed to say. Every other source Reaper already holds was considered and
+rejected, and each rejection is cheap to re-litigate by accident, so they are written down here.
+
+**For a movie it is a lower bound, and that is accepted rather than fixed.** This paragraph used
+to say "a bound is not a measurement," which read as a principle and was really a claim about
+Radarr that turned out to be false in the other direction. A season prune deletes the same
+`EpisodeFiles` rows Sonarr's statistic sums, so there the number and the delete are one quantity.
+A movie delete takes the whole folder while `sizeOnDisk` sums tracked rows, so untracked extras
+are freed uncounted. Measured (#317, learning 14b): the folder held more in 221 of 221 sampled
+folders and never less, by 0.02% at the median, 1.2% at the 90th percentile and 44% at the worst,
+0.2% aggregated. Three quarters of those bytes are untracked video rather than artwork, so the
+distribution is a small floor with a heavy tail.
+
+The cost is that a byte cap behaves like a slightly larger one. It cannot delete anything
+unapproved: the operator approves items, and the caps only bound how many approved items proceed.
+
+Three fixes were considered and declined. **A headroom margin** on the byte caps would have to be
+sized to the median, where it buys nothing, or to the tail, where it eats most of the operator's
+cap; either way "your 500 GB cap really means 480 GB" is a hidden fudge. **Walking the folder** is
+genuinely available — Radarr's `/api/v3/filesystem` returns a size per file and recurses, which is
+how the measurement above was taken — but it puts a new endpoint dependency and an N-request walk
+per item on the deletion path to correct 0.2%. **Rewording the operator copy** was declined for
+the twenty-odd strings that say "disk freed" or "would be freed": at the resolution an operator
+reads a round-number cap, the figure is right, and hedging every one of them would cost more
+confidence than the gap it describes. What was *not* declined is the absolute claim: three copies
+said the rolling byte cap made a multi-terabyte incident arithmetically unreachable and that no
+sequence of runs could exceed it. Those are bounds now, in `ProfileSettings`,
+`Executor._check_rolling_caps` and `tests/test_policy.py::TestCaps`.
 
 **No Plex season or episode fetch.** A show listing carries no `Media` element, `PlexClient`
 has no children method for seasons or episodes (`collection_children` is the only one), and

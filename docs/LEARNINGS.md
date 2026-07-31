@@ -294,10 +294,50 @@ the claim as the proof of it. **A fact about someone else's service is verified 
 service, or it is not verified** — vendored spec, upstream source, or a live probe. This is
 rule 144's failure mode with an external subject: the copies vouch for each other.
 
-⇒ The direction that survives is the opposite one, and it is filed as **#317**: Radarr's number
-sums tracked `MovieFiles` rows while `MoviesDeletedEvent` removes `movie.Path` recursively, so
-extras and artwork are freed and never counted, and a byte cap that under-counts does not fire.
-Magnitude unmeasured; that is what the issue asks for.
+⇒ The direction that survives is the opposite one, filed as **#317**: Radarr's number sums
+tracked `MovieFiles` rows while `MoviesDeletedEvent` removes `movie.Path` recursively, so extras
+and artwork are freed and never counted, and a byte cap that under-counts does not fire.
+
+### 14b. That gap, measured: 0.02% at the median, 44% at the worst (2026-07-30)
+
+Radarr's own `/api/v3/filesystem` walks a folder over the API and reports a size per file, so the
+folder can be measured without a mount. Two hundred movie folders on one live library and every
+sized folder on a second were walked recursively and compared against `sizeOnDisk`, after
+confirming no movie path was shared with, or nested inside, another (which would double-count) and
+that every tracked file sat under its own movie folder.
+
+**The folder held more than the reported number in 221 of 221 folders. It never held less.** On
+the main library: median ratio 1.0002, p75 1.0005, p90 1.012, p99 1.041, max 1.111, and 1.002
+aggregated over the sample. Twenty-three folders in two hundred were 1% or more, two were 5% or
+more. On the second, smaller library one folder measured 1.44 — tens of gigabytes of untracked
+a single file.
+
+⇒ **The excess is not artwork rounding, which is why the median is the wrong summary.** By count
+the untracked files are overwhelmingly images, about three in four in the sample, but by bytes
+are **74% video**: 26 untracked video files carried three quarters of the excess, and 12% of the
+excess sat in a subfolder rather than beside the movie. Artwork was 25%, subtitles 1.4%, metadata
+0.06%. The distribution is a floor of a few hundred kilobytes of posters on nearly every folder,
+plus a heavy tail wherever an extra, a trailer or an untracked rip sits in the folder. A margin
+sized to the median buys nothing and a margin sized to the tail would eat most of the operator's
+cap, which is why neither was added.
+
+⇒ **The season side has no counterpart, and the reason is the delete's shape, not the number's.**
+A season prune deletes `EpisodeFiles` rows one at a time and the statistic sums those same rows,
+so the two are one quantity by construction (learning 14). Measured anyway: a season folder held
+0.008% more than its files at the median and 0.3% at the worst, all of it sidecars the prune never
+touches. The asymmetry in one line: **for a season the number counts what the delete removes; for
+a movie the delete removes a folder and the number counts files.**
+
+⇒ **What was accepted, and what it costs.** The byte caps are charged in tracked bytes, so a run
+frees a little more than the cap admitted. Nothing unapproved is deleted by this — the operator
+approves items, and the caps only bound how many approved items proceed — so the failure is that
+a byte budget behaves like a slightly larger one, measured at 0.2%. That is accepted; what was
+not acceptable was the claim, stated in three places, that the rolling byte cap made a
+multi-terabyte incident *arithmetically unreachable* and that **no sequence of runs can exceed
+it**. Absolute claims were corrected to bounds; the approximate copy ("500 GB per run") was
+deliberately left alone, since at the resolution an operator reads it the number is right and
+hedging twenty strings would cost more than the 0.2% it describes. `docs/DECISIONS.md` under
+*Size acquisition* carries that call and the folder walk that was declined with it.
 
 ---
 

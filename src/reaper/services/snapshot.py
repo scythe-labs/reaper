@@ -1854,9 +1854,14 @@ def _reported_size(movie: Mapping[str, Any]) -> int | None:
     ``sizeOnDisk`` is a ``SUM`` over the movie's tracked ``MovieFiles`` rows, not a folder
     walk, and it is the best number Radarr offers for the reclaim estimate and the byte
     cap. The delete removes the movie folder, so bytes no row tracks are freed and never
-    counted here; issue #317 carries the question of whether that gap is material.
-    Distinct from :func:`_movie_file_size`, which reads ``movieFile.size`` for file-to-file
-    identity comparison.
+    counted here. **Measured** (#317): the folder held more than this number in every one
+    of 200 sampled movies, by 0.02% at the median, 1.2% at the 90th percentile and 11% at
+    the worst, with one folder on a second library at 44%. So it is a close LOWER bound on
+    what the delete frees, never an over-statement -- which is the wrong direction for a
+    byte cap, and why ``ProfileSettings``'s caps comment states what they bound. Accepted
+    rather than repaired; ``docs/DECISIONS.md`` under *Size acquisition* says why, and what
+    was declined. Distinct from :func:`_movie_file_size`, which reads ``movieFile.size``
+    for file-to-file identity comparison.
 
     Missing or zero is ``None``, never ``0``: see ``RawItem.size_bytes``.
     """
@@ -1869,8 +1874,11 @@ def _movie_file_size(movie: Mapping[str, Any]) -> int | None:
 
     The corroborator that tells apart several Plex listings carrying the same file name:
     an exact byte match is the same file (or a bit-identical copy of it); a mismatch is a
-    different file. Deliberately ``movieFile.size`` and not ``sizeOnDisk``, which can
-    include extras -- the comparison must be file-to-file. Zero or missing is unknown.
+    different file. Deliberately ``movieFile.size`` and not ``sizeOnDisk``, because the
+    comparison must be file-to-file and ``sizeOnDisk`` sums every tracked row. Not because
+    ``sizeOnDisk`` "includes extras", which this said and which is backwards: it holds no
+    untracked byte at all, and equalled ``movieFile.size`` for every movie holding a file
+    on two live libraries (learning 14). Zero or missing is unknown.
     """
     movie_file = movie.get("movieFile")
     if not isinstance(movie_file, dict):

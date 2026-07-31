@@ -426,8 +426,11 @@ class SizeSource(enum.StrEnum):
 
     RADARR = "radarr"
     """One movie's tracked file rows, summed by Radarr. ``sizeOnDisk`` is likewise a ``SUM``,
-    over ``MovieFiles``. The delete removes the movie folder, which may hold bytes no row
-    tracks, so this can under-state what a delete frees (issue #317)."""
+    over ``MovieFiles``. The delete removes the movie folder, which holds bytes no row
+    tracks, so this under-states what a delete frees -- measured, and always in that
+    direction: 221 of 221 sampled folders held more than Radarr reported, by 0.02% at the
+    median and 44% at the worst (#317, learning 14b). Accepted as a close lower bound,
+    which is why ``ProfileSettings``'s caps read as bounds rather than equalities."""
 
     RADARR_FILE = "radarr-file"
     """The movie file alone. Never written, and display only if it ever is: it reads one
@@ -468,6 +471,11 @@ class Candidate(Base):
     size_bytes: Mapped[int | None] = mapped_column(Integer, default=None)
     """What deleting this item would free, in bytes. NULL means Reaper could not measure
     it, which is NOT zero: no file worth deleting is genuinely empty.
+
+    For a season this is exact. For a movie it is a close LOWER bound: Radarr counts the
+    file rows it tracks and the delete takes the whole folder, so untracked extras are
+    freed and not counted here (``SizeSource.RADARR``, #317). Every "would free" string
+    downstream is copied from this line, so read it as the bound it is.
 
     Nullable rather than a sentinel, because a sentinel is the same bug with a nicer
     number -- every sum accepts it and quietly produces a wrong total, whereas a NULL

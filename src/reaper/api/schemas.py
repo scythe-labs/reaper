@@ -486,7 +486,11 @@ class RunReportOut(BaseModel):
     dry run it is 0, because a dry run proves the plan by skipping every send."""
 
     deleted_bytes: int = 0
-    """Bytes reclaimed by a real run. 0 for a dry run."""
+    """Bytes reclaimed by a real run. 0 for a dry run.
+
+    Summed from the frozen ``Candidate.size_bytes``, so for movies it is a close lower
+    bound on what the disk got back rather than an exact figure (#317). Under-stating is
+    the harmless direction here: the operator is never told they freed more than they did."""
 
     deleted_unmeasured: int = 0
     """How many of the deleted items had no size, so are absent from ``deleted_bytes``.
