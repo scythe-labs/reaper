@@ -7,7 +7,7 @@
 import { render, screen } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { announce, Announcer } from "./announce";
+import { announce, Announcer, useSlowWait } from "./announce";
 
 /** Both regions, in DOM order. Found by role rather than by class, which is the only way a
  *  test can tell that a reader would reach them at all. */
@@ -19,6 +19,19 @@ const spoken = () =>
     .map((r) => r.textContent)
     .filter((t) => t !== "")
     .join("|");
+
+/** A component that is waiting for something, standing in for the six loading affordances
+ *  `useSlowWait` serves. Takes the sentence as a prop so a test can drive the wait ending
+ *  (`null`) as well as the component going away. */
+function Waiting({ sentence }: { sentence: string | null }) {
+  useSlowWait(sentence);
+  return null;
+}
+
+/** How long a wait runs before it is worth saying. Written out rather than imported from the
+ *  module under test: the contract being pinned is "two seconds", and a test reading the same
+ *  constant production reads would hold whatever the constant became (rule 141). */
+const SLOW_WAIT_MS = 2000;
 
 // Rule 133: fake timers left standing are inherited by the next test in the file, and by every
 // file after it in the same worker.
@@ -144,6 +157,18 @@ describe("the announcer", () => {
     expect(regions().filter((r) => r.textContent !== "")).toHaveLength(1);
   });
 
+  it("says nothing when nothing is mounted to hear it", () => {
+    // Guards the two tests below from proving the wrong thing: they assert silence at 1999 ms,
+    // and silence is also what an unmounted region produces. Both mount `Announcer`, so this
+    // pins that the mounting is what makes the 2000 ms case different.
+    vi.useFakeTimers();
+    render(<Waiting sentence="Still loading Reaper." />);
+
+    act(() => void vi.advanceTimersByTime(5000));
+
+    expect(screen.queryAllByRole("status")).toHaveLength(0);
+  });
+
   it("opens silent again after the last region unmounts", () => {
     // Nothing mounted can hear it, so nothing can be said. Without the reset the next mount
     // opens holding the last thing the previous one announced -- an operator signing back in
@@ -156,5 +181,110 @@ describe("the announcer", () => {
     render(<Announcer />);
 
     expect(spoken()).toBe("");
+  });
+});
+
+// The app's loading affordances (#332). Seven of them carried a live region of their own,
+// mounted in the same commit as their text -- the shape several readers never announce, which
+// is the same bug `ReviewQueue`'s two toasts had and the reason `Notice` reaches for
+// `role="alert"`. Six now speak through the region above instead, and only once the wait has
+// been a wait: a spinner that announces on every route change is the other failure, and most of
+// these are gone in a few hundred milliseconds.
+//
+// So BOTH halves are pinned in every case below. Asserting only that a long wait speaks would
+// pass against a hook that announces on mount, which is the noise this shape exists to avoid.
+describe("a wait that runs long", () => {
+  it("is silent for as long as it is quick", () => {
+    vi.useFakeTimers();
+    render(
+      <>
+        <Announcer />
+        <Waiting sentence="Still loading Reaper." />
+      </>,
+    );
+
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS - 1));
+
+    expect(spoken()).toBe("");
+  });
+
+  it("is said out loud once it has run long", () => {
+    vi.useFakeTimers();
+    render(
+      <>
+        <Announcer />
+        <Waiting sentence="Still loading Reaper." />
+      </>,
+    );
+
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS));
+
+    expect(spoken()).toBe("Still loading Reaper.");
+  });
+
+  it("says nothing when the thing arrives before the wait is up", () => {
+    // The common case, and the whole reason this is a delay rather than an announcement on
+    // mount: a lazily-loaded route lands well inside the window on any ordinary connection.
+    vi.useFakeTimers();
+    const view = render(
+      <>
+        <Announcer />
+        <Waiting sentence="Still loading Reaper." />
+      </>,
+    );
+
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS - 1));
+    view.rerender(
+      <>
+        <Announcer />
+        <Waiting sentence={null} />
+      </>,
+    );
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS));
+
+    expect(spoken()).toBe("");
+  });
+
+  it("says nothing when the component holding the wait goes away first", () => {
+    // The other way a wait ends, and the one `RouteLoading` and the two panel fallbacks take:
+    // they do not switch to `null`, they unmount. An effect cleanup that canceled only on the
+    // prop change would leave those three announcing every fast load.
+    vi.useFakeTimers();
+    const view = render(
+      <>
+        <Announcer />
+        <Waiting sentence="Still loading Reaper." />
+      </>,
+    );
+
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS - 1));
+    view.rerender(
+      <>
+        <Announcer />
+      </>,
+    );
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS));
+
+    expect(spoken()).toBe("");
+  });
+
+  it("speaks into a region that was already there, which is the point", () => {
+    // The property the seven affordances lacked. Their region arrived in the same commit as
+    // its text; this one has been in the DOM for the whole wait by the time anything is said.
+    vi.useFakeTimers();
+    render(
+      <>
+        <Announcer />
+        <Waiting sentence="Still gathering requests." />
+      </>,
+    );
+
+    expect(regions()).toHaveLength(2);
+    for (const region of regions()) expect(region).toHaveTextContent("");
+
+    act(() => void vi.advanceTimersByTime(SLOW_WAIT_MS));
+
+    expect(regions()).toHaveLength(2);
+    expect(spoken()).toBe("Still gathering requests.");
   });
 });

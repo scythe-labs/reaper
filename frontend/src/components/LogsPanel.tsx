@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSlowWait } from "../announce";
 import { api, type LogLine } from "../api";
 import { count } from "../format";
 import { Switch } from "./Switch";
@@ -92,6 +93,13 @@ export function LogsPanel() {
       });
     }
   }, [logs.data]);
+
+  // The console below is the same sweep's sibling (#332), and it is the one that stays as it
+  // is: `role="log"` mounts holding its first batch, so that batch is not announced, and every
+  // line after it is. That is the behavior to want. A log region that announced on insertion
+  // would read the operator up to 2000 accumulated lines for opening the tab, which is why the
+  // sweep speaks the WAIT here and never the arrival.
+  useSlowWait(logs.isPending && lines.length === 0 ? "Still loading the log." : null);
 
   // Memoized on exactly what the filter reads. Without it this whole pass ran on every
   // render, and the panel re-renders on each 2s poll and each keystroke in the search box.
@@ -199,6 +207,10 @@ export function LogsPanel() {
           className={wrap ? "log-console log-wrap" : "log-console"}
           ref={consoleRef}
           tabIndex={0}
+          // Kept, unlike the six loading affordances swept in #332. This region mounts holding
+          // its first batch, so that batch is never announced -- and it must not be, or opening
+          // the tab would read out the whole accumulated window. What `role="log"` buys is every
+          // line AFTER it, which is exactly the part of a live log worth hearing.
           role="log"
           aria-label="Application log"
         >

@@ -15,6 +15,7 @@
 // It deletes nothing. It reads the last scan, so it can never disagree with Review.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSlowWait } from "../announce";
 import { api, type RequesterRow } from "../api";
 import { bytes, count } from "../format";
 import { CardOpen } from "./CardOpen";
@@ -197,6 +198,11 @@ export function Fairness({
   const queryClient = useQueryClient();
   const select = onSelectPerson ?? (() => {});
 
+  // The board's own copy already warns this can take a moment, so a wait that runs long is the
+  // expected case here rather than a fault. It is still said, because the operator who cannot
+  // see the spinner is the one that copy does not reach (#332).
+  useSlowWait(isPending ? "Still gathering requests. This can take a moment." : null);
+
   // Scales reads live requests and watch history, so a refresh pulls the latest without a full
   // scan. Invalidating the "fairness" prefix refetches the board and any open person panel.
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["fairness"] });
@@ -258,7 +264,9 @@ export function Fairness({
       {error && !data && <Notice tone="error">Couldn't load Scales.</Notice>}
       {error && data && <StaleReadNotice what="Scales" />}
       {isPending && (
-        <div className="fair-loading" role="status" aria-live="polite">
+        // Live region dropped: it was mounted in the same commit as its text, which several
+        // readers never announce (#332). `useSlowWait` above speaks it instead.
+        <div className="fair-loading">
           <span className="spinner spinner-xl" aria-hidden="true" />
           <p className="fair-loading-lead">Gathering requests…</p>
           <p className="fair-loading-sub muted">
