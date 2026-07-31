@@ -2,7 +2,7 @@
 
 # ---- Stage 1: frontend -------------------------------------------------------
 # Digest-pinned: the tag documents intent, the digest is what actually builds.
-FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS frontend
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS frontend
 WORKDIR /app/frontend
 
 # Lockfile first, so a source-only change does not reinstall the dependency tree.
