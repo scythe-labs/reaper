@@ -92,6 +92,7 @@ auto-memory note to explain the product, move it here.
 | `LEARNINGS.md` | knowledge | **live** — append by topic |
 | `SIGNALS.md` | knowledge | stable; cited from `src/` |
 | `CSS_SPLIT_PLAN.md` | state (one feature) | **live** — 3 of 7 stages landed; the last 4 are optional |
+| `I18N_PLAN.md` | state (one feature) | **live** — a proposal; nothing landed, no stage committed to |
 | `brand/README.md` | reference | stable; nothing here ships |
 | `history/PLAN-narrative.md` | history | frozen — the retired living plan |
 | `history/CODE_REVIEW.md` | history | frozen — 100/100 findings remediated |
