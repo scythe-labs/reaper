@@ -13,9 +13,10 @@ the independent backstop (proven separately in test_guarded_transport / test_ple
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -23,6 +24,7 @@ from unittest import mock
 import httpx
 import pytest
 import respx
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -60,6 +62,7 @@ from reaper.services.executor import (
     _deletable_bytes,
     _Delete,
     _grew_materially,
+    _JournalRow,
     _row_timestamp,
     _Terminal,
 )
@@ -4756,5 +4759,141 @@ class TestTwoMarksInARowBothReachTheDisk:
                 assert stored.state is StepState.VERIFIED
                 assert stored.verified_at is not None
                 assert stored.verification_json == '{"gone": true}'
+        finally:
+            await engine.dispose()
+
+
+#: A moment nothing else on this path produces, so a column that fails to make the round trip
+#: below reads as a wrong value rather than as a coincidence.
+_SENTINEL_INSTANT = datetime(2021, 3, 4, 5, 6, 7, tzinfo=UTC)
+
+#: Every ``ActionStep`` column the executor writes WHILE a run is in flight -- the journal
+#: writes ``_JournalRow`` captures ahead of a commit that may fail, and replays after the
+#: rollback that recovering from it needs. Each carries a distinct value, so the replay can be
+#: driven for real rather than compared by name.
+_REPLAYED_STEP_COLUMNS: dict[str, Any] = {
+    "state": StepState.FAILED,
+    "error": "sentinel: the error a recovered write has to carry",
+    "sent_at": _SENTINEL_INSTANT,
+    "verified_at": _SENTINEL_INSTANT + timedelta(seconds=1),
+    "verification_json": '{"sentinel": "the verification a recovered write has to carry"}',
+    "file_removed_at": _SENTINEL_INSTANT + timedelta(seconds=2),
+}
+
+#: And the ones the planner writes once, before the run starts. They are durable long before
+#: anything is sent, so a rollback on the delete path cannot discard them and the replay has
+#: nothing to carry.
+_WRITE_ONCE_STEP_COLUMNS = frozenset(
+    {
+        "id",
+        "run_id",
+        "media_key",
+        "ordinal",
+        "kind",
+        "method",
+        "path",
+        "body_json",
+        "idempotency_key",
+        "created_at",
+    }
+)
+
+#: ``ReapRun``'s half of the same split: the three columns ``_Terminal`` carries and
+#: ``_commit_and_finalize`` writes as plain values.
+_TERMINAL_RUN_COLUMNS = frozenset({"state", "aborted_reason", "finished_at"})
+
+#: Everything else on the run row is durable before the first file is touched. ``started_at``
+#: belongs here rather than above: it is committed with the EXECUTING claim, which sits ahead
+#: of the guarded block precisely so nothing with a file at stake rides on it.
+_BEFORE_ANY_DELETE_RUN_COLUMNS = frozenset(
+    {
+        "id",
+        "snapshot_id",
+        "policy_hash",
+        "approved_manifest_hash",
+        "approved_by",
+        "approved_at",
+        "started_at",
+        "held_back_unknown_size",
+    }
+)
+
+
+class TestARecoveredWriteCarriesEveryColumn:
+    """``_JournalRow`` and ``_Terminal`` each mirror a model's columns by hand, and the replay
+    and the terminal ``UPDATE`` restate that list a second and third time (#344).
+
+    Rule 103's shape: right today, with nothing keeping it right. Drift costs something
+    specific and silent. Add a mutable column to ``ActionStep``, write it from ``_fail`` or a
+    ``_stage_*`` helper, and on the ordinary path it lands -- while on the recovery path the
+    rollback discards it and the replay does not carry it, so it comes back NULL. That is the
+    ``file_removed_at`` clobber recorded in docs/LEARNINGS.md, and it was equally invisible to
+    a suite that never wrote the column in the first place.
+
+    So every column of both models is classified here, and the replay is then driven for real:
+    captured, transaction lost, replayed, and read back through a session the write never
+    touched. A new column fails the classification until someone decides which side it is on;
+    a column classified as replayed but missing from the dataclass, from ``of`` or from
+    ``replay`` fails the round trip.
+    """
+
+    def test_every_action_step_column_is_classified_as_replayed_or_write_once(self) -> None:
+        """A column added to ``ActionStep`` is on one side or the other, and saying which is
+        the whole point: a mutable one that nobody classifies is one the replay silently
+        drops."""
+        assert {c.key for c in sa_inspect(ActionStep).column_attrs} == (
+            set(_REPLAYED_STEP_COLUMNS) | _WRITE_ONCE_STEP_COLUMNS
+        )
+
+    def test_every_reap_run_column_is_classified_as_terminal_or_already_durable(self) -> None:
+        """Rule 72's sweep of the sibling. ``_Terminal`` is the same hand-written mirror over
+        the same hazard, one class above ``_JournalRow`` in the same file."""
+        assert {c.key for c in sa_inspect(ReapRun).column_attrs} == (
+            _TERMINAL_RUN_COLUMNS | _BEFORE_ANY_DELETE_RUN_COLUMNS
+        )
+
+    def test_the_journal_row_carries_every_replayed_column(self) -> None:
+        """``id`` is the ``WHERE``, not a value the replay restores."""
+        assert {f.name for f in dataclasses.fields(_JournalRow)} - {"id"} == set(
+            _REPLAYED_STEP_COLUMNS
+        )
+
+    def test_the_terminal_row_carries_every_terminal_column(self) -> None:
+        assert {f.name for f in dataclasses.fields(_Terminal)} == _TERMINAL_RUN_COLUMNS
+
+    async def test_a_rolled_back_journal_write_is_replayed_whole(self, tmp_path: Path) -> None:
+        """The round trip recovery actually makes: journal the step, capture it, lose the
+        transaction, replay. Every classified column has to arrive.
+
+        Read back through an engine of its own. The writing session answers a ``get`` out of
+        its identity map (``expire_on_commit=False``) and would report a discarded write as a
+        durable one, which is a test that cannot fail for the reason it names (#340).
+        """
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as setup:
+                snapshot_id = await _snapshot_many(setup, [("radarr:1:1", 1 * GB, 701)])
+                run = await _plan(setup, snapshot_id)
+                run_id = run.id
+                await setup.commit()
+
+            async with factory() as writer:
+                step = (await _steps(writer, run_id))[0]
+                step_id = step.id
+                for column, sentinel in _REPLAYED_STEP_COLUMNS.items():
+                    setattr(step, column, sentinel)
+                captured = _JournalRow.of(step)
+                # What recovery starts from: the commit failed, so the transaction is dead,
+                # every write above is discarded and every attribute on ``step`` is expired.
+                await writer.rollback()
+                await writer.execute(captured.replay())
+                await writer.commit()
+
+            async with factory() as fresh:
+                stored = await fresh.get(ActionStep, step_id)
+                assert stored is not None
+                assert {
+                    column: getattr(stored, column) for column in _REPLAYED_STEP_COLUMNS
+                } == _REPLAYED_STEP_COLUMNS
         finally:
             await engine.dispose()
