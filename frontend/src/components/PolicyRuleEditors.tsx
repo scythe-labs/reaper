@@ -167,6 +167,21 @@ function SuggestInput({
   // and the ref it reads is simply null.
   const popRef = useRef<HTMLUListElement>(null);
   const popShift = usePopoverShift(popRef, "suggest");
+  // The arrow keys move the active option without moving DOM focus, so the browser scrolls
+  // nothing on their behalf: past the seventh option of a 14rem window the operator is marking
+  // a value they cannot see, and ArrowUp from the top wraps straight to the last one (#333).
+  // Only a KEYBOARD step scrolls -- `onMouseEnter` sets `highlight` too, and scrolling there
+  // would drag the list out from under the pointer that is aiming at it.
+  const steppedRef = useRef(false);
+  useEffect(() => {
+    if (!steppedRef.current) return;
+    steppedRef.current = false;
+    // "nearest" leaves an already-visible option where it is; the pane only moves when the
+    // step left the window. Instant, like every other scroll here: smooth silently no-ops in
+    // some environments, and a jump that always lands beats an animation that sometimes does
+    // not (the reasoning DocsModal.tsx carries).
+    popRef.current?.querySelector(".suggest-opt.active")?.scrollIntoView({ block: "nearest" });
+  }, [highlight]);
 
   if (!isText) {
     // A number that has a unit wears it in the box, not in a placeholder that vanishes the
@@ -233,9 +248,11 @@ function SuggestInput({
           }
           if (e.key === "ArrowDown") {
             e.preventDefault();
+            steppedRef.current = true;
             setHighlight((h) => (h + 1) % matches.length);
           } else if (e.key === "ArrowUp") {
             e.preventDefault();
+            steppedRef.current = true;
             setHighlight((h) => (h - 1 + matches.length) % matches.length);
           } else if (e.key === "Enter" && highlight >= 0) {
             e.preventDefault();

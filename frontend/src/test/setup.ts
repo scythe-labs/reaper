@@ -9,6 +9,13 @@ import { afterEach } from "vitest";
 // closes, so make it a quiet no-op here -- nothing in the tests reads a real scroll.
 window.scrollTo = () => {};
 
+// Same reason, one layer down: jsdom does not implement Element.scrollIntoView AT ALL, so the
+// property is `undefined` rather than a no-op and calling it throws. Four components scroll a
+// keyboard target into view (the suggester's active option, the docs anchor, the policy
+// warning anchors), and each would take its whole test file down with a TypeError. Assigned
+// rather than spied, because `vi.spyOn` cannot wrap a method that does not exist.
+Element.prototype.scrollIntoView = () => {};
+
 // Pay jsdom's first `getComputedStyle` here, where nothing is timing it.
 //
 // The first such call in a jsdom instance costs ~52ms building the CSSOM, and every

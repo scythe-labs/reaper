@@ -58,8 +58,8 @@ Last verified against the code: 2026-07-30.
    A scroll container is now held reachable by a stylesheet-driven gate, not by memory.
    Still open: **#189** five policy warnings bound to a list rather than a control, held until
    option 2 is measured on a real screen reader; **#332** seven loading regions built with their
-   own text; **#333** the value suggester's active option scrolls out of sight; **#334** whether
-   an alert may carry its own button, which needs a real reader to settle.
+   own text; **#334** whether an alert may carry its own button, which needs a real reader to
+   settle.
 4. **The stylesheet split has four optional stages left** (`docs/CSS_SPLIT_PLAN.md`). The cut
    itself landed: 31 files under `frontend/src/styles/`, load order declared by `index.css` and
    load-bearing. Left: naming the control-standard padding and the 12 unnamed `z-index` values;

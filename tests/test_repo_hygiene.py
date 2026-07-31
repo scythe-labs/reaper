@@ -1762,7 +1762,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 43
+_EXPECTED_RENDERING_TEST_FILES = 44
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
