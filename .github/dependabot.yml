@@ -58,10 +58,18 @@ updates:
   # The two digest-pinned base images in the Dockerfile.
   #
   # The uv image's tag (`python3.13-bookworm-slim`) carries no version to bump, so it moves
-  # by digest alone, which is exactly the patched-layer case this file exists for. `node`'s
-  # tag does carry one, so a major bump can arrive here: that needs `node-version` in
-  # `ci.yml` moved with it, or the image builds on a Node the tests never ran on.
-  # tests/test_repo_hygiene.py fails the pull request that moves only one of the two.
+  # by digest alone, which is exactly the patched-layer case this file exists for.
+  #
+  # `node`'s tag does carry a version, and "the newest major" is the wrong answer for it.
+  # Node promotes only even majors to LTS; an odd one is end-of-life within about eight
+  # months, and the first pull request this file ever opened proposed 24 to 25, which had
+  # been dead for two months when it was raised. So a major stays a human decision, made on
+  # the LTS calendar rather than on what exists. Digest updates are unaffected, and they are
+  # the part that carries the patch.
+  #
+  # A bump done by hand still needs `node-version` in `ci.yml` moved with it, or the image
+  # builds on a Node the tests never ran on. tests/test_repo_hygiene.py fails a change that
+  # moves one of the two, and one that lands on an odd major either way.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -72,6 +80,9 @@ updates:
     groups:
       base-images:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     labels: ["Area/CI", "Kind/Chore", "Priority/Low"]
     commit-message:
       prefix: "build"
