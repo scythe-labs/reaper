@@ -8,7 +8,6 @@ the expired-session sweep (PR-13) and the sign-in poll's deadline (S2-2).
 
 from __future__ import annotations
 
-import asyncio
 from datetime import timedelta
 
 import pytest
@@ -226,24 +225,37 @@ class TestTheSignInPollHonorsItsDeadline:
                 "plex.tv", "rate limited", status=429, retry_after=self._retry_after
             )
 
-    async def _run(self, retry_after: float | None, timeout: float) -> tuple[object, float]:
+    async def _run(
+        self, retry_after: float | None, timeout: float
+    ) -> tuple[object, TestTheSignInPollHonorsItsDeadline._Client]:
         client = self._Client(retry_after)
-        loop = asyncio.get_running_loop()
-        started = loop.time()
         token = await plextv.PlexTvClient.wait_for_pin(client, 1, timeout=timeout)  # type: ignore[arg-type]
-        return token, loop.time() - started
+        return token, client
 
-    async def test_an_outrageous_retry_after_does_not_outlive_the_deadline(self) -> None:
-        token, elapsed = await self._run(86400.0, timeout=0.2)
+    async def test_an_outrageous_retry_after_does_not_outlive_the_deadline(
+        self, slept: list[float]
+    ) -> None:
+        """A day of ``Retry-After`` is capped to the backoff maximum, and the maximum is then
+        clipped again to the twenty seconds the caller had left.
+
+        What the deadline is worth has to be read off the delay, not off elapsed time: an
+        unclipped sleep is instant here too, so a "it returned quickly" assertion held with
+        the clipping deleted (rule 118, #346).
+        """
+        token, client = await self._run(86400.0, timeout=20.0)
         assert token is None
-        assert elapsed < 5.0, "the poll slept past its own timeout"
+        assert slept == [20.0], "the poll slept past its own timeout"
+        assert client.calls == 1
 
     async def test_the_backoff_is_capped_even_with_room_left(self) -> None:
         assert plextv.PIN_RATE_LIMIT_MAX_BACKOFF < 86400.0
         assert plextv.PIN_RATE_LIMIT_BACKOFF <= plextv.PIN_RATE_LIMIT_MAX_BACKOFF
 
-    async def test_a_bare_429_still_backs_off_and_keeps_polling(self) -> None:
+    async def test_a_bare_429_still_backs_off_and_keeps_polling(self, slept: list[float]) -> None:
         """The reason the 429 arm exists at all: it means we polled too eagerly, not that
-        the sign-in failed, so it must keep going rather than abandon the flow."""
-        token, _ = await self._run(None, timeout=0.05)
+        the sign-in failed, so it must keep going rather than abandon the flow. Twelve
+        seconds of window is two full backoffs and the two seconds left of a third."""
+        token, client = await self._run(None, timeout=12.0)
         assert token is None
+        assert client.calls == 3
+        assert slept == [plextv.PIN_RATE_LIMIT_BACKOFF, plextv.PIN_RATE_LIMIT_BACKOFF, 2.0]
