@@ -144,6 +144,20 @@ def _compact_sync(db_path: Path) -> bool:
     transaction, and the driver's default opens one on the first statement it takes for
     DML. The busy timeout lets it wait out an in-flight write rather than failing at once,
     the same courtesy ``services.backup`` extends to ``VACUUM INTO``.
+
+    **The checkpoint is what actually hands the disk back, and the ``VACUUM`` alone does
+    not.** The database is in WAL mode (``db.session``), so the rewrite lands in
+    ``reaper.db-wal`` and the main file stays at its high-water mark while any other
+    connection is open -- which is always, since the app's engine pools them for the life
+    of the process. Measured on the real engine: a 23.2 MB data directory was still
+    23.2 MB after a ``VACUUM`` that reported success, and fell to 0.7 MB only when the
+    engine was disposed. So the operator this module was written for saw the log say
+    compacted and ``du`` say otherwise until the next container restart. The truncating
+    checkpoint reclaimed 22.6 MB of that immediately, with a reader open.
+
+    A checkpoint that cannot finish reports a non-zero first element rather than raising.
+    It is logged and not retried: the pages are already free, the next restart truncates
+    the file on its own, and the sweep that matters has committed either way.
     """
     con = sqlite3.connect(db_path, isolation_level=None)
     try:
@@ -156,6 +170,9 @@ def _compact_sync(db_path: Path) -> bool:
         if free / pages < COMPACT_MIN_FREE_RATIO or free * page_size < COMPACT_MIN_FREE_BYTES:
             return False
         con.execute("VACUUM")
+        blocked = int(con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0])
+        if blocked:
+            log.warning("retention.checkpoint_blocked")
         return True
     finally:
         con.close()
@@ -168,6 +185,8 @@ async def compact_if_fragmented(data_dir: Path) -> bool:
     the event loop for the whole vacuum, exactly as ``services.backup`` found for
     ``VACUUM INTO``. Raises whatever SQLite raises -- a disk with no room for the second
     copy is the realistic failure, and the caller logs it and moves on, since a database
-    that is merely larger than it needs to be still works.
+    that is merely larger than it needs to be still works. In WAL mode the peak is the
+    main file plus the wal plus the vacuum's temporary copy, so nearer three times the
+    database than two.
     """
     return await asyncio.to_thread(_compact_sync, data_dir / "reaper.db")

@@ -99,6 +99,19 @@ async def _candidate_count(factory: async_sessionmaker[AsyncSession]) -> int:
         return int((await session.execute(select(func.count(Candidate.id)))).scalar_one())
 
 
+def _bytes_on_disk(data_dir: Path) -> int:
+    """What the operator's ``du`` says: the database and both of its WAL companions.
+
+    The wal is counted because a ``VACUUM`` in WAL mode moves the file's bulk INTO it,
+    so measuring ``reaper.db`` alone would report a reclaim that only relocated bytes.
+    """
+    return sum(
+        (data_dir / name).stat().st_size
+        for name in ("reaper.db", "reaper.db-wal", "reaper.db-shm")
+        if (data_dir / name).exists()
+    )
+
+
 def _pages(data_dir: Path) -> tuple[int, int]:
     """``(page_count, freelist_count)`` -- the file's real shape, not its size on disk.
 
@@ -272,14 +285,21 @@ class TestCompaction:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """The assertion is BYTES ON DISK, deliberately, and the pragmas below are the
+        supporting detail rather than the proof. Asserting only that ``page_count`` fell
+        and ``freelist_count`` reached zero is what let a ``VACUUM`` that handed back
+        nothing ship green: in WAL mode both are true of a file whose size never moved
+        (rule 118)."""
         await _seed(factory, 40, items=60)
         await retention.sweep_old_snapshots(factory, keep=1)
         pages_before, free_before = _pages(tmp_path)
         assert free_before > 0, "the sweep should have left dead pages to reclaim"
+        bytes_before = _bytes_on_disk(tmp_path)
         monkeypatch.setattr(retention, "COMPACT_MIN_FREE_BYTES", 1024)
 
         assert await retention.compact_if_fragmented(tmp_path) is True
 
+        assert _bytes_on_disk(tmp_path) < bytes_before
         pages_after, free_after = _pages(tmp_path)
         assert free_after == 0
         assert pages_after < pages_before

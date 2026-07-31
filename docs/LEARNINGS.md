@@ -2381,6 +2381,15 @@ next scan anyway — so compaction is gated behind both a share and an absolute 
 practice fires once, on the first sweep after an install that had been keeping every scan
 upgrades.
 
+**And `VACUUM` on its own returns nothing, in WAL mode, while the process is up.** The rewrite
+lands in `reaper.db-wal` and the main file holds its high-water mark until the last connection
+closes — which for a pooled engine means process exit. Measured on the real engine: 23.2 MB of
+data directory before, 23.2 MB after a vacuum that reported success, 0.7 MB once the engine was
+disposed. `PRAGMA wal_checkpoint(TRUNCATE)` after the vacuum reclaimed 22.6 MB of it at once,
+with a reader open. The trap is that every *logical* measure agrees the compaction worked:
+`page_count` falls, `freelist_count` reaches zero, and the vacuum raises nothing, so only a
+`stat().st_size` over the directory can tell the two apart — which is why the test asserts bytes.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
