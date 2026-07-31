@@ -1,39 +1,39 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: CI
 
-# Prose is gated by `docs.yml` instead of here. Nothing under these paths can change what
-# the app does and nothing under them reaches the image -- .dockerignore drops `docs/` and
-# `*.md`, the single exception being README.md, which is copied only because pyproject
-# declares it as the package readme and hatchling's metadata build fails without it. No
-# runtime code reads it. Proving that with a uv install, a mypy pass, a node build and an
-# image build costs ~3.5 minutes, and 22% of the last 117 commits touched nothing else.
+# One workflow, two lanes, one list of paths.
 #
-# The path list here and the one in docs.yml are complementary ON PURPOSE: what this file
-# ignores is exactly what that file claims, so every commit is gated by one lane or the
-# other and none slips through ungated. That is load-bearing, because "it's only docs" is
-# false in this repo -- tests/test_repo_hygiene.py reads CLAUDE.md, docs/ and
-# .claude/rules/, and a docs-only commit is precisely when it has something to say. Edit
-# one list and you must edit the other.
+# The expensive lane (uv install, mypy, pytest, a node build, an image build) costs ~3.5
+# minutes and cannot be changed by prose: .dockerignore drops `docs/` and `*.md`, the single
+# exception being README.md, which is copied only because pyproject declares it as the
+# package readme and hatchling's metadata build fails without it. No runtime code reads it.
+# 22% of the last 117 commits touched nothing but prose, so that lane skips for them.
 #
-# `paths-ignore` skips a run only when EVERY changed file matches, so the ordinary commit
-# that edits src/ and docs/STATUS.md together still runs this workflow in full.
+# The cheap lane is tests/test_repo_hygiene.py, ~1 second of asserts, and it exists because
+# "it's only docs" is false in this repo: that test reads CLAUDE.md, docs/ and .claude/, and
+# a prose-only commit is precisely when it has something to say.
 #
-# One visible consequence: a docs-only commit builds no image, so `:dev` keeps pointing at
-# the last commit that could actually change it. The tag is behind the branch by design --
-# the image really was built from that code -- rather than being silently rebuilt to carry
-# a newer sha with identical contents.
+# This used to be two workflow files whose `paths` and `paths-ignore` lists had to stay exact
+# complements of each other, with a comment in each saying "edit one and you must edit the
+# other". Two consequences retired that arrangement:
+#
+#   1. A path-filtered workflow that skips reports NO check run at all, so naming any of
+#      these jobs as a required check would leave the other lane's pull requests pending
+#      forever. Branch protection needs one check that always reports, which is `CI gate`
+#      below.
+#   2. One fact written in two places drifts. The list now exists once, in `changes`, and
+#      both lanes read it from there.
+#
+# `changes` and `CI gate` each cost a runner start (~10s a side). The lane that skips still
+# skips, so the saving that motivated the split is intact.
+#
+# One visible consequence survives: a prose-only commit builds no image, so `:dev` keeps
+# pointing at the last commit that could actually change it. The tag is behind the branch by
+# design, because the image really was built from that code.
 on:
   push:
     branches: [main, dev]
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
-      - ".claude/**"
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
-      - ".claude/**"
 
 # A second push to a branch makes the first one's verdict irrelevant: the only sha anyone
 # acts on is the tip. Grouping by ref and cancelling the older run means a burst of pushes
@@ -46,12 +46,85 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  check:
+  # The single source of truth for which lane a change belongs to. Everything downstream
+  # reads these two outputs; nothing else in the repository restates the path list.
+  changes:
+    name: Decide what to run
     runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+      prose: ${{ steps.decide.outputs.prose }}
     steps:
       # Actions are pinned to commit SHAs (the tag in the comment is what the SHA was
-      # resolved from): a mutable tag on a third-party action is an supply-chain door
+      # resolved from): a mutable tag on a third-party action is a supply-chain door
       # into the job that builds and publishes the deletion-capable image.
+      #
+      # Full history, because this job's whole purpose is to diff against a base commit
+      # that a shallow clone would not contain.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify the changed files
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "${EVENT}" = "pull_request" ]; then
+            base="${PR_BASE}"; head="${PR_HEAD}"
+          else
+            base="${PUSH_BEFORE}"; head="${PUSH_HEAD}"
+          fi
+
+          # Every path that leads here means "we cannot tell what changed", and the safe
+          # answer to that is to run everything rather than to skip a gate. A new branch
+          # reports an all-zero `before`, and a force-push can leave a base commit that no
+          # longer exists in this clone.
+          run_everything() {
+            echo "cannot determine the diff ($1); running both lanes"
+            echo "code=true"  >> "$GITHUB_OUTPUT"
+            echo "prose=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          case "${base}" in
+            ""|0000000000000000000000000000000000000000) run_everything "no base commit" ;;
+          esac
+          git cat-file -e "${base}^{commit}" 2>/dev/null || run_everything "base commit missing"
+          git cat-file -e "${head}^{commit}" 2>/dev/null || run_everything "head commit missing"
+
+          merge_base="$(git merge-base "${base}" "${head}" 2>/dev/null || echo "${base}")"
+          files="$(git diff --name-only "${merge_base}" "${head}")"
+          [ -n "${files}" ] || run_everything "empty diff"
+
+          echo "changed files:"
+          echo "${files}" | sed 's/^/  /'
+
+          code=false
+          prose=false
+          while IFS= read -r f; do
+            [ -n "${f}" ] || continue
+            case "${f}" in
+              docs/*|.claude/*|*.md) prose=true ;;
+              *)                     code=true  ;;
+            esac
+          done <<< "${files}"
+
+          echo "code=${code}"   >> "$GITHUB_OUTPUT"
+          echo "prose=${prose}" >> "$GITHUB_OUTPUT"
+          echo "verdict: code=${code} prose=${prose}"
+
+  check:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # Caching depends on job containers being able to reach the runner's cache server.
@@ -89,6 +162,8 @@ jobs:
       - name: Typecheck
         run: uv run mypy src/reaper
 
+      # The full suite includes tests/test_repo_hygiene.py, which is why `hygiene` below
+      # runs only for the prose lane: a commit touching code has already proved it here.
       - name: Test
         run: uv run pytest -n auto --cov --cov-report=term-missing
 
@@ -101,6 +176,8 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     defaults:
       run:
         working-directory: frontend
@@ -142,12 +219,42 @@ jobs:
       - name: Typecheck and build
         run: npm run build
 
+  # ~1 second of asserts, for the lane where the rest of the suite would be about code this
+  # commit did not touch. A commit that changes both prose and code runs this and the full
+  # pytest in `check`, which is redundant and deliberate: the alternative is a conditional
+  # that can silently fail to run.
+  hygiene:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.prose == 'true'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # The same locked install as `check`, not a lighter ad-hoc one. The hygiene test needs
+      # only pytest and the stdlib, but tests/conftest.py imports the app and is loaded on
+      # every collection, and an unlocked `--with pytest` install to dodge that would be the
+      # one place in the repo resolving dependencies fresh at run time.
+      - name: Install
+        run: uv sync --frozen --extra dev
+
+      - name: Docs hygiene
+        run: uv run pytest tests/test_repo_hygiene.py
+
   # The shipped artifact is the container, so its buildability must be a checked gate --
   # otherwise a broken COPY order, a stale lock, or a bad base image reaches main green.
   # needs: ensures the image is never built from code that failed lint, type, or test.
   docker:
     runs-on: ubuntu-latest
-    needs: [check, frontend]
+    needs: [changes, check, frontend]
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
       packages: write
@@ -211,3 +318,32 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
           docker push --all-tags "${IMAGE}"
+
+  # The one job that reports on every commit, whichever lane ran, and therefore the one
+  # worth naming as a required status check in branch protection.
+  #
+  # `if: always()` is what makes it report at all: without it this job would inherit the
+  # skip of anything it needs, which is the exact failure it exists to prevent. A skipped
+  # lane is a pass here, because a lane skips only when `changes` proved it had nothing to
+  # look at. A cancelled job is a failure, since a cancellation is not a verdict.
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [changes, check, frontend, hygiene, docker]
+    steps:
+      - name: Verdict
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+          failed="$(echo "$RESULTS" | jq -r '
+            [ to_entries[]
+              | select(.value.result != "success" and .value.result != "skipped")
+              | .key ] | join(", ")')"
+          if [ -n "${failed}" ]; then
+            echo "CI gate failed. Not successful or skipped: ${failed}"
+            exit 1
+          fi
+          echo "CI gate passed."
