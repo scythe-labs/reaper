@@ -9,6 +9,13 @@ it thinks each item is expendable**, and removes it safely through Sonarr and Ra
 It integrates with **Tautulli** (watch history), **Sonarr** and **Radarr** (the only
 components allowed to delete anything), **Seerr** (requests), and **Plex**.
 
+![The review queue, with each candidate's score beside it and a panel breaking down why one
+of them scored 91](docs/media/review-queue.png)
+
+*Reaper's own interface, filled with an invented library. Every title, cover and number in
+that picture is made up, so nothing here is a measured result. Drawn by
+[`scripts/gen_screenshot_mockup.py`](scripts/gen_screenshot_mockup.py).*
+
 > **Status: in development.** Deletion is implemented and tested, but it ships **off**: a
 > new install can only scan, score and explain until you deliberately arm it. Expect rough
 > edges, and read [Running it](#running-it) before you point it at a library you care about.
