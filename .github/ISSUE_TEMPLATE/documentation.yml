@@ -1,0 +1,44 @@
+name: 📖 Documentation
+description: Something in the docs is wrong, missing, or hard to follow.
+labels: ["Kind/Documentation"]
+type: Task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Instructions that did not work are worth reporting. So is a paragraph you had to
+        read three times.
+
+  - type: input
+    id: location
+    attributes:
+      label: Where
+      description: A link, or the file and section.
+      placeholder: "README.md, First run"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong with it
+      description: >
+        What you expected it to tell you, and what happened when you followed it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: What would have helped
+      description: A rewrite, a missing step, or the thing you had to work out yourself.
+
+  - type: checkboxes
+    id: search-existing
+    attributes:
+      label: Before you post
+      options:
+        - label: I searched the existing issues and did not find this one.
+          required: true
+        - label: I have read and agree to the [Code of Conduct](https://github.com/scythe-labs/reaper/blob/dev/CODE_OF_CONDUCT.md).
+          required: true

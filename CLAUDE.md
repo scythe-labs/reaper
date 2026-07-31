@@ -8,6 +8,14 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
 > **Prime directive: Reaper deletes irreplaceable data from a server other people depend on.
 > Every ambiguity resolves toward keeping the file.** When in doubt, fail closed.
 
+**The conventions live in [`CONTRIBUTING.md`](CONTRIBUTING.md), and they bind a session here
+exactly as they bind a human contributor.** Setup, the verification gates, commit and pull
+request conventions, how operator-facing text is written, and the AI policy are stated there
+once, for both audiences. This file holds what is specific to working inside the repository:
+the numbered rules, the architecture, the safety model, and the documentation discipline.
+Where the two touch the same subject, CONTRIBUTING is the copy to correct.
+[`AGENTS.md`](AGENTS.md) is the entry point other agent tools read, and it routes back here.
+
 ## Where the engineering rules live
 
 147 numbered blockers, adversarially verified across seven review passes. **The numbers are
@@ -97,12 +105,15 @@ rule narrating the gate that enforces it pays twice for one constraint.
   The `reaper-review` skill's *Opening issues* section holds every mechanic, label and cap, and
   binds every session rather than only a review pass — read it before filing. It is stated once,
   there, so nothing here can drift from it.
-- **Commit as you go, in focused commits — don't wait to be asked.** One commit tells one
-  story, and a fix ships with the test that pins it and the doc line it corrects, because those
-  are the same story. Nothing else rides along. **The reviewer's attention is the scarce
-  resource, so balance it both ways:** don't dribble one change across a string of tiny commits,
-  and don't lump unrelated work into a big one. Aim for the fewest commits that each still stand
-  alone and read clearly. End commit messages with the `Co-Authored-By` trailer.
+- **Commit as you go, and keep the pull request focused — don't wait to be asked.** Branches
+  are squash-merged, so a branch arrives on `dev` as one commit whose subject is the PR title
+  and whose body is the PR description. **The pull request is the unit that tells one story**:
+  a fix ships with the test that pins it and the doc line it corrects, because those are the
+  same story, and unrelated work earns its own branch. Commits on the branch are working state
+  that gets collapsed on the way in, so commit freely for your own sake and spend the writing
+  care on the title and body, which are what survive. The title is a Conventional Commit and CI
+  checks it. Put the `Co-Authored-By` trailer at the end of the **PR description**, since that
+  is the text that becomes the commit message.
 
 ## Rules that apply everywhere
 
@@ -207,42 +218,36 @@ written to reassure, so it fails toward telling the operator the app is safer th
   the fact). A PR closing an issue inherits that issue's two; `Reviewed/` is issue triage and
   stays off a PR. Reviewers filter the queue the same way the backlog is filtered, and an
   unlabeled PR is missing from it.
-- **Landing a branch into `dev` is CI-gated, and the style is `rebase`.** Check the run with
-  `gh pr checks <n>` before merging (a fresh PR sits pending for minutes; `--watch` blocks until
-  it settles), then `gh pr merge --rebase --delete-branch <n>`, which keeps the commit messages
-  you wrote; `--merge` and `--squash` both compose a new one from the PR title and body and
-  throw that text away. One round-trip cost survives the move to GitHub: **a rebase-merge lands
-  a sha CI never tested**, since the branch replays onto whatever `dev` is now, so landing
-  several PRs back to back ends with the gates re-run on the merged `dev` rather than three
-  green per-branch runs. A **draft still will not merge**, but `gh pr ready <n>` clears it, so
-  a `WIP:` title is a label for humans and no longer a thing to strip.
+- **Landing a branch into `dev` is CI-gated, and the style is `squash`.** It is the only style
+  the repository allows; merge commits and rebase merges are both turned off, so there is no
+  choice to get wrong. Check the run with `gh pr checks <n>` before merging (a fresh PR sits
+  pending for minutes; `--watch` blocks until it settles), then `gh pr merge --squash <n>`.
+  **The squash commit takes its subject from the PR title and its body from the PR
+  description** (`squash_merge_commit_title=PR_TITLE`, `squash_merge_commit_message=PR_BODY`),
+  so those two fields *are* the commit message and nothing you wrote on the branch survives
+  beside them. `.github/workflows/pr-validation.yml` checks the title parses as a Conventional
+  Commit, because that subject is permanent and feeds the release notes. The head branch is
+  deleted automatically on merge. A **draft will not merge**, but `gh pr ready <n>` clears it,
+  so a `WIP:` title is a label for humans and no longer a thing to strip. One round-trip cost
+  survives: **a squash-merge lands a sha CI never tested**, since the change is replayed onto
+  whatever `dev` is now, so landing several PRs back to back ends with the gates re-run on the
+  merged `dev` rather than three green per-branch runs.
 - **`main` is release-only.** Never push to `main` directly. Promote `dev` with a pull request
   from `dev` → `main`, **squash-merged**, so `main` reads as a sequence of releases while the
   granular history lives on `dev`: `gh pr create --base main --head dev`, then `gh pr merge
   --squash <n>`, and delete any temporary feature branch after.
 
-## Verification gates (these mirror CI)
+## Verification gates
 
-```
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src/reaper                 # src only; tests are not type-checked
-uv run pytest
-uv run alembic upgrade head            # then `alembic check` for model/migration drift
-npm --prefix frontend run lint         # eslint; the two react-hooks rules are errors
-npm --prefix frontend run format:check # prettier; `run format` writes
-npm --prefix frontend run test         # vitest component tests (the execute gate first)
-npm --prefix frontend run build        # tsc --noEmit, then vite build
-```
-
-Run the relevant subset while iterating; run the full set before a commit. **Always run the
-writing form of both formatters before staging — `uv run ruff format .` and `npm --prefix
-frontend run format`, not just `--check` — format failures are the most common CI break.**
-When a change is observable in the app, *drive it end-to-end* (the `verify` skill), don't
-stop at green tests.
+**The gate list and how to run it live in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#verification-gates)**, along with the rule that the
+writing form of both formatters runs before anything is staged. Run the relevant subset while
+iterating and the full set before a commit. When a change is observable in the app, *drive it
+end-to-end* (the `verify` skill) rather than stopping at green tests. What follows is what a
+session needs on top of that list.
 
 **Read the exit code, not the tail of the output** — rule 134, and the one that silently
-defeats every other gate on this list.
+defeats every other gate.
 
 **A green `npm run test` is not a quiet one.** Vitest's console interception drops test console
 output on some Node versions — nothing on Node 26, printed on CI's pinned Node 24 — so `act()`
@@ -257,24 +262,20 @@ what the commit touched.** `ci.yml` (`check`, `frontend`, `docker`) ignores exac
 `docs.yml` (`hygiene`, the repo-hygiene test alone) claims — `docs/**`, `**.md`, `.claude/**` —
 so a docs-only commit reports `hygiene` alone, and a missing `docker` there is a skipped lane,
 not a stall. The two lists are complementary; edit one and you must edit the other.
+`pr-validation.yml` sits outside that split: it runs on every pull request whatever the paths,
+and it reads the title alone.
 
 **Reading a CI log.** `gh run view --log-failed` is almost always the whole answer: it prints
 only the failing steps. `gh run list --branch <branch>` finds the run, `gh run view <id> --log`
 dumps it in full, and `gh run watch <id>` blocks until it finishes. **Confirm the run is for the
 sha you think it is** (`gh run view <id> --json headSha`, against `git rev-parse HEAD`) — a
-rebase-merge or a fresh push means the newest run for a branch is often not the commit you are
+squash-merge or a fresh push means the newest run for a branch is often not the commit you are
 holding, which is the one way to read a green log for someone else's code and believe it.
 
-**Both halves of the tree are machine-formatted, so never hand-argue style.** `ruff format` owns
-Python, prettier owns `frontend/`, both run in CI, and they share one width (prettier's
-`printWidth` is 100 because that is ruff's `line-length`; `frontend/prettier.config.mjs` carries
-the rest). Write code at whatever shape is clearest, run the formatter, stage what it gives you.
-If a reformat sweeps files you did not touch, someone skipped the gate: land it as its own
-commit and add it to `.git-blame-ignore-revs`. **Prettier's territory stops at `frontend/`** —
-invoke it as `npm --prefix frontend run format`, never `npx prettier` from the repo root, which
-finds no config, falls back to 80 columns, and reflows every hand-wrapped line of `CLAUDE.md`,
-`docs/`, and the CI workflow. Markdown and YAML here are wrapped by hand and no formatter owns
-them.
+**Both halves of the tree are machine-formatted, so never hand-argue style.** CONTRIBUTING
+carries the division of territory and prettier's root-directory hazard. The part that matters
+mid-session: if a reformat sweeps files you did not touch, someone skipped the gate, so land it
+as its own commit and add it to `.git-blame-ignore-revs`.
 
 ## Dev environment
 

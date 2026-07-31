@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions, setup help, and ideas
+    url: https://github.com/scythe-labs/reaper/discussions
+    about: Ask how something works, share a policy that worked well, or talk an idea through before it becomes an issue.
+  - name: 🔐 Report a security vulnerability
+    url: https://github.com/scythe-labs/reaper/security/advisories/new
+    about: Report it privately here. Please keep security problems out of public issues until there is a fix.

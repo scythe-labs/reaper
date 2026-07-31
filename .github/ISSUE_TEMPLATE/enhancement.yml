@@ -1,0 +1,61 @@
+name: ✨ Feature request
+description: Suggest something Reaper should do.
+labels: ["Kind/Enhancement"]
+type: Feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome. If you would rather talk it through first,
+        [Discussions](https://github.com/scythe-labs/reaper/discussions) is a good place to
+        start and nothing is lost by opening the issue later.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do that Reaper makes hard or impossible today? Describing the
+        situation usually leads somewhere better than describing the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired-behavior
+    attributes:
+      label: What you would like it to do
+      description: How you picture it working.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: touches-deletion
+    attributes:
+      label: Does this touch what gets deleted
+      description: >
+        Anything that changes which media is condemned, or that removes a step between a
+        decision and a deletion, gets a much closer look. Say so plainly and it will be read
+        in the right frame.
+      options:
+        - "No, it is about the interface or reporting"
+        - "Yes, it changes how media is chosen or scored"
+        - "Yes, it changes how or when media is deleted"
+        - "I am not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Anything else
+      description: Alternatives you considered, other tools that do this well, or a sketch.
+
+  - type: checkboxes
+    id: search-existing
+    attributes:
+      label: Before you post
+      options:
+        - label: I searched the existing issues and did not find this one.
+          required: true
+        - label: I have read and agree to the [Code of Conduct](https://github.com/scythe-labs/reaper/blob/dev/CODE_OF_CONDUCT.md).
+          required: true
