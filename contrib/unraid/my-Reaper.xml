@@ -6,8 +6,7 @@
   /boot/config/plugins/dockerMan/templates-user/my-Reaper.xml, then add the container
   from Docker > Add Container and pick "Reaper" in the template dropdown.
 
-  This registry needed a login before the pull would work. From the Unraid terminal:
-    docker login <registry>
+  The package is public, so the pull needs no login.
 
   The :dev tag tracks the dev branch, which is where pre-release work lands. :latest
   follows main once a release is cut.
@@ -15,7 +14,7 @@
 <Container version="2">
   <Name>Reaper</Name>
   <Repository>ghcr.io/scythe-labs/reaper:dev</Repository>
-  <Registry>https://github.com/scythe-labs/reaper</Registry>
+  <Registry>https://ghcr.io/scythe-labs/reaper</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>bash</Shell>

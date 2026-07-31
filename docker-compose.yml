@@ -12,8 +12,7 @@ services:
     # Pre-release, use :dev. These two are the only tags to put in a compose file; why the
     # others are not is in docs/LEARNINGS.md (#122).
     #
-    # This registry refused an anonymous pull:
-    #   docker login <registry>
+    # The package is public, so the pull needs no login.
     #
     # Overridable so a fork can point this at its own registry without editing the file
     # (the CI derives its image path the same way, rather than hardcoding a host):

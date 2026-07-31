@@ -68,7 +68,6 @@ database. If you find yourself mounting your library, something is wrong.
 CI publishes an image on every push, so there is nothing to build:
 
 ```bash
-docker login <registry>    # this registry refused anonymous pulls
 docker compose up -d                # serves on http://localhost:8420
 ```
 
