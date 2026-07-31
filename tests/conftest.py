@@ -59,15 +59,48 @@ async def _instant_async_sleep(delay: float, result: object = None) -> object:
 
     **It does not move the clock.** ``loop.time()`` still advances in real wall-clock, so a
     loop bounded by a DEADLINE rather than by a sleep count does not finish early here -- it
-    spins through the whole remaining window as fast as it can. Any test of such a deadline
-    has to pass a short timeout of its own and say why (``test_plex_auth``'s
-    ``test_the_deadline_clips_a_backoff_the_server_chose`` is the worked example); the
-    pin loop's real 300s default would take 300 seconds.
+    spins through the whole remaining window as fast as it can. A test of such a deadline
+    takes the ``slept`` fixture below and drives the clock itself; passing a short real
+    timeout instead measures the machine (rule 133).
     """
     return await _real_async_sleep(0, result)
 
 
 asyncio.sleep = _instant_async_sleep  # type: ignore[assignment]
+
+
+@pytest.fixture
+async def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Every delay the code under test asked for, in order, on a clock the test owns.
+
+    Sleeping is already instant (above); this writes the delay down and moves ``loop.time()``
+    forward by exactly that much. A loop bounded by a deadline is then driven by the sleeps
+    the test provoked, and the recorded delays are what the assertions read: what was slept
+    is the behavior, where elapsed wall clock is only evidence about the machine.
+
+    Both halves fix a real defect in the pin-poll tests (#346). A real window is a race the
+    loop can lose -- a fifth of a second held ~1,073 polls on an idle machine and 11 under
+    load, a ninetyfold swing with nothing about the code changed. And elapsed time could not
+    fail: an unclipped ``sleep(86400)`` is instant too, so a test asserting it returned
+    quickly passed with the deadline interlock deleted (rule 118).
+
+    The clock starts on a whole second so every deadline sum stays exact in binary. The loop
+    under test leaves at ``now == deadline``, and an ulp of drift buys a spurious extra poll.
+    """
+    recorded: list[float] = []
+    instant = asyncio.sleep
+    loop = asyncio.get_running_loop()
+    now = float(int(loop.time()))
+
+    async def _record(delay: float, result: object = None) -> object:
+        nonlocal now
+        recorded.append(delay)
+        now += delay
+        return await instant(0, result)
+
+    monkeypatch.setattr(asyncio, "sleep", _record)
+    monkeypatch.setattr(loop, "time", lambda: now)
+    return recorded
 
 
 async def _no_catch_up(*_args: object, **_kwargs: object) -> None:
