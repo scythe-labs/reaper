@@ -512,10 +512,15 @@ class _Delete:
 #: Why a run stops when it could not write its own journal. The database is the only record
 #: of what was removed, so a run that cannot write it stops rather than deleting more that it
 #: also could not record.
+#: It stops at what the operator must go and do. It deliberately does NOT tell them to scan
+#: again: the report panel appends "a fresh scan is running" to this very paragraph whenever
+#: the run removed anything, so the two sentences told them to start a scan and that one was
+#: already going, in the same breath (rule 144). The surface that knows whether a scan was
+#: launched is the one that says so.
 _JOURNAL_HALT = (
     "Reaper could not save its record of what it just did, so it stopped before touching "
     "anything else. Anything already removed stays removed. Check the free space and "
-    "permissions on Reaper's data folder, then scan again."
+    "permissions on Reaper's data folder."
 )
 
 
