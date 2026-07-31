@@ -720,6 +720,18 @@ describe("PolicyEditor warning anchors", () => {
     gates: [{ gate: "rating_floor", enabled, threshold: 70, window_days: 365 }],
   });
 
+  /** The rating card holding two bars, on the two scales it draws differently: IMDb is the
+   *  ten-point scale with a vote floor beside it, Rotten Tomatoes critics is a bare
+   *  percentage. Two rather than one because the complaint this binding exists to stop is a
+   *  bar reading its NEIGHBOUR's -- a card with one bar cannot fail that way. */
+  const barsBody: PolicyBody = {
+    ...ratingBody(true),
+    keep_rating_rules: [
+      { source: "imdb", floor: 65, min_votes: 5000 },
+      { source: "rotten_tomatoes_critic", floor: 75, min_votes: 0 },
+    ],
+  };
+
   /** The four protections the server warns about, each in the switch position its warning
    *  actually fires in: the two thresholds are warned about only while their gate is ON (a
    *  gate that is off holds nothing, and its box is not rendered), and the two switches only
@@ -836,22 +848,27 @@ describe("PolicyEditor warning anchors", () => {
   }
 
   // The anchors whose warnings each have ONE control that fixes them, and that control's
-  // accessible name. FIVE of the nine are here; the four that are not warn about a LIST or a
-  // card -- the signal sliders, the two rule editors, the rating card -- where there is no
-  // single box to point at and binding every child would read the whole card's complaints at
-  // each of them. Deliberately partial, and named here so the boundary is a decision on the
-  // page rather than an omission (#174).
+  // accessible name. SIX of the nine are here; the three that are not warn about a LIST or a
+  // card -- the signal sliders and the two rule editors -- where there is no single box to
+  // point at and binding every child would read the whole card's complaints at each of them.
+  // Deliberately partial, and named here so the boundary is a decision on the page rather than
+  // an omission (#174).
   //
-  // Two of the five earned their place rather than arriving with one obvious box:
+  // Three of the six earned their place rather than arriving with one obvious box:
   //
   // `in_progress` claims one field and its remedy ("lower this to match your history") names
   // one box, so leaving it unbound would have added an item to the backlog above rather than a
   // considered boundary.
   //
   // `gates` looks like a list and is not one: every warning in that family names one setting
-  // of one protection, so each already has the single owning box the other four lack, and
-  // binding them needed no judgment about what a group should say (#189). It is the shape the
-  // remaining four would have to be given on the server to join this table.
+  // of one protection, so each already has the single owning box the other three lack, and
+  // binding them needed no judgment about what a group should say (#189).
+  //
+  // `keep_rating_rules` was the same shape in disguise, and joined on the server rather than
+  // here: three of its four producers sit inside the loop over the bars and name one bar each
+  // through `source_label(rule.source)`, so giving them a `keep_rating_rules.{source}.floor`
+  // field was all they needed (#189). Its fourth is the card's own -- the protection on with no
+  // sources -- and that one stays unbound, below.
   //
   // Keyed by FIELD, not by anchor: `keep_last` claims three, and each is fixed from a different
   // control. Bound to the anchor as a whole, the seasons box spoke the scope control's
@@ -859,9 +876,16 @@ describe("PolicyEditor warning anchors", () => {
   const BOUND: {
     anchor: WarningAnchorId;
     controls: Record<string, string>;
+    /** Fields this anchor DECLARES that deliberately reach no single control, with the reason
+     *  at the entry. Without this the check below would read a mixed anchor as an unfinished
+     *  one, and the only way to quiet it would be to stop claiming the field -- which drops
+     *  the warning off the page rather than down to the catch-all (#145, rule 42). Declared
+     *  rather than omitted, and the whole population is pinned by the count case below, so a
+     *  binding cannot be given up by quietly moving its field into here. */
+    unbound?: readonly string[];
     /** The page state these boxes exist in, where the anchor's own guard does not name it.
-     *  `gates` is the one: its block is unguarded and renders on the default fixture, but
-     *  that fixture ships no protections, so the rows holding its boxes are not there. */
+     *  `gates` is one: its block is unguarded and renders on the default fixture, but that
+     *  fixture ships no protections, so the rows holding its boxes are not there. */
     drive?: Drive;
   }[] = [
     { anchor: "condemn_at", controls: { condemn_at: "Put a title on the list once it scores" } },
@@ -880,6 +904,26 @@ describe("PolicyEditor warning anchors", () => {
       },
       drive: async (warnings) => {
         renderEditor({ body: gatesBody }, pace, null, warnings);
+      },
+    },
+    {
+      anchor: "keep_rating_rules",
+      // The three the server sends today all name one bar's number, so each lands on the box
+      // holding that number. Named per SOURCE, which is what makes them distinct: `PolicyBody`
+      // refuses two rules on one source, so the source keys the row the way the gate id keys a
+      // protection row.
+      controls: {
+        "keep_rating_rules.imdb.floor": "IMDb score out of 10",
+        "keep_rating_rules.rotten_tomatoes_critic.floor": "Rotten Tomatoes critics percentage",
+      },
+      // The card's own complaint, and the one warning here that is genuinely about the card:
+      // it fires when the protection is on with no bars at all, so there is no bar row for it
+      // to sit on, and the two remedies it offers ("Add a rating source to it, or turn the
+      // protection off") are two different controls. It renders in the block under the list,
+      // where it is beside both of them.
+      unbound: ["keep_rating_rules"],
+      drive: async (warnings) => {
+        renderEditor({ body: barsBody }, pace, null, warnings);
       },
     },
     {
@@ -905,14 +949,18 @@ describe("PolicyEditor warning anchors", () => {
     },
   ];
 
-  it("binds five of the nine anchors, and walks each one it binds", () => {
+  it("binds six of the nine anchors, and walks each one it binds", () => {
     // Rule 145: this table is flag-shaped the same way the anchor list is. An entry deleted
     // takes both of its cases away with it and every assertion left still passes, so the count
     // is what says an anchor stopped being bound. Move it in the same commit that binds one or
-    // gives one up, and move the sentence above it too -- the four it describes are 9 minus
+    // gives one up, and move the sentence above it too -- the three it describes are 9 minus
     // this.
-    expect(BOUND).toHaveLength(5);
+    expect(BOUND).toHaveLength(6);
     expect(new Set(BOUND.map((b) => b.anchor)).size).toBe(BOUND.length);
+    // And the exemptions, by name and in full. `unbound` excuses a declared field from the
+    // description walk below, so it is the one place a binding could be given up without the
+    // count noticing: pinning the whole population is what closes that (rule 145).
+    expect(BOUND.flatMap((b) => b.unbound ?? [])).toEqual(["keep_rating_rules"]);
   });
 
   /** The state a bound anchor's boxes are driven in: its own entry says so where the default
@@ -930,20 +978,24 @@ describe("PolicyEditor warning anchors", () => {
       const anchor = WARNING_ANCHORS.find((a) => a.id === id)!;
       const mine = boundProbes(controls);
 
-      // Every field this anchor DECLARES has a control named above, so widening `fields`
-      // without giving the new one somewhere to speak from fails here rather than silently
-      // hanging its warning off whichever control was already bound.
-      for (const field of anchor.fields) expect(Object.keys(controls)).toContain(field);
-      // And nothing here is bound that the anchor does not claim: a field misspelled above
-      // points its box at an id no notice on this page ever carries, which is the failure the
-      // description assertions below would report as a missing binding rather than a typo.
-      for (const field of Object.keys(controls)) expect(anchorClaims(anchor, field)).toBe(true);
+      // Every field this anchor DECLARES is accounted for above -- bound to a control, or
+      // named as deliberately card-level -- so widening `fields` without giving the new one
+      // somewhere to speak from fails here rather than silently hanging its warning off
+      // whichever control was already bound.
+      const accounted = [...Object.keys(controls), ...(entry.unbound ?? [])];
+      for (const field of anchor.fields) expect(accounted).toContain(field);
+      // And nothing here is bound or exempted that the anchor does not claim: a field
+      // misspelled above points its box at an id no notice on this page ever carries, which is
+      // the failure the description assertions below would report as a missing binding rather
+      // than a typo.
+      for (const field of accounted) expect(anchorClaims(anchor, field)).toBe(true);
       // Exactly the declared fields, for every anchor that can state them. A `prefix` anchor
       // claims an open family and its `fields` holds one member as a probe, so the table names
       // more of the family than the declaration can (`gates`, four settings across four
-      // protections); the two checks above are what still holds it to the claim.
+      // protections; `keep_rating_rules`, one bar per source); the two checks above are what
+      // still holds it to the claim.
       if (anchor.prefix === undefined) {
-        expect(Object.keys(controls).sort()).toEqual([...anchor.fields].sort());
+        expect(accounted.sort()).toEqual([...anchor.fields].sort());
       }
 
       await driveBound(entry, anchor)([...mine, catchAll]);
@@ -984,6 +1036,65 @@ describe("PolicyEditor warning anchors", () => {
       }
     });
   }
+
+  it("leaves no box in a rating bar's row that its own warning cannot reach", async () => {
+    // The `gates` walk below, for the family that joined it (#189). Same reason it is needed:
+    // the `keep_rating_rules` entry above names the two fields the SERVER sends on this
+    // fixture, and those cannot see a third control added to `RatingBarRow` with no binding,
+    // because a field nobody sends yet has no probe to go missing (rule 145).
+    //
+    // IMDb is the row that draws all of them: the ten-point score, the vote floor beside it,
+    // and the × that removes the bar. `min_votes` carries no warning today and is bound
+    // anyway, off the same generic helper the score uses, so the walk is over what the row
+    // RENDERS rather than over what the server currently complains about.
+    const BOXES: Record<string, string | null> = {
+      "IMDb score out of 10": "keep_rating_rules.imdb.floor",
+      "IMDb vote floor": "keep_rating_rules.imdb.min_votes",
+      // Deliberately unbound, and the one exemption on this row. It is the way OUT of the bar,
+      // not the way to fix its number, and it already says what it does; a complaint about a
+      // score read from the remove button would offer deleting the protection as the remedy.
+      "Remove the IMDb bar": null,
+    };
+    const probed: PolicyWarning[] = Object.values(BOXES)
+      .filter((field): field is string => field !== null)
+      .map((field) => ({ field, severity: "warn", message: `anchor probe: ${field}` }));
+    // The neighboring bar's complaint, driven in the same render. This is the misattribution
+    // the issue was filed on -- a warning about IMDb spoken by the Rotten Tomatoes row -- so it
+    // is probed rather than argued.
+    const neighbor: PolicyWarning = {
+      field: "keep_rating_rules.rotten_tomatoes_critic.floor",
+      severity: "warn",
+      message: "anchor probe: the neighboring bar",
+    };
+
+    renderEditor({ body: barsBody }, pace, null, [...probed, neighbor, catchAll]);
+    await screen.findByText(probed[0]!.message);
+
+    // Typed, unlike the `closest("li")` in the walk below: TypeScript resolves a TAG selector
+    // to that tag's element type and a CLASS selector only to `Element`, which `within` will
+    // not take.
+    const row = screen.getByLabelText("IMDb score out of 10").closest<HTMLElement>(".bar-line")!;
+    // A container query rather than a role query, deliberately: the point is to collect boxes
+    // this walk does not already know about, and a role query only finds the roles it was told
+    // to ask for. `<button>` is in the list for the same reason and matches the × here.
+    const boxes = Array.from(row.querySelectorAll("input, select, textarea, button"));
+    const named = Object.keys(BOXES).map((name) => within(row).getByLabelText(name));
+    expect(boxes).toHaveLength(named.length);
+    for (const box of boxes) expect(named).toContain(box);
+
+    for (const [name, field] of Object.entries(BOXES)) {
+      const box = within(row).getByLabelText(name);
+      if (field === null) {
+        expect(box).not.toHaveAccessibleDescription(/anchor probe/);
+        continue;
+      }
+      expect(box).toHaveAccessibleDescription(new RegExp(`anchor probe: ${field}`));
+      for (const other of [...probed, neighbor]) {
+        if (other.field === field) continue;
+        expect(box).not.toHaveAccessibleDescription(new RegExp(other.message));
+      }
+    }
+  });
 
   it("leaves no box in a protection's row that its own warning cannot reach", async () => {
     // The `gates` entry above names the four fields the SERVER sends today, and rule 145 is
