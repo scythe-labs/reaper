@@ -52,6 +52,7 @@ dev = [
     "hypothesis>=6.161.0",       # property tests for the scoring invariants
     "pytest-xdist>=3.8.0",
     "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/history/PLAN-narrative.md httpx2 scope)
+    "pyyaml>=6.0.3",             # imported directly (test_repo_hygiene reads the CI config), not only via uvicorn[standard]
 ]
 
 [project.scripts]

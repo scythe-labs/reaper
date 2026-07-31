@@ -1111,6 +1111,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-httpx2" },
     { name = "pytest-xdist" },
+    { name = "pyyaml" },
     { name = "respx" },
     { name = "ruff" },
 ]
@@ -1137,6 +1138,7 @@ requires-dist = [
     { name = "pytest-httpx2", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.8.0" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.23.1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.22" },
