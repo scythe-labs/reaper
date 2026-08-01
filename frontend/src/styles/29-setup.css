@@ -23,13 +23,16 @@
   align-items: center;
   gap: 0.65rem;
 }
+/* Bigger than the masthead's 34px on purpose. This is the app introducing itself on a screen
+   with room, and the mark carries enough internal detail -- a cowl, two eyes, a field of
+   falling blocks -- that at 34px it reads as a smudge beside the word. */
 .setup-brand .brand-mark {
-  width: 34px;
-  height: 34px;
+  width: 56px;
+  height: 56px;
   color: var(--text);
 }
 .setup-brand .brand-word {
-  font-size: var(--text-lg);
+  font-size: var(--text-2xl);
   font-weight: var(--weight-semi);
   letter-spacing: 0.01em;
 }

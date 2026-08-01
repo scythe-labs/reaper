@@ -262,6 +262,32 @@ describe("the save bar", () => {
     await waitFor(() => expect(saveChanges()).toBeEnabled());
   });
 
+  it("moves the preview's link with its button, not just the button", async () => {
+    // The preview overrode --accent and --accent-ink, so the button followed the typed color
+    // and the LINK beside it kept the saved accent's ink -- a preview showing two accents at
+    // once, on the control whose whole job is to show one.
+    //
+    // The link's color is --accent-text, and that is not derived from --accent where it is
+    // used: the stylesheet computes it once on :root from what accent.ts writes there, so
+    // overriding --accent on a child inherits an ink belonging to a different color. Asserted
+    // as "all three move together" rather than against a transcribed hex, so the contrast
+    // search stays free to return whatever it returns (rule 119).
+    const person = renderPanel();
+    const hex = await screen.findByLabelText("Accent color hex code");
+    const preview = document.querySelector(".accent-preview") as HTMLElement;
+    expect(preview).toBeTruthy();
+
+    const before = preview.style.getPropertyValue("--accent-text");
+    expect(before).not.toBe("");
+
+    await person.clear(hex);
+    await person.type(hex, "#7c3aed");
+
+    await waitFor(() => expect(preview.style.getPropertyValue("--accent")).toBe("#7c3aed"));
+    expect(preview.style.getPropertyValue("--accent-ink")).not.toBe("");
+    expect(preview.style.getPropertyValue("--accent-text")).not.toBe(before);
+  });
+
   it("hands the refused hex box the sentence saying why", async () => {
     // #174. `aria-invalid` and `aria-describedby` appeared ZERO times in the whole frontend, so
     // a box that refuses to save had no way to reach the sentence explaining it: the message

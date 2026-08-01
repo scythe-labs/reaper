@@ -18,7 +18,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
+import { accentInk, accentText, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { announce } from "../announce";
 import { useSavebarFocus, useSuccessorFocus } from "../focus";
 import {
@@ -187,6 +187,10 @@ export function GeneralPanel({
   const [spareForever, setSpareForever] = useState(false);
   const [spareDays, setSpareDays] = useState(SPARE_DAYS_SEED);
   const [theme, setTheme] = useState<ThemeChoice>(readTheme);
+  // Which theme the preview is being SEEN in, which "system" alone does not say. The accent's
+  // text ink is computed per theme, so the preview needs the resolved one, not the choice.
+  const systemDark = useMediaQuery("(prefers-color-scheme: dark)");
+  const shownTheme: "light" | "dark" = theme === "system" ? (systemDark ? "dark" : "light") : theme;
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmReplace, setConfirmReplace] = useState(false);
@@ -656,6 +660,12 @@ export function GeneralPanel({
                   ? ({
                       "--accent": accent,
                       "--accent-ink": accentInk(accent),
+                      // --accent-text as well, or the link in the preview keeps the SAVED
+                      // accent's ink while the button beside it moves. It is not derived from
+                      // --accent at use time: the stylesheet computes it once on :root, from
+                      // the values accent.ts writes there, so a child overriding --accent alone
+                      // inherits an ink belonging to a different color (rule 67).
+                      "--accent-text": accentText(accent, shownTheme),
                     } as CSSProperties)
                   : undefined
               }
