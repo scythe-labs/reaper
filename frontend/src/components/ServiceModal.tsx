@@ -20,6 +20,7 @@ import { announce } from "../announce";
 import {
   api,
   type Instance,
+  type InstanceKind,
   type InstanceTest,
   type TestVerdict,
   type RootFolder,
@@ -32,7 +33,7 @@ import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
 
 export const KINDS: {
-  value: string;
+  value: InstanceKind;
   label: string;
   hint: string;
   port: string;
@@ -67,7 +68,7 @@ export const KINDS: {
   },
 ];
 
-export function kindLabel(kind: string): string {
+export function kindLabel(kind: InstanceKind): string {
   return KINDS.find((k) => k.value === kind)?.label ?? kind;
 }
 
@@ -201,7 +202,7 @@ export function ServiceModal({
   blockCloseRef,
   defaultName,
 }: {
-  kind: string;
+  kind: InstanceKind;
   instance: Instance | null;
   onClose: () => void;
   /** Set by ServicesPanel so its Back guard reads the SAME predicate the scrim, Escape and the

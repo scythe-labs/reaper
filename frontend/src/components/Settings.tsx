@@ -23,6 +23,7 @@ import { announce } from "../announce";
 import { useSavebarFocus, useSuccessorFocus } from "../focus";
 import {
   api,
+  type InstanceKind,
   type ExpandSeasonsMode,
   type Instance,
   type InstanceTest,
@@ -1256,7 +1257,9 @@ function ServiceSection({
 
 export function ServicesPanel() {
   const { data, isPending, error } = useQuery({ queryKey: ["instances"], queryFn: api.instances });
-  const [modal, setModal] = useState<{ kind: string; instance: Instance | null } | null>(null);
+  const [modal, setModal] = useState<{ kind: InstanceKind; instance: Instance | null } | null>(
+    null,
+  );
   // The modal decides when it may be dismissed; it mirrors that whole answer here so Back
   // refuses exactly what the scrim, Escape and the ✕ refuse, the same arrangement the schedule
   // editor uses (B-19). It carried only the SAVE half once, and the moment the modal grew a

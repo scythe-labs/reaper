@@ -184,9 +184,9 @@ function Pill({
   );
 }
 
-/** One active filter, as a chip that clears just that filter. The × is the button, so its
+/** One active filter, as a chip that clears just that filter. The ✕ is the button, so its
  *  label has to name what it stops filtering by: "Remove the genre filter", never a row of
- *  identical "×" controls. */
+ *  identical "✕" controls. */
 function FilterChip({
   label,
   clearLabel,
@@ -200,7 +200,7 @@ function FilterChip({
     <span className="filter-chip">
       {label}
       <button {...REMOVES_ITS_ROW} type="button" aria-label={clearLabel} onClick={onClear}>
-        ×
+        ✕
       </button>
     </span>
   );
@@ -1455,9 +1455,9 @@ export function ReviewQueue({
   // chip the pick just created is the honest successor, and it does not exist until that commit,
   // so the focus waits for one.
   const focusChip = useRef<string | null>(null);
-  // The other direction: removing a chip destroys the × holding focus, so the operator lands on
+  // The other direction: removing a chip destroys the ✕ holding focus, so the operator lands on
   // `<body>` and the next Tab restarts above the toolbar (#173). Focus goes to the next chip's
-  // ×, or to the ＋ Filter button once the row is empty -- which always exists after a removal,
+  // ✕, or to the ＋ Filter button once the row is empty -- which always exists after a removal,
   // since removing a filter is exactly what makes that dimension addable again.
   const addFilterRef = useRef<HTMLButtonElement>(null);
   const chips = useRemovalFocus(addFilterRef);
@@ -2354,7 +2354,7 @@ export function ReviewQueue({
         </div>
 
         {/* Every active filter as a chip: the search term (cleared with one tap) and each added
-          dimension (click to change its value, × to remove). A stacked combination is visible
+          dimension (click to change its value, ✕ to remove). A stacked combination is visible
           at a glance. Sort is not a chip: it hides nothing. */}
         {filtering && (
           <div className="active-filters" ref={chips.ref as RefObject<HTMLDivElement>}>
@@ -2405,7 +2405,7 @@ export function ReviewQueue({
                         setOpenMenu((m) => (m === d.id ? null : m));
                       }}
                     >
-                      ×
+                      ✕
                     </button>
                   </span>
                   {openMenu === d.id && (

@@ -99,7 +99,7 @@ function KeepTagsEditor({
   };
   // Removing a chip destroys the button holding focus, so without this the operator lands on
   // `<body>` and the next Tab restarts above the whole ~1,900-line policy form -- three times
-  // over for three tags (#173). Focus goes to the next chip's ×, or to the add box once the
+  // over for three tags (#173). Focus goes to the next chip's ✕, or to the add box once the
   // last one is gone.
   const addRef = useRef<HTMLInputElement>(null);
   const chips = useRemovalFocus(addRef);
@@ -117,7 +117,7 @@ function KeepTagsEditor({
               }}
               aria-label={`Remove ${t}`}
             >
-              ×
+              ✕
             </button>
           </span>
         ))}
@@ -477,7 +477,7 @@ function RatingBarRow({
         onClick={onRemove}
         aria-label={`Remove the ${meta.label} bar`}
       >
-        ×
+        ✕
       </button>
     </div>
   );
@@ -529,7 +529,7 @@ function RatingFloorRow({
       ? "Nothing is kept yet: add a rating source to set the score a title must clear to stay."
       : `Keep a title rated at least ${rules.map(describeBar).join(joiner)}.`;
 
-  // The same shape as the keep-tag chips 290 lines above, on the same ~1,900-line form: the ×
+  // The same shape as the keep-tag chips 290 lines above, on the same ~1,900-line form: the ✕
   // removes the row it lives in, so without this focus falls to `<body>` and the next Tab
   // restarts at the top (#173). Missed in that sweep and caught by a rule 72 pass over it.
   const addSourceRef = useRef<HTMLSelectElement>(null);

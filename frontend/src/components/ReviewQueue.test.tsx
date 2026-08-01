@@ -1531,7 +1531,10 @@ describe("the Spare length menu", () => {
     const onSet = renderControls();
     await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
     await user.click(screen.getByRole("button", { name: /Custom length/ }));
-    const box = screen.getByLabelText("Custom spare length in days");
+    // "Custom spare length", not "...in days": the box is `FixedQuantity` now, which binds the
+    // visible "days" suffix as its description, so the unit is spoken after the value instead of
+    // being folded into the name.
+    const box = screen.getByLabelText("Custom spare length");
     await user.clear(box);
     await user.type(box, "45");
     // Scope to the menu: the row's own split Spare button is also named "Spare".

@@ -1095,11 +1095,17 @@ export interface SetupStatus {
   complete: boolean;
 }
 
+/** The four services Reaper connects to, mirroring `InstanceKind` in `db/models.py`.
+ *
+ *  Every kind reaches the DOM as a class name (`kind-radarr`, `conn-badge kind-sonarr`) and the
+ *  stylesheet defines exactly these four, so a widened string here does not fail loudly -- it
+ *  emits a class with no rule and the badge renders unstyled, losing the fill-and-ink pair that
+ *  tells the services apart. */
 export type InstanceKind = "radarr" | "sonarr" | "tautulli" | "seerr";
 
 export interface Instance {
   id: number;
-  kind: string;
+  kind: InstanceKind;
   name: string;
   base_url: string;
   /** The address the UI's jump links open, or null to fall back to base_url. Display only,

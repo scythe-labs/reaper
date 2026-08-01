@@ -22,7 +22,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type RefObject } from "react";
 import { announce } from "../announce";
 import { useSuccessorFocus } from "../focus";
-import { api, type Instance, type SetupStatus } from "../api";
+import { api, type Instance, type InstanceKind, type SetupStatus } from "../api";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { KINDS, ServiceModal } from "./ServiceModal";
@@ -66,7 +66,9 @@ export function SetupConnectStep({
     queryKey: ["instances"],
     queryFn: api.instances,
   });
-  const [editing, setEditing] = useState<{ kind: string; instance: Instance | null } | null>(null);
+  const [editing, setEditing] = useState<{ kind: InstanceKind; instance: Instance | null } | null>(
+    null,
+  );
   const [restoring, setRestoring] = useState(false);
   // Which chip is asking to be confirmed, by instance id. One at a time, and never keyed on the
   // name (rule 19/63): two kinds can both hold an "HD".

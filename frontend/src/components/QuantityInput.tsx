@@ -9,7 +9,7 @@
 //   - a fixed suffix ("30 days", "3 people", "6.5 / 10"): the unit cannot change, so it
 //     renders as a quiet suffix inside the same box instead of a dropdown.
 
-import { useId, useRef, useState, type ChangeEvent } from "react";
+import { useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
 export interface Unit {
   label: string;
@@ -325,6 +325,8 @@ export function FixedQuantity({
   ariaLabel,
   disabled,
   describedBy,
+  autoFocus,
+  onKeyDown,
 }: {
   value: number | string;
   onChange: (next: number) => void;
@@ -343,6 +345,13 @@ export function FixedQuantity({
   // No `invalid` here, unlike `QuantityInput` above (rule 72). Every caller of this one is a
   // policy control, and a policy warning of either severity still saves, so there is no state
   // this box could honestly report as invalid.
+  /** For a box that opens focused, like the spare menu's custom length. */
+  autoFocus?: boolean;
+  /** For a box that submits on Enter. Runs BEFORE the typing handler below sees the key, which
+   *  is what a submit needs -- and it is why this is a prop rather than something a caller can
+   *  reach past the component: the spare menu had rebuilt this box by hand to get it, and a
+   *  hand-built copy does not inherit the unit's accessible binding below. */
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
 }) {
   const typed = useTypedNumber(String(value), onChange, {
     min,
@@ -379,6 +388,8 @@ export function FixedQuantity({
         // the run cap allows" reads in the order the operator needs it.
         aria-describedby={describedBy ? `${unitId} ${describedBy}` : unitId}
         disabled={disabled}
+        autoFocus={autoFocus}
+        onKeyDown={onKeyDown}
         {...typed}
       />
       <span className="qty-suffix" id={unitId}>
