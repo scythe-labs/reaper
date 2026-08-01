@@ -27,6 +27,11 @@ If you want to know who writes this and how, the README has an honest answer und
 - **Ask a question.** [Discussions](https://github.com/scythe-labs/reaper/discussions) is the
   place for setup help, ideas that are still forming, and anything that is not yet an issue.
 - **Fix the docs.** Instructions that did not work are a bug.
+- **Try a pull request.** Every push builds an image, so a change can be run before it lands:
+  `scripts/try-image.sh up --pr <number> --port 8421` on any machine with docker. It runs
+  beside whatever else is on that host, and `--data copy:<volume-or-path>` gives it a copy of
+  a real setup so the original is never written to. `scripts/try-image.sh --help` has the
+  rest, including teardown.
 
 Security problems go through [SECURITY.md](SECURITY.md), which opens a private report.
 
