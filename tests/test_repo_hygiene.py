@@ -1643,8 +1643,11 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # 15s poll), five facts about the install that are true on first paint, three load-time recovery
 # flags, and the password form's live complaint, whose `{pw.length} so far` mutated inside a live
 # region on every keystroke.
+# Then 34: the policy editor's other three readers of `["validate", debounced]`, which is keyed on
+# the draft and so refires as the operator types -- the same query whose `WarnBlock` notices were
+# already `standing` for that reason, and rule 72 for the two that were not.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 31
+_EXPECTED_STANDING = 34
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
