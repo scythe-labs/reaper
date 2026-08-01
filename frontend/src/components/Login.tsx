@@ -256,8 +256,12 @@ function LocalSheet({
                 wizard's own password step would have created, and any local account arms
                 deletion and confirms a restore just the same (`admin_password.verify` checks
                 every local admin, not one by name), so the choice is free and a free choice
-                is one the operator should not have to stop and make. Its two siblings say the
-                same thing (`cli.py`'s lockout warning, `main.py`'s boot warning). */}
+                is one the operator should not have to stop and make. Its three siblings say the
+                same thing (`cli.py`'s lockout warning, `main.py`'s boot warning, and the 409
+                from `api/auth.py` when a recovery link finds no admin), as does the setup
+                step in the README. The last two were left on `<name>` when the others were
+                made pasteable, so an operator arriving by recovery link read something
+                different from one reading this sheet (rule 72). */}
             <code>reaper-admin create-admin --username admin</code>.
           </Notice>
         ) : (

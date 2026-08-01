@@ -1543,8 +1543,12 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # gained the state after `Restart now` is pressed, and the failure slot that state made
 # unavoidable -- both of the armed card's buttons can be refused by the server, and until now
 # neither refusal rendered anywhere at all.
+# Then 128: the wizard's scan step, which offered "Run first scan" whatever was connected. The
+# start route answers 200 either way and the refusal is raised inside the detached task, so the
+# operator watched a spinner for a scan that could never run and was then sent to Settings, which
+# is behind the wizard they had not left. The notice carries the way back instead (rule 42).
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 127
+_EXPECTED_NOTICES = 128
 
 
 def _shipped_tsx() -> list[Path]:
@@ -1653,7 +1657,7 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # which argues the same thing in as many words. A ban would have to exempt all of them; a count
 # does not care which way a site resolved, only that nobody added one without deciding.
 _QUERY_FAILURE_HANDLES = {
-    "frontend/src/App.tsx": 9,
+    "frontend/src/App.tsx": 8,
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
     "frontend/src/components/LogsPanel.tsx": 1,
@@ -1673,6 +1677,10 @@ _QUERY_FAILURE_HANDLES = {
     # failed read means the list is merely out of date and pruning would delete a stored
     # mapping nothing confirmed is gone. The render branches beside them already keep their
     # grid and say it may be stale, which is why `.data` alone could not answer this.
+    # Moved out of App.tsx with the component rather than added: the banner's amber
+    # "we could not look" branch is the same handle it always had, now in its own module so
+    # the wizard states the regime from the same declaration.
+    "frontend/src/components/SafetyBanner.tsx": 1,
     "frontend/src/components/ServiceModal.tsx": 6,
     "frontend/src/components/Settings.tsx": 8,
     "frontend/src/components/SetupConnectStep.tsx": 1,
@@ -2107,7 +2115,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 46
+_EXPECTED_RENDERING_TEST_FILES = 47
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -2202,3 +2210,96 @@ def test_the_plex_sign_in_window_has_a_page_that_closes_it() -> None:
             f"{route} stopped sending the browser's origin, so the window it opens will "
             "never close. Both Plex start routes send plexForward()."
         )
+
+
+# --- the reap-readiness tie -------------------------------------------------------------
+#
+# `reap_ready` is one fact declared in Python and re-derived in TypeScript, because "not ready"
+# is not a sentence: the Reap page and the wizard's last step each need to say what to go and
+# do. `reapReadiness.ts` said in prose that a test would fail if the server's definition changed
+# and it did not, and no such test existed -- the agreement test beside it hand-transcribes the
+# Python expression into the same file as its own assertion, so it can only prove the module
+# agrees with that transcription. Adding a conjunct to `reap_ready` left the whole frontend
+# suite green. This is rule 144's remedy: the generated-looking claim gets a test pointed at the
+# other copy BY NAME, rather than a comment asking the next author to remember.
+
+
+def _reap_ready_fields() -> set[str]:
+    """The `SetupStatus` fields the server's own `reap_ready` is built from.
+
+    Parsed, never transcribed. The expression is read off the `SetupStatus(...)` call, each name
+    that is itself a pure and/or of other names is expanded to its leaves (so `scan_ready`
+    becomes the instance checks the frontend words separately), and each leaf is mapped back to
+    the payload field it is assigned to in the same call.
+    """
+    import ast
+
+    tree = ast.parse((SRC / "api" / "setup.py").read_text(encoding="utf-8"))
+    fn = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef) and n.name == "setup_status"
+    )
+    call = next(
+        n
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "SetupStatus"
+    )
+
+    # local name -> the expression it was assigned, for the pure-boolean ones we can expand
+    assigns: dict[str, ast.expr] = {}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                assigns[target.id] = node.value
+
+    def pure_bool(expr: ast.expr) -> bool:
+        if isinstance(expr, ast.Name):
+            return True
+        if isinstance(expr, ast.BoolOp):
+            return all(pure_bool(v) for v in expr.values)
+        return False
+
+    def leaves(name: str, seen: frozenset[str]) -> set[str]:
+        expr = assigns.get(name)
+        if name in seen or expr is None or not pure_bool(expr):
+            return {name}
+        out: set[str] = set()
+        for sub in {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}:
+            out |= leaves(sub, seen | {name})
+        return out
+
+    reap_ready = next(k.value for k in call.keywords if k.arg == "reap_ready")
+    names: set[str] = set()
+    for n in {x.id for x in ast.walk(reap_ready) if isinstance(x, ast.Name)}:
+        names |= leaves(n, frozenset())
+
+    # local name -> payload field, off the same constructor call (`has_password=password_set`)
+    to_field = {k.value.id: k.arg for k in call.keywords if isinstance(k.value, ast.Name) and k.arg}
+    return {to_field.get(n, n) for n in names}
+
+
+def test_the_frontend_reap_blockers_read_the_fields_the_server_builds_reap_ready_from() -> None:
+    """A conjunct added on one side and not the other must fail here.
+
+    The failure it exists for is silent and points the reassuring way: the server gains a
+    requirement, the browser does not hear about it, and an install is told "You're all set" over
+    a run that will be refused at the button -- which is #383 arriving a second time, by the exact
+    route the first one took.
+    """
+    server = _reap_ready_fields()
+
+    body = (FRONTEND_SRC / "reapReadiness.ts").read_text(encoding="utf-8")
+    # Comments name fields while explaining them, and a prose mention is not a read.
+    code = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)
+    code = re.sub(r"//[^\n]*", "", code)
+    frontend = set(re.findall(r"\bsetup\.(\w+)", code))
+
+    assert frontend == server, (
+        "frontend/src/reapReadiness.ts and src/reaper/api/setup.py disagree about what a real "
+        f"reap needs.\n  setup.py builds reap_ready from: {sorted(server)}\n  reapReadiness.ts "
+        f"reads: {sorted(frontend)}\nEvery conjunct of reap_ready needs a sentence in "
+        "reapReadiness.ts saying what to go and do about it, or the Reap page and the wizard's "
+        "last step promise a run the server refuses."
+    )

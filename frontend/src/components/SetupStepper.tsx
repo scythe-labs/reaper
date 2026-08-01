@@ -9,7 +9,7 @@
 // shorter or longer than it is. So `SETUP_STEPS` is the declaration and everything else is
 // derived from it: adding a step cannot leave a stale total behind.
 
-import type { ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 
 /** The flow, in order. The `key` is what the wizard routes on; the `label` is what the
  *  operator reads in the progress row. */
@@ -62,6 +62,20 @@ function Stepper({ current }: { current: SetupStepKey }) {
   );
 }
 
+/** Whether the operator got to this card by pressing something, rather than by loading the
+ *  page onto it.
+ *
+ *  A context rather than a prop because every step renders its own `StepCard`, so a prop would
+ *  be the same boolean threaded through four components that have no other use for it. The
+ *  distinction is the whole point: focusing a heading on a fresh load would steal focus from a
+ *  page the operator has not read, while NOT focusing it after a press leaves them at the top
+ *  of the document with the button they pressed gone. */
+const StepMovedContext = createContext(false);
+
+export function StepMovedProvider({ moved, children }: { moved: boolean; children: ReactNode }) {
+  return <StepMovedContext.Provider value={moved}>{children}</StepMovedContext.Provider>;
+}
+
 /** One step's card: the progress row, the heading, its position in the flow, and the step's
  *  own body.
  *
@@ -79,11 +93,27 @@ export function StepCard({
   title: string;
   children: ReactNode;
 }) {
+  // Each step is a separate element, so moving between them unmounts one card and mounts the
+  // next: the button that was pressed goes with it, and focus falls to <body>. Landing focus
+  // on the new heading names the step for a screen reader and puts the keyboard back in the
+  // card, and it is done here so all four steps get it from one place (rule 72). Reading the
+  // title aloud is also why no announce() is added beside it: both would say the same words.
+  const moved = useContext(StepMovedContext);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    // Mount only, and only after a press. `scrollTo` in the wizard already put the card at the
+    // top, so focusing must not fight it for the scroll position.
+    if (moved) heading.current?.focus({ preventScroll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <section className="step-card">
       <Stepper current={step} />
       <div className="step-head">
-        <h2>{title}</h2>
+        <h2 ref={heading} tabIndex={-1}>
+          {title}
+        </h2>
         <span className="step-of">
           Step {stepNumber(step)} of {SETUP_STEPS.length}
         </span>

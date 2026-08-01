@@ -332,3 +332,45 @@ describe("the sign-in gate through a failed refetch", () => {
     expect(dashboardNav()).toBeInTheDocument();
   });
 });
+
+describe("the wizard's own last step finishing", () => {
+  // `complete` is `has_password and scan_ready and has_scanned`, and the wizard's last step is
+  // what makes `has_scanned` true. Deriving the gate live therefore unmounted the wizard in the
+  // same commit its finish panel would have rendered in -- so the screen that reports the result
+  // of setup, including "a real reap will still be refused without Plex" (#383), was the one
+  // screen setup could never show. Latched instead: once the wizard has been needed it stays
+  // until the operator leaves it.
+  it("keeps the wizard up when the first scan flips complete", async () => {
+    // Everything done but the scan, which is where the wizard opens for this install and the
+    // only state the finish panel is written for.
+    const FRESH = { ...COMPLETE_SETUP, has_scanned: false, complete: false };
+    apiMock.setupStatus.mockResolvedValue(FRESH);
+    const client = renderApp();
+
+    await waitFor(() => expect(wizardSteps()).toBeInTheDocument());
+
+    // The scan lands: the step invalidates every key, and the server now calls setup complete.
+    apiMock.setupStatus.mockResolvedValue({ ...FRESH, has_scanned: true, complete: true });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["setup"] });
+    });
+
+    expect(wizardSteps()).toBeInTheDocument();
+    expect(dashboardNav()).toBeNull();
+    // And the panel that only this state renders is finally on screen, saying the thing the
+    // whole #383 change exists to say.
+    // "You're all set" was unreachable through the app in EVERY state before the latch: an
+    // empty blocker list implies has_password and scan_ready, which with has_scanned implies
+    // complete, which is exactly what used to unmount the panel drawing it.
+    expect(await screen.findByText(/you're all set/i)).toBeInTheDocument();
+  });
+
+  // The other direction, and the reason the latch is a latch rather than "never unmount": a
+  // configured install must still go straight to the Dashboard, and a blinked read must not
+  // drag it into the wizard. Both are pinned above; this asserts the latch did not break them.
+  it("does not latch an install that never needed the wizard", async () => {
+    renderApp();
+    expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
+    expect(wizardSteps()).toBeNull();
+  });
+});

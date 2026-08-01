@@ -21,7 +21,7 @@
 // editor, Discord, the restore card -- and those are real `ModalShell` dialogs.
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, type SetupStatus } from "../api";
 import { BrandMark } from "../brand/BrandMark";
 import { Notice } from "./Notice";
@@ -29,7 +29,7 @@ import { SetupConnectStep } from "./SetupConnectStep";
 import { SetupPasswordStep } from "./SetupPasswordStep";
 import { SetupPlexStep } from "./SetupPlexStep";
 import { SetupScanStep } from "./SetupScanStep";
-import { SETUP_STEPS, type SetupStepKey } from "./SetupStepper";
+import { SETUP_STEPS, StepMovedProvider, type SetupStepKey } from "./SetupStepper";
 
 /** What each step counts as finished, read off the server's setup status.
  *
@@ -57,17 +57,28 @@ function firstOpenStep(status: SetupStatus): SetupStepKey {
 export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   const { data: setup, isError } = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
 
-  // Null until the operator moves. Derived from the server once, on the first answer, rather
-  // than on every render: after that this is their own navigation, and re-deriving would drag
-  // them forward out of a step they had gone Back to.
+  // Null until the first status lands, then seeded from it below and never re-derived: after
+  // that this is the operator's own navigation, and re-deriving would drag them forward out of
+  // a step they had gone Back to.
   const [step, setStep] = useState<SetupStepKey | null>(null);
   // The password typed on step one, so the restore door on a later step can confirm with it
   // rather than asking for it again. Never persisted; it dies with the flow.
   const [password, setPassword] = useState<string | null>(null);
 
-  const at: SetupStepKey | null = step ?? (setup ? firstOpenStep(setup) : null);
+  // Seeded from the server the first time a status lands, then never again. It used to be
+  // derived inline on every render while `step` was null, which is the hazard the comment
+  // above names: each step invalidates `["setup"]` on success, so linking Plex or saving the
+  // last service moved the operator forward with no press -- off the Plex step before its
+  // Libraries picker had ever rendered, and off Connect before they had seen the restore door.
+  if (step === null && setup) setStep(firstOpenStep(setup));
+  const at: SetupStepKey | null = step;
 
+  // A ref, not state: it is read during the render that mounts the next card, and it must not
+  // itself cause one. Set here rather than beside `setStep` above, so the seeded first step
+  // counts as arriving rather than as moving.
+  const moved = useRef(false);
   const go = (next: SetupStepKey) => {
+    moved.current = true;
     setStep(next);
     window.scrollTo({ top: 0 });
   };
@@ -110,33 +121,33 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   return (
     <main className="setup">
       <Brand />
-      {at === "password" && (
-        <SetupPasswordStep
-          onDone={(pw) => {
-            setPassword(pw);
-            goNext("password");
-          }}
-        />
-      )}
-      {at === "plex" && (
-        <SetupPlexStep setup={setup} onBack={() => go("password")} onNext={() => goNext("plex")} />
-      )}
-      {at === "connect" && (
-        <SetupConnectStep
-          setup={setup}
-          password={password}
-          onBack={() => go("plex")}
-          onNext={() => goNext("connect")}
-        />
-      )}
-      {at === "scan" && (
-        <SetupScanStep
-          setup={setup}
-          onBack={() => go("connect")}
-          onGoToPlex={() => go("plex")}
-          onDone={onSkip}
-        />
-      )}
+      <StepMovedProvider moved={moved.current}>
+        {at === "password" && (
+          <SetupPasswordStep
+            onDone={(pw) => {
+              setPassword(pw);
+              goNext("password");
+            }}
+          />
+        )}
+        {at === "plex" && <SetupPlexStep setup={setup} onNext={() => goNext("plex")} />}
+        {at === "connect" && (
+          <SetupConnectStep
+            setup={setup}
+            password={password}
+            onBack={() => go("plex")}
+            onNext={() => goNext("connect")}
+          />
+        )}
+        {at === "scan" && (
+          <SetupScanStep
+            setup={setup}
+            onBack={() => go("connect")}
+            onGoToPlex={() => go("plex")}
+            onDone={onSkip}
+          />
+        )}
+      </StepMovedProvider>
     </main>
   );
 }

@@ -30,10 +30,18 @@ export interface ReapBlocker {
 
 /** Everything standing between this install and a real run, in the order it is worth fixing.
  *
- *  Empty exactly when `setup.reap_ready` is true, which `reapReadiness.test.ts` pins against
- *  the server's own field: these four conditions are that boolean, re-derived here only so
- *  each one can carry a sentence. If the server's definition changes and this does not, that
- *  test fails rather than one screen quietly promising a run the other refuses.
+ *  Empty exactly when `setup.reap_ready` is true: these four conditions are that boolean,
+ *  re-derived here only so each one can carry a sentence.
+ *
+ *  Two tests hold that, and it takes both. `reapReadiness.test.ts` walks all 16 combinations to
+ *  pin the sentences against the payload's own `reap_ready`, which proves this module is
+ *  self-consistent and nothing more: the expected side is a hand-written copy of the Python, in
+ *  the same file as the assertion. The tie to the server is
+ *  `tests/test_repo_hygiene.py::test_the_frontend_reap_blockers_read_the_fields_the_server_builds_reap_ready_from`,
+ *  which parses `reap_ready` out of `src/reaper/api/setup.py` and fails if the fields read below
+ *  are not exactly its conjuncts. Adding one there and not here is what that catches, and it
+ *  went uncaught until it was tried: the claim that it could not was written here first
+ *  (rule 144).
  */
 export function reapBlockers(setup: SetupStatus): ReapBlocker[] {
   const blockers: ReapBlocker[] = [];

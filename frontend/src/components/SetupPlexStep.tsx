@@ -41,15 +41,7 @@ function connectionLabel(c: PlexResourceConnection): string {
  *  collide with a discovered address. */
 const MANUAL = "__manual__";
 
-export function SetupPlexStep({
-  setup,
-  onBack,
-  onNext,
-}: {
-  setup: SetupStatus;
-  onBack: () => void;
-  onNext: () => void;
-}) {
+export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: () => void }) {
   const queryClient = useQueryClient();
   const linked = setup.plex_linked;
   const [error, setError] = useState<string | null>(null);
@@ -150,10 +142,12 @@ export function SetupPlexStep({
 
       {error && <Notice tone="error">{error}</Notice>}
 
+      {/* No Back. The only step behind this one is the password, which is deliberately
+          one-way: its form sends no current password, so on an install that now has one the
+          route answers 403 "The current password didn't match" on a screen that never asked
+          for it, and each press feeds the per-IP throttle that arming, restore and sign-in all
+          read. */}
       <div className="step-actions">
-        <button className="ghost" onClick={onBack}>
-          Back
-        </button>
         <span className="spacer" />
         {/* Skipping only means something while Plex is not linked. Once it is, the button
             would offer to abandon work already done. */}

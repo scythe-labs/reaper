@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // `reapBlockers` re-derives, for the sake of a sentence, a question the server already
-// answered as `reap_ready`. Two derivations of one fact is the shape that drifts, so the whole
-// point of this file is the agreement test at the bottom: every combination of the fields both
-// sides read, driven through both, asserting they never disagree.
+// answered as `reap_ready`. Two derivations of one fact is the shape that drifts, so the
+// agreement test at the bottom drives every combination of the fields both sides read and
+// asserts they never disagree -- against the payload's `reap_ready`, which is built here in
+// this file. That makes it a self-consistency check: what ties this module to the SERVER's
+// definition is the source-reading gate in `tests/test_repo_hygiene.py`, named at the bottom.
 import { describe, expect, it } from "vitest";
 import type { SetupStatus } from "./api";
 import { reapBlockers } from "./reapReadiness";
@@ -97,10 +99,17 @@ describe("reapBlockers", () => {
    *  `api/setup.py`, both re-derived above so each conjunct can carry its own sentence.
    *
    *  Rule 144: deriving the sentences from the same declaration is not available across the
-   *  wire, so the next best thing is to make a disagreement fail loudly. If the server's
-   *  definition gains a conjunct and this file does not, an install lands on a Reap page with
-   *  a live Execute button and no notice, and on a wizard saying "You're all set" over a run
-   *  that will be refused. That is the failure this walks all 16 combinations for.
+   *  wire. If the server's definition gains a conjunct and `reapReadiness.ts` does not, an
+   *  install lands on a Reap page with a live Execute button and no notice, and on a wizard
+   *  saying "You're all set" over a run that will be refused.
+   *
+   *  **This test cannot catch that**, and used to say it could. `reap_ready` below is a hand
+   *  transcription of the Python, sitting in the same file as the assertion, so all 16
+   *  combinations prove is that the sentences agree with that transcription. The conjunct gets
+   *  caught by
+   *  `tests/test_repo_hygiene.py::test_the_frontend_reap_blockers_read_the_fields_the_server_builds_reap_ready_from`,
+   *  which parses `src/reaper/api/setup.py`. Both are needed: that one checks the field SET,
+   *  this one checks each field turns into the right sentence.
    */
   it("is empty exactly when the server says the install is reap-ready", () => {
     const bits = [false, true];

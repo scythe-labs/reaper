@@ -33,6 +33,9 @@ const { apiMock } = vi.hoisted(() => ({
     // The Discord row on this step reads it. Named though nothing below asserts on it, because
     // a mock that omits a read the tree performs renders its failed-read branch (rule 135).
     notifications: vi.fn(),
+    // The pre-scan branch states the safety regime through the shared `SafetyBanner`, which
+    // reads this. Only that branch does, which is why it arrived with the cases below.
+    safety: vi.fn(),
   },
 }));
 vi.mock("../api", async (importOriginal) => ({
@@ -59,7 +62,7 @@ const DONE: SetupStatus = {
 /** The same install with Plex skipped: it scans, and it cannot reap. */
 const DONE_NO_PLEX: SetupStatus = { ...DONE, plex_linked: false, reap_ready: false };
 
-function renderStep(setup: SetupStatus, onGoToPlex = vi.fn()) {
+function renderStep(setup: SetupStatus, onGoToPlex = vi.fn(), onBack = vi.fn()) {
   render(
     <QueryClientProvider client={testQueryClient()}>
       {/* The app mounts this above every route, and `announce()` returns early with no region
@@ -69,17 +72,22 @@ function renderStep(setup: SetupStatus, onGoToPlex = vi.fn()) {
           is put back inside one rather than audited on a page with none. That the wizard
           really draws it is `SetupWizard.test.tsx`'s to prove, and it does. */}
       <main className="setup">
-        <SetupScanStep setup={setup} onBack={vi.fn()} onGoToPlex={onGoToPlex} onDone={vi.fn()} />
+        <SetupScanStep setup={setup} onBack={onBack} onGoToPlex={onGoToPlex} onDone={vi.fn()} />
       </main>
     </QueryClientProvider>,
   );
-  return { person: userEvent.setup(), onGoToPlex };
+  return { person: userEvent.setup(), onGoToPlex, onBack };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
   apiMock.notifications.mockResolvedValue({ has_webhook: false });
+  apiMock.safety.mockResolvedValue({
+    destructive_enabled: false,
+    has_password: true,
+    note: null,
+  });
 });
 
 describe("the finish panel", () => {
@@ -124,5 +132,55 @@ describe("the finish panel", () => {
     // This step replaces the whole app shell, like every other, so it answers for its own
     // landmarks; `pageLevel` for the same reason the wizard's own audits use it.
     await expectNoA11yViolations(document.body, { pageLevel: true });
+  });
+});
+
+describe("before anything is connected", () => {
+  /** Connect skipped with nothing wired: the step is reachable, the scan is not. */
+  const NOTHING: SetupStatus = {
+    ...DONE,
+    instances: {},
+    has_radarr: false,
+    has_tautulli: false,
+    has_scanned: false,
+    scan_ready: false,
+    reap_ready: false,
+    complete: false,
+  };
+
+  // "Skip for now" on the Connect step reaches here with nothing connected, and `POST
+  // /api/scan/start` answers 200 whatever is wired: the refusal is raised inside the detached
+  // task, so the panel had already turned into a spinner before the operator learned the scan
+  // could never run. The message it lands on sends them to Settings, which is behind the wizard
+  // they have not left; the step that fixes it is one press back.
+  it("does not offer a scan the server must refuse", async () => {
+    renderStep(NOTHING);
+
+    const button = await screen.findByRole("button", { name: /run first scan/i });
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/connect tautulli and one of radarr or sonarr/i)).toBeInTheDocument();
+    expect(apiMock.startScan).not.toHaveBeenCalled();
+  });
+
+  it("carries the way back to the step that fixes it", async () => {
+    const { person, onBack } = renderStep(NOTHING);
+
+    await person.click(await screen.findByRole("button", { name: /connect services/i }));
+    expect(onBack).toHaveBeenCalled();
+  });
+
+  it("still offers the scan once the services are there", async () => {
+    renderStep({
+      ...NOTHING,
+      instances: { radarr: 1, tautulli: 1 },
+      has_radarr: true,
+      has_tautulli: true,
+      scan_ready: true,
+    });
+
+    expect(await screen.findByRole("button", { name: /run first scan/i })).toBeEnabled();
+    expect(
+      screen.queryByText(/connect tautulli and one of radarr or sonarr/i),
+    ).not.toBeInTheDocument();
   });
 });

@@ -36,6 +36,7 @@ import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useSafety } from "./useSafety";
 import { useScanSettled } from "./useScanSettled";
 import { Notice } from "./components/Notice";
+import { SafetyBanner } from "./components/SafetyBanner";
 import { ScanLine } from "./components/ScanLine";
 
 // The review queue is the landing view and stays in the first chunk. Every other route is
@@ -130,76 +131,18 @@ export function SectionNav({ view, onChange }: { view: View; onChange: (next: Vi
   );
 }
 
-/** The safety state, stated permanently and without euphemism.
+/** The app-wide reap bar: shown on every screen of the app while a reap runs, so its count and
+ *  its Stop are reachable after you close or navigate away from the reap sheet. A reap runs
+ *  detached from the request that started it, so this bar (and Stop) survive navigating away
+ *  and a tab reload -- it re-attaches by polling the shared status. Not a safety surface (the
+ *  always-on one is SafetyBanner), so it shows nothing when idle. Stop is graceful: the run
+ *  halts after the item in flight and still tidies Plex, and deletion stays armed.
  *
- *  While destructive actions are disabled, Reaper *structurally cannot* delete: the
- *  GuardedTransport refuses every mutating HTTP request, so this is a fact about the
- *  process rather than a promise about the UI. The banner says which regime you are in,
- *  always, because "can this thing delete my library right now?" should never require
- *  reading a settings page to answer. */
-function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
-  // The same authenticated query the deletion toggle invalidates, so arming or disarming
-  // updates this banner in the same render pass -- and polled, so arming it somewhere else
-  // reaches this tab too (useSafety says why). (/api/health is a bare liveness probe now;
-  // it deliberately says nothing about the armed state.)
-  const { data, isLoading, isError } = useSafety();
-
-  // On the very first fetch we genuinely know nothing yet -- stay quiet rather than flash a
-  // state we might immediately contradict.
-  if (isLoading) return null;
-
-  // The banner's whole promise is that the regime is stated *always*. If the safety state
-  // can't be read and React Query has no last-known value to show, we must not just
-  // disappear -- an absent banner reads as "nothing to worry about". Say the state is
-  // unknown, in the amber "we could not look" tone, so it never reads as safe.
-  if (isError || !data) {
-    return (
-      <div className="banner banner-unknown">
-        <span className="banner-dot" aria-hidden="true" />
-        <span>
-          <strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm whether
-          deletion is on. Until it can, treat this as armed and{" "}
-          <button className="link" onClick={onGoToDeletion}>
-            check Policy → Deletion
-          </button>
-          .
-        </span>
-      </div>
-    );
-  }
-
-  if (!data.destructive_enabled) {
-    return (
-      <div className="banner banner-safe">
-        <span className="banner-dot" aria-hidden="true" />
-        <span>
-          <strong>Read-only.</strong> Reaper can look but can't remove anything.{" "}
-          <button className="link" onClick={onGoToDeletion}>
-            Turn deletion on in Policy → Deletion
-          </button>{" "}
-          when you're ready.
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="banner banner-armed">
-      <span className="banner-dot" aria-hidden="true" />
-      <span>
-        <strong>Deletion is on.</strong> Reaper can remove media you approve, through Sonarr and
-        Radarr.
-      </span>
-    </div>
-  );
-}
-
-/** The app-wide reap bar: shown on every screen while a reap runs, so its count and its Stop
- *  are reachable after you close or navigate away from the reap sheet. A reap runs detached
- *  from the request that started it, so this bar (and Stop) survive navigating away and a tab
- *  reload -- it re-attaches by polling the shared status. Not a safety surface (the always-on
- *  one is SafetyBanner), so it shows nothing when idle. Stop is graceful: the run halts after
- *  the item in flight and still tidies Plex, and deletion stays armed.
+ *  "Every screen" means every screen of the app, and the setup wizard is not one: `Authed`
+ *  returns it *instead of* `Dashboard`, so nothing below here mounts while it is up. That is
+ *  reachable during a run -- removing the Tautulli or the last *arr invalidates `["setup"]`,
+ *  `scan_ready` goes false, and the wizard takes the page with no reload -- and it lands on the
+ *  Connect step, which has Back and Skip, so Stop is two presses away rather than lost.
  *
  *  It mounts, runs and reaches its end -- "Reap failed." included -- and used to do all of it
  *  in silence, which on most screens made it the only sign of a deletion and the only Stop
@@ -230,7 +173,7 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
 
   // A finished reap invalidates half the app -- the queue lists titles that are gone, the
   // ledger promises to remove them, the snapshot's reclaimable figure counts them. That
-  // refresh belongs HERE, on the one component a reap cannot unmount: the confirmation sheet
+  // refresh belongs HERE, on the component a reap does not unmount: the confirmation sheet
   // is explicitly designed to be closed mid-run, and everything it invalidated went with it.
   // Fired once, on the running-to-ended edge of a run this mount actually saw running, so a
   // page opened after the fact does not re-invalidate what it just fetched.
@@ -247,9 +190,9 @@ export function ReapBar({ onView }: { onView: (runId: number) => void }) {
     // Say how it ended. The same edge, for the same reason: a run that finished before this tab
     // opened must not be announced as news. The sentence carries the outcome first and the
     // figures after, matching the bar's own text below (rule 144), and it is said HERE rather
-    // than in the reap sheet because this bar cannot be unmounted out of the way -- the sheet is
-    // meant to be closed mid-run, and an operator who closed it would otherwise hear nothing at
-    // all about a deletion finishing.
+    // than in the reap sheet because closing the sheet does not take this bar with it -- the
+    // sheet is meant to be closed mid-run, and an operator who closed it would otherwise hear
+    // nothing at all about a deletion finishing.
     announce(
       status.phase === "error"
         ? `Reap failed. ${souls(status.deleted_items)} removed before it stopped.`
@@ -1086,6 +1029,14 @@ function Dashboard({ user }: { user: AuthUser }) {
  *  scanned once; after that (or if the owner skips) it is the dashboard. */
 function Authed({ user }: { user: AuthUser }) {
   const [skipped, setSkipped] = useState(false);
+  // Latched, because the wizard's own last step is what makes `complete` true: finishing the
+  // first scan flips `has_scanned`, and deriving this gate live then unmounted the wizard in
+  // the same commit that its finish panel would have rendered in. That panel is where an
+  // install that skipped Plex is told a real reap would still be refused (#383), so the screen
+  // reporting the result of setup was the one screen setup could never show. Once the wizard
+  // has been needed it stays until the operator leaves it, and every step past the password
+  // carries a way out.
+  const [wasNeeded, setWasNeeded] = useState(false);
   const {
     data: setup,
     isLoading,
@@ -1135,7 +1086,11 @@ function Authed({ user }: { user: AuthUser }) {
   // including Settings, whose unsaved-edits guard then never runs, because the unmount comes from
   // above the panel holding the draft (rule 146).
   const needsSetup = setup === undefined ? isError : !setup.complete;
-  if (needsSetup && !skipped) {
+  // Adjusting state during render, which React allows for exactly this: it re-renders before
+  // committing, so the wizard never flashes out and back. A configured install never sets the
+  // latch, so a blinked read still holds the Dashboard, which is the split above.
+  if (needsSetup && !wasNeeded) setWasNeeded(true);
+  if ((needsSetup || wasNeeded) && !skipped) {
     return (
       <Suspense fallback={<RouteLoading />}>
         <SetupWizard onSkip={() => setSkipped(true)} />

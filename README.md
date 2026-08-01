@@ -105,7 +105,7 @@ the template dropdown.
 2. **Create a local admin as well, straight away:**
 
    ```bash
-   docker compose exec reaper reaper-admin create-admin --username <name>
+   docker compose exec reaper reaper-admin create-admin --username admin
    ```
 
    Reaper logs a warning on every start until one exists. Plex sign-in is additive

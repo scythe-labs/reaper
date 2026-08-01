@@ -441,7 +441,7 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
             raise HTTPException(
                 409,
                 "The recovery link was valid, but there is no admin account to sign in as. "
-                "Create one with: reaper-admin create-admin --username <name>",
+                "Create one with: reaper-admin create-admin --username admin",
             )
 
         token_str = await open_session(

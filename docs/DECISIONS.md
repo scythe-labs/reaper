@@ -440,9 +440,12 @@ correct and unchanged; what moved is when it is said.
 
 The sentences live in `frontend/src/reapReadiness.ts` rather than at each site, because the fact is
 now stated on the last setup step and above Execute on the Reap page, and rule 144 is exactly about
-one claim written twice. `reapReadiness.test.ts` walks all 16 combinations of the fields both sides
-read and asserts the list is empty exactly when the server says reap-ready, so a definition that
-gains a conjunct on one side fails rather than promising a run the other refuses.
+one claim written twice. Two tests hold it, and it takes both: `reapReadiness.test.ts` walks all 16
+combinations and asserts the list is empty exactly when the payload says reap-ready, which is
+self-consistency, and `test_repo_hygiene.py` parses `reap_ready` out of `api/setup.py` and asserts
+the frontend reads exactly its conjuncts, which is the tie across the wire. The first was described
+as doing both for a while, and was not: the expected side is a hand transcription of the Python in
+the same file as the assertion, so a conjunct added on the server left it green.
 
 ## Kill switch
 

@@ -1271,8 +1271,12 @@ export function ServicesPanel() {
   return (
     <div className="panel panel-wide">
       <h2>Services</h2>
+      {/* "It only ever reads" was false about Radarr and Sonarr, which are how a reap removes
+          anything: the executor unmonitors, deletes files and adds exclusions through them.
+          Bounded to the scan, which is what the claim was reaching for. Its twin is the
+          wizard's Connect step (rule 72). */}
       <p className="blurb">
-        The apps Reaper reads from. It only ever reads. Nothing here can delete a file.
+        The apps Reaper reads from. Scanning only reads. Nothing here can delete a file.
       </p>
       {/* The one Settings panel #140 did not reach. A raw exception string over the full service
           list broke rule 21 on its own, and said the read had failed above the connections it

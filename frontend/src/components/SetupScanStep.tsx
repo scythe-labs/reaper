@@ -27,6 +27,7 @@ import { api, type SetupStatus } from "../api";
 import { reapBlockers, type ReapBlocker } from "../reapReadiness";
 import { DiscordModal } from "./DiscordModal";
 import { Notice } from "./Notice";
+import { SafetyBanner } from "./SafetyBanner";
 import { phaseLabel } from "./ScanBar";
 import { ScanLine } from "./ScanLine";
 import { StepCard } from "./SetupStepper";
@@ -204,12 +205,29 @@ export function SetupScanStep({
               Reaper reads your library and shows what it would remove, and why. You approve every
               deletion by hand.
             </p>
-            {/* The one thing a new operator most needs to believe on this screen, in the
-                shared banner the rest of the app states safety in (rule 18). */}
-            <div className="banner banner-safe">
-              <span className="banner-dot" aria-hidden="true" />
-              Deletion is off. It stays off until you turn it on with the password you set.
-            </div>
+            {/* The one thing a new operator most needs to believe on this screen, so it is
+                read rather than asserted. This was a hardcoded sentence in the green tone,
+                saying deletion was off and consulting nothing: a deploy carrying
+                `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true` boots armed with `complete` still
+                false, which routes here, and the wizard returns above `Dashboard` so this is
+                the only place the regime is stated at all. Wrong in the reassuring direction,
+                which is the direction rule 144 says a rounded claim fails in. The shared
+                banner has the three honest branches, amber unknown included (rule 18). */}
+            <SafetyBanner />
+            {/* The same courtesy the finish panel pays `reap_ready`, paid to `scan_ready` on
+                the button that consumes it (rule 72). Without it, skipping Connect with
+                nothing wired left "Run first scan" live: the start route answers 200, the
+                panel turns into a spinner, and the refusal arrives from inside the detached
+                task pointing at Settings, which is behind the wizard the operator has not
+                left. The fix rides inside the notice (rule 42), and it is one step back. */}
+            {!setup.scan_ready && (
+              <Notice tone="warn" standing>
+                Connect Tautulli and one of Radarr or Sonarr before your first scan.{" "}
+                <button className="link" onClick={onBack}>
+                  Connect services
+                </button>
+              </Notice>
+            )}
             <div className="step-actions">
               <button className="ghost" onClick={onBack}>
                 Back
@@ -224,7 +242,7 @@ export function SetupScanStep({
               <button
                 className="primary btn-lg"
                 onClick={() => start.mutate()}
-                disabled={start.isPending}
+                disabled={start.isPending || !setup.scan_ready}
               >
                 {start.isPending ? "Starting…" : "Run first scan"}
               </button>

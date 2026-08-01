@@ -31,6 +31,10 @@ const { apiMock } = vi.hoisted(() => ({
     // a mock that omits a read the tree performs hands it `undefined`, and rule 135 fails the
     // run rather than letting the tree render its failed-read branch unnoticed.
     notifications: vi.fn(),
+    // The scan step states the safety regime through the shared `SafetyBanner`, which reads
+    // this. It used to hand-write "Deletion is off" and consult nothing, which is how a host
+    // armed by env var was told the opposite of the truth on the only screen saying anything.
+    safety: vi.fn(),
   },
 }));
 vi.mock("../api", () => ({ api: apiMock }));
@@ -81,6 +85,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.notifications.mockResolvedValue({ has_webhook: false });
   apiMock.scanStatus.mockResolvedValue(IDLE);
+  apiMock.safety.mockResolvedValue({
+    destructive_enabled: false,
+    has_password: true,
+    note: null,
+  });
 });
 
 // This screen replaces the whole app shell, so its landmarks are the only ones on the page --
@@ -273,5 +282,88 @@ describe("the first scan finishing", () => {
     renderWizard();
     await screen.findByText(/you're all set/i);
     expect(announceSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("what the wizard says about deletion", () => {
+  // The step used to state this itself, in the green "read-only" tone, reading no query at all:
+  // `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true` boots a host armed with `complete` still false, so
+  // the wizard is what it lands on, and `SafetyBanner` renders inside `Dashboard` and therefore
+  // nowhere in setup. The one sentence about deletion on screen was wrong, in the reassuring
+  // direction. Both regimes are driven, because a claim narrowed to nowhere fails the same way.
+  it("says deletion is on when the host is armed", async () => {
+    apiMock.setupStatus.mockResolvedValue(AT_SCAN);
+    apiMock.safety.mockResolvedValue({
+      destructive_enabled: true,
+      has_password: true,
+      note: null,
+    });
+    renderWizard();
+
+    expect(await screen.findByText(/deletion is on/i)).toBeTruthy();
+    expect(screen.queryByText(/can look but can't remove anything/i)).toBeNull();
+  });
+
+  it("says read-only when it is not", async () => {
+    apiMock.setupStatus.mockResolvedValue(AT_SCAN);
+    renderWizard();
+
+    expect(await screen.findByText(/can look but can't remove anything/i)).toBeTruthy();
+    expect(screen.queryByText(/deletion is on/i)).toBeNull();
+  });
+
+  it("says the state is unknown rather than safe when it cannot be read", async () => {
+    apiMock.setupStatus.mockResolvedValue(AT_SCAN);
+    apiMock.safety.mockRejectedValue(new Error("nope"));
+    renderWizard();
+
+    expect(await screen.findByText(/safety state unknown/i)).toBeTruthy();
+    expect(screen.queryByText(/can look but can't remove anything/i)).toBeNull();
+  });
+});
+
+describe("a status that changes under the operator", () => {
+  // Every step invalidates ["setup"] when its own work lands, and the step used to be re-derived
+  // from the answer on every render while nothing had been pressed. So linking Plex moved them
+  // off the Plex step before its Libraries picker had rendered, and saving the last service
+  // moved them off Connect before they had seen the restore door. Both are one line apart.
+  it("does not move the operator forward when the server's answer changes", async () => {
+    const client = testQueryClient();
+    const AT_CONNECT = { ...AT_SCAN, scan_ready: false, reap_ready: false };
+    apiMock.setupStatus.mockResolvedValue(AT_CONNECT);
+    render(
+      <QueryClientProvider client={client}>
+        <SetupWizard onSkip={() => {}} />
+      </QueryClientProvider>,
+    );
+    // The Connect step is stubbed in this file, so "still on Connect" is read as "the scan step
+    // has not taken the screen" -- which is exactly the jump being pinned against.
+    await screen.findByRole("list", { name: /setup steps/i }).catch(() => null);
+    expect(screen.queryByText(/run your first scan/i)).toBeNull();
+
+    apiMock.setupStatus.mockResolvedValue({ ...AT_CONNECT, scan_ready: true, reap_ready: true });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["setup"] });
+    });
+
+    expect(screen.queryByText(/run your first scan/i)).toBeNull();
+  });
+});
+
+describe("moving between steps", () => {
+  // Each step is its own element, so a move unmounts one card and mounts the next -- and the
+  // button that was pressed goes with it, dropping focus to <body>. Nothing announced the new
+  // step either, so a screen reader was left at the top of the document with no statement of
+  // where it now was. The heading takes focus instead, which names the step as it lands.
+  // The move itself is `StepCard`'s, and `SetupStepper.test.tsx` drives it: the steps either
+  // side of a move are stubbed in this file, so a heading landing after one is not observable
+  // here. What IS this file's to prove is the other half -- arriving is not moving. A fresh load must not steal focus from a page the
+  // operator has not read yet, which is why the card asks whether they pressed anything.
+  it("leaves focus alone on the step the wizard opens on", async () => {
+    apiMock.setupStatus.mockResolvedValue({ ...AT_SCAN, has_scanned: false });
+    renderWizard();
+
+    await screen.findByRole("button", { name: /run first scan/i });
+    expect(document.activeElement).toBe(document.body);
   });
 });
