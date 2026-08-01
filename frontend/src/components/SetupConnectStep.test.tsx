@@ -30,6 +30,7 @@ const { apiMock } = vi.hoisted(() => ({
     // Sent by the flow's own unmount rather than by anything an operator clicks, so nothing
     // below names it and it would still be missing without this line (rule 135).
     restoreCancel: vi.fn(),
+    deleteInstance: vi.fn(),
   },
 }));
 vi.mock("../api", async (importOriginal) => ({
@@ -187,5 +188,83 @@ describe("the restore door on the Connect step", () => {
     expect(await screen.findByText(/a restore is ready/i)).toBeInTheDocument();
     expect(document.querySelector('input[type="file"]')).toBeNull();
     expect(screen.getByRole("button", { name: /cancel restore/i })).toBeInTheDocument();
+  });
+});
+
+describe("removing a connection from the Connect step", () => {
+  // An instance added by mistake -- a typo'd address, a second Radarr that turned out to be the
+  // same server -- had no way out of the wizard: a chip only ever opened the editor, and the
+  // editor only ever saved. The operator had to finish setup and go find Settings.
+  const RADARR = {
+    id: 7,
+    kind: "radarr",
+    name: "HD",
+    base_url: "http://10.0.0.5:7878",
+    external_url: null,
+    enabled: true,
+    verify_tls: true,
+    add_import_exclusion: false,
+    plex_library_map: {},
+    service_instance_map: {},
+    has_key: true,
+    detected_version: null,
+    last_ok_at: null,
+    last_error: null,
+  };
+
+  it("asks before it forgets one, and names which one it is asking about", async () => {
+    // Never a one-press delete, and never a native confirm(): the same two-step the services
+    // panel uses for this act. Both buttons carry the instance, because by their visible text
+    // alone a row of chips is a row of identical "Remove"s (#192's shape).
+    apiMock.instances.mockResolvedValue([RADARR]);
+    const person = renderStep("pw");
+    await person.click(await screen.findByRole("button", { name: "Remove HD" }));
+
+    expect(screen.getByRole("button", { name: "Confirm remove HD" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel, keep HD" })).toBeInTheDocument();
+    expect(apiMock.deleteInstance).not.toHaveBeenCalled();
+  });
+
+  it("keeps the connection when the confirm is declined", async () => {
+    apiMock.instances.mockResolvedValue([RADARR]);
+    const person = renderStep("pw");
+    await person.click(await screen.findByRole("button", { name: "Remove HD" }));
+    await person.click(screen.getByRole("button", { name: "Cancel, keep HD" }));
+
+    expect(apiMock.deleteInstance).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Edit HD" })).toBeInTheDocument();
+  });
+
+  it("removes it on confirm, and says so out loud", async () => {
+    // The chip vanishing IS the whole success signal, and an absence cannot be perceived by
+    // ear -- the asymmetry #192 was about, reached here by a new control.
+    apiMock.instances.mockResolvedValue([RADARR]);
+    apiMock.deleteInstance.mockResolvedValue({ removed: true });
+    const person = renderStep("pw");
+    await person.click(await screen.findByRole("button", { name: "Remove HD" }));
+    await person.click(screen.getByRole("button", { name: "Confirm remove HD" }));
+
+    await waitFor(() => expect(apiMock.deleteInstance).toHaveBeenCalledWith(7));
+    expect(await screen.findByText("HD removed.")).toBeInTheDocument();
+  });
+
+  it("shows a refused remove rather than leaving the chip there saying nothing", async () => {
+    // Every async onClick is a mutation with a rendered failure (rule 17/36). Silence here
+    // reads as "it worked and came back".
+    apiMock.instances.mockResolvedValue([RADARR]);
+    apiMock.deleteInstance.mockRejectedValue(new Error("it is in use by a running scan"));
+    const person = renderStep("pw");
+    await person.click(await screen.findByRole("button", { name: "Remove HD" }));
+    await person.click(screen.getByRole("button", { name: "Confirm remove HD" }));
+
+    expect(await screen.findByText(/couldn't remove that connection/i)).toBeInTheDocument();
+    expect(screen.getByText(/in use by a running scan/)).toBeInTheDocument();
+  });
+
+  it("has no accessibility violations while a confirm is open", async () => {
+    apiMock.instances.mockResolvedValue([RADARR]);
+    const person = renderStep("pw");
+    await person.click(await screen.findByRole("button", { name: "Remove HD" }));
+    await expectNoA11yViolations();
   });
 });

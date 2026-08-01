@@ -15,9 +15,17 @@
 // not whole series), and the help text says so rather than pretending otherwise.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useState, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import { announce } from "../announce";
-import { api, type Instance, type InstanceTest, type SeerrService } from "../api";
+import {
+  api,
+  type Instance,
+  type InstanceTest,
+  type TestVerdict,
+  type RootFolder,
+  type SeerrService,
+} from "../api";
+import { usePlexLibraries } from "../usePlexLibraries";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
@@ -85,7 +93,7 @@ export function serviceKindLabel(kind: SeerrService["kind"]): string {
  *
  *  The one deliberate difference from the badge: the version is spoken as "version 4.0.1" where
  *  the badge shows "(v4.0.1)". A reader voices a bare "v" as a letter. */
-export function testSentence(result: InstanceTest): string {
+export function testSentence(result: TestVerdict): string {
   return `${testLead(result.ok)}: ${result.detail}${
     result.version ? ` (version ${result.version})` : ""
   }`;
@@ -97,7 +105,7 @@ function testLead(ok: boolean): string {
 }
 
 /** A small inline pill reporting the result of a connection test. */
-export function TestBadge({ result }: { result: InstanceTest | null }) {
+export function TestBadge({ result }: { result: TestVerdict | null }) {
   if (!result) return null;
   return (
     <span className={`test-badge ${result.ok ? "ok" : "bad"}`}>
@@ -190,15 +198,20 @@ export function ServiceModal({
   kind,
   instance,
   onClose,
-  savePendingRef,
+  blockCloseRef,
   defaultName,
 }: {
   kind: string;
   instance: Instance | null;
   onClose: () => void;
-  // Set by ServicesPanel so its Back guard can read the same canClose the scrim/Escape/✕ use,
-  // exactly as the schedule editor does (B-11, B-19).
-  savePendingRef?: RefObject<boolean>;
+  /** Set by ServicesPanel so its Back guard reads the SAME predicate the scrim, Escape and the
+   *  ✕ do (rule 80). It mirrors the whole of `canClose`, inverted, not just the save: it began
+   *  as a save-pending mirror, and the moment a second reason to stay open arrived -- a folder
+   *  map read but never made -- a ref that still meant "saving" would have let browser Back
+   *  walk straight through the new guard while every other dismissal honored it. A back-layer
+   *  close that bypasses a declared guard is exactly what that rule is about, so the name says
+   *  what it holds rather than which of the reasons happened to come first. */
+  blockCloseRef?: RefObject<boolean>;
   /** A name to start the box with, rather than only suggest in its placeholder. The setup
    *  wizard passes one because `ready` below requires a non-empty name, so a placeholder alone
    *  leaves a required box empty and the save off on the first screen a new operator meets --
@@ -230,7 +243,14 @@ export function ServiceModal({
   // screen vouching for an address that had never been tried (rule 85, #178). Clearing it from
   // each field's setter would be one more thing to remember every time a field joins `baseUrl()`;
   // comparing against what was tested cannot be forgotten.
-  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
+  const [test, setTest] = useState<{
+    result: InstanceTest;
+    of: string;
+    /** Whether this came from the pre-save probe, which is the only call that reads the folder
+     *  and service lists. A re-test of a saved instance answers the verdict with both lists
+     *  empty, and an empty list that was never read must not be mistaken for one that was. */
+    carriesMapping: boolean;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Kept apart from `error` above, which is the form's shared slot for a failed save and a
   // failed connection test. One flag rather than a message, because there is exactly one thing
@@ -246,35 +266,72 @@ export function ServiceModal({
   // Only Sonarr and Radarr delete, so only they carry the re-download switch.
   const isArr = kind === "radarr" || kind === "sonarr";
 
+  // What the connection was when this modal opened. Compared against `testedWith()` to tell a
+  // form that has been pointed somewhere new from one that is merely being renamed, which is
+  // what decides whether a fresh test is demanded before Save (see `testRequired` below).
+  /** The part of the connection a re-test is demanded for: the address and the key.
+   *
+   *  Narrower than `testedWith()` on purpose. That is the STALENESS key and rightly includes the
+   *  certificate setting, since a pass computed with the check on does not vouch for it off. But
+   *  demanding a fresh test for that switch also demanded a KEY -- the edit form's box is blank
+   *  by design -- so flipping "Check the server's certificate" told the operator they had
+   *  changed the address and blocked Save until they retyped a credential they had already
+   *  stored. Turning the check off can only ever make a connection easier to make, so it is
+   *  saved on its own terms. */
+  const reachedAt = () => [kind, baseUrl(), apiKey].join(" ");
+  const openedWith = useRef(reachedAt());
+  const connectionEdited = reachedAt() !== openedWith.current;
+
+  // The result currently vouching for what is on screen, or null. Everything downstream keys
+  // off this rather than off `test` directly: a held result whose `of` no longer matches is a
+  // result for an address that is no longer typed, and must vouch for nothing.
+  const passed = test !== null && test.of === testedWith() && test.result.ok ? test : null;
+  /** The folder / service lists this result actually read, or null when it read none.
+   *
+   *  `carriesMapping` is the whole of it: only the pre-save probe answers those lists, and a
+   *  re-test of a SAVED instance answers the verdict alone with both lists empty. Reading
+   *  `result.root_folders` unconditionally would let that empty pair pose as "this instance has
+   *  no folders" and take the grid off the screen -- and then, at save, prune the stored map to
+   *  nothing. `map_error` is the same hazard from the other side: the probe RAN and failed, so
+   *  its empty list is a read that did not land, never an instance with nothing to map. Both
+   *  collapse to null here, once, rather than being re-derived at each of the five call sites. */
+  const probed = passed?.carriesMapping && !passed.result.map_error ? passed.result : null;
+
   // The HD/4K library map: which Plex library each of this instance's root folders lands in.
-  // Only for a saved *arr, whose folders we can read. `suggestedRoots` marks the rows still
-  // holding an auto-suggested value the operator has not yet confirmed by picking.
+  // `suggestedRoots` marks the rows still holding an auto-suggested value the operator has not
+  // yet confirmed by picking.
   const [libMap, setLibMap] = useState<Record<string, string>>(instance?.plex_library_map ?? {});
   const [suggestedRoots, setSuggestedRoots] = useState<Set<string>>(new Set());
-  const mapEditable = editing && isArr;
   const libKind = kind === "sonarr" ? "show" : "movie";
 
   const rootFolders = useQuery({
     queryKey: ["instance-root-folders", instance?.id],
     queryFn: () => api.instanceRootFolders(instance!.id),
-    enabled: mapEditable,
+    enabled: editing && isArr,
   });
-  const plexLibraries = useQuery({
-    // The exact key the Plex panel refreshes after a sync (`PlexPanel`). Cached under a
-    // second spelling, this list went on offering libraries that had just been removed and
-    // hiding ones that had just been added, until the page was reloaded.
-    queryKey: ["plex-libraries"],
-    queryFn: api.plexLibraries,
-    enabled: mapEditable,
-  });
+  // Through the shared hook, which syncs a list that has never been synced. Read as a plain
+  // query it answered `[]` on a fresh install -- so every picker below offered nothing while
+  // the "suggested" tags beside them, which come from a LIVE Plex read on the server, named
+  // libraries that plainly existed. The pickers and the suggestions now read one list (#384).
+  const { libraries: plexLibraries, sync: syncLibraries } = usePlexLibraries({ enabled: isArr });
   const libOptions = (plexLibraries.data ?? []).filter((l) => l.kind === libKind);
+
+  /** The root folders on screen, or null when none have been read.
+   *
+   *  Two sources, freshest first: a passing test carries the folders for the address that was
+   *  just proved, and a saved instance can be asked by id. The test wins because it describes
+   *  the address currently in the boxes, where the by-id read describes the address as STORED
+   *  -- point a saved Radarr at a different server and the saved list is about the old one.
+   *  Neither is allocated here, so this is a stable identity the prefill effect can depend on
+   *  (rule 19). */
+  const folders: RootFolder[] | null = probed ? probed.root_folders : (rootFolders.data ?? null);
 
   // Prefill each unmapped folder with its suggested library, marked "suggested" until the
   // operator confirms it. A folder already in the stored map is left as saved, never
-  // overwritten by a suggestion, and never marked. Keyed on the folder list's identity.
+  // overwritten by a suggestion, and never marked. Keyed on the folder list's identity, so a
+  // fresh test landing a new list re-suggests against it.
   const savedMap = instance?.plex_library_map ?? {};
   useEffect(() => {
-    const folders = rootFolders.data;
     if (!folders) return;
     setLibMap((prev) => {
       const next = { ...prev };
@@ -292,7 +349,7 @@ export function ServiceModal({
     });
     // savedMap is derived from the immutable `instance` prop, so the folder data drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rootFolders.data]);
+  }, [folders]);
 
   const setFolderLibrary = (path: string, library: string) => {
     setLibMap((m) => ({ ...m, [path]: library }));
@@ -311,18 +368,23 @@ export function ServiceModal({
     instance?.service_instance_map ?? {},
   );
   const [suggestedServices, setSuggestedServices] = useState<Set<string>>(new Set());
-  const seerrMapEditable = editing && kind === "seerr";
+  const isSeerr = kind === "seerr";
 
   const seerrServices = useQuery({
     queryKey: ["instance-seerr-services", instance?.id],
     queryFn: () => api.instanceSeerrServices(instance!.id),
-    enabled: seerrMapEditable,
+    enabled: editing && isSeerr,
   });
   const arrInstances = useQuery({
     queryKey: ["instances"],
     queryFn: api.instances,
-    enabled: seerrMapEditable,
+    enabled: isSeerr,
   });
+  /** The portal's services on screen, from the same two sources as `folders` above and for
+   *  the same reason, freshest first (rule 72). */
+  const services: SeerrService[] | null = probed
+    ? probed.seerr_services
+    : (seerrServices.data ?? null);
   const instanceOptions = (svcKind: "sonarr" | "radarr") =>
     (arrInstances.data ?? []).filter((i) => i.kind === svcKind);
   // Seerr numbers Sonarr and Radarr services in SEPARATE lists (both from 0), so the map key
@@ -340,7 +402,6 @@ export function ServiceModal({
   // overwritten by a suggestion, and never marked. Keyed on the service list's identity.
   const savedServiceMap = instance?.service_instance_map ?? {};
   useEffect(() => {
-    const services = seerrServices.data;
     if (!services) return;
     setServiceMap((prev) => {
       const next = { ...prev };
@@ -360,7 +421,7 @@ export function ServiceModal({
     });
     // savedServiceMap is derived from the immutable `instance` prop; the service list drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seerrServices.data]);
+  }, [services]);
 
   const setServiceInstance = (key: string, instanceId: string) => {
     setServiceMap((m) => {
@@ -398,20 +459,38 @@ export function ServiceModal({
     void queryClient.invalidateQueries({ queryKey: ["setup"] });
   };
 
+  /** Whether this press tests the STORED instance rather than what is in the boxes.
+   *
+   *  A saved instance with an untouched address and a blank key ("leave blank to keep the
+   *  current key") has nothing the pre-save probe could be sent: it would go out with an empty
+   *  key and come back "refused that key". The by-id route tests exactly what is stored, which
+   *  is the honest answer to "is this saved service reachable" and needs no key retyped. The
+   *  stored key is never sent to an address the browser typed -- that is why this is bounded by
+   *  `!connectionEdited` and not merely by the key box being blank. */
+  const testsStored = editing && !connectionEdited && apiKey.trim() === "";
+
   const testConn = useMutation({
     mutationFn: () =>
-      api.testInstance({
-        kind,
-        base_url: baseUrl(),
-        api_key: apiKey,
-        verify_tls: ssl ? verifyCert : true,
-      }),
+      testsStored
+        ? api.testSavedInstance(instance!.id)
+        : api.testInstance({
+            kind,
+            base_url: baseUrl(),
+            api_key: apiKey,
+            verify_tls: ssl ? verifyCert : true,
+          }),
     // Whether Reaper can reach the Sonarr it deletes THROUGH is worth hearing, which is what
     // makes this more than cosmetic. `instances.py` never raises for a failed test, so an
     // unreachable host arrives as a 200 with `ok=False` and never reaches the shared error
     // notice -- the badge was the only report, and it announced nothing (#192).
-    onSuccess: (r) => {
-      setTest({ result: r, of: testedWith() });
+    // What this request is ABOUT, captured when it is issued. Both facts were read back at
+    // success time, and both are derived from boxes the operator can keep typing into while the
+    // request is in flight: `testedWith()` would then file the answer against an address it was
+    // never asked about, and `testsStored` would file a stored-instance verdict as a probe and
+    // let its empty lists pose as a folder read.
+    onMutate: () => ({ of: testedWith(), carriesMapping: !testsStored }),
+    onSuccess: (r, _v, issued) => {
+      setTest({ result: r, of: issued.of, carriesMapping: issued.carriesMapping });
       announce(testSentence(r));
     },
     onError: (e: Error) => setError(e.message),
@@ -451,10 +530,9 @@ export function ServiceModal({
         // edit they can see, which is the same silent loss from the other side. What is withheld
         // is the DELETION of entries nothing has confirmed are gone, so both directions fail
         // toward keeping the mapping.
-        if (mapEditable && rootFolders.data) {
-          const paths = rootFolders.isError
-            ? Object.keys(libMap)
-            : rootFolders.data.map((f) => f.path);
+        if (isArr && folders) {
+          const paths =
+            rootFolders.isError && !probed ? Object.keys(libMap) : folders.map((f) => f.path);
           const map: Record<string, string> = {};
           for (const path of paths) {
             const chosen = libMap[path];
@@ -465,10 +543,11 @@ export function ServiceModal({
         // Same contract, same limit, same reasoning for the Seerr service map (rule 72): sent when
         // a service list has been read, pruned only against one that is current, and omitted only
         // when none ever landed.
-        if (seerrMapEditable && seerrServices.data) {
-          const keys = seerrServices.isError
-            ? Object.keys(serviceMap)
-            : seerrServices.data.map((s) => svcKey(s));
+        if (isSeerr && services) {
+          const keys =
+            seerrServices.isError && !probed
+              ? Object.keys(serviceMap)
+              : services.map((s) => svcKey(s));
           const map: Record<string, number> = {};
           for (const key of keys) {
             const chosen = serviceMap[key];
@@ -486,9 +565,30 @@ export function ServiceModal({
         verify_tls?: boolean;
         add_import_exclusion?: boolean;
         external_url?: string;
+        plex_library_map?: Record<string, string>;
+        service_instance_map?: Record<string, number>;
       } = { kind, name, base_url: baseUrl(), api_key: apiKey, verify_tls: ssl ? verifyCert : true };
       if (isArr) createBody.add_import_exclusion = addExclusion;
       if (externalUrl.trim()) createBody.external_url = externalUrl.trim();
+      // The mapping made on this form rides along with the service it belongs to. Sent only
+      // over a list that was actually read -- on the add form that is the passing test's own
+      // folders, so there is no stale-list case to guard here the way the update above has to.
+      if (isArr && folders) {
+        const map: Record<string, string> = {};
+        for (const f of folders) {
+          const chosen = libMap[f.path];
+          if (chosen) map[f.path] = chosen;
+        }
+        createBody.plex_library_map = map;
+      }
+      if (isSeerr && services) {
+        const map: Record<string, number> = {};
+        for (const s of services) {
+          const chosen = serviceMap[svcKey(s)];
+          if (chosen) map[svcKey(s)] = chosen;
+        }
+        createBody.service_instance_map = map;
+      }
       return api.createInstance(createBody);
     },
     onSuccess: () => {
@@ -502,17 +602,82 @@ export function ServiceModal({
     onError: (e: Error) => setError(e.message),
   });
 
-  // Mirror the save's pending state up to ServicesPanel's Back guard, and clear it on unmount
-  // so a stale true never lingers after the modal closes (B-11, B-19).
-  useEffect(() => {
-    if (savePendingRef) savePendingRef.current = save.isPending;
-    return () => {
-      if (savePendingRef) savePendingRef.current = false;
-    };
-  }, [save.isPending, savePendingRef]);
+  // Either there is a whole address and key to send, or the instance is saved and untouched and
+  // the by-id route can test what is stored. Without the second arm the button was dead in
+  // exactly the states it exists for -- a saved service the operator wants re-tested, where the
+  // key box is blank by design -- and re-testing meant retyping a key to prove nothing.
+  const canTest =
+    !testConn.isPending && ((host.trim() !== "" && apiKey.trim() !== "") || testsStored);
 
-  const canTest = host.trim() !== "" && apiKey.trim() !== "" && !testConn.isPending;
-  const ready = name.trim() !== "" && host.trim() !== "" && (editing || apiKey.trim() !== "");
+  /** Whether Save waits on a passing connection test.
+   *
+   *  Always on the add form: a service saved at an address Reaper never reached is a scan that
+   *  fails later, on a screen that never mentioned it. On the EDIT form only once something the
+   *  connection depends on has been changed -- a stored instance was reachable when it was
+   *  saved, and demanding a live test to fix a typo in its NAME would refuse the edit whenever
+   *  the service happened to be down, which is the one moment an operator most wants to change
+   *  something. Renaming stays free; re-pointing does not. */
+  const testRequired = !editing || connectionEdited;
+  /** The key box is blank on the edit form and means "keep the stored key" -- which cannot be
+   *  tested against a DIFFERENT address, because sending a stored secret to a host the browser
+   *  just typed is exactly the shape an exfiltration bug takes. So re-pointing a saved instance
+   *  asks for the key again, and the sentence below says so rather than letting the test fail
+   *  as "refused that key". */
+  const needsKeyToTest = testRequired && apiKey.trim() === "";
+
+  /** How many of the folders on screen have a library, and whether at least one is required.
+   *
+   *  The floor lifts when there is nothing to satisfy it WITH: no folders read, or no libraries
+   *  to pick from (a Plex that is down, or one that has never been synced). A requirement the
+   *  operator has no way to meet is not a safeguard, it is a locked door -- and the whole point
+   *  of the map is to tell an HD copy from a 4K one, which needs a library list to be possible
+   *  at all. Seerr takes the prefill but no floor: its own help text says leaving a service
+   *  unset is a real choice, meaning "credit everyone who asked". */
+  const mappedFolders = folders ? folders.filter((f) => libMap[f.path]).length : 0;
+  const mapFloorApplies = isArr && (folders?.length ?? 0) > 0 && libOptions.length > 0;
+  const mapSatisfied = !mapFloorApplies || mappedFolders > 0;
+
+  /** Whether a dismissal is allowed, computed ONCE and handed to every path that can dismiss.
+   *
+   *  Two reasons to stay open. A close mid-save unmounts the only place the failure is ever
+   *  shown: the scrim swallows a 409 "a service with that name already exists", `invalidate()`
+   *  never runs, and the operator walks away believing the change saved (B-19). And a close over
+   *  folders that were read but never mapped drops the one screen that can tell this instance's
+   *  HD copy from its 4K one, silently.
+   *
+   *  Cancel is deliberately NOT gated on this: it is the deliberate way out, it saves nothing,
+   *  and a guard whose only exit is the destructive button is a trap rather than a guard
+   *  (rule 146). What this refuses is the ACCIDENTAL dismissals -- scrim, Escape, ✕, Back. */
+  const canClose = !save.isPending && mapSatisfied;
+
+  // Mirror it up to ServicesPanel's Back guard, so browser Back honors the same predicate the
+  // scrim, Escape and the ✕ do rather than a stale copy of one of its reasons (rule 80), and
+  // clear it on unmount so a stale true never lingers after the modal closes (B-11, B-19).
+  useEffect(() => {
+    if (blockCloseRef) blockCloseRef.current = !canClose;
+    return () => {
+      if (blockCloseRef) blockCloseRef.current = false;
+    };
+  }, [canClose, blockCloseRef]);
+
+  const ready =
+    name.trim() !== "" &&
+    host.trim() !== "" &&
+    (editing || apiKey.trim() !== "") &&
+    (!testRequired || passed !== null) &&
+    mapSatisfied;
+
+  /** Fire the test for a combination that has not been tried yet.
+   *
+   *  Called from the blur of every box the connection depends on, so "enter the key and Reaper
+   *  checks it" needs no button press -- and from blur rather than from each keystroke, so
+   *  typing a hostname does not send one request per character to a server that is about to be
+   *  told a different one. A combination that already has a result is not re-sent. */
+  const testIfUntried = () => {
+    if (!canTest || (test && test.of === testedWith())) return;
+    setError(null);
+    testConn.mutate();
+  };
 
   // Which box the submit button is waiting on, and the one sentence saying so. Three fields can
   // be empty at once but only the FIRST is named: the operator fills it, the next one appears,
@@ -524,15 +689,37 @@ export function ServiceModal({
   // reasoning as the password row's `errorOwner`, which this mirrors.
   // The tail names what the button will do, read off the same `editing` the button's own label
   // is, so the two cannot come to disagree about it (rule 144).
+  //
+  // The three boxes are still first and still named one at a time. What follows them is the
+  // rest of the road to Save, in the order it is walked: the connection has to be proved, and
+  // then the folders it handed back have to be mapped. Each reason names the control that
+  // clears it, and `owner` is what binds the sentence to that control -- including the two new
+  // owners, the Test button and the first unmapped picker, neither of which is a text box.
   const willDo = editing ? "to save" : "to add this service";
-  const missing: { owner: "name" | "host" | "key"; says: string } | null =
+  const missing: { owner: "name" | "host" | "key" | "test" | "map"; says: string } | null =
     name.trim() === ""
       ? { owner: "name", says: `Enter a name ${willDo}.` }
       : host.trim() === ""
         ? { owner: "host", says: `Enter a hostname or IP address ${willDo}.` }
         : !editing && apiKey.trim() === ""
           ? { owner: "key", says: `Enter an API key ${willDo}.` }
-          : null;
+          : needsKeyToTest
+            ? { owner: "key", says: "Enter the API key so Reaper can try this new address." }
+            : testRequired && passed === null
+              ? {
+                  // No arm for "checking…": the button beside this says "Testing…" itself, and
+                  // it is DISABLED while it does, so a description hung on it is unreachable by
+                  // the operator it is for -- the very trap the note above forbids.
+                  owner: "test",
+                  says: "Reaper has to reach this service before you can save.",
+                }
+              : !mapSatisfied
+                ? { owner: "map", says: "Pick a Plex library for at least one folder to save." }
+                : null;
+  /** The first folder with no library, so the sentence above binds to the control that clears
+   *  it rather than to a disabled button nothing can Tab to. */
+  const blockedFolder =
+    missing?.owner === "map" ? (folders?.find((f) => !libMap[f.path])?.path ?? null) : null;
 
   return (
     <ModalShell
@@ -546,7 +733,14 @@ export function ServiceModal({
       // A close mid-save unmounts the only place the failure is ever shown: the scrim swallows
       // a 409 "a service with that name already exists", `invalidate()` never runs, and the
       // operator walks away believing the change saved (B-19).
-      canClose={!save.isPending}
+      //
+      // A dismissal is also refused while the form holds folders that were read but never
+      // mapped: an operator who lands here has a reachable service and the one screen that can
+      // tell its HD copy from its 4K one, and brushing the scrim would drop that silently. It
+      // refuses the scrim, Escape and the ✕ only -- `canClose` is a mute gate, so the notice at
+      // the top of the form states the reason and Cancel below stays live as the way out. A
+      // guard whose only exit is the destructive button is a trap, not a guard (rule 146).
+      canClose={!save.isPending && mapSatisfied}
       className="service-modal"
     >
       <form
@@ -587,6 +781,7 @@ export function ServiceModal({
               <input
                 value={host}
                 onChange={(e) => onHostChange(e.target.value)}
+                onBlur={testIfUntried}
                 placeholder="192.168.1.10"
                 aria-describedby={missing?.owner === "host" ? BLOCKED_ID : undefined}
               />
@@ -598,6 +793,7 @@ export function ServiceModal({
               value={port}
               inputMode="numeric"
               onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, "").slice(0, 5))}
+              onBlur={testIfUntried}
               placeholder={ssl ? "443" : "80"}
             />
           </label>
@@ -607,6 +803,7 @@ export function ServiceModal({
           <input
             value={urlBase}
             onChange={(e) => setUrlBase(e.target.value)}
+            onBlur={testIfUntried}
             placeholder="only if it lives under a path, like /sonarr"
           />
         </label>
@@ -649,6 +846,9 @@ export function ServiceModal({
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
+            // "Once the key is entered, try to connect" -- on leaving the box, so the request
+            // goes once against a whole key rather than once per character of one.
+            onBlur={testIfUntried}
             placeholder={
               editing ? "leave blank to keep the current key" : "from the service's settings"
             }
@@ -686,26 +886,58 @@ export function ServiceModal({
         <p className="help">
           Where links to {kindLabel(kind)} open. Leave blank to use the address above.
         </p>
-        {mapEditable && (
+        {isArr && (
           <div className="field-sm plex-map">
             <span className="field-label">Plex libraries</span>
             {/* Divided on whether the folder list ever landed: any refetch while the modal is
                 open reaches this, and an undivided error traded the whole mapping grid for one
-                warning while React Query still held the folders (#190). */}
-            {rootFolders.isPending ? (
+                warning while React Query still held the folders (#190).
+                `passed.map_error` is the same division for the add form's source: the test
+                reached the service but could not read its folders, which is not the same as a
+                service that has none. */}
+            {folders === null && (testConn.isPending || (editing && rootFolders.isPending)) ? (
+              /* `editing &&` is load-bearing: this query is `enabled: editing && isArr`, and a
+                 DISABLED query reports `status: "pending"` forever, so the add form sat under
+                 "Reading this instance's folders…" from the moment it opened -- describing a
+                 read that was never started, and taking the sentence written for that exact
+                 moment (below) off the screen entirely. */
               <p className="help">Reading this instance's folders…</p>
-            ) : rootFolders.error && !rootFolders.data ? (
-              /* Names the boxes, not the Test button: this block needs `mapEditable`, so it only
-                 ever renders while editing, and the Test button renders under `!editing`. The copy
-                 sent the operator to a control that is nowhere on screen in the only mode it
-                 appears in (rule 25, #178). Its twin below says the same thing. */
+            ) : folders === null && passed?.result.map_error ? (
+              /* Only when there is nothing to show. A probe that failed while the by-id read
+                 still holds folders leaves the grid up and says this over it instead, because
+                 the grid is the surface the operator needs and the failure is about a refresh
+                 of it. */
+              <Notice tone="warn">{passed.result.map_error}</Notice>
+            ) : folders === null && !editing ? (
+              /* The add form before a test. Says where the list comes from rather than showing
+                 an empty grid, because on this form the folders are a RESULT of the connection
+                 test and not something that could have been read yet. */
+              <p className="help">
+                Your folders appear here once Reaper reaches this service, each with a suggested
+                library.
+              </p>
+            ) : rootFolders.error && !rootFolders.data && !probed ? (
+              /* `!probed` or this outranks a live probe that just succeeded. Re-pointing a saved
+                 *arr whose STORED address is dead is the flow this whole feature exists for: the
+                 by-id read fails against the old address, the operator types the new one, the
+                 test passes and hands back folders -- and this arm still won, so the grid never
+                 rendered, Save stayed off for a mapping with no picker to make it in, and the
+                 modal refused to close. A guard whose signal outlives the surface that satisfies
+                 it is a trap (rule 146), and the sentence was false besides: the folders had
+                 just been read. */
               <Notice tone="warn">
                 Reaper couldn't read this instance's folders. Check the address and key above, then
-                reopen this to map them.
+                test again to map them.
               </Notice>
-            ) : rootFolders.data && rootFolders.data.length > 0 ? (
+            ) : folders && folders.length > 0 ? (
               <>
-                {rootFolders.error && <StaleReadNotice what="this instance's folders" />}
+                {rootFolders.error && !probed && <StaleReadNotice what="this instance's folders" />}
+                {/* The probe failed while the by-id read still holds the folders. The grid stays
+                    up, because it is the surface the operator needs and this is a failure to
+                    REFRESH it, and the sentence sits over it like every other line about
+                    something below. Rendered here as well as in the no-folders arm above, which
+                    is the same fact in the two states it can be in. */}
+                {passed?.result.map_error && <Notice tone="warn">{passed.result.map_error}</Notice>}
                 {/* Over the grid, beside the folder line, because the shared sentence says what
                     is BELOW may be out of date and the stale library names are inside the pickers
                     under it. Emitted after the grid it pointed at the help paragraph instead,
@@ -720,7 +952,7 @@ export function ServiceModal({
                   <StaleReadNotice what="your Plex libraries" />
                 )}
                 <div className="plex-map-grid">
-                  {rootFolders.data.map((f) => (
+                  {folders.map((f) => (
                     <Fragment key={f.path}>
                       <div className="pl-root">{f.path}</div>
                       <div className="pl-pick">
@@ -730,6 +962,10 @@ export function ServiceModal({
                           // lives in a sibling cell the select is not labeled by. Without this
                           // a screen reader announces every row as "combobox, Not set".
                           aria-label={`Plex library for ${f.path}`}
+                          // The "map at least one" sentence binds to the FIRST unmapped picker,
+                          // which is a control that can actually be reached and used, where the
+                          // disabled Save button it describes is out of the Tab order entirely.
+                          aria-describedby={blockedFolder === f.path ? BLOCKED_ID : undefined}
                           value={libMap[f.path] ?? ""}
                           onChange={(e) => setFolderLibrary(f.path, e.target.value)}
                         >
@@ -766,20 +1002,32 @@ export function ServiceModal({
                     state as fact something we never learned -- and send the operator off to
                     re-sync a list that is already there. The empty sentence is only for a list
                     we genuinely read and found empty. This one stays under the grid: it replaces
-                    the help text rather than describing the pickers. */}
-                {plexLibraries.error && libOptions.length === 0 ? (
+                    the help text rather than describing the pickers.
+
+                    It no longer sends anyone to Plex settings to press Sync. That instruction was
+                    the visible half of #384: the list this reads is filled by a sync, nothing in
+                    the wizard ever ran one, and so the copy asked a first-run operator to go
+                    somewhere else and do the app's own job. `usePlexLibraries` runs it here. */}
+                {(plexLibraries.error || syncLibraries.error) && libOptions.length === 0 ? (
+                  /* `syncLibraries.error` belongs here, not only the query's. The read can
+                     succeed with `[]` while the SYNC that would fill it fails -- Plex not linked
+                     at all answers 400, Plex down answers 502 -- and with only the query
+                     consulted the arm below then stated as fact that the server has no libraries
+                     of this kind, about a server nobody reached (rule 93). */
                   <Notice tone="warn">Reaper couldn't read your Plex libraries. Try again.</Notice>
-                ) : !plexLibraries.isPending && libOptions.length === 0 ? (
+                ) : plexLibraries.isPending || syncLibraries.isPending ? (
+                  <p className="help">Looking for your Plex libraries…</p>
+                ) : libOptions.length === 0 ? (
                   <p className="help">
-                    No Plex libraries yet. Sync them in Plex settings first, then pick one per
-                    folder.
+                    No {libKind === "movie" ? "movie" : "TV"} libraries in Plex yet, so there is
+                    nothing to map to. You can save this and map later.
                   </p>
                 ) : (
                   <p className="help">
                     Which Plex library each folder lands in. This tells an HD copy from a 4K one
                     when the same title is in two libraries. Matches are suggested from your
-                    folders. Leave a folder on "Not set" to keep both copies when they can't be told
-                    apart.
+                    folders. Map at least one. Leave the rest on "Not set" to keep both copies when
+                    they can't be told apart.
                   </p>
                 )}
               </>
@@ -790,36 +1038,48 @@ export function ServiceModal({
               // line like every other held value -- without it, the one state where the read
               // failed AND the app has something to say rendered no warning at all.
               <>
-                {rootFolders.error && <StaleReadNotice what="this instance's folders" />}
+                {rootFolders.error && !probed && <StaleReadNotice what="this instance's folders" />}
                 <p className="help">This instance reports no root folders to map.</p>
               </>
             )}
           </div>
         )}
-        {seerrMapEditable && (
+        {isSeerr && (
           <div className="field-sm plex-map">
             <span className="field-label">Requested-by instances</span>
-            {/* Divided exactly as the folder grid above (rule 72). */}
-            {seerrServices.isPending ? (
+            {/* Divided exactly as the folder grid above (rule 72), including the add form's
+                before-a-test arm and `map_error` for a portal that answered but would not hand
+                over its settings. */}
+            {services === null && (testConn.isPending || (editing && seerrServices.isPending)) ? (
+              /* `editing &&` for the same reason as the folder slot above (rule 72). */
               <p className="help">Reading this portal's services…</p>
-            ) : seerrServices.error && !seerrServices.data ? (
-              /* Same correction as the folder notice above (rule 72): no Test button exists in
-                 edit mode, which is the only mode this renders in. */
+            ) : services === null && passed?.result.map_error ? (
+              <Notice tone="warn">{passed.result.map_error}</Notice>
+            ) : services === null && !editing ? (
+              <p className="help">
+                This portal's services appear here once Reaper reaches it, each with a suggested
+                connection.
+              </p>
+            ) : seerrServices.error && !seerrServices.data && !probed ? (
+              /* `!probed` for the same reason as the folder arm above (rule 72). */
               <Notice tone="warn">
                 Reaper couldn't read this portal's services. Check the address and key above (it
-                needs an admin key), then reopen this to map them.
+                needs an admin key), then test again to map them.
               </Notice>
-            ) : seerrServices.data && seerrServices.data.length > 0 ? (
+            ) : services && services.length > 0 ? (
               <>
-                {seerrServices.error && <StaleReadNotice what="this portal's services" />}
+                {seerrServices.error && !probed && (
+                  <StaleReadNotice what="this portal's services" />
+                )}
+                {/* Same as the folder grid above (rule 72). */}
+                {passed?.result.map_error && <Notice tone="warn">{passed.result.map_error}</Notice>}
                 {/* Over the grid, for the same reason as the library line above (rule 72): the
                     stale connection names are inside the pickers below it. */}
-                {arrInstances.error &&
-                  seerrServices.data.some((s) => instanceOptions(s.kind).length > 0) && (
-                    <StaleReadNotice what="your Sonarr and Radarr connections" />
-                  )}
+                {arrInstances.error && services.some((s) => instanceOptions(s.kind).length > 0) && (
+                  <StaleReadNotice what="your Sonarr and Radarr connections" />
+                )}
                 <div className="plex-map-grid">
-                  {seerrServices.data.map((s) => (
+                  {services.map((s) => (
                     <Fragment key={svcKey(s)}>
                       {/* Every part of `svcKey` (kind + id) that a person can see has to be on
                           this cell, because the name alone does not identify the row: a portal
@@ -874,12 +1134,12 @@ export function ServiceModal({
                     one stays under the grid: it replaces the help text, it does not describe the
                     pickers. */}
                 {arrInstances.error &&
-                seerrServices.data.every((s) => instanceOptions(s.kind).length === 0) ? (
+                services.every((s) => instanceOptions(s.kind).length === 0) ? (
                   <Notice tone="warn">
                     Reaper couldn't read your Sonarr and Radarr connections. Try again.
                   </Notice>
                 ) : !arrInstances.isPending &&
-                  seerrServices.data.every((s) => instanceOptions(s.kind).length === 0) ? (
+                  services.every((s) => instanceOptions(s.kind).length === 0) ? (
                   <p className="help">
                     No Sonarr or Radarr connections yet. Add them first, then map each service.
                   </p>
@@ -895,7 +1155,9 @@ export function ServiceModal({
             ) : (
               // The empty-and-then-failed arm, exactly as the folder grid above (rule 72).
               <>
-                {seerrServices.error && <StaleReadNotice what="this portal's services" />}
+                {seerrServices.error && !probed && (
+                  <StaleReadNotice what="this portal's services" />
+                )}
                 <p className="help">This portal reports no Sonarr or Radarr services to map.</p>
               </>
             )}
@@ -914,20 +1176,33 @@ export function ServiceModal({
             <TestBadge result={test.result} />
           </div>
         )}
+        {/* Why the ✕ and Escape are doing nothing, beside Cancel, which is the way out it names
+            (rule 42). It sat at the top of the form, eight controls above that button and above
+            the pickers that satisfy it, and it said in its own words what the blocked-reason
+            sentence below already says -- one requirement, written twice, in two places, neither
+            of them where it is acted on. Only ever on screen while `canClose` is false, so the
+            notice and the guard cannot disagree about whether the form is holding something. */}
+        {!mapSatisfied && (
+          <Notice tone="warn">Map a folder above, or Cancel to close without saving.</Notice>
+        )}
         <div className="add-actions">
-          {!editing && (
-            <button
-              type="button"
-              className="ghost"
-              disabled={!canTest}
-              onClick={() => {
-                setError(null);
-                testConn.mutate();
-              }}
-            >
-              {testConn.isPending ? "Testing…" : "Test connection"}
-            </button>
-          )}
+          {/* On both forms now, not just the add one. The test fires on its own when a box is
+              left, so this is the way back from the states no blur will reach: a switch that was
+              flipped, a service that was down a moment ago, a result the operator wants
+              re-taken. Hiding it while editing also left two notices above pointing at a button
+              that was nowhere on screen (rule 25) -- they no longer have to apologize for it. */}
+          <button
+            type="button"
+            className="ghost"
+            disabled={!canTest}
+            aria-describedby={missing?.owner === "test" ? BLOCKED_ID : undefined}
+            onClick={() => {
+              setError(null);
+              testConn.mutate();
+            }}
+          >
+            {testConn.isPending ? "Testing…" : passed ? "Test again" : "Test connection"}
+          </button>
           <span className="flex-spacer" />
           <button type="button" className="ghost" onClick={onClose} disabled={save.isPending}>
             Cancel

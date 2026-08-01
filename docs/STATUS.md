@@ -89,6 +89,8 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Settings saves | **One save bar on General**, the policy editor's `.savebar` reused † |
 | Settings row layout | **One fixed control track per box**, released for everything else † |
 | Setup readiness | **Scanning and reaping are two readinesses, reported apart** † |
+| Adding a service | **Connect, test, then map** — Save waits on a pass and one mapped folder |
+| Plex library list | **Synced when the server is linked**, never left for the operator to press |
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |
 | ORM | **Plain SQLAlchemy, not SQLModel** † |
