@@ -17,7 +17,7 @@
 // recorded hashes are committed alongside the files they describe, so the test needs nothing
 // but fs and crypto.
 import { type BinaryLike, createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,11 +26,13 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ACCENT } from "../accent";
 import { APP_ICON_RADIUS, appIconSvg } from "./appIcon";
 import { DISSOLVE_BONE, DISSOLVE_INK } from "./dissolve";
+import { DISSOLVE_FIGURE_HEAD_D } from "./dissolve.generated";
 import manifest from "./icons.generated.json";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const frontendDir = join(here, "..", "..");
 const publicDir = join(frontendDir, "public");
+const brandDir = dirname(fileURLToPath(import.meta.url));
 
 const sha256 = (data: BinaryLike) => createHash("sha256").update(data).digest("hex");
 
@@ -40,6 +42,39 @@ function pngSize(name: string): { width: number; height: number } {
   const buf = readFileSync(join(publicDir, name));
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
+
+describe("the flattened mark", () => {
+  // ./dissolve.generated.ts is the finished shape, flattened from the recipe in ./dissolve.ts
+  // by scripts/gen-mark.mjs. Nothing composes the recipe at render time any more, so an edit to
+  // the recipe that is not regenerated ships a mark that no longer matches its own source --
+  // and it ships silently, because both files are individually valid. Rule 68: a generated
+  // asset is covered by a drift test, and this is that asset's.
+  //
+  // The generator is re-run rather than its output re-parsed, so this compares geometry to the
+  // recipe it claims to come from rather than to a second copy of itself.
+  it("still matches the recipe it was generated from", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const before = readFileSync(join(brandDir, "dissolve.generated.ts"), "utf8");
+    execFileSync("node", [join(brandDir, "..", "..", "scripts", "gen-mark.mjs")], {
+      cwd: join(brandDir, "..", ".."),
+      stdio: "pipe",
+    });
+    const after = readFileSync(join(brandDir, "dissolve.generated.ts"), "utf8");
+    if (before !== after) {
+      writeFileSync(join(brandDir, "dissolve.generated.ts"), before);
+    }
+    expect(after).toBe(before);
+  }, 60_000);
+
+  it("draws the head with a hole and the blocks without one", () => {
+    // The two fill rules are not interchangeable and each is load-bearing: the head needs
+    // evenodd or the cowl opening fills in, and the blocks need nonzero or every deliberate
+    // overlap between them becomes a hole. Asserted here because a component swapping one for
+    // the other still renders a plausible mark.
+    expect(DISSOLVE_FIGURE_HEAD_D.match(/Z/g) ?? []).toHaveLength(2);
+    expect(appIconSvg(DEFAULT_ACCENT)).toContain('fill-rule="evenodd"');
+  });
+});
 
 describe("app icon", () => {
   it("committed favicon.svg matches the generator at the default accent", () => {

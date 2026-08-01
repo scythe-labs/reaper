@@ -76,11 +76,3 @@ export const DISSOLVE_BLOCKS_LOWER: readonly DissolveBlock[] = [
   [27, 63, 4],
   [53, 58, 3],
 ];
-
-/** The blocks as `<rect>` markup in a given fill. Shared by the string and JSX drawings so the
- *  two cannot drift in how they round or order them. */
-export function dissolveBlockRects(blocks: readonly DissolveBlock[], fill: string): string {
-  return blocks
-    .map(([x, y, s]) => `<rect x="${x}" y="${y}" width="${s}" height="${s}" fill="${fill}"/>`)
-    .join("");
-}
