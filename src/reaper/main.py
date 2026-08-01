@@ -142,7 +142,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "auth.no_local_admin",
                 detail=(
                     "No local admin exists. If Plex sign-in fails you will be locked out. "
-                    "Create a fallback with: reaper-admin create-admin --username <name>"
+                    "Create a fallback with: reaper-admin create-admin --username admin"
                 ),
             )
 

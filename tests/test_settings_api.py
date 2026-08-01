@@ -22,11 +22,13 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.orm import Session
 
 from reaper.api.settings import PlexUpdateIn, update_plex_settings
+from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import InstanceKind
+from reaper.db.models import InstanceKind, PlexServer, Snapshot
 from reaper.main import create_app
 from reaper.services import instances as instances_service
 
@@ -51,6 +53,62 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as c:
         login(c, settings)  # seeds a local admin whose password is TEST_PASSWORD
         yield c
+
+
+def _add_snapshot(client: TestClient) -> None:
+    """Put one Snapshot row in, so ``has_scanned`` is true.
+
+    The setup status only asks whether any snapshot exists, so this is the smallest row that
+    satisfies it rather than a scored one -- nothing here reads its contents.
+    """
+    settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
+    engine = sa_create_engine(settings.sync_database_url)
+    now = utcnow()
+    with Session(engine) as session:
+        session.add(
+            Snapshot(
+                created_at=now,
+                policy_hash="p",
+                scoring_hash="s",
+                horizon_at=now,
+                item_count=0,
+                degraded=False,
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+
+def _make_scan_ready(client: TestClient) -> None:
+    """The smallest configuration ``scan_ready`` accepts: a Tautulli and one *arr."""
+    for kind, name in [("radarr", "HD"), ("tautulli", "T")]:
+        client.post(
+            "/api/settings/instances",
+            json={"kind": kind, "name": name, "base_url": f"http://{name}", "api_key": "k"},
+        )
+
+
+def _link_plex(client: TestClient) -> None:
+    """Put one PlexServer row in, so ``plex_linked`` is true.
+
+    Written straight to the table for the same reason ``_add_snapshot`` is: the setup status
+    only asks whether a row exists, and the real path there is a plex.tv OAuth round trip.
+    """
+    settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
+    engine = sa_create_engine(settings.sync_database_url)
+    with Session(engine) as session:
+        session.add(
+            PlexServer(
+                machine_identifier="abc123",
+                name="Example Server",
+                connection_uri="http://plex.local:32400",
+                token_enc="enc",
+                owner_plex_account_id=1,
+                created_at=utcnow(),
+            )
+        )
+        session.commit()
+    engine.dispose()
 
 
 class TestInstancesCrud:
@@ -828,6 +886,115 @@ class TestSetupStatus:
             json={"kind": "tautulli", "name": "T", "base_url": "http://t", "api_key": "k"},
         )
         assert client.get("/api/setup/status").json()["scan_ready"] is False
+
+    def test_has_password_reports_whether_a_local_account_exists(self, client: TestClient) -> None:
+        """The wizard derives which step it is on from this, so it must track the real state.
+
+        The seeded admin has a password; nulling the hash is the Plex-only install, where the
+        owner claimed the server over OAuth and no local account was ever created.
+        """
+        assert client.get("/api/setup/status").json()["has_password"] is True
+        clear_admin_password(client)
+        assert client.get("/api/setup/status").json()["has_password"] is False
+
+    def test_setup_is_not_complete_without_a_password(self, client: TestClient) -> None:
+        """Scan-ready and scanned is no longer enough on its own.
+
+        Isolated deliberately: everything else `complete` asks for is satisfied here, so the
+        only thing holding it False is the missing password. Without this the wizard would
+        wave through an install with no local account, no way to arm deletion and no way to
+        confirm a restore -- which is the state that made the password step worth having.
+        """
+        for kind, name in [("radarr", "HD"), ("tautulli", "T")]:
+            client.post(
+                "/api/settings/instances",
+                json={"kind": kind, "name": name, "base_url": f"http://{name}", "api_key": "k"},
+            )
+        _add_snapshot(client)
+        ready = client.get("/api/setup/status").json()
+        assert ready["scan_ready"] is True
+        assert ready["has_scanned"] is True
+        assert ready["complete"] is True
+
+        clear_admin_password(client)
+        after = client.get("/api/setup/status").json()
+        assert after["scan_ready"] is True, "only the password changed"
+        assert after["has_scanned"] is True, "only the password changed"
+        assert after["complete"] is False
+
+    def test_scan_ready_without_plex_is_not_reap_ready(self, client: TestClient) -> None:
+        """The state #383 is about: everything a scan needs, and a reap still refused.
+
+        This install finishes the wizard -- ``complete`` is deliberately blind to Plex,
+        because Plex is optional for a scan -- so the only thing that can tell the operator
+        their first real run will be turned away is ``reap_ready``.
+        """
+        _make_scan_ready(client)
+        _add_snapshot(client)
+        status = client.get("/api/setup/status").json()
+        assert status["scan_ready"] is True
+        assert status["complete"] is True
+        assert status["plex_linked"] is False
+        assert status["reap_ready"] is False
+
+    def test_linking_plex_is_what_makes_it_reap_ready(self, client: TestClient) -> None:
+        _make_scan_ready(client)
+        _link_plex(client)
+        status = client.get("/api/setup/status").json()
+        assert status["plex_linked"] is True
+        assert status["reap_ready"] is True
+
+    def test_reap_ready_needs_the_password_that_arms_deletion(self, client: TestClient) -> None:
+        """Isolated the way ``complete``'s password case is: everything else is satisfied.
+
+        Deletion is armed through ``PUT /api/settings/safety``, which refuses without an
+        admin password, so an install missing one cannot reach a real run however much of
+        the rest is configured.
+        """
+        _make_scan_ready(client)
+        _link_plex(client)
+        assert client.get("/api/setup/status").json()["reap_ready"] is True
+
+        clear_admin_password(client)
+        after = client.get("/api/setup/status").json()
+        assert after["plex_linked"] is True, "only the password changed"
+        assert after["scan_ready"] is True, "only the password changed"
+        assert after["reap_ready"] is False
+
+    def test_reap_ready_asks_the_same_two_questions_the_executor_refuses_on(
+        self, client: TestClient
+    ) -> None:
+        """``reap_ready`` is only worth publishing if it predicts the actual refusal.
+
+        Rule 144: the sentence "you cannot reap without this" is now written in three
+        places -- ``api.runs._preflight_refusal``, ``services.executor.execute``'s backstop,
+        and this field, which the wizard and the Reap page both read. So the field is pinned
+        against the refusal itself rather than against a transcription of it: a gateway
+        missing either client refuses, and a setup missing the same thing is not reap-ready.
+        """
+        from reaper.api.runs import _preflight_refusal
+        from reaper.services.executor import ReapGateway
+
+        whole = ReapGateway(plex=object(), tautulli=object())  # type: ignore[arg-type]
+        assert _preflight_refusal(whole) is None
+
+        no_plex = ReapGateway(plex=None, tautulli=object())  # type: ignore[arg-type]
+        assert (refusal := _preflight_refusal(no_plex)) is not None
+        assert "without Plex" in refusal
+
+        no_tautulli = ReapGateway(plex=object(), tautulli=None)  # type: ignore[arg-type]
+        assert (refusal := _preflight_refusal(no_tautulli)) is not None
+        assert "without Tautulli" in refusal
+
+        # ...and the same two absences, asked of the configuration instead of the clients.
+        _make_scan_ready(client)
+        _link_plex(client)
+        assert client.get("/api/setup/status").json()["reap_ready"] is True
+
+        instances = client.get("/api/settings/instances").json()
+        tautulli = next(i for i in instances if i["kind"] == "tautulli")
+        assert client.delete(f"/api/settings/instances/{tautulli['id']}").status_code == 200
+        assert client.get("/api/setup/status").json()["reap_ready"] is False
 
 
 class TestSchedule:

@@ -142,7 +142,9 @@ const SITES: Site[] = [
     what: "the name of the backup file the operator dropped or picked",
     selectors: [".chosen-file"],
     classInTsx: "chosen-file",
-    seenIn: ["components/Settings.tsx"],
+    // The restore flow left Settings for its own module when the first-run wizard grew a
+    // door onto it (#385); one component draws this in both places.
+    seenIn: ["components/RestoreCard.tsx"],
   },
   {
     what: "one raw log line, which routinely carries a path, a host or upstream error text",

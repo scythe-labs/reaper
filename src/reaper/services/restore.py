@@ -13,11 +13,17 @@ The other half of :mod:`reaper.services.backup`. Restore is deliberately a
    edge. It forces deletion OFF inside the staged database (so the restored install
    boots read-only, never armed on someone else's decision) and then writes the
    ``READY`` marker *last* -- the marker is the arm.
-3. **Swap** (:func:`apply_pending_restore`) runs at container start, before
-   migrations, from the entrypoint's preflight. If ``READY`` is present and the
+3. **Swap** (:func:`apply_pending_restore`) runs at start, before migrations, from
+   :mod:`reaper.preflight` -- which the container entrypoint and ``scripts/dev-local.sh``
+   both run, and which nothing else may skip. If ``READY`` is present and the
    staged database reads as SQLite, it moves the current data aside (kept for
    recovery) and moves the staged files into place. ``alembic upgrade head`` then
    brings the restored database current.
+
+The operator asks for that start from the browser (``POST
+/api/settings/backup/restore/restart``, which stops the process and lets the container's
+restart policy bring it back) or by restarting the container themselves. Either way this
+module's part is identical: it is armed, and the next boot swaps.
 
 Every ambiguity resolves toward keeping the live data. A staged database that does
 not read as SQLite is discarded rather than swapped; an upload from a newer Reaper
@@ -88,6 +94,12 @@ SWAP_MARKER = "SWAPPING"
 #: (rule 73). Not a secret: a nonce that says "still the same staged backup," living in the
 #: 0700 staging dir.
 TOKEN_MARKER = "TOKEN"  # noqa: S105 -- a marker filename, not a secret
+
+#: How wide a staging token is, minted here and bounded at the API edge off this same
+#: declaration so the producer and the fields that accept it cannot drift apart (rules 95
+#: and 131). Hex, so twice the byte count.
+TOKEN_BYTES = 32
+TOKEN_MAX_LEN = TOKEN_BYTES * 2
 
 #: What the current data is moved into before the staged copy takes its place, so a bad
 #: restore is recoverable. Timestamped, and never touched again by Reaper.
@@ -379,7 +391,7 @@ def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
         manifest = _extract(archive_path, tmp)
         # Mint the staging token and write it beside the staged files, so it travels with
         # the atomic rename below and binds this exact staging to the confirm (rule 73).
-        token = pysecrets.token_hex(32)
+        token = pysecrets.token_hex(TOKEN_BYTES)
         (tmp / TOKEN_MARKER).write_text(token + "\n", encoding="utf-8")
         summary = _summarize(manifest, tmp, token)
         _replace_dir(data_dir / PENDING_DIR, tmp)
@@ -500,9 +512,28 @@ def arm(settings: Settings, token: str | None) -> None:
     log.warning("restore.armed")
 
 
-def clear_pending(settings: Settings) -> None:
-    """Discard a staged (or armed) restore. Safe to call when nothing is staged."""
-    shutil.rmtree(settings.data_dir / PENDING_DIR, ignore_errors=True)
+def clear_pending(settings: Settings, token: str | None = None) -> bool:
+    """Discard a staged (or armed) restore. Safe to call when nothing is staged.
+
+    ``token`` scopes the discard to one staging, the way :func:`arm` scopes the swap to the
+    content that was reviewed (rule 73). With a token, the discard happens only if that token
+    is still the one minted for what is staged now; a staging replaced since belongs to
+    whoever staged it, and this returns ``False`` having removed nothing. Without a token the
+    discard is unconditional, which is what a deliberate Cancel on an armed restore needs: it
+    holds no summary and no token, and it must still be able to clear anything.
+
+    Returns whether a staging was actually removed, so the route can say what happened rather
+    than reporting an ownership refusal -- or a call that found nothing at all -- as a discard
+    (#387). Both of those are ordinary arrivals here rather than errors: this is reached from
+    an unmount, and the operator may have cleared the staging from anywhere else first.
+    """
+    pending = settings.data_dir / PENDING_DIR
+    if token is not None and not _token_matches(pending, token):
+        log.info("restore.cancel_not_owned")
+        return False
+    existed = pending.exists()
+    shutil.rmtree(pending, ignore_errors=True)
+    return existed
 
 
 # ---------------------------------------------------------------------------

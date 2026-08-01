@@ -1,220 +1,162 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The first-run setup flow.
+// The first-run setup flow: four steps, one card at a time.
 //
-// A fresh Reaper knows nothing about your library. Rather than drop you on an empty screen,
-// this walks the two things that actually matter -- connect Radarr and Tautulli, then run a
-// first (read-only) scan -- and gets out of the way the moment they're done. Sonarr, Seerr
-// and Plex are offered but optional. You can skip to the full app at any time and finish
-// from Settings; the checklist keeps nagging gently until everything's in place.
+// It used to be one screen -- a checklist with the whole Settings services panel and the whole
+// Plex panel inlined under it -- which is every decision a fresh install has to make, stacked
+// in a single scroll. The steps exist to put one decision on screen at a time, in the order a
+// new install actually needs them: claim the instance, point Reaper at Plex, point it at the
+// services it reads from, then scan.
+//
+// **Where the operator resumes is derived from the server, never from this browser.** Each
+// step declares what "already done" means for it (`IS_DONE` below) and the flow opens on the
+// first one that is not; closing the tab mid-setup therefore comes back to the same place, and
+// a step finished from another window is not offered again. Local state takes over once they
+// are here, so Back and Skip move without re-asking the server what it thinks.
+//
+// The card wears `.modal`'s chrome on the page rather than being a real modal, and `ModalShell`
+// is deliberately not reused: its contract is dismissal and returning focus to whatever opened
+// it, and on the first screen of a fresh install there is no page behind it and no opener. The
+// first step cannot be dismissed at all. Modals still appear *over* a step -- the service
+// editor, Discord, the restore card -- and those are real `ModalShell` dialogs.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
-import { announce } from "../announce";
-import { api } from "../api";
-import { phaseLabel } from "./ScanBar";
+import { useQuery } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import { api, type SetupStatus } from "../api";
 import { BrandMark } from "../brand/BrandMark";
-import { PlexPanel, ServicesPanel } from "./Settings";
 import { Notice } from "./Notice";
+import { SetupConnectStep } from "./SetupConnectStep";
+import { SetupPasswordStep } from "./SetupPasswordStep";
+import { SetupPlexStep } from "./SetupPlexStep";
+import { SetupScanStep } from "./SetupScanStep";
+import { SETUP_STEPS, StepMovedProvider, type SetupStepKey } from "./SetupStepper";
 
-// The tick is the only thing that says whether a step is finished, so it carries the state
-// as text too: color and a glyph alone leave a screen reader hearing the step with no
-// state at all, on the one screen a new operator cannot skip past.
-function Check({ done, children }: { done: boolean; children: React.ReactNode }) {
-  return (
-    <li className={`setup-check ${done ? "done" : ""}`}>
-      <span className="check-mark" role="img" aria-label={done ? "Done" : "Not done yet"}>
-        {done ? "✓" : "○"}
-      </span>
-      {children}
-    </li>
-  );
+/** What each step counts as finished, read off the server's setup status.
+ *
+ *  The whole resume rule, in one place, so the flow and the progress row cannot come to
+ *  disagree about what "done" means. Plex counts as done only once it is linked: an operator
+ *  who skipped it is offered it again next visit, which is deliberate, because without Plex
+ *  `executor.execute` refuses every real run and the queue they are about to fill can never be
+ *  acted on. One click skips it again.
+ */
+const IS_DONE: Record<SetupStepKey, (s: SetupStatus) => boolean> = {
+  password: (s) => s.has_password,
+  plex: (s) => s.plex_linked,
+  connect: (s) => s.scan_ready,
+  scan: (s) => s.has_scanned,
+};
+
+/** The first step that is not finished, or the last one when they all are. */
+function firstOpenStep(status: SetupStatus): SetupStepKey {
+  const open = SETUP_STEPS.find((s) => !IS_DONE[s.key](status));
+  // `SETUP_STEPS` is a non-empty `as const`, but its index signature is not, so the fallback
+  // names the last step rather than indexing for it.
+  return open ? open.key : "scan";
 }
 
 export function SetupWizard({ onSkip }: { onSkip: () => void }) {
-  const queryClient = useQueryClient();
   const { data: setup, isError } = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
 
-  // The first scan is the same background job the rest of the app uses -- start it and poll.
-  const { data: scanState } = useQuery({
-    queryKey: ["scanStatus"],
-    queryFn: api.scanStatus,
-    refetchInterval: (query) => (query.state.data?.running ? 1000 : false),
-  });
-  const scanning = scanState?.running ?? false;
-  const wasScanning = useRef(false);
-  // Read at the transition rather than depended on: the message lands in the same poll that
-  // turns `running` off, and a later change to it must not re-fire the effect.
-  const latestError = useRef(scanState?.error ?? null);
-  latestError.current = scanState?.error ?? null;
-  useEffect(() => {
-    if (wasScanning.current && !scanning) {
-      void queryClient.invalidateQueries();
-      // The first scan ends on a one-second poll, not on anything the operator did, and the
-      // whole panel changes when it does: "Your first scan is running" becomes "You're all
-      // set" and the button relabels from "Go to the app" to "Go to the review queue". None
-      // of that was announced, so an operator using a screen reader had no way to learn the
-      // scan they were told could take a while had finished, short of re-reading the page on
-      // a guess (#177). Said at the transition, not on every render, so a panel that mounts
-      // already-scanned stays quiet.
-      //
-      // It branches for the same reason `useScanSettled` does, and this is its sibling (rule
-      // 72): `api/scan.py` clears `running` in a `finally`, so a scan that crashed arrives at
-      // this exact edge. The panel behind it does NOT turn into "You're all set" then -- it
-      // falls back to "Ready to scan" with an error notice beside it -- so announcing a finish
-      // here also contradicted the screen it was describing.
-      announce(
-        latestError.current === null
-          ? "Your first scan finished. Reaper has scanned your library."
-          : "Your first scan stopped before it finished. You can start it again.",
-      );
-    }
-    wasScanning.current = scanning;
-  }, [scanning, queryClient]);
+  // Null until the first status lands, then seeded from it below and never re-derived: after
+  // that this is the operator's own navigation, and re-deriving would drag them forward out of
+  // a step they had gone Back to.
+  const [step, setStep] = useState<SetupStepKey | null>(null);
+  // The password typed on step one, so the restore door on a later step can confirm with it
+  // rather than asking for it again. Never persisted; it dies with the flow.
+  const [password, setPassword] = useState<string | null>(null);
 
-  // Progress and failure are separate channels: the phase line is status, a failed scan
-  // is an error notice that leads with the outcome, the same shape ScanBar uses. The
-  // phase itself goes through ScanBar's shared table, so this never shows a raw phase id.
-  const scanError = scanState?.error ?? null;
-  const scanMsg = scanning
-    ? `${phaseLabel(scanState!.phase)}${scanState!.detail ? `, ${scanState!.detail}` : ""}`
-    : null;
+  // Seeded from the server the first time a status lands, then never again. It used to be
+  // derived inline on every render while `step` was null, which is the hazard the comment
+  // above names: each step invalidates `["setup"]` on success, so linking Plex or saving the
+  // last service moved the operator forward with no press -- off the Plex step before its
+  // Libraries picker had ever rendered, and off Connect before they had seen the restore door.
+  if (step === null && setup) setStep(firstOpenStep(setup));
+  const at: SetupStepKey | null = step;
 
-  // A mutation, not a fire-and-forget async onClick: on a fresh install a failed start
-  // (a service just removed, the server restarting) must say so, not silently do nothing.
-  const firstScan = useMutation({
-    mutationFn: () => api.startScan(),
-    onSuccess: (started) => {
-      queryClient.setQueryData(["scanStatus"], started);
-      // The press replaces this whole half of the panel -- "Ready to scan" and its button
-      // become a spinner, a heading and a paragraph -- with nothing said, on the first screen
-      // a new operator ever meets and for an operation the copy itself warns "can take a
-      // while" (#177). Same edge as `ScanBar`'s start, and the wording carries the same
-      // permission to walk away, because that is the useful part of a wait this long.
-      announce("Your first scan is running. You don't have to wait here.");
-    },
-  });
+  // A ref, not state: it is read during the render that mounts the next card, and it must not
+  // itself cause one. Set here rather than beside `setStep` above, so the seeded first step
+  // counts as arriving rather than as moving.
+  const moved = useRef(false);
+  const go = (next: SetupStepKey) => {
+    moved.current = true;
+    setStep(next);
+    window.scrollTo({ top: 0 });
+  };
+  const goNext = (from: SetupStepKey) => {
+    const i = SETUP_STEPS.findIndex((s) => s.key === from);
+    const next = SETUP_STEPS[i + 1];
+    if (next) go(next.key);
+  };
 
   // Still waiting and couldn't-read are different states, and neither may trap the owner:
-  // App.tsx routes an unreadable setup status here on the promise that Skip still works.
-  if (!setup) {
+  // App.tsx routes an unreadable setup status here on the promise that leaving still works, so
+  // the failure branch carries a way out (rule 17/36). `main`, not a div, on every branch --
+  // this screen replaces the whole app shell, so its landmarks are the only ones on the page.
+  if (!setup || at === null) {
     return (
-      // `main`, not a div, on both branches: this screen replaces the whole app shell, so its
-      // landmarks are the only ones on the page -- and it had none, which is the same defect
-      // `Login` carried (rule 72), on the one screen a new operator cannot skip past without
-      // first finding the Skip button. `.setup` is `max-width`/`margin`/`padding` only, with
-      // no child or sibling selectors, so this changes the accessibility tree and nothing on
-      // screen. The `pageLevel` audit below turns `region` on and pins it.
       <main className="setup">
-        <div className="setup-head">
-          <h1>{isError ? "Welcome to Reaper" : "Setting things up…"}</h1>
-          <button className="ghost" onClick={onSkip}>
-            Skip to the app
-          </button>
-        </div>
-        {isError && (
-          <Notice tone="error">
-            Couldn't check the setup state. You can skip to the app and finish from Settings.
-          </Notice>
-        )}
+        <Brand />
+        <section className="step-card">
+          <div className="step-head">
+            <h2>{isError ? "Welcome to Reaper" : "Setting things up…"}</h2>
+          </div>
+          {isError && (
+            <>
+              <Notice tone="error">
+                Couldn't check what's set up yet. You can go to the app and finish from Settings.
+              </Notice>
+              <div className="step-actions">
+                <span className="spacer" />
+                <button className="primary" onClick={onSkip}>
+                  Go to the app
+                </button>
+              </div>
+            </>
+          )}
+        </section>
       </main>
     );
   }
 
   return (
     <main className="setup">
-      <div className="setup-head">
-        <div className="brand">
-          <BrandMark className="brand-mark" />
-          <div>
-            <h1>Welcome to Reaper</h1>
-            <p className="muted">
-              Two quick things and you're running. Everything here only reads your library. Nothing
-              can be deleted until you say so.
-            </p>
-          </div>
-        </div>
-        <button className="ghost" onClick={onSkip}>
-          Skip to the app
-        </button>
-      </div>
-
-      <ol className="setup-checklist">
-        <Check done={setup.has_radarr || setup.has_sonarr}>
-          <strong>Connect Radarr or Sonarr</strong>: where your movies and shows live{" "}
-          <em>(at least one)</em>
-        </Check>
-        <Check done={setup.has_tautulli}>
-          <strong>Connect Tautulli</strong>: your watch history <em>(required)</em>
-        </Check>
-        <Check done={setup.has_seerr}>
-          <strong>Connect Seerr</strong>: shows who requested each title <em>(optional)</em>
-        </Check>
-        <Check done={setup.has_scanned}>
-          <strong>Run your first scan</strong>
-        </Check>
-      </ol>
-
-      <ServicesPanel />
-      <PlexPanel />
-
-      <div className="setup-finish">
-        {!setup.scan_ready ? (
-          <p className="muted">
-            Connect Tautulli plus at least one of Radarr or Sonarr above, then you'll be able to run
-            your first scan.
-          </p>
-        ) : scanning ? (
-          <>
-            <div>
-              <div className="setup-scanning">
-                <span className="spinner" aria-hidden="true" />
-                <h2>Your first scan is running</h2>
-              </div>
-              <p className="muted">
-                Big libraries with a lot of watch history can take a while. You don't have to wait
-                here: head into the app, and the bar at the top shows the scan's progress. The
-                review queue fills in the moment it finishes.
-              </p>
-            </div>
-            <button className="primary btn-lg" onClick={onSkip}>
-              Go to the app
-            </button>
-          </>
-        ) : setup.has_scanned ? (
-          <>
-            <div>
-              <h2>You're all set</h2>
-              <p className="muted">Reaper has scanned your library.</p>
-            </div>
-            <button className="primary btn-lg" onClick={onSkip}>
-              Go to the review queue
-            </button>
-          </>
-        ) : (
-          <>
-            <div>
-              <h2>Ready to scan</h2>
-              <p className="muted">
-                Your library and watch history are connected. Run a first scan to see what Reaper
-                would reap. It only reads, and you approve every deletion by hand later.
-              </p>
-            </div>
-            <button
-              className="primary btn-lg"
-              onClick={() => firstScan.mutate()}
-              disabled={firstScan.isPending}
-            >
-              {firstScan.isPending ? "Starting…" : "Run first scan"}
-            </button>
-          </>
+      <Brand />
+      <StepMovedProvider moved={moved.current}>
+        {at === "password" && (
+          <SetupPasswordStep
+            onDone={(pw) => {
+              setPassword(pw);
+              goNext("password");
+            }}
+          />
         )}
-      </div>
-      {firstScan.error && (
-        <Notice tone="error">The scan didn't start: {firstScan.error.message}</Notice>
-      )}
-      {scanError && <Notice tone="error">The scan hit a problem: {scanError}</Notice>}
-      {scanMsg && <p className="muted setup-scanmsg">{scanMsg}</p>}
+        {at === "plex" && <SetupPlexStep setup={setup} onNext={() => goNext("plex")} />}
+        {at === "connect" && (
+          <SetupConnectStep
+            setup={setup}
+            password={password}
+            onBack={() => go("plex")}
+            onNext={() => goNext("connect")}
+          />
+        )}
+        {at === "scan" && (
+          <SetupScanStep
+            setup={setup}
+            onBack={() => go("connect")}
+            onGoToPlex={() => go("plex")}
+            onDone={onSkip}
+          />
+        )}
+      </StepMovedProvider>
     </main>
+  );
+}
+
+function Brand() {
+  return (
+    <div className="setup-brand">
+      <BrandMark className="brand-mark" />
+      <span className="brand-word">Reaper</span>
+    </div>
   );
 }

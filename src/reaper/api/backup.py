@@ -12,28 +12,31 @@ The restore half (see :mod:`reaper.services.restore`) is a two-step, stage-and-r
 flow. ``prepare`` validates an uploaded archive and stages it, un-armed. ``confirm``
 verifies the admin password -- behind the same lockout and Argon2 gate as arming
 deletion -- then forces deletion off in the staged database and arms the swap. The
-actual replacement happens at the next container start, before migrations. None of the
+actual replacement happens at the next container start, before migrations, which
+``restart`` is a way of asking for from the browser rather than from a shell. None of the
 restore routes are on the API-key lane: they are unsafe methods outside the automation
-allowlist, so a key cannot reach them.
+allowlist, so a key cannot reach them, ``restart`` least of all -- it stops the app.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
 from reaper.api import tags as api_tags
 from reaper.api.auth import _client_ip, _throttled, _verify_admin_password
+from reaper.api.runs import reap_in_flight
 from reaper.auth.ratelimit import password_throttle
 from reaper.buildinfo import build_version
 from reaper.config import Settings
@@ -61,7 +64,7 @@ class BackupInfoOut(BaseModel):
     and a restore needs that same value set on the target."""
     app_version: str
     restore_armed: bool
-    """Whether a confirmed restore is staged and waiting for a container restart."""
+    """Whether a confirmed restore is staged and waiting for Reaper to restart."""
 
 
 class RestoreSummaryOut(BaseModel):
@@ -82,7 +85,15 @@ class RestoreConfirmIn(BaseModel):
     """Bounded, like every other field that reaches Argon2 (``SafetyIn``, ``AdminPasswordIn``,
     ``WatchEvidenceResetIn``): hashing unbounded input is a CPU-exhaustion vector, and this one
     was the only member of that set without the bound."""
-    token: str | None = None
+    token: str | None = Field(default=None, max_length=restore.TOKEN_MAX_LEN)
+    """Bounded off the width the staging mints (rule 95/131), as ``RestoreCancelIn.token`` is."""
+
+
+class RestoreCancelIn(BaseModel):
+    token: str | None = Field(default=None, max_length=restore.TOKEN_MAX_LEN)
+    """Which staging to discard, where the caller knows: the discard happens only while that
+    token is still the staged one. Absent means discard whatever is there, which is what the
+    armed card's Cancel needs -- it holds no summary to take a token from."""
 
 
 def _settings(request: Request) -> Settings:
@@ -226,7 +237,8 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[s
     ``token`` from the prepare summary binds this confirm to the exact backup reviewed, so
     a backup swapped in by another session since cannot be armed by this password (rule 73).
     On success the staged database is forced read-only, its inherited sessions are cleared,
-    and the swap is armed; the operator restarts the container to finish.
+    and the swap is armed; the swap itself happens on the next start, which the operator asks
+    for with ``restore/restart`` or by restarting the container themselves.
     """
     settings = _settings(request)
     keys = (f"ip:{_client_ip(request)}", "account:restore")
@@ -254,8 +266,89 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[s
 
 
 @router.post("/restore/cancel")
-async def restore_cancel(request: Request) -> dict[str, bool]:
-    """Discard a staged or armed restore. Turns off the "restart to finish" state."""
-    await asyncio.to_thread(restore.clear_pending, _settings(request))
-    log.info("restore.canceled")
-    return {"ok": True}
+async def restore_cancel(
+    request: Request, payload: RestoreCancelIn | None = None
+) -> dict[str, bool]:
+    """Discard a staged or armed restore. Turns off the "waiting to finish" state.
+
+    With a ``token`` the discard is scoped to that staging and refuses to touch one replaced
+    since, which is what an unattended caller needs: the card's unmount reclaim fires with no
+    operator watching, and two live restore cards (Settings in one tab, the wizard's door in
+    another) can each hold a summary while only the later one is staged (#387). Without a
+    token it discards whatever is there, which is what the operator's own Cancel means.
+
+    ``cleared`` says whether a staging was actually removed, which an ownership refusal and a
+    call that found nothing both report as false. Neither is an error: nothing was lost, and
+    the archive is still on the operator's disk.
+    """
+    cleared = await asyncio.to_thread(
+        restore.clear_pending, _settings(request), payload.token if payload else None
+    )
+    if cleared:
+        log.info("restore.canceled")
+    return {"ok": True, "cleared": cleared}
+
+
+#: How long the stop waits after the response has been handed to the server. The browser is
+#: told first and the process goes second, so the operator sees "Stopping" rather than a dead
+#: connection with no explanation. Short, because nothing useful happens in the window.
+_STOP_DELAY_SECONDS = 0.5
+
+
+def _stop_this_process() -> None:
+    """Ask this process to stop, the way stopping the container asks.
+
+    ``SIGTERM`` to ourselves, never ``sys.exit`` and never ``os._exit``: the signal is what
+    uvicorn turns into its graceful shutdown, and the graceful shutdown is what runs
+    :func:`reaper.main.lifespan`'s ``finally`` -- where a reap still in flight is canceled
+    *and awaited* so the executor marks the run ABORTED and commits its journal (rule 128).
+    Leaving by any other door would drop a deleting run mid-step with the row still reading
+    EXECUTING.
+
+    Reaper cannot see its own restart policy from inside the container, so nothing here
+    promises it comes back. What it can promise is what it left behind: the staged restore is
+    on disk, the swap has not run, and starting the container applies it.
+    """
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+async def _stop_after_response() -> None:
+    await asyncio.sleep(_STOP_DELAY_SECONDS)
+    log.warning("restore.restart_requested")
+    _stop_this_process()
+
+
+@router.post("/restore/restart")
+async def restore_restart(request: Request) -> JSONResponse:
+    """Stop Reaper, so the staged restore is applied on the way back up.
+
+    The last step of a restore was a shell command in another window, at the end of a flow
+    that is otherwise entirely in the browser, and the first-run wizard now opens onto that
+    flow (#386). This is that step, as a button.
+
+    **Two refusals, both resolving toward doing nothing:**
+
+    * Without an armed restore this is a general-purpose "stop the app" endpoint, which is
+      not a thing Reaper offers. It refuses, so the only state this route can reach is the
+      one where stopping is what the operator was already being asked to do.
+    * While a reap is in flight it refuses too. Shutdown does handle that case -- the run is
+      canceled, awaited, and recorded ABORTED -- but "handled" is not a reason to interrupt
+      the one path that deletes files, and the operator has a graceful Stop for the run and a
+      staged restore that will wait. The window between this check and the signal is not
+      closed by it; that is what the shutdown path is for.
+
+    It is not on the API-key lane. A key writes only what
+    :mod:`reaper.api.middleware`'s allowlist names, and this is not on it, so it is refused by
+    being born outside it -- deliberately, because stopping the app is not automation's to do.
+    """
+    settings = _settings(request)
+    if not await asyncio.to_thread(restore.is_armed, settings):
+        raise HTTPException(409, "There's no restore waiting, so nothing was stopped.")
+    if reap_in_flight(request.app):
+        raise HTTPException(
+            409, "A reap is running. Let it finish or stop it, then restart Reaper."
+        )
+    # The stop rides the response's background task, so it runs after the last byte is on its
+    # way and the browser has an answer to render. A route that stopped the process inline
+    # would close the connection first and leave the operator looking at a network error.
+    return JSONResponse({"ok": True}, background=BackgroundTask(_stop_after_response))

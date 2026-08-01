@@ -18,7 +18,7 @@
 }
 
 /* The background-scan cue: a thin accent line pinned to the very top of the window, shown
-   only while a scan runs (ScanLine in App.tsx). Determinate -- the fill tracks the scan's
+   only while a scan runs (components/ScanLine.tsx). Determinate -- the fill tracks the scan's
    real percent -- and it fades out the moment the scan finishes, so a still top edge always
    means nothing is running. Sits above the page but below the modal scrim (z 60), so an
    open dialog covers it. */

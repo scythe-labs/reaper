@@ -191,6 +191,7 @@ export function ServiceModal({
   instance,
   onClose,
   savePendingRef,
+  defaultName,
 }: {
   kind: string;
   instance: Instance | null;
@@ -198,13 +199,18 @@ export function ServiceModal({
   // Set by ServicesPanel so its Back guard can read the same canClose the scrim/Escape/✕ use,
   // exactly as the schedule editor does (B-11, B-19).
   savePendingRef?: RefObject<boolean>;
+  /** A name to start the box with, rather than only suggest in its placeholder. The setup
+   *  wizard passes one because `ready` below requires a non-empty name, so a placeholder alone
+   *  leaves a required box empty and the save off on the first screen a new operator meets --
+   *  where the name is also the least interesting decision they could be asked to make. */
+  defaultName?: string;
 }) {
   const queryClient = useQueryClient();
   const editing = instance !== null;
   const meta = KINDS.find((k) => k.value === kind);
   const initial = instance ? splitBaseUrl(instance.base_url) : null;
 
-  const [name, setName] = useState(instance?.name ?? "");
+  const [name, setName] = useState(instance?.name ?? defaultName ?? "");
   const [host, setHost] = useState(initial?.host ?? "");
   const [port, setPort] = useState(initial ? initial.port : (meta?.port ?? ""));
   const [urlBase, setUrlBase] = useState(initial?.urlBase ?? "");

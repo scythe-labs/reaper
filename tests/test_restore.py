@@ -11,13 +11,18 @@ What is pinned here, all of it resolving toward keeping the live data:
   ``arm`` writes the READY marker, and it forces deletion off in the staged database;
 * the boot swap replaces the database only when armed and the staged copy reads as
   SQLite, keeps the previous data in a recovery directory, and is a no-op otherwise;
+* ``restart`` stops the app only where a restore is armed and no reap is running, and it
+  stops by the signal that lets a run in flight record itself;
 * the restore routes are fenced off the API-key lane and need a signed-in session.
 """
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+import os
+import signal
 import sqlite3
 import stat
 import tarfile
@@ -27,12 +32,16 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.api.middleware import _api_key_allowed
+from reaper.api import backup as backup_api
+from reaper.api.middleware import _api_key_allowed, api_key_refused
+from reaper.api.runs import ReapStatus
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.main import create_app
-from reaper.services import restore
+from reaper.services import app_settings, restore
 from reaper.services.restore import RestoreError
 from tests._auth import TEST_PASSWORD, clear_admin_password, login
 
@@ -313,9 +322,39 @@ class TestArm:
         settings = _settings(tmp_path)
         summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
         restore.arm(settings, summary.token)
-        restore.clear_pending(settings)
+        assert restore.clear_pending(settings) is True
         assert restore.is_armed(settings) is False
         assert not (settings.data_dir / restore.PENDING_DIR).exists()
+
+    def test_cancel_with_the_staging_token_clears_it(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        assert restore.clear_pending(settings, summary.token) is True
+        assert not (settings.data_dir / restore.PENDING_DIR).exists()
+
+    def test_cancel_refuses_a_token_from_a_replaced_staging(self, tmp_path: Path) -> None:
+        # #387, and the discard side of `test_arm_refuses_a_token_from_a_replaced_staging`
+        # above: two live restore cards each hold their own reviewed summary, and only the
+        # later stage survives. The earlier card's reclaim must not take the other's archive.
+        settings = _settings(tmp_path)
+        first = restore.stage_upload(settings, _make_archive(tmp_path / "a.reaper"))
+        second = restore.stage_upload(settings, _make_archive(tmp_path / "b.reaper"))
+
+        assert restore.clear_pending(settings, first.token) is False
+
+        # Still `second`'s, intact and still armable by the card that staged it -- which is
+        # what a bare "the directory is there" assertion would not tell apart from a staging
+        # left half-removed.
+        assert (settings.data_dir / restore.PENDING_DIR).exists()
+        restore.arm(settings, second.token)
+        assert restore.is_armed(settings) is True
+
+    def test_cancel_with_a_token_and_nothing_staged_removes_nothing(self, tmp_path: Path) -> None:
+        # The reclaim fires on an unmount that may follow a cancel from anywhere else, so
+        # "no staging at all" is an ordinary arrival here, not an error.
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        assert restore.clear_pending(settings, "a" * restore.TOKEN_MAX_LEN) is False
 
     def test_restored_key_and_salt_are_owner_only(self, tmp_path: Path) -> None:
         # S-4: the key and salt are 0600 from creation, before the boot swap moves them into
@@ -509,7 +548,251 @@ class TestApi:
 
         canceled = client.post("/api/settings/backup/restore/cancel")
         assert canceled.status_code == 200, canceled.text
+        assert canceled.json()["cleared"] is True
         assert client.get("/api/settings/backup").json()["restore_armed"] is False
+
+    def test_cancel_scoped_to_a_replaced_staging_leaves_it(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The route half of #387, over the wire the two cards actually use.
+
+        The first card's reclaim arrives after a second card has staged its own archive.
+        It names what it staged, the server no longer holds that, and the archive the
+        other card is still showing survives -- confirmed by arming it afterwards, which
+        is the operation the stranded card was left unable to perform.
+        """
+        first = client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "a.reaper").read_bytes(),
+        )
+        second = client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "b.reaper").read_bytes(),
+        )
+
+        reclaimed = client.post(
+            "/api/settings/backup/restore/cancel", json={"token": first.json()["token"]}
+        )
+
+        assert reclaimed.status_code == 200, reclaimed.text
+        assert reclaimed.json()["cleared"] is False
+        armed = client.post(
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": second.json()["token"]},
+        )
+        assert armed.status_code == 200, armed.text
+        assert client.get("/api/settings/backup").json()["restore_armed"] is True
+
+    def test_cancel_refuses_a_token_wider_than_one_can_be(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        # Rule 95: the field is bounded off the width the staging mints, and the staging it
+        # would otherwise have to read against survives the refusal -- asserted by arming it
+        # afterwards with its own token, since a 422 never reaches the handler and "the
+        # directory is still there" would hold whatever the bound did.
+        prepared = client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "up.reaper").read_bytes(),
+        )
+        refused = client.post(
+            "/api/settings/backup/restore/cancel",
+            json={"token": "a" * (restore.TOKEN_MAX_LEN + 1)},
+        )
+        assert refused.status_code == 422, refused.text
+        armed = client.post(
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": prepared.json()["token"]},
+        )
+        assert armed.status_code == 200, armed.text
+
+    def test_confirm_refuses_a_token_wider_than_one_can_be(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        # The sibling bound, and the one that matters more: this field sits on the route that
+        # reaches Argon2 (rule 72, and rule 95's reason for the bound in the first place).
+        client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "up.reaper").read_bytes(),
+        )
+        refused = client.post(
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": "a" * (restore.TOKEN_MAX_LEN + 1)},
+        )
+        assert refused.status_code == 422, refused.text
+        assert client.get("/api/settings/backup").json()["restore_armed"] is False
+
+
+def _arm(client: TestClient, tmp_path: Path) -> None:
+    """Upload, review, and confirm a backup, leaving the swap armed -- the state the operator
+    is in when the card offers Restart now."""
+    prepared = client.post(
+        "/api/settings/backup/restore/prepare",
+        content=_make_archive(tmp_path / "up.reaper").read_bytes(),
+    )
+    confirmed = client.post(
+        "/api/settings/backup/restore/confirm",
+        json={"password": TEST_PASSWORD, "token": prepared.json()["token"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+
+
+@pytest.fixture
+def stops(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Every time the route asks this process to stop, recorded instead of sent.
+
+    Not optional decoration: the route's own background task calls this, and ``TestClient``
+    runs background tasks, so a test that armed a restore and posted without this would
+    SIGTERM the pytest process.
+    """
+    sent: list[int] = []
+    monkeypatch.setattr(backup_api, "_stop_this_process", lambda: sent.append(1))
+    return sent
+
+
+class TestRestartNow:
+    """The last step of a restore, in the browser rather than in a shell (#386).
+
+    A restore stages its files and stops; the swap happens on the next boot, from preflight.
+    That left the operator holding an instruction ("restart the container") at the end of a
+    flow that is otherwise entirely in the browser, and the first-run wizard now opens onto
+    that flow. This route is that instruction, as a button.
+
+    It cannot promise Reaper comes back -- nothing inside a container can read its own restart
+    policy -- so what is pinned here is everything it CAN promise: it stops only where stopping
+    is what the operator was already being asked to do, it does not stop while files are being
+    deleted, and it leaves by the door that lets a run in flight record itself.
+    """
+
+    def test_with_no_restore_armed_it_refuses(self, client: TestClient, stops: list[int]) -> None:
+        """Otherwise this is a general-purpose "stop the app" endpoint, reachable by anything
+        holding a session, which is not a thing Reaper offers."""
+        response = client.post("/api/settings/backup/restore/restart")
+
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == "There's no restore waiting, so nothing was stopped."
+        assert stops == []
+
+    def test_a_staged_restore_nobody_confirmed_is_not_enough(
+        self, client: TestClient, tmp_path: Path, stops: list[int]
+    ) -> None:
+        """The password is what arms the swap, so an upload that only reached ``prepare``
+        would stop the app to apply nothing at all."""
+        prepared = client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "up.reaper").read_bytes(),
+        )
+        assert prepared.status_code == 200, prepared.text
+
+        response = client.post("/api/settings/backup/restore/restart")
+
+        assert response.status_code == 409, response.text
+        assert stops == []
+
+    def test_with_a_restore_armed_it_stops(
+        self, client: TestClient, tmp_path: Path, stops: list[int]
+    ) -> None:
+        _arm(client, tmp_path)
+
+        response = client.post("/api/settings/backup/restore/restart")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {"ok": True}
+        # The stop rides the response's background task, so it lands after the body -- which is
+        # what lets the browser render "Reaper is stopping" instead of a dead connection.
+        assert stops == [1]
+
+    def test_it_will_not_stop_the_app_while_a_reap_is_running(
+        self, client: TestClient, tmp_path: Path, stops: list[int]
+    ) -> None:
+        """Shutdown handles a reap in flight -- it is canceled, awaited, and recorded ABORTED
+        -- but handled is not a reason to interrupt the one path that deletes files. The run
+        has a graceful Stop of its own, and the staged restore will wait as long as it takes.
+        """
+        _arm(client, tmp_path)
+        client.app.state.reap_status = ReapStatus(running=True, run_id=1)
+
+        response = client.post("/api/settings/backup/restore/restart")
+
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"] == (
+            "A reap is running. Let it finish or stop it, then restart Reaper."
+        )
+        assert stops == []
+        # ...and the restore is still armed, so the operator can press it again after the run.
+        assert client.get("/api/settings/backup").json()["restore_armed"] is True
+
+    def test_the_stop_is_the_signal_a_graceful_shutdown_reads(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SIGTERM to itself, which uvicorn turns into the graceful shutdown that runs
+        ``main.lifespan``'s finally. ``sys.exit`` or ``os._exit`` would leave by a door that
+        skips it, dropping a reap mid-step with the run row still reading EXECUTING.
+
+        Asserts what was actually sent (rule 119) rather than that something was called: the
+        signal number IS the behavior, and any other one is a different shutdown or none.
+        """
+        sent: list[tuple[int, int]] = []
+        monkeypatch.setattr(backup_api.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+
+        backup_api._stop_this_process()
+
+        assert sent == [(os.getpid(), signal.SIGTERM)]
+
+    async def test_shutdown_lets_a_reap_in_flight_finish_recording_itself(
+        self, tmp_path: Path
+    ) -> None:
+        """The refusal above closes the door on pressing this mid-reap. It does not close the
+        window between that check and the signal, and nothing can: a reap that starts in it
+        meets the shutdown anyway -- exactly as it would if the operator restarted the
+        container by hand, or the host rebooted.
+
+        What makes that survivable is two lines of ``main.lifespan``'s finally: the reap task
+        is canceled AND awaited, before the engines are disposed. The executor's own cancel
+        branch is pinned in ``test_reap_loop.py`` (it marks the run ABORTED and defers the Plex
+        purge); this pins that shutdown gives it a live database to commit that on. A bare
+        ``.cancel()``, or a ``dispose()`` moved above the await, leaves the branch half-run and
+        the run row reading EXECUTING forever -- with files already deleted (#327's shape).
+
+        The task stands in for the executor rather than being one: what is under test is the
+        shutdown's ordering, and the executor needs a planned run, an armed host and a gateway
+        to reach the same await. It commits through the app's OWN session factory, so a
+        disposal that landed too early fails here.
+        """
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        engine.dispose()
+        app = create_app(settings)
+        stamp = "2026-02-01T00:00:00+00:00"
+
+        async def reap_that_commits_on_cancel() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+                async with factory() as session:
+                    await app_settings.set_last_backup_at(session, stamp)
+                    await session.commit()
+                raise
+
+        async with app.router.lifespan_context(app):
+            app.state.reap_task = asyncio.create_task(reap_that_commits_on_cancel())
+            # One turn, so the task is actually parked in its await when shutdown arrives.
+            await asyncio.sleep(0)
+
+        # Read on a connection of our own, after the app's engines are gone: this is the row as
+        # it survives the process, which is the only version of it that matters.
+        read = sa_create_engine(settings.sync_database_url)
+        try:
+            with read.connect() as conn:
+                stored = conn.execute(
+                    text("SELECT value_json FROM app_setting WHERE key = :key"),
+                    {"key": app_settings.BACKUP_LAST_AT_KEY},
+                ).scalar_one_or_none()
+        finally:
+            read.dispose()
+        assert stored is not None, "shutdown canceled the reap without awaiting what it wrote"
+        assert stamp in stored
 
 
 class TestApiKeyIsFenced:
@@ -520,6 +803,16 @@ class TestApiKeyIsFenced:
         assert _api_key_allowed("POST", "/api/settings/backup/restore/prepare") is False
         assert _api_key_allowed("POST", "/api/settings/backup/restore/confirm") is False
         assert _api_key_allowed("POST", "/api/settings/backup/restore/cancel") is False
+
+    def test_restarting_is_denied_to_api_keys(self) -> None:
+        """The strongest case of the four: this one stops the app. A key is for scripts that
+        scan, plan, and edit the policy, and none of those needs the process to end.
+
+        Denied by being born outside the write allowlist rather than by being listed anywhere,
+        so it stays denied without anyone remembering -- but asserted here all the same,
+        because "nobody added it to the allowlist" is not something a reader can see."""
+        assert _api_key_allowed("POST", "/api/settings/backup/restore/restart") is False
+        assert api_key_refused("POST", "/api/settings/backup/restore/restart") is True
 
 
 def test_prepare_needs_a_session(tmp_path: Path) -> None:

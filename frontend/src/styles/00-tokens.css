@@ -83,6 +83,12 @@
   --sonarr-ink: #041018;
   --seerr: #8f95f7;
   --seerr-ink: #14153f;
+  /* Discord's blurple. Its ink is white rather than a dark tone: the fill is dark enough that
+     white clears WCAG AA on it at the badge's small bold size (4.61:1), where a dark ink would
+     not. Discord joined the pairs above when its settings got the service-editor layout, so
+     its badge reads as one of the connections. */
+  --discord: #5865f2;
+  --discord-ink: #ffffff;
 
   /* The dim behind a modal or a sheet. Deliberately theme-independent -- an overlay's job
      is to push the page back, and it does that the same way on a light page as a dark one
@@ -204,6 +210,8 @@
     --sonarr-ink: #041018;
     --seerr: #8f95f7;
     --seerr-ink: #14153f;
+    --discord: #5865f2;
+    --discord-ink: #ffffff;
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
@@ -262,6 +270,12 @@
   --sonarr-ink: #041018;
   --seerr: #8f95f7;
   --seerr-ink: #14153f;
+  /* Discord's blurple. Its ink is white rather than a dark tone: the fill is dark enough that
+     white clears WCAG AA on it at the badge's small bold size (4.61:1), where a dark ink would
+     not. Discord joined the pairs above when its settings got the service-editor layout, so
+     its badge reads as one of the connections. */
+  --discord: #5865f2;
+  --discord-ink: #ffffff;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
@@ -313,6 +327,12 @@
   --sonarr-ink: #041018;
   --seerr: #8f95f7;
   --seerr-ink: #14153f;
+  /* Discord's blurple. Its ink is white rather than a dark tone: the fill is dark enough that
+     white clears WCAG AA on it at the badge's small bold size (4.61:1), where a dark ink would
+     not. Discord joined the pairs above when its settings got the service-editor layout, so
+     its badge reads as one of the connections. */
+  --discord: #5865f2;
+  --discord-ink: #ffffff;
 
   --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06), 0 1px 3px rgba(16, 18, 27, 0.05);
   --shadow-md: 0 2px 6px rgba(16, 18, 27, 0.07), 0 8px 24px rgba(16, 18, 27, 0.07);

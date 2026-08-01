@@ -405,7 +405,7 @@ export function ReapConfirm({
                 `aria-valuetext` carries the counts a person would actually say, rather than
                 leaving a reader to read out "62". A progressbar is not a live region, so this
                 is read when the operator asks for it -- the announcing is throttled separately,
-                above (`ScanLine` in App.tsx is the same shape, rule 72). */}
+                above (`ScanLine` is the same shape, rule 72). */}
             <div
               className="prog-track"
               role="progressbar"

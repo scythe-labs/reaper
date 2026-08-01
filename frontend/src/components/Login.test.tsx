@@ -89,6 +89,41 @@ describe("the local-account sheet", () => {
       expect(sheet.contains(document.activeElement)).toBe(true);
     }
   });
+
+  // #382: the sheet used to assert the safeguard flat, so on an install that had no local
+  // account the promise and its own denial rendered one above the other. The claim now
+  // renders only where it is true, which is what these two pin -- from opposite directions,
+  // because a claim narrowed to nowhere is the same failure the other way round.
+  it("promises the fallback on an install that actually has one", async () => {
+    await openSheet();
+    const blurb = await screen.findByText(/fallback for when plex is unreachable/i);
+    expect(blurb).toHaveTextContent(/keeps at least one/i);
+  });
+
+  it("does not promise the fallback on an install with no local account", async () => {
+    apiMock.authContext.mockResolvedValue({
+      setup_needed: false,
+      plex_linked: true,
+      local_login_available: false,
+    });
+    try {
+      await openSheet();
+      const blurb = await screen.findByText(/fallback for when plex is unreachable/i);
+      expect(blurb).toHaveTextContent(/doesn’t have one yet/i);
+      expect(blurb).not.toHaveTextContent(/keeps at least one/i);
+      // And the way out is the one reachable from this browser. The host command stays for
+      // an operator who cannot reach plex.tv, which is the case they opened this sheet in.
+      const notice = screen.getByRole("alert");
+      expect(notice).toHaveTextContent(/sign in with plex above/i);
+      expect(notice).toHaveTextContent(/reaper-admin create-admin/i);
+    } finally {
+      apiMock.authContext.mockResolvedValue({
+        setup_needed: false,
+        plex_linked: true,
+        local_login_available: true,
+      });
+    }
+  });
 });
 
 describe("the Plex sign-in popup", () => {

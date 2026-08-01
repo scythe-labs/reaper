@@ -87,7 +87,7 @@ async def _cmd_list() -> int:
             if locals_ == 0:
                 _out(
                     "WARNING: none. If Plex OAuth fails you will be locked out.\n"
-                    "         Run: reaper-admin create-admin --username <name>"
+                    "         Run: reaper-admin create-admin --username admin"
                 )
         return 0
     finally:

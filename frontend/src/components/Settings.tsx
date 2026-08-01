@@ -12,7 +12,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ChangeEvent,
   type CSSProperties,
-  type DragEvent,
   type ReactNode,
   type RefObject,
   useEffect,
@@ -27,7 +26,6 @@ import {
   type ExpandSeasonsMode,
   type Instance,
   type InstanceTest,
-  type RestoreSummary,
   type Schedule,
   type ScheduledJob,
 } from "../api";
@@ -40,6 +38,7 @@ import { LogsPanel } from "./LogsPanel";
 import { ModalShell } from "./ModalShell";
 import { PlexPanel } from "./PlexPanel";
 import { FixedQuantity } from "./QuantityInput";
+import { RestoreCard } from "./RestoreCard";
 import { ScanRow } from "./ScanBar";
 import { Segmented } from "./Segmented";
 import { KINDS, kindLabel, ServiceModal, TestBadge, testSentence } from "./ServiceModal";
@@ -1272,8 +1271,12 @@ export function ServicesPanel() {
   return (
     <div className="panel panel-wide">
       <h2>Services</h2>
+      {/* "It only ever reads" was false about Radarr and Sonarr, which are how a reap removes
+          anything: the executor unmonitors, deletes files and adds exclusions through them.
+          Bounded to the scan, which is what the claim was reaching for. Its twin is the
+          wizard's Connect step (rule 72). */}
       <p className="blurb">
-        The apps Reaper reads from. It only ever reads. Nothing here can delete a file.
+        The apps Reaper reads from. Scanning only reads. Nothing here can delete a file.
       </p>
       {/* The one Settings panel #140 did not reach. A raw exception string over the full service
           list broke rule 21 on its own, and said the read had failed above the connections it
@@ -1397,391 +1400,6 @@ function BackupPanel({
         </>
       )}
     </div>
-  );
-}
-
-/** What an armed restore says, in one place because it is said twice: the warn notice on the card
- *  and the sentence spoken into the live region when the confirm lands. Two constants rather than
- *  one so the notice can bold the lead without the announcement inheriting markup -- and so
- *  neither copy can be reworded without the other (rule 144). */
-const RESTORE_ARMED_LEAD = "A restore is ready.";
-const RESTORE_ARMED_REST = "Restart Reaper's container to finish. Nothing has changed yet.";
-
-// The restore card: choose a backup file, confirm with the admin password, then restart the
-// container to finish. A restore never happens live -- the upload is validated and staged, the
-// password arms the swap, and the entrypoint does the swap on the next boot before migrations.
-// Three states: idle (choose a file), chosen (a validated summary + password), and armed (a
-// restore is staged and waiting for a restart). `armed` is server state (the READY marker), so
-// it survives a reload and shows even if this browser never did the confirm.
-function RestoreCard({
-  armed,
-  /** Called whenever a staged backup is waiting on this card, so the section rail can hold a
-   *  switch that would drop it. Pass a STABLE function: it is an effect dependency. */
-  onDirtyChange,
-}: {
-  armed: boolean;
-  onDirtyChange?: ((dirty: boolean) => void) | undefined;
-}) {
-  const qc = useQueryClient();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [summary, setSummary] = useState<RestoreSummary | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const [preparing, setPreparing] = useState(false);
-  // Pressing Restore replaces this whole card with the restart prompt, two hops later: the staged
-  // summary is dropped first, then the refetch flips `armed`. Focus lands on "Cancel restore",
-  // which is the only control the armed card has and the only way back out of it -- and it stays
-  // `disabled` until `busy` clears in the `finally`, one commit after it mounts, which is why the
-  // move waits on being actable rather than on being present (#173).
-  const afterArm = useSuccessorFocus();
-
-  // The two sends that outlive a render, held so the unmount cleanup below can wait on them
-  // instead of deciding against state that has not settled yet. A prepare stages its archive on
-  // the SERVER when it resolves, which can be after this card is gone; a confirm carries the
-  // admin password and arms the swap.
-  const prepareRef = useRef<Promise<RestoreSummary> | null>(null);
-  const confirmRef = useRef<Promise<unknown> | null>(null);
-
-  const refreshInfo = () => qc.invalidateQueries({ queryKey: ["backup-info"] });
-
-  const reset = () => {
-    setSummary(null);
-    setFileName(null);
-    setPassword("");
-    setError(null);
-  };
-
-  // The admin password belongs to the summary it was typed against, so it goes whenever that
-  // summary does: here, and on a failed confirm below. Dropping the summary alone unmounted
-  // the field while the password stayed in state, and refilled it against a different backup
-  // once the next file staged (S-5).
-  const choose = async (file: File) => {
-    setError(null);
-    setSummary(null);
-    setPassword("");
-    setFileName(file.name);
-    setBusy(true);
-    setPreparing(true);
-    const prepared = api.restorePrepare(file);
-    prepareRef.current = prepared;
-    try {
-      setSummary(await prepared);
-    } catch (err) {
-      setFileName(null);
-      // Each of this card's three failures states its own outcome, because one shared lead-in was
-      // wrong for two of them (#178). Nothing was staged here: the file never got read.
-      setError(
-        err instanceof Error
-          ? `Reaper couldn't read that file: ${err.message}`
-          : "Reaper couldn't read that file.",
-      );
-    } finally {
-      setPreparing(false);
-      setBusy(false);
-      if (prepareRef.current === prepared) prepareRef.current = null;
-    }
-  };
-
-  const onPick = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    // Clear the input so choosing the same file name twice still fires a change.
-    e.target.value = "";
-    if (file) void choose(file);
-  };
-
-  const onDrop = (e: DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) void choose(file);
-  };
-
-  const restore = async () => {
-    if (!summary) return;
-    setError(null);
-    setBusy(true);
-    const confirming = api.restoreConfirm(password, summary.token);
-    confirmRef.current = confirming;
-    try {
-      await confirming;
-      // Said here rather than after the refetch, because THIS is what armed it: the server has
-      // staged the swap whether or not the read that redraws the card lands. It was the one
-      // outcome in this panel with no signal at all -- the card simply became a different card,
-      // which is an absence, and the operator hears nothing when a full restore is armed (#173).
-      announce(`${RESTORE_ARMED_LEAD} ${RESTORE_ARMED_REST}`);
-      // The confirm armed the swap; refetch so `armed` flips on and this card shows the
-      // restart prompt. Drop the staged summary from local state either way.
-      reset();
-      await refreshInfo();
-    } catch (err) {
-      setPassword("");
-      // The only one of the three the old shared lead-in was right for.
-      setError(
-        err instanceof Error
-          ? `The restore didn't start: ${err.message}`
-          : "The restore didn't start.",
-      );
-    } finally {
-      setBusy(false);
-      if (confirmRef.current === confirming) confirmRef.current = null;
-    }
-  };
-
-  const cancel = async () => {
-    setBusy(true);
-    try {
-      await api.restoreCancel();
-      reset();
-      await refreshInfo();
-    } catch (err) {
-      // A cancel that fails used to report itself as a restore that did not start, which points
-      // the operator at the wrong button: the file is still staged on the server, so what they
-      // need to know is that it is still there.
-      setError(
-        err instanceof Error
-          ? `That file is still waiting to be restored: ${err.message}`
-          : "That file is still waiting to be restored.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // What this card would LOSE, reported up through `BackupPanel` to `Settings` so leaving the
-  // section can stop and ask first. It is the costliest draft in Settings by some way: the archive
-  // is already uploaded and staged on the SERVER, and the admin password was typed against that
-  // exact file.
-  //
-  // Rule 146: declared above the `armed` early return, and false inside it. An armed restore is
-  // server state that survives a reload, this browser, and this card -- there is nothing here to
-  // lose, and the card in that branch offers its own Cancel. Reporting a draft there would demand
-  // a discard for a decision already stored. The password is not read separately because it
-  // cannot outlive the summary: every path that drops one drops the other (`choose`, `reset`, and
-  // the failed confirm), which is S-5's fix and is what keeps this signal to one fact.
-  //
-  // `preparing` is the other half of the same fact, and reading `summary` alone missed it: the
-  // upload is already on its way to the server while the card still shows "Checking <file>", so a
-  // switch during that window left with no confirm at all and landed a staged archive nobody
-  // could see. Rule 146 asks what the parent is told while this component renders "loading" --
-  // this is that answer.
-  const staged = !armed && (summary !== null || preparing);
-  useEffect(() => {
-    onDirtyChange?.(staged);
-  }, [staged, onDirtyChange]);
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
-
-  // A prepare that is never confirmed leaves the archive staged on the server, and nothing else
-  // ever clears it: an un-armed stage has no surface anywhere in the app, so it would sit there
-  // until the next prepare replaced it. Leaving takes it with us.
-  //
-  // Deliberately its own effect with `[]` deps, unlike the report above, because this one SENDS
-  // something: hung off `onDirtyChange` it would re-run whenever that prop changed identity and
-  // cancel a staged restore while the card was still on screen. It reads `stagedRef` for the same
-  // reason -- the guard has to be the value at unmount, not at mount.
-  //
-  // `restore_cancel` discards a staged OR ARMED restore (`api/backup.py:restore_cancel`), so the
-  // three ways this can send a cancel it should not are each held off explicitly:
-  //
-  //   - An upload still in flight has no summary yet and stages its archive AFTER this runs, so
-  //     the decision waits on the prepare rather than reading state that has not arrived. A
-  //     prepare that REJECTED staged nothing, and a cancel then would be reclaiming someone
-  //     else's stage rather than ours.
-  //   - A confirm still in flight was already authorized with the admin password, so its outcome
-  //     is a decision, not a draft. We wait for it and leave whatever it armed.
-  //   - `armed` is a React Query cache nothing refreshes from another client: the query sets no
-  //     `refetchInterval`, and `main.tsx` turns `refetchOnWindowFocus` off app-wide, so a restore
-  //     armed from a second tab still reads false here. Asking the cache would disarm exactly the
-  //     restore the guard exists to protect, so the SERVER is asked instead, immediately before
-  //     the send.
-  //
-  // Best effort throughout: if any leg fails the archive stays staged, which is exactly where it
-  // stood before this existed, and there is no longer a card to say so on.
-  const stagedRef = useRef(false);
-  stagedRef.current = staged;
-  useEffect(
-    () => () => {
-      const reclaimStagedArchive = async () => {
-        if (prepareRef.current) {
-          try {
-            await prepareRef.current;
-          } catch {
-            return;
-          }
-        } else if (!stagedRef.current && !confirmRef.current) {
-          return;
-        }
-        await confirmRef.current?.catch(() => {});
-        if ((await api.backupInfo()).restore_armed) return;
-        await api.restoreCancel();
-      };
-      void reclaimStagedArchive().catch(() => {});
-    },
-    [],
-  );
-
-  if (armed) {
-    return (
-      <section className="rules-card">
-        <h3>Restore from a backup</h3>
-        <Notice tone="warn" className="restore-armed" as="div">
-          <span>
-            <strong>{RESTORE_ARMED_LEAD}</strong> {RESTORE_ARMED_REST}
-          </span>
-          <button
-            type="button"
-            className="link"
-            ref={afterArm.ref as RefObject<HTMLButtonElement>}
-            onClick={() => void cancel()}
-            disabled={busy}
-          >
-            Cancel restore
-          </button>
-        </Notice>
-      </section>
-    );
-  }
-
-  return (
-    <section className="rules-card">
-      <h3>Restore from a backup</h3>
-      <p className="help">
-        Replace everything here with a saved backup. Deletion stays off after a restore until you
-        turn it back on.
-      </p>
-
-      <input ref={inputRef} type="file" accept=".reaper" hidden onChange={onPick} />
-
-      {!summary && (
-        <div
-          className={`dropzone${dragging ? " dropzone-over" : ""}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
-          {busy && fileName ? (
-            <div className="muted">Checking {fileName}…</div>
-          ) : (
-            <>
-              <div>
-                Drop a backup file here, or{" "}
-                <button
-                  type="button"
-                  className="link"
-                  onClick={() => inputRef.current?.click()}
-                  disabled={busy}
-                >
-                  choose one
-                </button>
-                .
-              </div>
-              <div className="dz-hint">Reaper backup file (.reaper)</div>
-            </>
-          )}
-        </div>
-      )}
-
-      {summary && (
-        <>
-          <div className="chosen">
-            <div className="chosen-head">
-              <span className="chosen-file">{fileName}</span>
-              <button
-                type="button"
-                className="link chosen-x"
-                onClick={() => void cancel()}
-                disabled={busy}
-              >
-                Remove
-              </button>
-            </div>
-            <div className="chosen-body">
-              <div className="kv2">
-                <span>From</span>
-                <span>
-                  {summary.app_version ? `Reaper ${summary.app_version}` : "an earlier setup"}
-                  {summary.created_at ? `, saved ${since(summary.created_at)}` : ""}
-                </span>
-              </div>
-              <div className="kv2">
-                <span>Inside</span>
-                <span>Decisions, settings, credentials</span>
-              </div>
-              <div className="verdict-ok">
-                {/* Decorative here, unlike the test badge: both branches of the sentence below
-                    say the verdict in words, so the glyph would only interrupt it with a stray
-                    character. Hidden rather than given a text twin (rule 144 -- a second copy
-                    of a claim that gates a restore is the copy that goes wrong). */}
-                <span className="dot" aria-hidden="true">
-                  ✓
-                </span>
-                {summary.verdict === "current"
-                  ? "Matches this server. Safe to restore."
-                  : "Saved on an older version. Reaper will update it when it restarts."}
-              </div>
-            </div>
-          </div>
-
-          {!summary.key_in_backup && (
-            <Notice tone="warn">
-              This backup doesn't include the encryption key. Set REAPER_SECRET_KEY on this server
-              to the value it was saved with, or your saved credentials can't be read after the
-              restore.
-            </Notice>
-          )}
-
-          <label className="field-sm restore-pw">
-            <span className="field-label">Admin password</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => {
-                setError(null);
-                setPassword(e.target.value);
-              }}
-              autoComplete="current-password"
-              maxLength={128}
-              placeholder="Confirm to restore"
-            />
-          </label>
-
-          <div className="backup-actions">
-            <button
-              type="button"
-              className="danger"
-              onClick={() => {
-                afterArm.arriving();
-                void restore();
-              }}
-              disabled={busy || !password}
-            >
-              {busy ? "Restoring…" : "Restore"}
-            </button>
-          </div>
-          <p className="help restore-when">
-            Restoring takes effect the next time the container restarts. Nothing changes until then.
-          </p>
-
-          {/* `standing`, same as the download warning above: part of the restore card whenever
-              it is on screen, not a reply to a press. */}
-          <Notice tone="warn" standing>
-            Restoring replaces your current decisions and settings. There is no undo, so download a
-            backup first.
-          </Notice>
-        </>
-      )}
-
-      {/* The lead-in belongs to whichever step failed, so it is written where the failure is
-          caught (`choose`, `restore`, `cancel`) rather than here. One lead for all three said a
-          restore had not started when the real news was an unreadable file, or a staged archive
-          still sitting on the server (#178). */}
-      {error && <Notice tone="error">{error}</Notice>}
-    </section>
   );
 }
 
@@ -2448,7 +2066,10 @@ const DISCORD_WEBHOOK_HOSTS = ["discord.com", "discordapp.com"];
 /** The webhook box's format complaint, named once for both ends (rule 67). */
 const WEBHOOK_ERROR_ID = "discord-webhook-error";
 
-function isDiscordWebhook(raw: string): boolean {
+/** Exported so `DiscordModal` checks the format the same way this panel does. A second copy
+ *  of these host and path rules would be one validator written twice, and the copy that drifts
+ *  is the one that starts accepting a URL the backend then refuses (rule 18, rule 144). */
+export function isDiscordWebhook(raw: string): boolean {
   let url: URL;
   try {
     url = new URL(raw.trim());
@@ -2690,8 +2311,10 @@ export function NotificationsPanel({
 
 // The same floor the server applies (MIN_PASSWORD_LENGTH in
 // reaper/services/admin_password.py), so the placeholder, the live message, and the server
-// rule all state one number.
-const MIN_ADMIN_PASSWORD = 12;
+// rule all state one number. Exported because the first-run wizard sets this same password
+// on its own step and states the same floor: a second literal 12 there would be one rule
+// written twice, and the copy that drifts is the one nobody edits (rule 67, rule 144).
+export const MIN_ADMIN_PASSWORD = 12;
 
 /** The password form's one error region, named once for both ends of the association (rule 67).
  *  Which BOX claims it varies: the region carries whichever complaint is live, and only the box

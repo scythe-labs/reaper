@@ -13,8 +13,14 @@ container cleanly before a half-migrated schema can exist.
 It also applies a pending restore. A confirmed restore stages a backup and arms it
 (see :mod:`reaper.services.restore`); the swap must happen here, before
 ``alembic upgrade head`` runs, so the restored database is brought current on the
-same boot. Running it in preflight is why "restart the container to finish" is all a
-restore asks of the operator.
+same boot. Running it in preflight is why restarting is all a restore asks of the
+operator -- and why ``POST /api/settings/backup/restore/restart`` can offer that as a
+button rather than as an instruction.
+
+**Every way of starting Reaper runs this, or a staged restore is silently never
+applied.** The container entrypoint does; so does ``scripts/dev-local.sh``, which did
+not, and the restore banner there asked for a restart that could not finish however
+many times it was given one (#381).
 """
 
 from __future__ import annotations

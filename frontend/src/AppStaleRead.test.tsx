@@ -83,17 +83,23 @@ const USER: AuthUser = {
   thumb_url: null,
 };
 
-/** A configured install: everything wired and scanned once, which is what `complete` means. */
+/** A configured install: a password set, everything wired, and scanned once -- which is what
+ *  `complete` means. */
 const COMPLETE_SETUP: SetupStatus = {
   admin_exists: true,
+  has_password: true,
   plex_linked: true,
-  instances: { radarr: 1, sonarr: 1 },
+  instances: { radarr: 1, sonarr: 1, tautulli: 1 },
   has_radarr: true,
   has_sonarr: true,
-  has_tautulli: false,
+  // Wired, so the row is an install that could actually exist: `scan_ready` and `reap_ready`
+  // both require a Tautulli, and a fixture asserting them beside `has_tautulli: false`
+  // describes a state the server never returns.
+  has_tautulli: true,
   has_seerr: false,
   has_scanned: true,
   scan_ready: true,
+  reap_ready: true,
   complete: true,
 };
 
@@ -110,8 +116,12 @@ const EMPTY_PAGE: CandidatePage = {
 // whichever section is loading. The wizard and the login screen each render neither this nav nor
 // each other, which is what makes the three screens tellable apart with one assertion each.
 const dashboardNav = () => screen.queryByRole("navigation", { name: "Sections" });
-const WIZARD_SKIP = /Skip to the app/;
-const WIZARD_UNREADABLE = /Couldn't check the setup state/;
+// The wizard's own marker: the progress row is on every step and on nothing else, which is
+// what the old "Skip to the app" button used to be before the flow became four steps and its
+// way out moved onto each step's own actions.
+const wizardSteps = () => screen.queryByRole("list", { name: "Setup progress" });
+const WIZARD_UNREADABLE = /Couldn't check what's set up yet/;
+const WIZARD_WAY_OUT = /Go to the app/;
 
 beforeEach(() => {
   vi.stubGlobal("IntersectionObserver", NoopObserver);
@@ -203,7 +213,7 @@ describe("the setup gate through a failed refetch", () => {
 
     expect(dashboardNav()).toBeInTheDocument();
     // The claim that matters: the wizard did not come back over a configured install.
-    expect(screen.queryByText(WIZARD_SKIP)).toBeNull();
+    expect(wizardSteps()).toBeNull();
   });
 
   it("still shows the wizard when the first status read is the one that fails", async () => {
@@ -214,7 +224,7 @@ describe("the setup gate through a failed refetch", () => {
     // genuinely-fresh one onto an empty Dashboard with no way back is the worse failure. Skip is
     // the promise that makes routing here safe, so it is asserted rather than assumed.
     expect(await screen.findByText(WIZARD_UNREADABLE)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: WIZARD_SKIP })).toBeEnabled();
+    expect(screen.getByRole("button", { name: WIZARD_WAY_OUT })).toBeEnabled();
     expect(dashboardNav()).toBeNull();
   });
 
@@ -228,7 +238,10 @@ describe("the setup gate through a failed refetch", () => {
 
     // The half of the old expression that was never in question, kept so a fix that reduced the
     // gate to `setup === undefined && isError` cannot pass this file (rule 118).
-    expect(await screen.findByRole("button", { name: WIZARD_SKIP })).toBeEnabled();
+    expect(await screen.findByRole("list", { name: "Setup progress" })).toBeInTheDocument();
+    // The way out is still there on every step past the password, which is what makes
+    // routing an unfinished install here safe.
+    expect(screen.getByRole("button", { name: WIZARD_WAY_OUT })).toBeEnabled();
     expect(dashboardNav()).toBeNull();
   });
 });
@@ -317,5 +330,47 @@ describe("the sign-in gate through a failed refetch", () => {
     expect(await screen.findByText("Couldn't sign you out. Try again.")).toBeInTheDocument();
     await waitFor(() => expect(apiMock.me).toHaveBeenCalledTimes(2));
     expect(dashboardNav()).toBeInTheDocument();
+  });
+});
+
+describe("the wizard's own last step finishing", () => {
+  // `complete` is `has_password and scan_ready and has_scanned`, and the wizard's last step is
+  // what makes `has_scanned` true. Deriving the gate live therefore unmounted the wizard in the
+  // same commit its finish panel would have rendered in -- so the screen that reports the result
+  // of setup, including "a real reap will still be refused without Plex" (#383), was the one
+  // screen setup could never show. Latched instead: once the wizard has been needed it stays
+  // until the operator leaves it.
+  it("keeps the wizard up when the first scan flips complete", async () => {
+    // Everything done but the scan, which is where the wizard opens for this install and the
+    // only state the finish panel is written for.
+    const FRESH = { ...COMPLETE_SETUP, has_scanned: false, complete: false };
+    apiMock.setupStatus.mockResolvedValue(FRESH);
+    const client = renderApp();
+
+    await waitFor(() => expect(wizardSteps()).toBeInTheDocument());
+
+    // The scan lands: the step invalidates every key, and the server now calls setup complete.
+    apiMock.setupStatus.mockResolvedValue({ ...FRESH, has_scanned: true, complete: true });
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ["setup"] });
+    });
+
+    expect(wizardSteps()).toBeInTheDocument();
+    expect(dashboardNav()).toBeNull();
+    // And the panel that only this state renders is finally on screen, saying the thing the
+    // whole #383 change exists to say.
+    // "You're all set" was unreachable through the app in EVERY state before the latch: an
+    // empty blocker list implies has_password and scan_ready, which with has_scanned implies
+    // complete, which is exactly what used to unmount the panel drawing it.
+    expect(await screen.findByText(/you're all set/i)).toBeInTheDocument();
+  });
+
+  // The other direction, and the reason the latch is a latch rather than "never unmount": a
+  // configured install must still go straight to the Dashboard, and a blinked read must not
+  // drag it into the wizard. Both are pinned above; this asserts the latch did not break them.
+  it("does not latch an install that never needed the wizard", async () => {
+    renderApp();
+    expect(await screen.findByRole("navigation", { name: "Sections" })).toBeInTheDocument();
+    expect(wizardSteps()).toBeNull();
   });
 });

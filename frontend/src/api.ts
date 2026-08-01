@@ -1075,6 +1075,10 @@ export interface PlexPoll {
 
 export interface SetupStatus {
   admin_exists: boolean;
+  /** Whether an admin password exists, which is also whether a local account does. The
+   *  wizard reads it to know whether its first step is behind it, so the step shown comes
+   *  from the server rather than from how far this browser got. */
+  has_password: boolean;
   plex_linked: boolean;
   instances: Record<string, number>;
   has_radarr: boolean;
@@ -1083,6 +1087,11 @@ export interface SetupStatus {
   has_seerr: boolean;
   has_scanned: boolean;
   scan_ready: boolean;
+  /** Whether a *real* run could go ahead: scan-ready, plus a linked Plex and the password
+   *  that arms deletion. A strictly higher bar than `scan_ready`, and the one `complete`
+   *  does not answer. Read it through `reapBlockers` (`reapReadiness.ts`) rather than
+   *  writing copy off it here, so the wizard and the Reap page say the same thing. */
+  reap_ready: boolean;
   complete: boolean;
 }
 
@@ -1206,7 +1215,7 @@ export interface BackupInfo {
    *  the environment, so a restore needs that same value set on the target machine. */
   key_in_backup: boolean;
   app_version: string;
-  /** Whether a confirmed restore is staged and waiting for a container restart. */
+  /** Whether a confirmed restore is staged and waiting for Reaper to restart. */
   restore_armed: boolean;
 }
 
@@ -1578,13 +1587,22 @@ export const api = {
     });
     return parseBody<RestoreSummary>(response);
   },
-  /** Confirm a staged restore with the admin password. Arms the swap; the operator then
-   *  restarts the container to finish. The token comes from the prepare summary and binds
-   *  the confirm to the exact backup that was reviewed. */
+  /** Confirm a staged restore with the admin password. Arms the swap, which happens on the
+   *  next start (`restoreRestart`, or a restart the operator does themselves). The token comes
+   *  from the prepare summary and binds the confirm to the exact backup that was reviewed. */
   restoreConfirm: (password: string, token: string) =>
     post<{ ok: boolean }>("/api/settings/backup/restore/confirm", { password, token }),
-  /** Discard a staged or armed restore. */
-  restoreCancel: () => post<{ ok: boolean }>("/api/settings/backup/restore/cancel", {}),
+  /** Discard a staged or armed restore. `token` scopes the discard to one staging, so a card
+   *  reclaiming what it staged cannot take one a second card staged since; `cleared` says
+   *  whether it applied. Omit it to discard whatever is staged, which is what the armed
+   *  card's Cancel means: it holds no summary, and no token to take from one. */
+  restoreCancel: (token?: string) =>
+    post<{ ok: boolean; cleared: boolean }>("/api/settings/backup/restore/cancel", { token }),
+  /** Stop Reaper so the armed restore is applied on the way back up. The 200 means the stop
+   *  was accepted, not that anything came back: the process goes about half a second later,
+   *  and whether it returns is the container's restart policy to answer, which Reaper cannot
+   *  read from inside itself. Refused (409) with no armed restore and while a reap is running. */
+  restoreRestart: () => post<{ ok: boolean }>("/api/settings/backup/restore/restart", {}),
 
   schedule: () => request<Schedule>("/api/settings/schedule"),
   saveJobSchedule: (id: string, cron: string | null) =>

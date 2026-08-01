@@ -222,9 +222,17 @@ esac
 # --- up ------------------------------------------------------------------------------------
 mkdir -p "$LOG_DIR"
 
-# If both are already answering, don't stack a second copy.
+# If both are already answering, don't stack a second copy. BOUNDED, because a bound port is not
+# a live server: under --reload the reloader PARENT holds the listening socket and hands accepted
+# connections to a worker, so a worker that exited leaves the port bound and every connection
+# accepted by the kernel and then answered by nobody. An untimed curl there does not fail, it waits
+# forever -- so `up` hung on its own liveness probe rather than clearing the corpse and booting.
+#
+# That state is now reachable from the UI: `Restart now` on an armed restore stops the worker, and
+# in dev nothing supervises it, so the very next `up` is the one that has to survive this. Five
+# seconds is far past a local health read and far short of noticing a hang.
 if [ -n "$(port_pids "$API_PORT")" ] && [ -n "$(port_pids "$WEB_PORT")" ] \
-   && curl -sS -o /dev/null "http://127.0.0.1:$API_PORT/api/health" 2>/dev/null; then
+   && curl -sS -m 5 -o /dev/null "http://127.0.0.1:$API_PORT/api/health" 2>/dev/null; then
   log "already up -- API :$API_PORT, frontend :$WEB_PORT (use 'down' to restart)"
   exit 0
 fi
@@ -239,6 +247,25 @@ elif [ -f "$DATA_DIR/reaper.db" ] && [ -z "${REAPER_SECRET_KEY:-}" ]; then
   warn "no .env beside $DATA_DIR -- if that DB was encrypted under REAPER_SECRET_KEY,"
   warn "stored credentials will not decrypt. Do NOT re-enter them: that overwrites the good"
   warn "ciphertext under the wrong key. Point REAPER_DATA_DIR elsewhere, or restore the .env."
+fi
+
+# Preflight first, in the order docker-entrypoint.sh runs it: before migrations, because the
+# restore swap has to happen before `alembic upgrade head` brings the restored database current.
+# It is the only caller of `restore.apply_pending_restore`, so without it a confirmed restore is
+# never applied here -- the staged files sat in data/pending-restore/ across every restart while
+# the UI went on saying "restart to finish", and nothing in the log said otherwise (#381). It
+# also sweeps crash-leftover backup/restore temp dirs and turns an unwritable data dir into a
+# plain line instead of SQLite's "unable to open database file" under a driver traceback.
+#
+# Runs whatever REAPER_DEV_NO_MIGRATE says: that switch is about the schema, and a staged restore
+# and an unwritable data dir are neither.
+log "preflight (applies a staged restore, checks the data dir)"
+if ! REAPER_DATA_DIR="$DATA_DIR" uv run python -m reaper.preflight; then
+  # Preflight returns 1 only where booting anyway would be worse than not booting: a restore
+  # that could not complete must not serve a half-swapped database. Its own message above says
+  # what happened, so this adds only the consequence.
+  warn "preflight failed -- not starting. The line above says what to fix."
+  exit 1
 fi
 
 if [ "${REAPER_DEV_NO_MIGRATE:-}" = 1 ]; then

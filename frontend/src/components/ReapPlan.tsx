@@ -11,11 +11,16 @@
 // path to the switch beside it — the server would refuse anyway; the UI just stops inviting
 // a click that must fail. A plan built here covers the whole condemned set (capped); to reap
 // a hand-picked few, select them in the review queue and use "Reap now".
+//
+// The same courtesy is now extended to the *other* thing the server refuses on: a run without
+// Plex or Tautulli, whose 409 used to be the only place in the app that requirement was
+// written down, and which fired after the confirmation phrase had already been typed (#383).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api, type Run, type RunReport } from "../api";
 import { bytes, count, date, souls } from "../format";
+import { reapBlockers } from "../reapReadiness";
 import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
 import { PlexTrashNotice } from "./PlexTrashNotice";
@@ -178,7 +183,8 @@ export function ReapPlan({
 }: {
   /** Jump to Policy → Deletion, where the switch lives. */
   onGoToDeletion: () => void;
-  /** Jump to Settings → Plex, where the Leaving Soon shelf lives. */
+  /** Jump to Settings → Plex: where the Leaving Soon shelf lives, and where an install with
+   *  no Plex at all connects one. */
   onGoToPlexSettings: () => void;
   /** Jump to the Review queue, where per-title decisions are made. */
   onGoToReview: () => void;
@@ -256,6 +262,17 @@ export function ReapPlan({
   // a click for a 422. Said here, in the same words the scan job uses, before the ledger
   // below reads as a list Reaper is ready to act on.
   const degraded = latestSnapshot?.degraded === true;
+
+  // Whether a real run could go ahead at all. Without Plex or Tautulli the execute route
+  // refuses with a 409 (`api/runs._preflight_refusal`), and until this was read here the ONLY
+  // place that requirement appeared was inside the refusal -- which lands after the operator
+  // has picked what to delete, armed the host and typed the whole confirmation phrase (#383).
+  // The refusal is correct and stays; this is the same fact, four steps earlier.
+  const setup = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
+  // Shared with the wizard's finish panel, so the two screens cannot come to describe the same
+  // refusal differently (rule 144). Empty on a read we could not make -- the branch below says
+  // so out loud rather than letting silence read as "nothing is missing" (rule 17/36).
+  const blockers = setup.data ? reapBlockers(setup.data) : [];
 
   return (
     <section className="reap">
@@ -349,6 +366,29 @@ export function ReapPlan({
                     </button>
                   </>
                 )}
+              </Notice>
+            )}
+            {/* Above Execute, because that is the button the refusal fires from. The Plex one
+                carries the way to fix it (rule 42); the others are fixed from Settings →
+                Connections, which the notice names rather than links, since this page has no
+                jump to it. */}
+            {blockers.map((b) => (
+              <Notice key={b.key} tone="warn">
+                {b.sentence}
+                {b.key === "plex" && (
+                  <>
+                    {" "}
+                    <button className="link" onClick={onGoToPlexSettings}>
+                      Connect Plex in Settings
+                    </button>
+                  </>
+                )}
+              </Notice>
+            ))}
+            {setup.isError && !setup.data && (
+              <Notice tone="warn">
+                Reaper couldn't check whether Plex and Tautulli are connected. Without either one a
+                real run is refused.
               </Notice>
             )}
             <button onClick={() => dry.mutate(run.id)} disabled={dry.isPending}>
