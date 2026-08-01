@@ -36,6 +36,7 @@ import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useSafety } from "./useSafety";
 import { useScanSettled } from "./useScanSettled";
 import { Notice } from "./components/Notice";
+import { ScanLine } from "./components/ScanLine";
 
 // The review queue is the landing view and stays in the first chunk. Every other route is
 // its own, fetched the first time it is opened: the whole app used to ship as one 551 kB
@@ -203,11 +204,11 @@ function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
  *  It mounts, runs and reaches its end -- "Reap failed." included -- and used to do all of it
  *  in silence, which on most screens made it the only sign of a deletion and the only Stop
  *  (#170). It now announces the run's end, and its fill carries `role="progressbar"` the way
- *  `ScanLine` below already did (rule 72). The RUNNING ticks are deliberately not announced
+ *  `ScanLine` (components/ScanLine.tsx) already did (rule 72). The RUNNING ticks are deliberately not announced
  *  here: the reap sheet throttles and speaks them, and a bar that spoke too would say
  *  everything twice for anyone with the sheet open.
  *
- *  Exported for its tests, the way `ScanLine` and `WhyPanelFallback` below are: what it owes an
+ *  Exported for its tests, the way `WhyPanelFallback` below is: what it owes an
  *  operator is a property of this component, and reaching it through the whole authed `App`
  *  tree would test the login gate instead. */
 export function ReapBar({ onView }: { onView: (runId: number) => void }) {
@@ -603,33 +604,6 @@ export function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: 
         </div>
       )}
     </WhyShell>
-  );
-}
-
-/** A thin accent line pinned to the very top of the window while a scan runs in the
- *  background, filling to the scan's real percent and gone the moment it finishes. Ambient
- *  by design: it only says "a scan is working"; the phase, counts and controls live on the
- *  scan bar (Settings → Jobs), which is where you go to actually read them.
- *
- *  Unlike SafetyBanner this is not a safety surface, so it may show nothing when it knows
- *  nothing: an absent line reads as "idle", the calm and correct default, and a dropped
- *  status poll must not paint a scan that may not be running. (The armed-state banner is the
- *  surface that must never fail quiet.) Kept mounted so it can fade rather than pop, and
- *  aria-hidden while idle so a screen reader hears it only when there is activity. */
-export function ScanLine({ running, percent }: { running: boolean; percent: number }) {
-  const pct = Math.max(0, Math.min(100, percent));
-  return (
-    <div
-      className={running ? "scanline on" : "scanline"}
-      role="progressbar"
-      aria-label="Scanning your library"
-      aria-hidden={!running}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={running ? Math.round(pct) : undefined}
-    >
-      <div className="scanline-fill" style={{ width: `${pct}%` }} />
-    </div>
   );
 }
 

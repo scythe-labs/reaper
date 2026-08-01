@@ -1,61 +1,103 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The setup wizard. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
- * the load order, and that order is load-bearing (see the ordering notes in this file). */
+ * The first-run wizard: the step card, its progress row, and the connection rows inside it. One
+ * piece of Reaper's stylesheet: `../index.css` holds the design charter and the load order, and
+ * that order is load-bearing (see the ordering notes in this file). */
 /* ==========================================================================
    Setup wizard
    ========================================================================== */
 
+/* The wizard replaces the whole app shell, so it owns the viewport rather than sitting in a
+   layout. Centered on both axes: there is nothing else on the page to align it to. */
 .setup {
-  max-width: 820px;
-  margin: 1.5rem auto;
-  padding: 0 1rem 3rem;
-}
-.setup-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1.5rem;
-}
-.setup-head .brand {
-  align-items: flex-start;
-}
-.setup-head h1 {
-  font-size: 1.5rem;
-  margin: 0 0 0.2rem;
-}
-.setup-head .brand-mark {
-  width: 42px;
-  height: 42px;
-  color: var(--accent);
-}
-.setup-checklist {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 1.75rem;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  align-items: center;
+  justify-content: center;
+  gap: 1.1rem;
+  padding: 1.5rem 1.2rem 3rem;
 }
-.setup-check {
+.setup-brand {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  font-size: 0.95rem;
-  color: var(--muted);
+  gap: 0.65rem;
 }
-.setup-check.done {
+.setup-brand .brand-mark {
+  width: 34px;
+  height: 34px;
   color: var(--text);
 }
-.setup-check em {
-  color: var(--muted);
-  font-style: normal;
-  font-size: 0.82rem;
+.setup-brand .brand-word {
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
 }
-.check-mark {
+
+/* One step at a time, in `.modal`'s chrome (29-modals-reap.css) but ON the page rather than
+   over a scrim. It is not a modal and must not read as one: there is no page behind it to go
+   back to, and the first step may not be dismissed at all, so it offers no scrim, no Escape
+   and no closing mark. Same width and the same `dvh` bound as `.modal`, for the same reason --
+   a short viewport must scroll the card, not push its actions off-screen. */
+.step-card {
+  width: min(560px, 100%);
+  max-height: 84dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 1.3rem 1.5rem 1.5rem;
+}
+.step-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.15rem;
+}
+.step-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.step-of {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The progress row. Every dot carries its state as TEXT as well as color and shape (the
+   component gives each an aria-label), because this is the one screen a new operator cannot
+   skip past, and a tick that differs only by hue says nothing to a reader. */
+.stepper {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+.stepper li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.stepper li.now {
+  color: var(--text);
+  font-weight: 600;
+}
+.step-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  min-width: 0.8rem;
+}
+.step-dot {
   display: grid;
   place-items: center;
   width: 22px;
@@ -67,46 +109,274 @@
   color: var(--faint);
   flex: none;
 }
-/* The tick's ink is the matching -soft token, never white: on the lighter green --protect
-   takes in dark mode, white lands at 1.95:1 and the tick all but vanishes on the very
-   first screen an owner sees. --protect-soft clears AA in both themes (4.66:1 light,
-   8.32:1 dark), and matches what .chip-hand-spare and .strip-ov-spare already do. */
-.setup-check.done .check-mark {
+/* The done tick's ink is the matching -soft token, never white: on the lighter green
+   --protect takes in dark mode white lands at 1.95:1 and the tick all but vanishes on the very
+   first screen an owner sees. --protect-soft clears AA in both themes (4.66:1 light, 8.32:1
+   dark), and matches what .chip-hand-spare and .strip-ov-spare already do. The current step's
+   dot makes the same trade against --accent, whose ink the whole app already rides on an
+   accent fill. */
+.stepper li.done .step-dot {
   background: var(--protect);
   color: var(--protect-soft);
 }
-.setup .panel {
-  margin: 1.5rem 0;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--border);
+.stepper li.now .step-dot {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
-.setup-finish {
+
+.step-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 2rem;
-  padding: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  gap: 0.6rem;
+  margin-top: 1.2rem;
   flex-wrap: wrap;
 }
-.setup-finish h2 {
-  margin: 0 0 0.2rem;
+.step-actions .spacer {
+  flex: 1;
+}
+.step-foot {
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 .btn-lg {
   padding: 0.7rem 1.4rem;
   font-size: 1rem;
+}
+
+/* ---- connection rows -----------------------------------------------------
+   One grid per row with a shared badge column, never one boxed well per row (rule 44). The
+   third track is `auto` so a kind that offers no action collapses it, rather than leaving a
+   hole where its neighbours have a button. */
+.conn-list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.9rem 0 0.2rem;
+}
+.conn-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.conn-row.on {
+  border-color: color-mix(in srgb, var(--protect) 45%, transparent);
+  background: var(--protect-soft);
+}
+.conn-badge {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.conn-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.conn-why {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.conn-instances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+}
+/* A chip names one instance and is the control that edits it, which is what lets a kind hold
+   several without the row growing a control per instance. The name is whatever the operator
+   typed, so it declares its own break opportunity (rule 139). */
+.inst-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: var(--tap-min);
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--protect) 45%, transparent);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.inst-chip:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--protect);
+}
+.inst-chip .tick {
+  color: var(--protect);
+  font-weight: 700;
+}
+.conn-add {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.conn-tag {
+  padding: 0.08rem 0.36rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.conn-tag.required {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+/* The break between what a scan needs and what is merely nice to have, so the eye can stop at
+   the required set instead of reading every row to find out which ones matter. */
+.conn-split {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 1rem 0 0.3rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.conn-split::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.conn-note {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* ---- the Plex step ------------------------------------------------------- */
+
+/* Who is signed in, and on which address, once the link lands. Both come from plex.tv, so
+   both declare their own break opportunity (rule 139). */
+.plex-who {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.2rem 0.7rem;
+  align-items: center;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--protect) 45%, transparent);
+  border-radius: var(--radius);
+  background: var(--protect-soft);
+  font-size: 0.88rem;
+}
+.plex-who .tick {
+  grid-row: span 2;
+  color: var(--protect);
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+.plex-who .who-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.plex-who .who-sub {
+  font-size: 0.8rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* A select with a button beside it: the shape the Settings row uses for Server + Refresh. */
+.pick-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.pick-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Manual address: host, port, an SSL switch and Save on one line, the cluster the Settings row
+   uses (`.set-row-cluster`) rather than one boxed well per field. */
+.manual-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.manual-row .m-host {
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+.manual-row .m-port {
+  flex: 0 0 5.5rem;
+}
+/* The one control chrome (the standard at the top of 00-tokens.css); only the full-bleed width
+   inside its flex track is this row's own. */
+.manual-row input {
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.manual-row input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.manual-uri {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* ---- the scan step ------------------------------------------------------- */
+
+.setup-scanning {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
 }
 .setup-scanmsg {
   margin-top: 0.6rem;
   font-family: var(--mono);
   font-size: 0.8rem;
 }
-.setup-scanning {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
+.setup-later {
+  margin: 1.3rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+/* A phone gives the card the screen. The labels of steps the operator is NOT on drop away,
+   leaving their dots and the rules between them: the row still says how far along they are and
+   how much is left, without four labels fighting for a 320px line. The current step keeps its
+   name, because that is the one the heading below is about. */
+@media (max-width: 460px) {
+  .setup {
+    padding: 1rem 0.7rem 2.5rem;
+  }
+  .step-card {
+    padding: 1.1rem 1rem 1.2rem;
+  }
+  .stepper li:not(.now) .step-label {
+    display: none;
+  }
 }

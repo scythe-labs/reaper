@@ -37,7 +37,8 @@ Last verified against the code: 2026-07-30.
 | **M8** Profiles + scheduler | ✅ done |
 | **Whitelist** — manual "spare this file", scan + planner + grace | ✅ done |
 | **Scales** — per-requester cards over the last scan | ✅ done |
-| **Operator console** — service config, first-run setup, schedule, safety, review | ✅ done |
+| **Operator console** — service config, schedule, safety, review | ✅ done |
+| **First start** — four steps, password forced, resume derived from the server | ✅ done |
 
 ## Open work
 

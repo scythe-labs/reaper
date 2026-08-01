@@ -1535,7 +1535,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # Then 114: the why-panel's per-title twin of that control (#275) -- a standing warning carrying
 # the button, and the action failure beside it.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 114
+_EXPECTED_NOTICES = 121
 
 
 def _shipped_tsx() -> list[Path]:
@@ -1662,6 +1662,8 @@ _QUERY_FAILURE_HANDLES = {
     # grid and say it may be stale, which is why `.data` alone could not answer this.
     "frontend/src/components/ServiceModal.tsx": 6,
     "frontend/src/components/Settings.tsx": 8,
+    "frontend/src/components/SetupConnectStep.tsx": 1,
+    "frontend/src/components/SetupPlexStep.tsx": 1,
     "frontend/src/components/SetupWizard.tsx": 1,
     "frontend/src/components/queueSettings.tsx": 1,
 }
@@ -1899,7 +1901,7 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
-_EXPECTED_SELECTS = 19
+_EXPECTED_SELECTS = 21
 
 
 def _without_line_comments(chunk: str) -> str:

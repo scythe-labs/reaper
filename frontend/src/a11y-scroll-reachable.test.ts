@@ -100,6 +100,11 @@ const CONTAINERS: Record<string, Container> = {
     reach: "focus-moved",
     why: "useDialogFocus puts focus on the panel itself when the dialog opens",
   },
+  ".step-card": {
+    file: "components/SetupStepper.tsx",
+    reach: "has-controls",
+    why: "every step of the wizard ends in its own actions -- Back, Skip, Continue -- and the steps before them hold inputs, service rows or library switches, so Tab lands inside the card and carries the scroll with it. It wears `.modal`'s chrome but is NOT a dialog and moves no focus, so it is classified on its controls rather than on `useDialogFocus`. The one branch that renders this class with no control is SetupWizard's own 'Setting things up…', which is a heading alone and cannot overflow",
+  },
   ".sheet": {
     file: "components/Login.tsx",
     reach: "focus-moved",
@@ -130,7 +135,7 @@ const CONTAINERS: Record<string, Container> = {
 /** The count is pinned so a scroll container that leaves the walk fails as loudly as one that
  *  arrives without a classification (rule 145): a flag-shaped assertion cannot tell a member
  *  that complies from one the matcher stopped collecting. */
-const EXPECTED_CONTAINERS = 13;
+const EXPECTED_CONTAINERS = 14;
 
 /** `overflow`, `overflow-x` or `overflow-y` set to a value that makes a box scroll. `hidden`,
  *  `visible` and `clip` do not, and `overflow: auto hidden` (the two-value form) is read by the

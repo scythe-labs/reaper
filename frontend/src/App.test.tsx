@@ -13,15 +13,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN } from "./test/apiFixtures";
 import { expectNoA11yViolations } from "./test/a11y";
 import { testQueryClient } from "./test/queryClient";
-import {
-  App,
-  ReapBar,
-  ScanFreshness,
-  ScanLine,
-  SectionNav,
-  UserMenu,
-  WhyPanelFallback,
-} from "./App";
+import { App, ReapBar, ScanFreshness, SectionNav, UserMenu, WhyPanelFallback } from "./App";
+import { ScanLine } from "./components/ScanLine";
 import { announce, Announcer } from "./announce";
 import {
   ApiError,

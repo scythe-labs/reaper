@@ -230,7 +230,7 @@ export function ScanRow({
         {scanning ? (
           <>
             {/* A bare div with an inline width is a picture of a number and nothing else.
-                `ScanLine` in App.tsx was the correct twin in the tree and this was not swept
+                `ScanLine` was the correct twin in the tree and this was not swept
                 with it (#177, rule 72); the deletion path's pair went the same way in #170. */}
             <div
               className="bar"

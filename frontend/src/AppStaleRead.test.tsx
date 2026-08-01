@@ -112,8 +112,12 @@ const EMPTY_PAGE: CandidatePage = {
 // whichever section is loading. The wizard and the login screen each render neither this nav nor
 // each other, which is what makes the three screens tellable apart with one assertion each.
 const dashboardNav = () => screen.queryByRole("navigation", { name: "Sections" });
-const WIZARD_SKIP = /Skip to the app/;
-const WIZARD_UNREADABLE = /Couldn't check the setup state/;
+// The wizard's own marker: the progress row is on every step and on nothing else, which is
+// what the old "Skip to the app" button used to be before the flow became four steps and its
+// way out moved onto each step's own actions.
+const wizardSteps = () => screen.queryByRole("list", { name: "Setup progress" });
+const WIZARD_UNREADABLE = /Couldn't check what's set up yet/;
+const WIZARD_WAY_OUT = /Go to the app/;
 
 beforeEach(() => {
   vi.stubGlobal("IntersectionObserver", NoopObserver);
@@ -205,7 +209,7 @@ describe("the setup gate through a failed refetch", () => {
 
     expect(dashboardNav()).toBeInTheDocument();
     // The claim that matters: the wizard did not come back over a configured install.
-    expect(screen.queryByText(WIZARD_SKIP)).toBeNull();
+    expect(wizardSteps()).toBeNull();
   });
 
   it("still shows the wizard when the first status read is the one that fails", async () => {
@@ -216,7 +220,7 @@ describe("the setup gate through a failed refetch", () => {
     // genuinely-fresh one onto an empty Dashboard with no way back is the worse failure. Skip is
     // the promise that makes routing here safe, so it is asserted rather than assumed.
     expect(await screen.findByText(WIZARD_UNREADABLE)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: WIZARD_SKIP })).toBeEnabled();
+    expect(screen.getByRole("button", { name: WIZARD_WAY_OUT })).toBeEnabled();
     expect(dashboardNav()).toBeNull();
   });
 
@@ -230,7 +234,10 @@ describe("the setup gate through a failed refetch", () => {
 
     // The half of the old expression that was never in question, kept so a fix that reduced the
     // gate to `setup === undefined && isError` cannot pass this file (rule 118).
-    expect(await screen.findByRole("button", { name: WIZARD_SKIP })).toBeEnabled();
+    expect(await screen.findByRole("list", { name: "Setup progress" })).toBeInTheDocument();
+    // The way out is still there on every step past the password, which is what makes
+    // routing an unfinished install here safe.
+    expect(screen.getByRole("button", { name: WIZARD_WAY_OUT })).toBeEnabled();
     expect(dashboardNav()).toBeNull();
   });
 });

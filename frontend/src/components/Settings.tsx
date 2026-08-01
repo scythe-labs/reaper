@@ -2448,7 +2448,10 @@ const DISCORD_WEBHOOK_HOSTS = ["discord.com", "discordapp.com"];
 /** The webhook box's format complaint, named once for both ends (rule 67). */
 const WEBHOOK_ERROR_ID = "discord-webhook-error";
 
-function isDiscordWebhook(raw: string): boolean {
+/** Exported so `DiscordModal` checks the format the same way this panel does. A second copy
+ *  of these host and path rules would be one validator written twice, and the copy that drifts
+ *  is the one that starts accepting a URL the backend then refuses (rule 18, rule 144). */
+export function isDiscordWebhook(raw: string): boolean {
   let url: URL;
   try {
     url = new URL(raw.trim());
@@ -2690,8 +2693,10 @@ export function NotificationsPanel({
 
 // The same floor the server applies (MIN_PASSWORD_LENGTH in
 // reaper/services/admin_password.py), so the placeholder, the live message, and the server
-// rule all state one number.
-const MIN_ADMIN_PASSWORD = 12;
+// rule all state one number. Exported because the first-run wizard sets this same password
+// on its own step and states the same floor: a second literal 12 there would be one rule
+// written twice, and the copy that drifts is the one nobody edits (rule 67, rule 144).
+export const MIN_ADMIN_PASSWORD = 12;
 
 /** The password form's one error region, named once for both ends of the association (rule 67).
  *  Which BOX claims it varies: the region carries whichever complaint is live, and only the box
