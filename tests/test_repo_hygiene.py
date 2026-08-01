@@ -1547,8 +1547,15 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # start route answers 200 either way and the refusal is raised inside the detached task, so the
 # operator watched a spinner for a scan that could never run and was then sent to Settings, which
 # is behind the wizard they had not left. The notice carries the way back instead (rule 42).
+# Then 132: the service editor and the wizard's Connect step, on the change that made a service
+# prove its connection before it can be saved. Three of the four are states that could not arise
+# before -- a folder list the test could not read (said apart from an instance that genuinely has
+# none), the same for a Seerr portal's services, and the close guard's own sentence, which exists
+# because `canClose` is a mute gate and a dismissal that silently does nothing is worse than one
+# that says why. The fourth is a removal refused on the Connect step, which is new because the
+# step had no Remove until now.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 128
+_EXPECTED_NOTICES = 132
 
 
 def _shipped_tsx() -> list[Path]:
@@ -1800,7 +1807,11 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
     "frontend/src/components/LogsPanel.tsx": 1,
-    "frontend/src/components/PlexPanel.tsx": 5,
+    # 5 -> 6 when the library list moved to ``usePlexLibraries``. No branch here changed: the
+    # panel's JSX is untouched, and the extra handle is the walk seeing the bag's two members
+    # where a directly-bound ``useQuery`` had been one. Counted rather than excused, because
+    # the population is the thing this pins.
+    "frontend/src/components/PlexPanel.tsx": 6,
     "frontend/src/components/PolicyEditor.tsx": 4,
     "frontend/src/components/PolicyRuleEditors.tsx": 2,
     "frontend/src/components/ReapBreakdown.tsx": 2,
@@ -1841,6 +1852,14 @@ _READ_HOOKS = {
     "useSafety",
     "usePlexTrash",
     "useHoldsBackUnmeasured",
+    # The second BAG, after ``useOverrideMutations`` below, and the first MIXED one: it hands
+    # back ``{ libraries, sync }``, a query and the mutation that fills it when it has never
+    # been filled. Filed as a read because the handle every call site branches on is the
+    # query's -- "could we read your Plex libraries" -- and a failed refetch there leaves the
+    # last good list in the pickers, which is exactly the keep-your-content case. Its mutation
+    # half is not unclassified by omission: ``PlexPanel`` renders ``sync.error`` through the
+    # action slot it already shared with ``saveLibraries``.
+    "usePlexLibraries",
 }
 
 # The hooks whose failure is an action's, not a read's. Listed rather than assumed, so the walk

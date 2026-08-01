@@ -21,7 +21,7 @@ import {
   api,
   type Instance,
   type InstanceTest,
-  type InstanceTestMapping,
+  type TestVerdict,
   type RootFolder,
   type SeerrService,
 } from "../api";
@@ -93,7 +93,7 @@ export function serviceKindLabel(kind: SeerrService["kind"]): string {
  *
  *  The one deliberate difference from the badge: the version is spoken as "version 4.0.1" where
  *  the badge shows "(v4.0.1)". A reader voices a bare "v" as a letter. */
-export function testSentence(result: InstanceTest): string {
+export function testSentence(result: TestVerdict): string {
   return `${testLead(result.ok)}: ${result.detail}${
     result.version ? ` (version ${result.version})` : ""
   }`;
@@ -105,7 +105,7 @@ function testLead(ok: boolean): string {
 }
 
 /** A small inline pill reporting the result of a connection test. */
-export function TestBadge({ result }: { result: InstanceTest | null }) {
+export function TestBadge({ result }: { result: TestVerdict | null }) {
   if (!result) return null;
   return (
     <span className={`test-badge ${result.ok ? "ok" : "bad"}`}>
@@ -238,10 +238,7 @@ export function ServiceModal({
   // screen vouching for an address that had never been tried (rule 85, #178). Clearing it from
   // each field's setter would be one more thing to remember every time a field joins `baseUrl()`;
   // comparing against what was tested cannot be forgotten.
-  const [test, setTest] = useState<{
-    result: InstanceTest & InstanceTestMapping;
-    of: string;
-  } | null>(null);
+  const [test, setTest] = useState<{ result: InstanceTest; of: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Kept apart from `error` above, which is the form's shared slot for a failed save and a
   // failed connection test. One flag rather than a message, because there is exactly one thing

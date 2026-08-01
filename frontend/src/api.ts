@@ -1129,25 +1129,26 @@ export interface InstanceTest {
   ok: boolean;
   detail: string;
   version: string | null;
-}
-
-/** What a connection has to map, read on the same pass that proved its credentials.
- *
- *  Kept apart from `InstanceTest` above because only ONE route ever answers it: the pre-save
- *  test on the add form, which is the only caller with no instance id to ask a second question
- *  with. The service card also renders an `InstanceTest` it rebuilt from what it remembers of
- *  the last test (`last_ok_at`, `last_error`), and no folder read ever happened for that one --
- *  folding these fields into the base type would have made that card claim a `map_error: null`,
- *  which reads as "we looked and nothing was wrong" about a read nobody ran (rule 93). */
-export interface InstanceTestMapping {
-  /** Only one is ever filled -- a test is for exactly one kind -- and both are empty on a
-   *  failed test, since nothing was reached to read them from. */
+  /** What this connection has to map, read on the pass that proved the credentials. Only ONE
+   *  route ever fills these -- the pre-save test on the add form, which is the only caller with
+   *  no instance id to ask a second question with. This is what lets that form map a service
+   *  before it is saved. Only one list is ever filled (a test is for exactly one kind), and
+   *  both are empty on a failed test, since nothing was reached to read them from. */
   root_folders: RootFolder[];
   seerr_services: SeerrService[];
   /** Why the list above is empty, when the read FAILED rather than there being nothing to map.
    *  `null` means the read landed, so an empty list really is nothing to map. */
   map_error: string | null;
 }
+
+/** What the test BADGE reads: the verdict, and nothing about mapping.
+ *
+ *  Declared as the subset rather than reusing `InstanceTest` because the service card renders a
+ *  result it rebuilt from what it remembers of the last test (`last_ok_at`, `last_error`), and
+ *  no folder read ever happened for that one. Handing the badge a whole `InstanceTest` would
+ *  have made that card fill in a `map_error: null`, which reads as "we looked and nothing was
+ *  wrong" about a read nobody ran (rule 93). The badge only ever needed these three. */
+export type TestVerdict = Pick<InstanceTest, "ok" | "detail" | "version">;
 
 /** One of an *arr instance's root folders, with a suggested Plex library to prefill the map. */
 export interface RootFolder {
@@ -1508,7 +1509,7 @@ export const api = {
    *  Save is gated on this passing, so a service can never be saved at an address Reaper has
    *  not reached. */
   testInstance: (body: { kind: string; base_url: string; api_key: string; verify_tls?: boolean }) =>
-    post<InstanceTest & InstanceTestMapping>("/api/settings/instances/test", body),
+    post<InstanceTest>("/api/settings/instances/test", body),
   testSavedInstance: (id: number) => post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),

@@ -76,20 +76,13 @@ CLIENT_ONLY = {
     # A UI-side subset of ScanStatus (phase/done/total/detail) that several components take
     # as a prop; the server has no model of the subset.
     "Progress",
-    # A UI-side subset of TestOut, on the same terms as Progress: the three fields only the
-    # pre-save `POST /instances/test` ever populates. Split out of `InstanceTest` (which is the
-    # ALIAS pair for TestOut above) because the service card renders an `InstanceTest` it
-    # rebuilt from what it remembers of the last test, where no folder read ever happened --
-    # folding these fields in would have made that card claim a `map_error: null`, which reads
-    # as "we looked and nothing was wrong" about a read nobody ran.
-    "InstanceTestMapping",
 }
 
 #: Reconciled by hand against the tree (rule 145). ``grep -c '^export interface'`` on api.ts is
 #: the first number; a walk that silently stopped collecting would drop below it while every
 #: name-comparison below still passed, because a type absent from the walk is absent from both
 #: halves of the comparison.
-EXPECTED_INTERFACES = 83
+EXPECTED_INTERFACES = 82
 EXPECTED_PAIRS = 79
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
