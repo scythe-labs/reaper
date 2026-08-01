@@ -22,11 +22,13 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.orm import Session
 
 from reaper.api.settings import PlexUpdateIn, update_plex_settings
+from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import InstanceKind
+from reaper.db.models import InstanceKind, Snapshot
 from reaper.main import create_app
 from reaper.services import instances as instances_service
 
@@ -51,6 +53,30 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as c:
         login(c, settings)  # seeds a local admin whose password is TEST_PASSWORD
         yield c
+
+
+def _add_snapshot(client: TestClient) -> None:
+    """Put one Snapshot row in, so ``has_scanned`` is true.
+
+    The setup status only asks whether any snapshot exists, so this is the smallest row that
+    satisfies it rather than a scored one -- nothing here reads its contents.
+    """
+    settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
+    engine = sa_create_engine(settings.sync_database_url)
+    now = utcnow()
+    with Session(engine) as session:
+        session.add(
+            Snapshot(
+                created_at=now,
+                policy_hash="p",
+                scoring_hash="s",
+                horizon_at=now,
+                item_count=0,
+                degraded=False,
+            )
+        )
+        session.commit()
+    engine.dispose()
 
 
 class TestInstancesCrud:
@@ -828,6 +854,41 @@ class TestSetupStatus:
             json={"kind": "tautulli", "name": "T", "base_url": "http://t", "api_key": "k"},
         )
         assert client.get("/api/setup/status").json()["scan_ready"] is False
+
+    def test_has_password_reports_whether_a_local_account_exists(self, client: TestClient) -> None:
+        """The wizard derives which step it is on from this, so it must track the real state.
+
+        The seeded admin has a password; nulling the hash is the Plex-only install, where the
+        owner claimed the server over OAuth and no local account was ever created.
+        """
+        assert client.get("/api/setup/status").json()["has_password"] is True
+        clear_admin_password(client)
+        assert client.get("/api/setup/status").json()["has_password"] is False
+
+    def test_setup_is_not_complete_without_a_password(self, client: TestClient) -> None:
+        """Scan-ready and scanned is no longer enough on its own.
+
+        Isolated deliberately: everything else `complete` asks for is satisfied here, so the
+        only thing holding it False is the missing password. Without this the wizard would
+        wave through an install with no local account, no way to arm deletion and no way to
+        confirm a restore -- which is the state that made the password step worth having.
+        """
+        for kind, name in [("radarr", "HD"), ("tautulli", "T")]:
+            client.post(
+                "/api/settings/instances",
+                json={"kind": kind, "name": name, "base_url": f"http://{name}", "api_key": "k"},
+            )
+        _add_snapshot(client)
+        ready = client.get("/api/setup/status").json()
+        assert ready["scan_ready"] is True
+        assert ready["has_scanned"] is True
+        assert ready["complete"] is True
+
+        clear_admin_password(client)
+        after = client.get("/api/setup/status").json()
+        assert after["scan_ready"] is True, "only the password changed"
+        assert after["has_scanned"] is True, "only the password changed"
+        assert after["complete"] is False
 
 
 class TestSchedule:

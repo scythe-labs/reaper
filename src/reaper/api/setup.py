@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api import tags as api_tags
 from reaper.db.models import AppUser, Instance, InstanceKind, PlexServer, Snapshot
+from reaper.services import admin_password
 
 router = APIRouter(prefix="/api/setup", tags=[api_tags.SETUP])
 
@@ -30,6 +31,19 @@ def _factory(request: Request) -> async_sessionmaker[AsyncSession]:
 
 class SetupStatus(BaseModel):
     admin_exists: bool
+    has_password: bool
+    """Whether an admin password exists, which is also whether a local account does.
+
+    The wizard's first step sets it, and it reads this to know whether that step is behind
+    it -- the step the operator is on is derived from server state, never from how far this
+    browser happened to get, so closing the tab resumes where it left off.
+
+    It is not merely a wizard convenience. The same password arms deletion
+    (``PUT /api/settings/safety``) and confirms a restore (``POST .../restore/confirm``,
+    which refuses outright without one), and until it is set there is no local account at
+    all -- so a plex.tv outage locks the owner out of an install the login screen tells them
+    keeps one.
+    """
     plex_linked: bool
     instances: dict[str, int]
     """How many of each kind are configured -- e.g. {"radarr": 2, "tautulli": 1}."""
@@ -44,7 +58,18 @@ class SetupStatus(BaseModel):
     """The minimum to run a scan: a Tautulli, plus at least one Radarr or Sonarr.
     Mirrors the guard in ``services.scan_runner.build_sources``."""
     complete: bool
-    """Ready AND a scan has actually run -- nothing left the wizard needs to push."""
+    """Nothing left the wizard needs to push: a password, scan-ready, and a scan has run.
+
+    ``has_password`` is part of it because the wizard now asks for one, and a "complete"
+    that ignored it would send an install with no local account straight past the step that
+    creates it. That does mean an *existing* install without a password is no longer
+    complete and meets the wizard once more -- on the password step, with every later step
+    already satisfied.
+
+    It deliberately does NOT include ``plex_linked``: Plex is optional for a scan and
+    required for a reap, which are two different readinesses, and folding one into the other
+    here would claim the wizard can settle a question this endpoint does not model (#383).
+    """
 
 
 async def _counts(session: AsyncSession) -> dict[str, int]:
@@ -64,6 +89,9 @@ async def setup_status(request: Request) -> SetupStatus:
         admins = int(
             (await session.execute(select(func.count()).select_from(AppUser))).scalar_one()
         )
+        # Read, never derived from `admins`: a Plex-provider admin is not a local one, so an
+        # install can hold admins and still have no password (and no local account) at all.
+        password_set = await admin_password.has_password(session)
         counts = await _counts(session)
         plex_linked = (
             await session.execute(select(PlexServer.id).limit(1))
@@ -79,6 +107,7 @@ async def setup_status(request: Request) -> SetupStatus:
 
     return SetupStatus(
         admin_exists=admins > 0,
+        has_password=password_set,
         plex_linked=plex_linked,
         instances=counts,
         has_radarr=has_radarr,
@@ -87,5 +116,5 @@ async def setup_status(request: Request) -> SetupStatus:
         has_seerr=counts.get(str(InstanceKind.SEERR), 0) > 0,
         has_scanned=has_scanned,
         scan_ready=scan_ready,
-        complete=scan_ready and has_scanned,
+        complete=password_set and scan_ready and has_scanned,
     )

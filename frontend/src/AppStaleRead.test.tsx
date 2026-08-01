@@ -83,9 +83,11 @@ const USER: AuthUser = {
   thumb_url: null,
 };
 
-/** A configured install: everything wired and scanned once, which is what `complete` means. */
+/** A configured install: a password set, everything wired, and scanned once -- which is what
+ *  `complete` means. */
 const COMPLETE_SETUP: SetupStatus = {
   admin_exists: true,
+  has_password: true,
   plex_linked: true,
   instances: { radarr: 1, sonarr: 1 },
   has_radarr: true,

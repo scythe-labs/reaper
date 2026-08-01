@@ -1075,6 +1075,10 @@ export interface PlexPoll {
 
 export interface SetupStatus {
   admin_exists: boolean;
+  /** Whether an admin password exists, which is also whether a local account does. The
+   *  wizard reads it to know whether its first step is behind it, so the step shown comes
+   *  from the server rather than from how far this browser got. */
+  has_password: boolean;
   plex_linked: boolean;
   instances: Record<string, number>;
   has_radarr: boolean;
