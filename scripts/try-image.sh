@@ -57,6 +57,21 @@
 #   REAPER_IMAGE_REPO   the image path to pull tags from
 #                       (default ghcr.io/scythe-labs/reaper; set it for a fork)
 #
+if [ -z "${BASH_VERSION:-}" ]; then
+  # `sh try-image.sh` is the reflex on a server, and it bypasses the shebang above: on
+  # Debian /bin/sh is dash, which has no arrays, so the first array assignment below was
+  # a parse error reported tens of lines away from anything the operator typed. Re-exec
+  # under bash rather than explain that. This block stays POSIX so dash can read it, and
+  # stays ahead of `set -o pipefail`, which dash only learned in 0.5.12.
+  #
+  # It also has to sit below the help text, which is read off the top of this file.
+  if command -v bash > /dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+  echo "try-image.sh needs bash, and this host does not have it. Install bash and try again." >&2
+  exit 1
+fi
+
 set -euo pipefail
 
 IMAGE_REPO="${REAPER_IMAGE_REPO:-ghcr.io/scythe-labs/reaper}"
@@ -76,7 +91,11 @@ log()  { printf '\033[36m[try]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[try]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[31m[try]\033[0m %s\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//; $d'; }
+# The help IS the header comment: everything from line 2 down to the first line that is not
+# a comment, which keeps it next to the flags it documents. Anchored on "not a comment"
+# rather than on whatever statement happens to come first, so moving that statement cannot
+# quietly truncate the help or spill code into it.
+usage() { sed -n '2,/^[^#]/p' "$0" | sed 's/^# \{0,1\}//; $d'; }
 
 # --- docker availability ---------------------------------------------------------------
 # Checked once, up front, so every later failure is about Reaper and not about docker.
