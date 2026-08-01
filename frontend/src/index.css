@@ -25,7 +25,7 @@
  * specificity is settled by which one the browser reads second — and eighteen places in
  * these files carry a comment saying so. Two of them cross a file boundary: `main.split
  * .why` is declared in 10-layout and again in 12-why-panel, where the second must stay
- * later; and 20-queue-cards extends a `:hover` selector whose other halves are declared
+ * later; and 21-queue-cards extends a `:hover` selector whose other halves are declared
  * back in 18-scales. Vite inlines these imports in the order written, so this list IS the
  * cascade. Add a file at the position its rules belong at, never at the end for tidiness.
  */
@@ -50,14 +50,17 @@
 @import "./styles/17-reap-plan.css";
 @import "./styles/18-scales.css";
 @import "./styles/19-scales-panel.css";
-@import "./styles/20-queue-cards.css";
-@import "./styles/21-overrides.css";
-@import "./styles/22-select-mode.css";
-@import "./styles/23-settings.css";
-@import "./styles/24-settings-rows.css";
-@import "./styles/25-settings-log.css";
-@import "./styles/26-setup.css";
-@import "./styles/27-password.css";
-@import "./styles/28-qty.css";
-@import "./styles/29-modals-reap.css";
-@import "./styles/30-docs.css";
+@import "./styles/20-queue-toolbar.css";
+@import "./styles/21-queue-cards.css";
+@import "./styles/22-queue-filters.css";
+@import "./styles/23-queue-chips.css";
+@import "./styles/24-overrides.css";
+@import "./styles/25-select-mode.css";
+@import "./styles/26-settings.css";
+@import "./styles/27-settings-rows.css";
+@import "./styles/28-settings-log.css";
+@import "./styles/29-setup.css";
+@import "./styles/30-password.css";
+@import "./styles/31-qty.css";
+@import "./styles/32-modals-reap.css";
+@import "./styles/33-docs.css";

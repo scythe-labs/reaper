@@ -1,0 +1,368 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The queue card itself, and the empty state when filters hide everything. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+.card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  /* Cards adapt to the width they actually get (a panel can halve it), not the window. */
+  container-type: inline-size;
+}
+
+/* A genuinely narrow card folds instead of wrapping raggedly: smaller poster, the
+   actions on their own row, the score pinned to the top corner -- so the status pill
+   never lands pressed against the buttons. */
+@container (max-width: 560px) {
+  .card,
+  .card-head {
+    flex-wrap: wrap;
+  }
+  /* .card .poster, not bare .poster: the base rule is declared later in the file and
+     would win the specificity tie. */
+  .card .poster {
+    width: 44px;
+    height: 66px;
+  }
+  .card > .card-side,
+  .card-head > .card-side {
+    width: 100%;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+  }
+  /* In the fold card-side is a full-width actions row. Keep the score in flow and push it to the
+     row's left with an auto margin, so it sits opposite the right-aligned Spare/Reap buttons
+     instead of on top of them. It was absolutely positioned to card-side's top-right corner,
+     which in the fold IS the buttons' corner (card-side is now a row at the card's bottom) -- that
+     was the "60" landing on the Reap button. In flow it can't overlap them. */
+  .card-side .score {
+    margin-right: auto;
+  }
+  /* The fold turns card-side into a full-width row, so the absolutely-positioned resting mark
+     (bottom-right) lands on top of the now-inline Reap button. This is the fold's geometry, not
+     a pointer question, so fix it here rather than only under (hover: none): show the actions at
+     rest and drop the mark. The decision still reads from the card's override chip. */
+  .card > .card-side .override-controls,
+  .card-head > .card-side .override-controls {
+    opacity: 1;
+    visibility: visible;
+  }
+  .card > .card-side .override-mark,
+  .card-head > .card-side .override-mark {
+    display: none;
+  }
+  /* An expanded season row folds the same way the card above it does. Its four tracks plus
+     the list's indent leave the title about 25px on a 375px phone, which wraps season names
+     one letter per line and ellipsizes the chip to nothing. Two rows instead: the score down
+     the left, the name across the top, size and buttons underneath. Every selector here
+     carries the .card prefix for the same reason .card .poster does: the base rules are
+     declared later in the file and would win a specificity tie. */
+  .card .season-list,
+  .card .season-list-note {
+    padding-left: 1.2rem;
+  }
+  .card .season-row {
+    grid-template-columns: 2.6rem minmax(0, 1fr) auto;
+    align-items: start;
+    row-gap: var(--space-sm);
+  }
+  /* Score top-aligned with the name, not floated to the row's vertical center -- a wrapping
+     title used to leave the badge stranded below the first line. */
+  .card .season-row > .score {
+    grid-area: 1 / 1 / 2 / 2;
+    align-self: start;
+    margin-top: 2px;
+  }
+  .card .season-row > .season-title {
+    grid-area: 1 / 2 / 2 / 3;
+  }
+  /* Size stays top-right on the name line, aligned to the name's baseline. */
+  .card .season-row > .season-size {
+    grid-area: 1 / 3 / 2 / 4;
+    align-self: baseline;
+  }
+  /* A divergent/held season's reason drops to its own full-width line and WRAPS -- it can never
+     run off the right edge the way the old inline chip did. */
+  .card .season-row.has-reason > .season-reason {
+    grid-area: 2 / 2 / 3 / 4;
+  }
+  /* Buttons on their own row, right-aligned: row 2 by default, row 3 when a reason sits above
+     them (placed by the `.has-reason` class so an empty reason track never doubles the gap). */
+  .card .season-row > .override-controls {
+    grid-area: 2 / 2 / 3 / 4;
+    justify-self: end;
+  }
+  .card .season-row.has-reason > .override-controls {
+    grid-area: 3 / 2 / 4 / 4;
+  }
+}
+
+.card {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  gap: 0.9rem;
+  padding: var(--space-xl);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  transition:
+    box-shadow 0.15s var(--ease),
+    border-color 0.15s var(--ease);
+}
+/* Hover speaks in the accent on every card -- accent edge + a faint accent wash -- so pointing
+   at any row reads the same way. Scales' .fair-card and its .fair-stat-btn tile share this
+   whole interaction grammar (hover, focus ring, selection bar, additive selected+hover); it is
+   declared once here and on the three rules below, so a card-hover tweak lands in one place
+   (R-4, R-5). Every Scales card is clickable (each opens its person panel), and a review card
+   always is too. Adding a surface to the grammar means adding its selector to all four of
+   these, never copying the declarations out: the copy is what drifts.
+
+   Declared AFTER .fair-stat-btn's own base rule, so these win on equal specificity. */
+.card:hover,
+.fair-card.clickable:hover,
+.fair-stat-btn:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.card.clickable {
+  cursor: pointer;
+}
+/* The ring lands on the card even though the focusable thing inside it is `.card-open` (the
+   title button, components/CardOpen.tsx): the card is what the operator sees themselves
+   standing on, and moving the ring onto a few words of title would have been a visible
+   regression bought with the accessibility fix (#169). `:has()` is how a container reacts to a
+   descendant's focus without being focusable itself -- the same tool `.card-side:has(>
+   .override-controls.menu-open)` already uses.
+
+   Scoped through `.card-title`, which is the card's OWN heading: a show card holds a whole
+   season list, each row with a `.card-open` of its own, and a bare `:has(.card-open:...)` would
+   light the show's border every time a season name inside it took focus. The season rows and
+   the show card's head answer for themselves below, each in the treatment its own hover uses. */
+.card.clickable:has(.card-title > .card-open:focus-visible),
+.fair-card.clickable:has(.fair-row1 > .card-open:focus-visible),
+.fair-stat-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* Neither of these has a border of its own to light -- a show card's border belongs to the
+   `<article>` wrapping the head AND the season list, and a season row has none -- so both take
+   the accent wash their `:hover` takes. */
+.card-head:has(> .card-body .card-title > .card-open:focus-visible),
+.season-row:has(> .season-title > .card-open:focus-visible) {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+/* The control that opens a card: the card title, worn as a plain run of text. It inherits
+   everything from the heading it sits in so nothing about the card LOOKS different -- what
+   changed is that a screen reader can now read past it into the card's chips, reason line and
+   season marks, which a `role="button"` container pruned away entirely (#169, and the file
+   header of components/CardOpen.tsx). Its own ring is small and tight to the words, for the
+   season row, where there is no card border for the rule above to light. */
+.card-open {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-decoration: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  max-width: 100%;
+  /* The heading wraps a long title across lines; a button that did not would paint its tail
+     out of the card (rule 139's failure, reached from inside a control). */
+  white-space: inherit;
+  overflow-wrap: inherit;
+  /* The whole card is the pointer target, so the text inside it must not read as a separate
+     one by growing its own hand or I-beam. */
+  cursor: inherit;
+}
+.card-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.card-selected,
+.fair-card.selected,
+.fair-stat-btn.selected {
+  border-color: var(--accent);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    var(--shadow-sm);
+}
+/* Hovering the selected card is additive: the accent selection bar stays and the hover only
+   deepens it (raised shadow), so it never trades the accent edge for a plain one and can't
+   read as a deselect. After .card:hover in source, so this box-shadow wins; the accent border
+   and wash still come from .card:hover. */
+.card-selected:hover,
+.fair-card.selected.clickable:hover,
+.fair-stat-btn.selected:hover {
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    var(--shadow-md);
+}
+/* A spared card recedes -- but the dim must NOT be `opacity` on the card itself. An `opacity`
+   layer anywhere ABOVE the season strip makes Safari drop a strip square's fill to dark on a
+   child `:hover` (a group-opacity repaint bug -- the reason the strip hover only ever broke on
+   spared shows). So the dim goes on the poster and the text blocks, everything EXCEPT the
+   `.season-strip`, whose squares (and their hover ring) then keep a clean, un-composited layer.
+   `.card-side` is left alone on purpose too: its Spare/Reap buttons reveal on hover, and an
+   opacity layer over them is the same hazard. */
+.card-spared .poster,
+.card-spared .card-body > *:not(.season-strip) {
+  opacity: 0.7;
+}
+.card-spared .card-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--protect);
+}
+
+/* The dimmed backdrop art and its legibility scrim. The art sits at z0, the scrim at z1,
+   and everything with real content is lifted to z2 so the text never fights the image. */
+.card-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 20%;
+  opacity: 0.22;
+  z-index: 0;
+  pointer-events: none;
+}
+.card-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    var(--surface) 22%,
+    color-mix(in srgb, var(--surface) 45%, transparent) 100%
+  );
+}
+.card > *:not(.card-bg):not(.card-scrim),
+.card-head > *:not(.card-bg):not(.card-scrim) {
+  position: relative;
+  z-index: 2;
+}
+
+.poster {
+  flex: none;
+  width: 58px;
+  height: 87px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.poster-empty {
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.card-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+.card-title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semi);
+  margin: 0;
+  text-transform: none;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  /* A media title from the server, on a .card that clips: without this its tail is unreachable
+     (rule 139). The .card-open button inside forwards this by `inherit`, so the control and the
+     heading wrap alike. */
+  overflow-wrap: anywhere;
+}
+.card-year {
+  color: var(--muted);
+  font-weight: var(--weight-medium);
+}
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The reason a card leads with -- the protection keeping it, or the top reason it scored.
+   Slightly stronger than a synopsis would be, because it is the point of the card. */
+.card-reason {
+  margin: var(--space-xs) 0 0;
+  font-size: var(--text-md);
+  color: var(--text);
+  opacity: 0.82;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.infinity {
+  font-weight: var(--weight-bold);
+  font-size: var(--text-base);
+  line-height: 1;
+}
+
+.card-side {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+.row-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+button.sm {
+  padding: 0.28rem 0.6rem;
+  font-size: var(--text-sm);
+}
+
+/* When filters hide everything: a framed explanation instead of a bare empty page, so an
+   empty result reads as "your filters did this", never as broken. */
+.empty-filtered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  text-align: center;
+  margin-top: 1.1rem;
+  padding: 1.7rem 1rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+.empty-filtered p {
+  margin: 0;
+  max-width: 62ch;
+}
+.empty-filtered .empty-headline {
+  font-weight: var(--weight-semi);
+}
+.empty-filtered button {
+  margin-top: var(--space-lg);
+}

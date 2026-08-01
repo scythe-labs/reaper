@@ -578,7 +578,7 @@ function SeasonStrip({
         // engine can't honor yet reads dashed red (noted, but the file is held), never the
         // solid red of a removal, and carries the scythe mark below so it never blends into
         // the plain condemned outline (`.strip-ov-reap-refused` sits after `.strip-abstain`
-        // in styles/20-queue-cards.css and wins).
+        // in styles/23-queue-chips.css and wins).
         const handClass =
           fate === "spare"
             ? " strip-ov-spare"
