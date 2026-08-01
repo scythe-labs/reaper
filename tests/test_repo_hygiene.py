@@ -1539,8 +1539,12 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # unreadable-setup branch beside it (rule 17/36) -- plus the wizard's restore door, whose modal
 # says so too when it cannot tell whether a restore is already armed. The restore card's own
 # four moved out of Settings into `RestoreCard.tsx` and are not part of that bump.
+# Then 127: the armed restore card, which had a notice and no way to contradict it (#386). It
+# gained the state after `Restart now` is pressed, and the failure slot that state made
+# unavoidable -- both of the armed card's buttons can be refused by the server, and until now
+# neither refusal rendered anywhere at all.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 125
+_EXPECTED_NOTICES = 127
 
 
 def _shipped_tsx() -> list[Path]:
@@ -1843,6 +1847,14 @@ def test_every_query_failure_branch_is_counted() -> None:
 #   ReapBreakdown.tsx (1)    the ledger's refusal, which is undivided on purpose (#190)
 #   ReapConfirm.tsx (1)      the not-armed branch, before the confirmation box exists
 #   ReapPlan.tsx (1)         the plan loader. Not in #195's enumeration; see the note below
+#   RestoreCard.tsx (3)      the stopping state -- the sentence, the button that performs it, and
+#                            the call that button makes. The one site here where the advice is
+#                            not about a failed read: it renders only after the operator pressed
+#                            `Restart now` and the server took it, so the page is about to stop
+#                            answering whatever anyone does. Nothing is on screen to lose -- the
+#                            staged summary and the password typed against it went at the confirm,
+#                            two states earlier -- and what comes back is a different database
+#                            anyway, which is the point of pressing it (#386)
 #   Settings.tsx (6)         six never-loaded branches, each above a form that never rendered
 #
 # **#195's enumeration was not the whole population**, which is why this counts rather than
@@ -1864,6 +1876,7 @@ _RELOAD_ADVICE = {
     "frontend/src/components/ReapBreakdown.tsx": 1,
     "frontend/src/components/ReapConfirm.tsx": 1,
     "frontend/src/components/ReapPlan.tsx": 1,
+    "frontend/src/components/RestoreCard.tsx": 3,
     "frontend/src/components/Settings.tsx": 6,
 }
 

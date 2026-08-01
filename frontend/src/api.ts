@@ -1215,7 +1215,7 @@ export interface BackupInfo {
    *  the environment, so a restore needs that same value set on the target machine. */
   key_in_backup: boolean;
   app_version: string;
-  /** Whether a confirmed restore is staged and waiting for a container restart. */
+  /** Whether a confirmed restore is staged and waiting for Reaper to restart. */
   restore_armed: boolean;
 }
 
@@ -1587,13 +1587,18 @@ export const api = {
     });
     return parseBody<RestoreSummary>(response);
   },
-  /** Confirm a staged restore with the admin password. Arms the swap; the operator then
-   *  restarts the container to finish. The token comes from the prepare summary and binds
-   *  the confirm to the exact backup that was reviewed. */
+  /** Confirm a staged restore with the admin password. Arms the swap, which happens on the
+   *  next start (`restoreRestart`, or a restart the operator does themselves). The token comes
+   *  from the prepare summary and binds the confirm to the exact backup that was reviewed. */
   restoreConfirm: (password: string, token: string) =>
     post<{ ok: boolean }>("/api/settings/backup/restore/confirm", { password, token }),
   /** Discard a staged or armed restore. */
   restoreCancel: () => post<{ ok: boolean }>("/api/settings/backup/restore/cancel", {}),
+  /** Stop Reaper so the armed restore is applied on the way back up. The 200 means the stop
+   *  was accepted, not that anything came back: the process goes about half a second later,
+   *  and whether it returns is the container's restart policy to answer, which Reaper cannot
+   *  read from inside itself. Refused (409) with no armed restore and while a reap is running. */
+  restoreRestart: () => post<{ ok: boolean }>("/api/settings/backup/restore/restart", {}),
 
   schedule: () => request<Schedule>("/api/settings/schedule"),
   saveJobSchedule: (id: string, cron: string | null) =>

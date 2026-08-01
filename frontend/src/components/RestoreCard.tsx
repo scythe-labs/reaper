@@ -38,9 +38,19 @@ import { Notice } from "./Notice";
 /** What an armed restore says, in one place because it is said twice: the warn notice on the card
  *  and the sentence spoken into the live region when the confirm lands. Two constants rather than
  *  one so the notice can bold the lead without the announcement inheriting markup -- and so
- *  neither copy can be reworded without the other (rule 144). */
+ *  neither copy can be reworded without the other (rule 144).
+ *
+ *  It used to instruct -- "Restart Reaper's container to finish" -- because that was the only way
+ *  to finish. `Restart now` is under it now, so the sentence says what is true and the button says
+ *  what to do (#386). */
 export const RESTORE_ARMED_LEAD = "A restore is ready.";
-export const RESTORE_ARMED_REST = "Restart Reaper's container to finish. Nothing has changed yet.";
+export const RESTORE_ARMED_REST = "Nothing has changed yet. Restart Reaper to finish.";
+
+/** The same pair for the state after `Restart now` is pressed. It claims only what the server
+ *  accepted -- the stop -- and never that Reaper is back, which this page cannot see: the
+ *  connection it would ask over is the one about to go (rule 85). */
+export const RESTORE_STOPPING_LEAD = "Reaper is stopping.";
+export const RESTORE_STOPPING_REST = "It finishes the restore when it starts again.";
 
 /** What both surfaces pass in. Split out because two components take exactly this set. */
 export interface RestoreProps {
@@ -65,12 +75,17 @@ export function RestoreCard(props: RestoreProps) {
   );
 }
 
-// The restore flow: choose a backup file, confirm with the admin password, then restart the
-// container to finish. A restore never happens live -- the upload is validated and staged, the
-// password arms the swap, and the entrypoint does the swap on the next boot before migrations.
-// Three states: idle (choose a file), chosen (a validated summary + password), and armed (a
-// restore is staged and waiting for a restart). `armed` is server state (the READY marker), so
-// it survives a reload and shows even if this browser never did the confirm.
+// The restore flow: choose a backup file, confirm with the admin password, then restart to finish.
+// A restore never happens live -- the upload is validated and staged, the password arms the swap,
+// and preflight does the swap on the next boot before migrations. Three states: idle (choose a
+// file), chosen (a validated summary + password), and armed (a restore is staged and waiting for
+// Reaper to restart). `armed` is server state (the READY marker), so it survives a reload and shows
+// even if this browser never did the confirm.
+//
+// The armed state has a fourth on top of it, `stopping`, which is not server state and cannot be:
+// it says the server accepted a stop, and the read that would confirm anything more is the one the
+// stop ends. It does not survive a reload, and does not need to -- a reload after Reaper came back
+// finds no armed restore at all, because the swap has happened.
 //
 // No heading and no container of its own, so a modal can draw them: `RestoreCard` above adds
 // the Settings chrome, and `SetupRestoreModal` lets `ModalShell` carry the title. Both render
@@ -90,13 +105,22 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   // inside this flow is the box, so a refusal gives the box back rather than leaving the
   // operator pressing Restore against a string they cannot see or change.
   const [heldRejected, setHeldRejected] = useState(false);
+  // The server took the stop. Local, not server state: the one read that could confirm it is the
+  // one the stop is about to end, so this is what THIS browser was told, and it says only that.
+  const [stopping, setStopping] = useState(false);
   const useHeld = heldPassword != null && heldPassword !== "" && !heldRejected;
   // Pressing Restore replaces this whole card with the restart prompt, two hops later: the staged
-  // summary is dropped first, then the refetch flips `armed`. Focus lands on "Cancel restore",
-  // which is the only control the armed card has and the only way back out of it -- and it stays
-  // `disabled` until `busy` clears in the `finally`, one commit after it mounts, which is why the
-  // move waits on being actable rather than on being present (#173).
+  // summary is dropped first, then the refetch flips `armed`. Focus lands on "Cancel restore" --
+  // and it stays `disabled` until `busy` clears in the `finally`, one commit after it mounts, which
+  // is why the move waits on being actable rather than on being present (#173).
+  //
+  // Not on "Restart now", though that is the continuation an operator wants: a programmatic focus
+  // move puts the control under whatever key is pressed next, and one of these two stops the app.
+  // The reversible one takes the landing.
   const afterArm = useSuccessorFocus();
+  // ...and the same hop again when "Restart now" replaces itself with the stopping state, where
+  // "Reload" is the only control left.
+  const afterStop = useSuccessorFocus();
 
   // The two sends that outlive a render, held so the unmount cleanup below can wait on them
   // instead of deciding against state that has not settled yet. A prepare stages its archive on
@@ -198,6 +222,29 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
     }
   };
 
+  // The last step of a restore, as a button rather than as a shell command in another window
+  // (#386). The server refuses unless a restore is armed and unless a reap is in flight, so both
+  // of this card's ways to be told "no" arrive as an error on the notice below.
+  const restartNow = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.restoreRestart();
+      // Said on the 200, which is the whole of what settled: the server took the stop. Whether it
+      // comes back is not this page's to know or to claim (rule 85).
+      setStopping(true);
+      announce(`${RESTORE_STOPPING_LEAD} ${RESTORE_STOPPING_REST}`);
+    } catch (err) {
+      // Its own lead, like the other three: nothing was stopped, and the staged restore is exactly
+      // where it was.
+      setError(
+        err instanceof Error ? `Reaper didn't restart: ${err.message}` : "Reaper didn't restart.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const cancel = async () => {
     setBusy(true);
     try {
@@ -290,6 +337,34 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
     [],
   );
 
+  if (armed && stopping) {
+    return (
+      <>
+        <Notice tone="warn" className="restore-armed" as="div">
+          <span>
+            <strong>{RESTORE_STOPPING_LEAD}</strong> {RESTORE_STOPPING_REST}
+          </span>
+        </Notice>
+        <p className="help">
+          This page stops working until then. Reload it once Reaper is back, or start the container
+          yourself if it doesn't come back on its own.
+        </p>
+        <div className="backup-actions">
+          {/* The operator decides when Reaper is back, because the page cannot: a poll would be
+              asking the connection that just went. Pressing this early costs a browser error page
+              and another press. */}
+          <button
+            type="button"
+            ref={afterStop.ref as RefObject<HTMLButtonElement>}
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        </div>
+      </>
+    );
+  }
+
   if (armed) {
     return (
       <>
@@ -307,6 +382,23 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
             Cancel restore
           </button>
         </Notice>
+        <div className="backup-actions">
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              afterStop.arriving();
+              void restartNow();
+            }}
+            disabled={busy}
+          >
+            {busy ? "Restarting…" : "Restart now"}
+          </button>
+        </div>
+        <p className="help">
+          Reaper stops. It comes back on its own if your container is set to restart, otherwise
+          start it yourself.
+        </p>
         {/* Only the wizard needs telling what happens next, because only there is the rest of
             setup about to be overwritten by what is now staged. */}
         {heldPassword != null && (
@@ -315,6 +407,11 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
             setup will be behind you.
           </p>
         )}
+        {/* The armed card had no failure surface at all, so a Cancel that failed set a sentence
+            nothing rendered and the operator watched the button re-enable and nothing else. Both
+            of its buttons can be refused, so the notice lives here as well as on the form below
+            (rule 17/36). */}
+        {error && <Notice tone="error">{error}</Notice>}
       </>
     );
   }

@@ -13,11 +13,17 @@ The other half of :mod:`reaper.services.backup`. Restore is deliberately a
    edge. It forces deletion OFF inside the staged database (so the restored install
    boots read-only, never armed on someone else's decision) and then writes the
    ``READY`` marker *last* -- the marker is the arm.
-3. **Swap** (:func:`apply_pending_restore`) runs at container start, before
-   migrations, from the entrypoint's preflight. If ``READY`` is present and the
+3. **Swap** (:func:`apply_pending_restore`) runs at start, before migrations, from
+   :mod:`reaper.preflight` -- which the container entrypoint and ``scripts/dev-local.sh``
+   both run, and which nothing else may skip. If ``READY`` is present and the
    staged database reads as SQLite, it moves the current data aside (kept for
    recovery) and moves the staged files into place. ``alembic upgrade head`` then
    brings the restored database current.
+
+The operator asks for that start from the browser (``POST
+/api/settings/backup/restore/restart``, which stops the process and lets the container's
+restart policy bring it back) or by restarting the container themselves. Either way this
+module's part is identical: it is armed, and the next boot swaps.
 
 Every ambiguity resolves toward keeping the live data. A staged database that does
 not read as SQLite is discarded rather than swapped; an upload from a newer Reaper

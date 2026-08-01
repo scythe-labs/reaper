@@ -19,6 +19,9 @@ const { apiMock } = vi.hoisted(() => ({
     // Sent by the card's own unmount, not by anything an operator clicks, so nothing in this file
     // names it and it was still missing when the card started sending it (rule 135).
     restoreCancel: vi.fn(),
+    // Pressed only from the armed card, which most of this file never reaches -- so it is
+    // declared here rather than where a test happens to name it (rule 135).
+    restoreRestart: vi.fn(),
     downloadBackup: vi.fn(),
   },
 }));
@@ -72,11 +75,29 @@ async function stage(name: string) {
   return screen.findByLabelText(/admin password/i);
 }
 
+/** What the live region is holding, for the sentences this card speaks. */
+const spoken = () =>
+  [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+
+/** Stage, type the password, and confirm: the card's armed branch, reached the way an operator
+ *  reaches it. Shared by the two describes that need it rather than transcribed into both. */
+async function arm() {
+  apiMock.restoreConfirm.mockResolvedValue({ ok: true });
+  const { person, queryClient } = renderBackupPanel();
+  const password = await stage("a.reaper");
+  await person.type(password, "a-password");
+  // The refetch after the confirm is what flips the card into its armed branch.
+  apiMock.backupInfo.mockResolvedValue({ ...INFO, restore_armed: true });
+  await person.click(screen.getByRole("button", { name: /^restore$/i }));
+  return { person, queryClient };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.backupInfo.mockResolvedValue(INFO);
   apiMock.restorePrepare.mockResolvedValue(SUMMARY);
   apiMock.restoreCancel.mockResolvedValue({ ok: true });
+  apiMock.restoreRestart.mockResolvedValue({ ok: true });
 });
 
 describe("the admin password on the restore card", () => {
@@ -283,19 +304,6 @@ describe("what an operator is told when a restore arms", () => {
   // card becoming a different card: no sentence, and the pressed Restore button gone with the form
   // it lived on, so focus fell to `<body>` and the next Tab restarted above the whole page. An
   // absence cannot be heard, and this is the costliest absence in Settings (#173).
-  const spoken = () =>
-    [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
-
-  async function arm() {
-    apiMock.restoreConfirm.mockResolvedValue({ ok: true });
-    const { person, queryClient } = renderBackupPanel();
-    const password = await stage("a.reaper");
-    await person.type(password, "a-password");
-    // The refetch after the confirm is what flips the card into its armed branch.
-    apiMock.backupInfo.mockResolvedValue({ ...INFO, restore_armed: true });
-    await person.click(screen.getByRole("button", { name: /^restore$/i }));
-    return { person, queryClient };
-  }
 
   it("says a restore is ready, in the same words the card shows", async () => {
     // One pair of constants behind both, so the notice and the sentence cannot be reworded apart
@@ -316,13 +324,73 @@ describe("what an operator is told when a restore arms", () => {
     expect(spoken()).toContain("A restore is ready.");
   });
 
-  it("leaves the operator on the one control the armed card has", async () => {
-    // "Cancel restore" is the only way back out, and it mounts a commit before `busy` clears, so
-    // the move has to wait for it to become actable rather than for it to exist.
+  it("leaves the operator on the armed card's reversible control, not the one that stops the app", async () => {
+    // "Cancel restore" mounts a commit before `busy` clears, so the move has to wait for it to
+    // become actable rather than for it to exist. It takes the landing rather than "Restart now",
+    // which is the continuation an operator wants but also the one that ends the process: a
+    // programmatic focus move puts whatever it lands on under the next key pressed.
     await arm();
 
     const cancel = await screen.findByRole("button", { name: /cancel restore/i });
     await waitFor(() => expect(cancel).toBeEnabled());
     await waitFor(() => expect(cancel).toHaveFocus());
+    expect(screen.getByRole("button", { name: /restart now/i })).not.toHaveFocus();
+  });
+});
+
+describe("finishing the restore from the browser", () => {
+  // #386: the last step of a restore used to be a shell command in another window, at the end of a
+  // flow that is otherwise entirely in the browser -- and the first-run wizard now opens onto that
+  // flow, so a fresh operator met the instruction on their very first screen.
+
+  it("stops Reaper, and claims only that", async () => {
+    // The 200 says the server accepted the stop. It does not say Reaper is back, and this page
+    // cannot find out: the connection it would ask over is the one going away (rule 85).
+    const { person } = await arm();
+    const restart = await screen.findByRole("button", { name: /restart now/i });
+    await waitFor(() => expect(restart).toBeEnabled());
+
+    await person.click(restart);
+
+    expect(await screen.findByText(/Reaper is stopping/)).toBeInTheDocument();
+    expect(apiMock.restoreRestart).toHaveBeenCalledTimes(1);
+    // Waited for, not read straight off: this is the second sentence this card speaks, and
+    // `announce` drains its queue one `MESSAGE_GAP_MS` apart so neither is lost to a batch.
+    await waitFor(() => expect(spoken()).toContain("Reaper is stopping."));
+    // Nothing anywhere on the card says it came back, and the button that stops it is gone: a
+    // second press would be asking a server that is already going.
+    expect(screen.queryByRole("button", { name: /restart now/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /reload/i })).toBeInTheDocument();
+  });
+
+  it("shows the server's refusal, on a card that had no failure surface at all", async () => {
+    // The armed branch rendered a notice and a Cancel and nothing else, so BOTH of its buttons
+    // could be refused in silence: a failed cancel set a sentence nothing drew, and the operator
+    // watched the button re-enable and never learned the archive was still staged.
+    apiMock.restoreRestart.mockRejectedValue(
+      new Error("A reap is running. Let it finish or stop it, then restart Reaper."),
+    );
+    const { person } = await arm();
+    const restart = await screen.findByRole("button", { name: /restart now/i });
+    await waitFor(() => expect(restart).toBeEnabled());
+
+    await person.click(restart);
+
+    expect(await screen.findByText(/A reap is running/)).toBeInTheDocument();
+    // Nothing was stopped, so the card stays exactly where it was and the button is pressable
+    // again once the run ends.
+    expect(screen.queryByText(/Reaper is stopping/)).toBeNull();
+    await waitFor(() => expect(screen.getByRole("button", { name: /restart now/i })).toBeEnabled());
+  });
+
+  it("shows a failed Cancel too, which was the silent half of the same gap", async () => {
+    apiMock.restoreCancel.mockRejectedValue(new Error("the disk is full"));
+    const { person } = await arm();
+    const cancel = await screen.findByRole("button", { name: /cancel restore/i });
+    await waitFor(() => expect(cancel).toBeEnabled());
+
+    await person.click(cancel);
+
+    expect(await screen.findByText(/still waiting to be restored/)).toBeInTheDocument();
   });
 });
