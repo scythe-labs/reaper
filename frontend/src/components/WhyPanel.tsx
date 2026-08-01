@@ -19,7 +19,7 @@
 // that only explains its deletions cannot be trusted about its keeps.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import {
   api,
   type CandidateDetail,
@@ -31,6 +31,7 @@ import {
   type SignalState,
 } from "../api";
 import { announce } from "../announce";
+import { useSuccessorFocus } from "../focus";
 import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
@@ -1105,6 +1106,9 @@ export function WhyPanel({
   // removal is approved, the title simply goes back to being judged on its current plays
   // (`api.settings.forget_watch_evidence_for`).
   const queryClient = useQueryClient();
+  // The same handoff the global Forget makes, through the same hook (rule 72): that one is this
+  // control's whole-library twin and already pairs the sentence with a place to stand.
+  const afterForget = useSuccessorFocus();
   const forgetWatchRecord = useMutation({
     mutationFn: () => api.forgetWatchEvidenceFor(item.media_key),
     onSuccess: () => {
@@ -1113,6 +1117,7 @@ export function WhyPanel({
       // said at all. The same sentence as that replacement, on purpose: one fact, one wording,
       // whichever way the operator meets it (rule 144).
       announce("Reaper will judge this title on what it can see now.");
+      afterForget.arriving();
       for (const queryKey of WATCH_RECORD_STALE) void queryClient.invalidateQueries({ queryKey });
     },
   });
@@ -1246,7 +1251,29 @@ export function WhyPanel({
                   happened, and the next press asks the server to forget a record that is
                   already gone. So the action is replaced by what will happen instead. */}
               {forgetWatchRecord.isSuccess ? (
-                <p className="help">Reaper will judge this title on what it can see now.</p>
+                // The place to stand, and a paragraph rather than a control because the press
+                // removes the only control there was -- deliberately, since a second press would
+                // forget a record that is already gone. The global twin hands focus to a button
+                // that comes back; here there is nothing but this sentence, so it takes
+                // `tabIndex={-1}` to be able to hold focus at all.
+                //
+                // Without it focus sits on `<body>`: the button carries `disabled={isPending}`,
+                // so the browser blurs it at the press, and above 900px `WhyShell` is not modal
+                // and traps nothing, which makes the next Tab restart at the top of the whole
+                // application rather than anywhere in this panel (#393).
+                //
+                // A reader hears the sentence twice in the common case, once from the live region
+                // and once on landing. That is the trade taken on purpose: the alternative on
+                // offer was the panel's heading, which is a fixed point but throws the operator
+                // out of the block they were reading, and saying one short sentence twice is the
+                // smaller cost.
+                <p
+                  className="help"
+                  tabIndex={-1}
+                  ref={afterForget.ref as RefObject<HTMLParagraphElement>}
+                >
+                  Reaper will judge this title on what it can see now.
+                </p>
               ) : (
                 <>
                   <button

@@ -1174,6 +1174,23 @@ describe("the watch-record escape", () => {
     );
   });
 
+  it("leaves the operator standing on the sentence, not on the document root (#393)", async () => {
+    // The press removes the control it is on, so without a handoff focus falls to `<body>` and
+    // the next Tab restarts above the whole application: above 900px `WhyShell` is not modal and
+    // traps nothing, so there is no panel boundary to catch it. The replacement paragraph is the
+    // only successor there is, which is why it carries `tabIndex={-1}`.
+    const user = userEvent.setup();
+    show(blindDetail(true));
+
+    const press = screen.getByRole("button", { name: PRESS });
+    await waitFor(() => expect(press).toBeEnabled());
+    await user.click(press);
+
+    const landed = await screen.findByText("Reaper will judge this title on what it can see now.");
+    await waitFor(() => expect(landed).toHaveFocus());
+    expect(document.body).not.toHaveFocus();
+  });
+
   it("says a failed write failed, rather than swallowing it", async () => {
     vi.mocked(api.forgetWatchEvidenceFor).mockRejectedValue(new Error("no"));
     const user = userEvent.setup();

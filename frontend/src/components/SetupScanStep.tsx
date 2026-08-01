@@ -254,7 +254,15 @@ export function SetupScanStep({
         )}
 
         {start.error && <Notice tone="error">The scan didn't start: {start.error.message}</Notice>}
-        {scan?.error && <Notice tone="error">The scan hit a problem: {scan.error}</Notice>}
+        {/* `standing`, unlike the Start refusal above it: a scan already running or already
+            crashed server-side is on this step the moment it mounts, and once one is running the
+            1s poll delivers the failure with nothing pressed. `ScanBar` says the same thing about
+            the same field and moves with it (rule 72). */}
+        {scan?.error && (
+          <Notice tone="error" standing>
+            The scan hit a problem: {scan.error}
+          </Notice>
+        )}
       </StepCard>
 
       {discordOpen && <DiscordModal onClose={() => setDiscordOpen(false)} />}

@@ -292,7 +292,12 @@ export function ReapPlan({
       </p>
 
       {degraded && (
-        <Notice tone="warn">
+        // `standing`: `["snapshot"]` carries the last scan's own verdict on itself, so this is
+        // true before the page loads and stays true until a clean scan replaces it. Its other
+        // route in is `useScanSettled` invalidating that key off the shell's 15s poll, which a
+        // scheduled scan reaches with nothing pressed. `ScanBar` says the same thing about the
+        // same field and moves with it (rule 72).
+        <Notice tone="warn" standing>
           <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You can
           still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and
           scan again.

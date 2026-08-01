@@ -1377,7 +1377,10 @@ function BackupPanel({
             </div>
             {error && <Notice tone="error">The download didn't start: {error}</Notice>}
             {!data.key_in_backup && (
-              <Notice tone="warn">
+              // `standing`: where the key is set is a property of the deployment, read from
+              // `["backup-info"]`, so this is on the panel from its first paint. The download
+              // failure directly above answers a press and stays an alert.
+              <Notice tone="warn" standing>
                 Your encryption key is set through the environment, so it is not inside this backup.
                 Keep that key with the file, or a restore cannot read your saved credentials.
               </Notice>
@@ -2506,8 +2509,21 @@ function AdminPasswordForm({
             {msg && <span className="muted">{msg}</span>}
           </div>
         </form>
+        {/* One box, two kinds of message, so the flag is read off the same chain that picks the
+            text. `errorOwner` is non-null for exactly the three live branches and null for the
+            fourth, because `valid` requires all three to be clear before Save can be pressed at
+            all -- so a submit failure always mounts this fresh, which is the insertion
+            `role="alert"` is announced on.
+
+            `standing` on the live ones: they explain why Save is off WHILE THE OPERATOR TYPES,
+            and the first of them renders `{pw.length} so far`, so its text changed inside a live
+            region on every keystroke and re-announced the whole string each time -- around
+            eleven interruptions on the way to a valid password, on the form that sets the key
+            arming deletion. Nothing is lost by not interrupting: all three inputs point here
+            through `aria-describedby`, so the complaint is read as the description of the box
+            the operator is standing in. This is the case `Notice.tsx` names outright. */}
         {errorNode && (
-          <Notice tone="error" id={PASSWORD_ERROR_ID}>
+          <Notice tone="error" id={PASSWORD_ERROR_ID} standing={errorOwner !== null}>
             {errorNode}
           </Notice>
         )}

@@ -127,7 +127,10 @@ export function SetupConnectStep({
       )}
 
       {!ready && instances && (
-        <Notice tone="warn">
+        // `standing`: on a fresh install this is true the moment `["instances"]` resolves at step
+        // mount, which is what a wizard step opens on. Presses only ever make it go away. Its
+        // twin on the scan step already declares this (rule 72).
+        <Notice tone="warn" standing>
           Add Tautulli and one of Radarr or Sonarr, then you can run a scan.
         </Notice>
       )}

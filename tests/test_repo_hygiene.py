@@ -1635,8 +1635,16 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # anyway (the armed restore card, the Reap page's expired-spares prompt, its two stale-plan
 # notices, the Plex trash warning on both its surfaces, and the why-panel's "Kept to be safe"),
 # plus the log's two failure notices, which a 2s poll re-announced on every flap.
+# Then 31: #394 swept the rest of the tree against the sharper question, which is not what a
+# notice's mount condition READS but what refetches the query under it -- `main.tsx` turns
+# `refetchOnWindowFocus` off app-wide, so a read moves on a mount, an interval, or an
+# invalidation, and only the first two reach a notice with nothing pressed. Fifteen did: a run
+# started on another device, a scheduled scan crashing or finishing degraded (three sites off one
+# 15s poll), five facts about the install that are true on first paint, three load-time recovery
+# flags, and the password form's live complaint, whose `{pw.length} so far` mutated inside a live
+# region on every keystroke.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 16
+_EXPECTED_STANDING = 31
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")

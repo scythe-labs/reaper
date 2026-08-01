@@ -1484,15 +1484,18 @@ export function PolicyEditor({
           </div>
         </div>
         {/* A recovery notice renders on the load it explains, so it hangs off the response
-            flag alone and no dirty gate, disclosure or savebar can hide it. */}
+            flag alone and no dirty gate, disclosure or savebar can hide it.
+
+            `standing` on both, for that same reason: a flag carried by the fetch is the state of
+            the page from its first paint, and the reader meets it above the values it is about. */}
         {saved?.fell_back && (
-          <Notice tone="error" as="div">
+          <Notice tone="error" as="div" standing>
             Your saved policy couldn't be read, so this shows the starting one instead. Nothing has
             changed on your server. Check the values below, then save to replace it.
           </Notice>
         )}
         {saved?.rating_rules_restored && (
-          <Notice tone="warn" as="div">
+          <Notice tone="warn" as="div" standing>
             Keep well-rated titles had stopped keeping anything. Your saved rating is back below,
             unsaved. Reaper won't remove anything until you check it and save.
           </Notice>
@@ -2007,9 +2010,9 @@ export function PolicyEditor({
         </p>
 
         {/* Recovery notice: hangs off the response flag alone, so no dirty gate or disclosure
-            can hide it (mirrors the policy recovery notice above). */}
+            can hide it (mirrors the policy recovery notice above), `standing` included. */}
         {savedPace?.settings_recovered && (
-          <Notice tone="error">
+          <Notice tone="error" standing>
             Your saved caps and grace couldn't be read, so these show the starting ones. Nothing has
             changed on your server, but a scan won't remove anything until you check these and save.
           </Notice>
@@ -2036,8 +2039,11 @@ export function PolicyEditor({
               An extra ceiling on how much one run and a rolling month remove, on top of the
               deletion password. Turn off for a big first cleanup, back on for routine runs.
             </p>
+            {/* `standing`: seeded from the stored profile, so it paints on load whenever caps are
+                saved off, and after that it follows the Switch directly above it -- a control
+                whose own state already says which way it went. */}
             {!pace.caps_enabled && (
-              <Notice tone="warn" inline>
+              <Notice tone="warn" inline standing>
                 No cap on run size. A run can remove everything you've approved at once. Deletion
                 still needs the password and your approval of the list.
               </Notice>

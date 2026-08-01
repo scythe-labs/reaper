@@ -320,7 +320,12 @@ export function ReapConfirm({
       {/* Another reap holds the single slot: say so, rather than lighting a Reap button the
           server would refuse. */}
       {!running && !report && !failed && otherRunning && (
-        <Notice tone="warn">
+        // `standing`: `otherRunning` is somebody ELSE's run, seen through the 1s/15s
+        // `["reapStatus"]` poll, so it inserts under a sheet that is already open with nothing
+        // pressed here at all. It is also the state of this sheet for as long as that run holds
+        // the slot, and the sheet reads in document order by design (the focus move below is
+        // withheld for the same reason).
+        <Notice tone="warn" standing>
           Another reap is running. Wait for it to finish, then reopen this to reap.
         </Notice>
       )}

@@ -113,8 +113,15 @@ describe("the local-account sheet", () => {
       expect(blurb).not.toHaveTextContent(/keeps at least one/i);
       // And the way out is the one reachable from this browser. The host command stays for
       // an operator who cannot reach plex.tv, which is the case they opened this sheet in.
-      const notice = screen.getByRole("alert");
-      expect(notice).toHaveTextContent(/sign in with plex above/i);
+      //
+      // Found by its words rather than by `role="alert"`, which it no longer carries: whether
+      // this install has a local account is read from `["authContext"]` on first load, so the
+      // notice is on the sheet before anything is pressed and is `standing` (#394). The sheet is
+      // always mounted and only translated off-screen, so the press that opens it reveals a node
+      // that was already there. Asserted rather than merely worked around, so putting the alert
+      // back fails here.
+      const notice = screen.getByText(/sign in with plex above/i).closest(".notice");
+      expect(notice).not.toHaveAttribute("role", "alert");
       expect(notice).toHaveTextContent(/reaper-admin create-admin/i);
     } finally {
       apiMock.authContext.mockResolvedValue({
