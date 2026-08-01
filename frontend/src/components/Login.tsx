@@ -247,8 +247,12 @@ function LocalSheet({
               : " Reaper keeps at least one, so a plex.tv outage can’t lock you out.")}
         </p>
 
+        {/* `standing`: a property of the install, read from `["authContext"]` on first load, so
+            it is on this sheet before anything is pressed. The sheet is always mounted and only
+            translated off-screen, so the "Use a local account" press reveals a node that was
+            already there rather than causing this. */}
         {noLocalYet ? (
-          <Notice tone="warn">
+          <Notice tone="warn" standing>
             Sign in with Plex above and Reaper will ask you to set a password, which creates it.
             You’ll need that password to turn deletion on anyway. If Plex is unreachable right now,
             create an account on the host with{" "}

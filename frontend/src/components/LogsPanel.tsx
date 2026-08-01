@@ -8,7 +8,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSlowWait } from "../announce";
+import { announce, useSlowWait } from "../announce";
 import { api, type LogLine } from "../api";
 import { count } from "../format";
 import { Switch } from "./Switch";
@@ -133,6 +133,20 @@ export function LogsPanel() {
 
   const download = useMutation({ mutationFn: api.downloadLogs });
 
+  /** Try again, and say how it went.
+   *
+   *  The one genuine press in this panel's failure notices, and the one thing they never said.
+   *  `refetch()` on an already-errored query leaves `isError` true throughout, so the notice never
+   *  unmounts and its text never changes: a retry that failed again is indistinguishable from a
+   *  button that does nothing, which is the absence `announce.tsx` exists for. Both notices share
+   *  this, in sentences true of either -- one fact, one wording (rule 144).
+   *
+   *  `refetch` resolves with the result rather than rejecting, so the outcome is read off it. */
+  const retry = async () => {
+    const result = await logs.refetch();
+    announce(result.isError ? "The log still didn't load." : "The log is up to date.");
+  };
+
   return (
     <div className="panel">
       <h2>Logs</h2>
@@ -190,9 +204,13 @@ export function LogsPanel() {
       {logs.isPending && lines.length === 0 ? (
         <p className="muted">Loading the log…</p>
       ) : logs.isError && lines.length === 0 ? (
-        <Notice tone="error">
+        // `standing`: `["logs"]` polls every 2s while Follow new lines is on, so this mounts and
+        // unmounts with the connection rather than with anything pressed. As an alert a flapping
+        // connection re-announced byte-identical text over whoever was reading the pane. What the
+        // operator does press is Try again, and `retry` is what answers it.
+        <Notice tone="error" standing>
           Couldn't load the log.{" "}
-          <button className="ghost sm" onClick={() => void logs.refetch()}>
+          <button className="ghost sm" onClick={() => void retry()}>
             Try again
           </button>
         </Notice>
@@ -235,13 +253,16 @@ export function LogsPanel() {
           nothing is retrying and saying so would be a lie. In that state the operator gets
           the same Try again button the empty-log branch above offers. */}
       {logs.isError && lines.length > 0 && (
-        <Notice tone="error">
+        // `standing`, same as its twin above, and with one more reason: its text swaps between
+        // these two branches when Follow new lines is toggled, which as an alert made an
+        // unrelated switch speak a failure the operator had already been told about.
+        <Notice tone="error" standing>
           {live ? (
             "Couldn't load new lines. Reaper is trying again."
           ) : (
             <>
               Couldn't load new lines, and updates are paused.{" "}
-              <button className="ghost sm" onClick={() => void logs.refetch()}>
+              <button className="ghost sm" onClick={() => void retry()}>
                 Try again
               </button>
             </>

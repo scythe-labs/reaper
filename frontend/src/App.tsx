@@ -384,7 +384,11 @@ export function ScanFreshness({
     // selection that "Select everything matching" may have walked thousands of rows to build,
     // and nothing anywhere in the app asks first.
     return (
-      <Notice tone="error" className="scan-freshness">
+      // `standing`: this line is the queue's age, so it is part of the page whenever the read
+      // behind it will not answer. It arrives that way on a first load, and again whenever
+      // `useScanSettled` invalidates `["snapshot"]` off the shell's 15s poll -- a scheduled scan
+      // finishing, with nothing pressed. It sits directly above the queue it describes.
+      <Notice tone="error" className="scan-freshness" standing>
         Couldn't read the last scan, so Reaper can't say how old this queue is.
       </Notice>
     );

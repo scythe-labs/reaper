@@ -219,7 +219,10 @@ export function SetupScanStep({
                 nothing wired left "Run first scan" live: the start route answers 200, the
                 panel turns into a spinner, and the refusal arrives from inside the detached
                 task pointing at Settings, which is behind the wizard the operator has not
-                left. The fix rides inside the notice (rule 42), and it is one step back. */}
+                left. The fix rides inside the notice (rule 42), and it is one step back.
+
+                `standing`: `scan_ready` is the state of the install, true before this step was
+                reached, so it is read in document order like the banner above it. */}
             {!setup.scan_ready && (
               <Notice tone="warn" standing>
                 Connect Tautulli and one of Radarr or Sonarr before your first scan.{" "}
@@ -251,7 +254,15 @@ export function SetupScanStep({
         )}
 
         {start.error && <Notice tone="error">The scan didn't start: {start.error.message}</Notice>}
-        {scan?.error && <Notice tone="error">The scan hit a problem: {scan.error}</Notice>}
+        {/* `standing`, unlike the Start refusal above it: a scan already running or already
+            crashed server-side is on this step the moment it mounts, and once one is running the
+            1s poll delivers the failure with nothing pressed. `ScanBar` says the same thing about
+            the same field and moves with it (rule 72). */}
+        {scan?.error && (
+          <Notice tone="error" standing>
+            The scan hit a problem: {scan.error}
+          </Notice>
+        )}
       </StepCard>
 
       {discordOpen && <DiscordModal onClose={() => setDiscordOpen(false)} />}

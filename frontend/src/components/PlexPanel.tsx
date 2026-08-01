@@ -732,8 +732,13 @@ export function PlexPanel({
                   </>
                 ) : (
                   <>
+                    {/* `standing`: a plex.tv response that came back without the linked server
+                        makes this true on the panel's first successful read, so it is what this
+                        row looks like until the server is back rather than a reply to anything.
+                        The action failures further down answer their own presses and stay
+                        alerts. */}
                     {linkedServerMissing && (
-                      <Notice tone="warn">
+                      <Notice tone="warn" standing>
                         Plex's list came back without the server Reaper uses
                         {data?.name ? `, ${data.name}` : ""}. Nothing has changed. Refresh to look
                         again; the server and connection stay as they are until it is back.

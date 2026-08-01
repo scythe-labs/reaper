@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { LogsPanel } from "./LogsPanel";
@@ -32,6 +33,10 @@ function renderPanel() {
   const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
+      {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when
+          no region is listening -- so without it here Try again's sentence is dropped and a test
+          about it passes against silence. */}
+      <Announcer />
       <LogsPanel />
     </QueryClientProvider>,
   );
@@ -84,6 +89,43 @@ describe("LogsPanel", () => {
 
     expect(await screen.findByText(/reaper is trying again/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+  });
+
+  // #376: the pair was wrong in both directions at once -- it spoke when nobody did anything,
+  // and stayed silent when someone did. Both halves are pinned, because fixing either alone
+  // leaves the other exactly as broken and neither is visible from the diff.
+  it("does not announce a failure the poll found, in either notice", async () => {
+    const { queryClient } = renderPanel();
+    expect(await screen.findByText("a line")).toBeInTheDocument();
+
+    apiMock.logs.mockRejectedValue(new Error("boom"));
+    await act(() => queryClient.refetchQueries({ queryKey: ["logs"] }));
+
+    // `["logs"]` refetches every 2s, so a flapping connection remounts this notice on a cycle
+    // no operator drove. As an alert it re-read byte-identical text over whoever was reading
+    // the pane or typing in the search box.
+    const notice = await screen.findByText(/reaper is trying again/i);
+    expect(notice.closest(".notice")).not.toHaveAttribute("role", "alert");
+  });
+
+  it("announces the outcome of Try again, whichever way it goes", async () => {
+    const { queryClient, person } = renderPanel();
+    expect(await screen.findByText("a line")).toBeInTheDocument();
+
+    apiMock.logs.mockRejectedValue(new Error("boom"));
+    await person.click(screen.getByRole("switch", { name: /follow new lines/i }));
+    await act(() => queryClient.refetchQueries({ queryKey: ["logs"] }));
+    expect(await screen.findByText(/updates are paused/i)).toBeInTheDocument();
+
+    // Failing again is the case that used to say nothing at all: `isError` stays true across
+    // the retry, so the notice never unmounts and its text never changes. Nothing about the
+    // rendered page distinguishes a retry that failed from a button that does nothing.
+    await person.click(screen.getByRole("button", { name: /try again/i }));
+    await screen.findByText(/the log still didn't load\./i);
+
+    apiMock.logs.mockResolvedValue(page(2));
+    await person.click(screen.getByRole("button", { name: /try again/i }));
+    expect(await screen.findByText(/the log is up to date\./i)).toBeInTheDocument();
   });
 
   it("downloads the full log on demand", async () => {

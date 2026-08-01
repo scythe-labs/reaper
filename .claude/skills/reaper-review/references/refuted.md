@@ -375,3 +375,21 @@ are one quantity and the blind band is only the tolerance `_grew_materially` dec
 `f6ddf24`. Note the *shape* of the error rather than the conclusion: five sites agreed with each
 other because each was written from one of the others, and the claim was never checked against
 Sonarr. See learning 14.
+
+**`StaleReadNotice.tsx` — 18 surfaces announce a failed background refetch nobody asked for, so
+the shared component should be `standing` (issue #392).** The premise is false on all but two of
+the call sites, and it was written from the component's *mount condition* without reading what
+refetches the queries behind it. `main.tsx:17` sets `refetchOnWindowFocus: false` app-wide with
+`staleTime: 30_000`, so a read here refetches only when it mounts or when a mutation invalidates
+its key. On 21 of the 23 call sites that makes the stale line a REACTION -- the operator saved a
+connection, switched a Plex server, removed a webhook -- and `role="alert"` is what those call
+sites should carry. The issue also claimed a window-focus refetch reaches it; there is no such
+refetch anywhere in the app. Two callers genuinely arrive unprompted: the Security panel's read is
+`useSafety`, whose `refetchInterval` is 15s and always on, and the Jobs panel's `["schedule"]`
+polls at 1500ms while any job runs, which a scheduled job satisfies. Neither is worth a
+caller-level opt-out on a component whose whole point is that the wording cannot drift: the
+repetition they can produce is already bounded by `collapseStaleReads` (#198), which folds a
+panel's simultaneous failures into one line for exactly this reason and reasons about the
+announcements out loud. Note the shape of the error rather than the conclusion: "no press is on
+this path" is a claim about a QUERY's refetch policy, not about a component's props, and reading
+only the latter made 21 reactions look like furniture.

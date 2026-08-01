@@ -253,14 +253,22 @@ export function ScanRow({
             The scan didn't start: {start.error.message}
           </Notice>
         )}
+        {/* `standing`, unlike `start.error` directly above it, which answers this bar's own
+            Start press and stays an alert. A scan runs from the scheduler and from other
+            devices, and the shell holds a second observer on `["scanStatus"]` that polls every
+            15s while this row is idle (`App.tsx`), so a scheduled scan crashing writes this into
+            the shared cache and paints it under a page nobody touched. */}
         {status?.error && (
-          <Notice tone="error" inline>
+          <Notice tone="error" inline standing>
             The scan hit a problem: {status.error}
           </Notice>
         )}
 
+        {/* `standing`, same route one step later: `useScanSettled` invalidates `["snapshot"]` on
+            the running-to-idle edge it sees through that same 15s poll, so a scheduled scan
+            finishing incomplete draws this with no press either. */}
         {snapshot?.degraded && (
-          <Notice tone="warn">
+          <Notice tone="warn" standing>
             <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason} You can
             still look at it, but Reaper won't act on it. A scan that missed a source could show a
             list that looks complete when it isn't.

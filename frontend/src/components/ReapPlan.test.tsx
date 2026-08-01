@@ -4,7 +4,7 @@
 // that carries Execute, next to the button that rebuilds it. These pin that it is there, and
 // that "we could not check" is said out loud rather than rendering nothing.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Run, Snapshot } from "../api";
@@ -167,6 +167,48 @@ describe("ReapPlan staleness", () => {
     apiMock.latestSnapshot.mockRejectedValue(new Error("boom"));
     const { summary } = await buildPlan();
     expect(await within(summary).findByText(/couldn't check/i)).toBeInTheDocument();
+  });
+
+  // #375. Both of these turn true without a press -- a newer scan landing under a plan already
+  // on screen, or a read that would not answer -- so both are read in document order rather
+  // than interrupting whoever is working through the ledger above them.
+  it("does not interrupt with the older-scan warning", async () => {
+    apiMock.latestSnapshot.mockResolvedValue(snapshot);
+    const { summary } = await buildPlan();
+    const stale = await within(summary).findByText(/came from an older scan/i);
+    expect(stale.closest(".notice")).not.toHaveAttribute("role", "alert");
+  });
+
+  it("does not interrupt with the could-not-check warning", async () => {
+    apiMock.latestSnapshot.mockRejectedValue(new Error("boom"));
+    const { summary } = await buildPlan();
+    const unknown = await within(summary).findByText(/couldn't check/i);
+    expect(unknown.closest(".notice")).not.toHaveAttribute("role", "alert");
+  });
+
+  it("does not dress the freshness check itself as a warning while it is still running", async () => {
+    // This caption used to be the pending branch of the notice below it, so the first thing
+    // that notice said was "Warning: Checking whether this plan came from the latest scan…" --
+    // a severity claim over a spinner -- and it spoke a second time when the query settled and
+    // swapped its own children in place. A loading affordance is markup (#332).
+    let settle: (value: Snapshot) => void = () => {};
+    apiMock.latestSnapshot.mockReturnValue(
+      new Promise<Snapshot>((resolve) => {
+        settle = resolve;
+      }),
+    );
+    const { summary } = await buildPlan();
+
+    const waiting = await within(summary).findByText(/checking whether this plan came from/i);
+    expect(waiting.closest(".notice")).toBeNull();
+    expect(within(summary).queryByText(/couldn't check/i)).not.toBeInTheDocument();
+
+    await act(async () => {
+      settle(snapshot);
+    });
+    await waitFor(() =>
+      expect(within(summary).queryByText(/checking whether this plan came from/i)).toBeNull(),
+    );
   });
 
   it("leaves the staleness wording out of the history list", async () => {

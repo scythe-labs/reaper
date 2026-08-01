@@ -244,7 +244,10 @@ export function ReapBreakdown({
           has to do something (scan) for these to move -- not the informational `.rb-line` the
           held reaps use, which only points at Review. */}
       {data.spares_expired > 0 && (
-        <Notice tone="warn">
+        // `standing`: a scan-derived count, true before this page loaded and until the next scan
+        // moves it. Its sibling below is the opposite -- `startScan.isError` answers the Scan now
+        // press inside this notice -- and stays an alert.
+        <Notice tone="warn" standing>
           {/* Titles, not spares: the server counts the rows a scan would hand back, and one
               whole-show spare can be holding five condemned seasons. Calling those "5 spares"
               named a thing the operator has one of (rule 21). */}

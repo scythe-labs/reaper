@@ -67,6 +67,47 @@ describe("the admin password form", () => {
     expect(apiMock.setAdminPassword).not.toHaveBeenCalled();
   });
 
+  // #394. One box carries two kinds of message and they must not share a voice: the live count
+  // above changes on EVERY keystroke while the node stays mounted, and a `role="alert"` announces
+  // content changes, so typing a valid password re-read the whole string about eleven times on
+  // the form that sets the key arming deletion. A failed submit through the same box is the
+  // opposite and has to keep interrupting. Both directions are driven, because a flag that
+  // silenced one would silence the other just as quietly.
+  it("does not interrupt while the operator is still typing", async () => {
+    apiMock.safety.mockResolvedValue({ has_password: false });
+    const person = renderPanel();
+
+    const next = await screen.findByLabelText(/^new password$/i);
+    await person.type(next, "hunter7");
+
+    const complaint = screen.getByText(/use at least 12 characters/i).closest(".notice");
+    expect(complaint).not.toHaveAttribute("role", "alert");
+    // Nothing is lost by not interrupting: the box the operator is standing in points at this
+    // very node, so a reader gets the complaint as that box's description.
+    expect(next).toHaveAttribute("aria-describedby", complaint?.id);
+  });
+
+  it("still interrupts when the save itself is refused", async () => {
+    apiMock.safety.mockResolvedValue({ has_password: false });
+    apiMock.setAdminPassword.mockRejectedValue(new Error("the server said no"));
+    const person = renderPanel();
+
+    const next = await screen.findByLabelText(/^new password$/i);
+    const confirm = screen.getByLabelText(/confirm new password/i);
+    await fill(person, next, "a-long-enough-password");
+    await fill(person, confirm, "a-long-enough-password");
+
+    const save = screen.getByRole("button", { name: /^save$/i });
+    // Rule 137: user-event reports a press on a disabled control as a success.
+    await waitFor(() => expect(save).toBeEnabled());
+    await person.click(save);
+
+    // Every live branch is clear by now -- `valid` requires it before Save can be pressed at all
+    // -- so this notice mounts fresh, which is the insertion `role="alert"` is announced on.
+    const failure = await screen.findByText(/the password wasn't set/i);
+    expect(failure.closest(".notice")).toHaveAttribute("role", "alert");
+  });
+
   it("blocks Save until the confirmation matches, then sends only the new password", async () => {
     apiMock.safety.mockResolvedValue({ has_password: false });
     const person = renderPanel();

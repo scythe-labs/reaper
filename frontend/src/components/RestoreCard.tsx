@@ -420,7 +420,13 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   if (armed) {
     return (
       <>
-        <Notice tone="warn" className="restore-armed" as="div">
+        {/* `standing`: `armed` is the server's READY marker, so this card is what Backup looks
+            like on every visit until Cancel or a restart, not a reply to anything pressed here.
+            The press that arms it is already covered -- `confirm` announces these same two
+            sentences and moves focus onto Cancel -- so the flag takes away a repeat, never the
+            only signal. The `stopping` twin above is the opposite: `stopping` is local state set
+            by Restart now, so it answers a press and stays an alert. */}
+        <Notice tone="warn" className="restore-armed" as="div" standing>
           <span>
             <strong>{RESTORE_ARMED_LEAD}</strong> {RESTORE_ARMED_REST}
           </span>

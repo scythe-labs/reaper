@@ -292,7 +292,12 @@ export function ReapPlan({
       </p>
 
       {degraded && (
-        <Notice tone="warn">
+        // `standing`: `["snapshot"]` carries the last scan's own verdict on itself, so this is
+        // true before the page loads and stays true until a clean scan replaces it. Its other
+        // route in is `useScanSettled` invalidating that key off the shell's 15s poll, which a
+        // scheduled scan reaches with nothing pressed. `ScanBar` says the same thing about the
+        // same field and moves with it (rule 72).
+        <Notice tone="warn" standing>
           <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You can
           still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and
           scan again.
@@ -343,29 +348,34 @@ export function ReapPlan({
               <PlexTrashNotice known={planTrash.known} unreadable={planTrash.unreadable} />
             )}
             {staleRun && (
-              <Notice tone="warn">
+              // `standing`: this turns true when a newer scan lands under a plan already on
+              // screen, which is a background event with no press to attach it to, and it is
+              // then part of the page until a new plan is built.
+              <Notice tone="warn" standing>
                 This plan came from an older scan, so it can list titles you have since protected.{" "}
                 <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
                   Build a new plan
                 </button>
               </Notice>
             )}
-            {staleUnknown && (
-              <Notice tone="warn">
-                {snapshot.isPending ? (
-                  "Checking whether this plan came from the latest scan…"
-                ) : (
-                  <>
-                    Reaper couldn't check whether this plan came from the latest scan.{" "}
-                    <button
-                      className="link"
-                      onClick={() => plan.mutate()}
-                      disabled={plan.isPending}
-                    >
-                      Build a new plan
-                    </button>
-                  </>
-                )}
+            {/* The check is in flight, so there is nothing to warn about yet. This used to be the
+                pending branch of the notice below, which made the first thing that notice said
+                "Warning: Checking whether this plan came from the latest scan…" -- a severity
+                claim over a spinner caption, and then a second utterance when the query settled
+                and swapped its own children in place. A loading affordance is markup and speaks
+                only once the wait has been one (#332, `useSlowWait`), so it is the page's plain
+                help line here, the same one the plan loader above uses. */}
+            {staleUnknown && snapshot.isPending && (
+              <p className="help">Checking whether this plan came from the latest scan…</p>
+            )}
+            {staleUnknown && !snapshot.isPending && (
+              // `standing`: a snapshot read that would not answer is the state of this page until
+              // the read succeeds, not a reply to anything pressed.
+              <Notice tone="warn" standing>
+                Reaper couldn't check whether this plan came from the latest scan.{" "}
+                <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
+                  Build a new plan
+                </button>
               </Notice>
             )}
             {/* Above Execute, because that is the button the refusal fires from. The Plex one
