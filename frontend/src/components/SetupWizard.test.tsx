@@ -53,6 +53,7 @@ const AT_SCAN: SetupStatus = {
   has_seerr: false,
   has_scanned: false,
   scan_ready: true,
+  reap_ready: true,
   complete: false,
 };
 const IDLE = {

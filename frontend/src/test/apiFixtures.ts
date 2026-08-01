@@ -13,7 +13,13 @@
 // held back), seasons collapsed, spares kept forever. A test that cares about any of these sets
 // its own value -- these exist so a test that does NOT care never has to think about them.
 import type { QueryClient } from "@tanstack/react-query";
-import type { GeneralSettings, ProfileSettings, ScanStatus, WatchEvidence } from "../api";
+import type {
+  GeneralSettings,
+  ProfileSettings,
+  ScanStatus,
+  SetupStatus,
+  WatchEvidence,
+} from "../api";
 
 export const DEFAULT_PROFILE: ProfileSettings = {
   max_items_per_run: 10,
@@ -57,6 +63,29 @@ export const IDLE_SCAN: ScanStatus = {
   error: null,
   snapshot_id: 1,
   followup_queued: false,
+};
+
+/** A fully configured install: everything connected, a scan behind it, and a real run allowed.
+ *
+ *  The Reap page reads this on its own to say, before the button, what would turn a run away
+ *  (`reapReadiness.ts`). `reap_ready: true` is the value that renders NOTHING extra, which is
+ *  the point: a test that does not care about setup keeps rendering the page it always did,
+ *  and a test that does care sets its own. A failed read is not the same as this and does not
+ *  substitute for it -- the page says so out loud, which is why the fixture cannot be omitted
+ *  and left to the mock gap (rule 135). */
+export const READY_SETUP: SetupStatus = {
+  admin_exists: true,
+  has_password: true,
+  plex_linked: true,
+  instances: { radarr: 1, sonarr: 1, tautulli: 1 },
+  has_radarr: true,
+  has_sonarr: true,
+  has_tautulli: true,
+  has_seerr: false,
+  has_scanned: true,
+  scan_ready: true,
+  reap_ready: true,
+  complete: true,
 };
 
 /** Put those settings in the cache, fresh, for a tree that reads them on its own and a test that

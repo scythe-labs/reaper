@@ -13,6 +13,10 @@
 // is the server's own predicate, not a second copy of it. Seerr sits under an Optional divider
 // because a scan does not need it, and it is here rather than a step later so that every
 // service connection is on one screen.
+//
+// The restore door is in the footer, and it is on this step for the same reason the rows are:
+// restoring is the alternative to connecting services one at a time, so an operator moving an
+// existing install meets it before doing the work it replaces rather than after (#385).
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -20,6 +24,7 @@ import { api, type Instance, type SetupStatus } from "../api";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { KINDS, ServiceModal } from "./ServiceModal";
+import { SetupRestoreModal } from "./SetupRestoreModal";
 import { StepCard } from "./SetupStepper";
 
 /** The badge letters and the name a first instance of each kind arrives with.
@@ -60,6 +65,7 @@ export function SetupConnectStep({
     queryFn: api.instances,
   });
   const [editing, setEditing] = useState<{ kind: string; instance: Instance | null } | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
   const of = (kind: string) => (instances ?? []).filter((i) => i.kind === kind);
 
@@ -137,10 +143,14 @@ export function SetupConnectStep({
       {/* The restore door. It sits on this step and not the first because
           `restore/confirm` refuses outright until a password exists, and the first step is
           what creates one. */}
-      <div className="step-foot">
-        Moving an existing Reaper here? Restore a backup from Settings once you're in, and your
-        connections and decisions come back with it.
-        {password === null && " You'll be asked for your password there."}
+      <div className="step-foot step-foot-door">
+        <div>
+          <strong>Moving an existing Reaper here?</strong> Restore a backup and your connections,
+          settings and decisions come back with it. You can skip the rest of setup.
+        </div>
+        <button type="button" className="ghost" onClick={() => setRestoring(true)}>
+          Restore a backup
+        </button>
       </div>
 
       {editing && (
@@ -155,6 +165,8 @@ export function SetupConnectStep({
           onClose={() => setEditing(null)}
         />
       )}
+
+      {restoring && <SetupRestoreModal password={password} onClose={() => setRestoring(false)} />}
     </StepCard>
   );
 }

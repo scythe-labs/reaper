@@ -232,16 +232,33 @@ function LocalSheet({
       >
         <div className="sheet-grip" aria-hidden="true" />
         <h2>Local account</h2>
+        {/* The guarantee is only claimed where it holds. It used to be stated flat, directly
+            above the notice saying no local account existed -- a promise and its own denial,
+            one under the other, on a fresh Plex-only install (#382). What makes it true now is
+            the wizard's mandatory password step, whose `set_password` creates a local admin
+            where there is none; `auth.admins.LastAdminError` is what then keeps it true. Three
+            branches, not two: while the context is still loading Reaper does not yet know
+            which install this is, so it says only what the account is for. */}
         <p className="muted sheet-blurb">
-          The fallback for when Plex is unreachable. Reaper always keeps at least one local account
-          so a plex.tv outage can’t lock you out.
+          The fallback for when Plex is unreachable.
+          {ctx &&
+            (noLocalYet
+              ? " This install doesn’t have one yet."
+              : " Reaper keeps at least one, so a plex.tv outage can’t lock you out.")}
         </p>
 
         {noLocalYet ? (
           <Notice tone="warn">
-            No local account exists yet. Create one on the host with{" "}
-            <code>reaper-admin create-admin --username &lt;name&gt;</code>, or sign in with Plex
-            above.
+            Sign in with Plex above and Reaper will ask you to set a password, which creates it.
+            You’ll need that password to turn deletion on anyway. If Plex is unreachable right now,
+            create an account on the host with{" "}
+            {/* A name that can be pasted, not a placeholder to fill in. `admin` is what the
+                wizard's own password step would have created, and any local account arms
+                deletion and confirms a restore just the same (`admin_password.verify` checks
+                every local admin, not one by name), so the choice is free and a free choice
+                is one the operator should not have to stop and make. Its two siblings say the
+                same thing (`cli.py`'s lockout warning, `main.py`'s boot warning). */}
+            <code>reaper-admin create-admin --username admin</code>.
           </Notice>
         ) : (
           <form onSubmit={submit} className="local-form">

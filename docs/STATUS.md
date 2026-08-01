@@ -38,7 +38,7 @@ Last verified against the code: 2026-07-30.
 | **Whitelist** — manual "spare this file", scan + planner + grace | ✅ done |
 | **Scales** — per-requester cards over the last scan | ✅ done |
 | **Operator console** — service config, schedule, safety, review | ✅ done |
-| **First start** — four steps, password forced, resume derived from the server | ✅ done |
+| **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
 
 ## Open work
 
@@ -90,6 +90,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Section nav | **Its own grammar, not the pill track** † |
 | Settings saves | **One save bar on General**, the policy editor's `.savebar` reused † |
 | Settings row layout | **One fixed control track per box**, released for everything else † |
+| Setup readiness | **Scanning and reaping are two readinesses, reported apart** † |
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |
 | ORM | **Plain SQLAlchemy, not SQLModel** † |

@@ -13,11 +13,18 @@
 // Discord sits here rather than earlier on purpose: it is optional, and optional work belongs
 // after the finish line, while the operator is already waiting on a scan that can run for
 // minutes. Putting it before the scan is what makes a wizard feel long.
+//
+// **The finish panel does not say "all set" unless a run could go ahead.** Skipping Plex left
+// an install that scans and shows a queue and then refuses the first real reap, and this was
+// the screen that told the operator they were finished (#383). The refusal itself is right and
+// stays; what was missing is that nothing said so until they had picked what to delete and
+// pressed the button. `reapBlockers` is the shared list, read here and on the Reap page.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type SetupStatus } from "../api";
+import { reapBlockers, type ReapBlocker } from "../reapReadiness";
 import { DiscordModal } from "./DiscordModal";
 import { Notice } from "./Notice";
 import { phaseLabel } from "./ScanBar";
@@ -27,10 +34,15 @@ import { StepCard } from "./SetupStepper";
 export function SetupScanStep({
   setup,
   onBack,
+  onGoToPlex,
   onDone,
 }: {
   setup: SetupStatus;
   onBack: () => void;
+  /** Back to the Plex step, offered inside the notice that says why a run would be refused
+   *  without it. A warning naming a fix carries the control that applies it (rule 42), and
+   *  here that control is two steps back rather than on this screen. */
+  onGoToPlex: () => void;
   /** Leave the wizard for the app. */
   onDone: () => void;
 }) {
@@ -45,11 +57,20 @@ export function SetupScanStep({
   const running = scan?.running ?? false;
   const percent = scan?.percent ?? 0;
 
+  // What would still turn a real run away, in the same words the Reap page uses. Read here
+  // rather than off `setup.reap_ready` directly, because "not ready" is not a sentence: the
+  // operator on the last screen of setup needs to know what to go and do.
+  const blockers = reapBlockers(setup);
+
   // Read at the transition rather than depended on: the message lands in the same poll that
   // turns `running` off, and a later change to it must not re-fire the effect.
   const wasRunning = useRef(false);
   const latestError = useRef(scan?.error ?? null);
   latestError.current = scan?.error ?? null;
+  // Held the same way, and additionally because `blockers` is freshly allocated every render,
+  // which must never be an effect dependency (rule 19).
+  const latestBlockers = useRef<ReapBlocker[]>(blockers);
+  latestBlockers.current = blockers;
   useEffect(() => {
     if (wasRunning.current && !running) {
       void queryClient.invalidateQueries();
@@ -57,10 +78,17 @@ export function SetupScanStep({
       // did. It branches for the same reason `useScanSettled` does, and this is its sibling
       // (rule 72): `api/scan.py` clears `running` in a `finally`, so a crashed scan arrives at
       // this exact edge and the panel behind it does NOT become "all set".
+      //
+      // The blocker rides on this sentence rather than announcing itself, because it lands in
+      // the same commit: its notice is `standing`, so it is read in document order like the
+      // rest of the panel, and two alerts firing at one edge would talk over each other.
+      const blocker = latestBlockers.current[0];
       announce(
-        latestError.current === null
-          ? "Your first scan finished. Reaper has scanned your library."
-          : "Your first scan stopped before it finished. You can start it again.",
+        latestError.current !== null
+          ? "Your first scan stopped before it finished. You can start it again."
+          : blocker
+            ? `Your first scan finished. ${blocker.sentence}`
+            : "Your first scan finished. Reaper has scanned your library.",
       );
     }
     wasRunning.current = running;
@@ -128,11 +156,38 @@ export function SetupScanStep({
           </>
         ) : setup.has_scanned ? (
           <>
-            <h3>You're all set</h3>
+            {/* "All set" is a claim about what the install can do, so it is only made when a
+                real run could actually go ahead. It could not, before: an operator who
+                skipped Plex was told they were all set and had their first reap refused at
+                the button, four screens later, with nothing before that saying so (#383). */}
+            <h3>{blockers.length === 0 ? "You're all set" : "Your library is scanned"}</h3>
             <p className="blurb">
-              Reaper has scanned your library. Nothing has been touched: open the queue to see what
-              it would remove, and why it picked each one.
+              Nothing has been touched: open the queue to see what Reaper would remove, and why it
+              picked each one.
             </p>
+            {blockers.map((b) => (
+              // `standing`: this is the state of the install whenever this panel is on
+              // screen, not a reply to anything the operator just pressed.
+              //
+              // The fix rides INSIDE the notice, not as a third button in the row below
+              // (rule 42, and rule 18). Two reasons, and the second is why it changed: a
+              // link beside the sentence is anchored to the reason it answers, and the
+              // action row is navigation -- Back, and the way onward -- so a repair
+              // affordance sitting in it reads as a third way out of the step. It also
+              // makes this the same shape the Reap page uses for the same job, which two
+              // different treatments of one fix would not have been.
+              <Notice key={b.key} tone="warn" standing>
+                {b.sentence}
+                {b.key === "plex" && (
+                  <>
+                    {" "}
+                    <button className="link" onClick={onGoToPlex}>
+                      Connect Plex
+                    </button>
+                  </>
+                )}
+              </Notice>
+            ))}
             <div className="step-actions">
               <button className="ghost" onClick={onBack}>
                 Back

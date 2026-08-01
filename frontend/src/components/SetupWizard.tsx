@@ -130,7 +130,12 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
         />
       )}
       {at === "scan" && (
-        <SetupScanStep setup={setup} onBack={() => go("connect")} onDone={onSkip} />
+        <SetupScanStep
+          setup={setup}
+          onBack={() => go("connect")}
+          onGoToPlex={() => go("plex")}
+          onDone={onSkip}
+        />
       )}
     </main>
   );

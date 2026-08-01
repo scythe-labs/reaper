@@ -141,6 +141,26 @@
   font-size: 0.85rem;
   color: var(--muted);
 }
+/* A footer that is a door rather than a note: the sentence and the control that acts on it,
+   side by side. Wraps on a narrow screen so the button lands under its own text rather than
+   squeezing it to one word per line, and the button never shrinks below its label. */
+.step-foot-door {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+.step-foot-door > div {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+.step-foot-door strong {
+  color: var(--text);
+}
+.step-foot-door > button {
+  flex: none;
+}
 .btn-lg {
   padding: 0.7rem 1.4rem;
   font-size: 1rem;

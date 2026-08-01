@@ -1087,6 +1087,11 @@ export interface SetupStatus {
   has_seerr: boolean;
   has_scanned: boolean;
   scan_ready: boolean;
+  /** Whether a *real* run could go ahead: scan-ready, plus a linked Plex and the password
+   *  that arms deletion. A strictly higher bar than `scan_ready`, and the one `complete`
+   *  does not answer. Read it through `reapBlockers` (`reapReadiness.ts`) rather than
+   *  writing copy off it here, so the wizard and the Reap page say the same thing. */
+  reap_ready: boolean;
   complete: boolean;
 }
 

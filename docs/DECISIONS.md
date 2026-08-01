@@ -417,6 +417,33 @@ It starts a DB-only countdown and drives Leaving Soon + Discord. Nothing on the 
 reads it, so what actually spares a file at send time is the live played-since-approval and
 streaming vetoes.
 
+## Setup readiness
+
+**Choice: Scanning and reaping are two readinesses, reported apart.**
+
+`GET /api/setup/status` returns both. `scan_ready` is Tautulli plus one *arr, mirroring
+`scan_runner.build_sources`. `reap_ready` is that plus a linked Plex and the admin password, and
+every conjunct is a refusal that already exists elsewhere: `api.runs._preflight_refusal` returns a
+409 without Plex or Tautulli, `executor.execute` raises the same two sentences as its backstop,
+and `PUT /api/settings/safety` refuses to arm without a password.
+
+The alternative — folding Plex into `complete` — was rejected twice, and the second time is the
+reason this section exists. Plex is genuinely optional for a *scan*: an unlinked Plex adds no
+degradation, unlike a linked one that fails, and an install that only ever wants to see what
+Reaper would remove is a real install. So `complete` still means "the wizard has nothing left to
+push", and it stays blind to Plex.
+
+What that left was a `complete` reading like both: an operator with Tautulli and one *arr finished
+the wizard, was told "You're all set", filled a review queue, and had their first real reap refused
+at the button (#383). One boolean cannot answer two questions, so there are two. The refusal is
+correct and unchanged; what moved is when it is said.
+
+The sentences live in `frontend/src/reapReadiness.ts` rather than at each site, because the fact is
+now stated on the last setup step and above Execute on the Reap page, and rule 144 is exactly about
+one claim written twice. `reapReadiness.test.ts` walks all 16 combinations of the fields both sides
+read and asserts the list is empty exactly when the server says reap-ready, so a definition that
+gains a conjunct on one side fails rather than promising a run the other refuses.
+
 ## Kill switch
 
 **Choice: Asymmetric, not one-way**

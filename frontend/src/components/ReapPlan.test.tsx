@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Run, Snapshot } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { DEFAULT_PROFILE, IDLE_SCAN } from "../test/apiFixtures";
+import { DEFAULT_PROFILE, IDLE_SCAN, READY_SETUP } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { ReapPlan } from "./ReapPlan";
 
@@ -25,6 +25,7 @@ const { apiMock } = vi.hoisted(() => ({
     plexTrash: vi.fn(),
     profile: vi.fn(),
     scanStatus: vi.fn(),
+    setupStatus: vi.fn(),
   },
 }));
 
@@ -34,12 +35,14 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 // The breakdown inside the plan reads the unmeasured allowance (["profile"], via
-// useHoldsBackUnmeasured) and the scan poll (["scanStatus"]) on its own. Without them it
-// rendered its "we could not read the allowance" branch, which drops the title count from the
-// headline -- silently, under tests that pass. Rule 135.
+// useHoldsBackUnmeasured) and the scan poll (["scanStatus"]) on its own; the page itself reads
+// ["setup"] to say what would turn a real run away. Without them it rendered its "we could not
+// read the allowance" branch, which drops the title count from the headline -- silently, under
+// tests that pass. Rule 135.
 beforeEach(() => {
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
+  apiMock.setupStatus.mockResolvedValue(READY_SETUP);
 });
 
 const run = {
@@ -327,5 +330,68 @@ describe("what a practice run reports", () => {
     expect(line.textContent).toContain("2 souls were walked");
     expect(line.textContent).toContain("1 of them would be skipped");
     expect(line.textContent).not.toContain("end to end");
+  });
+});
+
+// #383. Until this shipped, the ONLY place in the app that said a run needs Plex was the 409
+// the execute route answers with -- which fires after the operator has picked what to delete,
+// armed the host and typed the whole confirmation phrase. The refusal is correct and stays;
+// these pin that the same fact is now on screen above the button instead of only behind it.
+describe("what would turn a real run away", () => {
+  beforeEach(() => {
+    apiMock.safety.mockResolvedValue({ destructive_enabled: false });
+    apiMock.createRun.mockResolvedValue(run);
+    apiMock.run.mockResolvedValue(run);
+    apiMock.runs.mockResolvedValue([run]);
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 0,
+      sections_unreadable: 0,
+      empties_after_scan: false,
+    });
+    apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: false });
+    apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
+  });
+
+  it("says nothing extra when the install could reap", async () => {
+    // `READY_SETUP` from the shared beforeEach. The quiet case is half the claim: a warning
+    // that renders over a healthy install is the same defect as one that never renders.
+    const { summary } = await buildPlan();
+    expect(summary).not.toHaveTextContent(/can't remove anything/i);
+  });
+
+  it("names Plex above Execute, with the way to connect it", async () => {
+    apiMock.setupStatus.mockResolvedValue({
+      ...READY_SETUP,
+      plex_linked: false,
+      reap_ready: false,
+    });
+    const { summary } = await buildPlan();
+
+    expect(summary).toHaveTextContent(/Reaper can't remove anything until Plex is connected/i);
+    // Beside the control that fixes it (rule 42), and inside the summary that carries Execute
+    // rather than somewhere further down the page.
+    expect(
+      within(summary).getByRole("button", { name: /connect plex in settings/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("names Tautulli too, which the executor refuses on just as hard", async () => {
+    apiMock.setupStatus.mockResolvedValue({
+      ...READY_SETUP,
+      has_tautulli: false,
+      scan_ready: false,
+      reap_ready: false,
+    });
+    const { summary } = await buildPlan();
+    expect(summary).toHaveTextContent(/until Tautulli is connected/i);
+  });
+
+  it("says it could not check, rather than going quiet, when the read fails", async () => {
+    // Rule 17/36. Silence here reads as "nothing is missing" over a run the server is about
+    // to refuse, which is the failure this whole feature exists to remove.
+    apiMock.setupStatus.mockRejectedValue(new Error("nope"));
+    const { summary } = await buildPlan();
+    expect(summary).toHaveTextContent(/couldn't check whether Plex and Tautulli are connected/i);
   });
 });

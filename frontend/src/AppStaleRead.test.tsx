@@ -89,13 +89,17 @@ const COMPLETE_SETUP: SetupStatus = {
   admin_exists: true,
   has_password: true,
   plex_linked: true,
-  instances: { radarr: 1, sonarr: 1 },
+  instances: { radarr: 1, sonarr: 1, tautulli: 1 },
   has_radarr: true,
   has_sonarr: true,
-  has_tautulli: false,
+  // Wired, so the row is an install that could actually exist: `scan_ready` and `reap_ready`
+  // both require a Tautulli, and a fixture asserting them beside `has_tautulli: false`
+  // describes a state the server never returns.
+  has_tautulli: true,
   has_seerr: false,
   has_scanned: true,
   scan_ready: true,
+  reap_ready: true,
   complete: true,
 };
 

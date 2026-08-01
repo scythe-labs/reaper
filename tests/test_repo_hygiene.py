@@ -42,7 +42,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 15
+DECISION_SECTIONS = 16
 
 
 def _live_docs() -> list[Path]:
@@ -1534,8 +1534,13 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # the control costs.
 # Then 114: the why-panel's per-title twin of that control (#275) -- a standing warning carrying
 # the button, and the action failure beside it.
+# Then 125: telling the operator BEFORE the button what the execute route refuses after it
+# (#383) -- one on the wizard's finish panel and one on the Reap page, each with the
+# unreadable-setup branch beside it (rule 17/36) -- plus the wizard's restore door, whose modal
+# says so too when it cannot tell whether a restore is already armed. The restore card's own
+# four moved out of Settings into `RestoreCard.tsx` and are not part of that bump.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 121
+_EXPECTED_NOTICES = 125
 
 
 def _shipped_tsx() -> list[Path]:
@@ -1653,7 +1658,11 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/PolicyRuleEditors.tsx": 2,
     "frontend/src/components/ReapBreakdown.tsx": 2,
     "frontend/src/components/ReapConfirm.tsx": 2,
-    "frontend/src/components/ReapPlan.tsx": 3,
+    # 4th: the pre-flight read that says what would turn a real run away (#383). Deliberately
+    # undivided in the same way as the safety reads above -- an unreadable setup status is
+    # UNKNOWN, and the page says so rather than staying silent, because silence there reads as
+    # "nothing is missing" over a run the server is about to refuse.
+    "frontend/src/components/ReapPlan.tsx": 4,
     "frontend/src/components/ReviewQueue.tsx": 3,
     # 4 render branches, plus 2 in the save handler (#204). Those two are neither of the
     # questions the docstring below names: they ask "may I PRUNE against this list", where a
@@ -1664,6 +1673,10 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/Settings.tsx": 8,
     "frontend/src/components/SetupConnectStep.tsx": 1,
     "frontend/src/components/SetupPlexStep.tsx": 1,
+    # Whether a restore is already armed. Never-loaded only: the modal mounts on the press and
+    # holds no earlier good answer to keep, and falling through to the idle card would invite an
+    # upload on top of a restore already staged.
+    "frontend/src/components/SetupRestoreModal.tsx": 1,
     "frontend/src/components/SetupWizard.tsx": 1,
     "frontend/src/components/queueSettings.tsx": 1,
 }
@@ -2081,7 +2094,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 44
+_EXPECTED_RENDERING_TEST_FILES = 46
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:

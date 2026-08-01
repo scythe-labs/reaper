@@ -57,6 +57,29 @@ class SetupStatus(BaseModel):
     scan_ready: bool
     """The minimum to run a scan: a Tautulli, plus at least one Radarr or Sonarr.
     Mirrors the guard in ``services.scan_runner.build_sources``."""
+    reap_ready: bool
+    """The minimum for a *real* run, which is a strictly higher bar than ``scan_ready``.
+
+    Scanning and reaping are two different readinesses and the endpoint used to publish only
+    the first, under a ``complete`` that reads like both: an install with Tautulli and one
+    *arr and no Plex finished the wizard, was told it was all set, and had its first reap
+    refused outright at the button (#383). Each conjunct here is a refusal that already
+    exists somewhere else, restated as a question the UI can ask *before* the operator picks
+    what to delete:
+
+    * ``has_password`` -- ``PUT /api/settings/safety`` is password-gated, so deletion cannot
+      be armed at all without one.
+    * ``plex_linked`` and ``has_tautulli`` -- ``api.runs._preflight_refusal`` returns a 409
+      for each, and ``services.executor.execute`` raises the same two sentences as its
+      backstop. Those refusals are correct and stay: the check for who is watching runs
+      through Plex, and the played-since-approval check through Tautulli.
+    * a Radarr or a Sonarr -- deletion goes *through* an *arr, so with neither there is
+      nothing a plan could remove.
+
+    The last three are ``scan_ready``, so this is that plus a password and a linked Plex.
+    Configuration only: a service that is configured but unreachable still fails at run
+    time, and nothing here can know that in advance.
+    """
     complete: bool
     """Nothing left the wizard needs to push: a password, scan-ready, and a scan has run.
 
@@ -66,9 +89,11 @@ class SetupStatus(BaseModel):
     complete and meets the wizard once more -- on the password step, with every later step
     already satisfied.
 
-    It deliberately does NOT include ``plex_linked``: Plex is optional for a scan and
-    required for a reap, which are two different readinesses, and folding one into the other
-    here would claim the wizard can settle a question this endpoint does not model (#383).
+    It deliberately does NOT include ``plex_linked``: an install with no Plex is finished
+    with the wizard, because Plex is optional for a scan and the wizard exists to get one
+    running. What that install cannot do is *reap*, and that is ``reap_ready``'s question
+    rather than this one -- published beside this field so the answer is available without
+    this one having to mean two things (#383).
     """
 
 
@@ -116,5 +141,6 @@ async def setup_status(request: Request) -> SetupStatus:
         has_seerr=counts.get(str(InstanceKind.SEERR), 0) > 0,
         has_scanned=has_scanned,
         scan_ready=scan_ready,
+        reap_ready=password_set and scan_ready and plex_linked,
         complete=password_set and scan_ready and has_scanned,
     )
