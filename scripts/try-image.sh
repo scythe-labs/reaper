@@ -132,10 +132,18 @@ label_name_of() {
 }
 
 # `up --pr 400` names the instance "pr-400", but the number is what you remember, so
-# `down 400` finds it too. Only when the bare name matches nothing of its own.
+# `down 400` finds it too. An exact match always wins, so an instance genuinely named
+# "400" is never mistaken for "pr-400".
+#
+# The volume counts as a match, not only the container: `down 400` leaves the volume
+# behind by design, so by the time you come back to `down 400 --purge` there is no
+# container left to resolve the name from, and matching on the container alone would
+# report success while leaving the data it was asked to delete.
 resolve_name() {
   local given="$1"
-  if ! exists "$(container_of "$given")" && exists "$(container_of "pr-$given")"; then
+  if exists "$(container_of "$given")" || volume_exists "$(volume_of "$given")"; then
+    printf '%s' "$given"
+  elif exists "$(container_of "pr-$given")" || volume_exists "$(volume_of "pr-$given")"; then
     printf 'pr-%s' "$given"
   else
     printf '%s' "$given"
