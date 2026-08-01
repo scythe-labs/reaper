@@ -226,16 +226,33 @@ cmd_up() {
   fi
 
   # --- pull ---
+  # A failed pull falls back to a copy already on this host, because an image built here
+  # (`--image`, and `docker build` never pushes anywhere) has nothing to pull from. The
+  # fallback is loud and dates the copy: testing a pull request against yesterday's build
+  # of it reads as "the fix did not work", which is the worst answer this script could
+  # give quietly. Nothing is assumed about which case you are in -- both get the date.
   if [ "$pull" -eq 1 ]; then
     log "pulling $image"
-    if ! docker pull "$image"; then
-      warn "could not pull $image"
+    local pulled=1
+    docker pull "$image" || pulled=0
+
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      warn "could not pull $image, and there is no copy of it on this host."
       warn "If the registry needs a login:  docker login ghcr.io"
-      [ -n "$pr" ] && warn "If the pull request is new, its image may still be building. Check the PR's CI run."
+      [ -n "$pr" ] && warn "If the pull request is new, its image may still be building. Check its CI run."
       die "no image to run."
     fi
+
+    if [ "$pulled" -eq 0 ]; then
+      local built
+      built="$(docker image inspect --format '{{.Created}}' "$image" 2>/dev/null)"
+      warn "the pull failed, so this is the copy already on this host, from ${built%%T*}."
+      warn "That is what you want for an image you built here. For a pull request it may"
+      warn "be an older build of it, which would read as a fix that did not work."
+    fi
   else
-    docker image inspect "$image" >/dev/null 2>&1 || die "$image is not on this host, and --no-pull was given."
+    docker image inspect "$image" >/dev/null 2>&1 \
+      || die "$image is not on this host, and --no-pull was given."
   fi
 
   # --- resolve the data source into one docker -v argument ---
@@ -259,6 +276,15 @@ cmd_up() {
       local src="${data#copy:}"
       [ -n "$src" ] && [ "$src" != "$volume" ] || die "--data copy: needs a source that is not this instance's own volume."
       MOUNT_SRC="$volume"; DATA_NOTE="copy of $src"
+      # The copy happens once, when the volume is made. A second `up` on the same instance
+      # keeps whatever the first one has become, which is what you want while iterating on
+      # a rebuilt image -- but it is NOT a fresh copy, and reading it as one would mean
+      # judging a pull request against state an earlier run left behind.
+      if volume_exists "$volume"; then
+        DATA_NOTE="earlier copy of $src"
+        log "keeping the copy already in $volume, not copying $src again."
+        log "  a fresh copy is:  $0 down $name --purge   then up again"
+      fi
       ;;
     */*|.|..|~*)
       [ -d "$data" ] || die "no such directory: $data"
