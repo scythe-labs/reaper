@@ -30,6 +30,7 @@ import {
   type SignalContribution,
   type SignalState,
 } from "../api";
+import { announce } from "../announce";
 import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
@@ -266,7 +267,11 @@ function KeptNotice({
         : "We couldn't find this in your Plex, so there's no way to tell if anyone still watches it.";
 
   return (
-    <Notice tone="warn" className="kept-notice">
+    // `standing`: `match.status` is frozen into the scan's explanation, so it is true every time
+    // the panel is opened on this title. Its candidate links are focusables a component deep
+    // (`MatchCandidates` -> `JumpPill`), so they are reached by navigating rather than by being
+    // interrupted -- and the same rows render bare at `ShowPanel.tsx`, with no notice at all.
+    <Notice tone="warn" className="kept-notice" standing>
       <strong>Kept to be safe.</strong> {reason}
       <MatchCandidates links={links} />
     </Notice>
@@ -1103,6 +1108,11 @@ export function WhyPanel({
   const forgetWatchRecord = useMutation({
     mutationFn: () => api.forgetWatchEvidenceFor(item.media_key),
     onSuccess: () => {
+      // Success here is the button DISAPPEARING, replaced in place by the help line below, and it
+      // happens inside a `standing` notice that is correctly not a live region -- so nothing was
+      // said at all. The same sentence as that replacement, on purpose: one fact, one wording,
+      // whichever way the operator meets it (rule 144).
+      announce("Reaper will judge this title on what it can see now.");
       for (const queryKey of WATCH_RECORD_STALE) void queryClient.invalidateQueries({ queryKey });
     },
   });

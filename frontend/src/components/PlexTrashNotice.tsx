@@ -27,7 +27,10 @@ export function PlexTrashNotice({
 }) {
   const items = known === 1 ? "1 item" : `${known} items`;
   return (
-    <Notice tone="warn">
+    // `standing`: both surfaces mount this on a Plex read, never on a press. In the sheet it also
+    // holds the checkbox that gates Reap, so it has to be navigated to rather than shouted, and
+    // `ReapConfirm` already withholds its focus move so the notice is met in document order.
+    <Notice tone="warn" standing>
       {known > 0 ? (
         <>
           <strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash

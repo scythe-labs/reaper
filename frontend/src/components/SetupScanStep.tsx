@@ -219,7 +219,10 @@ export function SetupScanStep({
                 nothing wired left "Run first scan" live: the start route answers 200, the
                 panel turns into a spinner, and the refusal arrives from inside the detached
                 task pointing at Settings, which is behind the wizard the operator has not
-                left. The fix rides inside the notice (rule 42), and it is one step back. */}
+                left. The fix rides inside the notice (rule 42), and it is one step back.
+
+                `standing`: `scan_ready` is the state of the install, true before this step was
+                reached, so it is read in document order like the banner above it. */}
             {!setup.scan_ready && (
               <Notice tone="warn" standing>
                 Connect Tautulli and one of Radarr or Sonarr before your first scan.{" "}

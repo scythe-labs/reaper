@@ -257,6 +257,25 @@ describe("the ledger", () => {
     expect(failure).toHaveClass("notice-error");
   });
 
+  it("reads the count in document order and the press failure as an interruption (#375)", async () => {
+    // The two sit two lines apart and are the clearest statement of the distinction in the
+    // tree: the count is scan-derived and true before the page loaded, so it is furniture; the
+    // failure answers the Scan now press inside it. Both are asserted here rather than only the
+    // first, because the flag that silences one would silence the other just as quietly.
+    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
+    apiMock.startScan.mockRejectedValue(new Error("nope"));
+    const user = userEvent.setup();
+    renderBreakdown();
+
+    const standing = await screen.findByText(/2 titles are kept by spares that expired/);
+    expect(standing.closest(".notice")).not.toHaveAttribute("role", "alert");
+
+    await user.click(await screen.findByRole("button", { name: "Scan now" }));
+
+    const failure = await screen.findByText("The scan didn't start. Try again.");
+    expect(failure).toHaveAttribute("role", "alert");
+  });
+
   it("shows the notice even when the reap would remove nothing", async () => {
     // The case that matters most: every condemned title was spared, and those spares have
     // since expired. The ledger collapses to its empty state, so if this line lived inside it

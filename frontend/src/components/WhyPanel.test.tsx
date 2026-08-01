@@ -18,6 +18,7 @@ import {
   type Match,
   type SignalContribution,
 } from "../api";
+import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
@@ -1134,6 +1135,43 @@ describe("the watch-record escape", () => {
       await screen.findByText("Reaper will judge this title on what it can see now."),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: PRESS })).not.toBeInTheDocument();
+  });
+
+  /** The same panel with the app's live regions above it, as `App.tsx` mounts them.
+   *
+   *  Not folded into `show()`: the announced sentence is deliberately the SAME string as the
+   *  visible replacement (rule 144, one fact one wording), so mounting the regions for every
+   *  test would make `findByText` ambiguous in the one above that reads it off the page. Here
+   *  the region is read as a region, which is the idiom the other announcement tests use. */
+  function showSpeaking(item: CandidateDetail) {
+    return render(
+      <QueryClientProvider client={seedSettings(testQueryClient())}>
+        <Announcer />
+        <WhyPanel item={item} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+  }
+
+  const spoken = () =>
+    [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
+
+  it("says out loud that the record is gone, since the only sign on screen is a button leaving", async () => {
+    // #377. Success here is signalled by something DISAPPEARING, and it happens inside the
+    // `standing` notice above -- correctly not a live region -- so nothing was said at all.
+    // The button also carries `disabled={isPending}`, so the browser drops focus at the press
+    // and the sentence that replaces it is ordinary page text nobody is pointed at.
+    const user = userEvent.setup();
+    showSpeaking(blindDetail(true));
+
+    const press = screen.getByRole("button", { name: PRESS });
+    await waitFor(() => expect(press).toBeEnabled());
+    expect(spoken()).toBe("");
+
+    await user.click(press);
+
+    await waitFor(() =>
+      expect(spoken()).toContain("Reaper will judge this title on what it can see now."),
+    );
   });
 
   it("says a failed write failed, rather than swallowing it", async () => {

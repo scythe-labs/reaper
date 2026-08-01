@@ -1628,6 +1628,134 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
     )
 
 
+# Every notice that opts OUT of announcing itself. Rule 145 again, for the other direction: the
+# count above proves a notice exists, and says nothing about whether it speaks.
+#
+# 16. Eight were the sweep in #375/#376 -- six notices that were page furniture and interrupted
+# anyway (the armed restore card, the Reap page's expired-spares prompt, its two stale-plan
+# notices, the Plex trash warning on both its surfaces, and the why-panel's "Kept to be safe"),
+# plus the log's two failure notices, which a 2s poll re-announced on every flap.
+# Re-derive it by running the test, never by arithmetic on this comment.
+_EXPECTED_STANDING = 16
+
+# ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
+_STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
+
+# How far above a call site its justification may sit. Wide enough for the comment to precede a
+# multi-line mount condition, narrow enough that the next notice down cannot borrow it.
+_JUSTIFY_WINDOW = 12
+
+
+def _notice_openings(text: str) -> list[tuple[int, str]]:
+    """Every ``<Notice`` opening tag, as ``(line number, attribute text)``.
+
+    Reads the whole tag rather than anchoring on a delimiter, which is rule 147's instruction
+    after the quote-anchored ban shipped blind to a ternary. The tag ends at the first ``>`` at
+    brace depth zero and outside a string, so ``key={b.key}``, ``className={cx ? a : b}`` and a
+    tag broken across five lines all read the same way.
+    """
+    out: list[tuple[int, str]] = []
+    for match in re.finditer(r"<Notice(?![\w])", text):
+        i, depth, quote = match.end(), 0, ""
+        while i < len(text):
+            ch = text[i]
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in "\"'`":
+                quote = ch
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            elif ch == ">" and depth == 0:
+                break
+            i += 1
+        out.append((text.count("\n", 0, match.start()) + 1, text[match.end() : i]))
+    return out
+
+
+def test_the_matcher_for_standing_reads_every_spelling_the_tree_uses() -> None:
+    """Rule 147: the spellings a source-text scan accepts are written down and driven, both ways.
+
+    The ban this sits beside shipped green over the one site it existed to catch, because a
+    ternary ``className`` was a spelling its pattern could not parse. So the accepted and
+    rejected forms are a table here rather than a claim in a comment, and the walk below is only
+    as good as this.
+    """
+    accepted = [
+        '<Notice tone="warn" standing>',
+        '<Notice tone="warn" standing as="div">',
+        '<Notice standing tone="error">',
+        '<Notice key={b.key} tone="warn" standing>',
+        '<Notice tone="warn" className="kept-notice" standing>',
+        '<Notice\n  tone="warn"\n  standing\n>',
+        '<Notice tone={bad ? "error" : "warn"} standing>',
+        "<Notice tone={t} standing />",
+    ]
+    rejected = [
+        '<Notice tone="warn">',
+        '<Notice tone="warn" className="standing-room">',
+        '<Notice tone="warn" className="restore-armed" as="div">',
+        # The word inside the CHILDREN is not the attribute, so the tag reader must stop at `>`.
+        '<Notice tone="warn">A standing restore is armed.</Notice>',
+        '<Notice\n  tone="warn"\n  as="div"\n>',
+    ]
+    for spelling in accepted:
+        opens = _notice_openings(spelling)
+        assert len(opens) == 1, f"did not read one tag out of {spelling!r}"
+        assert _STANDING_ATTR.search(opens[0][1]), f"missed `standing` in {spelling!r}"
+    for spelling in rejected:
+        opens = _notice_openings(spelling)
+        assert len(opens) == 1, f"did not read one tag out of {spelling!r}"
+        assert not _STANDING_ATTR.search(opens[0][1]), f"read `standing` into {spelling!r}"
+
+
+def test_every_silent_notice_says_why_it_is_silent() -> None:
+    """``standing`` takes a notice out of the screen reader's path, so it argues for itself (#375).
+
+    ``Notice`` announces by default and the flag is the opt-out, which makes the flag the only
+    thing standing between an operator and a message they will never hear. Six notices were page
+    furniture and interrupted anyway; the reverse mistake is the one this catches, because it is
+    the one that is silent in both the app and the diff. ``Notice.tsx`` asks for the reason in a
+    comment at the call site, and prose cannot bind an author who never read it.
+
+    What this proves is that a reason was WRITTEN, never that it is true -- whether a mount
+    condition is really furniture is a judgment no regex makes. It is deliberately the cheap half:
+    an author who has to name the condition out loud has already done the thinking that the six
+    skipped. The window can also be satisfied by a neighbour's comment where two standing notices
+    sit within ``_JUSTIFY_WINDOW`` lines, which is a false pass and not a false failure.
+    """
+    component = FRONTEND_SRC / "components" / "Notice.tsx"
+    silent: list[str] = []
+    unjustified: list[str] = []
+    for path in _shipped_tsx():
+        if path == component:
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for lineno, attrs in _notice_openings("\n".join(lines)):
+            if not _STANDING_ATTR.search(attrs):
+                continue
+            site = f"{path.relative_to(REPO)}:{lineno}"
+            silent.append(site)
+            above = lines[max(0, lineno - 1 - _JUSTIFY_WINDOW) : lineno - 1]
+            if not any("standing" in line for line in above):
+                unjustified.append(site)
+    assert not unjustified, (
+        "these pass `standing`, so a screen reader never announces them, and nothing above them\n"
+        "says why. Name the mount condition in a comment at the call site: what makes this text\n"
+        "part of the page rather than a reply to something the operator pressed.\n"
+        + "\n".join(unjustified)
+    )
+    assert len(silent) == _EXPECTED_STANDING, (
+        f"expected {_EXPECTED_STANDING} `standing` notices, found {len(silent)}.\n"
+        "If you silenced a notice or gave one its voice back, bump _EXPECTED_STANDING and say\n"
+        "which in the comment above it. If you changed neither, one dropped out of the walk and\n"
+        "the justification check above is passing on a site it can no longer see (rule 145).\n"
+        + "\n".join(silent)
+    )
+
+
 # Every handle on a READ's failure the shipped app binds, by the file that binds it.
 #
 # The sweep for branches that test a query's failure without asking whether the value is still in
