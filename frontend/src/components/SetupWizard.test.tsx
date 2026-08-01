@@ -18,8 +18,26 @@ import { SetupWizard } from "./SetupWizard";
 
 // The Plex and Connect steps drive the real service and Plex surfaces, which make their own
 // queries and are not what these tests are about. Stubbed so each test drives one step.
-vi.mock("./SetupPlexStep", () => ({ SetupPlexStep: () => null }));
-vi.mock("./SetupConnectStep", () => ({ SetupConnectStep: () => null }));
+//
+// Both stubs render, rather than returning null. The Connect one SAYS the password it was
+// handed, because that prop is the whole of #385's "the password is typed once" -- the wizard
+// holds what was typed on step one so the restore door does not ask for it again -- and a stub
+// returning null left `password={password}` pinned by nothing: passing `null` there would have
+// kept every test in this file green while putting the box back in front of the operator
+// (rule 141). The Plex one carries a Next, because reaching Connect with a password in state
+// means walking there from step one, and a stub with no control cannot be walked through.
+vi.mock("./SetupPlexStep", () => ({
+  SetupPlexStep: ({ onNext }: { onNext: () => void }) => (
+    <button type="button" onClick={onNext}>
+      stub: on to Connect
+    </button>
+  ),
+}));
+vi.mock("./SetupConnectStep", () => ({
+  SetupConnectStep: ({ password }: { password: string | null }) => (
+    <p>{password === null ? "stub: holding no password" : `stub: holding ${password}`}</p>
+  ),
+}));
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -139,6 +157,28 @@ describe("where the wizard resumes", () => {
     // restore confirm all at once, so there is nothing here to defer.
     expect(screen.queryByRole("button", { name: /skip/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^back$/i })).toBeNull();
+  });
+
+  it("carries the password typed on step one through to the Connect step", async () => {
+    // #385's "the password is typed once". The restore door sits on Connect, and
+    // `restore/confirm` refuses outright without an admin password, so the wizard holds what
+    // was typed on step one and the door confirms with it. That hand-off is a single prop
+    // three steps apart, and nothing here saw it: both intervening steps are stubbed, so this
+    // walks the operator's own route to it rather than handing the prop to a rendered stub.
+    const person = userEvent.setup();
+    apiMock.setupStatus.mockResolvedValue({ ...AT_SCAN, has_password: false });
+    apiMock.setAdminPassword.mockResolvedValue({ ok: true });
+    renderWizard();
+    await screen.findByRole("heading", { name: /set your password/i });
+    // Anchored, not exact: this label's accessible name carries its help text too, and
+    // "Confirm password" is the only other match a loose one would find.
+    await person.type(screen.getByLabelText(/^password/i), "a-typed-password");
+    await person.type(screen.getByLabelText(/confirm password/i), "a-typed-password");
+
+    await person.click(screen.getByRole("button", { name: /set password and continue/i }));
+    await person.click(await screen.findByRole("button", { name: /stub: on to connect/i }));
+
+    expect(await screen.findByText("stub: holding a-typed-password")).toBeInTheDocument();
   });
 
   it("opens on the scan step once everything before it is done", async () => {

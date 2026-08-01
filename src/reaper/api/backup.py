@@ -86,7 +86,7 @@ class RestoreConfirmIn(BaseModel):
     ``WatchEvidenceResetIn``): hashing unbounded input is a CPU-exhaustion vector, and this one
     was the only member of that set without the bound."""
     token: str | None = Field(default=None, max_length=restore.TOKEN_MAX_LEN)
-    """Bounded off the width the staging mints (rule 95/131), like the field below."""
+    """Bounded off the width the staging mints (rule 95/131), as ``RestoreCancelIn.token`` is."""
 
 
 class RestoreCancelIn(BaseModel):
@@ -277,8 +277,9 @@ async def restore_cancel(
     another) can each hold a summary while only the later one is staged (#387). Without a
     token it discards whatever is there, which is what the operator's own Cancel means.
 
-    ``cleared`` says which of the two happened. It is not an error either way: nothing was
-    lost, and the archive is still on the operator's disk.
+    ``cleared`` says whether a staging was actually removed, which an ownership refusal and a
+    call that found nothing both report as false. Neither is an error: nothing was lost, and
+    the archive is still on the operator's disk.
     """
     cleared = await asyncio.to_thread(
         restore.clear_pending, _settings(request), payload.token if payload else None

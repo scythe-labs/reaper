@@ -131,8 +131,17 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
 
   const refreshInfo = () => qc.invalidateQueries({ queryKey: ["backup-info"] });
 
+  // The token of the staging this card is holding, kept beside `summary` rather than read off
+  // it, because the unmount cleanup below runs with `[]` deps and cannot see state. It is
+  // written on the same three transitions `summary` is, and written SYNCHRONOUSLY on each: a
+  // ref assigned during render carries the last rendered value, which is a render behind the
+  // moment `choose` learns the token, and an unmount committed inside that gap would find a
+  // staged archive it could no longer name.
+  const tokenRef = useRef<string | null>(null);
+
   const reset = () => {
     setSummary(null);
+    tokenRef.current = null;
     setFileName(null);
     setPassword("");
     setError(null);
@@ -145,6 +154,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   const choose = async (file: File) => {
     setError(null);
     setSummary(null);
+    tokenRef.current = null;
     setPassword("");
     setFileName(file.name);
     setBusy(true);
@@ -152,7 +162,9 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
     const prepared = api.restorePrepare(file);
     prepareRef.current = prepared;
     try {
-      setSummary(await prepared);
+      const reviewed = await prepared;
+      tokenRef.current = reviewed.token;
+      setSummary(reviewed);
     } catch (err) {
       setFileName(null);
       // Each of this card's three failures states its own outcome, because one shared lead-in was
@@ -250,9 +262,26 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   // second card staged since (#387); the armed Cancel has no summary, so it passes nothing and
   // discards whatever is there, which is what "cancel this restore" has to mean when the thing
   // being canceled was armed from somewhere else entirely.
+  //
+  // **An unscoped discard asks the server what it is about to discard.** `armed` is a cached
+  // read nothing refreshes from another client -- the query sets no `refetchInterval` and
+  // `main.tsx` turns `refetchOnWindowFocus` off app-wide -- so this card can still be drawing
+  // the armed branch long after that restore was canceled somewhere else and a fresh archive
+  // staged in its place. Sending then destroys the new one and leaves the card that staged it
+  // holding a reviewed summary with nothing behind it, which is #387 reached through the one
+  // discard a token cannot scope. So the same server read the unmount reclaim does, in the
+  // moment before the send: not armed any more means there is nothing here to cancel, and the
+  // card redraws as whatever is true now. The sub-second window after the read is not closed
+  // by this and is not claimed to be.
   const cancel = async (token?: string) => {
     setBusy(true);
+    setError(null);
     try {
+      if (token === undefined && !(await api.backupInfo()).restore_armed) {
+        reset();
+        await refreshInfo();
+        return;
+      }
       await api.restoreCancel(token);
       reset();
       await refreshInfo();
@@ -331,11 +360,6 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   // stood before this existed, and there is no longer a card to say so on.
   const stagedRef = useRef(false);
   stagedRef.current = staged;
-  // Beside it for the same reason: the cleanup runs with `[]` deps and cannot read `summary`.
-  // An upload still in flight has no token here yet -- it is minted server-side and arrives
-  // with the summary -- so that branch takes it from the prepare it just awaited instead.
-  const tokenRef = useRef<string | null>(null);
-  tokenRef.current = summary?.token ?? null;
   useEffect(
     () => () => {
       const reclaimStagedArchive = async () => {
@@ -351,9 +375,11 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
         }
         await confirmRef.current?.catch(() => {});
         // No token, nothing to reclaim BY: the only send left would be the unscoped one this
-        // guard exists to stop. Reached when a confirm we waited on succeeded and dropped the
-        // summary, where the check below is what should return -- so this leaves the staged
-        // archive rather than betting on that read, which is the direction that loses nothing.
+        // guard exists to stop. Reached from a confirm we waited on that succeeded and dropped
+        // the summary, and from a cancel that had just cleared one -- in both, `stagedRef` is a
+        // render behind and says yes while there is nothing of ours left to reclaim. Returning
+        // leaves whatever is on the server for the surface that owns it, which is the direction
+        // that loses nothing.
         if (!token) return;
         if ((await api.backupInfo()).restore_armed) return;
         await api.restoreCancel(token);
@@ -569,8 +595,11 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
               {busy ? "Restoring…" : "Restore"}
             </button>
           </div>
+          {/* Read before arming, and a sibling of the armed pair above (rule 144): it named the
+              container back when a shell command was the only way to finish, so it now says the
+              same thing the armed card does, in the same words, one state early. */}
           <p className="help restore-when">
-            Restoring takes effect the next time the container restarts. Nothing changes until then.
+            Restoring takes effect when Reaper restarts. Nothing changes until then.
           </p>
 
           {/* `standing`, same as the download warning above: part of the restore card whenever

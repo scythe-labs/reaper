@@ -12,10 +12,12 @@
 // It is a real `ModalShell`, unlike the step cards themselves: there IS a page behind it and
 // there IS an opener to return focus to, which is exactly the contract the shell owns. The
 // close guard is deliberately open, including mid-upload. Nothing on this card is lost that a
-// second click cannot redo, and `RestoreFlow`'s unmount reclaims a staged-but-unconfirmed
-// archive from the server rather than abandoning it, so a close cannot leave one stranded. A
-// confirm already in flight is waited on and whatever it armed is left alone, which is why
-// closing during one is not a way to lose a restore either.
+// second click cannot redo, and `RestoreFlow`'s unmount reclaims the staged-but-unconfirmed
+// archive THIS card put there rather than abandoning it. So a close leaves nothing of ours
+// stranded: what it does not reclaim is a staging another card has replaced ours with, which
+// that card is still showing and still owns (#387). A confirm already in flight is waited on
+// and whatever it armed is left alone, which is why closing during one is not a way to lose a
+// restore either.
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";

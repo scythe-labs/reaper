@@ -300,6 +300,35 @@ describe("a staged backup nobody confirmed", () => {
     await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalledTimes(1));
   });
 
+  it("sends nothing when the confirm it waited on left no staging of ours to name", async () => {
+    // Rule 118, for the `!token` guard. A confirm that succeeds drops the summary and its token
+    // together, but `confirmRef` stays set until the refetch behind it settles -- so an unmount
+    // in that window walks past the early return with nothing of ours left to name. Held open
+    // here deliberately: with the refetch allowed to settle, the cleanup returns one line
+    // earlier and this test could not fail whatever the guard did.
+    //
+    // The server is then made to answer "nothing armed", which is the only state where an
+    // unguarded cleanup reaches its send -- and that send is the unscoped cancel, on a server
+    // whose staging may by then belong to another card.
+    apiMock.restoreConfirm.mockResolvedValue({ ok: true });
+    let settle = (_: typeof INFO) => {};
+    const { person, unmount } = renderBackupPanel();
+    await person.type(await stage("a.reaper"), "a-password");
+    apiMock.backupInfo.mockReturnValue(
+      new Promise<typeof INFO>((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    await person.click(screen.getByRole("button", { name: /^restore$/i }));
+    unmount();
+    apiMock.backupInfo.mockResolvedValue({ ...INFO, restore_armed: false });
+    settle({ ...INFO, restore_armed: false });
+
+    await waitFor(() => expect(apiMock.restoreConfirm).toHaveBeenCalledTimes(1));
+    expect(apiMock.restoreCancel).not.toHaveBeenCalled();
+  });
+
   it("sends no cancel when the upload itself failed, because it staged nothing", async () => {
     // The other side of the window above: a prepare that rejected left no archive of ours on the
     // server, so a cancel here would be reclaiming somebody else's stage.
@@ -461,6 +490,31 @@ describe("finishing the restore from the browser", () => {
     // reached the mock would fail on a refactor that changed nothing an operator can see.
     await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalled());
     expect(apiMock.restoreCancel.mock.calls[0]?.[0]).toBeUndefined();
+  });
+
+  it("asks the server before an unscoped discard, so it cannot take a newer archive", async () => {
+    // #387 reached through the one discard a token cannot scope. `armed` is a cached read
+    // nothing refreshes from another client, so this card goes on drawing the armed branch
+    // after that restore was canceled elsewhere and a fresh archive staged in its place -- and
+    // an unconditional discard then destroys the new one. Same shape as the unmount reclaim's
+    // guard, and the same reason: reading the cache is the bug, so the SERVER is asked.
+    //
+    // No invalidation here, deliberately. Handing the card the answer would hide the defect,
+    // because the card would simply stop rendering the button under test.
+    const { person } = await arm();
+    const cancel = await screen.findByRole("button", { name: /cancel restore/i });
+    await waitFor(() => expect(cancel).toBeEnabled());
+    apiMock.backupInfo.mockResolvedValue({ ...INFO, restore_armed: false });
+
+    await person.click(cancel);
+
+    // The card saying what is true now IS the evidence the server was asked: nothing else in
+    // this branch can move it off the armed state. Asserted on the controls rather than on the
+    // armed sentence, which the live region is still holding from the confirm, and rather than
+    // on a call count, which the refetch behind the redraw makes a moving number.
+    expect(await screen.findByText(/Drop a backup file here/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /cancel restore/i })).toBeNull();
+    expect(apiMock.restoreCancel).not.toHaveBeenCalled();
   });
 
   it("shows a failed Cancel too, which was the silent half of the same gap", async () => {

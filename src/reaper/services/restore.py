@@ -522,15 +522,18 @@ def clear_pending(settings: Settings, token: str | None = None) -> bool:
     discard is unconditional, which is what a deliberate Cancel on an armed restore needs: it
     holds no summary and no token, and it must still be able to clear anything.
 
-    Returns whether the discard was carried out, so the route can say which of the two
-    happened rather than reporting an ownership refusal as a discard (#387).
+    Returns whether a staging was actually removed, so the route can say what happened rather
+    than reporting an ownership refusal -- or a call that found nothing at all -- as a discard
+    (#387). Both of those are ordinary arrivals here rather than errors: this is reached from
+    an unmount, and the operator may have cleared the staging from anywhere else first.
     """
     pending = settings.data_dir / PENDING_DIR
     if token is not None and not _token_matches(pending, token):
         log.info("restore.cancel_not_owned")
         return False
+    existed = pending.exists()
     shutil.rmtree(pending, ignore_errors=True)
-    return True
+    return existed
 
 
 # ---------------------------------------------------------------------------

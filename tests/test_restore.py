@@ -587,8 +587,10 @@ class TestApi:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         # Rule 95: the field is bounded off the width the staging mints, and the staging it
-        # would otherwise have to read against survives the refusal.
-        client.post(
+        # would otherwise have to read against survives the refusal -- asserted by arming it
+        # afterwards with its own token, since a 422 never reaches the handler and "the
+        # directory is still there" would hold whatever the bound did.
+        prepared = client.post(
             "/api/settings/backup/restore/prepare",
             content=_make_archive(tmp_path / "up.reaper").read_bytes(),
         )
@@ -597,6 +599,27 @@ class TestApi:
             json={"token": "a" * (restore.TOKEN_MAX_LEN + 1)},
         )
         assert refused.status_code == 422, refused.text
+        armed = client.post(
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": prepared.json()["token"]},
+        )
+        assert armed.status_code == 200, armed.text
+
+    def test_confirm_refuses_a_token_wider_than_one_can_be(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        # The sibling bound, and the one that matters more: this field sits on the route that
+        # reaches Argon2 (rule 72, and rule 95's reason for the bound in the first place).
+        client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "up.reaper").read_bytes(),
+        )
+        refused = client.post(
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": "a" * (restore.TOKEN_MAX_LEN + 1)},
+        )
+        assert refused.status_code == 422, refused.text
+        assert client.get("/api/settings/backup").json()["restore_armed"] is False
 
 
 def _arm(client: TestClient, tmp_path: Path) -> None:
