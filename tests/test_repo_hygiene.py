@@ -691,8 +691,9 @@ def _selects_processes_by_pattern(line: str) -> bool:
     return bool(_PGREP.search(code) and _KILL_WORD.search(code))
 
 
-#: ``docker-entrypoint.sh``, ``scripts/dev-local.sh``, ``scripts/log-instructions-loaded.sh``.
-_EXPECTED_SHELL_SCRIPTS = 3
+#: ``docker-entrypoint.sh``, ``scripts/dev-local.sh``, ``scripts/log-instructions-loaded.sh``,
+#: ``scripts/try-image.sh``.
+_EXPECTED_SHELL_SCRIPTS = 4
 #: The one in ``dev-local.sh``'s ``stop_all``. Pinned separately from the script count because
 #: the walk and the ban cover different populations (rule 147): a script that drops out of the
 #: walk is absent from both, so a single figure would agree with itself while disagreeing with
@@ -988,6 +989,120 @@ def test_every_uvicorn_launch_disables_proxy_headers() -> None:
     assert not missing, (
         "every uvicorn launch must pass --no-proxy-headers, or the forwarded headers it\n"
         "rewrites decide peer trust one layer above reaper.auth.proxy:\n" + "\n".join(missing)
+    )
+
+
+# Where the operator is told what REAPER_PORT does. The Dockerfile's CMD is the declaration;
+# these are the prose copies of it, and rule 144 is that deriving one does not make the rest
+# safe. docker-compose.yml carried the wrong one for a while: it said REAPER_PORT "does not
+# move" the container's port, beside a CMD that has always read it, so an operator following
+# the compose file published on a port the app was not serving and read the healthcheck's
+# failure as a broken image.
+_PORT_PROSE = ("docker-compose.yml", ".env.example", "scripts/try-image.sh")
+
+# Said of REAPER_PORT, each of these is false. Matched against the flattened text, so a
+# sentence wrapped across two comment lines is still read as the one sentence it is.
+_PORT_DENIALS = (
+    "reaper_port does not move",
+    "reaper_port is ignored",
+    "reaper_port has no effect",
+    "right side is fixed",
+    "container always serves on 8420",
+)
+
+#: A comment leader at the start of a line: ``#``, ``//``, or a YAML/shell run of them.
+_COMMENT_LEADER = re.compile(r"^\s*(?:#+|//)\s?")
+
+
+def _flatten_prose(text: str) -> str:
+    """One lowercase line, with per-line comment leaders removed.
+
+    Every one of these copies lives in a comment, so a sentence long enough to matter wraps,
+    and each continuation line carries its own ``#``. Collapsing whitespace alone leaves that
+    marker sitting mid-sentence ("reaper_port does not # move it"), which a substring ban
+    reads straight past -- the exact shape of the claim this exists to catch (rule 147).
+    """
+    stripped = [_COMMENT_LEADER.sub("", line) for line in text.splitlines()]
+    return " ".join(" ".join(stripped).split()).lower()
+
+
+def test_no_file_denies_that_reaper_port_moves_the_container_port() -> None:
+    """Rule 144: the CMD reads REAPER_PORT, so no prose copy may say it does not.
+
+    The image's ``CMD`` passes ``--port "${REAPER_PORT:-8420}"`` to uvicorn and its
+    ``HEALTHCHECK`` reads the same variable, so setting it genuinely moves the port the
+    container serves on. That fact is written out again in three places an operator
+    actually reads, and each was written by someone looking at a different one.
+
+    The direction of the failure is the point: a wrong denial here reads as reassurance
+    ("you cannot break it, the right side is fixed"), which is why it survived review.
+    """
+    cmd = (REPO / "Dockerfile").read_text(encoding="utf-8")
+    assert "REAPER_PORT:-8420" in cmd, (
+        "the Dockerfile CMD no longer reads REAPER_PORT. If the port really is fixed now,\n"
+        "this test is inverted: the prose in " + ", ".join(_PORT_PROSE) + " must be\n"
+        "rewritten to say so, and this check deleted with it."
+    )
+
+    wrong: list[str] = []
+    for name in _PORT_PROSE:
+        path = REPO / name
+        assert path.is_file(), f"{name} is gone; update _PORT_PROSE beside this test."
+        flat = _flatten_prose(path.read_text(encoding="utf-8"))
+        wrong += [f"  {name}: says {denial!r}" for denial in _PORT_DENIALS if denial in flat]
+
+    assert not wrong, (
+        "REAPER_PORT moves the port the container serves on -- the Dockerfile CMD passes it\n"
+        "to uvicorn and the healthcheck reads it -- so this text tells the operator the\n"
+        "opposite of what the image does:\n" + "\n".join(wrong)
+    )
+
+
+def test_the_port_denial_matcher_reads_every_spelling_it_claims() -> None:
+    """Rule 147: the ban above is a substring match, so prove what it does and does not read.
+
+    The accepts include the form the whole design rests on -- a sentence broken across two
+    comment lines, which is how the wrong one was actually written and how a matcher
+    anchored per-line would have missed it.
+
+    The rejects matter more here than usual. Every one of them is text that states the
+    behavior *correctly*, and a matcher that trips on those gets deleted the first time it
+    cries wolf, taking the real check with it.
+    """
+    accepted = [
+        "# REAPER_PORT does not move it",
+        "# always serves on 8420, and REAPER_PORT does not\n      # move it (the CMD is fixed)",
+        "the right side is fixed: 8420",
+        "The container always serves on 8420.",
+        "note: REAPER_PORT is ignored by the image",
+        "REAPER_PORT has no effect on the published port",
+    ]
+    rejected = [
+        # The corrected compose comment, and the shape of the other two prose copies.
+        "The right side is the port inside the container, which is 8420 unless you set\n"
+        "REAPER_PORT below.",
+        "Bind address and port. Honored by the container entrypoint.",
+        "The port inside the container follows REAPER_PORT when you pass one.",
+        "REAPER_PORT moves the port the container serves on.",
+        # Near misses: the words are present, the denial is not.
+        "the container serves on 8420 by default",
+        "REAPER_PORT does not need to be set for a normal install",
+    ]
+
+    def denies(text: str) -> bool:
+        # The same normalizer the ban runs, never a copy of it (rule 119).
+        flat = _flatten_prose(text)
+        return any(denial in flat for denial in _PORT_DENIALS)
+
+    missed = [text for text in accepted if not denies(text)]
+    assert not missed, "the matcher must read these as denials, and does not:\n" + "\n".join(
+        f"  {text!r}" for text in missed
+    )
+
+    tripped = [text for text in rejected if denies(text)]
+    assert not tripped, (
+        "the matcher must leave correct prose alone, and these are correct:\n"
+        + "\n".join(f"  {text!r}" for text in tripped)
     )
 
 
