@@ -21,6 +21,10 @@ const { apiMock } = vi.hoisted(() => ({
     instanceSeerrServices: vi.fn(),
     instances: vi.fn(),
     plexLibraries: vi.fn(),
+    // The modal reads the library list through `usePlexLibraries`, which SYNCS a list that came
+    // back empty rather than telling the operator to go press Sync somewhere else (#384). An
+    // unmocked sync would throw out of the one test that renders an empty list.
+    syncPlexLibraries: vi.fn(),
     updateInstance: vi.fn(),
     createInstance: vi.fn(),
     testInstance: vi.fn(),
@@ -82,6 +86,9 @@ function renderModal(
   else apiMock.instanceRootFolders.mockResolvedValue(folders);
   if (libraries instanceof Error) apiMock.plexLibraries.mockRejectedValue(libraries);
   else apiMock.plexLibraries.mockResolvedValue(libraries);
+  // A re-sync answers what the read answered, so an empty list stays empty and the "nothing to
+  // map to" arm is reached rather than being papered over by the sync the hook fires.
+  apiMock.syncPlexLibraries.mockResolvedValue(libraries instanceof Error ? [] : libraries);
   apiMock.updateInstance.mockResolvedValue(instance);
   const onClose = vi.fn();
   const queryClient = testQueryClient();
@@ -268,8 +275,41 @@ describe("ServiceModal HD/4K library map", () => {
 
   it("keeps the 'none yet' sentence for a list that really is empty", async () => {
     renderModal(sonarr(), [{ path: "/tv", suggested_library: null }], []);
-    expect(await screen.findByText(/No Plex libraries yet/i)).toBeInTheDocument();
+    // It no longer sends anyone to Plex settings to press Sync: the hook runs the sync itself,
+    // so the only honest thing left to say is that the server has no library of this kind. The
+    // old copy asked a first-run operator to go do the app's own job (#384).
+    expect(await screen.findByText(/found no TV libraries/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Sync them in Plex settings/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn't read your Plex libraries/i)).not.toBeInTheDocument();
+  });
+
+  it("syncs a library list that has never been synced, instead of offering nothing", async () => {
+    // The whole of #384 in one assertion. `GET /plex/libraries` answers "as last synced", the
+    // wizard never synced, and so every picker here offered nothing while the "suggested" tags
+    // beside them -- which come from a live Plex read on the server -- named libraries that
+    // plainly existed. An empty read now triggers exactly one sync.
+    apiMock.instanceRootFolders.mockResolvedValue([{ path: "/tv", suggested_library: "TV" }]);
+    apiMock.plexLibraries.mockResolvedValue([]);
+    apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
+    apiMock.updateInstance.mockResolvedValue(sonarr());
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <ServiceModal kind="sonarr" instance={sonarr()} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(apiMock.syncPlexLibraries).toHaveBeenCalledTimes(1));
+    // And the pickers it fills really do offer the synced libraries.
+    await waitFor(() =>
+      expect(within(selectForFolder("/tv")).getByRole("option", { name: "TV 4K" })).toBeDefined(),
+    );
+  });
+
+  it("does not sync a list that merely failed to load", async () => {
+    // A read failure is not an empty list, and answering one with a WRITE would paper over the
+    // state the operator needs to see. `libraries.data` is undefined here, never `[]`.
+    renderModal(sonarr(), [{ path: "/tv", suggested_library: null }], new Error("plex down"));
+    expect(await screen.findByText(/couldn't read your Plex libraries/i)).toBeInTheDocument();
+    expect(apiMock.syncPlexLibraries).not.toHaveBeenCalled();
   });
 
   it("names every picker after its own folder", async () => {
@@ -741,10 +781,14 @@ describe("why 'Add service' will not act", () => {
     return userEvent.setup();
   }
 
-  it("names each empty box in turn, and lets go once the form is fillable", async () => {
-    // Every arm of the chain driven, in the order the boxes are on screen, because the chain
-    // shows only the FIRST and a later arm is otherwise never reached (rule 145). The button
-    // stays off for all three and turns on exactly when the sentence goes.
+  it("names each empty box in turn, then the connection, then the map", async () => {
+    // Every arm of the chain driven, in the order it is walked, because the chain shows only
+    // the FIRST and a later arm is otherwise never reached (rule 145). The button stays off for
+    // all of them and turns on exactly when the last sentence goes.
+    //
+    // The three boxes are no longer the whole road: filling them used to enable Add outright,
+    // which is how a service could be saved at an address Reaper had never reached, and a
+    // folder map nobody had made.
     const user = renderAdd();
     expect(submit()).toBeDisabled();
     expect(blocked()!.textContent).toBe("Enter a name to add this service.");
@@ -757,7 +801,28 @@ describe("why 'Add service' will not act", () => {
     expect(submit()).toBeDisabled();
     expect(blocked()!.textContent).toBe("Enter an API key to add this service.");
 
+    // Typing the key no longer enables the button: the connection has not been proved yet.
     await user.type(screen.getByLabelText(/^API key$/), "k");
+    expect(submit()).toBeDisabled();
+    expect(blocked()!.textContent).toBe("Reaper has to reach this service before you can save.");
+
+    // Leaving the key box fires the test, which passes and hands back one unmapped folder.
+    apiMock.testInstance.mockResolvedValue({
+      ok: true,
+      detail: "Connected to Sonarr.",
+      version: "4.0.1",
+      root_folders: [{ path: "/tv", suggested_library: null }],
+      seerr_services: [],
+      map_error: null,
+    });
+    await user.tab();
+    await waitFor(() =>
+      expect(blocked()!.textContent).toBe("Pick a Plex library for at least one folder to save."),
+    );
+    expect(submit()).toBeDisabled();
+
+    // And the map is what finally clears it.
+    await user.selectOptions(selectForFolder("/tv"), "TV");
     expect(submit()).toBeEnabled();
     expect(blocked()).toBeNull();
   });

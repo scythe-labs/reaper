@@ -141,6 +141,12 @@ class InstanceCreateIn(BaseModel):
     add_import_exclusion: bool = False
     # The address links open; blank/omitted means links use base_url. Display only.
     external_url: str | None = None
+    # Both maps are accepted at creation because the add form maps the service before saving
+    # it: a passing connection test hands back the root folders (or the portal's services), so
+    # the mapping is made on the screen that adds the connection rather than only on a later
+    # edit. Omitted or empty stores NULL, which reads back as "no map".
+    plex_library_map: dict[str, str] | None = None
+    service_instance_map: dict[str, int] | None = None
 
 
 class InstanceUpdateIn(BaseModel):
@@ -185,6 +191,18 @@ class TestOut(BaseModel):
     ok: bool
     detail: str
     version: str | None = None
+    # What this connection has to map, read on the same pass that proved the credentials. Only
+    # one is ever populated -- a test is for exactly one kind -- and both stay empty on a
+    # failed test, since nothing was reached to read them from.
+    root_folders: list[RootFolderOut] = []
+    seerr_services: list[SeerrServiceOut] = []
+    # Why the list above is empty, when it is empty because the read FAILED rather than because
+    # the service genuinely has nothing to map. The two must not look alike: "this instance
+    # reports no root folders" is a claim about the instance, and printing it over a read that
+    # never landed asserts something nobody checked (rule 93's Absent-vs-Unknown, and the same
+    # trap the modal's own empty-vs-stale notices are divided against). ``None`` means the read
+    # landed, so an empty list beside it really is nothing to map.
+    map_error: str | None = None
 
 
 class PlexStatusOut(BaseModel):
@@ -559,6 +577,8 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 verify_tls=payload.verify_tls,
                 add_import_exclusion=payload.add_import_exclusion,
                 external_url=payload.external_url,
+                plex_library_map=payload.plex_library_map,
+                service_instance_map=payload.service_instance_map,
             )
         except instances.InstanceConflictError as exc:
             # A duplicate name is a conflict; anything else the service refused (a blank
@@ -609,13 +629,96 @@ async def delete_instance(request: Request, instance_id: int) -> dict[str, bool]
     return {"removed": removed}
 
 
+async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
+    """``{library title: that library's folder paths}``, the Plex side of a folder suggestion.
+
+    Best-effort: if Plex is not linked or is unreachable this answers ``{}`` and the folders
+    still come back, just with nothing suggested. Titled, not keyed, because the stored library
+    map itself is titled; two libraries sharing a title contribute BOTH their folder lists here
+    rather than one dropping the other, so the prefill considers everything under that name.
+
+    Written once because two routes need it -- the test below, which suggests for a service
+    that has no row yet, and ``instance_root_folders``, which suggests for one that does. A
+    second copy would be two suggestion sources for one control (rule 144).
+    """
+    section_paths: dict[str, list[str]] = {}
+    async with _factory(request)() as session:
+        server = (await session.execute(select(PlexServer))).scalars().first()
+        safety = await app_settings.runtime_safety(session, _settings(request))
+    if server is None or not server.connection_uri:
+        return section_paths
+    plex = PlexClient(
+        server.connection_uri,
+        _box(request).decrypt(server.token_enc),
+        safety=safety,
+        verify=server.verify_tls,
+    )
+    try:
+        for section in await plex.section_paths():
+            section_paths.setdefault(section.title, []).extend(section.locations)
+    except PlexError:
+        return {}
+    finally:
+        await plex.aclose()
+    return section_paths
+
+
 @router.post("/instances/test", tags=[api_tags.SERVICES])
 async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOut:
-    """Test a URL and key before saving, so a typo is caught on the add form."""
+    """Test a URL and key before saving, and hand back what this connection has to map.
+
+    The add form gates its Save on this passing, so a service can never be saved at an address
+    Reaper has not reached. A pass therefore has to arrive carrying everything the operator
+    still has to decide, because an instance that is not saved yet has no id and cannot be
+    asked a second question: for Sonarr and Radarr that is the root folders with their
+    suggested Plex libraries, and for Seerr the portal's services with their suggested Reaper
+    instances.
+
+    The mapping read never decides the verdict. It runs only after the connection passed, and
+    its own failure is reported as ``map_error`` beside an empty list rather than turning a
+    reachable service into a failed test -- the credentials really were proven, and refusing
+    the save over a folder list would strand an operator whose *arr answers ``/system/status``
+    but not ``/rootfolder``.
+    """
+    kind = _kind(payload.kind)
     result = await instances.test_connection(
-        _kind(payload.kind), payload.base_url, payload.api_key, verify=payload.verify_tls
+        kind, payload.base_url, payload.api_key, verify=payload.verify_tls
     )
-    return TestOut(ok=result.ok, detail=result.detail, version=result.version)
+    out = TestOut(ok=result.ok, detail=result.detail, version=result.version)
+    if not result.ok:
+        return out
+    try:
+        if kind in (InstanceKind.SONARR, InstanceKind.RADARR):
+            found = await instances.probe_root_folders(
+                kind,
+                payload.base_url,
+                payload.api_key,
+                verify=payload.verify_tls,
+                section_paths=await _plex_section_paths(request),
+            )
+            out.root_folders = [
+                RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in found
+            ]
+        elif kind is InstanceKind.SEERR:
+            async with _factory(request)() as session:
+                arr_rows = await instances.arr_rows(session)
+            services = await instances.probe_seerr_services(
+                payload.base_url, payload.api_key, verify=payload.verify_tls, arr_rows=arr_rows
+            )
+            out.seerr_services = [
+                SeerrServiceOut(
+                    service_id=s.service_id,
+                    kind=s.kind,
+                    name=s.name,
+                    is_4k=s.is_4k,
+                    suggested_instance_id=s.suggested_instance_id,
+                )
+                for s in services
+            ]
+    except (IntegrationError, instances.InstanceError) as exc:
+        log.warning("instance.map_probe_failed", kind=kind.value, error=str(exc))
+        out.map_error = f"Reaper reached this service but couldn't read what to map: {exc}"
+    return out
 
 
 @router.post("/instances/{instance_id}/test", tags=[api_tags.SERVICES])
@@ -639,29 +742,9 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
     cannot be reached, so the modal can say so rather than show an empty list as if the
     instance had no folders.
     """
-    # The Plex side of the suggestion: {library title: folder paths}. Best-effort -- if Plex is
-    # not linked or is unreachable the folders still come back, just with no suggestions.
-    # Titled, not keyed, because the stored library map itself is titled; two libraries
-    # sharing a title contribute BOTH their folder lists here rather than one dropping the
-    # other, so the prefill considers everything under that name.
-    section_paths: dict[str, list[str]] = {}
-    async with _factory(request)() as session:
-        server = (await session.execute(select(PlexServer))).scalars().first()
-        safety = await app_settings.runtime_safety(session, _settings(request))
-    if server is not None and server.connection_uri:
-        plex = PlexClient(
-            server.connection_uri,
-            _box(request).decrypt(server.token_enc),
-            safety=safety,
-            verify=server.verify_tls,
-        )
-        try:
-            for section in await plex.section_paths():
-                section_paths.setdefault(section.title, []).extend(section.locations)
-        except PlexError:
-            section_paths = {}
-        finally:
-            await plex.aclose()
+    # The Plex side of the suggestion, from the one helper the test route also uses so a
+    # folder cannot be suggested differently depending on which screen asked (rule 144).
+    section_paths = await _plex_section_paths(request)
 
     async with _factory(request)() as session:
         try:
@@ -808,6 +891,8 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
 
     if linked is None:
         return PlexLinkPollOut(status="pending")
+    # The server is linked as of this line, so its libraries are readable for the first time.
+    await _sync_libraries_after_link(request)
     async with _factory(request)() as session:
         return PlexLinkPollOut(status="ok", server=await _plex_status(session))
 
@@ -928,6 +1013,10 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
     except PlexLinkError as exc:
         raise HTTPException(400, str(exc)) from exc
 
+    # Switching cleared the library choices, which were keyed to the old server. Refill them
+    # from the new one here, for the same reason the link path does (rule 72): the stored list
+    # is otherwise empty until something presses Sync, and the library pickers read that list.
+    await _sync_libraries_after_link(request)
     async with _factory(request)() as session:
         status = await _plex_status(session)
     log.info("plex.server_switched")
@@ -1023,9 +1112,39 @@ async def plex_libraries(request: Request) -> list[PlexLibraryOut]:
         return _libraries_out(await app_settings.get_plex_libraries(session))
 
 
+async def _sync_libraries_after_link(request: Request) -> None:
+    """Refresh the library list because the linked server just changed. Never raises.
+
+    The library list is a property of the server that was just linked, so this is where it
+    becomes knowable -- and reading it here is what stops every later screen from having to
+    remember. Nothing did: ``GET /plex/libraries`` answers "as last synced", the setup wizard
+    only ever called that, and an operator who signs in with Plex at the login screen is past
+    ``plex_linked`` before the wizard's Plex step would have run, so the step never renders and
+    nothing ever syncs. The service editor's library pickers were then empty on a fresh install
+    while its folder suggestions -- which come from a LIVE Plex read, not the stored list --
+    were right, so the two disagreed about libraries that plainly existed (#384).
+
+    Best-effort by design: a sync failure must not fail the sign-in the operator just approved.
+    Both callers have a manual Sync button behind them and ``PlexPanel`` re-syncs an empty list
+    on sight, so the recovery path is the one that already existed.
+    """
+    try:
+        await _sync_libraries(request)
+    except (PlexError, HTTPException) as exc:
+        log.warning("plex.libraries_autosync_failed", error=str(exc))
+
+
 @router.post("/plex/libraries/sync", tags=[api_tags.PLEX])
 async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
-    """Refresh the library list from the server.
+    """Refresh the library list from the server."""
+    try:
+        return await _sync_libraries(request)
+    except PlexError as exc:
+        raise HTTPException(502, f"Could not reach Plex: {exc}") from exc
+
+
+async def _sync_libraries(request: Request) -> list[PlexLibraryOut]:
+    """The refresh itself, raising ``PlexError`` for an unreachable server.
 
     Merge, not replace: a library the operator already turned off stays off across a
     re-sync; a newly discovered library starts ON, so the default install marks every
@@ -1048,8 +1167,6 @@ async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
 
     try:
         sections = await plex.video_sections()
-    except PlexError as exc:
-        raise HTTPException(502, f"Could not reach Plex: {exc}") from exc
     finally:
         await plex.aclose()
 

@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { announce } from "../announce";
 import { api, type PlexResourceConnection, type SetupStatus } from "../api";
+import { usePlexLibraries } from "../usePlexLibraries";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
@@ -175,7 +176,11 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
   const queryClient = useQueryClient();
   const status = useQuery({ queryKey: ["plex"], queryFn: api.plexStatus });
   const resources = useQuery({ queryKey: ["plex-resources"], queryFn: api.plexResources });
-  const libraries = useQuery({ queryKey: ["plex-libraries"], queryFn: api.plexLibraries });
+  // Through the shared hook, so a list that has never been synced fills itself here exactly as
+  // it does in Settings. Reading it with a plain query was the whole of #384: this step renders
+  // only once Plex is linked, and it showed an empty Libraries grid on every fresh install
+  // while telling the service editor's pickers there were no libraries to offer.
+  const { libraries } = usePlexLibraries();
 
   const [manualOpen, setManualOpen] = useState(false);
   const [host, setHost] = useState("");

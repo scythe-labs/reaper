@@ -279,7 +279,15 @@ async def create_instance(
     verify_tls: bool = True,
     add_import_exclusion: bool = False,
     external_url: str | None = None,
+    plex_library_map: Mapping[str, str] | None = None,
+    service_instance_map: Mapping[str, int] | None = None,
 ) -> InstanceView:
+    """Store a new instance. Both maps are optional and encode exactly as ``update_instance``
+    does -- an empty or absent one stores NULL, which reads back as "no map".
+
+    They are accepted at creation because the add form now maps the service before saving it:
+    the connection test hands back the root folders, so a first *arr can be told apart from a
+    second one on the screen that adds it, rather than only on a later edit."""
     name = name.strip()
     base_url = base_url.strip().rstrip("/")
     # Blank (or whitespace) is stored as NULL, so links fall back to base_url. Normalized like
@@ -314,6 +322,8 @@ async def create_instance(
         enabled=True,
         verify_tls=verify_tls,
         add_import_exclusion=add_import_exclusion,
+        plex_library_map=_encode_library_map(plex_library_map),
+        service_instance_map=_encode_service_instance_map(service_instance_map),
         created_at=utcnow(),
     )
     session.add(row)
@@ -693,6 +703,39 @@ class RootFolderSuggestion:
     suggested_library: str | None
 
 
+async def probe_root_folders(
+    kind: InstanceKind,
+    base_url: str,
+    api_key: str,
+    *,
+    verify: bool = True,
+    api_path_prefix: str | None = None,
+    section_paths: Mapping[str, Sequence[str]],
+) -> list[RootFolderSuggestion]:
+    """Root folders read straight from credentials, for an *arr with no row yet.
+
+    The add form needs this: an instance the operator is still typing has no id, so
+    ``instance_root_folders`` below cannot reach it, and until it could the folder map only
+    ever appeared on a service that was already saved -- which is never where a first-run
+    operator is. The connection test calls this the moment it passes, so the map arrives
+    filled in from the same credentials that just proved they work.
+
+    Sonarr/Radarr only -- Tautulli and Seerr have no root folders and no library map.
+    ``section_paths`` is the Plex side (``{library title: folder paths}``), passed in by the
+    caller so this function needs no Plex client of its own. Raises ``InstanceError`` for a
+    wrong kind, and lets the arr client's error surface for a connection failure.
+    """
+    if kind not in (InstanceKind.SONARR, InstanceKind.RADARR):
+        raise InstanceError("Only Sonarr and Radarr have root folders to map to a Plex library.")
+    client = _client(kind, base_url, api_key, verify=verify, api_path_prefix=api_path_prefix)
+    async with client:
+        payload = await client.root_folders()  # type: ignore[attr-defined]
+    return [
+        RootFolderSuggestion(path=p, suggested_library=suggest_library(p, section_paths))
+        for p in identity.root_folder_paths(payload)
+    ]
+
+
 async def instance_root_folders(
     session: AsyncSession,
     box: SecretBox,
@@ -700,24 +743,26 @@ async def instance_root_folders(
     *,
     section_paths: Mapping[str, Sequence[str]],
 ) -> list[RootFolderSuggestion]:
-    """This instance's root folders, each with a suggested Plex library (a prefill only).
+    """This stored instance's root folders, each with a suggested Plex library (a prefill only).
 
-    Sonarr/Radarr only -- Tautulli and Seerr have no root folders and no library map.
-    The live ``/rootfolder`` read exercises the stored key; ``section_paths`` is the Plex side
-    (``{library title: folder paths}``), passed in by the caller so this function needs no
-    Plex client of its own. Raises ``InstanceError`` for a wrong kind or a missing instance,
-    and lets the arr client's error surface for a connection failure (the caller maps it).
+    The saved-row half of ``probe_root_folders`` above, which holds the whole read: one
+    implementation, so the folder list and its suggestions cannot come to differ between the
+    add form and the edit form (rule 104). Raises ``InstanceError`` for a wrong kind or a
+    missing instance, and lets the arr client's error surface for a connection failure (the
+    caller maps it).
+
+    ``api_path_prefix`` rides along for the reason ``test_connection`` gives: this probes the
+    same path the scan will use. It was the one read of the three that dropped it (rule 72).
     """
     row = await _get(session, instance_id)
-    if row.kind not in (InstanceKind.SONARR, InstanceKind.RADARR):
-        raise InstanceError("Only Sonarr and Radarr have root folders to map to a Plex library.")
-    client = _client(row.kind, row.base_url, box.decrypt(row.api_key_enc), verify=row.verify_tls)
-    async with client:
-        payload = await client.root_folders()  # type: ignore[attr-defined]
-    return [
-        RootFolderSuggestion(path=p, suggested_library=suggest_library(p, section_paths))
-        for p in identity.root_folder_paths(payload)
-    ]
+    return await probe_root_folders(
+        row.kind,
+        row.base_url,
+        box.decrypt(row.api_key_enc),
+        verify=row.verify_tls,
+        api_path_prefix=row.api_path_prefix,
+        section_paths=section_paths,
+    )
 
 
 @dataclass(frozen=True)
@@ -759,28 +804,31 @@ def _suggest_instance(service: SeerrService, arr_rows: Sequence[Instance]) -> in
     return matches[0] if len(matches) == 1 else None
 
 
-async def seerr_services(
-    session: AsyncSession,
-    box: SecretBox,
-    instance_id: int,
-) -> list[ServiceInstanceSuggestion]:
-    """This Seerr portal's Sonarr/Radarr services, each with a suggested Reaper instance.
-
-    Seerr only. The live ``/settings`` read exercises the stored (admin) key. The suggestion
-    matches the service's own host:port to a Reaper Sonarr/Radarr instance -- a prefill only,
-    since the two apps may reach the same server at different addresses, so the operator
-    confirms. Raises ``InstanceError`` for a wrong kind or a missing instance, and lets the Seerr
-    client's error surface for a connection or non-admin-key failure (the caller maps it).
-    """
-    row = await _get(session, instance_id)
-    if row.kind is not InstanceKind.SEERR:
-        raise InstanceError("Only Seerr portals have request services to map to an instance.")
-    arr_rows = (
+async def arr_rows(session: AsyncSession) -> Sequence[Instance]:
+    """Every stored Sonarr and Radarr, the pool a Seerr service's suggestion is drawn from."""
+    return (
         await session.scalars(
             select(Instance).where(Instance.kind.in_((InstanceKind.SONARR, InstanceKind.RADARR)))
         )
     ).all()
-    client = _client(row.kind, row.base_url, box.decrypt(row.api_key_enc), verify=row.verify_tls)
+
+
+async def probe_seerr_services(
+    base_url: str,
+    api_key: str,
+    *,
+    verify: bool = True,
+    arr_rows: Sequence[Instance],
+) -> list[ServiceInstanceSuggestion]:
+    """A portal's services read straight from credentials, for a Seerr with no row yet.
+
+    The add form's half, exactly as ``probe_root_folders`` is for an *arr (rule 72): the
+    connection test calls this on a pass, so the requester map arrives filled in rather than
+    only appearing after a save. ``arr_rows`` is the suggestion pool, passed in so this needs
+    no session of its own. Lets the Seerr client's error surface for a connection or
+    non-admin-key failure.
+    """
+    client = _client(InstanceKind.SEERR, base_url, api_key, verify=verify)
     async with client:
         services = await client.services()  # type: ignore[attr-defined]
     return [
@@ -793,3 +841,27 @@ async def seerr_services(
         )
         for s in services
     ]
+
+
+async def seerr_services(
+    session: AsyncSession,
+    box: SecretBox,
+    instance_id: int,
+) -> list[ServiceInstanceSuggestion]:
+    """This stored Seerr portal's Sonarr/Radarr services, each with a suggested Reaper instance.
+
+    The saved-row half of ``probe_seerr_services`` above, which holds the whole read -- one
+    implementation, so the add form and the edit form cannot come to suggest differently
+    (rule 104). The live ``/settings`` read exercises the stored (admin) key. Raises
+    ``InstanceError`` for a wrong kind or a missing instance, and lets the Seerr client's error
+    surface for a connection or non-admin-key failure (the caller maps it).
+    """
+    row = await _get(session, instance_id)
+    if row.kind is not InstanceKind.SEERR:
+        raise InstanceError("Only Seerr portals have request services to map to an instance.")
+    return await probe_seerr_services(
+        row.base_url,
+        box.decrypt(row.api_key_enc),
+        verify=row.verify_tls,
+        arr_rows=await arr_rows(session),
+    )

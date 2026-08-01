@@ -1131,6 +1131,24 @@ export interface InstanceTest {
   version: string | null;
 }
 
+/** What a connection has to map, read on the same pass that proved its credentials.
+ *
+ *  Kept apart from `InstanceTest` above because only ONE route ever answers it: the pre-save
+ *  test on the add form, which is the only caller with no instance id to ask a second question
+ *  with. The service card also renders an `InstanceTest` it rebuilt from what it remembers of
+ *  the last test (`last_ok_at`, `last_error`), and no folder read ever happened for that one --
+ *  folding these fields into the base type would have made that card claim a `map_error: null`,
+ *  which reads as "we looked and nothing was wrong" about a read nobody ran (rule 93). */
+export interface InstanceTestMapping {
+  /** Only one is ever filled -- a test is for exactly one kind -- and both are empty on a
+   *  failed test, since nothing was reached to read them from. */
+  root_folders: RootFolder[];
+  seerr_services: SeerrService[];
+  /** Why the list above is empty, when the read FAILED rather than there being nothing to map.
+   *  `null` means the read landed, so an empty list really is nothing to map. */
+  map_error: string | null;
+}
+
 /** One of an *arr instance's root folders, with a suggested Plex library to prefill the map. */
 export interface RootFolder {
   path: string;
@@ -1458,6 +1476,11 @@ export const api = {
     verify_tls?: boolean;
     add_import_exclusion?: boolean;
     external_url?: string;
+    /** Both maps ride along on creation, because the add form maps the service before saving
+     *  it: the connection test hands back the folders (or the portal's services), so a first
+     *  *arr is told apart from a second one here rather than only on a later edit. */
+    plex_library_map?: Record<string, string>;
+    service_instance_map?: Record<string, number>;
   }) => post<Instance>("/api/settings/instances", body),
   updateInstance: (
     id: number,
@@ -1481,8 +1504,11 @@ export const api = {
   /** This Seerr portal's Sonarr/Radarr services, each with a suggested Reaper instance. */
   instanceSeerrServices: (id: number) =>
     request<SeerrService[]>(`/api/settings/instances/${id}/seerr-services`),
+  /** Test an address and key, and get back what this connection has to map. The add form's
+   *  Save is gated on this passing, so a service can never be saved at an address Reaper has
+   *  not reached. */
   testInstance: (body: { kind: string; base_url: string; api_key: string; verify_tls?: boolean }) =>
-    post<InstanceTest>("/api/settings/instances/test", body),
+    post<InstanceTest & InstanceTestMapping>("/api/settings/instances/test", body),
   testSavedInstance: (id: number) => post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),

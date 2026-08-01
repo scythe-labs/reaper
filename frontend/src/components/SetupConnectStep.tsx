@@ -18,8 +18,9 @@
 // restoring is the alternative to connecting services one at a time, so an operator moving an
 // existing install meets it before doing the work it replaces rather than after (#385).
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { announce } from "../announce";
 import { api, type Instance, type SetupStatus } from "../api";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
@@ -66,6 +67,24 @@ export function SetupConnectStep({
   });
   const [editing, setEditing] = useState<{ kind: string; instance: Instance | null } | null>(null);
   const [restoring, setRestoring] = useState(false);
+  // Which chip is asking to be confirmed, by instance id. One at a time, and never keyed on the
+  // name (rule 19/63): two kinds can both hold an "HD".
+  const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
+
+  const queryClient = useQueryClient();
+  const remove = useMutation({
+    mutationFn: (id: number) => api.deleteInstance(id),
+    // The chip vanishes, and an absence cannot be perceived by ear -- the same asymmetry the
+    // services panel's own Remove was corrected for (#192). `scan_ready` is re-read too, since
+    // dropping the last Radarr is exactly what can un-ready the step.
+    onSuccess: (_r, id) => {
+      const gone = (instances ?? []).find((i) => i.id === id);
+      announce(gone ? `${gone.name} removed.` : "Connection removed.");
+      setConfirmRemove(null);
+      void queryClient.invalidateQueries({ queryKey: ["instances"] });
+      void queryClient.invalidateQueries({ queryKey: ["setup"] });
+    },
+  });
 
   const of = (kind: string) => (instances ?? []).filter((i) => i.kind === kind);
 
@@ -105,6 +124,10 @@ export function SetupConnectStep({
                 required={k.value === "tautulli"}
                 onAdd={() => setEditing({ kind: k.value, instance: null })}
                 onEdit={(i) => setEditing({ kind: k.value, instance: i })}
+                confirming={confirmRemove}
+                onAskRemove={setConfirmRemove}
+                onRemove={(i) => remove.mutate(i.id)}
+                removing={remove.isPending}
               />
             ))}
           </div>
@@ -120,10 +143,21 @@ export function SetupConnectStep({
                 required={false}
                 onAdd={() => setEditing({ kind: k.value, instance: null })}
                 onEdit={(i) => setEditing({ kind: k.value, instance: i })}
+                confirming={confirmRemove}
+                onAskRemove={setConfirmRemove}
+                onRemove={(i) => remove.mutate(i.id)}
+                removing={remove.isPending}
               />
             ))}
           </div>
         </>
+      )}
+
+      {/* Every async onClick is a mutation with a rendered failure (rule 17/36). Without this a
+          refused remove left the chip on screen and said nothing, which reads as "it worked and
+          came back". */}
+      {remove.error && (
+        <Notice tone="error">Couldn't remove that connection: {remove.error.message}</Notice>
       )}
 
       {!ready && instances && (
@@ -186,12 +220,22 @@ function ConnRow({
   required,
   onAdd,
   onEdit,
+  confirming,
+  onAskRemove,
+  onRemove,
+  removing,
 }: {
   kind: (typeof KINDS)[number];
   rows: Instance[];
   required: boolean;
   onAdd: () => void;
   onEdit: (i: Instance) => void;
+  /** The instance id currently asking to be confirmed, or null. Held by the step rather than
+   *  per row, so opening one confirm closes any other. */
+  confirming: number | null;
+  onAskRemove: (id: number | null) => void;
+  onRemove: (i: Instance) => void;
+  removing: boolean;
 }) {
   const connected = rows.length > 0;
   // A singleton that already has one offers no second, and its slot collapses rather than
@@ -211,18 +255,69 @@ function ConnRow({
         </div>
         {connected ? (
           <div className="conn-instances">
-            {rows.map((i) => (
+            {rows.map((i) =>
               // Keyed on the server id, never the display name (rule 19, rule 63).
-              <button key={i.id} type="button" className="inst-chip" onClick={() => onEdit(i)}>
-                <span className="tick" aria-hidden="true">
-                  ✓
+              confirming === i.id ? (
+                /* The two-step confirm the services panel already uses for the same act, not a
+                   native confirm() and not a one-press delete. It replaces the chip in place, so
+                   the question sits exactly where the thing it is about was. */
+                <span key={i.id} className="chip-confirm">
+                  <span className="chip-confirm-q">Remove {i.name}?</span>
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={removing}
+                    // Says what removing does and does not touch, the same promise the services
+                    // panel's own Remove makes.
+                    title="Only forgets it in Reaper. Nothing is changed in the service itself."
+                    aria-label={`Confirm remove ${i.name}`}
+                    onClick={() => onRemove(i)}
+                  >
+                    {removing ? "Removing…" : "Remove"}
+                  </button>
+                  <button
+                    type="button"
+                    // The visible word first, so "click Cancel" still reaches it by voice, then
+                    // which connection it keeps.
+                    aria-label={`Cancel, keep ${i.name}`}
+                    onClick={() => onAskRemove(null)}
+                  >
+                    Cancel
+                  </button>
                 </span>
-                {/* The visible text is the name alone; the reader hears what pressing it
-                    does, so the chip is not just a label to a screen reader. */}
-                <span className="sr-only">Edit </span>
-                {i.name}
-              </button>
-            ))}
+              ) : (
+                <span key={i.id} className="inst-chip">
+                  <span className="tick" aria-hidden="true">
+                    ✓
+                  </span>
+                  {/* The chip is the control that edits this instance, and the ✕ beside it the
+                      one that forgets it. Two buttons rather than one nested in the other, which
+                      is not valid HTML and would make the whole chip ambiguous to press.
+
+                      The visible text is the name alone, and the reader hears what pressing it
+                      does. Said as an `aria-label` rather than an `sr-only` "Edit " prefix,
+                      which is what it was: the accessible-name algorithm trims each text node
+                      before joining them, so that trailing space was dropped and every chip
+                      announced itself as "EditHD". The ✕ beside it names itself the same way. */}
+                  <button
+                    type="button"
+                    className="chip-edit"
+                    aria-label={`Edit ${i.name}`}
+                    onClick={() => onEdit(i)}
+                  >
+                    {i.name}
+                  </button>
+                  <button
+                    type="button"
+                    className="chip-x"
+                    aria-label={`Remove ${i.name}`}
+                    onClick={() => onAskRemove(i.id)}
+                  >
+                    <span aria-hidden="true">✕</span>
+                  </button>
+                </span>
+              ),
+            )}
           </div>
         ) : (
           <div className="conn-why">{kind.hint}</div>

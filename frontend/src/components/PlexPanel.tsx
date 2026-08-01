@@ -13,6 +13,7 @@ import { announce } from "../announce";
 import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence } from "../api";
 import { useSuccessorFocus } from "../focus";
 import { count, since } from "../format";
+import { usePlexLibraries } from "../usePlexLibraries";
 import { useSafety } from "../useSafety";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 import { StaleReadSlot, collapseStaleReads } from "./StaleReadNotice";
@@ -425,30 +426,14 @@ export function PlexPanel({
 
   // --- libraries ---------------------------------------------------------------
 
-  const libraries = useQuery({
-    queryKey: ["plex-libraries"],
-    queryFn: api.plexLibraries,
-    enabled: linked,
-  });
-  const syncLibraries = useMutation({
-    mutationFn: api.syncPlexLibraries,
-    onSuccess: (libs) => queryClient.setQueryData(["plex-libraries"], libs),
-  });
+  // The list, and the first-visit sync that fills one that has never been synced. Both come
+  // from the shared hook, which is also what the wizard's Plex step and the service editor's
+  // library pickers read -- three screens, one rule for what an empty list means (rule 144).
+  const { libraries, sync: syncLibraries } = usePlexLibraries({ enabled: linked });
   const saveLibraries = useMutation({
     mutationFn: api.setPlexLibraries,
     onSuccess: (libs) => queryClient.setQueryData(["plex-libraries"], libs),
   });
-
-  // First visit on a linked install: the list has never been synced, so fetch it once
-  // rather than showing an empty grid with a button to press. The ref makes it
-  // once-per-mount even though the mutation object's identity changes per render.
-  const autoSynced = useRef(false);
-  useEffect(() => {
-    if (linked && libraries.data && libraries.data.length === 0 && !autoSynced.current) {
-      autoSynced.current = true;
-      syncLibraries.mutate();
-    }
-  }, [linked, libraries.data, syncLibraries]);
 
   const toggleLibrary = (key: number, next: boolean) => {
     const libs = libraries.data ?? [];

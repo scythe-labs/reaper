@@ -217,15 +217,17 @@
   gap: 0.35rem;
   margin-top: 0.15rem;
 }
-/* A chip names one instance and is the control that edits it, which is what lets a kind hold
-   several without the row growing a control per instance. The name is whatever the operator
-   typed, so it declares its own break opportunity (rule 139). */
+/* A chip names one instance and carries the two controls for it -- edit, and forget. It holds
+   both rather than being one button, which is what lets a kind hold several without the row
+   growing a control per instance. It is a span wrapping two buttons, never a button inside a
+   button: that is invalid HTML, and it would make the whole chip ambiguous to press. The name
+   is whatever the operator typed, so it declares its own break opportunity (rule 139). */
 .inst-chip {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
   min-height: var(--tap-min);
-  padding: 0.1rem 0.55rem;
+  padding: 0.1rem 0.3rem 0.1rem 0.55rem;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--protect) 45%, transparent);
   background: var(--surface);
@@ -234,9 +236,59 @@
   font-weight: 500;
   overflow-wrap: anywhere;
 }
-.inst-chip:hover:not(:disabled) {
+.inst-chip:hover {
   background: var(--hover);
   border-color: var(--protect);
+}
+/* The name. All the chrome lives on the chip around it, so this is a bare hit area for the
+   text -- the control standard's box would draw a second border inside the pill. */
+.inst-chip .chip-edit,
+.inst-chip .chip-x {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  min-height: 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.inst-chip .chip-x {
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1;
+}
+/* Red on approach, so the destructive one of the chip's two controls says so before it is
+   pressed. The chip's own hover stays underneath it. */
+.inst-chip .chip-x:hover {
+  color: var(--condemn);
+}
+.inst-chip .chip-edit:focus-visible,
+.inst-chip .chip-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+/* The confirm, in the chip's own slot: a red-ink Remove and a plain Cancel, the same two-step
+   the services panel uses for this act rather than a second way of asking. */
+.chip-confirm {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+}
+.chip-confirm-q {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.chip-confirm button {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  min-height: var(--tap-min);
 }
 .inst-chip .tick {
   color: var(--protect);

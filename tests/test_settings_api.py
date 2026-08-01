@@ -25,6 +25,7 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
 from reaper.api.settings import PlexUpdateIn, update_plex_settings
+from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -1479,3 +1480,153 @@ class TestPlexLinkChoice:
         )
         assert saved.status_code == 200, saved.text
         assert saved.json()["connection_uri"] == "https://192.0.2.52:32400"
+
+
+class TestConnectionTestCarriesTheMapping:
+    """A passing test hands back what the connection still has to map.
+
+    The add form gates Save on this call, and an instance that is not saved yet has no id, so
+    there is no second question to ask: whatever the operator must decide has to arrive on the
+    pass itself. Before this, the folder map only ever appeared on a service that was already
+    saved -- which is never where a first-run operator is.
+    """
+
+    def _pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def ok(*_a: object, **_k: object) -> instances_service.TestResult:
+            return instances_service.TestResult(
+                ok=True, detail="Connected to Radarr.", version="5.4.6"
+            )
+
+        monkeypatch.setattr(instances_service, "test_connection", ok)
+
+    def test_a_passing_arr_test_returns_its_root_folders(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._pass(monkeypatch)
+
+        async def folders(
+            *_a: object, **_k: object
+        ) -> list[instances_service.RootFolderSuggestion]:
+            return [
+                instances_service.RootFolderSuggestion(path="/movies", suggested_library="Movies"),
+                instances_service.RootFolderSuggestion(path="/movies-4k", suggested_library=None),
+            ]
+
+        monkeypatch.setattr(instances_service, "probe_root_folders", folders)
+        body = client.post(
+            "/api/settings/instances/test",
+            json={"kind": "radarr", "base_url": "http://r.local:7878", "api_key": "k"},
+        ).json()
+
+        assert body["ok"] is True
+        assert [f["path"] for f in body["root_folders"]] == ["/movies", "/movies-4k"]
+        # The suggestion rides along, and "cannot tell" stays null rather than becoming a guess.
+        assert body["root_folders"][0]["suggested_library"] == "Movies"
+        assert body["root_folders"][1]["suggested_library"] is None
+        # Nothing was read that a Seerr would have, and the read landed, so no error is claimed.
+        assert body["seerr_services"] == []
+        assert body["map_error"] is None
+
+    def test_a_failed_test_reads_nothing_to_map(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nothing was reached, so there is nothing to have read -- and no probe is attempted."""
+
+        async def bad(*_a: object, **_k: object) -> instances_service.TestResult:
+            return instances_service.TestResult(ok=False, detail="Radarr refused that key.")
+
+        monkeypatch.setattr(instances_service, "test_connection", bad)
+
+        async def never(*_a: object, **_k: object) -> list[instances_service.RootFolderSuggestion]:
+            raise AssertionError("the folder read must not run for a connection that failed")
+
+        monkeypatch.setattr(instances_service, "probe_root_folders", never)
+        body = client.post(
+            "/api/settings/instances/test",
+            json={"kind": "radarr", "base_url": "http://r.local:7878", "api_key": "nope"},
+        ).json()
+
+        assert body["ok"] is False
+        assert body["root_folders"] == []
+        assert body["map_error"] is None
+
+    def test_an_unreadable_folder_list_is_said_apart_from_an_empty_one(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The credentials really were proved, so the test still passes -- but the empty list
+        must not read as "this instance has no folders", which is a claim nobody checked
+        (rule 93). The two states are told apart by ``map_error``, never by the empty list."""
+        self._pass(monkeypatch)
+
+        async def boom(*_a: object, **_k: object) -> list[instances_service.RootFolderSuggestion]:
+            raise IntegrationError("radarr", "connection reset")
+
+        monkeypatch.setattr(instances_service, "probe_root_folders", boom)
+        body = client.post(
+            "/api/settings/instances/test",
+            json={"kind": "radarr", "base_url": "http://r.local:7878", "api_key": "k"},
+        ).json()
+
+        # A folder list that could not be read never turns a reachable service into a failed
+        # test: refusing the save over it would strand an *arr that answers /system/status but
+        # not /rootfolder.
+        assert body["ok"] is True
+        assert body["root_folders"] == []
+        assert "connection reset" in body["map_error"]
+
+    def test_a_seerr_test_returns_the_portals_services(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._pass(monkeypatch)
+
+        async def services(
+            *_a: object, **_k: object
+        ) -> list[instances_service.ServiceInstanceSuggestion]:
+            return [
+                instances_service.ServiceInstanceSuggestion(
+                    service_id=0, kind="radarr", name="Movies", is_4k=False, suggested_instance_id=4
+                )
+            ]
+
+        monkeypatch.setattr(instances_service, "probe_seerr_services", services)
+        body = client.post(
+            "/api/settings/instances/test",
+            json={"kind": "seerr", "base_url": "http://s.local:5055", "api_key": "k"},
+        ).json()
+
+        assert body["ok"] is True
+        assert [s["name"] for s in body["seerr_services"]] == ["Movies"]
+        assert body["seerr_services"][0]["suggested_instance_id"] == 4
+        # A Seerr has no root folders, so that list stays empty rather than being invented.
+        assert body["root_folders"] == []
+
+
+class TestCreateStoresTheMapping:
+    def test_a_new_arr_is_created_with_the_map_made_on_the_add_form(
+        self, client: TestClient
+    ) -> None:
+        """The mapping is made before the save now, so it has to survive the create. Sent only
+        on the update route, a first Radarr's HD/4K map was silently dropped and the operator
+        had to reopen the service and make it again."""
+        created = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "HD",
+                "base_url": "http://r.local:7878",
+                "api_key": "k",
+                "plex_library_map": {"/movies": "Movies"},
+            },
+        )
+        assert created.status_code == 200, created.text
+        assert created.json()["plex_library_map"] == {"/movies": "Movies"}
+        # And it is stored, not merely echoed.
+        listed = client.get("/api/settings/instances").json()
+        assert listed[0]["plex_library_map"] == {"/movies": "Movies"}
+
+    def test_an_omitted_map_stays_empty(self, client: TestClient) -> None:
+        created = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "HD", "base_url": "http://r.local", "api_key": "k"},
+        )
+        assert created.json()["plex_library_map"] == {}
