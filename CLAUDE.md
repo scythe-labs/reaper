@@ -286,8 +286,10 @@ as its own commit and add it to `.git-blame-ignore-revs`.
   via `.claude/launch.json` (`preview_start`, names `reaper-api` / `reaper-frontend`) — never
   hand-run dev servers.
 - **Headless / background job (no `preview_start`):** run **`scripts/dev-local.sh`**. It
-  applies migrations, boots both auto-reloading servers (API `--reload`, Vite HMR) against
-  the shared real `data/`, waits for health, and prints the URLs. `down` stops them,
+  runs preflight and then migrations, in the entrypoint's order, so a staged restore is
+  applied here exactly as it is in the container; then it boots both auto-reloading servers
+  (API `--reload`, Vite HMR) against the shared real `data/`, waits for health, and prints
+  the URLs. `down` stops them,
   `status` / `logs` inspect. The UI at :5173 is the live dev server, not a build;
   `npm run build` is a CI gate only. **A second instance beside a running one** is
   `REAPER_PORT` + `REAPER_WEB_PORT`, and the two move together: `REAPER_PORT` reaches
