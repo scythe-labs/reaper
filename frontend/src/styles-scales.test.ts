@@ -20,7 +20,7 @@ import { CSS, FILES, siteOf } from "./test/stylesheet";
 /** Comments stripped, so prose quoting a value is not read as a declaration. */
 const CODE = CSS.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
 
-/** Every `--name: value` on a :root rule, labelled with the at-rule wrapping it.
+/** Every `--name: value` on a :root rule, labeled with the at-rule wrapping it.
  *
  *  The dark palette lives at `@media (prefers-color-scheme: dark) { :root { … } }`, so the
  *  rule's own selector is a bare `:root` and says nothing about which theme it is. What

@@ -58,12 +58,12 @@ Last verified against the code: 2026-07-30.
    `docs/history/SCREEN_READER_SWEEP.md`; the guard's own measurement is in `docs/LEARNINGS.md`.
    A scroll container is now held reachable by a stylesheet-driven gate, not by memory. Whether a
    notice speaks is `standing`, declared per call site and held by a count and a written reason.
-4. **The stylesheet split has four optional stages left** (`docs/CSS_SPLIT_PLAN.md`). The cut
-   itself landed: 31 files under `frontend/src/styles/`, load order declared by `index.css` and
-   load-bearing. Left: naming the control-standard padding and the 12 unnamed `z-index` values;
-   rehoming `.notice` and `.qty` out of the sections they were appended into; a type and space
-   scale, since 39 font sizes and 25 gap values are drift, not variety; and a dead-CSS pass that
-   must stay manual, because 96 sites compute their class name.
+4. **The stylesheet is 34 files with named scales** (`docs/CSS_SPLIT_PLAN.md`). Load order is
+   declared by `index.css` and load-bearing. Type (9 steps), weight (4) and the constants
+   (`--control-pad`, `--radius-pill`, a `--z-*` ladder) are adopted everywhere; space is 11 steps
+   adopted only where nothing moved, with a ratchet on the 294 literals left. Gates hold the file
+   cap, the theme blocks and the iOS zoom floor. Left: `.notice` still lives in the simulator
+   section, and a dead-CSS pass that must stay manual, because 96 sites compute their class name.
 
 ## Decisions locked
 
