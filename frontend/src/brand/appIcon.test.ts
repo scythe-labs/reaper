@@ -25,6 +25,7 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ACCENT } from "../accent";
 import { APP_ICON_RADIUS, appIconSvg } from "./appIcon";
+import { DISSOLVE_BONE, DISSOLVE_INK } from "./dissolve";
 import manifest from "./icons.generated.json";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -50,15 +51,19 @@ describe("app icon", () => {
     const svg = appIconSvg("#ff0000");
     // Both eyes, and nothing else, are painted in the passed color.
     expect(svg.match(/#ff0000/g)).toHaveLength(2);
-    // The shell and figure are absent from the accent's influence entirely.
-    expect(svg).toContain("#14161C");
-    expect(svg).toContain("#EDE7DA");
+    // The shell and figure are absent from the accent's influence entirely. Read from the
+    // drawing rather than transcribed: these two literals sat here as "#14161C" and "#EDE7DA",
+    // so recoloring the figure failed HERE, in a test about the accent, naming a color it was
+    // never about (rule 119).
+    expect(svg).toContain(DISSOLVE_INK);
+    expect(svg).toContain(DISSOLVE_BONE);
+    expect(DISSOLVE_BONE).not.toBe(DISSOLVE_INK);
     expect(appIconSvg("#00ff00")).not.toContain("#ff0000");
   });
 
   it("offers a full-bleed square for masked surfaces (iOS, maskable)", () => {
     expect(appIconSvg(DEFAULT_ACCENT, { radius: 0 })).toContain(
-      '<rect width="64" height="64" rx="0" fill="#14161C"/>',
+      `<rect width="64" height="64" rx="0" fill="${DISSOLVE_INK}"/>`,
     );
     expect(appIconSvg(DEFAULT_ACCENT)).toContain(`rx="${APP_ICON_RADIUS}"`);
   });

@@ -6,47 +6,47 @@
       "file": "favicon.svg",
       "kind": "svg",
       "radius": 14,
-      "sourceSha256": "2433aef743f39d7153601eb357e96ee17895156074dd699bd83648f10b0a2eef"
+      "sourceSha256": "5c33e06948538a02863b9235bdd3a0fcfa6709d6c21d78d49aaaaf77e9c4106d"
     },
     {
       "file": "favicon-32.png",
       "kind": "png",
       "size": 32,
       "radius": 14,
-      "sourceSha256": "2433aef743f39d7153601eb357e96ee17895156074dd699bd83648f10b0a2eef",
-      "sha256": "4f575eca7233f88a1427aa09e41b36e57032d26d3c833ecbf88a7ff3d5817817"
+      "sourceSha256": "5c33e06948538a02863b9235bdd3a0fcfa6709d6c21d78d49aaaaf77e9c4106d",
+      "sha256": "7035f703da1bcadc3d8c0d5d61e8478735ec17823cdcf7e0c786e663e5c3f817"
     },
     {
       "file": "apple-touch-icon.png",
       "kind": "png",
       "size": 180,
       "radius": 0,
-      "sourceSha256": "494cfd3fc0b6701cdff6baea90f4a80f26ae95bb4fc334b56c05d499ea9073d2",
-      "sha256": "e3b0c1efc04596f65e43ba5b354f85bdac209ba5d2a77e0fb54356f89f0bdfa0"
+      "sourceSha256": "29a4feaecb0253c2e5278824b9cf84a64995196da01725fd5607c05d07b2ed3c",
+      "sha256": "e7089743f655bfb1f5e302bbedc3fd2519e6cac7611ab3c13e8495c2a38ad78c"
     },
     {
       "file": "icon-192.png",
       "kind": "png",
       "size": 192,
       "radius": 14,
-      "sourceSha256": "2433aef743f39d7153601eb357e96ee17895156074dd699bd83648f10b0a2eef",
-      "sha256": "03a807ac7fa1ce55824a5c31ed9c5b7216ca48d279132dac55718a3b74459914"
+      "sourceSha256": "5c33e06948538a02863b9235bdd3a0fcfa6709d6c21d78d49aaaaf77e9c4106d",
+      "sha256": "971ceba856d68b7a7a0ee2492fd198ab01df97b7083f9d49482d6702fb4bacb1"
     },
     {
       "file": "icon-512.png",
       "kind": "png",
       "size": 512,
       "radius": 14,
-      "sourceSha256": "2433aef743f39d7153601eb357e96ee17895156074dd699bd83648f10b0a2eef",
-      "sha256": "55dafac0fc517b9b047bdde054db682a9bdb1c345ed6b2838bc4964c732459af"
+      "sourceSha256": "5c33e06948538a02863b9235bdd3a0fcfa6709d6c21d78d49aaaaf77e9c4106d",
+      "sha256": "eaf06037cad25a5f17ef7b04aba4e9716e92311222e6ae656e96a138c208f8ac"
     },
     {
       "file": "icon-maskable-512.png",
       "kind": "png",
       "size": 512,
       "radius": 0,
-      "sourceSha256": "494cfd3fc0b6701cdff6baea90f4a80f26ae95bb4fc334b56c05d499ea9073d2",
-      "sha256": "156e79b547053ff43e53549760e9d98e3f0f54e79c95a63474fe875dc33333f1"
+      "sourceSha256": "29a4feaecb0253c2e5278824b9cf84a64995196da01725fd5607c05d07b2ed3c",
+      "sha256": "8b49ee19b1f580d9de3571ee545315587bf067bdca7ed2467433d04f8f8680ed"
     }
   ]
 }
