@@ -278,7 +278,7 @@ describe("ServiceModal HD/4K library map", () => {
     // It no longer sends anyone to Plex settings to press Sync: the hook runs the sync itself,
     // so the only honest thing left to say is that the server has no library of this kind. The
     // old copy asked a first-run operator to go do the app's own job (#384).
-    expect(await screen.findByText(/found no TV libraries/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No TV libraries in Plex yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/Sync them in Plex settings/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/couldn't read your Plex libraries/i)).not.toBeInTheDocument();
   });
@@ -864,5 +864,132 @@ describe("why 'Add service' will not act", () => {
     renderAdd();
     expect(blocked()).not.toBeNull();
     await expectNoA11yViolations();
+  });
+});
+
+describe("what a failed folder read must not do", () => {
+  /** The edit form for a saved *arr whose STORED address no longer answers. */
+  function renderRepair(saved: Partial<Instance> = {}) {
+    apiMock.instanceRootFolders.mockRejectedValue(new Error("connection refused"));
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
+    apiMock.updateInstance.mockResolvedValue(sonarr(saved));
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <Announcer />
+        <ServiceModal kind="sonarr" instance={sonarr(saved)} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    return userEvent.setup();
+  }
+
+  it("lets a passing test replace the failed by-id read, instead of trapping the operator", async () => {
+    // The flow this whole feature exists for: a saved Sonarr is pointed at a new address. The
+    // by-id read fails (it uses the STORED address), the operator types the new one, and the
+    // test passes and hands back folders. The never-landed notice used to outrank the grid, so
+    // Save stayed off for a mapping with no picker to make it in and the modal refused to close
+    // -- a guard whose signal outlived the surface that satisfies it (rule 146).
+    const user = renderRepair();
+    expect(await screen.findByText(/couldn't read this instance's folders/i)).toBeInTheDocument();
+
+    apiMock.testInstance.mockResolvedValue({
+      ok: true,
+      detail: "Connected to Sonarr.",
+      version: "4.0.1",
+      root_folders: [{ path: "/tv", suggested_library: null }],
+      seerr_services: [],
+      map_error: null,
+    });
+    await fill(user, screen.getByLabelText(/Hostname or IP/), "10.0.0.9");
+    await user.type(screen.getByLabelText(/New API key/), "k");
+    await user.tab();
+
+    // The grid arrives, the stale notice goes, and the requirement is satisfiable.
+    await waitFor(() => expect(selectForFolder("/tv")).toBeInTheDocument());
+    expect(screen.queryByText(/couldn't read this instance's folders/i)).not.toBeInTheDocument();
+    await user.selectOptions(selectForFolder("/tv"), "TV");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("keeps the stored map when the test passes but the folder read fails", async () => {
+    // The silent-loss case. `map_error` means the probe RAN and failed, so its empty list is a
+    // read that never landed -- and `[]` is truthy, so the save's prune walked it and sent `{}`,
+    // which the server stores as NULL. The map that tells an HD copy from a 4K one was gone with
+    // no confirmation, off a screen that had replaced the grid with a notice.
+    apiMock.instanceRootFolders.mockResolvedValue([{ path: "/tv", suggested_library: null }]);
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
+    const saved = sonarr({ plex_library_map: { "/tv": "TV" } });
+    apiMock.updateInstance.mockResolvedValue(saved);
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <Announcer />
+        <ServiceModal kind="sonarr" instance={saved} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await waitFor(() => expect(selectForFolder("/tv").value).toBe("TV"));
+
+    apiMock.testInstance.mockResolvedValue({
+      ok: true,
+      detail: "Connected to Sonarr.",
+      version: "4.0.1",
+      root_folders: [],
+      seerr_services: [],
+      map_error: "Reaper reached this service but couldn't read what to map. It timed out.",
+    });
+    await user.type(screen.getByLabelText(/New API key/), "fresh-key");
+    await user.tab();
+    await waitFor(() => expect(screen.getByText(/couldn't read what to map/i)).toBeInTheDocument());
+
+    // The grid stays up over the warning, because the by-id read still holds the folders.
+    expect(selectForFolder("/tv").value).toBe("TV");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.updateInstance).toHaveBeenCalled());
+    const body = apiMock.updateInstance.mock.calls[0]![1] as {
+      plex_library_map?: Record<string, string>;
+    };
+    expect(body.plex_library_map).toEqual({ "/tv": "TV" });
+  });
+
+  it("says a test is what fills the grid, rather than claiming to be reading already", async () => {
+    // The by-id query is `enabled: editing && isArr`, and a DISABLED query reports
+    // `status: "pending"` forever -- so the add form sat under "Reading this instance's folders…"
+    // from the moment it opened, describing a read nobody started, and the sentence written for
+    // that exact moment could never render.
+    apiMock.instanceRootFolders.mockResolvedValue([]);
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/Your folders appear here once Reaper reaches/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Reading this instance's folders/i)).not.toBeInTheDocument();
+  });
+
+  it("does not demand a key when only the certificate check was flipped", async () => {
+    // The switch is not an address. It changes what a held result vouches for, so the badge goes
+    // -- but demanding a fresh test for it also demanded a KEY, on a form whose key box is blank
+    // by design, and told the operator they had changed an address they had not touched.
+    apiMock.instanceRootFolders.mockResolvedValue([{ path: "/tv", suggested_library: "TV" }]);
+    apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
+    apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
+    const saved = sonarr({ base_url: "https://tv.example.com", plex_library_map: { "/tv": "TV" } });
+    apiMock.updateInstance.mockResolvedValue(saved);
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <ServiceModal kind="sonarr" instance={saved} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+
+    await user.click(screen.getByLabelText("Check the server's certificate"));
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(document.querySelector("#service-blocked")).toBeNull();
   });
 });

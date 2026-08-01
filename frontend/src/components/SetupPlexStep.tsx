@@ -180,7 +180,7 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
   // it does in Settings. Reading it with a plain query was the whole of #384: this step renders
   // only once Plex is linked, and it showed an empty Libraries grid on every fresh install
   // while telling the service editor's pickers there were no libraries to offer.
-  const { libraries } = usePlexLibraries();
+  const { libraries, sync: syncLibraries } = usePlexLibraries();
 
   const [manualOpen, setManualOpen] = useState(false);
   const [host, setHost] = useState("");
@@ -364,10 +364,16 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
         The libraries Reaper may touch in Plex. Leaving Soon shelves are managed only in libraries
         you turn on. This doesn't change what gets scanned: scanning reads from Radarr and Sonarr.
       </p>
-      {libraries.isPending ? (
+      {libraries.isPending || syncLibraries.isPending ? (
         <p className="muted">Loading libraries…</p>
       ) : libraries.isError && !libraries.data ? (
         <Notice tone="error">Couldn't load the library list.</Notice>
+      ) : syncLibraries.isError && libs.length === 0 ? (
+        /* The read landed empty and the sync that would fill it failed, which is what an
+           unlinked or unreachable Plex answers. Without this the step drew an empty grid and
+           said nothing at all, so "no libraries" and "we never got to look" were the same
+           picture (rule 17/36, rule 93). */
+        <Notice tone="error">Couldn't load the library list. Try again.</Notice>
       ) : (
         <>
           {libraries.isError && <StaleReadNotice what="the library list" />}

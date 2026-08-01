@@ -240,21 +240,29 @@
   background: var(--hover);
   border-color: var(--protect);
 }
-/* The name. All the chrome lives on the chip around it, so this is a bare hit area for the
-   text -- the control standard's box would draw a second border inside the pill. */
+/* The name EDITS this instance and the ✕ FORGETS it: two different outcomes, flush against
+   each other, so both have to reach --tap-min or a thumb aimed at one lands on the other. The
+   same rule `.fchip-body` / `.fchip-x` states for the identical pill in the queue's filter bar,
+   and `.tag-chip button` for the keep-tag chips. All the chrome lives on the chip around these,
+   so they are bare hit areas: the control standard's box would draw a second border inside the
+   pill. */
 .inst-chip .chip-edit,
 .inst-chip .chip-x {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-min);
   font: inherit;
   color: inherit;
   background: none;
   border: 0;
-  padding: 0;
-  min-height: 0;
+  padding: 0 0.15rem;
   cursor: pointer;
   overflow-wrap: anywhere;
 }
 .inst-chip .chip-x {
-  padding: 0 0.25rem;
+  justify-content: center;
+  min-width: var(--tap-min);
+  padding: 0;
   border-radius: 999px;
   color: var(--muted);
   font-weight: 700;
@@ -451,4 +459,11 @@
   .stepper li:not(.now) .step-label {
     display: none;
   }
+}
+
+/* A refused remove, inside the row whose chip it is about. The row is a three-column grid, so
+   this takes the full width under the chips rather than squeezing into the action column. */
+.conn-row .conn-row-error {
+  grid-column: 1 / -1;
+  margin: 0.4rem 0 0;
 }

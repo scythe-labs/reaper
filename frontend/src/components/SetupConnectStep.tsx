@@ -19,8 +19,9 @@
 // existing install meets it before doing the work it replaces rather than after (#385).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 import { announce } from "../announce";
+import { useSuccessorFocus } from "../focus";
 import { api, type Instance, type SetupStatus } from "../api";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
@@ -72,6 +73,11 @@ export function SetupConnectStep({
   const [confirmRemove, setConfirmRemove] = useState<number | null>(null);
 
   const queryClient = useQueryClient();
+  // Removing a chip unmounts the pressed control, and it is `disabled` while the write is in
+  // flight, so focus is already at `<body>` before the unmount (#173). Without this the next Tab
+  // restarts at the top of the document. It lands on the row's Add button, which is the one
+  // thing left to do there -- the same landing the services panel's own Remove uses (rule 72).
+  const afterRemove = useSuccessorFocus();
   const remove = useMutation({
     mutationFn: (id: number) => api.deleteInstance(id),
     // The chip vanishes, and an absence cannot be perceived by ear -- the same asymmetry the
@@ -87,6 +93,14 @@ export function SetupConnectStep({
   });
 
   const of = (kind: string) => (instances ?? []).filter((i) => i.kind === kind);
+
+  /** The remove failure, but only for the row that owns the instance it was about.
+   *
+   *  `remove.variables` is the id the last press sent. Without narrowing on it the one failure
+   *  printed under every kind's row at once, so three rows claimed a removal nobody attempted
+   *  there -- and the sentence names no instance, so there is nothing in it to tell them apart. */
+  const removeErrorFor = (rows: Instance[]): Error | null =>
+    remove.error && rows.some((i) => i.id === remove.variables) ? remove.error : null;
 
   /** The name a new instance of this kind arrives with, stepping past the ones already taken
    *  so a second Radarr does not open on a name that will collide. */
@@ -125,8 +139,13 @@ export function SetupConnectStep({
                 onAdd={() => setEditing({ kind: k.value, instance: null })}
                 onEdit={(i) => setEditing({ kind: k.value, instance: i })}
                 confirming={confirmRemove}
+                addRef={afterRemove.ref}
+                removeError={removeErrorFor(of(k.value))}
                 onAskRemove={setConfirmRemove}
-                onRemove={(i) => remove.mutate(i.id)}
+                onRemove={(i) => {
+                  afterRemove.arriving();
+                  remove.mutate(i.id);
+                }}
                 removing={remove.isPending}
               />
             ))}
@@ -144,20 +163,18 @@ export function SetupConnectStep({
                 onAdd={() => setEditing({ kind: k.value, instance: null })}
                 onEdit={(i) => setEditing({ kind: k.value, instance: i })}
                 confirming={confirmRemove}
+                addRef={afterRemove.ref}
+                removeError={removeErrorFor(of(k.value))}
                 onAskRemove={setConfirmRemove}
-                onRemove={(i) => remove.mutate(i.id)}
+                onRemove={(i) => {
+                  afterRemove.arriving();
+                  remove.mutate(i.id);
+                }}
                 removing={remove.isPending}
               />
             ))}
           </div>
         </>
-      )}
-
-      {/* Every async onClick is a mutation with a rendered failure (rule 17/36). Without this a
-          refused remove left the chip on screen and said nothing, which reads as "it worked and
-          came back". */}
-      {remove.error && (
-        <Notice tone="error">Couldn't remove that connection: {remove.error.message}</Notice>
       )}
 
       {!ready && instances && (
@@ -221,9 +238,11 @@ function ConnRow({
   onAdd,
   onEdit,
   confirming,
+  addRef,
   onAskRemove,
   onRemove,
   removing,
+  removeError,
 }: {
   kind: (typeof KINDS)[number];
   rows: Instance[];
@@ -233,9 +252,15 @@ function ConnRow({
   /** The instance id currently asking to be confirmed, or null. Held by the step rather than
    *  per row, so opening one confirm closes any other. */
   confirming: number | null;
+  /** Where focus lands once a removed chip takes the pressed control with it. */
+  addRef: RefObject<HTMLElement | null>;
   onAskRemove: (id: number | null) => void;
   onRemove: (i: Instance) => void;
   removing: boolean;
+  /** A refused remove, rendered inside the row that owns it rather than below every row: the
+   *  chip it is about is still on screen here, and the services panel's twin is inline in the
+   *  card for the same reason (rule 42, rule 72). */
+  removeError: Error | null;
 }) {
   const connected = rows.length > 0;
   // A singleton that already has one offers no second, and its slot collapses rather than
@@ -270,7 +295,7 @@ function ConnRow({
                     // Says what removing does and does not touch, the same promise the services
                     // panel's own Remove makes.
                     title="Only forgets it in Reaper. Nothing is changed in the service itself."
-                    aria-label={`Confirm remove ${i.name}`}
+                    aria-label={removing ? `Removing…, ${i.name}` : `Confirm remove ${i.name}`}
                     onClick={() => onRemove(i)}
                   >
                     {removing ? "Removing…" : "Remove"}
@@ -324,11 +349,24 @@ function ConnRow({
         )}
       </div>
       {canAdd ? (
-        <button type="button" className={connected ? "conn-add" : ""} onClick={onAdd}>
+        <button
+          type="button"
+          ref={addRef as RefObject<HTMLButtonElement | null>}
+          className={connected ? "conn-add" : ""}
+          onClick={onAdd}
+        >
           {connected ? "+ Add another" : "Connect"}
         </button>
       ) : (
         <span />
+      )}
+      {/* Every async onClick is a mutation with a rendered failure (rule 17/36). Silence here
+          leaves the chip on screen saying nothing, which reads as "it worked and came back".
+          Spans the row's whole width, under the chips it is about. */}
+      {removeError && (
+        <Notice tone="error" className="conn-row-error">
+          Couldn't remove that connection: {removeError.message}
+        </Notice>
       )}
     </div>
   );

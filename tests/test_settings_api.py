@@ -1572,7 +1572,16 @@ class TestConnectionTestCarriesTheMapping:
         # not /rootfolder.
         assert body["ok"] is True
         assert body["root_folders"] == []
-        assert "connection reset" in body["map_error"]
+        # Plain language, not the raw exception. Pasting `str(exc)` put "radarr: connection
+        # reset" in front of someone trying to get a URL and a key right -- the exact string
+        # shape `explain_failure` exists to prevent, on the one path that had not been given it.
+        assert "couldn't read what to map" in body["map_error"]
+        assert "connection reset" not in body["map_error"]
+        assert body["map_error"].endswith(
+            instances_service.explain_failure(
+                InstanceKind.RADARR, IntegrationError("radarr", "connection reset")
+            )
+        )
 
     def test_a_seerr_test_returns_the_portals_services(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

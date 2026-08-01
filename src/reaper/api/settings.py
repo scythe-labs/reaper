@@ -716,8 +716,18 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOu
                 for s in services
             ]
     except (IntegrationError, instances.InstanceError) as exc:
-        log.warning("instance.map_probe_failed", kind=kind.value, error=str(exc))
-        out.map_error = f"Reaper reached this service but couldn't read what to map: {exc}"
+        # The raw exception stays in the log, where a diagnosis needs it, and what the operator
+        # is shown is the same plain-language translation the test's own failure gets. Pasting
+        # `str(exc)` here put "radarr: HTTP 500 for GET /api/v3/rootfolder" in front of someone
+        # trying to get a URL and a key right -- the exact string shape `explain_failure` exists
+        # to prevent, on the one path that had not been given it (rule 21, rule 72).
+        log.warning(
+            "instance.map_probe_failed", kind=kind.value, error=f"{type(exc).__name__}: {exc}"
+        )
+        out.map_error = (
+            f"Reaper reached this service but couldn't read what to map. "
+            f"{instances.explain_failure(kind, exc)}"
+        )
     return out
 
 
@@ -1128,10 +1138,16 @@ async def _sync_libraries_after_link(request: Request) -> None:
     Both callers have a manual Sync button behind them and ``PlexPanel`` re-syncs an empty list
     on sight, so the recovery path is the one that already existed.
     """
+    # Deliberately every exception, because the promise above is unconditional and the two named
+    # families were not the whole surface: `_sync_libraries` also decrypts the stored token, writes
+    # and commits, and closes the client in a `finally`. An `InvalidToken` or a locked database
+    # would have come out of `plex_link_poll` as a 500 -- after the pin was already consumed and
+    # the server already linked, which is precisely the stranded sign-in the poll route's own
+    # comment is written to avoid. A docstring saying "never raises" has to be true (rule 7/24).
     try:
         await _sync_libraries(request)
-    except (PlexError, HTTPException) as exc:
-        log.warning("plex.libraries_autosync_failed", error=str(exc))
+    except Exception as exc:
+        log.warning("plex.libraries_autosync_failed", error=f"{type(exc).__name__}: {exc}")
 
 
 @router.post("/plex/libraries/sync", tags=[api_tags.PLEX])

@@ -1554,8 +1554,12 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # because `canClose` is a mute gate and a dismissal that silently does nothing is worse than one
 # that says why. The fourth is a removal refused on the Connect step, which is new because the
 # step had no Remove until now.
+# Then 135, from the review of that change: a folder probe that failed while the grid it would
+# have refreshed is still on screen (and its Seerr twin), and a Plex library list whose SYNC
+# failed -- three states that each used to render as a positive claim about a service or a
+# server nobody reached.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 132
+_EXPECTED_NOTICES = 135
 
 
 def _shipped_tsx() -> list[Path]:
@@ -1831,10 +1835,17 @@ _QUERY_FAILURE_HANDLES = {
     # "we could not look" branch is the same handle it always had, now in its own module so
     # the wizard states the regime from the same declaration.
     "frontend/src/components/SafetyBanner.tsx": 1,
-    "frontend/src/components/ServiceModal.tsx": 6,
+    # 6 -> 7: the library pickers now consult the SYNC's failure as well as the query's. A read
+    # that lands empty while the sync that would fill it fails is the ordinary answer when Plex
+    # is not linked at all, and with only the query consulted the panel stated as fact that the
+    # server holds no libraries of this kind -- about a server nobody reached.
+    "frontend/src/components/ServiceModal.tsx": 7,
     "frontend/src/components/Settings.tsx": 8,
     "frontend/src/components/SetupConnectStep.tsx": 1,
-    "frontend/src/components/SetupPlexStep.tsx": 1,
+    # 1 -> 2: the same sync failure, on the step that renders the Libraries grid. It drew an
+    # empty grid and said nothing at all, so "no libraries" and "we never got to look" were one
+    # picture (rule 93).
+    "frontend/src/components/SetupPlexStep.tsx": 2,
     # Whether a restore is already armed. Never-loaded only: the modal mounts on the press and
     # holds no earlier good answer to keep, and falling through to the idle card would invite an
     # upload on top of a restore already staged.

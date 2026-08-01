@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """What a failed connection test tells the operator.
 
-``_explain_failure`` is the first screen a new operator sees when a URL or a key is
+``explain_failure`` is the first screen a new operator sees when a URL or a key is
 wrong, and its correctness is almost entirely a matter of *branch order*: certificate
 failures arrive wrapped in a ``ConnectError`` (so the SSL check has to be read first),
 ``ssl.SSLCertVerificationError`` is itself a ``ValueError`` (so it has to be read before
@@ -33,10 +33,10 @@ from reaper.services.instances import (
     _GENERIC_FAILURE,
     _causes,
     _encode_service_instance_map,
-    _explain_failure,
     _host_port,
     _suggest_instance,
     decode_service_instance_map,
+    explain_failure,
 )
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
@@ -246,14 +246,14 @@ CASES: list[tuple[str, InstanceKind, BaseException, str]] = [
     [(kind, exc, expected) for _name, kind, exc, expected in CASES],
     ids=[name for name, _kind, _exc, _expected in CASES],
 )
-def test_explain_failure_sentence(kind: InstanceKind, exc: BaseException, expected: str) -> None:
-    assert _explain_failure(kind, exc) == expected
+def testexplain_failure_sentence(kind: InstanceKind, exc: BaseException, expected: str) -> None:
+    assert explain_failure(kind, exc) == expected
 
 
 def test_no_failure_message_recommends_skipping_verification_except_the_safe_one() -> None:
     """Only the unknown-authority case may offer the "turn off the check" remedy."""
     for name, kind, exc, _expected in CASES:
-        sentence = _explain_failure(kind, exc)
+        sentence = explain_failure(kind, exc)
         if sentence == SELF_SIGNED:
             continue
         assert "certificate check" not in sentence, name
@@ -261,7 +261,7 @@ def test_no_failure_message_recommends_skipping_verification_except_the_safe_one
 
 def test_failure_copy_has_no_em_dashes() -> None:
     for name, kind, exc, _expected in CASES:
-        assert "—" not in _explain_failure(kind, exc), name
+        assert "—" not in explain_failure(kind, exc), name
 
 
 def test_causes_follows_implicit_context() -> None:

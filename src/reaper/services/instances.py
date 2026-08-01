@@ -499,7 +499,7 @@ def _self_signed(chain: list[BaseException]) -> bool:
     )
 
 
-def _explain_failure(kind: InstanceKind, exc: BaseException) -> str:
+def explain_failure(kind: InstanceKind, exc: BaseException) -> str:
     """One plain sentence an operator can act on, for the families we can recognize.
 
     Everything else falls through to :data:`_GENERIC_FAILURE`; the raw exception is
@@ -639,7 +639,7 @@ async def test_connection(
         client = _client(kind, base_url, api_key, verify=verify, api_path_prefix=api_path_prefix)
     except Exception as exc:  # a malformed URL, say
         log.warning("instance.test_failed", kind=kind.value, stage="build", error=str(exc))
-        return TestResult(ok=False, detail=_explain_failure(kind, exc))
+        return TestResult(ok=False, detail=explain_failure(kind, exc))
 
     try:
         async with client:
@@ -657,7 +657,7 @@ async def test_connection(
             # /status needs no key, so it passes even with a wrong one. Probe an
             # authenticated route too, so a rejected key fails the test here instead of
             # going quiet and surfacing later as a scan warning with the requester signal
-            # dark. A 401/403 lands in _explain_failure's key-refused branch.
+            # dark. A 401/403 lands in explain_failure's key-refused branch.
             await client.requests(take=1)  # type: ignore[attr-defined]
             return TestResult(ok=True, detail="Connected to Seerr.", version=version)
     except Exception as exc:  # network/TLS/timeout/HTTP -- report, don't crash the request
@@ -669,7 +669,7 @@ async def test_connection(
             stage="request",
             error=f"{type(exc).__name__}: {exc}",
         )
-        return TestResult(ok=False, detail=_explain_failure(kind, exc))
+        return TestResult(ok=False, detail=explain_failure(kind, exc))
 
 
 async def test_saved_instance(
