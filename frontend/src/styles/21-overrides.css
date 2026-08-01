@@ -56,15 +56,15 @@
   color: var(--condemn);
 }
 .override-mark .mk-inf {
-  font-weight: 700;
-  font-size: 1.2rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xl);
   line-height: 1;
 }
 /* A timed spare rests as the clock plus its days left ("27d") -- the forever spare's ∞ made
    finite. Same protect green: still "kept", just for now. */
 .override-mark .mk-count {
-  font-size: 0.78rem;
-  font-weight: 700;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -103,10 +103,10 @@
 .ov-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-xs);
   padding: 0.28rem 0.55rem;
-  font-size: 0.8rem;
-  font-weight: 550;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
   border-radius: 6px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
@@ -150,7 +150,7 @@
   background: color-mix(in srgb, var(--protect) 15%, var(--surface));
   border-color: color-mix(in srgb, var(--protect) 55%, transparent);
   color: var(--protect);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .ov-spare:hover:not(:disabled) {
   background: color-mix(in srgb, var(--protect) 24%, var(--surface));
@@ -298,7 +298,7 @@
   min-width: 0;
   height: 2.75rem;
   padding: 0 0.9rem;
-  font-size: 0.92rem;
+  font-size: var(--text-base);
 }
 .why-actions .override-controls .split-caret {
   width: 2.4rem;
@@ -313,18 +313,18 @@
    overflow:hidden cannot clip it; styled on the filter-menu pattern so it reads as one of the
    app's own popovers. */
 .dur-menu {
-  z-index: 100;
+  z-index: var(--z-menu);
   width: 224px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   padding: 0.3rem;
-  font-size: 0.88rem;
+  font-size: var(--text-md);
 }
 .dur-head {
-  font-size: 0.66rem;
-  font-weight: 700;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
@@ -358,7 +358,7 @@
   color: var(--protect);
 }
 .dur-mi .mi-glyph .infinity {
-  font-size: 0.95rem;
+  font-size: var(--text-base);
 }
 .dur-mi .mi-pen {
   color: var(--muted);
@@ -367,14 +367,14 @@
   flex: 1 1 auto;
 }
 .dur-mi .mi-tag {
-  font-size: 0.62rem;
-  font-weight: 700;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--accent-text);
   background: var(--accent-soft);
   border: 1px solid var(--accent-ring);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0.05rem 0.4rem;
 }
 .dur-div {
@@ -390,15 +390,15 @@
    one instead of an undo. */
 .dur-clear {
   border-top: 1px solid var(--border);
-  margin-top: 0.25rem;
-  padding-top: 0.5rem;
+  margin-top: var(--space-xs);
+  padding-top: var(--space-md);
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   color: var(--muted);
 }
 .dur-custom {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
   padding: 0.35rem 0.55rem 0.45rem;
 }
 .dur-spare-go {
@@ -407,8 +407,8 @@
   color: var(--protect-soft);
   border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
   padding: 0.34rem 0.7rem;
   cursor: pointer;
 }

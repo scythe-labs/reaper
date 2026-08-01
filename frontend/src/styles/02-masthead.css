@@ -7,7 +7,7 @@
 .masthead {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: var(--space-3xl);
   /* The brand and the user menu keep this gap above the border; .views alone gives it back with
      a negative margin, so only the rail touches the rule its cut is drawn on (.views, below). */
   padding: 0.35rem 0 var(--masthead-pad-b);
@@ -17,7 +17,7 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   min-width: 0;
 }
 /* The mark's figure is the page's own text color and its EYES are the raw --accent, drawn by
@@ -41,12 +41,12 @@
   min-width: 0;
 }
 .brand-word {
-  font-weight: 700;
-  font-size: 1.1rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xl);
   letter-spacing: -0.02em;
 }
 .brand-sub {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
 }
 
 /* One pill segmented-control track, shared by the review queue's list switcher (.tabs) and the
@@ -61,10 +61,10 @@
 .tabs,
 .segmented {
   display: flex;
-  gap: 0.15rem;
+  gap: var(--space-2xs);
   padding: 0.2rem;
   background: var(--surface-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 /* The section rail. `align-self: stretch` + `align-items: flex-end` put every button's bottom edge
@@ -77,7 +77,7 @@
   display: flex;
   align-items: flex-end;
   align-self: stretch;
-  gap: 0.15rem;
+  gap: var(--space-2xs);
   margin: 0 auto calc(-1 * var(--masthead-pad-b));
 }
 
@@ -88,8 +88,8 @@
   border-radius: 0;
   color: var(--muted);
   padding: 0.5rem 0.75rem 0.85rem;
-  font-size: 0.92rem;
-  font-weight: 500;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
 }
 .view-tab:hover:not(:disabled) {
   background: transparent;
@@ -98,7 +98,7 @@
 }
 .view-tab.active {
   color: var(--text);
-  font-weight: 650;
+  font-weight: var(--weight-semi);
 }
 /* The cut: the active section's segment of the masthead border, drawn over it. Scaled rather
    than width-animated so it grows from the middle of its own label and never reflows. */
@@ -126,7 +126,7 @@
   height: 0;
   overflow: hidden;
   visibility: hidden;
-  font-weight: 650;
+  font-weight: var(--weight-semi);
 }
 
 /* The box the safety dot hangs off: whichever of the icon and the label is showing at this

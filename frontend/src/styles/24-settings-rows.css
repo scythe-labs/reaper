@@ -28,7 +28,7 @@
 .switch .slider {
   position: absolute;
   inset: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg);
   border: 1px solid var(--border-strong);
   pointer-events: none;
@@ -78,17 +78,17 @@
   margin-top: 1.7rem;
 }
 .set-group > h3 {
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
-  margin: 0 0 0.35rem;
+  margin: 0 0 var(--space-sm);
 }
 .set-group > .group-blurb {
   color: var(--muted);
-  font-size: 0.85rem;
-  margin: 0 0 0.7rem;
+  font-size: var(--text-md);
+  margin: 0 0 var(--space-xl);
   max-width: 72ch;
 }
 
@@ -108,7 +108,7 @@
      inert, because 100% of a shrink-to-fit parent resolves back to the content width, which is
      why a phone never showed a full-width field either. */
   grid-template-columns: minmax(0, 1fr) minmax(0, var(--set-control-w));
-  gap: 0.25rem 1.5rem;
+  gap: var(--space-xs) var(--space-5xl);
   align-items: center;
   padding: 0.85rem 1.1rem;
 }
@@ -118,8 +118,8 @@
 .set-row .set-label {
   grid-column: 1;
   grid-row: 1;
-  font-weight: 600;
-  font-size: 0.92rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
 }
 .set-row .help {
   grid-column: 1;
@@ -139,7 +139,7 @@
   justify-content: flex-end;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
   /* The box may shrink below its contents. A flex container's floor is `auto`, so without this
      a long <option> sets a min-content the track has to honor (see the 640px block). */
   min-width: 0;
@@ -279,7 +279,7 @@
 .presets {
   display: flex;
   gap: 0.45rem;
-  margin-top: 0.6rem;
+  margin-top: var(--space-lg);
 }
 .preset-dot {
   width: 1.5rem;
@@ -296,35 +296,35 @@
 .accent-preview {
   display: flex;
   align-items: center;
-  gap: 0.85rem;
+  gap: var(--space-2xl);
   flex-wrap: wrap;
   margin-top: 0.75rem;
-  padding: 0.7rem 0.85rem;
+  padding: var(--space-xl) var(--space-2xl);
   background: var(--surface-2);
   border-radius: var(--radius);
 }
 .accent-preview .pv-label {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--muted);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .set-row.set-status {
   grid-template-columns: minmax(0, 1fr);
   padding: 0.6rem 1.1rem;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
 .set-row .set-control input,
 .set-row .set-control select {
-  padding: 0.42rem 0.6rem;
+  padding: var(--control-pad);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: var(--text-md);
   /* A long value (a plex.direct hostname, say) must not squeeze the label column
      into a sliver: the control caps and ellipsizes, the full value stays readable
      in the dropdown itself. The cap is the track width, so a cluster row -- which keeps a
@@ -442,33 +442,33 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 0.6rem;
+  margin-bottom: var(--space-lg);
 }
 .lib-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
-  gap: 0.6rem;
+  gap: var(--space-lg);
 }
 .lib-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   padding: 0.65rem 0.85rem;
-  font-weight: 600;
-  font-size: 0.9rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
   /* The library's name is whatever the operator called it in Plex, in a fixed grid track that
      cannot widen to hold it (rule 139). */
   overflow-wrap: anywhere;
 }
 .lib-card .lib-kind {
   display: block;
-  font-weight: 500;
-  font-size: 0.72rem;
+  font-weight: var(--weight-medium);
+  font-size: var(--text-xs);
   color: var(--muted);
   margin-top: 0.05rem;
 }
@@ -481,7 +481,7 @@
   display: grid;
   grid-template-columns: 11rem minmax(0, 1fr);
   gap: 0.55rem 1.1rem;
-  font-size: 0.92rem;
+  font-size: var(--text-base);
   padding: 1rem 1.1rem;
   margin: 0;
 }
@@ -499,7 +499,7 @@
     gap: 0.1rem;
   }
   .about-kv dd {
-    margin-bottom: 0.5rem;
+    margin-bottom: var(--space-md);
   }
 }
 
@@ -509,7 +509,7 @@
   display: grid;
   grid-template-columns: 9rem minmax(0, 1fr);
   gap: 0.45rem 1.1rem;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   margin: 0.9rem 0 0;
 }
 .backup-facts dt {
@@ -542,18 +542,18 @@
   padding: 1.1rem 1rem;
   text-align: center;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 .dropzone-over {
   border-color: var(--accent);
   border-style: solid;
 }
 .dropzone .dz-hint {
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 
@@ -567,13 +567,13 @@
 .chosen-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.7rem 0.85rem;
+  gap: var(--space-lg);
+  padding: var(--space-xl) var(--space-2xl);
   border-bottom: 1px solid var(--border);
 }
 .chosen-file {
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 .chosen-x {
@@ -582,13 +582,13 @@
 .chosen-body {
   padding: 0.75rem 0.85rem;
   display: grid;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 .kv2 {
   display: grid;
   grid-template-columns: 8rem minmax(0, 1fr);
   gap: 0.3rem 1rem;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 .kv2 span:first-child {
   color: var(--muted);
@@ -598,8 +598,8 @@
   align-items: center;
   gap: 0.4rem;
   color: var(--protect);
-  font-size: 0.85rem;
-  font-weight: 550;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semi);
 }
 .verdict-ok .dot {
   width: 1.05rem;
@@ -610,24 +610,24 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.7rem;
-  font-weight: 800;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   flex: none;
 }
 
 /* The password field rides the shared control standard (.field-sm); only its width differs. */
 .restore-pw {
-  margin-top: 0.85rem;
+  margin-top: var(--space-2xl);
   max-width: 22rem;
 }
 .restore-when {
-  margin-top: 0.5rem;
+  margin-top: var(--space-md);
 }
 
 /* The armed prompt is a warn notice that carries its Cancel affordance on the right. */
 .restore-armed {
   display: flex;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;

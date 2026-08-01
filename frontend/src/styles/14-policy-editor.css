@@ -7,9 +7,9 @@
 .editor {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 440px);
-  gap: 2rem;
+  gap: var(--space-6xl);
   align-items: start;
-  margin-top: 1.25rem;
+  margin-top: var(--space-4xl);
 }
 /* `minmax(0, ...)`, not a bare `1fr`: `1fr` means `minmax(auto, 1fr)`, and that `auto` floors
    the column at its widest child's min-content. One un-shrinkable control inside (the preset
@@ -32,7 +32,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-3xl);
   flex-wrap: wrap;
   padding: 0.8rem 1rem 0.85rem 1.05rem;
   border: 1px solid var(--pc-edge);
@@ -57,7 +57,7 @@
 .pc-left {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: var(--space-2xs);
   min-width: 0;
 }
 .pc-title {
@@ -67,13 +67,13 @@
   flex-wrap: wrap;
 }
 .policy-context h2 {
-  font-size: 1.15rem;
+  font-size: var(--text-xl);
   margin: 0;
 }
 /* The blurb, moved under the title inside the band: only top spacing, no big trailing
    margin the standalone .blurb carries. */
 .pc-sub {
-  margin: 0.25rem 0 0;
+  margin: var(--space-xs) 0 0;
 }
 
 .field {
@@ -89,15 +89,15 @@
 .field-label,
 .pace-matrix .row-h,
 .pace-extra .ex-label {
-  font-size: 0.8rem;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   color: var(--muted);
 }
 .field-label {
   display: flex;
   justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xs);
 }
 /* The value read-out a policy slider parks on the right stays at full strength, so the number
    the owner is dragging reads louder than its muted caption. */
@@ -111,7 +111,7 @@
 }
 .help {
   display: block;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   margin-top: 0.2rem;
   max-width: 58ch;
@@ -121,51 +121,51 @@
    its control (a value+unit picker, a rating box, or a weight slider). */
 .rule-list {
   list-style: none;
-  margin: 0.5rem 0 1.25rem;
+  margin: var(--space-md) 0 var(--space-4xl);
   padding: 0;
 }
 .rule-row {
-  padding: 0.7rem 0;
+  padding: var(--space-xl) 0;
   border-bottom: 1px solid var(--border);
 }
 .rule-row:last-child {
   border-bottom: none;
 }
 .rule-toggle {
-  font-weight: 550;
+  font-weight: var(--weight-semi);
 }
 .rule-name {
-  font-size: 0.92rem;
-  font-weight: 550;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semi);
   color: var(--text);
 }
 .rule-name-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 .rule-strength {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   font-variant: small-caps;
   letter-spacing: 0.02em;
 }
 .rule-help {
-  margin: 0.25rem 0 0;
+  margin: var(--space-xs) 0 0;
 }
 .rule-control {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
+  margin-top: var(--space-md);
+  font-size: var(--text-md);
   color: var(--muted);
 }
 /* Rule-row controls sit on the same standard as every other box in the app. */
 .rule-control input[type="number"] {
   width: 5rem;
-  padding: 0.42rem 0.6rem;
+  padding: var(--control-pad);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -175,7 +175,7 @@
 }
 .rule-control select,
 .bar-foot select {
-  padding: 0.42rem 0.6rem;
+  padding: var(--control-pad);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -189,7 +189,7 @@
 }
 .rule-row input[type="range"] {
   width: 100%;
-  margin-top: 0.5rem;
+  margin-top: var(--space-md);
   accent-color: var(--accent);
 }
 
@@ -202,14 +202,14 @@
   column-gap: 0.8rem;
   row-gap: 0.55rem;
   align-items: center;
-  margin-top: 0.6rem;
+  margin-top: var(--space-lg);
 }
 .bar-line {
   display: contents;
 }
 .bar-src {
-  font-weight: 600;
-  font-size: 0.9rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
   white-space: nowrap;
 }
 .bar-set {
@@ -217,7 +217,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 0.45rem;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   color: var(--muted);
 }
 .bar-x {
@@ -228,9 +228,9 @@
   justify-content: center;
   background: none;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--muted);
-  font-size: 1rem;
+  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
 }
@@ -246,7 +246,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   flex-wrap: wrap;
   margin-top: 0.8rem;
 }
@@ -271,17 +271,17 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
-  margin-top: 0.5rem;
+  margin-top: var(--space-md);
 }
 .condition-add select,
 .condition-add input {
-  padding: 0.42rem 0.6rem;
+  padding: var(--control-pad);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 .condition-add :is(select, input):focus {
   outline: 2px solid var(--accent);
@@ -301,8 +301,8 @@
 .season-card {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  padding: 1rem 1.25rem 1.25rem;
-  margin-top: 1.25rem;
+  padding: var(--space-3xl) var(--space-4xl) var(--space-4xl);
+  margin-top: var(--space-4xl);
 }
 .rules-card > h3,
 .season-card > h3 {
@@ -313,7 +313,7 @@
 .card-head {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
 }
 .rules-table {
   border: 1px solid var(--border);
@@ -327,7 +327,7 @@
   align-items: center;
   gap: 0.9rem;
   padding: 0.55rem 0.85rem;
-  font-size: 0.86rem;
+  font-size: var(--text-md);
 }
 .rules-row + .rules-row {
   border-top: 1px solid var(--border);
@@ -337,17 +337,17 @@
 }
 .rules-weight-remove {
   color: var(--condemn);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
 }
 .rules-weight-keep {
   color: var(--protect);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
 }
 .rules-add {
-  margin-top: 0.5rem;
+  margin-top: var(--space-md);
 }
 .rules-add .segmented {
-  margin-bottom: 0.6rem;
+  margin-bottom: var(--space-lg);
 }
 /* Sentence rows: rule as a sentence, its effect, and a remove button. No pill column --
    the card's lane already says which way the rule points. */
@@ -379,13 +379,13 @@
   position: absolute;
   top: calc(100% + 4px);
   left: var(--pop-shift, 0px);
-  z-index: 30;
+  z-index: var(--z-nav);
   min-width: 100%;
   max-width: min(20rem, calc(100vw - 1.5rem));
   max-height: 14rem;
   overflow-y: auto;
   margin: 0;
-  padding: 0.25rem;
+  padding: var(--space-xs);
   list-style: none;
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -395,7 +395,7 @@
 .suggest-opt {
   padding: 0.3rem 0.55rem;
   border-radius: 5px;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -405,7 +405,7 @@
   background: var(--hover);
 }
 .rule-kind {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--muted);

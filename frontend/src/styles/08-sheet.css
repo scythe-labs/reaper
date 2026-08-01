@@ -7,7 +7,7 @@
 .sheet-scrim {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--z-overlay);
   background: var(--scrim);
   opacity: 0;
   pointer-events: none;
@@ -42,16 +42,16 @@
 .sheet-grip {
   width: 42px;
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--border-strong);
-  margin: 0 auto 1rem;
+  margin: 0 auto var(--space-3xl);
 }
 .sheet h2 {
   text-align: center;
 }
 .sheet-blurb {
   text-align: center;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   margin: 0 auto 1.2rem;
   max-width: 34ch;
 }
@@ -63,7 +63,7 @@
    width is this sheet's own. */
 .local-form input {
   width: 100%;
-  padding: 0.42rem 0.6rem;
+  padding: var(--control-pad);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -76,7 +76,7 @@
 }
 .sheet-actions {
   display: flex;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   margin-top: 1.2rem;
 }
 .sheet-actions .primary {

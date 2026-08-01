@@ -95,9 +95,100 @@
      -- so no forced-theme block below restates it. */
   --scrim: rgba(8, 9, 12, 0.55);
 
+  /* THE TYPE SCALE. Nine steps, and every `font-size` in these files is one of them.
+
+     They are written in `rem`, whose root is 16px, while `body` is 15px (01-base.css). So
+     `1rem` names a size the app never uses, and before these tokens existed the only way to
+     ask for "the same size as body text" was to guess at the ratio: six values landed inside
+     1.3px of each other, and 0.8rem and 0.82rem -- 0.32px apart -- were each written 36 times
+     as two authors' word for "small". `--text-base` is that size, spelled once.
+
+     Steps are anchored on the values already carrying the most weight rather than on a ratio,
+     so adopting them moved 79% of declarations less than half a pixel. Sizing something new:
+     pick the step, never a number between two of them. A size that genuinely has no step is a
+     case for changing the scale, in its own commit, not for a literal. */
+  --text-2xs: 0.625rem; /* 10.0px  tiny tags, diagram labels */
+  --text-xs: 0.72rem; /*   11.5px  chips, badges, legends */
+  --text-sm: 0.8rem; /*    12.8px  meta lines, section headings */
+  --text-md: 0.86rem; /*   13.8px  secondary text, help, notices */
+  --text-base: 0.9375rem; /* 15px  body -- matches the `body` rule in 01-base.css (rule 67) */
+  --text-lg: 1.05rem; /*   16.8px  panel headings */
+  --text-xl: 1.15rem; /*   18.4px  page titles */
+  --text-2xl: 1.5rem; /*     24px  setup, big stats */
+  --text-3xl: 1.7rem; /*   27.2px  hero numbers */
+
+  /* THE WEIGHT SCALE. Four steps, and every `font-weight` is one of them.
+
+     There were twelve, seven of which (450, 520, 550, 560, 620, 640, 650) render as authored
+     only where the platform's UI font is variable -- SF on Apple, Segoe UI Variable on Win11.
+     On a static face (Segoe UI on Win10, older Roboto) CSS font matching snaps them, so 550
+     and 600 came out identical and 650 came out bold: the distinctions were real on the
+     machine they were written on and invisible on most of the machines running Reaper. Four
+     steps render the same everywhere. */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semi: 600;
+  --weight-bold: 700;
+
+  /* THE SPACE SCALE, and the one scale that is only partly adopted -- deliberately, so read
+     this before "finishing" it.
+
+     Spacing here is a continuum, not a scale: 0.3 / 0.35 / 0.4 / 0.45 / 0.5 / 0.55 / 0.6rem
+     are all heavily used and 0.8px apart, and no set of steps collapses them without moving
+     pixels on every screen at once. So these eleven steps were adopted ONLY where a
+     declaration already sat exactly on one -- about half of them, at zero visual change. The
+     rest are still literals, and that is the honest state: a literal here means "nobody has
+     judged this one yet", not "this is deliberate".
+
+     `tests/test_repo_hygiene.py` ratchets the off-scale count so it can only fall. Snapping a
+     literal to its nearest step is a visual change and wants an eye on it, a file at a time.
+     Anything NEW uses a step. */
+  --space-2xs: 0.15rem; /*  2.4px */
+  --space-xs: 0.25rem; /*   4.0px */
+  --space-sm: 0.35rem; /*   5.6px */
+  --space-md: 0.5rem; /*    8.0px */
+  --space-lg: 0.6rem; /*    9.6px */
+  --space-xl: 0.7rem; /*   11.2px */
+  --space-2xl: 0.85rem; /* 13.6px */
+  --space-3xl: 1rem; /*    16.0px */
+  --space-4xl: 1.25rem; /*  20.0px */
+  --space-5xl: 1.5rem; /*   24.0px */
+  --space-6xl: 2rem; /*     32.0px */
+
   --radius-sm: 7px;
   --radius: 11px;
   --radius-lg: 18px;
+  /* Every pill in the app -- chips, tabs, tags, the segmented control. Was written out as the
+     literal `999px` at 37 sites across 16 files, which made it the most-used unnamed value in
+     the stylesheet. */
+  --radius-pill: 999px;
+  /* The small radius under --radius-sm: progress fills, strip squares, inline code, swatches.
+     Names the largest cluster of the bare pixel radii (1-6px) that sat below the scale. */
+  --radius-xs: 4px;
+
+  /* THE STACKING ORDER of the app's own surfaces, named at the values they already had.
+
+     Twenty-two `z-index` uses across twelve unnamed values, with nothing recording which
+     surface was meant to sit over which. The top of the ladder is where that costs something:
+     the why panel (50), the scan line (55) and the modal (60) can all be on screen at once and
+     sat five apart for no stated reason.
+
+     These are the surfaces that stack against EACH OTHER, across the app. The low values
+     (0,1,2,3) are deliberately NOT here: they layer a background, a scrim and its content
+     inside one component's own stacking context -- `.card-bg` under `.card-scrim` under the
+     card's children -- and giving them ladder names would claim a card's scrim and a dropdown
+     are comparable when they are in different stacking contexts entirely. They stay literal.
+
+     Naming changed no value. Reordering any of these is a separate change needing a browser
+     pass, because what it breaks is invisible until two of them are open together. */
+  --z-rail: 5; /*       policy rail, save bar */
+  --z-sticky: 20; /*    scan nudge, bulk-action bar */
+  --z-nav: 30; /*       phone section bar, user menu, suggest and filter popovers */
+  --z-overlay: 40; /*   sheet scrim, and the why panel as a right-hand sheet */
+  --z-panel: 50; /*     the why panel once it covers the screen, so it clears the nav above */
+  --z-scanline: 55;
+  --z-modal: 60; /*     modal scrim, scan toast */
+  --z-menu: 100; /*     the spare-length menu, portaled to <body> */
 
   /* The phone section bar's height, excluding the safe-area inset it adds underneath. Declared
      once because four other rules have to clear it (rule 67): the app's bottom padding, in the
@@ -121,11 +212,18 @@
   /* Form control standard. Every text / number / select box shares this chrome, so the
      app reads as one surface (see .set-control, .rule-control, .field-sm, .condition-add,
      .search-input, .log-search, .pw-form, .local-form, .qty): padding
-     0.42rem 0.6rem; border 1px solid var(--border-strong); border-radius var(--radius-sm);
+     var(--control-pad); border 1px solid var(--border-strong); border-radius var(--radius-sm);
      background var(--bg); color var(--text); font: inherit; and on :focus, outline 2px
      solid var(--accent) with outline-offset 1px. Width is the only thing that varies by
      context -- compact numbers 5rem, unit selects ~5.25rem, wide text fields 15-22rem --
-     but the chrome above never does. Reuse it; don't fork it. */
+     but the chrome above never does. Reuse it; don't fork it.
+
+     The padding is a token rather than prose because it was written out as the literal
+     `0.42rem 0.6rem` at twelve sites, which is rule 67's argument applied inside the
+     stylesheet: a standard restated twelve times is twelve places to disagree. It is NOT a
+     step of the space scale above -- it is one pair, and a control that wants different
+     padding is not on the standard. */
+  --control-pad: 0.42rem 0.6rem;
 
   /* The width of a settings row's control track, and so of every box that fills it. Declared
      once (rule 67): `.set-row` sizes its second grid column from it and the control standard's

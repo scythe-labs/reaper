@@ -48,7 +48,7 @@
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  font-size: 0.88rem;
+  font-size: var(--text-md);
   color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
@@ -62,11 +62,11 @@
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-sm);
   height: 2.15rem;
-  padding: 0 0.5rem 0 0.6rem;
+  padding: 0 var(--space-md) 0 var(--space-lg);
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface);
 }
 .pill:focus-within {
@@ -82,7 +82,7 @@
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   padding: 0.2rem 0.15rem;
   cursor: pointer;
   outline: none;
@@ -100,7 +100,7 @@
   height: 2.15rem;
   padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface);
   color: var(--muted);
 }
@@ -118,7 +118,7 @@
 .card-list {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   /* Cards adapt to the width they actually get (a panel can halve it), not the window. */
   container-type: inline-size;
 }
@@ -178,7 +178,7 @@
   .card .season-row {
     grid-template-columns: 2.6rem minmax(0, 1fr) auto;
     align-items: start;
-    row-gap: 0.35rem;
+    row-gap: var(--space-sm);
   }
   /* Score top-aligned with the name, not floated to the row's vertical center -- a wrapping
      title used to leave the badge stranded below the first line. */
@@ -216,7 +216,7 @@
   overflow: hidden;
   display: flex;
   gap: 0.9rem;
-  padding: 0.7rem;
+  padding: var(--space-xl);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -385,17 +385,17 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-xs);
 }
 .card-title-row {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: var(--space-md);
   flex-wrap: wrap;
 }
 .card-title {
-  font-size: 0.98rem;
-  font-weight: 600;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semi);
   margin: 0;
   text-transform: none;
   letter-spacing: -0.01em;
@@ -407,14 +407,14 @@
 }
 .card-year {
   color: var(--muted);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
 }
 .card-meta {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
   flex-wrap: wrap;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -422,8 +422,8 @@
 /* The reason a card leads with -- the protection keeping it, or the top reason it scored.
    Slightly stronger than a synopsis would be, because it is the point of the card. */
 .card-reason {
-  margin: 0.25rem 0 0;
-  font-size: 0.84rem;
+  margin: var(--space-xs) 0 0;
+  font-size: var(--text-md);
   color: var(--text);
   opacity: 0.82;
   line-height: 1.4;
@@ -433,8 +433,8 @@
   overflow: hidden;
 }
 .infinity {
-  font-weight: 700;
-  font-size: 0.95rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-base);
   line-height: 1;
 }
 
@@ -445,15 +445,15 @@
   flex-direction: column;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 .row-actions {
   display: flex;
-  gap: 0.35rem;
+  gap: var(--space-sm);
 }
 button.sm {
   padding: 0.28rem 0.6rem;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 
 /* When filters hide everything: a framed explanation instead of a bare empty page, so an
@@ -474,10 +474,10 @@ button.sm {
   max-width: 62ch;
 }
 .empty-filtered .empty-headline {
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .empty-filtered button {
-  margin-top: 0.6rem;
+  margin-top: var(--space-lg);
 }
 
 /* Active review-queue filters, one removable chip each -- the .tag-chip shape in the
@@ -486,19 +486,19 @@ button.sm {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
-  margin-top: 0.6rem;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
 }
 .filter-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-xs);
   background: var(--accent-soft);
   color: var(--accent-text);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0.12rem 0.2rem 0.12rem 0.6rem;
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
 }
 /* Same --tap-min sizing as .tag-chip, the shape this one borrows. */
 .filter-chip button {
@@ -511,10 +511,10 @@ button.sm {
   border: none;
   color: inherit;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: var(--text-lg);
   line-height: 1;
   padding: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .filter-chip button:hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -540,13 +540,13 @@ button.sm {
   align-items: center;
   gap: 0.4rem;
   height: 2.15rem;
-  padding: 0 0.85rem 0 0.7rem;
+  padding: 0 var(--space-2xl) 0 var(--space-xl);
   border: 1px dashed var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--muted);
-  font-size: 0.85rem;
-  font-weight: 500;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
 }
 .add-filter:hover,
 .add-filter.open {
@@ -568,12 +568,12 @@ button.sm {
   background: var(--accent-soft);
   color: var(--accent-text);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   /* Trimmed to hold the chip's overall size steady now that both children carry their own
      --tap-min hit area: the inset the padding used to supply comes from the buttons. */
   padding: 0.06rem 0.1rem 0.06rem 0.35rem;
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
 }
 .fchip.open {
   border-color: var(--accent);
@@ -590,10 +590,10 @@ button.sm {
   border: none;
   color: inherit;
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--weight-semi);
   cursor: pointer;
   padding: 0.06rem 0.25rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .fchip-ic {
   display: inline-flex;
@@ -620,10 +620,10 @@ button.sm {
   border: none;
   color: inherit;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: var(--text-lg);
   line-height: 1;
   padding: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   opacity: 0.75;
 }
 .fchip-x:hover {
@@ -640,7 +640,7 @@ button.sm {
   position: absolute;
   top: calc(100% + 6px);
   left: var(--pop-shift, 0px);
-  z-index: 30;
+  z-index: var(--z-nav);
   min-width: 190px;
   max-width: min(260px, calc(100vw - 1.5rem));
   max-height: 18rem;
@@ -655,8 +655,8 @@ button.sm {
 }
 .filter-menu-head {
   padding: 0.35rem 0.55rem 0.25rem;
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
@@ -671,7 +671,7 @@ button.sm {
   border: none;
   color: var(--text);
   font: inherit;
-  font-size: 0.86rem;
+  font-size: var(--text-md);
   padding: 0.42rem 0.55rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -681,7 +681,7 @@ button.sm {
 }
 .filter-mi.sel {
   color: var(--accent-text);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .filter-mi-ic {
   display: inline-flex;
@@ -706,9 +706,9 @@ button.sm {
   display: inline-flex;
   align-items: center;
   height: 1.35rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  padding: 0 0.5rem;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  padding: 0 var(--space-md);
   border-radius: 5px;
   background: var(--surface-2);
   color: var(--muted);
@@ -776,8 +776,8 @@ button.sm {
   display: inline-flex;
   align-items: center;
   height: 1.35rem;
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.03em;
   padding: 0 0.45rem;
   border-radius: 5px;
@@ -787,7 +787,7 @@ button.sm {
   white-space: nowrap;
 }
 .res-badge .res-detail {
-  font-size: 0.62rem;
+  font-size: var(--text-2xs);
   opacity: 0.75;
 }
 
@@ -800,8 +800,8 @@ button.sm {
   align-items: center;
   gap: 0.32rem;
   height: 1.35rem;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
   padding: 0 0.5rem 0 0.42rem;
   border-radius: 5px;
   border: 1px solid var(--border-strong);
@@ -843,10 +843,10 @@ button.sm {
   gap: 0.3rem;
   align-self: flex-start;
   height: 1.35rem;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
   padding: 0 0.55rem 0 0.45rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--unknown);
   background: var(--unknown-soft);
   white-space: nowrap;
@@ -861,14 +861,14 @@ button.sm {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
   /* Centered by construction: the line box plus padding is exactly the family's
      1.35rem, so the text cannot ride high the way a loose line-height let it.
      inline-block (not flex) so text-overflow keeps working on the single line. */
   line-height: 1.15rem;
   padding: 0.1rem 0.6rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
 }
 .status-kept {
@@ -933,8 +933,8 @@ button.sm {
   /* The held-reap scythe (.strip-mark) pins to this square's corner. */
   position: relative;
   font-family: inherit;
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   font-variant-numeric: tabular-nums;
   /* Each square opens its season's reasoning; the ring (transparent until hover/focus)
      is reserved up front so hovering never nudges the strip's layout. */

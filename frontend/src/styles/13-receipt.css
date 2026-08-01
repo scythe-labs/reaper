@@ -12,18 +12,18 @@
 
 .sig-group + .sig-group,
 .sig-group + .sig-rest {
-  margin-top: 1rem;
+  margin-top: var(--space-3xl);
 }
 .sig-group-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.6rem;
-  margin-bottom: 0.5rem;
+  gap: var(--space-lg);
+  margin-bottom: var(--space-md);
 }
 .sig-group-head h4 {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--muted); /* 5.33:1 light, 6.65:1 dark */
@@ -33,8 +33,8 @@
  * values, so all four themes clear AA. */
 .sig-group-total {
   font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  font-size: 0.9rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-base);
   color: var(--condemn);
 }
 /* One note for the whole group, never one per row: the old per-row sentence printed five
@@ -43,22 +43,22 @@
  * values. */
 .sig-group-note {
   margin: -0.2rem 0 0.5rem;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 
 .sig-row {
-  margin-bottom: 0.6rem;
+  margin-bottom: var(--space-lg);
 }
 .sig-head {
   display: flex;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   align-items: baseline;
-  font-size: 0.86rem;
+  font-size: var(--text-md);
 }
 .sig-share {
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: var(--weight-semi);
   min-width: 2.6rem;
   text-align: right;
   color: var(--condemn);
@@ -124,7 +124,7 @@
 /* The rules that simply did not apply: out of the way, never gone. */
 .sig-rest > summary {
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   padding: 0.3rem 0;
 }
@@ -134,7 +134,7 @@
   border-radius: var(--radius-sm);
 }
 .sig-rest > .signals {
-  margin-top: 0.5rem;
+  margin-top: var(--space-md);
 }
 
 .sig-legend {
@@ -143,7 +143,7 @@
   flex-wrap: wrap;
   gap: 0.3rem 0.5rem;
   margin: 0.9rem 0 0;
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 .sig-key {
@@ -167,15 +167,15 @@
 
 .gates li {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-md);
   align-items: flex-start;
-  font-size: 0.86rem;
+  font-size: var(--text-md);
   padding: 0.3rem 0.5rem;
   border-radius: 5px;
-  margin-bottom: 0.25rem;
+  margin-bottom: var(--space-xs);
 }
 .gate-mark {
-  font-weight: 700;
+  font-weight: var(--weight-bold);
 }
 /* What a protection said, which on the "could not check" branch quotes an upstream error from
    someone else's server and routinely carries a URL (rule 139). */
@@ -206,7 +206,7 @@
  * an explicit affordance than the tail-fold's descriptive count. */
 .gates-fold > summary {
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   padding: 0.3rem 0;
   list-style: none;
@@ -230,7 +230,7 @@
   margin-bottom: 0.4rem;
 }
 .fold-caret {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   line-height: 1;
   transition: transform 0.15s ease;
 }

@@ -33,7 +33,7 @@ button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
-  font-weight: 550;
+  font-weight: var(--weight-semi);
   box-shadow: var(--shadow-sm);
 }
 button.primary:hover:not(:disabled) {
@@ -60,7 +60,7 @@ button.link:hover:not(:disabled) {
 .btn-block {
   width: 100%;
   justify-content: center;
-  padding: 0.6rem 1rem;
+  padding: var(--space-lg) var(--space-3xl);
 }
 
 /* The pill inside the segmented track: the queue's lane tab (.tab) and the policy toggle
@@ -70,11 +70,11 @@ button.link:hover:not(:disabled) {
 .seg {
   background: none;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--muted);
   padding: 0.34rem 0.95rem;
-  font-size: 0.9rem;
-  font-weight: 500;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
 }
 .tab:hover:not(:disabled),
 .seg:hover:not(:disabled) {
@@ -87,7 +87,7 @@ button.link:hover:not(:disabled) {
   color: var(--text);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 /* Hovering the section, lane, or option you are ALREADY on keeps its raised pill: the plain
    :hover rules above outrank .active (the :not() adds a class's weight) and would repaint the
@@ -115,7 +115,7 @@ button.link:hover:not(:disabled) {
   height: 0;
   overflow: hidden;
   visibility: hidden;
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 /* The `fill` variant (Segmented `fill` prop): equal-width segments, so a short label
    ("TV") and a long one ("Movies") both center in the track instead of the active pill

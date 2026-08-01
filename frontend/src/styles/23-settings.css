@@ -7,13 +7,13 @@
    ========================================================================== */
 
 .settings {
-  margin-top: 1.25rem;
+  margin-top: var(--space-4xl);
 }
 .settings-nav {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-xs);
   border-bottom: 1px solid var(--border);
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--space-4xl);
   flex-wrap: wrap;
 }
 .settings-tab {
@@ -23,8 +23,8 @@
   border-radius: 0;
   color: var(--muted);
   padding: 0.5rem 0.9rem;
-  font-size: 0.92rem;
-  font-weight: 500;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
 }
 .settings-tab:hover:not(:disabled) {
   background: none;
@@ -33,7 +33,7 @@
 .settings-tab.active {
   color: var(--text);
   border-bottom-color: var(--accent);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 /* The rail wraps, so it never overflows -- but it pays for its padding in LINES, and each line
    is height `.policy-section`'s scroll-margin has to clear on a jump. This trim holds it to two
@@ -64,19 +64,19 @@
    show. */
 .settings-picker {
   display: block;
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--space-4xl);
 }
 /* The control standard, unforked -- only the width and the weight are its own. The weight is
    the `.settings-tab.active` treatment carried over: this names the section you are on. */
 .settings-picker select {
   width: 100%;
-  padding: 0.42rem 0.6rem;
+  padding: var(--control-pad);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .settings-picker select:focus {
   outline: 2px solid var(--accent);
@@ -89,10 +89,10 @@
   max-width: none;
 }
 .panel h2 {
-  font-size: 1.15rem;
+  font-size: var(--text-xl);
 }
 .panel h3 {
-  margin-top: 1.5rem;
+  margin-top: var(--space-5xl);
 }
 
 /* services: one section per kind, a grid of compact cards, add/edit in a modal */
@@ -107,8 +107,8 @@
 }
 .service-hint {
   color: var(--muted);
-  font-size: 0.85rem;
-  margin: 0.15rem 0 0.7rem;
+  font-size: var(--text-md);
+  margin: var(--space-2xs) 0 var(--space-xl);
 }
 .service-grid {
   display: grid;
@@ -137,17 +137,17 @@
 .instance-id {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
   flex-wrap: wrap;
 }
 .instance-url {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-family: var(--mono);
   overflow-wrap: anywhere;
 }
 .instance-status {
-  font-size: 0.8rem;
-  margin-top: 0.15rem;
+  font-size: var(--text-sm);
+  margin-top: var(--space-2xs);
 }
 .service-card-foot {
   display: flex;
@@ -160,7 +160,7 @@
   border-left: 1px solid var(--border);
   border-radius: 0;
   padding: 0.5rem 0.2rem;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 .service-card-foot button:first-child {
@@ -186,7 +186,7 @@
   justify-content: center;
   gap: 0.45rem;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 .service-add:hover:not(:disabled) {
   background: none;
@@ -202,8 +202,8 @@ button.danger:hover:not(:disabled) {
 }
 
 .kind-badge {
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   padding: 0.1rem 0.4rem;
@@ -235,8 +235,8 @@ button.danger:hover:not(:disabled) {
 }
 
 .test-badge {
-  font-size: 0.8rem;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   /* A failed connection test quotes the upstream error, which usually contains the URL it tried.
      .instance-url on the same card already wraps; this is its sibling line (rule 139, rule 72). */
   overflow-wrap: anywhere;
@@ -252,12 +252,12 @@ button.danger:hover:not(:disabled) {
 .service-form {
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: var(--space-xl);
 }
 .host-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px;
-  gap: 0.6rem;
+  gap: var(--space-lg);
 }
 .url-join {
   display: flex;
@@ -273,7 +273,7 @@ button.danger:hover:not(:disabled) {
   border-right: none;
   border-radius: var(--radius-sm) 0 0 var(--radius-sm);
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -293,7 +293,7 @@ button.danger:hover:not(:disabled) {
 .add-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 0.7rem;
+  gap: var(--space-xl);
 }
 
 /* On a phone the two-column settings forms are too cramped to read a pasted URL or API
@@ -311,7 +311,7 @@ button.danger:hover:not(:disabled) {
 .field-sm {
   display: flex;
   flex-direction: column;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 .field-sm.wide {
@@ -319,7 +319,7 @@ button.danger:hover:not(:disabled) {
 }
 .field-sm input,
 .field-sm select {
-  padding: 0.42rem 0.6rem;
+  padding: var(--control-pad);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -334,7 +334,7 @@ button.danger:hover:not(:disabled) {
 .add-actions {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   margin-top: 0.9rem;
   flex-wrap: wrap;
 }
@@ -351,11 +351,11 @@ button.danger:hover:not(:disabled) {
   grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   gap: 0.5rem 0.8rem;
   align-items: center;
-  margin: 0.15rem 0 0.35rem;
+  margin: var(--space-2xs) 0 var(--space-sm);
 }
 .pl-root {
   font-family: var(--mono);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -372,7 +372,7 @@ button.danger:hover:not(:disabled) {
 .pl-pick .pl-select {
   flex: 1;
   min-width: 0;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 /* "Not set" reads as the quiet, unchosen state. */
 .pl-select.unset {
@@ -386,20 +386,20 @@ button.danger:hover:not(:disabled) {
    screen, and the row it rescues is the one where that copy is the only legible one. */
 .pl-echo {
   flex-basis: 100%;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   overflow-wrap: anywhere;
 }
 /* A suggested-but-unconfirmed row: a soft accent pill that clears once the operator picks. */
 .pl-suggested {
   flex: none;
-  font-size: 0.68rem;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
   color: var(--text);
   background: var(--accent-soft);
   border: 1px solid var(--accent-ring);
   padding: 0.05rem 0.45rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
 }
 /* The muted markers on a Seerr service row -- what it asks for ("TV"/"Movies") and, where the
@@ -407,12 +407,12 @@ button.danger:hover:not(:disabled) {
    a row can show either, or both. */
 .pl-tag {
   margin-left: 0.4rem;
-  font-size: 0.62rem;
-  font-weight: 700;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
   color: var(--muted);
   border: 1px solid var(--border-strong);
   padding: 0.02rem 0.3rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   vertical-align: middle;
 }
 /* Below the width the modal stops getting its full 560px, the two columns above stop fitting:
@@ -437,7 +437,7 @@ button.danger:hover:not(:disabled) {
     row-gap: 0.2rem;
   }
   .plex-map-grid > .pl-root:not(:first-child) {
-    margin-top: 0.6rem;
+    margin-top: var(--space-lg);
   }
 }
 
@@ -449,7 +449,7 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1.5rem;
+  gap: var(--space-5xl);
   padding: 0.95rem 1.1rem;
 }
 .jobrow + .jobrow {
@@ -459,33 +459,33 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
 }
 .jobrow-title {
-  font-weight: 600;
-  font-size: 0.95rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
 }
 .jobrow-desc {
   margin: 0.18rem 0 0;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   max-width: 70ch;
 }
 .jobrow-meta {
   margin: 0.4rem 0 0;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .jobrow-meta strong {
   color: var(--text);
-  font-weight: 650;
+  font-weight: var(--weight-semi);
 }
 .jobrow-sched {
   margin: 0.2rem 0 0;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 .jobrow-run {
-  margin: 0.35rem 0 0;
-  font-size: 0.8rem;
+  margin: var(--space-sm) 0 0;
+  font-size: var(--text-sm);
   color: var(--accent-text);
   display: flex;
   align-items: center;
@@ -496,13 +496,13 @@ button.danger:hover:not(:disabled) {
 }
 .jobrow-link {
   margin: 0.3rem 0 0;
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
 }
 .jobrow-actions {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 .jobrow-actions .slot-edit,
 .jobrow-actions .slot-act {
@@ -527,7 +527,7 @@ button.danger:hover:not(:disabled) {
   .jobrow {
     flex-direction: column;
     align-items: stretch;
-    gap: 0.7rem;
+    gap: var(--space-xl);
   }
   .jobrow-actions {
     width: 100%;
@@ -568,11 +568,11 @@ button.danger:hover:not(:disabled) {
   margin: 0;
 }
 .jobrow-last {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
   font-variant-numeric: tabular-nums;
 }
 /* The outcome dot, in Reaper's verdict colors: a success is green, a failure red, and a job
@@ -615,18 +615,18 @@ button.danger:hover:not(:disabled) {
    grows when the chip appears. */
 .jobrow-last.is-flash {
   color: var(--protect);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .jobrow-last.is-flash-fail {
   color: var(--condemn);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .flash-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0 0.5rem;
-  border-radius: 999px;
+  gap: var(--space-sm);
+  padding: 0 var(--space-md);
+  border-radius: var(--radius-pill);
 }
 .is-flash .flash-chip {
   background: var(--protect-soft);
@@ -639,7 +639,7 @@ button.danger:hover:not(:disabled) {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--condemn) 35%, transparent);
 }
 .flash-chip .check {
-  font-weight: 700;
+  font-weight: var(--weight-bold);
 }
 @media (prefers-reduced-motion: reduce) {
   .jobrow-status > * {
@@ -668,19 +668,19 @@ button.danger:hover:not(:disabled) {
   }
 }
 .scan-freshness {
-  font-size: 0.85rem;
-  margin: 0.6rem 0 0;
+  font-size: var(--text-md);
+  margin: var(--space-lg) 0 0;
 }
 .freshness-warn {
   color: var(--unknown);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 
 /* safety */
 .safety-state {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  gap: var(--space-xl);
   padding: 0.8rem 1rem;
   border-radius: var(--radius);
   border: 1px solid transparent;
@@ -690,13 +690,13 @@ button.danger:hover:not(:disabled) {
    top-of-page banner near the top of this file; only the panel-specific spacing lives here. */
 .safety-state p {
   margin: 0.2rem 0 0;
-  font-size: 0.84rem;
+  font-size: var(--text-md);
 }
 .safety-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-3xl);
   padding: 0.9rem 0;
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
@@ -709,5 +709,5 @@ button.danger:hover:not(:disabled) {
    beside the form it belongs to. Give it the full width, under the control. */
 .safety-row .notice {
   flex-basis: 100%;
-  margin: 0.25rem 0 0;
+  margin: var(--space-xs) 0 0;
 }
