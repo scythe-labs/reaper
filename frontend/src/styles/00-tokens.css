@@ -133,14 +133,14 @@
   /* THE SPACE SCALE, and the one scale that is only partly adopted -- deliberately, so read
      this before "finishing" it.
 
-     Spacing here is a continuum, not a scale: 0.3 / 0.35 / 0.4 / 0.45 / 0.5 / 0.55 / 0.6rem
-     are all heavily used and 0.8px apart, and no set of steps collapses them without moving
-     pixels on every screen at once. So these eleven steps were adopted ONLY where a
-     declaration already sat exactly on one -- about half of them, at zero visual change. The
-     rest are still literals, and that is the honest state: a literal here means "nobody has
-     judged this one yet", not "this is deliberate".
+     Spacing here is a continuum: 0.3 / 0.35 / 0.4 / 0.45 / 0.5 / 0.55 / 0.6rem are all heavily
+     used and 0.8px apart, and no set of steps collapses them without moving pixels on every
+     screen at once. So these eleven steps were adopted ONLY where a declaration already sat
+     exactly on one -- about half of them, at zero visual change. The rest are still literals,
+     which is the honest state: a literal here means "nobody has judged this one yet", not
+     "this is deliberate".
 
-     `tests/test_repo_hygiene.py` ratchets the off-scale count so it can only fall. Snapping a
+     `styles-scales.test.ts` ratchets the off-scale count so it can only fall. Snapping a
      literal to its nearest step is a visual change and wants an eye on it, a file at a time.
      Anything NEW uses a step. */
   --space-2xs: 0.15rem; /*  2.4px */

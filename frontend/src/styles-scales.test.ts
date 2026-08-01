@@ -126,20 +126,19 @@ describe("the type and weight scales", () => {
 });
 
 describe("the space scale", () => {
-  // Spacing is a continuum here, not a scale -- 0.3 through 0.6rem are all heavily used and
-  // 0.8px apart -- so the tokens went in only where a declaration already sat exactly on a step
-  // and nothing moved. The rest are still literals, and this ratchet is what makes that a debt
-  // rather than a shrug: snapping one to its nearest step is a visual change wanting an eye on
-  // it, a file at a time, and every time that happens this number comes down.
+  // Spacing here is a continuum: 0.3 through 0.6rem are all heavily used and 0.8px apart. So the
+  // tokens went in only where a declaration already sat exactly on a step and nothing moved, and
+  // the rest are still literals. This ratchet is what makes those a debt: snapping one to its
+  // nearest step is a visual change wanting an eye on it, a file at a time, and the number comes
+  // down each time that happens.
   //
-  // It may only ever fall. Raising it means new drift was written, which is the thing the
-  // scale exists to stop.
+  // It may only ever fall. Raising it means new drift was written, which the scale exists to
+  // stop.
   //
-  // The number is the count THIS TEST measures, taken by running it, not a figure carried over
-  // from the script that did the migration: that one counted every declaration it declined to
-  // rewrite, including the ones with no rem in them at all, and seeding the ceiling from it
-  // left 173 declarations of slack -- enough that three freshly-written off-scale values
-  // changed nothing and the ratchet sat green through a mutation planted to break it.
+  // Take the number by running this test. Seeding it from the migration script's count left 173
+  // declarations of slack -- that script counted every declaration it declined to rewrite,
+  // including the ones holding no rem at all -- and three freshly-written off-scale values then
+  // changed nothing, so the ratchet sat green through a mutation planted to break it.
   const OFF_SCALE_CEILING = 294;
 
   it("does not grow the number of off-scale spacing literals", () => {
@@ -197,11 +196,11 @@ describe("the iOS no-zoom floor", () => {
   });
 
   it("cannot be outranked by any other rule sizing a field", () => {
-    // This is the half a reader cannot check by eye. The guard wins today because it is an ID
-    // selector and every control rule is class-based -- an ID beats any number of classes, so
-    // file order and media queries are both irrelevant, which is why the guard can sit in the
-    // FIRST of 34 files and still beat the last. A future rule with an ID in it, or a second
-    // `#root` qualifier, would take a field back under the floor and nothing would say so.
+    // The guard wins on being an ID selector while every control rule is class-based: an ID
+    // beats any number of classes, so file order and media queries are both irrelevant and it
+    // can sit in the FIRST of 34 files and still beat the last. A future rule carrying an ID,
+    // or a second `#root` qualifier, would take a field back under the floor in silence. This
+    // is the half a reader cannot check by eye.
     const guard = declarationsOf("font-size").find(([sel]) => sel.includes("#root input"));
     expect(guard).toBeDefined();
     const guardSpec = specificity((guard as [string, string, number])[0].split(",")[0] ?? "");
