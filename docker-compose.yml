@@ -26,9 +26,11 @@ services:
     restart: unless-stopped
 
     ports:
-      # Left side is the port on your machine. The right side is fixed: the container
-      # always serves on 8420, and REAPER_PORT does not move it (the image's CMD
-      # passes the port to uvicorn directly).
+      # Left side is the port on your machine, and it is the one to change: publish
+      # Reaper wherever you like without touching anything else. The right side is the
+      # port inside the container, which is 8420 unless you set REAPER_PORT below --
+      # it reaches uvicorn and the image's healthcheck alike, so if you move it, move
+      # this side to match.
       - "8420:8420"
 
     volumes:
