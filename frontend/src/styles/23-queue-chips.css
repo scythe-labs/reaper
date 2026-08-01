@@ -225,9 +225,14 @@
   gap: 0.375rem;
   margin: 0.1rem 0;
 }
+/* The one member of the 1.35rem chip rhythm above that is a real button, and the only per-season
+   open target on a phone. At that height it was 21.6px with 6px between squares -- under SC
+   2.5.8 and too tight for the spacing exception -- so it takes --tap-min instead and is
+   deliberately 2.4px taller than the chips it sits among. A chip is a label and reads at rest;
+   this is a thing a finger has to land on. */
 .strip-sq {
   min-width: 1.65rem;
-  height: 1.35rem;
+  height: var(--tap-min);
   padding: 0 0.3rem;
   border: none;
   border-radius: 5px;
@@ -344,4 +349,39 @@
   background: var(--condemn-soft);
   border: 1.5px dashed var(--condemn);
   box-shadow: none;
+}
+
+/* Windows High Contrast replaces every author color with a system one and forces `box-shadow`
+   to `none`. Every square above is told apart by its FILL, and .strip-condemn's only other cue
+   is an inset shadow -- so in that mode a run of seasons rendered as identical blank squares,
+   and "would be removed" and "kept" looked the same on the surface that decides which files go.
+   A screen-reader operator was never affected: each square carries `aria-label="Open <name>,
+   <lane>"` with the lane in words. This is for the sighted operator who has High Contrast on.
+
+   Border STYLE survives forced colors, so that is the channel. The two hand-override states
+   already wore `dashed` for their own reason and keep it, which leaves the scan verdicts to
+   take solid, dotted and none. `forced-color-adjust: none` is deliberately NOT used: the point
+   is to work WITH the operator's palette, not to reassert ours over it. */
+@media (forced-colors: active) {
+  .strip-sq {
+    border: 2px solid;
+  }
+  /* Heaviest edge on the one that means the file goes. */
+  .strip-condemn,
+  .strip-ov-reap {
+    border-style: solid;
+  }
+  .strip-protect,
+  .strip-ov-spare {
+    border-style: dotted;
+  }
+  .strip-abstain {
+    border-style: none;
+  }
+  /* Held, not settled -- the same "noted, but nothing has happened yet" the dashes carry in
+     color. */
+  .strip-ov-spare-expired,
+  .strip-ov-reap-refused {
+    border-style: dashed;
+  }
 }

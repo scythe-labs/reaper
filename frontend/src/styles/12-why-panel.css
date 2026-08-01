@@ -53,6 +53,13 @@
   }
 }
 
+/* Honored here, beside the animation it stops (see 06-spinner.css). */
+@media (prefers-reduced-motion: reduce) {
+  .why-loading {
+    animation: none;
+  }
+}
+
 /* Spare / Reap from inside the reasoning: pinned to the panel's bottom edge so the
    decision stays in reach at the end of a long explanation. Bleeds into the panel's own
    padding so scrolled content passes under it, never beside it. */
@@ -304,9 +311,14 @@
   gap: 0.45rem;
   flex-wrap: wrap;
 }
+/* A link, so --tap-min is a min-height rather than a box: the pill keeps the width its text
+   gives it and grows only downward to the 24px floor (SC 2.5.8). It was 21.3px with 7.2px
+   between neighbors, too close for the spacing exception. The padding stays as it was -- the
+   min-height absorbs the difference, so the pill does not visibly change size. */
 .jump-pill {
   display: inline-flex;
   align-items: center;
+  min-height: var(--tap-min);
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
   padding: 0.06rem 0.55rem;

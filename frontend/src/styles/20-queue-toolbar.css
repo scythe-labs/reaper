@@ -114,3 +114,8 @@
 .sort-dir svg.asc {
   transform: rotate(180deg);
 }
+@media (prefers-reduced-motion: reduce) {
+  .sort-dir svg {
+    transition: none;
+  }
+}

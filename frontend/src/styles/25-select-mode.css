@@ -209,6 +209,13 @@
 .season-expander .chevron.open {
   transform: rotate(90deg);
 }
+/* Its twin, .fold-caret in 13-receipt.css, was already stopped; this one was the sibling the
+   fix did not reach (rule 72). Same widget, same rotate. */
+@media (prefers-reduced-motion: reduce) {
+  .season-expander .chevron {
+    transition: none;
+  }
+}
 
 /* The banner atop an expanded show whose whole-show decision drives its seasons: the sentence
    the rows used to each repeat, said once. A reap tints faint red, a spare faint green, matching

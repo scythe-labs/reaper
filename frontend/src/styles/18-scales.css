@@ -27,9 +27,17 @@
   width: 14px;
   height: 14px;
 }
-/* The glyph spins only while a refresh is in flight, echoing the loading spinner's motion. */
+/* The glyph spins only while a refresh is in flight, echoing the loading spinner's motion.
+   Stopped for reduced motion directly below: `spin` is declared in 06-spinner.css and stopping
+   it there does nothing for this rule, which is exactly how this one came to be the single
+   animation in the app that ran regardless of the preference. */
 .fair-refresh.busy .ico {
   animation: spin 0.7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fair-refresh.busy .ico {
+    animation: none;
+  }
 }
 
 /* Summary strip: SPACE leads (the reclaimable tile shows bytes, the count is its caption). */

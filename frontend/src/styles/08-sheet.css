@@ -29,15 +29,33 @@
   border-bottom: none;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   box-shadow: var(--shadow-lg);
-  padding: 0.9rem 1.6rem 1.8rem;
+  /* The bottom padding clears the home indicator as well as the sheet's own edge. This surface
+     is anchored to the bottom of a fixed scrim, so it is viewport-bottom-anchored exactly like
+     the five that already add the inset -- the phone section bar, the scan toast, the policy
+     save bar and the bulk-action bar -- and it was the one that did not. 1.8rem is 28.8px
+     against a 34px indicator, and `.sheet-actions` holds the sign-in button as the last thing
+     in the sheet, so what landed under the indicator was the control the sheet exists for. */
+  padding: 0.9rem 1.6rem calc(1.8rem + env(safe-area-inset-bottom, 0px));
   /* Same bound as .modal, and dvh for the same reason: the sheet is anchored to the bottom
      of the scrim, so on a short viewport (a landscape phone, or once an error notice
      renders) the username field grows straight off the top with nothing to scroll. */
   max-height: 85dvh;
   overflow-y: auto;
+  /* And contained for .modal's reason too: the scrim is `position: fixed` but is not itself a
+     scroll container, so without this a flick past the end of the sheet scrolls the login page
+     behind it. Both structural siblings (.modal, .why) contain; this one was reasoned against
+     .modal for its height bound and did not carry the rest across. */
+  overscroll-behavior: contain;
 }
 .sheet.open {
   transform: translate(-50%, 0);
+}
+/* The largest single movement in the app: a whole sheet travelling its own height up the
+   screen. The scrim's opacity fade beside it is left as it is. */
+@media (prefers-reduced-motion: reduce) {
+  .sheet {
+    transition: none;
+  }
 }
 .sheet-grip {
   width: 42px;

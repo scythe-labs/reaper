@@ -117,6 +117,14 @@
 .view-tab.active::before {
   transform: scaleX(1);
 }
+/* Reduced motion stops the slide; the cut still lands, it just arrives rather than travels.
+   Opacity fades in these files are deliberately left alone -- the preference is about motion,
+   and a fade moves nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .view-tab::before {
+    transition: none;
+  }
+}
 /* Reserve the active (650) width at every weight, so marking a section never widens it and
    shoves its neighbors sideways -- the same strut, and the same reason, as .tab[data-label]
    further down. The phone bar drops it along with the labels. */

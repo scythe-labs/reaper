@@ -279,12 +279,11 @@
   background: var(--condemn);
   transition: width 0.4s var(--ease);
 }
+/* Only what this file declares. `.spinner` and `.why-loading` used to be stopped from here
+   too, far from the rules that start them -- see the note in 06-spinner.css for what that
+   cost. */
 @media (prefers-reduced-motion: reduce) {
-  .spinner,
   .reap-running .spinner {
-    animation: none;
-  }
-  .why-loading {
     animation: none;
   }
   .prog-fill,
