@@ -85,7 +85,15 @@ class RestoreConfirmIn(BaseModel):
     """Bounded, like every other field that reaches Argon2 (``SafetyIn``, ``AdminPasswordIn``,
     ``WatchEvidenceResetIn``): hashing unbounded input is a CPU-exhaustion vector, and this one
     was the only member of that set without the bound."""
-    token: str | None = None
+    token: str | None = Field(default=None, max_length=restore.TOKEN_MAX_LEN)
+    """Bounded off the width the staging mints (rule 95/131), like the field below."""
+
+
+class RestoreCancelIn(BaseModel):
+    token: str | None = Field(default=None, max_length=restore.TOKEN_MAX_LEN)
+    """Which staging to discard, where the caller knows: the discard happens only while that
+    token is still the staged one. Absent means discard whatever is there, which is what the
+    armed card's Cancel needs -- it holds no summary to take a token from."""
 
 
 def _settings(request: Request) -> Settings:
@@ -258,11 +266,26 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[s
 
 
 @router.post("/restore/cancel")
-async def restore_cancel(request: Request) -> dict[str, bool]:
-    """Discard a staged or armed restore. Turns off the "waiting to finish" state."""
-    await asyncio.to_thread(restore.clear_pending, _settings(request))
-    log.info("restore.canceled")
-    return {"ok": True}
+async def restore_cancel(
+    request: Request, payload: RestoreCancelIn | None = None
+) -> dict[str, bool]:
+    """Discard a staged or armed restore. Turns off the "waiting to finish" state.
+
+    With a ``token`` the discard is scoped to that staging and refuses to touch one replaced
+    since, which is what an unattended caller needs: the card's unmount reclaim fires with no
+    operator watching, and two live restore cards (Settings in one tab, the wizard's door in
+    another) can each hold a summary while only the later one is staged (#387). Without a
+    token it discards whatever is there, which is what the operator's own Cancel means.
+
+    ``cleared`` says which of the two happened. It is not an error either way: nothing was
+    lost, and the archive is still on the operator's disk.
+    """
+    cleared = await asyncio.to_thread(
+        restore.clear_pending, _settings(request), payload.token if payload else None
+    )
+    if cleared:
+        log.info("restore.canceled")
+    return {"ok": True, "cleared": cleared}
 
 
 #: How long the stop waits after the response has been handed to the server. The browser is

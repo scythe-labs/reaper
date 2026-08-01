@@ -95,6 +95,12 @@ SWAP_MARKER = "SWAPPING"
 #: 0700 staging dir.
 TOKEN_MARKER = "TOKEN"  # noqa: S105 -- a marker filename, not a secret
 
+#: How wide a staging token is, minted here and bounded at the API edge off this same
+#: declaration so the producer and the fields that accept it cannot drift apart (rules 95
+#: and 131). Hex, so twice the byte count.
+TOKEN_BYTES = 32
+TOKEN_MAX_LEN = TOKEN_BYTES * 2
+
 #: What the current data is moved into before the staged copy takes its place, so a bad
 #: restore is recoverable. Timestamped, and never touched again by Reaper.
 PRE_RESTORE_PREFIX = "pre-restore-"
@@ -385,7 +391,7 @@ def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
         manifest = _extract(archive_path, tmp)
         # Mint the staging token and write it beside the staged files, so it travels with
         # the atomic rename below and binds this exact staging to the confirm (rule 73).
-        token = pysecrets.token_hex(32)
+        token = pysecrets.token_hex(TOKEN_BYTES)
         (tmp / TOKEN_MARKER).write_text(token + "\n", encoding="utf-8")
         summary = _summarize(manifest, tmp, token)
         _replace_dir(data_dir / PENDING_DIR, tmp)
@@ -506,9 +512,25 @@ def arm(settings: Settings, token: str | None) -> None:
     log.warning("restore.armed")
 
 
-def clear_pending(settings: Settings) -> None:
-    """Discard a staged (or armed) restore. Safe to call when nothing is staged."""
-    shutil.rmtree(settings.data_dir / PENDING_DIR, ignore_errors=True)
+def clear_pending(settings: Settings, token: str | None = None) -> bool:
+    """Discard a staged (or armed) restore. Safe to call when nothing is staged.
+
+    ``token`` scopes the discard to one staging, the way :func:`arm` scopes the swap to the
+    content that was reviewed (rule 73). With a token, the discard happens only if that token
+    is still the one minted for what is staged now; a staging replaced since belongs to
+    whoever staged it, and this returns ``False`` having removed nothing. Without a token the
+    discard is unconditional, which is what a deliberate Cancel on an armed restore needs: it
+    holds no summary and no token, and it must still be able to clear anything.
+
+    Returns whether the discard was carried out, so the route can say which of the two
+    happened rather than reporting an ownership refusal as a discard (#387).
+    """
+    pending = settings.data_dir / PENDING_DIR
+    if token is not None and not _token_matches(pending, token):
+        log.info("restore.cancel_not_owned")
+        return False
+    shutil.rmtree(pending, ignore_errors=True)
+    return True
 
 
 # ---------------------------------------------------------------------------

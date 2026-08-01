@@ -498,7 +498,15 @@ staged archive was an operator doing what the page told them. It carries its own
 confirm, because the shared one would be false twice over — what is waiting is an uploaded file
 rather than a setting, and leaving does not merely forget it: the card sends `restoreCancel` on
 unmount, so the archive already staged on the server goes with it instead of sitting there
-unreachable, an un-armed stage having no surface anywhere in the app. That cleanup asks the SERVER
+unreachable, an un-armed stage having no surface anywhere in the app. **It names the archive it is
+reclaiming**, since two of these cards are live now — Settings, and the wizard's restore door —
+and an upload replaces the staging directory rather than adding to it, so an unscoped discard let
+the first card to leave take the second card's archive and leave that operator holding a reviewed
+summary with nothing behind it (#387). The token minted at stage time answers who staged what, the
+way it already answers what the password may arm (rule 73), and the server discards nothing once it
+no longer matches. The operator's own Cancel on an ARMED restore stays unscoped, because that card
+may never have seen the summary behind it: an armed restore survives the browser that made it, and
+a scoped Cancel there would refuse the one press that clears it. That cleanup asks the SERVER
 whether a restore is armed in the moment before it sends, because the same route discards an armed
 restore too and the state holding both at once is reachable — staged here, armed from a second
 tab, which nothing refreshes this tab's cached answer for, so reading the cache would disarm

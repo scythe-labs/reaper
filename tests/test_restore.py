@@ -322,9 +322,39 @@ class TestArm:
         settings = _settings(tmp_path)
         summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
         restore.arm(settings, summary.token)
-        restore.clear_pending(settings)
+        assert restore.clear_pending(settings) is True
         assert restore.is_armed(settings) is False
         assert not (settings.data_dir / restore.PENDING_DIR).exists()
+
+    def test_cancel_with_the_staging_token_clears_it(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        assert restore.clear_pending(settings, summary.token) is True
+        assert not (settings.data_dir / restore.PENDING_DIR).exists()
+
+    def test_cancel_refuses_a_token_from_a_replaced_staging(self, tmp_path: Path) -> None:
+        # #387, and the discard side of `test_arm_refuses_a_token_from_a_replaced_staging`
+        # above: two live restore cards each hold their own reviewed summary, and only the
+        # later stage survives. The earlier card's reclaim must not take the other's archive.
+        settings = _settings(tmp_path)
+        first = restore.stage_upload(settings, _make_archive(tmp_path / "a.reaper"))
+        second = restore.stage_upload(settings, _make_archive(tmp_path / "b.reaper"))
+
+        assert restore.clear_pending(settings, first.token) is False
+
+        # Still `second`'s, intact and still armable by the card that staged it -- which is
+        # what a bare "the directory is there" assertion would not tell apart from a staging
+        # left half-removed.
+        assert (settings.data_dir / restore.PENDING_DIR).exists()
+        restore.arm(settings, second.token)
+        assert restore.is_armed(settings) is True
+
+    def test_cancel_with_a_token_and_nothing_staged_removes_nothing(self, tmp_path: Path) -> None:
+        # The reclaim fires on an unmount that may follow a cancel from anywhere else, so
+        # "no staging at all" is an ordinary arrival here, not an error.
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        assert restore.clear_pending(settings, "a" * restore.TOKEN_MAX_LEN) is False
 
     def test_restored_key_and_salt_are_owner_only(self, tmp_path: Path) -> None:
         # S-4: the key and salt are 0600 from creation, before the boot swap moves them into
@@ -518,7 +548,55 @@ class TestApi:
 
         canceled = client.post("/api/settings/backup/restore/cancel")
         assert canceled.status_code == 200, canceled.text
+        assert canceled.json()["cleared"] is True
         assert client.get("/api/settings/backup").json()["restore_armed"] is False
+
+    def test_cancel_scoped_to_a_replaced_staging_leaves_it(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The route half of #387, over the wire the two cards actually use.
+
+        The first card's reclaim arrives after a second card has staged its own archive.
+        It names what it staged, the server no longer holds that, and the archive the
+        other card is still showing survives -- confirmed by arming it afterwards, which
+        is the operation the stranded card was left unable to perform.
+        """
+        first = client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "a.reaper").read_bytes(),
+        )
+        second = client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "b.reaper").read_bytes(),
+        )
+
+        reclaimed = client.post(
+            "/api/settings/backup/restore/cancel", json={"token": first.json()["token"]}
+        )
+
+        assert reclaimed.status_code == 200, reclaimed.text
+        assert reclaimed.json()["cleared"] is False
+        armed = client.post(
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": second.json()["token"]},
+        )
+        assert armed.status_code == 200, armed.text
+        assert client.get("/api/settings/backup").json()["restore_armed"] is True
+
+    def test_cancel_refuses_a_token_wider_than_one_can_be(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        # Rule 95: the field is bounded off the width the staging mints, and the staging it
+        # would otherwise have to read against survives the refusal.
+        client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "up.reaper").read_bytes(),
+        )
+        refused = client.post(
+            "/api/settings/backup/restore/cancel",
+            json={"token": "a" * (restore.TOKEN_MAX_LEN + 1)},
+        )
+        assert refused.status_code == 422, refused.text
 
 
 def _arm(client: TestClient, tmp_path: Path) -> None:

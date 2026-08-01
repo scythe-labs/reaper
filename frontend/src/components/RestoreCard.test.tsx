@@ -3,12 +3,13 @@
 // The card is local to Settings.tsx, so these drive it the way an operator reaches it: the
 // Backup panel, a staged file, then the password box that appears with the summary.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { Announcer } from "../announce";
+import { RestoreFlow } from "./RestoreCard";
 import { Settings } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -63,16 +64,34 @@ function renderBackupPanel() {
   return { person: userEvent.setup(), unmount, queryClient };
 }
 
+/** One bare `RestoreFlow` in its own tree and its own query cache, which is what two tabs are.
+ *  The panel above cannot stand in for that: `Settings` mounts one card, and the state #387
+ *  turns on needs two live at once, each holding the summary it staged. */
+function renderFlow() {
+  const { container, unmount } = render(
+    <QueryClientProvider client={testQueryClient()}>
+      <Announcer />
+      <RestoreFlow armed={false} />
+    </QueryClientProvider>,
+  );
+  return { container, unmount };
+}
+
 /** Stage a backup file. The real input is `hidden` (a styled dropzone drives it), so this
  *  fires the change the file picker would. */
 async function stage(name: string) {
+  return stageIn(document.body, name);
+}
+
+/** The same, scoped to one tree, for the tests that render more than one card. */
+async function stageIn(root: HTMLElement, name: string) {
   const input = await waitFor(() => {
-    const el = document.querySelector('input[type="file"]');
+    const el = root.querySelector('input[type="file"]');
     if (!el) throw new Error("the backup panel has not loaded yet");
     return el;
   });
   fireEvent.change(input, { target: { files: [new File(["x"], name)] } });
-  return screen.findByLabelText(/admin password/i);
+  return within(root).findByLabelText(/admin password/i);
 }
 
 /** What the live region is holding, for the sentences this card speaks. */
@@ -151,6 +170,48 @@ describe("a staged backup nobody confirmed", () => {
     unmount();
 
     await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalledTimes(1));
+    // Named, never bare: a tokenless cancel discards whatever is staged, and what is staged is
+    // not always what this card put there (#387, and the two-card case below).
+    expect(apiMock.restoreCancel).toHaveBeenCalledWith(SUMMARY.token);
+  });
+
+  it("reclaims the archive it staged, never one a second card staged since", async () => {
+    // #387, driven as the two cards it takes. `RestoreFlow` is live in two places now --
+    // Settings, and the wizard's restore door -- so an operator can hold one in each tab, and
+    // `stage_upload` REPLACES the staging directory rather than adding to it. Tab 1 stages,
+    // tab 2 stages over it, tab 1 leaves at any later moment: no timing coincidence, and the
+    // first card's reclaim used to discard the second's archive. Tab 2 was then looking at a
+    // validated summary whose Restore had nothing behind it.
+    //
+    // What this half pins is the token the card SENDS. That the server then declines it is
+    // `test_cancel_scoped_to_a_replaced_staging_leaves_it` in `tests/test_restore.py`; neither
+    // test proves the pair alone, and the ownership check they share is the seam.
+    const first = renderFlow();
+    const second = renderFlow();
+    apiMock.restorePrepare.mockResolvedValueOnce({ ...SUMMARY, token: "first-token" });
+    await stageIn(first.container, "a.reaper");
+    apiMock.restorePrepare.mockResolvedValueOnce({ ...SUMMARY, token: "second-token" });
+    await stageIn(second.container, "b.reaper");
+
+    first.unmount();
+
+    await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalledTimes(1));
+    expect(apiMock.restoreCancel).toHaveBeenCalledWith("first-token");
+    second.unmount();
+  });
+
+  it("scopes the operator's own Remove to the file named on the card", async () => {
+    // Rule 72: `Remove` reaches the same discard from the same state, holding the same summary,
+    // so it strands the other card exactly as the unmount did. The armed Cancel is the one that
+    // stays unscoped, below -- it has no summary to take a token from.
+    const { person } = renderBackupPanel();
+    await stage("a.reaper");
+    const remove = await screen.findByRole("button", { name: /^remove$/i });
+    await waitFor(() => expect(remove).toBeEnabled());
+
+    await person.click(remove);
+
+    await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalledWith(SUMMARY.token));
   });
 
   it("sends no cancel when nothing was staged", async () => {
@@ -381,6 +442,25 @@ describe("finishing the restore from the browser", () => {
     // again once the run ends.
     expect(screen.queryByText(/Reaper is stopping/)).toBeNull();
     await waitFor(() => expect(screen.getByRole("button", { name: /restart now/i })).toBeEnabled());
+  });
+
+  it("cancels unscoped, because an armed restore need not be the one this card staged", async () => {
+    // The other side of #387's fix, and the reason it is not applied to every discard: `armed`
+    // is server state that outlives this browser, so the card offering Cancel here may never
+    // have seen the summary behind it -- a restore armed from a phone shows on the desktop
+    // too. A token-scoped Cancel there would refuse the one press that clears it, and an armed
+    // restore with no way to cancel is a restore the operator cannot get out of.
+    const { person } = await arm();
+    const cancel = await screen.findByRole("button", { name: /cancel restore/i });
+    await waitFor(() => expect(cancel).toBeEnabled());
+
+    await person.click(cancel);
+
+    // The absence of a token is the assertion, not the argument count: `restoreCancel()` and
+    // `restoreCancel(undefined)` are one request on the wire, and pinning which spelling
+    // reached the mock would fail on a refactor that changed nothing an operator can see.
+    await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalled());
+    expect(apiMock.restoreCancel.mock.calls[0]?.[0]).toBeUndefined();
   });
 
   it("shows a failed Cancel too, which was the silent half of the same gap", async () => {

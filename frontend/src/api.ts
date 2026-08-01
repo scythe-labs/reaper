@@ -1592,8 +1592,12 @@ export const api = {
    *  from the prepare summary and binds the confirm to the exact backup that was reviewed. */
   restoreConfirm: (password: string, token: string) =>
     post<{ ok: boolean }>("/api/settings/backup/restore/confirm", { password, token }),
-  /** Discard a staged or armed restore. */
-  restoreCancel: () => post<{ ok: boolean }>("/api/settings/backup/restore/cancel", {}),
+  /** Discard a staged or armed restore. `token` scopes the discard to one staging, so a card
+   *  reclaiming what it staged cannot take one a second card staged since; `cleared` says
+   *  whether it applied. Omit it to discard whatever is staged, which is what the armed
+   *  card's Cancel means: it holds no summary, and no token to take from one. */
+  restoreCancel: (token?: string) =>
+    post<{ ok: boolean; cleared: boolean }>("/api/settings/backup/restore/cancel", { token }),
   /** Stop Reaper so the armed restore is applied on the way back up. The 200 means the stop
    *  was accepted, not that anything came back: the process goes about half a second later,
    *  and whether it returns is the container's restart policy to answer, which Reaper cannot

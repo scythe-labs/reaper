@@ -245,10 +245,15 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
     }
   };
 
-  const cancel = async () => {
+  // `token` scopes the discard to the staging this card is showing. `Remove` on a reviewed
+  // summary has one and passes it, so it discards the file named on the card and never one a
+  // second card staged since (#387); the armed Cancel has no summary, so it passes nothing and
+  // discards whatever is there, which is what "cancel this restore" has to mean when the thing
+  // being canceled was armed from somewhere else entirely.
+  const cancel = async (token?: string) => {
     setBusy(true);
     try {
-      await api.restoreCancel();
+      await api.restoreCancel(token);
       reset();
       await refreshInfo();
     } catch (err) {
@@ -297,6 +302,16 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   // cancel a staged restore while the card was still on screen. It reads `stagedRef` for the same
   // reason -- the guard has to be the value at unmount, not at mount.
   //
+  // **It reclaims what THIS card staged, never whatever is staged.** A tokenless cancel is an
+  // unscoped discard, and two of these cards can be live at once -- Settings in one tab, the
+  // wizard's restore door in another -- each holding its own reviewed summary while only the
+  // later stage survives on the server, since `stage_upload` replaces the staging directory
+  // rather than adding to it. The earlier card leaving at any later moment then discarded the
+  // other's archive, and that operator was left looking at a validated summary whose Restore
+  // had nothing behind it (#387). So the cancel carries the token minted for our own staging,
+  // and the server discards nothing when it no longer matches. Rule 73 binds the *arm* to the
+  // content that was reviewed; this is the same binding on the discard.
+  //
   // `restore_cancel` discards a staged OR ARMED restore (`api/backup.py:restore_cancel`), so the
   // three ways this can send a cancel it should not are each held off explicitly:
   //
@@ -316,12 +331,18 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
   // stood before this existed, and there is no longer a card to say so on.
   const stagedRef = useRef(false);
   stagedRef.current = staged;
+  // Beside it for the same reason: the cleanup runs with `[]` deps and cannot read `summary`.
+  // An upload still in flight has no token here yet -- it is minted server-side and arrives
+  // with the summary -- so that branch takes it from the prepare it just awaited instead.
+  const tokenRef = useRef<string | null>(null);
+  tokenRef.current = summary?.token ?? null;
   useEffect(
     () => () => {
       const reclaimStagedArchive = async () => {
+        let token = tokenRef.current;
         if (prepareRef.current) {
           try {
-            await prepareRef.current;
+            token = (await prepareRef.current).token;
           } catch {
             return;
           }
@@ -329,8 +350,13 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
           return;
         }
         await confirmRef.current?.catch(() => {});
+        // No token, nothing to reclaim BY: the only send left would be the unscoped one this
+        // guard exists to stop. Reached when a confirm we waited on succeeded and dropped the
+        // summary, where the check below is what should return -- so this leaves the staged
+        // archive rather than betting on that read, which is the direction that loses nothing.
+        if (!token) return;
         if ((await api.backupInfo()).restore_armed) return;
-        await api.restoreCancel();
+        await api.restoreCancel(token);
       };
       void reclaimStagedArchive().catch(() => {});
     },
@@ -465,7 +491,7 @@ export function RestoreFlow({ armed, heldPassword, onDirtyChange }: RestoreProps
               <button
                 type="button"
                 className="link chosen-x"
-                onClick={() => void cancel()}
+                onClick={() => void cancel(summary.token)}
                 disabled={busy}
               >
                 Remove
