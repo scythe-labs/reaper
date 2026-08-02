@@ -3771,7 +3771,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -3849,7 +3849,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -4432,7 +4432,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 48,
+    "score": 49,
     "verdict": "protect"
    },
    "facts": {
@@ -4512,7 +4512,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 40,
+    "score": 41,
     "verdict": "protect"
    },
    "facts": {
@@ -4590,7 +4590,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 3,
+    "score": 5,
     "verdict": "protect"
    },
    "facts": {
@@ -6165,7 +6165,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 55,
+    "score": 57,
     "verdict": "protect"
    },
    "facts": {
@@ -6245,7 +6245,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 27,
+    "score": 30,
     "verdict": "protect"
    },
    "facts": {
@@ -6327,7 +6327,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -6413,7 +6413,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 55,
+    "score": 56,
     "verdict": "protect"
    },
    "facts": {
@@ -6492,7 +6492,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 91,
     "verdict": "protect"
    },
    "facts": {
@@ -6569,7 +6569,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -6647,7 +6647,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 20,
+    "score": 21,
     "verdict": "protect"
    },
    "facts": {
@@ -6722,7 +6722,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 72,
+    "score": 74,
     "verdict": "condemn"
    },
    "facts": {
@@ -6799,7 +6799,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 72,
+    "score": 73,
     "verdict": "condemn"
    },
    "facts": {
@@ -6877,7 +6877,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -6969,7 +6969,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -7143,7 +7143,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -7226,7 +7226,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 21,
+    "score": 23,
     "verdict": "protect"
    },
    "facts": {
@@ -7308,7 +7308,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -7385,7 +7385,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 27,
+    "score": 29,
     "verdict": "protect"
    },
    "facts": {
@@ -7468,7 +7468,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 14,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -7649,7 +7649,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -7730,7 +7730,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -7809,7 +7809,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 46,
+    "score": 47,
     "verdict": "protect"
    },
    "facts": {
@@ -7889,7 +7889,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -7980,7 +7980,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -8057,7 +8057,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 35,
+    "score": 37,
     "verdict": "protect"
    },
    "facts": {
@@ -8258,7 +8258,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 91,
     "verdict": "condemn"
    },
    "facts": {
@@ -8336,7 +8336,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -8423,7 +8423,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 80,
+    "score": 81,
     "verdict": "condemn"
    },
    "facts": {
@@ -8500,7 +8500,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 42,
+    "score": 44,
     "verdict": "protect"
    },
    "facts": {
@@ -8586,7 +8586,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 91,
     "verdict": "condemn"
    },
    "facts": {
@@ -8665,7 +8665,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 7,
+    "score": 8,
     "verdict": "protect"
    },
    "facts": {
@@ -8770,7 +8770,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -8855,7 +8855,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 32,
+    "score": 34,
     "verdict": "protect"
    },
    "facts": {
@@ -8956,7 +8956,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 93,
     "verdict": "condemn"
    },
    "facts": {
@@ -9033,7 +9033,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 91,
     "verdict": "condemn"
    },
    "facts": {
@@ -9111,7 +9111,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -9191,7 +9191,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 24,
+    "score": 26,
     "verdict": "protect"
    },
    "facts": {
@@ -9276,7 +9276,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 20,
+    "score": 21,
     "verdict": "protect"
    },
    "facts": {
@@ -9351,7 +9351,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 40,
+    "score": 42,
     "verdict": "protect"
    },
    "facts": {
@@ -9509,7 +9509,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 7,
+    "score": 8,
     "verdict": "protect"
    },
    "facts": {
@@ -9594,7 +9594,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -9673,7 +9673,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -9759,7 +9759,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 25,
+    "score": 28,
     "verdict": "protect"
    },
    "facts": {
@@ -9850,7 +9850,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -9947,7 +9947,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -10024,7 +10024,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -10127,7 +10127,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 18,
+    "score": 19,
     "verdict": "protect"
    },
    "facts": {
@@ -10213,7 +10213,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 91,
     "verdict": "condemn"
    },
    "facts": {
@@ -10290,7 +10290,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 55,
+    "score": 57,
     "verdict": "abstain"
    },
    "facts": {
@@ -10367,7 +10367,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 40,
+    "score": 42,
     "verdict": "protect"
    },
    "facts": {
@@ -10445,7 +10445,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -10538,7 +10538,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 91,
     "verdict": "condemn"
    },
    "facts": {
@@ -10617,7 +10617,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 7,
+    "score": 8,
     "verdict": "protect"
    },
    "facts": {
@@ -10715,7 +10715,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -10807,7 +10807,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -10887,7 +10887,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 23,
+    "score": 24,
     "verdict": "protect"
    },
    "facts": {
@@ -10973,7 +10973,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 79,
+    "score": 81,
     "verdict": "condemn"
    },
    "facts": {
@@ -11052,7 +11052,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -11130,7 +11130,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 21,
+    "score": 22,
     "verdict": "protect"
    },
    "facts": {
@@ -11214,7 +11214,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 67,
+    "score": 69,
     "verdict": "abstain"
    },
    "facts": {
@@ -11294,7 +11294,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -11371,7 +11371,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 28,
+    "score": 30,
     "verdict": "protect"
    },
    "facts": {
@@ -11452,7 +11452,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -11636,7 +11636,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 30,
+    "score": 32,
     "verdict": "protect"
    },
    "facts": {
@@ -11715,7 +11715,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -11810,7 +11810,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 32,
+    "score": 34,
     "verdict": "protect"
    },
    "facts": {
@@ -11889,7 +11889,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 80,
+    "score": 82,
     "verdict": "condemn"
    },
    "facts": {
@@ -11970,7 +11970,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 78,
+    "score": 79,
     "verdict": "condemn"
    },
    "facts": {
@@ -12056,7 +12056,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -12151,7 +12151,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -12259,7 +12259,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 44,
+    "score": 46,
     "verdict": "protect"
    },
    "facts": {
@@ -12345,7 +12345,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -12429,7 +12429,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -12507,7 +12507,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 35,
+    "score": 38,
     "verdict": "protect"
    },
    "facts": {
@@ -12585,7 +12585,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 33,
+    "score": 36,
     "verdict": "protect"
    },
    "facts": {
@@ -12745,7 +12745,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 26,
+    "score": 29,
     "verdict": "protect"
    },
    "facts": {
@@ -12826,7 +12826,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 45,
+    "score": 48,
     "verdict": "protect"
    },
    "facts": {
@@ -12926,7 +12926,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -13003,7 +13003,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -13089,7 +13089,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 23,
+    "score": 25,
     "verdict": "protect"
    },
    "facts": {
@@ -13262,7 +13262,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 27,
+    "score": 29,
     "verdict": "protect"
    },
    "facts": {
@@ -13339,7 +13339,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -13432,7 +13432,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 7,
+    "score": 9,
     "verdict": "protect"
    },
    "facts": {
@@ -13704,7 +13704,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 76,
+    "score": 77,
     "verdict": "condemn"
    },
    "facts": {
@@ -13787,7 +13787,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 41,
+    "score": 43,
     "verdict": "protect"
    },
    "facts": {
@@ -13865,7 +13865,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 20,
+    "score": 22,
     "verdict": "protect"
    },
    "facts": {
@@ -13943,7 +13943,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 15,
+    "score": 17,
     "verdict": "protect"
    },
    "facts": {
@@ -14020,7 +14020,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 40,
+    "score": 41,
     "verdict": "protect"
    },
    "facts": {
@@ -14099,7 +14099,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 89,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -14180,7 +14180,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -14267,7 +14267,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 91,
     "verdict": "condemn"
    },
    "facts": {
@@ -14346,7 +14346,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 35,
+    "score": 37,
     "verdict": "protect"
    },
    "facts": {
@@ -14439,7 +14439,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -14522,7 +14522,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 23,
+    "score": 25,
     "verdict": "protect"
    },
    "facts": {
@@ -14602,7 +14602,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 29,
+    "score": 30,
     "verdict": "protect"
    },
    "facts": {
@@ -14696,7 +14696,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 24,
+    "score": 26,
     "verdict": "protect"
    },
    "facts": {
@@ -14866,7 +14866,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 38,
+    "score": 40,
     "verdict": "protect"
    },
    "facts": {
@@ -14949,7 +14949,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 14,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -15031,7 +15031,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 36,
+    "score": 37,
     "verdict": "protect"
    },
    "facts": {
@@ -15283,7 +15283,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 52,
+    "score": 53,
     "verdict": "protect"
    },
    "facts": {
@@ -15361,7 +15361,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 27,
+    "score": 28,
     "verdict": "protect"
    },
    "facts": {
@@ -15448,7 +15448,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 45,
+    "score": 47,
     "verdict": "protect"
    },
    "facts": {
@@ -15535,7 +15535,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -15621,7 +15621,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 52,
+    "score": 54,
     "verdict": "protect"
    },
    "facts": {
@@ -15700,7 +15700,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 19,
+    "score": 20,
     "verdict": "protect"
    },
    "facts": {
@@ -15783,7 +15783,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 14,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -15873,7 +15873,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 44,
+    "score": 46,
     "verdict": "protect"
    },
    "facts": {
@@ -15952,7 +15952,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -16038,7 +16038,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 15,
+    "score": 17,
     "verdict": "protect"
    },
    "facts": {
@@ -16127,7 +16127,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 7,
+    "score": 8,
     "verdict": "protect"
    },
    "facts": {
@@ -16228,7 +16228,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 14,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -16314,7 +16314,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 85,
+    "score": 87,
     "verdict": "condemn"
    },
    "facts": {
@@ -16395,7 +16395,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 21,
+    "score": 23,
     "verdict": "protect"
    },
    "facts": {
@@ -16477,7 +16477,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 73,
+    "score": 75,
     "verdict": "condemn"
    },
    "facts": {
@@ -16558,7 +16558,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 24,
+    "score": 26,
     "verdict": "protect"
    },
    "facts": {
@@ -16638,7 +16638,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -16718,7 +16718,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 4,
+    "score": 6,
     "verdict": "protect"
    },
    "facts": {
@@ -16800,7 +16800,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 30,
+    "score": 32,
     "verdict": "protect"
    },
    "facts": {
@@ -16959,7 +16959,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 50,
+    "score": 51,
     "verdict": "protect"
    },
    "facts": {
@@ -17034,7 +17034,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 50,
+    "score": 53,
     "verdict": "protect"
    },
    "facts": {
@@ -17199,7 +17199,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -17282,7 +17282,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 46,
+    "score": 48,
     "verdict": "protect"
    },
    "facts": {
@@ -17366,7 +17366,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 66,
+    "score": 67,
     "verdict": "abstain"
    },
    "facts": {
@@ -17445,7 +17445,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 14,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -17530,7 +17530,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 55,
+    "score": 56,
     "verdict": "protect"
    },
    "facts": {
@@ -17609,7 +17609,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 30,
+    "score": 32,
     "verdict": "protect"
    },
    "facts": {
@@ -17711,7 +17711,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -17793,7 +17793,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -17896,7 +17896,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 37,
+    "score": 40,
     "verdict": "protect"
    },
    "facts": {
@@ -17989,7 +17989,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 43,
+    "score": 45,
     "verdict": "protect"
    },
    "facts": {
@@ -18067,7 +18067,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 82,
+    "score": 85,
     "verdict": "condemn"
    },
    "facts": {
@@ -18146,7 +18146,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -18391,7 +18391,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 39,
+    "score": 40,
     "verdict": "protect"
    },
    "facts": {
@@ -18478,7 +18478,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -18570,7 +18570,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -18668,7 +18668,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 27,
+    "score": 28,
     "verdict": "protect"
    },
    "facts": {
@@ -18762,7 +18762,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 15,
+    "score": 17,
     "verdict": "protect"
    },
    "facts": {
@@ -18840,7 +18840,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 22,
+    "score": 23,
     "verdict": "protect"
    },
    "facts": {
@@ -18928,7 +18928,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 1,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -19012,7 +19012,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 49,
+    "score": 51,
     "verdict": "protect"
    },
    "facts": {
@@ -19096,7 +19096,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -19181,7 +19181,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 37,
+    "score": 39,
     "verdict": "protect"
    },
    "facts": {
@@ -19259,7 +19259,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 7,
+    "score": 8,
     "verdict": "protect"
    },
    "facts": {
@@ -19450,7 +19450,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 30,
+    "score": 31,
     "verdict": "protect"
    },
    "facts": {
@@ -19530,7 +19530,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -19623,7 +19623,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -19702,7 +19702,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 3,
+    "score": 5,
     "verdict": "protect"
    },
    "facts": {
@@ -19784,7 +19784,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 27,
+    "score": 29,
     "verdict": "protect"
    },
    "facts": {
@@ -19864,7 +19864,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 61,
+    "score": 63,
     "verdict": "abstain"
    },
    "facts": {
@@ -19952,7 +19952,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 25,
+    "score": 27,
     "verdict": "protect"
    },
    "facts": {
@@ -20033,7 +20033,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 14,
+    "score": 17,
     "verdict": "protect"
    },
    "facts": {
@@ -20112,7 +20112,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 87,
+    "score": 89,
     "verdict": "condemn"
    },
    "facts": {
@@ -20194,7 +20194,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 55,
+    "score": 57,
     "verdict": "abstain"
    },
    "facts": {
@@ -20274,7 +20274,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 31,
+    "score": 32,
     "verdict": "protect"
    },
    "facts": {
@@ -20356,7 +20356,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -20446,7 +20446,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 44,
+    "score": 46,
     "verdict": "protect"
    },
    "facts": {
@@ -20533,7 +20533,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -20622,7 +20622,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 14,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -20706,7 +20706,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 28,
+    "score": 30,
     "verdict": "protect"
    },
    "facts": {
@@ -20787,7 +20787,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -20945,7 +20945,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 33,
+    "score": 35,
     "verdict": "protect"
    },
    "facts": {
@@ -21026,7 +21026,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -21194,7 +21194,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 40,
+    "score": 41,
     "verdict": "protect"
    },
    "facts": {
@@ -21273,7 +21273,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 74,
+    "score": 75,
     "verdict": "condemn"
    },
    "facts": {
@@ -21351,7 +21351,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 89,
+    "score": 90,
     "verdict": "condemn"
    },
    "facts": {
@@ -21598,7 +21598,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -21678,7 +21678,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 35,
+    "score": 37,
     "verdict": "protect"
    },
    "facts": {
@@ -21925,7 +21925,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -22026,7 +22026,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -22117,7 +22117,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -22371,7 +22371,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 33,
+    "score": 34,
     "verdict": "protect"
    },
    "facts": {
@@ -22448,7 +22448,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 38,
+    "score": 40,
     "verdict": "protect"
    },
    "facts": {
@@ -22690,7 +22690,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -22768,7 +22768,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 2,
     "verdict": "protect"
    },
    "facts": {
@@ -22849,7 +22849,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 1,
     "verdict": "protect"
    },
    "facts": {
@@ -22964,7 +22964,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 36,
+    "score": 38,
     "verdict": "protect"
    },
    "facts": {
@@ -23050,7 +23050,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 14,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -23131,7 +23131,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 0,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -23224,7 +23224,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 64,
+    "score": 66,
     "verdict": "abstain"
    },
    "facts": {
@@ -23388,7 +23388,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 7,
+    "score": 9,
     "verdict": "protect"
    },
    "facts": {
@@ -23471,7 +23471,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 24,
+    "score": 26,
     "verdict": "protect"
    },
    "facts": {
@@ -23637,7 +23637,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 32,
+    "score": 33,
     "verdict": "protect"
    },
    "facts": {
@@ -23716,7 +23716,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 42,
+    "score": 43,
     "verdict": "protect"
    },
    "facts": {
@@ -23796,7 +23796,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 64,
+    "score": 66,
     "verdict": "abstain"
    },
    "facts": {
@@ -23890,7 +23890,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 39,
+    "score": 41,
     "verdict": "protect"
    },
    "facts": {
@@ -23971,7 +23971,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 16,
     "verdict": "protect"
    },
    "facts": {
@@ -24064,7 +24064,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -24142,7 +24142,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 82,
+    "score": 83,
     "verdict": "protect"
    },
    "facts": {
@@ -24319,7 +24319,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 39,
+    "score": 40,
     "verdict": "protect"
    },
    "facts": {
@@ -24403,7 +24403,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 33,
+    "score": 34,
     "verdict": "protect"
    },
    "facts": {
@@ -24588,7 +24588,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 56,
+    "score": 57,
     "verdict": "abstain"
    },
    "facts": {
@@ -24839,7 +24839,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 30,
+    "score": 31,
     "verdict": "protect"
    },
    "facts": {
@@ -25160,7 +25160,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 78,
+    "score": 80,
     "verdict": "condemn"
    },
    "facts": {
@@ -25240,7 +25240,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 57,
+    "score": 58,
     "verdict": "abstain"
    },
    "facts": {
@@ -25322,7 +25322,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 4,
     "verdict": "protect"
    },
    "facts": {
@@ -25402,7 +25402,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 53,
+    "score": 55,
     "verdict": "abstain"
    },
    "facts": {
@@ -25895,7 +25895,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 40,
+    "score": 42,
     "verdict": "protect"
    },
    "facts": {
@@ -26052,7 +26052,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 4,
     "verdict": "protect"
    },
    "facts": {
@@ -26242,7 +26242,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 36,
+    "score": 37,
     "verdict": "protect"
    },
    "facts": {
@@ -26406,7 +26406,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 27,
+    "score": 29,
     "verdict": "protect"
    },
    "facts": {
@@ -27164,7 +27164,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 12,
+    "score": 13,
     "verdict": "protect"
    },
    "facts": {
@@ -27243,7 +27243,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -27402,7 +27402,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 10,
+    "score": 12,
     "verdict": "protect"
    },
    "facts": {
@@ -28393,7 +28393,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 12,
+    "score": 13,
     "verdict": "protect"
    },
    "facts": {
@@ -28471,7 +28471,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 78,
+    "score": 79,
     "verdict": "condemn"
    },
    "facts": {
@@ -28634,7 +28634,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 31,
+    "score": 33,
     "verdict": "protect"
    },
    "facts": {
@@ -28715,7 +28715,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 8,
+    "score": 9,
     "verdict": "protect"
    },
    "facts": {
@@ -28870,7 +28870,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 20,
+    "score": 21,
     "verdict": "protect"
    },
    "facts": {
@@ -29119,7 +29119,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 79,
+    "score": 81,
     "verdict": "condemn"
    },
    "facts": {
@@ -29198,7 +29198,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 33,
+    "score": 34,
     "verdict": "protect"
    },
    "facts": {
@@ -29282,7 +29282,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 24,
+    "score": 25,
     "verdict": "protect"
    },
    "facts": {
@@ -29685,7 +29685,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -29770,7 +29770,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 92,
     "verdict": "condemn"
    },
    "facts": {
@@ -29936,7 +29936,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 78,
+    "score": 79,
     "verdict": "condemn"
    },
    "facts": {
@@ -30017,7 +30017,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 85,
+    "score": 86,
     "verdict": "protect"
    },
    "facts": {
@@ -30174,7 +30174,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 90,
+    "score": 91,
     "verdict": "protect"
    },
    "facts": {
@@ -30427,7 +30427,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 66,
+    "score": 69,
     "verdict": "abstain"
    },
    "facts": {
@@ -30584,7 +30584,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 12,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -30907,7 +30907,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 32,
+    "score": 33,
     "verdict": "protect"
    },
    "facts": {
@@ -31174,7 +31174,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 12,
+    "score": 13,
     "verdict": "protect"
    },
    "facts": {
@@ -31252,7 +31252,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 20,
+    "score": 23,
     "verdict": "protect"
    },
    "facts": {
@@ -31497,7 +31497,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 49,
+    "score": 51,
     "verdict": "abstain"
    },
    "facts": {
@@ -31577,7 +31577,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 12,
+    "score": 13,
     "verdict": "protect"
    },
    "facts": {
@@ -31736,7 +31736,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 26,
+    "score": 29,
     "verdict": "protect"
    },
    "facts": {
@@ -31974,7 +31974,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 62,
+    "score": 65,
     "verdict": "abstain"
    },
    "facts": {
@@ -32053,7 +32053,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 12,
+    "score": 13,
     "verdict": "protect"
    },
    "facts": {
@@ -32136,7 +32136,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -32296,7 +32296,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 15,
+    "score": 17,
     "verdict": "protect"
    },
    "facts": {
@@ -32456,7 +32456,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 63,
+    "score": 64,
     "verdict": "abstain"
    },
    "facts": {
@@ -32711,7 +32711,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 42,
+    "score": 44,
     "verdict": "protect"
    },
    "facts": {
@@ -32953,7 +32953,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 23,
+    "score": 24,
     "verdict": "protect"
    },
    "facts": {
@@ -33192,7 +33192,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 47,
+    "score": 48,
     "verdict": "protect"
    },
    "facts": {
@@ -33273,7 +33273,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -33357,7 +33357,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 19,
+    "score": 20,
     "verdict": "protect"
    },
    "facts": {
@@ -33522,7 +33522,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 45,
+    "score": 46,
     "verdict": "protect"
    },
    "facts": {
@@ -33602,7 +33602,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -33765,7 +33765,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 52,
+    "score": 53,
     "verdict": "abstain"
    },
    "facts": {
@@ -33925,7 +33925,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 24,
+    "score": 26,
     "verdict": "protect"
    },
    "facts": {
@@ -34086,7 +34086,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 20,
+    "score": 22,
     "verdict": "protect"
    },
    "facts": {
@@ -34166,7 +34166,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 5,
+    "score": 6,
     "verdict": "protect"
    },
    "facts": {
@@ -34327,7 +34327,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 28,
+    "score": 30,
     "verdict": "protect"
    },
    "facts": {
@@ -34803,7 +34803,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 22,
+    "score": 24,
     "verdict": "protect"
    },
    "facts": {
@@ -35046,7 +35046,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 72,
+    "score": 74,
     "verdict": "condemn"
    },
    "facts": {
@@ -35362,7 +35362,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 58,
+    "score": 60,
     "verdict": "abstain"
    },
    "facts": {
@@ -35438,7 +35438,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 3,
     "verdict": "protect"
    },
    "facts": {
@@ -35518,7 +35518,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 8,
+    "score": 10,
     "verdict": "protect"
    },
    "facts": {
@@ -35754,7 +35754,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 60,
+    "score": 62,
     "verdict": "abstain"
    },
    "facts": {
@@ -36004,7 +36004,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 15,
+    "score": 18,
     "verdict": "protect"
    },
    "facts": {
@@ -36097,7 +36097,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 42,
+    "score": 44,
     "verdict": "protect"
    },
    "facts": {
@@ -36177,7 +36177,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 79,
+    "score": 80,
     "verdict": "protect"
    },
    "facts": {
@@ -36520,7 +36520,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 42,
+    "score": 43,
     "verdict": "protect"
    },
    "facts": {
@@ -36759,7 +36759,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 36,
+    "score": 37,
     "verdict": "protect"
    },
    "facts": {
@@ -36839,7 +36839,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -37241,7 +37241,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 33,
+    "score": 34,
     "verdict": "protect"
    },
    "facts": {
@@ -37320,7 +37320,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 35,
+    "score": 36,
     "verdict": "protect"
    },
    "facts": {
@@ -37396,7 +37396,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 47,
+    "score": 48,
     "verdict": "protect"
    },
    "facts": {
@@ -37476,7 +37476,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 41,
+    "score": 42,
     "verdict": "protect"
    },
    "facts": {
@@ -37639,7 +37639,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 52,
+    "score": 54,
     "verdict": "abstain"
    },
    "facts": {
@@ -37718,7 +37718,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -38225,7 +38225,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 21,
+    "score": 22,
     "verdict": "protect"
    },
    "facts": {
@@ -38548,7 +38548,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 12,
+    "score": 14,
     "verdict": "protect"
    },
    "facts": {
@@ -38630,7 +38630,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 13,
+    "score": 15,
     "verdict": "protect"
    },
    "facts": {
@@ -38711,7 +38711,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 82,
+    "score": 83,
     "verdict": "condemn"
    },
    "facts": {
@@ -38866,7 +38866,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 78,
+    "score": 79,
     "verdict": "condemn"
    },
    "facts": {
@@ -39023,7 +39023,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 33,
+    "score": 34,
     "verdict": "protect"
    },
    "facts": {
@@ -39113,7 +39113,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 2,
+    "score": 5,
     "verdict": "protect"
    },
    "facts": {
@@ -39664,7 +39664,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 28,
+    "score": 30,
     "verdict": "protect"
    },
    "facts": {
@@ -39822,7 +39822,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 56,
+    "score": 57,
     "verdict": "abstain"
    },
    "facts": {
@@ -39983,7 +39983,7 @@
   {
    "baseline": {
     "coverage_bp": 10000,
-    "score": 82,
+    "score": 83,
     "verdict": "protect"
    },
    "facts": {

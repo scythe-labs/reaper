@@ -2099,7 +2099,21 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         # still ~13%, never zero -- nothing is ever free to delete).
         SignalSetting(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365),
         SignalSetting(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
-        SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
+        # The ramp reaches up to 8.0 rather than stopping at 6.0, so a merely-average rating
+        # carries a little of this signal instead of none of it.
+        #
+        # It is the condemn direction, and small: measured against `evaluate_signal`, a 7.0
+        # goes from 0 to 1.25 of these 10 points and a 6.0 from 0 to 2.5, while 8.0 and above
+        # still add nothing and 0.0 still adds all ten. The weight is unmoved, so the most
+        # this can shift any score is 2.5 points out of 100. Re-pinned against the 440
+        # real-shape vectors in `tests/fixtures/policy_lab_vectors.json`: 271 scores moved and
+        # no verdict did.
+        #
+        # It also moves the bar for "this rating argues for KEEPING it" from 6.0 up to 8.0, so
+        # a 7.0 title reads as mild pressure rather than as a reason to keep. The panel states
+        # the ramp on the row itself, which is what keeps that legible rather than a silent
+        # reweighting.
+        SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=80),
         # SIZE IS DELIBERATELY ABSENT.
         #
         # It measures REWARD (how much you reclaim), not RISK (how unlikely it is to
@@ -2132,7 +2146,8 @@ DEFAULT_TV_POLICY = PolicyBody(
         # as a weight -- a much-rewatched season 1 can still out-score its rank. The
         # keep-last-N seasons floor above is the hard guard.
         SignalSetting(signal=SignalId.SEASON_RANK, weight=15, saturate_at=6),
-        SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
+        # Same ramp as the movie lane above, where the reasoning lives.
+        SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=80),
     ),
     # IMDb only by default for TV: Sonarr carries no rich ratings object, so a show's
     # IMDb score (from the dataset) is the one bar reliably available. Owners may add
