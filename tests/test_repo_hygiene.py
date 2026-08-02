@@ -1753,6 +1753,83 @@ def test_no_file_invents_a_floor_the_operator_never_reads() -> None:
     )
 
 
+#: The product tagline. One fact, stated on every surface that introduces Reaper.
+TAGLINE = "Grave decisions, clearly explained"
+
+#: The surfaces that state it. Written from the spec rather than scanned, because the slot is
+#: not the fact: the recovery card fills the same ``auth-tagline`` element with "Single-use
+#: admin access", which names that card and is correct, so a scan of the slot would demand the
+#: tagline in the one place it does not belong.
+TAGLINE_SITES = (
+    "README.md",
+    "frontend/src/App.tsx",
+    "frontend/src/components/Login.tsx",
+    "website/docusaurus.config.ts",
+    "manual/index.mdx",
+    "src/reaper/main.py",
+    "scripts/gen_screenshot_mockup.py",
+)
+
+#: What the sign-in card said instead, until it was the only surface saying anything else.
+RETIRED_TAGLINE = "Explainable pruning for Plex"
+
+
+def test_every_surface_states_the_same_tagline() -> None:
+    """The words under the mark are the same words wherever the app introduces itself.
+
+    Rule 144. The masthead, the README, the manual's site header and the API's own description
+    all carried this string; the sign-in card carried its own, and drifted alone for as long as
+    nobody saw two of them at once. Each surface is written by someone reading a different one.
+
+    A tagline is retired by editing this constant, which fails here naming every file still on
+    the old words.
+    """
+    absent = [
+        site for site in TAGLINE_SITES if TAGLINE not in (REPO / site).read_text(encoding="utf-8")
+    ]
+    assert not absent, (
+        f"these surfaces no longer state the tagline {TAGLINE!r}:\n"
+        + "\n".join(f"  {site}" for site in absent)
+        + "\nSay the same words on every one, in this same change."
+    )
+
+
+def test_the_tagline_sites_all_exist() -> None:
+    """A site renamed out from under the list above drops silently out of the guard.
+
+    ``read_text`` would raise there, which fails for the wrong reason and reads as a broken
+    test rather than a missing surface (rule 118).
+    """
+    gone = [site for site in TAGLINE_SITES if not (REPO / site).is_file()]
+    assert not gone, (
+        "TAGLINE_SITES names files that are not there; re-point it at where each surface "
+        f"moved to: {gone}"
+    )
+
+
+def test_no_surface_keeps_the_retired_tagline() -> None:
+    """The positive test cannot see a NEW surface inventing its own words.
+
+    This is the cheap half of that population (rule 145): it catches the one wording already
+    known to have drifted, including a revert, and it costs one grep.
+    """
+    haystacks = [
+        *_source_files_to_scan(),
+        REPO / "README.md",
+        *(REPO / "manual").rglob("*.mdx"),
+    ]
+    offenders = [
+        f"{path.relative_to(REPO)}:{n}"
+        for path in haystacks
+        if path.is_file() and path != SELF
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if RETIRED_TAGLINE in line
+    ]
+    assert not offenders, (
+        f"{RETIRED_TAGLINE!r} was retired; the tagline is {TAGLINE!r}:\n" + "\n".join(offenders)
+    )
+
+
 def test_archived_docs_declare_they_are_frozen() -> None:
     """Every file in ``docs/history/`` says so in its own banner.
 
