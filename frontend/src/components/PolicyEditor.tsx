@@ -66,7 +66,7 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
-import { probeSaid, rampDefaultSaid, rampStrip, rampUnits } from "./signalRamp";
+import { probeSaid, rampStrip, rampUnits } from "./signalRamp";
 import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
@@ -879,6 +879,10 @@ function SignalRamp({
           the rewatch curve flattens, not a number anyone remembers, and the presets restore
           weights only. Shown only once the value has actually moved, so it is an undo rather
           than a permanent button.
+          It named the value it goes to and no longer does: the near bound is usually the one
+          the operator did not touch, so half the label restated a number already on screen in
+          the box above it. The boxes and the strip answer "where did it go" the instant it is
+          pressed, and the savebar's Discard is still there if the answer is unwelcome.
           Bounds alone, never the weight: removal weights total exactly 100, and putting one
           back on its own would break the budget the save bar enforces. */}
       {shipped &&
@@ -887,6 +891,12 @@ function SignalRamp({
             <button
               type="button"
               className="link-btn"
+              // The visible text is the same on every signal, so on its own it announces as
+              // three identical buttons with nothing to tell them apart -- the failure the
+              // threshold-naming test above this file's fixtures exists for. The name leads
+              // with the visible text, so it still satisfies label-in-name for anyone
+              // speaking it, and adds the signal it belongs to.
+              aria-label={`Set to default: ${label}`}
               onClick={() =>
                 onChange({
                   ...signal,
@@ -895,7 +905,7 @@ function SignalRamp({
                 })
               }
             >
-              {`Set to default (${rampDefaultSaid(signal.signal, shipped)})`}
+              Set to default
             </button>
           </p>
         )}

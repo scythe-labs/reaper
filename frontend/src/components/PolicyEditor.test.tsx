@@ -1635,18 +1635,20 @@ describe("putting a ramp back the way Reaper ships it", () => {
     expect(screen.queryByText(/Set to default/)).toBeNull();
   });
 
-  it("names where it goes, rather than making them press to find out", async () => {
+  it("offers the way back once a bound has moved", async () => {
     renderEditor({ body: body(), default_signals: shipped });
 
     // body()'s unwatched is 0 -> 365, against a shipped 365 -> 1825.
-    expect(await screen.findByText("Set to default (1 year to 5 years)")).toBeVisible();
+    expect(
+      await screen.findByLabelText("Set to default: How long it's gone unwatched"),
+    ).toBeVisible();
   });
 
   it("restores both bounds and leaves the weight alone", async () => {
     const user = userEvent.setup();
     renderEditor({ body: body(), default_signals: shipped });
 
-    await user.click(await screen.findByText("Set to default (1 year to 5 years)"));
+    await user.click(await screen.findByLabelText("Set to default: How long it's gone unwatched"));
 
     // Both ends back, and the strip is what shows it: the bar moves to 365 of a 3650 track.
     await waitFor(() =>

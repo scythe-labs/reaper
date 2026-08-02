@@ -228,7 +228,20 @@ export function useSavebarFocus() {
     // focusing the heading then would move the operator off a Discard they can still press.
     if (document.body.contains(headingRef.current) && !document.querySelector(".savebar")) {
       wanted.current = false;
-      headingRef.current?.focus();
+      // `preventScroll`, and it is the whole point of this line rather than a nicety.
+      //
+      // Focusing an element scrolls it into view, and the target here is deliberately a FIXED
+      // point near the top of a form that runs to nineteen hundred lines -- not somewhere
+      // near the operator. So Save and Discard both threw the page back to the heading,
+      // however far down the operator had scrolled to make the edit they just saved. The two
+      // presses that mean "I am done with this bit" were the two that lost their place.
+      //
+      // Suppressing the scroll keeps what the focus move is FOR: a screen reader's cursor
+      // follows focus regardless of where the viewport sits, so the findable landing point
+      // (#173) is untouched. A sighted keyboard operator is not stranded either -- their next
+      // Tab moves focus onward and the browser scrolls to that, which is a scroll they asked
+      // for by pressing a key rather than one done to them.
+      headingRef.current?.focus({ preventScroll: true });
     }
   });
   return {
