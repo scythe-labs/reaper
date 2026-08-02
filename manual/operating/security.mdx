@@ -7,8 +7,7 @@ sidebar_position: 3
 
 # Security
 
-What Reaper actually enforces, and where the edges are. Every line here describes shipped
-behavior.
+What Reaper actually enforces, and where the edges are.
 
 ## What an API key can do
 
@@ -60,8 +59,8 @@ Every one of these, together:
 </Steps>
 
 Underneath all of it, the connection Reaper's requests travel through refuses any change unless
-deletion is armed **and** the intent was written to a record first. A new feature is safe by
-existing, because it travels the same road.
+deletion is armed **and** the intent was written to a record first. A new feature travels that
+same road, so it inherits the refusal without asking.
 
 ## Credentials at rest
 
@@ -88,8 +87,6 @@ own API key are encrypted before they are stored.
 
 ## The sharp edges
 
-Worth knowing before you expose Reaper to anything.
-
 <Callout tone="caution">
   **Reaper serves plain HTTP and sets no browser security headers.** No TLS, no content security
   policy, no HSTS. Put it behind a reverse proxy you control.
@@ -98,12 +95,13 @@ Worth knowing before you expose Reaper to anything.
 - **The session cookie is only marked secure when Reaper can see that the connection is HTTPS.**
   Terminating TLS at a proxy Reaper has not been told to trust leaves the cookie unmarked. Turn
   on reverse proxy trust and list the proxy.
-- **Forwarded headers are ignored until you do that.** That is the safe default, and it means
-  client addresses in the log are your proxy until it is configured.
+- **Forwarded headers are ignored until you turn on reverse proxy trust.** Until then, every
+  client address in the log is your proxy.
 - **`REAPER_DESTRUCTIVE_ACTIONS_ENABLED=false` is not a permanent lock.** It seeds the first run.
   Once the switch has been set in the app, the stored value wins.
-- **The backup download needs only a signed-in session.** It carries the database and the key
-  that decrypts it. Restoring one asks for your password; downloading one does not.
+- **The backup download needs only a signed-in session.** It carries the database, and the key
+  that decrypts it unless you supply that key from the environment. Restoring one asks for your
+  password; downloading one does not.
 - **The API reference page can send real writes.** Signed in, its try-it-out button acts as you,
   including rotating the API key and unlinking Plex.
 - **The app drops to an unprivileged user, unless you ask otherwise.** It starts as root only to

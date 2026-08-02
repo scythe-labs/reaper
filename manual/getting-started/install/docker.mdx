@@ -68,8 +68,8 @@ Reaper then serves on `http://localhost:8420`.
 
 <Callout tone="tip">
   **No healthcheck to write.** The image declares its own against `/api/health`, so
-  `docker ps` reports real health with no extra configuration. That endpoint is the one route
-  that answers without signing in, so a checker needs no credentials.
+  `docker ps` reports real health with no extra configuration. That endpoint is open to
+  unauthenticated callers, so a checker needs no credentials.
 </Callout>
 
 ## The volume
@@ -87,7 +87,7 @@ can see and copy. That is what you want on a NAS, and it makes
 No `chown` needed either way: the container starts as root, takes ownership of the folder, then
 drops to an unprivileged user before it opens the database.
 
-## Settings worth knowing
+## Common settings
 
 | Variable | Default | What it does |
 | --- | --- | --- |
