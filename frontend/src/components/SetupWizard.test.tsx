@@ -140,9 +140,9 @@ describe("the first screen a new operator meets", () => {
 });
 
 describe("where the wizard resumes", () => {
-  // The whole point of deriving the step from the server rather than from this browser: an
-  // install that never set a password must not be able to walk past the step that creates the
-  // local account, however many times the tab is closed and reopened.
+  // Why the step comes from the server rather than from this browser: an install that never
+  // set a password must not be able to walk past the step that creates the local account,
+  // however many times the tab is closed and reopened.
   it("opens on the password step when no password is set", async () => {
     apiMock.setupStatus.mockResolvedValue({ ...AT_SCAN, has_password: false });
     renderWizard();

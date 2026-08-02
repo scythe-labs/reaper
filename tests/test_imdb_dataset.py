@@ -179,8 +179,8 @@ class TestAtomicLoad:
     async def test_a_failed_load_leaves_the_previous_data_intact(
         self, engine: AsyncEngine, archive: Path, tmp_path: Path
     ) -> None:
-        """The whole point of staging + swap: a download that dies halfway must not
-        leave the library unprotected."""
+        """Staging + swap is there so a download that dies halfway cannot leave the
+        library unprotected."""
         await load(engine, archive)
 
         empty = tmp_path / "empty.tsv.gz"

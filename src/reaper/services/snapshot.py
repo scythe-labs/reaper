@@ -1620,7 +1620,7 @@ def _explain(
                 # The rows an abstain was choosing between, so the panel can offer a link to
                 # each instead of naming a problem in Plex with no way to open it. Display
                 # only -- no verdict reads it, because not knowing which of these the file
-                # is, is the whole reason there is no rating_key.
+                # is, is why there is no rating_key.
                 "candidate_rating_keys": (list(match_candidates) if match_candidates else None),
             },
             "signals": [

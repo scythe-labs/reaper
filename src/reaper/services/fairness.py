@@ -357,8 +357,8 @@ def _scope_to_request(cands: list[CandidateInfo], req: MediaRequest) -> list[Can
 
     Charging a person the whole show for a single-season request is the exact over-attribution
     B-6 fixes, so a season whose number is unknown (``None``) is treated as out of a specific
-    scope rather than swept in -- fail toward under-, never over-, attributing disk on a report
-    whose whole point is who is holding it. A movie never scopes (movies have no seasons)."""
+    scope rather than swept in -- fail toward under-, never over-, attributing disk on a
+    report about who is holding it. A movie never scopes (movies have no seasons)."""
     if req.media_type == "movie" or not req.seasons:
         return cands
     wanted = set(req.seasons)

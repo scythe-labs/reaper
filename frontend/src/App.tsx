@@ -768,8 +768,8 @@ function Dashboard({ user }: { user: AuthUser }) {
 
   // The background-scan cue, polled from the shell so it lights up on every screen. Fast
   // while a scan runs; a gentle idle poll so a scan started elsewhere (the scheduler,
-  // another device) still surfaces here without a manual start or a tab refocus -- the
-  // whole point of a global "something is running" line. Shares the ["scanStatus"] cache
+  // another device) still surfaces here without a manual start or a tab refocus -- that
+  // is what a global "something is running" line is for. Shares the ["scanStatus"] cache
   // with the scan bar, so the two never disagree.
   const { data: scanStatus } = useQuery({
     queryKey: ["scanStatus"],

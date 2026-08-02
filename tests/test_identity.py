@@ -89,7 +89,7 @@ class TestTheIdTierBindsAndDisambiguates:
             file_basename=None,
             index=index,
         )
-        # Bound by id even though the title differs -- the whole point of the id tier.
+        # Bound by id even though the title differs -- exactly what the id tier is for.
         assert res.rating_key == 300
         assert res.matched_by is MatchedBy.TVDB
 

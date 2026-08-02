@@ -170,8 +170,8 @@ class ConditionSpec(Frozen):
 
     Protect-only *by construction*. It is validated against the PROTECT lane of the field
     registry, so the worst a mis-authored condition can do is fail to keep something -- it can
-    never mark a title for removal. That asymmetry is the whole reason these are safe to hand
-    to the owner (see ``engine.fields``).
+    never mark a title for removal. That asymmetry is why these are safe to hand to the
+    owner (see ``engine.fields``).
     """
 
     field: str
@@ -1227,9 +1227,9 @@ def inspect(
     # which is why the lean check does not read the gate either (rules 7/24, 140).
     #
     # This branch remains about the PROTECT lane only. The three lanes and what each does under
-    # a shortfall, since the asymmetry is the whole reason there are separate checks: a protect
-    # blocks and abstains, a lean takes its full discount, and a condemn rule withholds its
-    # pressure while keeping its weight in the denominator.
+    # a shortfall, since the asymmetry is why there are separate checks: a protect blocks and
+    # abstains, a lean takes its full discount, and a condemn rule withholds its pressure
+    # while keeping its weight in the denominator.
     #
     # That last one lowers scores without blocking anything, so it cannot empty the list
     # through PRESSURE -- but it can through COVERAGE, and **that lane is warned about now

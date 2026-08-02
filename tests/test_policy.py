@@ -2851,7 +2851,8 @@ class TestAHoldTheWatchHistoryCannotEstablish:
         assert "held forever" not in flagged.message
 
     def test_the_journey_that_used_to_end_on_a_silent_page(self) -> None:
-        """The whole point of the issue: clearing the window warning must not clear this one.
+        """Clearing the window warning must not clear this one, which is exactly what the
+        issue reported.
 
         Both warnings hold at the start. The operator follows the first, lowers the window to
         their reach, and that one goes -- and this one stays, because the hold is a different

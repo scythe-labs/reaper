@@ -249,7 +249,7 @@ def skipped_guards(source: str, spans: dict[str, tuple[int, int]]) -> dict[str, 
     written for. Token swaps still reach inside both tests, so neither is wholly unmutated --
     what is missing is specifically the delete-this-guard edit.
 
-    Reporting the count is the whole point: "27 guards mutated" printed beside a silent 11
+    Never drop the count from the report: "27 guards mutated" printed beside a silent 11
     skipped reads as a complete sweep, which is the claim shape this runner exists to
     distrust. A bound the tool declines to mention is the same silent cap the guard operator
     was added to remove.

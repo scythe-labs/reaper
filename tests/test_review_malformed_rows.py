@@ -197,7 +197,7 @@ class TestTheQueueSurvivesABrokenRow:
         match used to raise straight past that promise.
 
         The row is stored ``abstain`` but rides the KEPT lane, because a reap the engine
-        will not honor keeps the file -- which is the whole point.
+        will not honor keeps the file.
         """
         rows = client.get("/api/candidates", params={"verdict": "protect"}).json()
         row = next(r for r in rows if r["media_key"] == "radarr:1:6")

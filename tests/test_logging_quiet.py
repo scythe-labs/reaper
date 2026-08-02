@@ -21,7 +21,7 @@ from reaper.logging import _NOISY_LOGGERS, configure_logging
 
 
 def test_aiosqlite_and_sql_stay_at_warning(_restore_logging: None) -> None:
-    assert "aiosqlite" in _NOISY_LOGGERS  # the whole point of the fix
+    assert "aiosqlite" in _NOISY_LOGGERS  # the logger the fix was about
     # httpx2 renames its loggers; both spellings must stay quiet through the migration, or
     # a Discord webhook token (in the URL path) leaks into the log in cleartext.
     assert "httpx2" in _NOISY_LOGGERS and "httpcore2" in _NOISY_LOGGERS

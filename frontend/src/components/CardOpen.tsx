@@ -10,8 +10,8 @@
 // and replaced by that one label. A screen reader heard "Why Example Title scored 62, button"
 // and nothing else -- not the override chip saying a spare is keeping the file, not the
 // held-reap "kept for now", not the library, size, resolution or requester, not the reason
-// line, not the season strip. That pruned content IS the case for deleting the file, and it is
-// the whole reason the queue exists (#169).
+// line, not the season strip. That pruned content IS the case for deleting the file, and it
+// is why the queue exists (#169).
 //
 // Two more things came off the same declaration. Real `<button>`s sat inside the `role="button"`
 // (Spare, Reap, the season expander, every strip square), which is invalid and which axe reports

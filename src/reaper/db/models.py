@@ -341,9 +341,9 @@ class AutonomyGrant(Base):
 class Snapshot(Base):
     """A frozen evidence set.
 
-    Everything is gathered, frozen and hashed *before* anything is scored. That is the
-    whole point: a transient Sonarr timeout halfway through a scan cannot flip an
-    item's fate, because every item in a run is judged against the same evidence.
+    Everything is gathered, frozen and hashed *before* anything is scored, so a
+    transient Sonarr timeout halfway through a scan cannot flip an item's fate:
+    every item in a run is judged against the same evidence.
 
     Maintainerr #3125 is the bug this prevents: "collection items flip in/out when
     Sonarr API lookups fail transiently during rule runs". An item's fate should not
@@ -645,9 +645,9 @@ class WatchHighWater(Base):
     zero from a positive one is a transition no library can make, and that is the signal.
     ``services.watch_evidence`` does the comparing.
 
-    Outside the snapshot lifecycle, and that is the whole point: comparing against only
-    the previous snapshot would let the FIRST blind scan write zero as the new baseline,
-    after which 0 -> 0 is no longer a fall and the blindness is never noticeable again.
+    Outside the snapshot lifecycle on purpose: comparing against only the previous
+    snapshot would let the FIRST blind scan write zero as the new baseline, after
+    which 0 -> 0 is no longer a fall and the blindness is never noticeable again.
 
     Keyed by the stable ``media_key``, never the Plex rating key -- which is the thing
     that moved.

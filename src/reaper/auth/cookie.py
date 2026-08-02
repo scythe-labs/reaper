@@ -116,15 +116,15 @@ def read_session_tokens(cookies: Mapping[str, str]) -> tuple[str, ...]:
 def _delete(response: Response, name: str) -> None:
     """Emit the delete for one cookie name, with the ``Secure`` flag that name requires.
 
-    The flag is a property of the NAME, not of the request, and that is the whole point.
-    A browser only accepts a ``__Host-`` cookie carrying ``Secure``, deletion included, so
-    clearing it with the request's own flag broke the most common install shape: TLS
-    terminated at a reverse proxy the operator had not listed under proxy trust, where
-    :func:`is_secure_request` returns ``False``. The delete went out without ``Secure``,
-    the browser discarded it, and the cookie survived in the jar with its database row
-    already gone. Every later sign-in wrote the plain name, the dead ``__Host-`` cookie
-    outranked it on read, and sign-in silently stopped working until the operator cleared
-    cookies by hand or the 30-day window lapsed.
+    The flag is a property of the NAME, not of the request. A browser only accepts a
+    ``__Host-`` cookie carrying ``Secure``, deletion included, so clearing it with the
+    request's own flag broke the most common install shape: TLS terminated at a reverse
+    proxy the operator had not listed under proxy trust, where :func:`is_secure_request`
+    returns ``False``. The delete went out without ``Secure``, the browser discarded it,
+    and the cookie survived in the jar with its database row already gone. Every later
+    sign-in wrote the plain name, the dead ``__Host-`` cookie outranked it on read, and
+    sign-in silently stopped working until the operator cleared cookies by hand or the
+    30-day window lapsed.
 
     A delete carries no value, so marking it ``Secure`` leaks nothing. On a genuinely
     plain-HTTP install a browser ignores the ``Secure`` delete, but no ``__Host-`` cookie

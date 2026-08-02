@@ -73,7 +73,7 @@ export async function findA11yViolations(
   options: A11yOptions = {},
 ): Promise<A11yFinding[]> {
   for (const [id, why] of Object.entries(options.skip ?? {})) {
-    // The reason is the whole point of `skip` being a map rather than a list: a suppressed rule
+    // `skip` is a map rather than a list exactly so it carries the reason: a suppressed rule
     // has to stay arguable by whoever reads it next. A type cannot ask for a reason that means
     // something, but it can refuse an empty one, so the discipline is carried by code and not
     // only by the docstring underneath (rule 7/24).

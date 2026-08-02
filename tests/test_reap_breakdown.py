@@ -192,8 +192,8 @@ async def test_an_expired_spare_still_keeps_the_title_and_is_counted_as_expired(
 ) -> None:
     """A spare whose clock has passed goes on keeping the file until a SCAN realizes it.
 
-    That is the whole reason the count exists. ``purge_expired_spares`` runs only inside the
-    scan transaction, so between the clock passing and the next scan this ledger, the planner
+    That is why the count exists. ``purge_expired_spares`` runs only inside the scan
+    transaction, so between the clock passing and the next scan this ledger, the planner
     and the executor all still read the spare -- the title is genuinely kept and genuinely
     absent from the reap, with nothing else on the page to explain why. The count is what lets
     the Reap page say so.

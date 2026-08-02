@@ -125,10 +125,10 @@ describe("the confirm that refuses a switch away from unsaved edits", () => {
     expect(within(confirm).getByRole("button", { name: "Keep editing" })).toBeInTheDocument();
   });
 
-  // The nonce is the whole reason this component takes one. Pressing the same refused section a
-  // second time sets `pendingSwitch` to the value it already holds, which React treats as no
-  // change at all -- so an effect keyed on the pending value would not re-fire, and the second
-  // press stayed the literal no-op the issue measured (byte-identical DOM, same activeElement).
+  // This component takes a nonce because pressing the same refused section a second time sets
+  // `pendingSwitch` to the value it already holds, which React treats as no change at all --
+  // so an effect keyed on the pending value would not re-fire, and the second press stayed the
+  // literal no-op the issue measured (byte-identical DOM, same activeElement).
   it("moves focus again on a repeat press, which changes no state at all", async () => {
     const user = userEvent.setup();
     render(<Harness />);

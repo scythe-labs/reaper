@@ -129,8 +129,8 @@ button.link:hover:not(:disabled) {
    itself cannot get narrower than its labels laid end to end however narrow the screen is:
    the lane switcher held 300px and the preset picker 304px at every viewport, and both ran
    straight off a narrow phone. Buy the room back from the padding rather than from the
-   labels -- reading every option at once is the whole point of this control, so truncating
-   one, hiding one behind a sideways scroll, or dropping one into a dropdown all defeat it
+   labels -- this control is there so every option can be read at once, so truncating one,
+   hiding one behind a sideways scroll, or dropping one into a dropdown all defeat it
    (rule 41). Clearing the SCREEN is the wrong test on its own, though: the preset picker sits
    inside a card, and at 0.55rem it still ran past `.intent-band`'s content box below 340px. */
 @media (max-width: 400px) {

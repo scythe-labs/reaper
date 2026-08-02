@@ -901,7 +901,7 @@ class TestTheCacheIsRebuiltNotMigrated:
             assert not any(row[1] == "watched_status" and row[3] for row in cols)
             # Emptied, so the next sync is a full one rather than an incremental gap.
             assert (await conn.execute(text("SELECT COUNT(*) FROM watch_event"))).scalar() == 0
-            # The whole point: an unreported completion is now storable as such.
+            # An unreported completion is now storable as such.
             await conn.execute(
                 text(
                     "INSERT INTO watch_event VALUES "

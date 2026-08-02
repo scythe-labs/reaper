@@ -119,7 +119,7 @@ class ProtectedSeason:
     ("couldn't check") rather than green ("checked and passed"), and the operator can see
     which of the two they are looking at.
 
-    **That is now the whole reason, and it is the durable one.** The flag was originally
+    **That is now the only reason, and it is the durable one.** The flag was originally
     added for a second reason that has lapsed: a block used to hold a hand reap where a
     plain PROTECT on this gate did not, which made ``blocked`` the strictly stronger
     encoding. No blocked gate holds a hand reap any more (``engine.verdict``), so both

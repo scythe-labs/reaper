@@ -4,7 +4,7 @@
 Every case here was found by probing live Sonarr, Radarr, Tautulli and Seerr instances
 read-only, and every one of them contradicts a reasonable assumption. A fixture written
 from an OpenAPI spec would have encoded the assumption instead of the truth -- which is
-the whole reason this file exists. Each test names the wrong belief it protects against.
+why this file exists. Each test names the wrong belief it protects against.
 """
 
 from __future__ import annotations

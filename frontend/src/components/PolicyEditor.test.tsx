@@ -565,9 +565,9 @@ describe("the gate that counts recent watchers", () => {
   });
 
   it("shows the server's warning beside the protections it is about", async () => {
-    // The whole point of the warning is that an operator whose reap list is empty has
-    // somewhere to read why, so "the server emits it" is not the claim worth pinning --
-    // "it reaches the page, beside the control it tells them to change" is.
+    // The warning gives an operator whose reap list is empty somewhere to read why, so "the
+    // server emits it" is not the claim worth pinning -- "it reaches the page, beside the
+    // control it tells them to change" is.
     //
     // Both halves are needed, and the second is the one that costs an assertion. An
     // unanchored warning still renders, in the catch-all stack at the foot of the page, so

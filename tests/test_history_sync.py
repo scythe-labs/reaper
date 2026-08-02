@@ -108,8 +108,8 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         assert fake.after_calls[0] is None
 
     async def test_the_second_sync_asks_only_for_recent_rows(self, engine: AsyncEngine) -> None:
-        """The whole point: the incremental sync must pass an ``after`` date, so Tautulli
-        returns the delta instead of the full history."""
+        """The incremental sync must pass an ``after`` date, so Tautulli returns the
+        delta instead of the full history."""
         history = [_row(i, days_ago=i) for i in range(1, 11)]
         fake = FakeTautulli(history)
         await sync(engine, fake)  # type: ignore[arg-type]
@@ -339,7 +339,7 @@ class TestAnUnreportedCompletionIsStoredAsUnknown:
         assert await self._status(engine, 1) == 0.0
 
     async def test_the_two_are_distinguishable_after_a_sync(self, engine: AsyncEngine) -> None:
-        """Both facts in one history, told apart in storage. This is the whole point."""
+        """Both facts in one history, told apart in storage."""
         unknown = _row(1, days_ago=1)
         del unknown["watched_status"]
         rows = [unknown, dict(_row(2, days_ago=2), watched_status=0)]
