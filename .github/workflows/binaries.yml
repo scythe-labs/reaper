@@ -293,8 +293,8 @@ jobs:
             if curl -sf http://127.0.0.1:8420/api/health > /dev/null; then ok=true; break; fi
             sleep 1
           done
-          if [ "${ok}" != "true" ]; then sudo snap logs reaper -n 100 || true; exit 1; fi
-          sudo snap remove reaper
+          if [ "${ok}" != "true" ]; then sudo snap logs scythe-labs-reaper -n 100 || true; exit 1; fi
+          sudo snap remove scythe-labs-reaper
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

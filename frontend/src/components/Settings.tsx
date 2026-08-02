@@ -27,9 +27,12 @@ import {
   type ExpandSeasonsMode,
   type Instance,
   type InstanceTest,
+  type ReleaseChange,
   type Schedule,
   type ScheduledJob,
 } from "../api";
+import Markdown from "react-markdown";
+import { useUpdateStatus } from "../updateStatus";
 import { useBackGuard } from "../backnav";
 import { bytes, count, since } from "../format";
 import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
@@ -1423,13 +1426,24 @@ function BackupPanel({
 
 // --- About -------------------------------------------------------------------
 
-function AboutPanel() {
+export function AboutPanel() {
   const { data, isPending, isError } = useQuery({ queryKey: ["about"], queryFn: api.about });
+  const update = useUpdateStatus();
+  const [changesOpen, setChangesOpen] = useState(false);
 
   return (
     <div className="panel">
       <h2>About</h2>
       <p className="blurb">What's running, and where its data lives.</p>
+      {/* standing: which channel this build is on is a fact about the install, true on
+          first paint and unchanged for the process's whole life -- page furniture, not a
+          reaction to anything pressed. */}
+      {update.data?.channel === "dev" && (
+        <Notice tone="warn" standing>
+          You are running a <code>dev</code> build of Reaper. It changes daily and can break; use a
+          release unless you are helping test.
+        </Notice>
+      )}
       {isPending && <p className="muted">Loading…</p>}
       {/* Two cases, not one. React Query keeps the last good row through a failed refetch and
           raises isError beside it, so an undivided `isError` printed "couldn't load this page"
@@ -1445,7 +1459,18 @@ function AboutPanel() {
         <div className="set-rows">
           <dl className="about-kv">
             <dt>Version</dt>
-            <dd>Reaper {data.version}</dd>
+            <dd>
+              Reaper {data.version}
+              {update.data?.update_available && (
+                <span className="update-pill">
+                  {update.data.channel === "dev" ? "Newer dev build" : "Update available"}
+                </span>
+              )}
+            </dd>
+            <dt>Update</dt>
+            <dd>
+              <UpdateCell status={update} onSeeChanges={() => setChangesOpen(true)} />
+            </dd>
             <dt>License</dt>
             <dd>{data.license}</dd>
             <dt>Data folder</dt>
@@ -1459,7 +1484,113 @@ function AboutPanel() {
           </dl>
         </div>
       )}
+      {changesOpen && update.data && (
+        <ChangesModal changes={update.data.changes} onClose={() => setChangesOpen(false)} />
+      )}
     </div>
+  );
+}
+
+/** The Update row's sentence, one branch per state the check can be in. Pending and a
+ *  failed read are spelled out (rule 17/36), and both failure shapes -- the HTTP call
+ *  failing, and the server answering "unknown" -- read the same, because to the
+ *  operator they are the same fact: no answer today, and nothing they must do. */
+function UpdateCell({
+  status,
+  onSeeChanges,
+}: {
+  status: ReturnType<typeof useUpdateStatus>;
+  onSeeChanges: () => void;
+}) {
+  const { data, isPending, isError } = status;
+  if (isPending) return <span className="muted">Checking for updates…</span>;
+  if (!data || isError)
+    return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
+  if (!data.enabled)
+    return (
+      <span className="muted">
+        Update checks are off, so Reaper never asks GitHub for versions. Remove
+        REAPER_UPDATE_CHECK=false to turn them back on.
+      </span>
+    );
+  if (data.update_available === null)
+    return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
+  if (!data.update_available)
+    return (
+      <span>
+        {data.channel === "dev"
+          ? "This build matches the dev branch."
+          : "You are on the newest release."}
+      </span>
+    );
+  if (data.channel === "dev")
+    return (
+      <>
+        The dev branch has moved since this build.{" "}
+        {data.url && (
+          <a href={data.url} target="_blank" rel="noreferrer">
+            See what changed
+          </a>
+        )}
+        <br />
+        <span className="muted">Dev builds change often. Releases are the steadier channel.</span>
+      </>
+    );
+  return (
+    <>
+      Reaper {data.latest} is out.{" "}
+      <button type="button" className="link-btn" onClick={onSeeChanges}>
+        See what changed
+      </button>
+      <br />
+      <span className="muted">
+        Reaper checks a few times a day and never sends anything about your library.
+      </span>
+    </>
+  );
+}
+
+/** The GitHub changelog for every release the operator has not taken, newest first, in
+ *  the one modal shell. The markdown is rendered sanitized -- react-markdown emits no
+ *  raw HTML -- and every link inside it leaves for GitHub in a new tab. */
+function ChangesModal({ changes, onClose }: { changes: ReleaseChange[]; onClose: () => void }) {
+  return (
+    <ModalShell title="What changed" onClose={onClose} className="modal-changes">
+      <div className="changes-body">
+        {changes.length === 0 && (
+          <p className="muted">
+            No release notes to show. The releases page on GitHub has the full story.
+          </p>
+        )}
+        {changes.map((c) => (
+          <section key={c.version} className="changes-release">
+            <h3>Reaper {c.version}</h3>
+            {c.notes ? (
+              <div className="changes-notes">
+                <Markdown
+                  components={{
+                    a: ({ node: _node, ...props }) => (
+                      <a {...props} target="_blank" rel="noreferrer" />
+                    ),
+                  }}
+                >
+                  {c.notes}
+                </Markdown>
+              </div>
+            ) : (
+              <p className="muted">This release shipped without notes.</p>
+            )}
+            {c.url && (
+              <p className="changes-link">
+                <a href={c.url} target="_blank" rel="noreferrer">
+                  View on GitHub
+                </a>
+              </p>
+            )}
+          </section>
+        ))}
+      </div>
+    </ModalShell>
   );
 }
 

@@ -1199,12 +1199,23 @@ class AboutOut(BaseModel):
     """The rebuildable cache: watch history, ratings, lists. Large and disposable."""
 
 
+class ReleaseChangeOut(BaseModel):
+    """One release the operator has not taken yet, for the what-changed modal.
+    ``notes`` is the release's own changelog, GitHub-flavored markdown."""
+
+    version: str
+    url: str | None
+    notes: str | None
+
+
 class UpdateOut(BaseModel):
     """Whether a newer Reaper exists, on this build's channel. Advisory only: nothing
     gates on it, and a check that could not answer reads as unknown, never as an error.
 
     ``update_available`` is three-state: ``None`` when the check is off, unreachable,
     or the two versions cannot be ordered. The surface renders that as nothing.
+    ``changes`` lists every release newer than the running one, newest first; empty
+    unless ``update_available`` is ``True``, and always empty on the dev channel.
     """
 
     channel: Literal["release", "dev"]
@@ -1214,3 +1225,4 @@ class UpdateOut(BaseModel):
     update_available: bool | None
     url: str | None
     checked_at: datetime | None
+    changes: list[ReleaseChangeOut]

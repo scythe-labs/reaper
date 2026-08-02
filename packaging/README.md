@@ -9,7 +9,7 @@ map, plus the pieces that need a human once.
 | --- | --- | --- |
 | `Reaper-<v>-windows-x64-setup.exe` (Inno Setup) + portable `.zip` | `binaries.yml` | GitHub release assets |
 | `Reaper-<v>-macos-arm64.zip` (macOS 14+, Apple Silicon) | `binaries.yml` | GitHub release assets |
-| `reaper_<v>_{amd64,arm64}.snap` | `binaries.yml` | GitHub release assets, Snap Store |
+| `scythe-labs-reaper_<v>_{amd64,arm64}.snap` | `binaries.yml` | GitHub release assets, Snap Store |
 | `ghcr.io/…/reaper:<v>` and `:latest` | `release.yml` | GHCR |
 
 Releases are CalVer (`vYYYY.M.N`), cut automatically by `release.yml` on every push to
@@ -44,10 +44,11 @@ The snap builds with `snapcraft` on a Linux host (CI uses LXD on the runner).
 
 ## One-time setup that needs a human
 
-**Snap Store.** Register the name once (`snapcraft register reaper`), then mint the
-CI credential and store it as the `SNAPCRAFT_STORE_CREDENTIALS` secret:
-`snapcraft export-login --snaps reaper --channels edge,stable -`. Without the secret
-the workflows build and attach the snap but skip the store, green.
+**Snap Store.** The registered name is `scythe-labs-reaper` (the bare name was not
+available), so the yaml's `name:` and the store must always agree. Mint the CI
+credential and store it as the `SNAPCRAFT_STORE_CREDENTIALS` secret:
+`snapcraft export-login --snaps scythe-labs-reaper --channels edge,stable -`. Without
+the secret the workflows build and attach the snap but skip the store, green.
 
 **WinGet.** The first `ScytheLabs.Reaper` manifest must be submitted to
 [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) by hand

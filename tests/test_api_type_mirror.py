@@ -91,8 +91,8 @@ CLIENT_ONLY = {
 # The third new name, `PolicyProbe`, is a type alias rather than an interface and is counted
 # by neither walk -- which is the reason these two numbers are reconciled against the tree
 # separately instead of one being derived from the other.
-EXPECTED_INTERFACES = 84
-EXPECTED_PAIRS = 81
+EXPECTED_INTERFACES = 86
+EXPECTED_PAIRS = 83
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

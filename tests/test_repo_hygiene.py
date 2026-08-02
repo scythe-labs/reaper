@@ -1938,7 +1938,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # failed -- three states that each used to render as a positive claim about a service or a
 # server nobody reached.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 135
+_EXPECTED_NOTICES = 136
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2036,8 +2036,10 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # Then 34: the policy editor's other three readers of `["validate", debounced]`, which is keyed on
 # the draft and so refires as the operator types -- the same query whose `WarnBlock` notices were
 # already `standing` for that reason, and rule 72 for the two that were not.
+# Then 35: About's dev-build banner, a fact about the install that is true on first paint
+# and unchanged for the process's whole life.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 34
+_EXPECTED_STANDING = 35
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
@@ -2675,7 +2677,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 47
+_EXPECTED_RENDERING_TEST_FILES = 48
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:

@@ -907,6 +907,31 @@ export interface About {
   cache_db_bytes: number;
 }
 
+/** One release the operator has not taken yet, for the what-changed modal. `notes` is
+ *  the release's own changelog, GitHub-flavored markdown. */
+export interface ReleaseChange {
+  version: string;
+  url: string | null;
+  notes: string | null;
+}
+
+/** Whether a newer Reaper exists, on this build's channel: a release build follows
+ *  published releases, everything else follows the dev branch. `update_available` is
+ *  three-state -- `null` when the check is off, unreachable, or the versions cannot be
+ *  ordered -- and the surfaces render that as nothing: the check informs, never gates.
+ *  `changes` lists every release newer than the running one, newest first; empty
+ *  unless `update_available` is true, and always empty on the dev channel. */
+export interface Update {
+  channel: "release" | "dev";
+  enabled: boolean;
+  current: string;
+  latest: string | null;
+  update_available: boolean | null;
+  url: string | null;
+  checked_at: string | null;
+  changes: ReleaseChange[];
+}
+
 /** Which screens the review queue opens a show's season list on by default. Mirrors
  *  `app_settings.ExpandSeasonsMode`; "both" is what the on/off switch this replaced meant
  *  when it was on. */
@@ -1628,6 +1653,7 @@ export const api = {
     put<LeavingSoonSettings>("/api/settings/leaving-soon", body),
 
   about: () => request<About>("/api/about"),
+  update: () => request<Update>("/api/about/update"),
 
   general: () => request<GeneralSettings>("/api/settings/general"),
   saveGeneral: (body: {

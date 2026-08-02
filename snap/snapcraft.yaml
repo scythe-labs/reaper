@@ -9,7 +9,7 @@
 # CI (binaries.yml) generates buildinfo.json at the repo root before building, so the
 # snap can name its version, commit, and channel; a local `snapcraft` run synthesizes
 # a dev one from the checkout.
-name: reaper
+name: scythe-labs-reaper
 title: Reaper
 summary: Find media nobody watches, review why, then remove it safely
 description: |
@@ -17,7 +17,7 @@ description: |
   each item is expendable, lets you review and approve, then removes approved
   items through Sonarr and Radarr and refreshes Plex.
 
-  The web UI listens on port 8420. Data lives in /var/snap/reaper/common.
+  The web UI listens on port 8420. Data lives in /var/snap/scythe-labs-reaper/common.
 license: AGPL-3.0-or-later
 source-code: https://github.com/scythe-labs/reaper
 issues: https://github.com/scythe-labs/reaper/issues
@@ -31,7 +31,7 @@ platforms:
   arm64:
 
 apps:
-  reaper:
+  scythe-labs-reaper:
     command: opt/python/bin/python3.13 -m reaper.launcher
     daemon: simple
     restart-condition: on-failure

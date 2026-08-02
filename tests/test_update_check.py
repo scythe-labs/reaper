@@ -20,13 +20,13 @@ from sqlalchemy import create_engine as sa_create_engine
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.main import create_app
-from reaper.services.update_check import DEFAULT_REPO, UpdateChecker, _newer
+from reaper.services.update_check import _MAX_NOTES, DEFAULT_REPO, UpdateChecker, _newer
 
 from ._auth import login
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
-_RELEASES = f"https://api.github.com/repos/{DEFAULT_REPO}/releases/latest"
+_RELEASES = f"https://api.github.com/repos/{DEFAULT_REPO}/releases"
 _DEV_TIP = f"https://api.github.com/repos/{DEFAULT_REPO}/commits/dev"
 
 
@@ -70,16 +70,23 @@ class TestVersionOrdering:
         assert _newer(latest, current) is expected
 
 
+def _release(tag: str, *, notes: str | None = None, prerelease: bool = False) -> dict[str, object]:
+    return {
+        "tag_name": tag,
+        "prerelease": prerelease,
+        "html_url": f"https://github.com/{DEFAULT_REPO}/releases/tag/{tag}",
+        "body": notes,
+    }
+
+
 class TestReleaseChannel:
     @pytest.mark.usefixtures("_release_build")
-    async def test_a_newer_release_is_reported(self, httpx2_mock: respx.Router) -> None:
+    async def test_a_newer_release_is_reported_with_its_notes(
+        self, httpx2_mock: respx.Router
+    ) -> None:
         httpx2_mock.get(_RELEASES).mock(
             return_value=httpx.Response(
-                200,
-                json={
-                    "tag_name": "v2026.9.1",
-                    "html_url": f"https://github.com/{DEFAULT_REPO}/releases/tag/v2026.9.1",
-                },
+                200, json=[_release("v2026.9.1", notes="## What changed\n* a fix")]
             )
         )
         status = await UpdateChecker().status()
@@ -90,21 +97,73 @@ class TestReleaseChannel:
         assert status.update_available is True
         assert status.url is not None and status.url.endswith("v2026.9.1")
         assert status.checked_at is not None
+        assert [c.version for c in status.changes] == ["2026.9.1"]
+        assert status.changes[0].notes == "## What changed\n* a fix"
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_every_release_behind_is_carried_newest_first(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """An operator two releases behind sees both sets of notes: the middle
+        release must not read as never having happened."""
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    _release("v2026.9.2", notes="second"),
+                    _release("v2026.9.1", notes="first"),
+                    _release("v2026.8.1", notes="taken already"),
+                ],
+            )
+        )
+        status = await UpdateChecker().status()
+        assert [c.version for c in status.changes] == ["2026.9.2", "2026.9.1"]
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_the_rolling_dev_prerelease_is_not_a_release(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The dev-build prerelease sits newest in the list; treating it as the
+        headline would tell every release operator an update exists nightly."""
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(
+                200,
+                json=[_release("dev-build", prerelease=True), _release("v2026.8.1")],
+            )
+        )
+        status = await UpdateChecker().status()
+        assert status.latest == "2026.8.1"
+        assert status.update_available is False
+        assert status.changes == ()
 
     @pytest.mark.usefixtures("_release_build")
     async def test_the_current_release_reports_no_update(self, httpx2_mock: respx.Router) -> None:
         httpx2_mock.get(_RELEASES).mock(
-            return_value=httpx.Response(200, json={"tag_name": "v2026.8.1"})
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.8.1"}])
         )
         status = await UpdateChecker().status()
         assert status.update_available is False
+        assert status.changes == ()
         assert status.url is None  # no html_url in the payload: absent, not invented
 
     @pytest.mark.usefixtures("_release_build")
-    async def test_a_payload_without_a_tag_reads_as_unknown(
+    async def test_endless_notes_are_cut_and_say_so(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(
+                200, json=[_release("v2026.9.1", notes="x" * (_MAX_NOTES + 1))]
+            )
+        )
+        status = await UpdateChecker().status()
+        notes = status.changes[0].notes
+        assert notes is not None
+        assert len(notes) < _MAX_NOTES + 100
+        assert notes.endswith("Read the rest on GitHub.")
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_a_payload_without_releases_reads_as_unknown(
         self, httpx2_mock: respx.Router
     ) -> None:
-        httpx2_mock.get(_RELEASES).mock(return_value=httpx.Response(200, json={"name": "x"}))
+        httpx2_mock.get(_RELEASES).mock(return_value=httpx.Response(200, json=[{"name": "x"}]))
         status = await UpdateChecker().status()
         assert status.update_available is None
         assert status.latest is None
@@ -135,7 +194,7 @@ class TestReleaseChannel:
     @pytest.mark.usefixtures("_release_build")
     async def test_a_successful_answer_is_cached_for_hours(self, httpx2_mock: respx.Router) -> None:
         httpx2_mock.get(_RELEASES).mock(
-            return_value=httpx.Response(200, json={"tag_name": "v2026.8.1"})
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.8.1"}])
         )
         clock = [0.0]
         checker = UpdateChecker(clock=lambda: clock[0])
@@ -163,7 +222,7 @@ class TestReleaseChannel:
         assert len(httpx2_mock.calls) == 0
 
         httpx2_mock.get(_RELEASES).mock(
-            return_value=httpx.Response(200, json={"tag_name": "v2026.8.1"})
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.8.1"}])
         )
         monkeypatch.setenv("REAPER_UPDATE_CHECK", "true")
         status = await checker.status()
@@ -177,15 +236,15 @@ class TestReleaseChannel:
         """The slug is spliced into a URL path, so anything that is not owner/name
         falls back to the default rather than being sent."""
         monkeypatch.setenv("REAPER_UPDATE_REPO", "fork-owner/reaper")
-        forked = httpx2_mock.get(
-            "https://api.github.com/repos/fork-owner/reaper/releases/latest"
-        ).mock(return_value=httpx.Response(200, json={"tag_name": "v2026.8.1"}))
+        forked = httpx2_mock.get("https://api.github.com/repos/fork-owner/reaper/releases").mock(
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.8.1"}])
+        )
         await UpdateChecker().status()
         assert len(forked.calls) == 1
 
         monkeypatch.setenv("REAPER_UPDATE_REPO", "../repos/evil")
         upstream = httpx2_mock.get(_RELEASES).mock(
-            return_value=httpx.Response(200, json={"tag_name": "v2026.8.1"})
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.8.1"}])
         )
         await UpdateChecker().status()
         assert len(upstream.calls) == 1
@@ -272,7 +331,7 @@ class TestRoute:
         assert body["current"] == "dev (abc1234)"
         assert body["latest"] == "dev (def5678)"
         assert body["update_available"] is True
-        assert body["url"].endswith("/commit/def5678")
+        assert body["url"].endswith("/commits/dev")
         assert body["checked_at"] is not None
 
     @pytest.mark.usefixtures("_dev_build")

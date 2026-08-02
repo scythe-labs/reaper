@@ -75,3 +75,21 @@
 .user-dropdown-item:hover {
   background: var(--hover);
 }
+
+/* The update status light: on the chip while a newer build exists, echoed on the
+   dropdown's item. Decoration only, and aria-hidden at both sites: the chip's
+   accessible name carries the words, so the fact is spoken, never the dot. */
+.update-light {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px 1px var(--accent-ring);
+  flex: none;
+}
+.user-dropdown-update {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}

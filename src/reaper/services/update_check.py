@@ -54,6 +54,21 @@ _FAILURE_TTL = 15 * 60.0
 
 Channel = Literal["release", "dev"]
 
+#: Per-release cap on the notes carried to the UI. A generated changelog is a few
+#: kilobytes; the cap only bounds the response against a hand-written epic, and the
+#: modal's GitHub link carries the rest.
+_MAX_NOTES = 20_000
+
+
+@dataclass(frozen=True)
+class ReleaseChange:
+    """One release the operator has not taken yet, notes included, for the
+    what-changed modal."""
+
+    version: str
+    url: str | None
+    notes: str | None
+
 
 @dataclass(frozen=True)
 class UpdateStatus:
@@ -61,7 +76,9 @@ class UpdateStatus:
 
     ``update_available`` is three-state on purpose: ``None`` means the check could not
     answer (disabled, unreachable, or an unparseable version), which the surface shows
-    as nothing rather than as either verdict.
+    as nothing rather than as either verdict. ``changes`` holds every release newer
+    than the running one, newest first; it is empty whenever ``update_available`` is
+    not ``True``, and always empty on the dev channel, whose builds have no notes.
     """
 
     channel: Channel
@@ -71,6 +88,7 @@ class UpdateStatus:
     update_available: bool | None = None
     url: str | None = None
     checked_at: datetime | None = None
+    changes: tuple[ReleaseChange, ...] = ()
 
 
 def _channel() -> Channel:
@@ -156,29 +174,52 @@ class UpdateChecker:
             return UpdateStatus(channel=channel, enabled=True, current=current)
 
     async def _check_release(self, current: str) -> UpdateStatus:
-        payload = await self._fetch(f"/repos/{self._repo}/releases/latest")
-        tag = payload.get("tag_name")
-        if not isinstance(tag, str) or not tag.strip():
-            raise IntegrationError("update-check", "release payload carried no tag_name")
-        latest = tag.strip().removeprefix("v")
-        url = payload.get("html_url")
+        """The newest release as the headline, plus notes for every release the
+        operator has not taken, so the what-changed modal can show the whole gap.
+
+        The list read replaces ``releases/latest`` because ``latest`` carries one
+        body: an operator two releases behind would be shown only the newest one's
+        notes and read the middle release as never having happened. Drafts are not
+        visible to this anonymous read; prereleases (the rolling dev build) are
+        filtered because they are not the release channel.
+        """
+        payload = await self._fetch(f"/repos/{self._repo}/releases", params={"per_page": 10})
+        if not isinstance(payload, list):
+            raise IntegrationError("update-check", "expected a list of releases")
+        entries: list[tuple[str, dict[str, Any]]] = []
+        for row in payload:
+            if not isinstance(row, dict) or row.get("prerelease") or row.get("draft"):
+                continue
+            tag = row.get("tag_name")
+            if isinstance(tag, str) and tag.strip():
+                entries.append((tag.strip().removeprefix("v"), row))
+        if not entries:
+            raise IntegrationError("update-check", "the answer carried no releases")
+
+        latest, headline = entries[0]
+        mine = version_number()
+        newer = _newer(latest, mine)
+        changes = tuple(_change(version, row) for version, row in entries if _newer(version, mine))
+        url = headline.get("html_url")
         return UpdateStatus(
             channel="release",
             enabled=True,
             current=current,
             latest=latest,
-            update_available=_newer(latest, version_number()),
+            update_available=newer,
             url=url if isinstance(url, str) else None,
             checked_at=utcnow(),
+            changes=changes if newer else (),
         )
 
     async def _check_dev(self, current: str) -> UpdateStatus:
         payload = await self._fetch(f"/repos/{self._repo}/commits/{_DEV_BRANCH}")
+        if not isinstance(payload, dict):
+            raise IntegrationError("update-check", "expected an object for the branch tip")
         sha = payload.get("sha")
         if not isinstance(sha, str) or len(sha) < 7:
             raise IntegrationError("update-check", "branch payload carried no commit sha")
         mine = short_commit()
-        url = payload.get("html_url")
         return UpdateStatus(
             channel="dev",
             enabled=True,
@@ -187,13 +228,29 @@ class UpdateChecker:
             # A local checkout that cannot name its own commit gets "unknown", never a
             # nag that is almost always true and almost never actionable.
             update_available=None if mine is None else not sha.startswith(mine),
-            url=url if isinstance(url, str) else None,
+            # The branch's commit list, not the tip commit the payload names: "what
+            # changed" on the dev channel is a run of commits, and the single-commit
+            # page shows exactly one of them.
+            url=f"https://github.com/{self._repo}/commits/{_DEV_BRANCH}",
             checked_at=utcnow(),
         )
 
-    async def _fetch(self, path: str) -> dict[str, Any]:
+    async def _fetch(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
+        """One GET, shape-checked by the caller: the release read wants a list, the
+        branch read an object."""
         async with PublicClient(_API) as client:
-            payload = await client.get_json(path, headers={"Accept": "application/vnd.github+json"})
-        if not isinstance(payload, dict):
-            raise IntegrationError("update-check", f"expected an object from {path}")
-        return payload
+            return await client.get_json(
+                path, params=params, headers={"Accept": "application/vnd.github+json"}
+            )
+
+
+def _change(version: str, row: dict[str, Any]) -> ReleaseChange:
+    url = row.get("html_url")
+    notes = row.get("body")
+    if isinstance(notes, str) and len(notes) > _MAX_NOTES:
+        notes = notes[:_MAX_NOTES] + "\n\nRead the rest on GitHub."
+    return ReleaseChange(
+        version=version,
+        url=url if isinstance(url, str) else None,
+        notes=notes if isinstance(notes, str) else None,
+    )

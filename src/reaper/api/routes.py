@@ -60,6 +60,7 @@ from reaper.api.schemas import (
     PolicyValidateIn,
     PolicyWarningOut,
     RatingsOut,
+    ReleaseChangeOut,
     SeasonShapeOut,
     SignalSettingIn,
     SimExampleOut,
@@ -2492,4 +2493,7 @@ async def update_status(request: Request) -> UpdateOut:
         update_available=status.update_available,
         url=status.url,
         checked_at=status.checked_at,
+        changes=[
+            ReleaseChangeOut(version=c.version, url=c.url, notes=c.notes) for c in status.changes
+        ],
     )

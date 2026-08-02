@@ -18,6 +18,7 @@ import type {
   ProfileSettings,
   ScanStatus,
   SetupStatus,
+  Update,
   WatchEvidence,
 } from "../api";
 
@@ -51,6 +52,21 @@ export const DEFAULT_GENERAL: GeneralSettings = {
  *  and every test that does not care about this read would render the "counted none" sentence
  *  instead of the "not recorded" one. */
 export const DEFAULT_WATCH_EVIDENCE: WatchEvidence = { titles: 0, held_back: null };
+
+/** The update check with nothing to say: enabled but unanswered, which renders no
+ *  pill, no chip light, no banner -- the same nothing a tree rendered before the check
+ *  existed. A test that cares about updates sets its own payload; this exists so every
+ *  test that does not care never has to think about it. */
+export const DEFAULT_UPDATE: Update = {
+  channel: "release",
+  enabled: true,
+  current: "0.1.0",
+  latest: null,
+  update_available: null,
+  url: null,
+  checked_at: null,
+  changes: [],
+};
 
 /** Nothing running -- the shape `api.scanStatus` returns between scans. */
 export const IDLE_SCAN: ScanStatus = {
