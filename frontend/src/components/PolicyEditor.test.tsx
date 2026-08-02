@@ -1240,15 +1240,15 @@ describe("the controls a screen reader has to tell apart", () => {
   //
   // Rule 145: this walks a population, so it counts. Asserting "every slider I collected has a
   // name" reads green when the walk collects nothing. The count below is every `range` this
-  // fixture renders -- the two thresholds, plus a weight and a probe per built-in signal in
-  // `body()` (3 signals, 2 each) -- reconciled by hand against the source. Its honest limit: a
-  // slider added to a section this fixture does not mount is missing from both the table and
-  // the count, and the two absences hide each other.
+  // fixture renders -- the two thresholds plus one weight per built-in signal in `body()`
+  // (3) -- reconciled by hand against the source. Its honest limit: a slider added to a
+  // section this fixture does not mount is missing from both the table and the count, and
+  // the two absences hide each other.
   //
-  // The probe sliders raised this from 5 to 8 and the guard is what said so, which is the
-  // whole point of pinning a number nobody would otherwise re-derive: each one is a second
-  // range control sitting under a weight, and a pair of unnamed neighbours is exactly the
-  // confusion the test above it was written for.
+  // It went 5 -> 8 -> 5 across this branch: a probe slider per signal, then none. The guard
+  // caught the arrival, and the reason they left is the same thing it is watching for -- a
+  // second range control under a weight reads as another setting, and the operator cannot
+  // tell which track changes their policy.
   it("names both thresholds for their label, never for the help text under it", async () => {
     renderEditor({ body: body() });
 
@@ -1258,7 +1258,7 @@ describe("the controls a screen reader has to tell apart", () => {
     expect(floor).toHaveAttribute("type", "range");
 
     const sliders = document.querySelectorAll<HTMLInputElement>('input[type="range"]');
-    expect(sliders).toHaveLength(8);
+    expect(sliders).toHaveLength(5);
     for (const s of sliders) expect(s.getAttribute("aria-label")).toBeTruthy();
     // The two per signal must not answer to the same name, which is the failure this whole
     // test is about and the one a truthiness check on each cannot see.
@@ -1484,12 +1484,14 @@ describe("trying a value against a signal's range", () => {
     apiMock.probePolicy.mockResolvedValue({ points: 3.5, detail: "IMDb 3.0" });
     renderEditor({ body: body() });
 
-    await screen.findByLabelText('Try a value against "How low it\'s rated"');
+    await screen.findByText("How low it's rated");
 
-    // The value in the sentence is the server's, and it is deliberately not what this ramp
-    // would produce: a component doing its own arithmetic would overwrite it and this test
-    // is the thing that notices.
-    await waitFor(() => expect(screen.getByText(/earns 3.5 of these 10 points/)).toBeVisible());
+    // The number is the server's, and it is deliberately NOT what this ramp would produce:
+    // a component doing its own arithmetic would overwrite it, and this is what notices.
+    // Read off the bolded element rather than the sentence, which is split across nodes
+    // precisely so the two numbers can be picked out of it.
+    await waitFor(() => expect(screen.getByText("3.5")).toBeVisible());
+    expect(screen.getAllByText(/of these/).length).toBeGreaterThan(0);
     expect(apiMock.probePolicy).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "signal", signal: "low_rating", weight: 10 }),
     );
@@ -1501,9 +1503,7 @@ describe("trying a value against a signal's range", () => {
     apiMock.probePolicy.mockReturnValue(new Promise(() => {}));
     renderEditor({ body: body() });
 
-    await screen.findByLabelText('Try a value against "How low it\'s rated"');
-
-    expect(screen.getAllByText(/Working out what/).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/Working out what/)).length).toBeGreaterThan(0);
   });
 
   it("owns up when the read fails instead of going quiet", async () => {
@@ -1512,15 +1512,13 @@ describe("trying a value against a signal's range", () => {
     apiMock.probePolicy.mockRejectedValue(new Error("nope"));
     renderEditor({ body: body() });
 
-    await screen.findByLabelText('Try a value against "How low it\'s rated"');
-
     await waitFor(() =>
       expect(screen.getAllByText(/couldn't work that one out/).length).toBeGreaterThan(0),
     );
     // And it says the setting itself is fine, because a failed preview is not a failed save.
-    expect(screen.getAllByText(/It's still set, this is just the preview/).length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      screen.getAllByText(/Your setting is fine, this is just the preview/).length,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -1533,8 +1531,6 @@ describe("what the dormancy ramp can actually reach", () => {
     apiMock.probePolicy.mockResolvedValue({ points: 1.7, detail: "not watched in 1 year" });
     renderEditor({ body: body(), history_reach_days: 400 });
 
-    await screen.findByLabelText('Try a value against "How long it\'s gone unwatched"');
-
     // The largest dormancy anything can present, so what it earns there is the most this
     // signal can ever pay.
     await waitFor(() =>
@@ -1543,17 +1539,16 @@ describe("what the dormancy ramp can actually reach", () => {
       ),
     );
     expect(
-      // `humanDays` says "400 days" where the backend's `humanize_days` would say
-      // "1 year, 1 month". Two spellings of one fact, and the editor uses this one
-      // throughout, so the test asserts what the operator actually reads.
-      screen.getByText(/watch history goes back 400 days, and nothing can show/),
+      // `humanDays` is the server's wording now, so 400 days reads as it does there.
+      // Two spellings of one fact on one page was the drift; see humanDays.test.ts.
+      screen.getByText(/watch history goes back 1 year, 1 month, and nothing can show/),
     ).toBeVisible();
   });
 
   it("says nothing about history for a signal the mirror does not bound", async () => {
     renderEditor({ body: body(), history_reach_days: 400 });
 
-    await screen.findByLabelText('Try a value against "How low it\'s rated"');
+    await screen.findByText(/watch history goes back/);
 
     // A rating is a rating however short the history, so claiming the mirror bounds it would
     // be a fact about the wrong signal.
@@ -1565,7 +1560,7 @@ describe("what the dormancy ramp can actually reach", () => {
     // and the page claims nothing about the operator's history.
     renderEditor({ body: body() });
 
-    await screen.findByLabelText('Try a value against "How long it\'s gone unwatched"');
+    await screen.findByText("How long it's gone unwatched");
 
     expect(screen.queryByText(/watch history goes back/)).toBeNull();
   });

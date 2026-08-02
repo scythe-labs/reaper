@@ -58,7 +58,7 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
-import { probeSentence, rampSentence, rampUnits } from "./signalRamp";
+import { probeSaid, rampSentence, rampUnits } from "./signalRamp";
 import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
@@ -766,7 +766,10 @@ function SignalRamp({
     bounds: { min?: number; max?: number } = {},
   ) => (
     <FixedQuantity
-      value={units.fromStored(value)}
+      // Formatted to the step's own precision, so a tenths box reads "6.0" and not "6".
+      // `FixedQuantity` renders `String(value)`, which drops a trailing zero and makes a
+      // decimal control look like a whole-number one.
+      value={units.step < 1 ? units.fromStored(value).toFixed(1) : units.fromStored(value)}
       suffix={units.unit}
       step={units.step}
       width="narrow"
@@ -820,49 +823,44 @@ function SignalRamp({
       </div>
       {/* Bound to the boxes above it, not to the slider, which has its own help (rule 45). */}
       <p className="help rule-help">{said}</p>
-      <SignalProbe signal={signal} label={label} reachDays={reachDays} />
+      <SignalProbe signal={signal} reachDays={reachDays} />
     </>
   );
 }
 
-/** Try a value against the range above and let the engine answer.
+/** What a title would earn under the range above, worked out by the engine.
  *
  *  The number comes from `POST /api/policy/probe`, which runs the same `evaluate_signal` a
  *  scan runs. Computing it here instead would be a second scorer sitting beside the control
  *  that tunes deletions, free to drift from the one that decides and reading as
- *  authoritative while it did (rule 3/22). One round trip per drag, debounced.
+ *  authoritative while it did (rule 3/22).
  *
- *  All three states render (rule 17/36). A probe that showed a stale number while the next
+ *  **There is no slider.** It had one, and a second range control under a weight slider
+ *  reads as another setting: the operator sees two tracks and no way to tell which one
+ *  changes their policy. The value is chosen instead, and the sentence re-asks the engine
+ *  as the range above is edited, which is where "live" belongs -- the answer moves when the
+ *  thing it is about moves.
+ *
+ *  All three states render (rule 17/36). A preview that showed a stale number while the next
  *  was in flight, or fell silent when the read failed, would be a confident answer to a
- *  question nobody answered -- which is the whole failure this control exists to fix. */
-function SignalProbe({
-  signal,
-  label,
-  reachDays,
-}: {
-  signal: SignalSetting;
-  label: string;
-  reachDays: number | null;
-}) {
+ *  question nobody answered -- which is the whole failure this card exists to fix. */
+function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: number | null }) {
   const units = rampUnits(signal.signal);
-  // Where the probe opens, and for the dormancy ramp it is not a neutral choice.
+  // Which title to describe, and for the dormancy ramp it is not a neutral choice.
   //
   // That signal cannot read past the mirror's edge -- a never-played title is measured from
-  // the LATER of its arrival and that edge -- so the edge IS the most a title can ever
-  // present, and what it earns there is the most the signal can ever pay. Opening there
+  // the LATER of its arrival and that edge -- so the edge IS the most a title can present,
+  // and what it earns there is the most the signal can ever pay. Describing that title
   // answers "my 70-point rule is worth 70 points, right?" before it is asked, without a
   // warning that would fire for everyone: the shipped far end is five years and almost
-  // nobody's history is that deep, so a warning here would be noise and would train the
-  // page to be ignored.
+  // nobody's history is that deep.
   //
-  // Every other signal opens half way up its ramp, which is a real point on both shapes
-  // rather than an end that reads as 0 or as the whole weight.
+  // Every other signal describes a title half way up its ramp, which is a real point on
+  // both shapes rather than an end that reads as nothing or as the whole weight.
   const bounded = units?.boundedByHistory === true && reachDays !== null;
-  const opensAt = bounded
+  const value = bounded
     ? Math.round(reachDays)
     : Math.round((signal.floor + signal.saturate_at) / 2);
-  const [value, setValue] = useState<number | null>(null);
-  const tried = value ?? opensAt;
 
   const probe = useMemo(
     () =>
@@ -873,50 +871,38 @@ function SignalProbe({
             weight: signal.weight,
             saturate_at: signal.saturate_at,
             floor: signal.floor,
-            value: tried,
+            value,
           } as const)
         : null,
-    [units, signal.signal, signal.weight, signal.saturate_at, signal.floor, tried],
+    [units, signal.signal, signal.weight, signal.saturate_at, signal.floor, value],
   );
   const { answer, pending, failed } = usePolicyProbe(probe);
   if (!units) return null;
 
+  const said =
+    answer && !pending ? probeSaid(signal.signal, value, answer.points, signal.weight) : null;
+
   return (
-    <div className="ramp-probe">
-      <label className="ramp-field">
-        <span>Try a value</span>
-        <input
-          type="range"
-          min={0}
-          max={units.probeMax}
-          step={1}
-          value={tried}
-          aria-label={`Try a value against "${label}"`}
-          onChange={(e) => setValue(Number(e.target.value))}
-        />
-      </label>
-      {/* Deliberately not a live region: this changes on every step of a drag, and a
-          screen reader already announces the slider's own value as it moves. Announcing a
-          derived number on top of that is noise on the one control it would drown. */}
-      <p className="help rule-help">
-        {failed
-          ? "Reaper couldn't work that one out. It's still set, this is just the preview."
-          : answer && !pending
-            ? probeSentence(signal.signal, tried, answer.points, signal.weight)
-            : `Working out what ${units.say(tried)} earns…`}
+    <>
+      <p className="ramp-said">
+        {failed ? (
+          "Reaper couldn't work that one out. Your setting is fine, this is just the preview."
+        ) : said ? (
+          <>
+            {said.lead} <b>{said.value}</b> adds <b>{said.points}</b> of these <b>{said.weight}</b>{" "}
+            points.
+          </>
+        ) : (
+          "Working out what that earns…"
+        )}
       </p>
       {bounded && (
-        // The fact that makes the number above mean something. Said plainly rather than as
-        // a warning: it is true on every install and only matters once you read it next to
-        // where the far end sits.
-        // One string rather than an interpolation, so the sentence is a single text node:
-        // split across nodes, some screen readers read it out in pieces.
         <p className="help rule-help">
           {`Your watch history goes back ${humanDays(Math.round(reachDays))}, and nothing ` +
             `can show as untouched for longer than that.`}
         </p>
       )}
-    </div>
+    </>
   );
 }
 

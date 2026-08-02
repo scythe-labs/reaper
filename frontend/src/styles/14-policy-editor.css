@@ -210,17 +210,21 @@
   color: var(--muted);
 }
 
-/* Try a value against the range above. The track fills the row like the weight slider does,
-   so the two read as the same kind of control rather than as a box and a stray input. */
-.ramp-probe {
-  margin-top: var(--space-lg);
+/* What a title would earn under the range above. An inset well rather than more help text:
+   it is the one line on the card that is an ANSWER rather than a setting, and the quiet
+   surface is what tells them apart at a glance. The same fill the explanation panel gives a
+   signal row's own reasoning, so the two surfaces read as one language. */
+.ramp-said {
+  margin: var(--space-lg) 0 0;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-md);
+  color: var(--text);
 }
-.ramp-probe .ramp-field {
-  gap: var(--space-xs);
-}
-.ramp-probe input[type="range"] {
-  width: 100%;
-  accent-color: var(--accent);
+.ramp-said b {
+  font-weight: var(--weight-semi);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Keep well-rated titles: the per-source bars as rows of ONE aligned table. The source

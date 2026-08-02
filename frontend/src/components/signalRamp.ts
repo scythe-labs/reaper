@@ -41,6 +41,10 @@ interface RampUnits {
   /** The suffix its box wears, and the step that box moves in (rule 40). */
   unit: string;
   step: number;
+  /** How this signal names the thing being previewed: "A title rated", "A title untouched
+   *  for". Worded per signal because "a title rated 2 people" is not a sentence, and one
+   *  generic lead across five different facts is how a page ends up reading like a form. */
+  lead: string;
   /** The number an operator types is not always the number that is stored. */
   toStored: (typed: number) => number;
   fromStored: (stored: number) => number;
@@ -72,6 +76,7 @@ const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
  *  states its own range in the rule editor and is not described by this module. */
 const RAMPS: Record<string, RampUnits> = {
   unwatched: {
+    lead: "A title untouched for",
     shape: "direct",
     say: humanDays,
     unit: "days",
@@ -80,6 +85,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   season_rank: {
+    lead: "A season that is",
     shape: "direct",
     say: (n) => (n === 1 ? "the newest season" : `the ${ordinal(n)}-newest season`),
     unit: "seasons",
@@ -88,6 +94,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   few_watchers: {
+    lead: "A title watched by",
     shape: "shortfall",
     say: (n) => (n === 1 ? "1 watcher" : `${n} watchers`),
     unit: "people",
@@ -95,6 +102,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   low_rating: {
+    lead: "A title rated",
     shape: "shortfall",
     say: (n) => `IMDb ${(n / 10).toFixed(1)}`,
     unit: "IMDb",
@@ -106,6 +114,7 @@ const RAMPS: Record<string, RampUnits> = {
     fromStored: (stored) => stored / 10,
   },
   size: {
+    lead: "A title taking",
     shape: "direct",
     say: (n) => `${Math.round(n / 1e9)} GB`,
     unit: "GB",
@@ -187,17 +196,37 @@ export function sayPoints(points: number): string {
   return Number.isInteger(points) ? String(points) : points.toFixed(1);
 }
 
-/** What the engine answered for a value the operator is trying, as a sentence.
+/** What the engine answered, in the pieces the card bolds.
+ *
+ *  Returned in parts rather than as one string so the two numbers can be picked out: the
+ *  value being tried and what it earns are what the sentence is FOR, and running them
+ *  together with the words makes an operator re-read a line they should take at a glance.
  *
  *  The points come from the server (`POST /api/policy/probe`), never from arithmetic here:
  *  a local copy of the ramp beside the control that tunes deletions is a second scorer free
  *  to drift from the one that decides. This only words the answer. */
-export function probeSentence(id: string, value: number, points: number, weight: number): string {
+export interface ProbeSaid {
+  /** The subject, worded by the signal: "A title rated", "A title untouched for". */
+  lead: string;
+  value: string;
+  points: string;
+  weight: number;
+}
+
+export function probeSaid(
+  id: string,
+  value: number,
+  points: number,
+  weight: number,
+): ProbeSaid | null {
   const units = RAMPS[id];
-  const said = units ? units.say(value) : String(value);
-  return points >= weight
-    ? `${said} earns the whole ${weight} points.`
-    : `${said} earns ${sayPoints(points)} of these ${weight} points.`;
+  if (!units) return null;
+  return {
+    lead: units.lead,
+    value: units.say(value),
+    points: sayPoints(points),
+    weight,
+  };
 }
 
 /** The same sentence with what it did to one title, for the row in the explanation panel.

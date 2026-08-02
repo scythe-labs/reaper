@@ -56,21 +56,43 @@ export function coverage(bp: number): string {
   return `${Math.round(bp / 100)}%`;
 }
 
-/** "1095 days" said the way a person would: "3 years".
+/** A day count as a phrase a person reads without doing arithmetic: `2060` becomes
+ *  "5 years, 7 months".
+ *
+ *  This is `clock.humanize_days` ported, and it is a port rather than a second design
+ *  because the two sit side by side on the policy page: the server words the history
+ *  warnings and this words the controls beside them, so one saying "1 year, 1 month" while
+ *  the other says "400 days" about the same number is rule 144's drift, on a page whose
+ *  whole job is to be read (#410). `format.humanDays.test.ts` pins them against a table.
+ *
+ *  It only humanized EXACT multiples before, which is the shape that let it disagree:
+ *  everything but a round year or month came out as a bare day count, and a real watch
+ *  history is never a round number.
+ *
+ *  Kept to the two most-significant units on purpose, and approximate by construction (a
+ *  month is 30 days, a year 365): these are phrases beside a dormancy setting, not
+ *  accounting.
  *
  *  Lives here rather than in `PolicyEditor`, which is where it started, because
  *  `signalRamp` needs it too and the editor imports `signalRamp`. Re-exported there so the
  *  existing callers keep their import. */
 export function humanDays(days: number): string {
-  if (days >= 365 && days % 365 === 0) {
-    const y = days / 365;
-    return y === 1 ? "1 year" : `${y} years`;
-  }
-  if (days >= 30 && days % 30 === 0) {
-    const m = days / 30;
-    return m === 1 ? "1 month" : `${m} months`;
-  }
-  return `${days} days`;
+  const whole = Math.round(days);
+  if (whole <= 0) return "less than a day";
+
+  const years = Math.floor(whole / 365);
+  const months = Math.floor((whole % 365) / 30);
+  const rest = (whole % 365) % 30;
+  const units: [number, string][] = [
+    [years, "year"],
+    [months, "month"],
+    [rest, "day"],
+  ];
+  return units
+    .filter(([n]) => n > 0)
+    .slice(0, 2)
+    .map(([n, name]) => `${n} ${name}${n === 1 ? "" : "s"}`)
+    .join(", ");
 }
 
 export function date(iso: string): string {
