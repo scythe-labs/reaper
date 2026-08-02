@@ -1548,41 +1548,63 @@ describe("trying a value against a signal's range", () => {
 // the shipped far end is five years, almost nobody's history is that deep, and a warning
 // firing for everyone teaches the page to be ignored.
 describe("what the dormancy ramp can actually reach", () => {
-  it("opens the probe where the evidence runs out", async () => {
-    apiMock.probePolicy.mockResolvedValue({ points: 1.7, detail: "not watched in 1 year" });
-    renderEditor({ body: body(), history_reach_days: 400 });
+  // The example has to MOVE with the setting or it teaches nothing about the control under
+  // it. This one opened at the watch mirror's edge, and a mirror deeper than the far end put
+  // it past the point the signal already pays in full: it froze at "70 of these 70 points"
+  // whatever either box said. So the edge is used only where it BINDS.
+  it("describes a title the history caps, when the history is the shorter of the two", async () => {
+    // 200 days of history against a far end of 365: nothing can present more than 200, so
+    // that is both a moving example and the ceiling the mirror imposes.
+    apiMock.probePolicy.mockResolvedValue({ points: 38.4, detail: "not watched in 6 months" });
+    renderEditor({ body: body(), history_reach_days: 200 });
 
-    // The largest dormancy anything can present, so what it earns there is the most this
-    // signal can ever pay.
     await waitFor(() =>
       expect(apiMock.probePolicy).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: "signal", signal: "unwatched", value: 400 }),
+        expect.objectContaining({ kind: "signal", signal: "unwatched", value: 200 }),
       ),
     );
+    // 200 days reads as "6 months, 20 days": two units, the way the server words it too.
     expect(
-      // `humanDays` is the server's wording now, so 400 days reads as it does there.
-      // Two spellings of one fact on one page was the drift; see humanDays.test.ts.
-      screen.getByText(/watch history goes back 1 year, 1 month, and nothing can show/),
+      screen.getByText(/watch history goes back 6 months, 20 days, and nothing can show/),
     ).toBeVisible();
   });
 
-  it("says nothing about history for a signal the mirror does not bound", async () => {
+  it("describes a title half way up instead, when the history reaches past the far end", async () => {
+    // 400 days against the same 365 far end. The edge earns full points here, so an example
+    // pinned to it would read 70 of 70 for every setting the operator could type.
     renderEditor({ body: body(), history_reach_days: 400 });
 
-    await screen.findByText(/watch history goes back/);
+    await waitFor(() =>
+      expect(apiMock.probePolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ signal: "unwatched", value: 183 }),
+      ),
+    );
+  });
 
+  it("says nothing about history where the history caps nothing", async () => {
+    // True but consequence-free: a mirror deeper than the far end bounds this signal not at
+    // all, and the card is long enough without a sentence that changes nothing.
+    renderEditor({ body: body(), history_reach_days: 400 });
+
+    await screen.findByText("How long it's gone unwatched");
+    expect(screen.queryByText(/watch history goes back/)).toBeNull();
+  });
+
+  it("says nothing about history for a signal the mirror does not bound", async () => {
     // A rating is a rating however short the history, so claiming the mirror bounds it would
     // be a fact about the wrong signal.
+    renderEditor({ body: body(), history_reach_days: 200 });
+
+    await screen.findByText(/watch history goes back/);
     expect(screen.getAllByText(/watch history goes back/)).toHaveLength(1);
   });
 
   it("keeps its nerve when the scan never recorded a reach", async () => {
-    // Null is "we don't know", not "no history": the probe falls back to the ramp's midpoint
-    // and the page claims nothing about the operator's history.
+    // Null is "we don't know", not "no history": the example falls back to the ramp's
+    // midpoint and the page claims nothing about the operator's history.
     renderEditor({ body: body() });
 
     await screen.findByText("How long it's gone unwatched");
-
     expect(screen.queryByText(/watch history goes back/)).toBeNull();
   });
 });

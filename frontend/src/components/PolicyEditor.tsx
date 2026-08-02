@@ -887,19 +887,21 @@ function SignalRamp({
  *  question nobody answered -- which is the whole failure this card exists to fix. */
 function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: number | null }) {
   const units = rampUnits(signal.signal);
-  // Which title to describe, and for the dormancy ramp it is not a neutral choice.
+  // Which title to describe. Half way up the ramp, because that is the only choice that
+  // MOVES with the setting: an example pinned to an end reads the same whatever the operator
+  // types, which is an example that teaches nothing about the control it sits under.
   //
-  // That signal cannot read past the mirror's edge -- a never-played title is measured from
-  // the LATER of its arrival and that edge -- so the edge IS the most a title can present,
-  // and what it earns there is the most the signal can ever pay. Describing that title
-  // answers "my 70-point rule is worth 70 points, right?" before it is asked, without a
-  // warning that would fire for everyone: the shipped far end is five years and almost
-  // nobody's history is that deep.
+  // The dormancy ramp opened at the watch mirror's edge instead, and it was wrong whenever
+  // the history was deep. That signal cannot read past the edge, so the edge is the most a
+  // title can present -- but a mirror reaching 8 years against a far end of 5 puts it past
+  // the point the signal already pays in full, and the example froze at "70 of these 70
+  // points" no matter what either box said.
   //
-  // Every other signal describes a title half way up its ramp, which is a real point on
-  // both shapes rather than an end that reads as nothing or as the whole weight.
-  const bounded = units?.boundedByHistory === true && reachDays !== null;
-  const value = bounded
+  // So the edge is used only where it BINDS, below the far end, which is exactly the case it
+  // was added for: there it is both a moving example and the ceiling the history imposes.
+  const capped =
+    units?.boundedByHistory === true && reachDays !== null && reachDays < signal.saturate_at;
+  const value = capped
     ? Math.round(reachDays)
     : Math.round((signal.floor + signal.saturate_at) / 2);
 
@@ -937,9 +939,12 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
           "Working out what that earns…"
         )}
       </p>
-      {bounded && (
+      {/* Only where the mirror actually caps this signal. A history deeper than the far end
+          bounds nothing, so saying so there is a true sentence with no consequence, on a card
+          that is already long. */}
+      {capped && (
         <p className="help rule-help">
-          {`Your watch history goes back ${humanDays(Math.round(reachDays))}, and nothing ` +
+          {`Your watch history goes back ${humanDays(Math.round(reachDays ?? 0))}, and nothing ` +
             `can show as untouched for longer than that.`}
         </p>
       )}
