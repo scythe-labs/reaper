@@ -110,8 +110,15 @@ export const understandingPolicy: Doc = {
     p(
       "Each signal pushes the score up by up to its number of points. The default mix differs for movies and TV.",
     ),
+    // The "What it pays" column is the fourth copy of a sentence the app now states three
+    // other ways: the two bound boxes on the signal card, the strip drawn under them, and the
+    // why-panel row that reports what a title scored. Generating those three and leaving this
+    // one is exactly the trap rule 144 describes, and it fails in the reassuring direction: a
+    // reader is told a signal is worth 10 points with nothing saying it pays none of them
+    // above IMDb 6.0. `tests/test_repo_hygiene.py` holds these figures against the shipped
+    // policies by name, because a comment asking the next author to remember does nothing.
     table(
-      ["Signal", "What it means", "Movie points", "TV points"],
+      ["Signal", "What it means", "What it pays", "Movie points", "TV points"],
       [
         // Not "time since anyone last played it": `engine/dormancy.py` measures from the
         // last play, or from the day the file arrived when there has never been one, or
@@ -120,13 +127,38 @@ export const understandingPolicy: Doc = {
         [
           "How long it's gone unwatched",
           "How long it has sat untouched, counted from the last play or from the day it arrived",
+          "Nothing until 1 year, all of it at 5 years",
           "70",
           "60",
         ],
-        ["How few people watch it", "Fewer recent viewers means more pressure", "20", "15"],
-        ["How old a season is", "Older seasons carry more pressure (TV only)", "not used", "15"],
-        ["How low it's rated", "Lower ratings add a little pressure", "10", "10"],
-        ["How big it is on disk", "Off by default", "0 (off)", "0 (off)"],
+        [
+          "How few people watch it",
+          "Fewer recent viewers means more pressure",
+          "Nothing at 3 viewers or more, all of it at 0",
+          "20",
+          "15",
+        ],
+        [
+          "How old a season is",
+          "Older seasons carry more pressure (TV only)",
+          "A little from the newest season on, all of it at the 6th-newest",
+          "not used",
+          "15",
+        ],
+        [
+          "How low it's rated",
+          "Lower ratings add a little pressure",
+          "Nothing at IMDb 6.0 or above, all of it at IMDb 0.0",
+          "10",
+          "10",
+        ],
+        [
+          "How big it is on disk",
+          "Off by default",
+          "Nothing, unless you turn it on",
+          "0 (off)",
+          "0 (off)",
+        ],
       ],
     ),
     p(

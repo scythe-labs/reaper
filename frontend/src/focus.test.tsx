@@ -133,6 +133,23 @@ describe("useSavebarFocus", () => {
     expect(screen.getByRole("heading", { name: "General" })).toHaveFocus();
   });
 
+  it("does not drag the page to the heading it focuses", async () => {
+    // The landing point is a FIXED spot near the top of a form that runs to ~1,900 lines, not
+    // somewhere near the operator, so focusing it scrolled Save and Discard back to the top --
+    // however far down the operator had gone to make the edit they just saved. jsdom computes
+    // no layout and cannot be scrolled, so the contract is read off the call: focus still
+    // moves, and it moves without taking the viewport with it.
+    const user = userEvent.setup();
+    const focused = vi.spyOn(HTMLHeadingElement.prototype, "focus");
+    render(<Panel />);
+    await user.type(screen.getByRole("textbox", { name: "A field" }), "x");
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(focused).toHaveBeenCalledWith({ preventScroll: true });
+    focused.mockRestore();
+  });
+
   it("leaves focus alone while the bar is still up", async () => {
     // A save keeps the bar up while the write is in flight. Moving focus then would take the
     // operator off a Discard they can still press.

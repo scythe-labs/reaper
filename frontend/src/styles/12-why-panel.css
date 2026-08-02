@@ -430,6 +430,15 @@ a.rating-chip:hover {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* Open or closed, the synopsis text keeps its own line, so the disclosure under it holds one
+   position. `.clamp-2` above is `display: -webkit-box`, which is block-level, and the open state
+   used to carry no class at all -- so pressing `more` turned the span inline and the control
+   landed after the last word, 328px right of where it had just been on a phone-width panel
+   (#407). The pair only ever meet on the collapsed state, where `.clamp-2` is what has to win,
+   so this claims the open state by name rather than by source order. */
+.why-synopsis:not(.clamp-2) {
+  display: block;
+}
 /* A standalone text button, not a link inside a sentence, so SC 2.5.8's inline exception
    does not cover it and it carries --tap-min like any other control. Its three uses ("Clear
    all" beside the filter chips, the why-panel's show-more, back-to-show) all sit next to

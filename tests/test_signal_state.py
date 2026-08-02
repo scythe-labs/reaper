@@ -200,7 +200,73 @@ class TestWhatReachesTheWire:
         assert isinstance(explanation["score"], int)
 
 
+class TestTheRampReachesTheWire:
+    """A row carries the line it was measured against, so the panel can state the
+    arithmetic without asking a policy that may have moved since the scan."""
+
+    def test_a_built_in_row_carries_the_ramp_it_was_scored_under(self) -> None:
+        # Neither bound is the shipped default for this signal (60/0) or `SignalConfig`'s
+        # own (1/0), so a config that never reached the result cannot produce these
+        # numbers by accident (rule 141).
+        item = score(
+            [SignalConfig(SignalId.LOW_RATING, weight=100, saturate_at=72, floor=8)],
+            _facts(imdb_rating_tenths=Known(value=64, source="imdb")),
+        )
+        row = json.loads(_explain(EVALUATION, item, _policy()))["signals"][0]
+
+        assert (row["floor"], row["saturate_at"]) == (8, 72)
+
+    def test_a_graded_rule_of_your_own_carries_its_ramp_too(self) -> None:
+        graded = CustomSignalConfig(
+            name="big files",
+            weight=100,
+            kind="graded",
+            field="size_bytes",
+            floor=11,
+            saturate_at=83,
+        )
+        item = score([], _facts(), custom_condemn=[graded])
+        row = json.loads(_explain(EVALUATION, item, _policy()))["signals"][0]
+
+        assert (row["floor"], row["saturate_at"]) == (11, 83)
+
+    def test_a_yes_no_rule_of_your_own_carries_no_ramp(self) -> None:
+        # It matched or it did not; it cannot land part-way, so there is no line to state
+        # and inventing one would draw a ramp the rule does not have.
+        boolean = CustomSignalConfig(
+            name="on a list",
+            weight=100,
+            kind="boolean",
+            field="on_curated_list",
+            condition=Condition(field="on_curated_list", op=Op.EQ, value=True),
+        )
+        item = score([], _facts(), custom_condemn=[boolean])
+        row = json.loads(_explain(EVALUATION, item, _policy()))["signals"][0]
+
+        assert row["floor"] is None
+        assert row["saturate_at"] is None
+
+
 class TestHistoricalRows:
+    def test_a_row_stored_before_the_ramp_existed_asserts_no_line(self) -> None:
+        # Two different things arrive as None here -- a rule with no ramp, and a row frozen
+        # before these fields shipped -- and the panel treats both the same way, by saying
+        # nothing. A `0` default would instead assert a line about every legacy row, which
+        # is the failure rule 142 names.
+        row = SignalContribution.model_validate(
+            {
+                "id": "low_rating",
+                "contribution": 0.0,
+                "weight": 10,
+                "detail": "IMDb 6.4",
+                "evaluated": True,
+                "state": "argues_keep",
+            }
+        )
+
+        assert row.floor is None
+        assert row.saturate_at is None
+
     def test_a_row_stored_before_the_state_existed_still_parses(self) -> None:
         row = SignalContribution.model_validate(
             {

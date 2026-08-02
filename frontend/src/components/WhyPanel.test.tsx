@@ -10,7 +10,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   api,
   type CandidateDetail,
@@ -22,7 +22,8 @@ import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
-import { WhyPanel, allocateShares } from "./WhyPanel";
+import { CSS } from "../test/stylesheet";
+import { Synopsis, WhyPanel, allocateShares } from "./WhyPanel";
 
 vi.mock("../api", () => ({
   api: {
@@ -1215,5 +1216,198 @@ describe("the why panel's accessible name", () => {
   it("names itself from the title it is explaining", () => {
     show(detail([]));
     expect(screen.getByRole("complementary", { name: /Example Show/ })).toBeInTheDocument();
+  });
+});
+
+// Only one thing can lower coverage -- a reason Reaper could not read -- and those get their own
+// group with their own note. So at full coverage the old clause announced the absence of a group
+// that was already absent, which is what made an owner ask "100% of WHAT evidence" (#410). Neither
+// branch had a test, and every fixture in the suite sits at 10,000, so the whole clause was
+// unexercised in both directions.
+describe("the coverage clause", () => {
+  it("says nothing when every reason was readable", () => {
+    show(detail(WORKED_ROWS, { coverage_bp: 10_000 }));
+
+    expect(screen.getByText(/Reasons to believe nobody will watch it again/)).toBeVisible();
+    expect(screen.queryByText(/of what it scores on/)).toBeNull();
+    expect(screen.queryByText(/100%/)).toBeNull();
+  });
+
+  it("says how much it could read when something was missed", () => {
+    // 76%, not a round number: a fixture equal to the full-coverage constant could not tell
+    // a working branch from a missing one (rule 141).
+    show(detail(WORKED_ROWS, { coverage_bp: 7_550 }));
+
+    expect(screen.getByText(/Reaper could read 76% of what it scores on/)).toBeVisible();
+  });
+});
+
+// A row states the line it was measured against, from the ramp the SCAN froze onto it. The
+// panel must never fill this in from the live policy: the item was scored under the policy as
+// it stood at scan time, and rule 113 refuses a reap across exactly that gap.
+describe("what a signal row was measured against", () => {
+  const RATED = signal({
+    id: "low_rating",
+    contribution: 0,
+    weight: 10,
+    detail: "IMDb 6.4",
+    state: "argues_keep",
+    floor: 0,
+    saturate_at: 60,
+  });
+
+  it("states the ramp and what this row did against it", async () => {
+    const user = userEvent.setup();
+    show(detail([RATED]));
+
+    const row = screen.getByRole("button", { name: /IMDb 6.4/ });
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    await user.click(row);
+
+    expect(
+      screen.getByText(
+        "Pays nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0. " + "This one added 0.",
+      ),
+    ).toBeVisible();
+    expect(row).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("closes again on a second press, which is the whole interaction on a phone", async () => {
+    const user = userEvent.setup();
+    show(detail([RATED]));
+
+    const row = screen.getByRole("button", { name: /IMDb 6.4/ });
+    await user.click(row);
+    await user.click(row);
+
+    expect(row).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("says nothing for a row whose line the scan never recorded", () => {
+    // A row frozen before the ramp shipped, and a yes/no rule of your own, both arrive as
+    // null and both mean the same thing: there is no line to state. Inventing one would put
+    // a ramp on a rule that provably has none.
+    show(detail([signal({ id: "low_rating", detail: "IMDb 6.4", state: "argues_keep" })]));
+
+    expect(screen.queryByRole("button", { name: /IMDb 6.4/ })).toBeNull();
+    expect(screen.queryByText(/Pays nothing/)).toBeNull();
+  });
+
+  it("says nothing for a reason it could not read", () => {
+    // There is a line, but nothing was compared to it. "This one added 0" would describe
+    // arithmetic that never ran, on the one row state that must stay distinct from a zero.
+    show(
+      detail([
+        signal({
+          id: "low_rating",
+          detail: "could not read the IMDb rating",
+          evaluated: false,
+          state: "unreadable",
+          floor: 0,
+          saturate_at: 60,
+        }),
+      ]),
+    );
+
+    expect(screen.queryByRole("button", { name: /could not read/ })).toBeNull();
+  });
+});
+
+// Whether the synopsis needs a "more" is a question about how wide the panel is, and it used to
+// be answered by counting characters -- right at the width that number was picked for, and wrong
+// everywhere else. On a phone two lines hold about 120 characters against a test asking for 150,
+// so a synopsis in between was cut with nothing on screen to open it (#407).
+describe("the synopsis disclosure", () => {
+  /** The panel's 0.88rem text at line-height 1.5, rounded to the integer the DOM reports. */
+  const LINE = 21;
+  const originals = new Map<string, PropertyDescriptor | undefined>();
+
+  /** jsdom computes no layout, so every element answers 0 to both heights and a disclosure
+   *  decided by measurement could never appear -- a test written against that would pass having
+   *  proven nothing. Model what a clamp does instead: an element reports every line it holds,
+   *  and a clamped one reports the two it shows. That difference is the whole of what `Synopsis`
+   *  reads, so it is the boundary to stub rather than to inherit from the environment
+   *  (rule 119). Restored after every test (rule 133). */
+  function reportLines(lines: number) {
+    for (const prop of ["scrollHeight", "clientHeight"] as const) {
+      if (!originals.has(prop)) {
+        originals.set(prop, Object.getOwnPropertyDescriptor(Element.prototype, prop));
+      }
+      Object.defineProperty(Element.prototype, prop, {
+        configurable: true,
+        get(this: Element) {
+          const clamped = prop === "clientHeight" && this.classList.contains("clamp-2");
+          return (clamped ? Math.min(lines, 2) : lines) * LINE;
+        },
+      });
+    }
+  }
+
+  afterEach(() => {
+    for (const [prop, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(Element.prototype, prop, descriptor);
+      else delete (Element.prototype as unknown as Record<string, unknown>)[prop];
+    }
+    originals.clear();
+  });
+
+  it("offers the control for a synopsis the panel cut, however short the string", () => {
+    const text = "a plain sentence. ".repeat(6).trim();
+    // Under the 150 the old rule asked for, and over what two lines hold on a phone.
+    expect(text.length).toBeLessThan(150);
+    reportLines(3);
+
+    render(<Synopsis text={text} />);
+
+    expect(screen.getByRole("button", { name: "more" })).toBeVisible();
+  });
+
+  it("offers no control for a long synopsis the panel is showing whole", () => {
+    const text = "a plain sentence. ".repeat(12).trim();
+    // Past the 150 the old rule asked for, and inside the two lines. A control here opens
+    // nothing, which reads as a broken control rather than as a full synopsis.
+    expect(text.length).toBeGreaterThan(150);
+    reportLines(2);
+
+    render(<Synopsis text={text} />);
+
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("keeps the control once the synopsis is open", async () => {
+    const user = userEvent.setup();
+    reportLines(4);
+    render(<Synopsis text={"a plain sentence. ".repeat(8).trim()} />);
+
+    const open = screen.getByRole("button", { name: "more" });
+    expect(open).toHaveAttribute("aria-expanded", "false");
+    await user.click(open);
+
+    // An open synopsis is not clamped, so it measures as "nothing is hidden". A control that
+    // re-read its own state would take away the only way to close what it just opened.
+    const close = screen.getByRole("button", { name: "less" });
+    expect(close).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(close);
+    expect(screen.getByRole("button", { name: "more" })).toBeVisible();
+  });
+
+  it("gives the text its own line whether the synopsis is open or closed", async () => {
+    const user = userEvent.setup();
+    reportLines(3);
+    const { container } = render(<Synopsis text={"a plain sentence. ".repeat(8).trim()} />);
+    const span = container.querySelector("span");
+
+    expect(span).toHaveClass("why-synopsis");
+    await user.click(screen.getByRole("button", { name: "more" }));
+    expect(span).toHaveClass("why-synopsis");
+  });
+
+  it("carries the declaration that class stands for", () => {
+    // jsdom computes no layout, so the class above is one half of a contract spanning the
+    // component and the stylesheet (rule 67). This is the other half, and it is the whole of
+    // what the operator sees: without it the open state is an inline span and the control
+    // lands after the last word, hundreds of pixels from where it had just been.
+    expect(CSS).toMatch(/\.why-synopsis:not\(\.clamp-2\)\s*\{[^}]*display:\s*block/);
   });
 });

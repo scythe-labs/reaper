@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from reaper.clock import humanize_days, humanize_window
@@ -233,6 +233,21 @@ class SignalResult:
     and that knowledge is gone by the time anything downstream sees the result. A new
     construction site must choose."""
 
+    floor: int | None = None
+    """The ramp this result was scored against: no points below ``floor``, all of them at
+    ``saturate_at``, straight line between.
+
+    Carried so the panel can state the arithmetic without asking the policy, which by then
+    may not be the one this item was scored under. That gap is not hypothetical -- a run's
+    approval is bound to its policy hash and refuses to execute across an edit (rule 113) --
+    so a panel printing today's line beside yesterday's score would be confidently wrong
+    exactly where the operator is deciding what to delete.
+
+    ``None`` where there is no ramp to state: a boolean custom rule matched or did not.
+    Stored explanations frozen before these fields existed also thaw as ``None``, and the
+    panel omits the sentence rather than inventing a line (rule 142's three-state)."""
+    saturate_at: int | None = None
+
 
 def _ramp(value: float, floor: float, saturate: float) -> float:
     """Linear 0 -> 1 between ``floor`` and ``saturate``, clamped at both ends."""
@@ -246,7 +261,12 @@ def _numeric(observation: Observation[float] | Observation[int]) -> float | None
 
 
 def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 365) -> SignalResult:
-    """One signal. Always in ``[0, weight]``.
+    """One signal, carrying the ramp it was scored against. Always in ``[0, weight]``.
+
+    The ramp is stamped here rather than at each of the seven returns below, because a
+    branch that forgot it would produce a row whose line the panel silently cannot state,
+    and "silently" is the whole problem: a missing line reads identically to a rule that
+    never had one.
 
     ``window_days`` is the popularity window -- the span ``distinct_watchers`` was counted
     over. It phrases the "few watches" detail as "in the last <period>", and it moves
@@ -266,6 +286,15 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     The span is named in the withheld arm too, where the shortfall clause that follows it
     says why it could not be checked.
     """
+    return replace(
+        _branch_signal(config, facts, window_days=window_days),
+        floor=config.floor,
+        saturate_at=config.saturate_at,
+    )
+
+
+def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> SignalResult:
+    """``evaluate_signal`` without the ramp stamp. Every return here leaves it unset."""
     if not config.enabled:
         return SignalResult(
             config.signal, 0.0, 0, "disabled", evaluated=True, state=SignalState.NOT_APPLICABLE
@@ -449,7 +478,23 @@ def evaluate_custom(
     ``window_days`` is the policy's popularity window, needed because a rule may be
     authored on a watcher count, whose value the watch mirror only supports so far back
     (``fields.reach_shortfall``).
+
+    A GRADED rule carries its ramp out the same way a built-in does. A boolean one carries
+    none, and that is the distinction the field exists to keep: it did not land part-way, so
+    there is no line to state and none is invented.
     """
+    graded = config.kind == "graded"
+    return replace(
+        _branch_custom(config, facts, window_days=window_days),
+        floor=config.floor if graded else None,
+        saturate_at=config.saturate_at if graded else None,
+    )
+
+
+def _branch_custom(
+    config: CustomSignalConfig, facts: Facts, *, window_days: int | None
+) -> SignalResult:
+    """``evaluate_custom`` without the ramp stamp. Every return here leaves it unset."""
     if not config.enabled:
         return SignalResult(
             config.name, 0.0, 0, "disabled", evaluated=True, state=SignalState.NOT_APPLICABLE

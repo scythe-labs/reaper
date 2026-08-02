@@ -107,13 +107,13 @@ The threshold is a confidence line. A title is flagged only when its score reach
 
 Each signal pushes the score up by up to its number of points. The default mix differs for movies and TV.
 
-| Signal | What it means | Movie points | TV points |
-| --- | --- | --- | --- |
-| How long it's gone unwatched | How long it has sat untouched, counted from the last play or from the day it arrived | 70 | 60 |
-| How few people watch it | Fewer recent viewers means more pressure | 20 | 15 |
-| How old a season is | Older seasons carry more pressure (TV only) | not used | 15 |
-| How low it's rated | Lower ratings add a little pressure | 10 | 10 |
-| How big it is on disk | Off by default | 0 (off) | 0 (off) |
+| Signal | What it means | What it pays | Movie points | TV points |
+| --- | --- | --- | --- | --- |
+| How long it's gone unwatched | How long it has sat untouched, counted from the last play or from the day it arrived | Nothing until 1 year, all of it at 5 years | 70 | 60 |
+| How few people watch it | Fewer recent viewers means more pressure | Nothing at 3 viewers or more, all of it at 0 | 20 | 15 |
+| How old a season is | Older seasons carry more pressure (TV only) | A little from the newest season on, all of it at the 6th-newest | not used | 15 |
+| How low it's rated | Lower ratings add a little pressure | Nothing at IMDb 6.0 or above, all of it at IMDb 0.0 | 10 | 10 |
+| How big it is on disk | Off by default | Nothing, unless you turn it on | 0 (off) | 0 (off) |
 
 **The points share one fixed budget.** Every signal's points, plus any of your own removal rules, must total exactly 100 before you can save. A point is literally how much that signal can add to the score. So lowering one signal frees points you must hand to another signal or removal rule first. Setting a signal to 0 turns it off and returns its points to the pot.
 

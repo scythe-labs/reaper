@@ -25,7 +25,15 @@
 //   3. the deletion switch (its own password-gated call).
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import {
   api,
   ApiError,
@@ -41,7 +49,7 @@ import {
 import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
 import { useDocs } from "../docs/DocsContext";
-import { bytes, count } from "../format";
+import { bytes, count, humanDays } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
 import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
@@ -58,22 +66,15 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
+import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
+import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
 
-/** "1095 days" said the way a person would: "3 years". */
-export function humanDays(days: number): string {
-  if (days >= 365 && days % 365 === 0) {
-    const y = days / 365;
-    return y === 1 ? "1 year" : `${y} years`;
-  }
-  if (days >= 30 && days % 30 === 0) {
-    const m = days / 30;
-    return m === 1 ? "1 month" : `${m} months`;
-  }
-  return `${days} days`;
-}
+/** Re-exported from `format`, where it moved so `signalRamp` could read it without a cycle
+ *  back through this module. Several sites import it from here. */
+export { humanDays };
 
 // ---------------------------------------------------------------------------
 // Keep-tags: a set of *arr tags that spare a title, with an ANY/ALL switch.
@@ -683,9 +684,15 @@ function pointsSplit(builtIn: number, yours: number): string {
  *  its range. */
 function SignalRow({
   signal,
+  reachDays,
+  shipped,
   onChange,
 }: {
   signal: SignalSetting;
+  /** How far back the watch mirror goes, or null when the scan did not record it. */
+  reachDays: number | null;
+  /** This signal's bounds as Reaper ships them, for the way back. */
+  shipped: SignalSetting | undefined;
   onChange: (s: SignalSetting) => void;
 }) {
   const meta = SIGNAL_META[signal.signal] ?? { label: titleCase(signal.signal), help: "" };
@@ -724,7 +731,302 @@ function SignalRow({
         aria-label={`How much "${meta.label}" matters`}
         onChange={(e) => onChange({ ...signal, weight: Number(e.target.value) })}
       />
+      {signal.weight > 0 && (
+        <SignalRamp
+          signal={signal}
+          label={meta.label}
+          reachDays={reachDays}
+          shipped={shipped}
+          onChange={onChange}
+        />
+      )}
     </li>
+  );
+}
+
+/** Where a signal starts earning its points and where it earns all of them.
+ *
+ *  This was set and never shown. "Up to 10 points" is unreadable without it -- ten points on
+ *  a library of well-rated titles is ten points that can never be earned, and the panel row
+ *  underneath said `0  IMDb 6.4` with nothing naming the 6.0 it fell short of (#410).
+ *
+ *  **One box or two, decided by the signal's shape, and the difference is arithmetic rather
+ *  than taste.** A shortfall signal ramps how far BELOW its bound a value sits, which works
+ *  out to depend on `saturate_at - floor` alone: measured against `evaluate_signal`, the
+ *  pairs (0,60), (10,70) and (40,100) score identically at every rating, and full points
+ *  always land at zero. A second box there would be a control that provably does nothing, so
+ *  editing writes the gap back as `floor: 0` -- one canonical spelling of the same curve.
+ *
+ *  Hidden at weight 0 rather than disabled, matching the gates: a signal worth no points has
+ *  no range worth reading (rule 41). */
+/** How wide a ramp box has to be, as the custom property `14-policy-editor.css` reads.
+ *
+ *  One declaration for a value the TSX and the stylesheet must agree on (rule 67): the
+ *  component knows what the field can hold, the stylesheet knows the chrome it holds it in,
+ *  and neither can size the box alone. */
+function rampBoxWidth(widest: string): CSSProperties {
+  return { "--ramp-chars": widest.length } as CSSProperties;
+}
+
+function SignalRamp({
+  signal,
+  label,
+  reachDays,
+  shipped,
+  onChange,
+}: {
+  signal: SignalSetting;
+  label: string;
+  reachDays: number | null;
+  /** This signal's bounds as Reaper ships them, or undefined where the server sent none. */
+  shipped: SignalSetting | undefined;
+  onChange: (s: SignalSetting) => void;
+}) {
+  const units = rampUnits(signal.signal);
+  const strip = rampStrip(signal.signal, signal.floor, signal.saturate_at);
+  if (!units) return null;
+
+  // Two controls, split on rule 40's line: a changeable unit gets the picker, a fixed one
+  // gets the suffix box. `QuantityInput` stores and returns the BASE value -- days, bytes --
+  // which is what the policy body holds, so nothing is converted on the way through; it just
+  // draws 1825 as "5 years" and hands 1825 back.
+  //
+  // `max` is spread rather than passed, because `exactOptionalPropertyTypes` treats an
+  // explicit `undefined` as a value and refuses it.
+  const box = (
+    value: number,
+    ariaLabel: string,
+    onNext: (stored: number) => void,
+    bounds: { min?: number; max?: number } = {},
+  ) =>
+    units.unitKind !== "fixed" ? (
+      <QuantityInput
+        value={value}
+        units={units.unitKind === "time" ? TIME_UNITS : SIZE_UNITS}
+        min={bounds.min ?? 0}
+        ariaLabel={ariaLabel}
+        onChange={onNext}
+      />
+    ) : (
+      <FixedQuantity
+        // Formatted to the step's own precision, so a tenths box reads "6.0" and not "6".
+        // `FixedQuantity` renders `String(value)`, which drops a trailing zero and makes a
+        // decimal control look like a whole-number one.
+        value={units.step < 1 ? units.fromStored(value).toFixed(1) : units.fromStored(value)}
+        suffix={units.unit}
+        step={units.step}
+        // The standard width, not `narrow`. Narrow is 3.6rem, and a dormancy far end is four
+        // digits plus the browser's spinner: "1825" came out clipped to "182". No new size
+        // either way (rule 40) -- this is the other one that already exists.
+        min={bounds.min ?? 0}
+        {...(bounds.max === undefined ? {} : { max: bounds.max })}
+        ariaLabel={ariaLabel}
+        onChange={(next) => onNext(units.toStored(next))}
+      />
+    );
+
+  return (
+    <>
+      <div className="rule-control rule-ramp">
+        {units.shape === "shortfall" ? (
+          <label
+            className="ramp-field"
+            style={units.unitKind === "fixed" ? rampBoxWidth(units.widest) : undefined}
+          >
+            <span>{units.nearLabel}</span>
+            {box(signal.saturate_at - signal.floor, `Where "${label}" stops paying`, (stored) =>
+              // Floor back to zero with it: the pair carries one degree of freedom, and
+              // leaving a stale floor behind would keep a second number in the body that
+              // nothing reads and nobody can see.
+              onChange({ ...signal, floor: 0, saturate_at: Math.max(1, stored) }),
+            )}
+          </label>
+        ) : (
+          <>
+            <label
+              className="ramp-field"
+              style={units.unitKind === "fixed" ? rampBoxWidth(units.widest) : undefined}
+            >
+              <span>{units.nearLabel}</span>
+              {box(
+                signal.floor,
+                `Where "${label}" starts paying`,
+                // The server refuses `floor >= saturate_at` outright, so the box cannot
+                // offer it: a policy that will not save is not a state to let an operator
+                // type their way into and discover at the save bar.
+                (stored) =>
+                  onChange({ ...signal, floor: Math.min(stored, signal.saturate_at - 1) }),
+                { max: units.fromStored(signal.saturate_at - 1) },
+              )}
+            </label>
+            <label
+              className="ramp-field"
+              style={units.unitKind === "fixed" ? rampBoxWidth(units.widest) : undefined}
+            >
+              <span>{units.farLabel}</span>
+              {box(
+                signal.saturate_at,
+                `Where "${label}" pays in full`,
+                (stored) =>
+                  onChange({ ...signal, saturate_at: Math.max(stored, signal.floor + 1) }),
+                { min: units.fromStored(signal.floor + 1) },
+              )}
+            </label>
+          </>
+        )}
+      </div>
+      {/* The way back. Making these editable made them losable: 1825 is the measured point
+          the rewatch curve flattens, not a number anyone remembers, and the presets restore
+          weights only. Shown only once the value has actually moved, so it is an undo rather
+          than a permanent button.
+          It named the value it goes to and no longer does: the near bound is usually the one
+          the operator did not touch, so half the label restated a number already on screen in
+          the box above it. The boxes and the strip answer "where did it go" the instant it is
+          pressed, and the savebar's Discard is still there if the answer is unwelcome.
+          Bounds alone, never the weight: removal weights total exactly 100, and putting one
+          back on its own would break the budget the save bar enforces. */}
+      {shipped &&
+        (signal.floor !== shipped.floor || signal.saturate_at !== shipped.saturate_at) && (
+          <p className="ramp-restore">
+            <button
+              type="button"
+              className="link-btn"
+              // The visible text is the same on every signal, so on its own it announces as
+              // three identical buttons with nothing to tell them apart -- the failure the
+              // threshold-naming test above this file's fixtures exists for. The name leads
+              // with the visible text, so it still satisfies label-in-name for anyone
+              // speaking it, and adds the signal it belongs to.
+              aria-label={`Set to default: ${label}`}
+              onClick={() =>
+                onChange({
+                  ...signal,
+                  floor: shipped.floor,
+                  saturate_at: shipped.saturate_at,
+                })
+              }
+            >
+              Set to default
+            </button>
+          </p>
+        )}
+      {/* Everything below this line is what the setting DOES, and nothing in it is a
+          control: the strip draws the range, the sentence says what a title earns under it.
+          One lighter panel around the pair, so the card reads as settings first and
+          consequences second rather than as six alternating rows.
+
+          The example keeps its bold numbers but loses its own fill -- inside the panel a
+          second gray box on a gray box just draws a border nobody needs. */}
+      <div className="ramp-shows">
+        {/* The range, drawn rather than restated. This REPLACES the sentence that used to sit
+            here: it said the same thing the picture says, and two grammars for one fact is
+            the restatement rule 144 is about. What the picture adds is the direction -- a
+            rating charges leftward and dormancy rightward, and no shared sentence carries
+            that without the operator holding both rules in their head. */}
+        {strip && (
+          <div className="ramp-strip" aria-hidden="true">
+            <div className="ramp-strip-track">
+              <div
+                className="ramp-strip-fill"
+                style={{
+                  left: `${strip.fillFrom}%`,
+                  width: `${strip.fillTo - strip.fillFrom}%`,
+                  background: rampFill(strip),
+                }}
+              />
+              <div className="ramp-strip-bar" style={{ left: `${strip.bar}%` }} />
+            </div>
+            <div className="ramp-strip-scale">
+              <span>{strip.scaleFrom}</span>
+              <span>{strip.scaleTo}</span>
+            </div>
+          </div>
+        )}
+        <SignalProbe signal={signal} reachDays={reachDays} />
+      </div>
+    </>
+  );
+}
+
+/** What a title would earn under the range above, worked out by the engine.
+ *
+ *  The number comes from `POST /api/policy/probe`, which runs the same `evaluate_signal` a
+ *  scan runs. Computing it here instead would be a second scorer sitting beside the control
+ *  that tunes deletions, free to drift from the one that decides and reading as
+ *  authoritative while it did (rule 3/22).
+ *
+ *  **There is no slider.** It had one, and a second range control under a weight slider
+ *  reads as another setting: the operator sees two tracks and no way to tell which one
+ *  changes their policy. The value is chosen instead, and the sentence re-asks the engine
+ *  as the range above is edited, which is where "live" belongs -- the answer moves when the
+ *  thing it is about moves.
+ *
+ *  All three states render (rule 17/36). A preview that showed a stale number while the next
+ *  was in flight, or fell silent when the read failed, would be a confident answer to a
+ *  question nobody answered -- which is the whole failure this card exists to fix. */
+function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: number | null }) {
+  const units = rampUnits(signal.signal);
+  // Which title to describe. Half way up the ramp, because that is the only choice that
+  // MOVES with the setting: an example pinned to an end reads the same whatever the operator
+  // types, which is an example that teaches nothing about the control it sits under.
+  //
+  // The dormancy ramp opened at the watch mirror's edge instead, and it was wrong whenever
+  // the history was deep. That signal cannot read past the edge, so the edge is the most a
+  // title can present -- but a mirror reaching 8 years against a far end of 5 puts it past
+  // the point the signal already pays in full, and the example froze at "70 of these 70
+  // points" no matter what either box said.
+  //
+  // So the edge is used only where it BINDS, below the far end, which is exactly the case it
+  // was added for: there it is both a moving example and the ceiling the history imposes.
+  const capped =
+    units?.boundedByHistory === true && reachDays !== null && reachDays < signal.saturate_at;
+  const value = capped
+    ? Math.round(reachDays)
+    : Math.round((signal.floor + signal.saturate_at) / 2);
+
+  const probe = useMemo(
+    () =>
+      units
+        ? ({
+            kind: "signal",
+            signal: signal.signal,
+            weight: signal.weight,
+            saturate_at: signal.saturate_at,
+            floor: signal.floor,
+            value,
+          } as const)
+        : null,
+    [units, signal.signal, signal.weight, signal.saturate_at, signal.floor, value],
+  );
+  const { answer, pending, failed } = usePolicyProbe(probe);
+  if (!units) return null;
+
+  const said =
+    answer && !pending ? probeSaid(signal.signal, value, answer.points, signal.weight) : null;
+
+  return (
+    <>
+      <p className="ramp-said">
+        {failed ? (
+          "Reaper couldn't work that one out. Your setting is fine, this is just the preview."
+        ) : said ? (
+          <>
+            {said.lead} <b>{said.value}</b> adds <b>{said.points}</b> of these <b>{said.weight}</b>{" "}
+            points.
+          </>
+        ) : (
+          "Working out what that earns…"
+        )}
+      </p>
+      {/* Only where the mirror actually caps this signal. A history deeper than the far end
+          bounds nothing, so saying so there is a true sentence with no consequence, on a card
+          that is already long. */}
+      {capped && (
+        <p className="help rule-help">
+          {`Your watch history goes back ${humanDays(Math.round(reachDays ?? 0))}, and nothing ` +
+            `can show as untouched for longer than that.`}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -1658,6 +1960,10 @@ export function PolicyEditor({
             <SignalRow
               key={signal.signal}
               signal={signal}
+              // Off the SAVED policy, not the draft: it is a fact about the operator's watch
+              // history rather than a policy value, so it does not move as they edit.
+              reachDays={saved?.history_reach_days ?? null}
+              shipped={saved?.default_signals?.find((d) => d.signal === signal.signal)}
               onChange={(s) => {
                 const signals = [...draft.signals];
                 signals[i] = s;
@@ -1666,6 +1972,19 @@ export function PolicyEditor({
             />
           ))}
         </ul>
+        {/* One key for the section, at its foot. Three strips down a column want one legend,
+            not three, which is how the explanation panel does it too. Hidden from a reader
+            for the same reason the strips are: it captions a picture, and read on its own it
+            is two color names with nothing to attach them to. Every bound it describes is
+            already in a labeled box above, spoken. */}
+        <p className="ramp-key" aria-hidden="true">
+          <span>
+            <i className="earns" aria-hidden="true" /> earns points, deepest where it pays in full
+          </span>
+          <span>
+            <i className="alone" aria-hidden="true" /> left alone
+          </span>
+        </p>
         <WarnBlock anchor="signals" warnings={warningsAt("signals")} />
 
         <RemoveRulesEditor

@@ -1972,6 +1972,18 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/SetupRestoreModal.tsx": 1,
     "frontend/src/components/SetupWizard.tsx": 1,
     "frontend/src/components/queueSettings.tsx": 1,
+    # The policy editor's probe: what the engine says a rule would do at a value the operator
+    # is dragging. A READ, and one that deliberately does NOT keep its content -- the hook
+    # nulls the answer on failure rather than leaving the last one on screen, because the
+    # last one is about a value the operator has already moved past, and a points figure
+    # under a slider reads as being about where the slider is now.
+    #
+    # It is one handle rather than two because the hook answers the read-or-action question
+    # once and hands down a `failed` boolean, so `PolicyEditor` stays at 4: its branch is on
+    # the derived flag and this walk never sees it. That is the arrangement this population
+    # is meant to encourage, not a gap in it -- the decision is made in one place instead of
+    # re-made at every call site.
+    "frontend/src/usePolicyProbe.ts": 1,
 }
 
 # The hooks that hand back a READ's failure. The last three wrap a ``useQuery`` in their own
@@ -2704,4 +2716,61 @@ def test_the_site_palette_matches_the_app_palette() -> None:
         f"{_EXPECTED_SHARED_TOKENS}. If you added or removed a --rp-* token in both themes of "
         "website/src/css/custom.css, move this number with it; if you did not, a token dropped "
         f"out of the comparison and is no longer checked. Compared: {sorted(compared)}"
+    )
+
+
+def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
+    """The manual's signals table is the fourth copy of "what earns these points".
+
+    The signal card's two bound boxes, the strip under them, and the why-panel row all derive
+    the ramp from the policy the operator is holding. This table is written by hand, and rule
+    144 is about exactly that pair: deriving three copies makes the fourth MORE dangerous, not
+    less, because the derived ones are demonstrably right and vouch for a consistency nobody
+    checked. It fails in the reassuring direction too, since a reader told a signal is worth
+    10 points and not told it pays none of them above IMDb 6.0 concludes the wrong thing about
+    their own library.
+
+    So the figures are held against the shipped policies here rather than by a comment asking
+    the next author to remember.
+    """
+    from reaper.clock import humanize_days
+    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, SignalId
+
+    page = (FRONTEND_SRC / "docs" / "content" / "understandingPolicy.ts").read_text()
+    shipped = {
+        s.signal: s for policy in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY) for s in policy.signals
+    }
+
+    # Each phrase is BUILT from the shipped bound, so moving a default in `engine/policy.py`
+    # fails here with the sentence the manual now has to carry.
+    unwatched = shipped[SignalId.UNWATCHED]
+    low_rating = shipped[SignalId.LOW_RATING]
+    expected = {
+        "unwatched": (
+            f"Nothing until {humanize_days(unwatched.floor)}, "
+            f"all of it at {humanize_days(unwatched.saturate_at)}"
+        ),
+        "few_watchers": (
+            f"Nothing at {shipped[SignalId.FEW_WATCHERS].saturate_at} viewers or more, "
+            "all of it at 0"
+        ),
+        "season_rank": (f"all of it at the {shipped[SignalId.SEASON_RANK].saturate_at}th-newest"),
+        # Stored in tenths, said the way a person reads a rating.
+        "low_rating": (
+            f"Nothing at IMDb {low_rating.saturate_at / 10:.1f} or above, "
+            f"all of it at IMDb {low_rating.floor / 10:.1f}"
+        ),
+    }
+
+    missing = [
+        f"  {name}: expected {phrase!r}" for name, phrase in expected.items() if phrase not in page
+    ]
+    assert not missing, (
+        "frontend/src/docs/content/understandingPolicy.ts no longer states the ramp the "
+        "shipped policy uses:\n"
+        + "\n".join(missing)
+        + "\nThe signal card, the strip and the why-panel row all derive this from the "
+        "policy; this table is hand-written, so it is the copy that drifts (rule 144). "
+        "Update the 'What it pays' column, and re-read frontend/src/components/signalRamp.ts "
+        "so the manual and the app word the same bound the same way."
     )

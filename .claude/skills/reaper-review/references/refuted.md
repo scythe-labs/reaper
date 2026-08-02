@@ -393,3 +393,37 @@ panel's simultaneous failures into one line for exactly this reason and reasons 
 announcements out loud. Note the shape of the error rather than the conclusion: "no press is on
 this path" is a claim about a QUERY's refetch policy, not about a component's props, and reading
 only the latter made 21 reactions look like furniture.
+
+**`engine/preview.py:_bare_facts` — the docstring promises `Unknown` and six fields default to
+`Absent`, so a future keep probe would understate an operator's protection.** The literal count
+is right and the consequence is unreachable. `_bare_facts` sets 13 of `Facts`' 20 fields (11
+`Unknown`, `title` a str, `history_reach_days` a disclosed `Known(36_500)`); six fall through to
+`_UNSET = Absent(source="unset")` (`gates.py:59`) and `ratings` to `()`. But the harm named
+cannot occur: `evaluate_keep` (`signals.py:626-673`) reads exactly ONE fact, `spec.read(facts)`
+for its own configured field, and any probe sets that field `Known` at `preview.py:85` before
+asking — so the `Absent`→0.0 / `Unknown`→full-discount asymmetry can never touch the probed
+field. The one cross-field reader, `fields.reach_shortfall`, points the OPPOSITE way: on a
+non-`Known` `days_since_added` it reports a shortfall, which `evaluate_keep` answers with the
+FULL discount, i.e. more protection shown, not less. On the path that exists, `_branch_signal`
+reads only the six fields that ARE enumerated, so the docstring's operative claim — "nothing
+else can move the answer" — is true as implemented. Pinned at `aba0c95`. The residual was taken:
+the sentence now says which fields it covers, and names what a keep arm must set. Note the shape
+rather than the conclusion: a literally-false count in a comment is not automatically a defect,
+and the test is whether the clause the code RELIES on is the false one.
+
+**`WhyPanel.tsx:SignalRow` — the ramp sentence is suppressed only for `unreadable`, so a
+`not_applicable` row describes arithmetic that never ran.** Every mechanical claim is correct and
+the defect is not. Verified by running the engine: an `Absent` `imdb_rating_tenths` returns
+`not_applicable, pressure 0.0, floor 0, saturate_at 60`, `rowRampSentence` self-bails only on a
+null bound, and the rendered string is byte-identical to a well-rated title's. It still misleads
+nobody, because the two never appear together: a `not_applicable` row renders alone inside a
+collapsed `<details>` headed "N didn't apply here" (`WhyPanel.tsx:977-986`) beside a detail line
+reading "no IMDb rating", where a well-rated row lands in the "Argued to keep" group. No clause
+is false about the item either — the ramp half describes the RULE, and "This one added 0" agrees
+with the row's own 0 column. The `unreadable` exclusion has a state-specific reason the candidate
+never accounted for: that row's column prints "Couldn't check" instead of a number, so "added 0"
+would contradict it and assert the very zero the panel refuses to state. The one genuinely
+misleading variant (`few_watchers` reading "all 20 points at 0 watchers" beside "no watch history
+recorded") is unreachable: `distinct_watchers` is only ever `Known` or `Unknown`, never `Absent`.
+Pinned at `aba0c95`. The residual was taken: the guard's comment now states its real reason and
+says why `not_applicable` keeps the sentence.

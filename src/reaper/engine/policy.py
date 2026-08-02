@@ -2099,6 +2099,12 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         # still ~13%, never zero -- nothing is ever free to delete).
         SignalSetting(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365),
         SignalSetting(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
+        # 6.0, and it was briefly 8.0 on the way here. Raising it makes an average rating
+        # carry a little of this signal, which is the condemn direction: measured against
+        # `evaluate_signal`, a far end of 8.0 takes a 7.0 title from 0 to 1.25 of these 10
+        # points and a 6.0 title from 0 to 2.5. It also moves the bar for "this rating argues
+        # for KEEPING it" up with it, so a 7.0 stops reading as a reason to keep. Back at 6.0
+        # a title has to be genuinely poorly rated before this signal says anything.
         SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
         # SIZE IS DELIBERATELY ABSENT.
         #
@@ -2132,6 +2138,7 @@ DEFAULT_TV_POLICY = PolicyBody(
         # as a weight -- a much-rewatched season 1 can still out-score its rank. The
         # keep-last-N seasons floor above is the hard guard.
         SignalSetting(signal=SignalId.SEASON_RANK, weight=15, saturate_at=6),
+        # Same ramp as the movie lane above, where the reasoning lives.
         SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
     ),
     # IMDb only by default for TV: Sonarr carries no rich ratings object, so a show's

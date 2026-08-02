@@ -19,7 +19,15 @@
 // that only explains its deletions cannot be trusted about its keeps.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   api,
   type CandidateDetail,
@@ -37,6 +45,8 @@ import { useOverrideMutations } from "../useOverrideMutations";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { reapIsNoop } from "./reviewFate";
+import { rowRampSentence } from "./signalRamp";
+import { useMediaQuery } from "../useMediaQuery";
 import { WhyShell } from "./WhyShell";
 import { Notice } from "./Notice";
 
@@ -171,15 +181,55 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
   );
 }
 
-/** The synopsis, clamped to two lines with a "more" to expand. The card shows the *reason*
- *  now, so this slide-out is the one place the plot lives -- but it still should not push the
- *  reasoning below the fold, hence the clamp. Shared with the show panel. */
+/** The synopsis, clamped to two lines with a "more" to expand -- offered whenever the text is
+ *  actually cut, at whatever width the panel has. The card shows the *reason* now, so this
+ *  slide-out is the one place the plot lives, but it still should not push the reasoning below
+ *  the fold, hence the clamp. Shared with the show panel. */
 export function Synopsis({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  // This component is reused when the selection changes without an unmount in between --
+  // `WhyHero` documents the same reuse -- so a synopsis left open would open the next title's
+  // too, and the measurement below, which is skipped while open, would go on answering for the
+  // previous text. Before paint, so the new title never flashes expanded.
+  useLayoutEffect(() => setExpanded(false), [text]);
+
+  // Whether two lines are enough is a question about how wide the panel is, never about how
+  // long the string is. The old `text.length > 150` answered it at one width, and the width it
+  // was right at is not the one a phone has: measured against this stylesheet, the first length
+  // two lines cannot hold is 115 characters at a 393px panel, 135 at 430px and 145 at 480px,
+  // against a control that waited for 151 everywhere. Everything inside that band was cut with
+  // nothing on screen to open it, and the band is widest exactly where the panel is narrowest
+  // (#407). Ask the element instead, which is also right at a text size or browser zoom nobody
+  // predicted.
+  //
+  // Same shape as `usePopoverShift` (rule 18): layout rather than paint, so the control is
+  // there in the first frame instead of appearing after it, and re-measured on every render
+  // plus a window listener, because React re-renders nothing on a resize. Setting the same
+  // value bails out of the re-render, so this settles rather than looping.
+  useLayoutEffect(() => {
+    // An open synopsis is not clamped, so it measures as "nothing hidden" and would take away
+    // the control that closes it. Its last collapsed answer stands until it is collapsed again.
+    if (expanded) return;
+    const measure = () => {
+      const el = ref.current;
+      // A pixel of tolerance: both heights are rounded to integers, and a line box whose
+      // height does not land on one can leave a 1px difference with nothing actually hidden.
+      if (el) setClipped(el.scrollHeight > el.clientHeight + 1);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  });
+
   return (
     <p className="why-summary">
-      <span className={expanded ? undefined : "clamp-2"}>{text}</span>
-      {text.length > 150 && (
+      <span ref={ref} className={expanded ? "why-synopsis" : "why-synopsis clamp-2"}>
+        {text}
+      </span>
+      {(clipped || expanded) && (
         <button
           className="link-btn"
           // A disclosure that never said it was one. The clamp is CSS-only (`.clamp-2`), so the
@@ -641,6 +691,62 @@ type Row = {
   added: number;
 };
 
+/** A signal row that can say what it was measured against, opened from the row itself.
+ *
+ *  **A press is the state that survives; hover only previews.** On a phone there is no
+ *  hover at all, so the press IS the whole interaction and the row behaves as a plain
+ *  expander: tap to open, tap to close. It expands in place rather than floating, which also
+ *  keeps it clear of the edge-clipping rule 138 exists for -- inside a full-screen sheet an
+ *  anchored popover has nowhere to be pushed back to.
+ *
+ *  The hover pair is bound only where a real pointer exists, because a touch tap synthesises
+ *  `mouseenter` BEFORE it sends `click`: bound unconditionally the two handlers fight, on
+ *  exactly the device that can use neither. `useMediaQuery` reporting `false` under jsdom is
+ *  the safe way round here -- press-only is the behavior that works everywhere.
+ *
+ *  **There is deliberately no focus handler**, and there was one for a draft. A press
+ *  focuses the button on every platform, so opening on focus too left `previewing` true
+ *  underneath the press: the second tap unpressed a row that stayed open, and the control
+ *  read as dead. Enter and Space already arrive here as a click, so the keyboard is served
+ *  by the press like everything else, and nothing can strand a row open behind a Tab.
+ *
+ *  Not a `title` tooltip, which a phone never shows and a screen reader never reads out.
+ *  This is the panel an owner reads before approving a deletion. */
+function RampWhy({ sentence, children }: { sentence: string; children: ReactNode }) {
+  const [pressed, setPressed] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const canHover = useMediaQuery(HOVER_QUERY);
+  const id = useId();
+  const open = pressed || previewing;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="sig-why"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setPressed((v) => !v)}
+        {...(canHover
+          ? {
+              onMouseEnter: () => setPreviewing(true),
+              onMouseLeave: () => setPreviewing(false),
+            }
+          : {})}
+      >
+        {children}
+      </button>
+      <p className="sig-why-said" id={id} hidden={!open}>
+        {sentence}
+      </p>
+    </>
+  );
+}
+
+/** Where a pointer can hover at all. Read through `useMediaQuery` like every other query
+ *  this app branches on, so there is one way of asking. */
+const HOVER_QUERY = "(hover: hover) and (pointer: fine)";
+
 /** One row: the points it added, what it was about, and its slice of the whole bar.
  *
  *  The bar is measured against the TOTAL, not against the row's own weight. Filling each
@@ -653,10 +759,26 @@ function SignalRow({ row }: { row: Row }) {
   // A yes/no rule of your own either matched or did not, so it cannot land part-way. Flat
   // chrome, no ramp cap, or the bar would imply a sliding scale that does not exist.
   const flat = custom && (signal.contribution === 0 || signal.contribution === signal.weight);
+  // The line this row was measured against, if the scan recorded one. A row that could not
+  // be read gets none, because its share column prints "Couldn't check" rather than a
+  // number, and "added 0" would contradict the column and assert the very zero the panel is
+  // refusing to state. A `not_applicable` row also returns before the ramp runs, and it DOES
+  // keep the sentence: it sits inside a disclosure headed "didn't apply here", beside a
+  // detail line naming what was missing, and its "added 0" agrees with the 0 in its column.
+  const why =
+    state === "unreadable"
+      ? null
+      : rowRampSentence(
+          signal.id,
+          signal.floor,
+          signal.saturate_at,
+          signal.weight,
+          signal.contribution,
+        );
 
-  return (
-    <li className={`sig-row sig-${state}`}>
-      <div className="sig-head">
+  const body = (
+    <>
+      <span className="sig-head">
         {/* A plus sign is a claim that something was added. A row that added nothing shows
             a plain 0, and one that added less than a whole point says so rather than
             rounding its contribution away to "+0". */}
@@ -685,18 +807,28 @@ function SignalRow({ row }: { row: Row }) {
           {signal.detail}
           {custom && <RuleTag />}
         </span>
-      </div>
-      <div className="sig-track">
-        <div
+      </span>
+      <span className="sig-track">
+        <span
           className={flat ? "sig-foot sig-foot-flat" : "sig-foot"}
           style={{ width: `${row.footprint * 100}%` }}
         >
-          <div className="sig-added" style={{ width: `${row.added * 100}%` }} />
-        </div>
-      </div>
+          <span className="sig-added" style={{ width: `${row.added * 100}%` }} />
+        </span>
+      </span>
+    </>
+  );
+
+  return (
+    <li className={`sig-row sig-${state}`}>
+      {why ? <RampWhy sentence={why}>{body}</RampWhy> : body}
     </li>
   );
 }
+
+/** Coverage in basis points when every weighted reason was readable. Stored as bp because
+ *  the policy body is integers-only (see `format.coverage`), so full is 10,000 and not 1. */
+const FULL_COVERAGE_BP = 10_000;
 
 /** How many rows a group shows before the rest fold away. Six because a stock policy
  *  carries three signals for movies and four for TV: a default install never collapses
@@ -813,9 +945,20 @@ function Signals({ item }: { item: CandidateDetail }) {
   return (
     <section className="block">
       <h3>Why it scored {explanation.score}</h3>
+      {/* The coverage clause is silence at full coverage, and it should always have been.
+          The ONLY thing that can lower this number is a reason Reaper could not read
+          (`SignalState.UNREADABLE` is the one state that costs coverage), and those get
+          their own "Couldn't check" group below with their own note. So at 100% the
+          sentence announced the absence of a group that is already absent -- a number with
+          nothing behind it, which is what made an owner ask "100% of WHAT evidence" (#410).
+          Below full it is the one place the panel says how much of the scoring weight went
+          unread, which the group's row count does not answer: one unread reason out of five
+          can be most of the score. */}
       <p className="blurb">
-        Reasons to believe nobody will watch it again. Reaper saw{" "}
-        <strong>{coverage(item.coverage_bp)}</strong> of the evidence.
+        Reasons to believe nobody will watch it again.
+        {item.coverage_bp < FULL_COVERAGE_BP && (
+          <> Reaper could read {coverage(item.coverage_bp)} of what it scores on.</>
+        )}
       </p>
 
       <SignalGroup

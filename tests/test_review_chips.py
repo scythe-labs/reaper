@@ -85,6 +85,11 @@ _NO_PANEL_ROUTE = {
         "already plain: it answers 'why kept', not 'what could not be checked'"
     ),
     "season_pruning.PROGRESS_UNREADABLE_REASON": ("its twin above, same surface and same shape"),
+    "preview.NOT_PROBED_REASON": (
+        "the facts a policy probe leaves out. probe_signal answers one route with a number "
+        "and a detail string and builds no candidate, stores no Explanation and touches no "
+        "snapshot, so nothing carries this reason to a panel"
+    ),
 }
 
 #: Panel copy whose backend producer is gone, and why the entry stays. ``CAUSE_COPY`` renders
@@ -1424,7 +1429,9 @@ class TestTheMatchStatusVocabulary:
         # The population this ban scans, reconciled by hand (rule 147): a reason that stops
         # being an ``Unknown(...)`` call leaves the walk silently, and a flag-shaped
         # assertion cannot tell that from a tree that complies. Bump it deliberately.
-        assert walked == 42, (
+        # 42 -> 43: the placeholder a policy probe fills every unprobed fact with, so a
+        # preview cannot quietly inherit a number from a fact it is not about.
+        assert walked == 43, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."

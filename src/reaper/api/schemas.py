@@ -577,6 +577,56 @@ class SignalSettingIn(BaseModel):
     floor: int = Field(default=0, ge=0)
 
 
+class SignalProbeIn(SignalSettingIn):
+    """Try one signal's settings against one value.
+
+    Inherits the settings half rather than restating it, so a probe refuses exactly what a
+    save refuses (rule 131): answering for a pair the editor could not then store would
+    describe a policy that cannot exist.
+    """
+
+    kind: Literal["signal"] = "signal"
+
+    value: float = Field(ge=0, le=1e15)
+    """The value to try, in the units the signal is stored in: days, watchers, a season's
+    rank, a rating in tenths, or bytes. The ceiling is a boundary bound rather than a real
+    one (rule 95) -- above any file anyone has, and below where a float stops counting whole
+    numbers."""
+
+    window_days: int = Field(default=365, ge=1, le=36_500)
+    """The policy's popularity window. It reaches only ``detail``'s wording, which nothing
+    renders yet, so the editor does not send it and the default stands in. A client that
+    starts rendering ``detail`` sends its policy's own window with it."""
+
+
+#: What ``POST /api/policy/probe`` accepts.
+#:
+#: One member today, and typed as a discriminated ``kind`` anyway, which is the whole point:
+#: a second probe -- what a keep rule would discount, what a graded rule of the operator's
+#: own would add -- becomes ``Annotated[SignalProbeIn | KeepProbeIn,
+#: Field(discriminator="kind")]`` and every client that already sends ``kind`` keeps working.
+#: Inferring the shape from which fields happened to be present is the thing rule 142 exists
+#: to stop, and it is far cheaper to type it now than to add the discriminator to a wire
+#: format that already shipped without one.
+#:
+#: No speculative members: a probe kind arrives with the surface that asks it and the tests
+#: that pin it, or it does not exist (rule 38/117).
+PolicyProbeIn = SignalProbeIn
+
+
+class PolicyProbeOut(BaseModel):
+    """What the engine answered. One shape for every probe kind, so the editor reads them
+    the same way and a new kind needs no new rendering path."""
+
+    points: float
+    """What this rule would move the score by, in the rule's own direction: pressure for a
+    signal, and a discount for a keep rule when one is added."""
+
+    detail: str
+    """The engine's own words for it. Carried for a client that wants the engine's phrasing;
+    the editor words its own sentence, so nothing reads this today."""
+
+
 class ConditionIn(BaseModel):
     """One user-authored protect condition: keep a title when ``field op value``."""
 
@@ -651,6 +701,31 @@ class PolicyOut(BaseModel):
     policy_hash: str
     name: str
     body: PolicyIn
+
+    default_signals: list[SignalSettingIn] = []
+    """The SHIPPED bounds for this media type's signals, so the editor can offer a way back.
+
+    Making the ramp bounds editable made them losable: nothing on the page said what 1825
+    had been, and the presets restore weights only. Derived from ``DEFAULT_MOVIE_POLICY`` /
+    ``DEFAULT_TV_POLICY`` on the way out rather than copied into the browser, so there is no
+    second declaration of a number the scorer reads (rule 103).
+
+    Weights are carried but the editor restores only the bounds: removal weights must total
+    exactly 100, so putting one back on its own would break the budget the save bar enforces.
+    """
+
+    history_reach_days: float | None = None
+    """How far back the watch mirror goes, for the editor to say beside the controls it
+    bounds.
+
+    The dormancy ramp is the one it bounds hard: `dormancy.reference_instant` anchors a
+    never-played item at the LATER of its arrival and the mirror's edge, so the largest
+    dormancy any item can present IS this number. Setting "full points" past it therefore
+    caps what that signal can ever pay, and until the editor could say this, nothing on the
+    page could tell the operator so.
+
+    ``None`` when the scan did not record it, which the editor renders as not knowing rather
+    than as a reach of zero."""
 
     needs_save: bool = False
     """This body was rescaled on the way out and is NOT what is stored.

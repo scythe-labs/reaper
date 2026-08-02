@@ -193,6 +193,156 @@
   accent-color: var(--accent);
 }
 
+/* Where a signal starts earning and where it earns in full. Two labeled boxes on the
+   shared control chrome, wrapping to one column on a phone rather than shrinking the boxes
+   below the standard (rule 40 -- width is the only thing that may vary, and not below what
+   a number needs). */
+.rule-ramp {
+  gap: var(--space-lg);
+}
+/* `align-items` is load-bearing, not tidiness. A column flex container stretches its
+   children by default, and `.qty` is a flex box with no width of its own, so each box came
+   out exactly as wide as the caption above it: "Pays nothing at or above" gave a 147px box
+   and "Full points at" a 101px one, for the same 3.6rem input. Two boxes side by side then
+   disagreed on width for a reason that had nothing to do with what they hold, and neither
+   fitted its own contents (rule 40 -- width is the only thing that may vary, and it varies
+   with the VALUE, never with the label). */
+.ramp-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+.ramp-field > span {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+/* The box holds exactly what its own field can show, and no more. A single fixed width was
+   wrong in both directions: `narrow` clipped a four-digit dormancy end to "182", and the
+   standard width left a three-character rating floating in a box built for four. `1ch` is
+   one figure of the tabular face the box already uses, and the addend is the control
+   standard's own padding plus room for the browser's spinner. `--ramp-chars` comes from
+   `PolicyEditor`'s `rampBoxWidth`, which is the one place the count is declared (rule 67). */
+.ramp-field .qty input[type="number"] {
+  width: calc(var(--ramp-chars, 4) * 1ch + 2.4rem);
+}
+
+/* The range, drawn. Reaper's own track-and-fill mark, the one the explanation panel gives a
+   signal row, so a bar means the same thing on both screens: one hue for how hard it charges,
+   a neutral track for what it leaves alone.
+
+   `aria-hidden`, and it may be: the boxes above state both bounds and the worked example
+   below states what they do to a real title, so nothing here is the only place a fact lives.
+   Drawing it is what makes the DIRECTION legible, which is a thing eyes do and prose does
+   badly -- a rating charges leftward and dormancy rightward. */
+.ramp-strip {
+  margin-top: 0;
+}
+/* The track is the "left alone" half of the picture, so it has to differ from whatever it
+   sits on. It sat on the page and read as `--surface-2`; inside the preview panel that IS
+   `--surface-2`, and the unfilled stretch vanished -- the one region meaning "Reaper does
+   not charge for this" became invisible. The page ground reads as the inset here. */
+.ramp-strip-track {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.ramp-strip-fill {
+  position: absolute;
+  inset-block: 0;
+}
+/* The bar a title has to clear. Sits proud of the track so it reads as a boundary rather
+   than as another band of fill. */
+.ramp-strip-bar {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--text);
+  border-radius: 1px;
+}
+.ramp-strip-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One key for the whole section, at its foot, never one per signal: the same arrangement the
+   explanation panel's legend uses, and the reason three strips down a column do not read as
+   three separate diagrams. */
+.ramp-key {
+  display: flex;
+  gap: var(--space-3xl);
+  flex-wrap: wrap;
+  margin: var(--space-lg) 0 0;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.ramp-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.ramp-key i {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 2px;
+  display: inline-block;
+}
+.ramp-key .earns {
+  background: var(--condemn);
+}
+/* Outside the panel, on the page ground, so the swatch matches the track it names and needs
+   its outline to be visible at all against the same color. */
+.ramp-key .alone {
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+}
+
+/* The way back to Reaper's own bounds. A quiet text button rather than a bordered one: it
+   undoes an edit and should not compete with the boxes that made it. Hidden until the value
+   has actually moved, so it reads as an undo and not as a permanent control. */
+.ramp-restore {
+  margin: var(--space-md) 0 0;
+}
+
+/* Everything the setting DOES, in one panel: the strip that draws the range and the sentence
+   that says what a title earns under it. Nothing inside is a control, and that is the whole
+   reason it is grouped and tinted -- the card reads settings first and consequences second,
+   rather than as six alternating rows where a picture, a link and a number all look like
+   things to press.
+
+   The same fill the explanation panel gives a signal row's own reasoning, so a preview looks
+   the same on both screens. */
+.ramp-shows {
+  margin-top: var(--space-lg);
+  padding: var(--space-lg);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.ramp-shows > :first-child {
+  margin-top: 0;
+}
+
+/* Inside the panel the sentence keeps its bold numbers and loses its own fill: a gray box on
+   a gray box only draws a border nobody asked for. */
+.ramp-said {
+  margin: var(--space-lg) 0 0;
+  font-size: var(--text-md);
+  color: var(--text);
+}
+.ramp-said b {
+  font-weight: var(--weight-semi);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Keep well-rated titles: the per-source bars as rows of ONE aligned table. The source
    names share a column sized by the longest, so every "at least" lines up whatever the
    name's length -- the bars read as a set without each needing its own box. */

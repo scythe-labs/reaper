@@ -8,7 +8,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -19,6 +19,7 @@ import { PolicyEditor, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     policy: vi.fn(),
+    probePolicy: vi.fn(),
     profile: vi.fn(),
     safety: vi.fn(),
     scanStatus: vi.fn(),
@@ -37,6 +38,14 @@ const { apiMock } = vi.hoisted(() => ({
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return { ...actual, api: apiMock };
+});
+
+// The probe under each signal's range fires on a 250ms debounce, so most tests here finish
+// before it runs. Seeded anyway: rule 135's gate only catches a queryFn that actually ran, so
+// an unmocked one would sit silent until the first test that waits long enough. Seeded HERE
+// rather than inside `renderEditor`, which runs after a test's own mock and would overwrite it.
+beforeEach(() => {
+  apiMock.probePolicy.mockResolvedValue({ points: 0.8, detail: "a value" });
 });
 
 function body(custom: CustomCondemn[] = []): PolicyBody {
@@ -1231,10 +1240,15 @@ describe("the controls a screen reader has to tell apart", () => {
   //
   // Rule 145: this walks a population, so it counts. Asserting "every slider I collected has a
   // name" reads green when the walk collects nothing. The count below is every `range` this
-  // fixture renders -- the two thresholds plus one per built-in signal in `body()` (3) --
-  // reconciled by hand against the source. Its honest limit: a slider added to a section this
-  // fixture does not mount is missing from both the table and the count, and the two absences
-  // hide each other.
+  // fixture renders -- the two thresholds plus one weight per built-in signal in `body()`
+  // (3) -- reconciled by hand against the source. Its honest limit: a slider added to a
+  // section this fixture does not mount is missing from both the table and the count, and
+  // the two absences hide each other.
+  //
+  // It went 5 -> 8 -> 5 across this branch: a probe slider per signal, then none. The guard
+  // caught the arrival, and the reason they left is the same thing it is watching for -- a
+  // second range control under a weight reads as another setting, and the operator cannot
+  // tell which track changes their policy.
   it("names both thresholds for their label, never for the help text under it", async () => {
     renderEditor({ body: body() });
 
@@ -1246,6 +1260,10 @@ describe("the controls a screen reader has to tell apart", () => {
     const sliders = document.querySelectorAll<HTMLInputElement>('input[type="range"]');
     expect(sliders).toHaveLength(5);
     for (const s of sliders) expect(s.getAttribute("aria-label")).toBeTruthy();
+    // The two per signal must not answer to the same name, which is the failure this whole
+    // test is about and the one a truthiness check on each cannot see.
+    const names = [...sliders].map((s) => s.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(names.length);
   });
 
   // A placeholder is an accessible name of last resort, so this box announced itself as the
@@ -1393,5 +1411,305 @@ describe("why an 'Add rule' will not act", () => {
 
     expect(box).toHaveAccessibleDescription("");
     expect(screen.getAllByRole("button", { name: "Add rule" }).at(-1)!).toBeEnabled();
+  });
+});
+
+// "Up to 10 points" cannot be read without knowing what earns them: ten points on a library
+// of well-rated titles is ten points that can never be earned, and until now the range lived
+// only in the stored body (#410). How many boxes a signal gets is arithmetic, not taste --
+// see `signalRamp`'s two shapes.
+/** The strip drawn under one named signal.
+ *
+ *  Scoped to its own row on purpose: every signal draws one, so an unscoped
+ *  `querySelector` silently answers for whichever sits highest on the page -- which is how
+ *  this pair of tests first read green against the dormancy ramp's geometry.
+ */
+function stripFor(signalName: string): { fill: HTMLElement; bar: HTMLElement } {
+  const row = screen.getByText(signalName).closest(".rule-row");
+  expect(row).not.toBeNull();
+  return {
+    fill: (row as HTMLElement).querySelector(".ramp-strip-fill") as HTMLElement,
+    bar: (row as HTMLElement).querySelector(".ramp-strip-bar") as HTMLElement,
+  };
+}
+
+describe("where a signal starts earning", () => {
+  it("gives a shortfall signal one box, because the second would do nothing", async () => {
+    renderEditor({ body: body() });
+
+    // low_rating measures how far BELOW its bound a rating sits, and the engine's fraction
+    // works out to depend on the gap alone: (0,70), (10,80) and (30,100) score identically.
+    // A "full points at" box here would be a control an operator could move for no effect.
+    expect(await screen.findByLabelText('Where "How low it\'s rated" stops paying')).toBeVisible();
+    expect(screen.queryByLabelText('Where "How low it\'s rated" pays in full')).toBeNull();
+    // The range is drawn now rather than restated: the strip charges everything BELOW the
+    // bar, so its fill starts at the left edge and stops where the bar sits (7.0 of 10).
+    const { fill } = stripFor("How low it's rated");
+    expect(fill.style.left).toBe("0%");
+    expect(fill.style.width).toBe("70%");
+    // The label says what a title CLEARS, which is the whole of the backwards reading: a
+    // higher number now visibly demands more rather than sounding more generous.
+    expect(screen.getByText("Good enough to leave alone")).toBeVisible();
+  });
+
+  it("gives a direct signal both ends, because the engine honors both", async () => {
+    renderEditor({ body: body() });
+
+    expect(
+      await screen.findByLabelText('Where "How long it\'s gone unwatched" starts paying'),
+    ).toBeVisible();
+    expect(
+      screen.getByLabelText('Where "How long it\'s gone unwatched" pays in full'),
+    ).toBeVisible();
+  });
+
+  it("colors a direct ramp deepest at the bound it pays in full at", async () => {
+    renderEditor({ body: body() });
+    await screen.findByLabelText('Where "How long it\'s gone unwatched" pays in full');
+
+    // This fixture pays in full at 365 days on a 3650-day track, so the flat top starts one
+    // tenth along and the fill still runs to the end: past the far bound the signal keeps
+    // paying all of it. Full color therefore belongs at 10%, not at the edge the fill happens
+    // to stop on. Drawing one gradient edge to edge put it at 3650 days, ten times the bound,
+    // while the key underneath says "deepest where it pays in full" -- the picture and the
+    // words disagreeing about the one fact the picture exists to carry.
+    const { fill } = stripFor("How long it's gone unwatched");
+    expect(fill.style.background).toBe(
+      "linear-gradient(to right, color-mix(in srgb, var(--condemn) 6%, transparent), var(--condemn) 10%)",
+    );
+  });
+
+  it("writes a shortfall edit back as the gap, floor and all", async () => {
+    const user = userEvent.setup();
+    renderEditor({ body: body() });
+
+    const box = await screen.findByLabelText('Where "How low it\'s rated" stops paying');
+    await user.clear(box);
+    await user.type(box, "5.5");
+
+    // Stored in tenths, and the floor goes back to zero with it: the pair carries one degree
+    // of freedom, so a stale floor would leave a second number in the body that nothing reads
+    // and nobody can see. The strip is what shows it landed -- the bar moves to 5.5 of 10.
+    await waitFor(() => expect(stripFor("How low it's rated").bar.style.left).toBe("55%"));
+  });
+
+  it("says nothing about a range for a signal worth no points", async () => {
+    const off = body();
+    off.signals = off.signals.map((s) =>
+      s.signal === "low_rating"
+        ? { ...s, weight: 0 }
+        : s.signal === "unwatched"
+          ? { ...s, weight: s.weight + 10 }
+          : s,
+    );
+    renderEditor({ body: off });
+
+    await screen.findByText("How low it's rated");
+    expect(screen.queryByLabelText('Where "How low it\'s rated" stops paying')).toBeNull();
+  });
+});
+
+// The probe is a round trip for a number a slider could have computed locally, and that is
+// the point: a local copy of the ramp beside the control that tunes deletions is a second
+// scorer, free to drift from the one that decides. So what matters here is that the sentence
+// only ever shows what the server said, and says so plainly when it has not said it yet.
+describe("trying a value against a signal's range", () => {
+  it("shows what the engine answered, not a number worked out here", async () => {
+    apiMock.probePolicy.mockResolvedValue({ points: 3.5, detail: "IMDb 3.0" });
+    renderEditor({ body: body() });
+
+    await screen.findByText("How low it's rated");
+
+    // The number is the server's, and it is deliberately NOT what this ramp would produce:
+    // a component doing its own arithmetic would overwrite it, and this is what notices.
+    // Read off the bolded element rather than the sentence, which is split across nodes
+    // precisely so the two numbers can be picked out of it.
+    //
+    // Scoped to the row. Unscoped this was a FLAKE, and it went green locally and red on CI:
+    // one mock answers every signal's probe, so all three rows end up showing 3.5, and
+    // whether `getByText` found one or three came down to how many had settled by the time
+    // the assertion ran. A query that depends on which requests have landed is not a test of
+    // the thing it names.
+    const row = screen.getByText("How low it's rated").closest(".rule-row") as HTMLElement;
+    await waitFor(() => expect(within(row).getByText("3.5")).toBeVisible());
+    expect(within(row).getByText(/of these/)).toBeVisible();
+    expect(apiMock.probePolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "signal", signal: "low_rating", weight: 10 }),
+    );
+  });
+
+  it("says it is still working rather than showing a stale answer", async () => {
+    // Never resolves: the state between a drag and an answer is a real state, and the honest
+    // thing on screen is that nothing has come back yet.
+    apiMock.probePolicy.mockReturnValue(new Promise(() => {}));
+    renderEditor({ body: body() });
+
+    expect((await screen.findAllByText(/Working out what/)).length).toBeGreaterThan(0);
+  });
+
+  it("owns up when the read fails instead of going quiet", async () => {
+    // Silence here would read as "this rule earns nothing", which is a claim about the
+    // operator's policy that a failed request never made (rule 17/36).
+    apiMock.probePolicy.mockRejectedValue(new Error("nope"));
+    renderEditor({ body: body() });
+
+    await waitFor(() =>
+      expect(screen.getAllByText(/couldn't work that one out/).length).toBeGreaterThan(0),
+    );
+    // And it says the setting itself is fine, because a failed preview is not a failed save.
+    expect(
+      screen.getAllByText(/Your setting is fine, this is just the preview/).length,
+    ).toBeGreaterThan(0);
+  });
+});
+
+// "Full points at 5 years" is unreachable on a mirror that only goes back one, and until the
+// probe opened at the mirror's edge nothing on the page said so. Deliberately NOT a warning:
+// the shipped far end is five years, almost nobody's history is that deep, and a warning
+// firing for everyone teaches the page to be ignored.
+describe("what the dormancy ramp can actually reach", () => {
+  // The example has to MOVE with the setting or it teaches nothing about the control under
+  // it. This one opened at the watch mirror's edge, and a mirror deeper than the far end put
+  // it past the point the signal already pays in full: it froze at "70 of these 70 points"
+  // whatever either box said. So the edge is used only where it BINDS.
+  it("describes a title the history caps, when the history is the shorter of the two", async () => {
+    // 200 days of history against a far end of 365: nothing can present more than 200, so
+    // that is both a moving example and the ceiling the mirror imposes.
+    apiMock.probePolicy.mockResolvedValue({ points: 38.4, detail: "not watched in 6 months" });
+    renderEditor({ body: body(), history_reach_days: 200 });
+
+    await waitFor(() =>
+      expect(apiMock.probePolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "signal", signal: "unwatched", value: 200 }),
+      ),
+    );
+    // 200 days reads as "6 months, 20 days": two units, the way the server words it too.
+    expect(
+      screen.getByText(/watch history goes back 6 months, 20 days, and nothing can show/),
+    ).toBeVisible();
+  });
+
+  it("describes a title half way up instead, when the history reaches past the far end", async () => {
+    // 400 days against the same 365 far end. The edge earns full points here, so an example
+    // pinned to it would read 70 of 70 for every setting the operator could type.
+    renderEditor({ body: body(), history_reach_days: 400 });
+
+    await waitFor(() =>
+      expect(apiMock.probePolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ signal: "unwatched", value: 183 }),
+      ),
+    );
+  });
+
+  it("says nothing about history where the history caps nothing", async () => {
+    // True but consequence-free: a mirror deeper than the far end bounds this signal not at
+    // all, and the card is long enough without a sentence that changes nothing.
+    renderEditor({ body: body(), history_reach_days: 400 });
+
+    await screen.findByText("How long it's gone unwatched");
+    expect(screen.queryByText(/watch history goes back/)).toBeNull();
+  });
+
+  it("says nothing about history for a signal the mirror does not bound", async () => {
+    // A rating is a rating however short the history, so claiming the mirror bounds it would
+    // be a fact about the wrong signal.
+    renderEditor({ body: body(), history_reach_days: 200 });
+
+    await screen.findByText(/watch history goes back/);
+    expect(screen.getAllByText(/watch history goes back/)).toHaveLength(1);
+  });
+
+  it("keeps its nerve when the scan never recorded a reach", async () => {
+    // Null is "we don't know", not "no history": the example falls back to the ramp's
+    // midpoint and the page claims nothing about the operator's history.
+    renderEditor({ body: body() });
+
+    await screen.findByText("How long it's gone unwatched");
+    expect(screen.queryByText(/watch history goes back/)).toBeNull();
+  });
+});
+
+// Making the ramp editable made it losable. 1825 is the measured point the rewatch curve
+// flattens, not a number anyone remembers, and the presets restore weights only -- so before
+// this there was no way back from a typo except knowing the answer.
+describe("putting a ramp back the way Reaper ships it", () => {
+  const shipped = [
+    { signal: "unwatched", weight: 70, saturate_at: 1825, floor: 365 },
+    { signal: "few_watchers", weight: 20, saturate_at: 3, floor: 0 },
+    { signal: "low_rating", weight: 10, saturate_at: 80, floor: 0 },
+  ];
+
+  it("offers nothing while the bounds are still Reaper's", async () => {
+    const body_ = body();
+    body_.signals = shipped.map((s) => ({ ...s }));
+    renderEditor({ body: body_, default_signals: shipped });
+
+    await screen.findByText("How long it's gone unwatched");
+    expect(screen.queryByText(/Set to default/)).toBeNull();
+  });
+
+  it("offers the way back once a bound has moved", async () => {
+    renderEditor({ body: body(), default_signals: shipped });
+
+    // body()'s unwatched is 0 -> 365, against a shipped 365 -> 1825.
+    expect(
+      await screen.findByLabelText("Set to default: How long it's gone unwatched"),
+    ).toBeVisible();
+  });
+
+  it("restores both bounds and leaves the weight alone", async () => {
+    const user = userEvent.setup();
+    renderEditor({ body: body(), default_signals: shipped });
+
+    await user.click(await screen.findByLabelText("Set to default: How long it's gone unwatched"));
+
+    // Both ends back, and the strip is what shows it: the bar moves to 365 of a 3650 track.
+    await waitFor(() =>
+      expect(stripFor("How long it's gone unwatched").bar.style.left).toBe("10%"),
+    );
+    // The weight is untouched. Removal weights total exactly 100, so putting one back on its
+    // own would break the budget the save bar enforces.
+    expect(screen.getByText("How long it's gone unwatched").closest(".rule-row")).toHaveTextContent(
+      "up to 70 points",
+    );
+    // And the offer goes from THIS row once there is nothing left to undo. Scoped, because
+    // the fixture's rating ramp also differs from shipped and keeps its own offer.
+    const row = screen.getByText("How long it's gone unwatched").closest(".rule-row");
+    expect(within(row as HTMLElement).queryByText(/Set to default/)).toBeNull();
+  });
+
+  it("offers nothing when the server sent no defaults", async () => {
+    // An older server, or a response that lost the field: no invented "default" to go back to.
+    renderEditor({ body: body() });
+
+    await screen.findByText("How long it's gone unwatched");
+    expect(screen.queryByText(/Set to default/)).toBeNull();
+  });
+});
+
+// Rule 40 splits the two number controls on whether the unit can change, and the dormancy
+// gate two controls up already offers days/weeks/months/years for the same quantity. A bound
+// spelled "1825 days" beside a gate spelling the same span "5 years" was the app disagreeing
+// with itself about one unit.
+describe("which number control a bound gets", () => {
+  it("gives a day bound the unit picker, and draws it in the friendliest one", async () => {
+    const body_ = body();
+    body_.signals = body_.signals.map((s) =>
+      s.signal === "unwatched" ? { ...s, floor: 365, saturate_at: 1825 } : s,
+    );
+    renderEditor({ body: body_ });
+
+    const far = await screen.findByLabelText('Where "How long it\'s gone unwatched" pays in full');
+    // 1825 days is stored; "5 years" is drawn. The policy body never sees the unit.
+    expect(far).toHaveValue(5);
+    expect(within(far.closest(".qty") as HTMLElement).getByRole("combobox")).toHaveValue("years");
+  });
+
+  it("leaves a rating on the fixed suffix, which has no larger unit to offer", async () => {
+    renderEditor({ body: body() });
+
+    const box = await screen.findByLabelText('Where "How low it\'s rated" stops paying');
+    // A suffix, not a picker: there is no unit above IMDb to switch to.
+    expect(within(box.closest(".qty") as HTMLElement).queryByRole("combobox")).toBeNull();
   });
 });

@@ -46,6 +46,20 @@ class SignalContribution(BaseModel):
     claiming an old row argued for keeping, when nothing recorded whether it did, would
     overstate the case for keeping the file."""
 
+    floor: int | None = None
+    """The ramp this row was scored against: no points below ``floor``, all of them at
+    ``saturate_at``. The panel states the arithmetic from these two.
+
+    They are frozen here rather than read off the live policy because the policy may have
+    moved since the scan, and the panel would then explain a score using a line that score
+    was never computed against. Rule 113 refuses a reap across the same gap.
+
+    ``None`` in two cases the UI must not tell apart by guessing: a rule with no ramp (a
+    boolean custom rule matched or did not), and a row frozen before these fields shipped.
+    Both mean "no line to state", so both render the plain row the panel showed before
+    (rule 142's three-state -- a `0` default would assert a line about every legacy row)."""
+    saturate_at: int | None = None
+
 
 class GateOutcomeOut(BaseModel):
     """One protection's outcome on one item.

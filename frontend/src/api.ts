@@ -250,6 +250,16 @@ export interface SignalContribution {
    *  `not_applicable`, never `argues_keep` -- claiming an old row argued for keeping,
    *  when nothing recorded whether it did, overstates the case for keeping. */
   state?: SignalState | null;
+  /** The ramp this row was scored against: no points below `floor`, all of them at
+   *  `saturate_at`. Frozen at scan time, because the live policy need not be the one this
+   *  score was computed under and a panel explaining a score with the wrong line is worse
+   *  than one that stays quiet.
+   *
+   *  `null` in two cases the panel deliberately does not tell apart: a rule with no ramp (a
+   *  yes/no rule of your own either matched or did not), and a row frozen before these
+   *  shipped. Both mean "no line to state", and both render the plain row. */
+  floor?: number | null;
+  saturate_at?: number | null;
 }
 
 export interface GateOutcome {
@@ -417,6 +427,35 @@ export interface SignalSetting {
   floor: number;
 }
 
+/** Try one signal's settings against one value.
+ *
+ *  `kind` is a discriminator, not decoration: a second probe -- what a keep rule would
+ *  discount, what a graded rule of your own would add -- joins this union and every client
+ *  already sending `kind` keeps working. Inferring the shape from which fields turned up is
+ *  what rule 142 exists to stop, and it is far cheaper to type before the format ships. */
+export interface SignalProbe {
+  kind: "signal";
+  signal: string;
+  weight: number;
+  saturate_at: number;
+  floor: number;
+  /** In the units the signal stores: days, watchers, a season's rank, a rating in tenths,
+   *  or bytes. */
+  value: number;
+  window_days?: number;
+}
+
+/** What `POST /api/policy/probe` accepts. One member today; see `SignalProbe`. */
+export type PolicyProbe = SignalProbe;
+
+/** One answer, the same shape for every probe kind, so a new kind needs no new rendering. */
+export interface PolicyProbeResult {
+  /** What the rule moves the score by, in its own direction. */
+  points: number;
+  /** The engine's own words for it, the sentence the panel's row would carry. */
+  detail: string;
+}
+
 export interface Condition {
   field: string;
   op: string;
@@ -522,6 +561,21 @@ export interface PolicyWarning {
 export interface Policy {
   policy_hash: string;
   name: string;
+  /** The shipped bounds for this media type's signals, so a changed one can be put back.
+   *
+   *  Making the ramp editable made it losable: nothing said what 1825 had been, and the
+   *  presets restore weights only. Sent rather than copied into this file, so the number the
+   *  scorer reads is declared once.
+   *
+   *  Weights ride along and the editor ignores them: removal weights must total exactly 100,
+   *  so restoring one on its own would break the budget the save bar enforces. */
+  default_signals?: SignalSetting[];
+  /** How far back your watch history goes, for the editor to say beside the controls it
+   *  bounds. A never-played title is measured from the later of its arrival and this edge,
+   *  so this IS the largest dormancy anything can present: a ramp whose far end sits past
+   *  it can never pay in full. `null` when the scan did not record it, which the editor
+   *  renders as not knowing rather than as no history at all. */
+  history_reach_days?: number | null;
   body: PolicyBody;
   warnings: PolicyWarning[];
   /** This body was repaired on the way out and is NOT what is stored. Set when a policy
@@ -1683,6 +1737,13 @@ export const api = {
         : { draft_max_unmeasured_per_run: maxUnmeasured }),
     }),
   simulate: (body: PolicyBody) => post<Simulation>("/api/policy/simulate", body),
+  /** Try one policy rule against one value and let the engine answer.
+   *
+   *  A round trip for a number a slider could compute locally, deliberately: the local copy
+   *  would be a second scorer beside the control that tunes deletions, free to drift from
+   *  the one that actually decides. Stateless and snapshot-free, so it is cheap enough to
+   *  sit under a drag. */
+  probePolicy: (probe: PolicyProbe) => post<PolicyProbeResult>("/api/policy/probe", probe),
   /** The season-count distribution from the latest snapshot, for the keep-last advisory.
    *  Independent of the current keep-last value, so it needs no re-scan. */
   seasonShape: () => request<SeasonShape>("/api/snapshot/season-shape"),
