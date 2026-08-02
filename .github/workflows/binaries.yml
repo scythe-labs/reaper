@@ -42,6 +42,15 @@ on:
 permissions:
   contents: read
 
+# Opening a PR with several labels fires one pull_request event per label, and the
+# first run of this workflow arrived four times over. One group per event kind and
+# ref folds those into one running build; only PR builds may be cancelled, since a
+# superseded PR build is answering a question nobody is still asking, while a
+# half-cancelled publish is the failure release.yml's own group exists to prevent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # One decision, read by every job: what to build, what to call it, whether the
   # rolling dev prerelease gets refreshed afterward.
