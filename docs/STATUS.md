@@ -64,6 +64,10 @@ Last verified against the code: 2026-07-30.
    adopted only where nothing moved, with a ratchet on the 294 literals left. Gates hold the file
    cap, the theme blocks and the iOS zoom floor. Left: `.notice` still lives in the simulator
    section, and a dead-CSS pass that must stay manual, because 96 sites compute their class name.
+5. **The manual is generated from the in-app docs** (`frontend/src/docs/toMdx.ts`). Five pages
+   land in `manual/` from the typed blocks the app already renders; `npm run gen-manual` writes
+   them, and `manual.gen.test.ts` fails when they drift. Nothing consumes them yet: the
+   Docusaurus site, its Dependabot entry, a CI lane and the README slim-down are all still open.
 
 ## Decisions locked
 
