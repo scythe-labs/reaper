@@ -1418,6 +1418,21 @@ describe("why an 'Add rule' will not act", () => {
 // of well-rated titles is ten points that can never be earned, and until now the range lived
 // only in the stored body (#410). How many boxes a signal gets is arithmetic, not taste --
 // see `signalRamp`'s two shapes.
+/** The strip drawn under one named signal.
+ *
+ *  Scoped to its own row on purpose: every signal draws one, so an unscoped
+ *  `querySelector` silently answers for whichever sits highest on the page -- which is how
+ *  this pair of tests first read green against the dormancy ramp's geometry.
+ */
+function stripFor(signalName: string): { fill: HTMLElement; bar: HTMLElement } {
+  const row = screen.getByText(signalName).closest(".rule-row");
+  expect(row).not.toBeNull();
+  return {
+    fill: (row as HTMLElement).querySelector(".ramp-strip-fill") as HTMLElement,
+    bar: (row as HTMLElement).querySelector(".ramp-strip-bar") as HTMLElement,
+  };
+}
+
 describe("where a signal starts earning", () => {
   it("gives a shortfall signal one box, because the second would do nothing", async () => {
     renderEditor({ body: body() });
@@ -1427,9 +1442,14 @@ describe("where a signal starts earning", () => {
     // A "full points at" box here would be a control an operator could move for no effect.
     expect(await screen.findByLabelText('Where "How low it\'s rated" stops paying')).toBeVisible();
     expect(screen.queryByLabelText('Where "How low it\'s rated" pays in full')).toBeNull();
-    expect(
-      screen.getByText("Pays nothing at IMDb 7.0 or above, and all 10 points at IMDb 0.0."),
-    ).toBeVisible();
+    // The range is drawn now rather than restated: the strip charges everything BELOW the
+    // bar, so its fill starts at the left edge and stops where the bar sits (7.0 of 10).
+    const { fill } = stripFor("How low it's rated");
+    expect(fill.style.left).toBe("0%");
+    expect(fill.style.width).toBe("70%");
+    // The label says what a title CLEARS, which is the whole of the backwards reading: a
+    // higher number now visibly demands more rather than sounding more generous.
+    expect(screen.getByText("Good enough to leave alone")).toBeVisible();
   });
 
   it("gives a direct signal both ends, because the engine honors both", async () => {
@@ -1454,9 +1474,10 @@ describe("where a signal starts earning", () => {
     // Stored in tenths, and the floor goes back to zero with it: the pair carries one degree
     // of freedom, so a stale floor would leave a second number in the body that nothing reads
     // and nobody can see.
-    expect(
-      screen.getByText("Pays nothing at IMDb 5.5 or above, and all 10 points at IMDb 0.0."),
-    ).toBeVisible();
+    // Stored in tenths, and the floor goes back to zero with it: the pair carries one degree
+    // of freedom, so a stale floor would leave a second number in the body that nothing reads
+    // and nobody can see. The strip is what shows it landed -- the bar moves to 5.5 of 10.
+    await waitFor(() => expect(stripFor("How low it's rated").bar.style.left).toBe("55%"));
   });
 
   it("says nothing about a range for a signal worth no points", async () => {

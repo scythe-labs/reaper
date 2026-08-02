@@ -227,6 +227,79 @@
   width: calc(var(--ramp-chars, 4) * 1ch + 2.4rem);
 }
 
+/* The range, drawn. Reaper's own track-and-fill mark, the one the explanation panel gives a
+   signal row, so a bar means the same thing on both screens: one hue for how hard it charges,
+   a neutral track for what it leaves alone.
+
+   `aria-hidden`, and it may be: the boxes above state both bounds and the worked example
+   below states what they do to a real title, so nothing here is the only place a fact lives.
+   Drawing it is what makes the DIRECTION legible, which is a thing eyes do and prose does
+   badly -- a rating charges leftward and dormancy rightward. */
+.ramp-strip {
+  margin-top: var(--space-lg);
+}
+.ramp-strip-track {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.ramp-strip-fill {
+  position: absolute;
+  inset-block: 0;
+}
+/* The bar a title has to clear. Sits proud of the track so it reads as a boundary rather
+   than as another band of fill. */
+.ramp-strip-bar {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--text);
+  border-radius: 1px;
+}
+.ramp-strip-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One key for the whole section, at its foot, never one per signal: the same arrangement the
+   explanation panel's legend uses, and the reason three strips down a column do not read as
+   three separate diagrams. */
+.ramp-key {
+  display: flex;
+  gap: var(--space-3xl);
+  flex-wrap: wrap;
+  margin: var(--space-lg) 0 0;
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.ramp-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+.ramp-key i {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 2px;
+  display: inline-block;
+}
+.ramp-key .earns {
+  background: var(--condemn);
+}
+.ramp-key .alone {
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+}
+
 /* What a title would earn under the range above. An inset well rather than more help text:
    it is the one line on the card that is an ANSWER rather than a setting, and the quiet
    surface is what tells them apart at a glance. The same fill the explanation panel gives a

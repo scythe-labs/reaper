@@ -66,7 +66,7 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
-import { probeSaid, rampSentence, rampUnits } from "./signalRamp";
+import { probeSaid, rampStrip, rampUnits } from "./signalRamp";
 import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
@@ -771,8 +771,8 @@ function SignalRamp({
   onChange: (s: SignalSetting) => void;
 }) {
   const units = rampUnits(signal.signal);
-  const said = rampSentence(signal.signal, signal.floor, signal.saturate_at, signal.weight);
-  if (!units || !said) return null;
+  const strip = rampStrip(signal.signal, signal.floor, signal.saturate_at);
+  if (!units) return null;
 
   // `max` is spread rather than passed, because `exactOptionalPropertyTypes` treats an
   // explicit `undefined` as a value and refuses it.
@@ -804,7 +804,7 @@ function SignalRamp({
       <div className="rule-control rule-ramp">
         {units.shape === "shortfall" ? (
           <label className="ramp-field" style={rampBoxWidth(units.widest)}>
-            <span>Pays nothing at or above</span>
+            <span>{units.nearLabel}</span>
             {box(signal.saturate_at - signal.floor, `Where "${label}" stops paying`, (stored) =>
               // Floor back to zero with it: the pair carries one degree of freedom, and
               // leaving a stale floor behind would keep a second number in the body that
@@ -815,7 +815,7 @@ function SignalRamp({
         ) : (
           <>
             <label className="ramp-field" style={rampBoxWidth(units.widest)}>
-              <span>Pays nothing until</span>
+              <span>{units.nearLabel}</span>
               {box(
                 signal.floor,
                 `Where "${label}" starts paying`,
@@ -828,7 +828,7 @@ function SignalRamp({
               )}
             </label>
             <label className="ramp-field" style={rampBoxWidth(units.widest)}>
-              <span>Full points at</span>
+              <span>{units.farLabel}</span>
               {box(
                 signal.saturate_at,
                 `Where "${label}" pays in full`,
@@ -840,8 +840,30 @@ function SignalRamp({
           </>
         )}
       </div>
-      {/* Bound to the boxes above it, not to the slider, which has its own help (rule 45). */}
-      <p className="help rule-help">{said}</p>
+      {/* The range, drawn rather than restated. This REPLACES the sentence that used to sit
+          here: it said the same thing the picture says, and two grammars for one fact is the
+          restatement rule 144 is about. What the picture adds is the direction -- a rating
+          charges leftward and dormancy rightward, and no shared sentence carries that without
+          the operator holding both rules in their head. */}
+      {strip && (
+        <div className="ramp-strip" aria-hidden="true">
+          <div className="ramp-strip-track">
+            <div
+              className="ramp-strip-fill"
+              style={{
+                left: `${strip.fillFrom}%`,
+                width: `${strip.fillTo - strip.fillFrom}%`,
+                background: `linear-gradient(to ${strip.deepEnd === "left" ? "right" : "left"}, var(--condemn), color-mix(in srgb, var(--condemn) 6%, transparent))`,
+              }}
+            />
+            <div className="ramp-strip-bar" style={{ left: `${strip.bar}%` }} />
+          </div>
+          <div className="ramp-strip-scale">
+            <span>{strip.scaleFrom}</span>
+            <span>{strip.scaleTo}</span>
+          </div>
+        </div>
+      )}
       <SignalProbe signal={signal} reachDays={reachDays} />
     </>
   );
@@ -1866,6 +1888,16 @@ export function PolicyEditor({
             />
           ))}
         </ul>
+        {/* One key for the section, at its foot. Three strips down a column want one legend,
+            not three, which is how the explanation panel does it too. */}
+        <p className="ramp-key">
+          <span>
+            <i className="earns" aria-hidden="true" /> earns points, deepest where it pays in full
+          </span>
+          <span>
+            <i className="alone" aria-hidden="true" /> left alone
+          </span>
+        </p>
         <WarnBlock anchor="signals" warnings={warningsAt("signals")} />
 
         <RemoveRulesEditor

@@ -19,6 +19,21 @@
 // first (rule 3/22's spirit), and the place it would disagree is a number printed beside the
 // control an operator tunes deletions with.
 
+// SWEPT (rule 72). Three things on the Policy page are ramps, and only one of them read
+// backwards. The built-in signals here phrased their bound as where pressure STARTS ("pays
+// nothing at or above 6.0"), with no word for which way it ran, so raising the number made
+// the rule harsher while sounding more generous. The other two already name their direction
+// and are correct as they stand: a graded rule of the operator's own reads "Size on disk: the
+// higher it is (from 20 GB to 80 GB)" and a graded keep reads "the more, the safer (full
+// effect at 80 GB)" (`PolicyRuleEditors.describeCondemn`, and the keeps list beside it).
+//
+// They do NOT get the strip, and that is a deferral rather than an oversight. Both are
+// one-line summary rows in a list with a Remove button, not a card an operator tunes, and
+// their bounds come from the field vocabulary rather than from the table below -- so a strip
+// there is a different design question about a different surface, not this one applied twice.
+// The keep bars are not siblings at all: "keep well-rated titles: at least 7.5" is a
+// threshold, and it is where the phrasing below was borrowed from.
+
 import { humanDays } from "../format";
 
 /** How a signal's ramp is stored, which decides how many ends the operator can set.
@@ -45,6 +60,21 @@ interface RampUnits {
    *  for". Worded per signal because "a title rated 2 people" is not a sentence, and one
    *  generic lead across five different facts is how a page ends up reading like a form. */
   lead: string;
+  /** The near bound's label, phrased as the bar a title CLEARS rather than as where
+   *  pressure starts.
+   *
+   *  "Pays nothing at or above 6.0" made the control read backwards: raise the number and
+   *  the rule gets harsher, which is the opposite of what a higher rating usually means. It
+   *  is not a rating being judged, it is the bar to be left alone over, and a bar raised is
+   *  a bar fewer titles clear. Reaper's keep rules already say it this way ("keep well-rated
+   *  titles: at least 7.5") and nobody misreads those. */
+  nearLabel: string;
+  /** The far bound's label, on the two-ended signals only. */
+  farLabel?: string;
+  /** The ends of the strip's scale, in the operator's words. `say(0)` cannot supply these:
+   *  it words a BOUND ("less than a day"), where this words an axis ("today"). */
+  scaleFrom: string;
+  scaleTo: string;
   /** The number an operator types is not always the number that is stored. */
   toStored: (typed: number) => number;
   fromStored: (stored: number) => number;
@@ -82,6 +112,10 @@ const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
  *  states its own range in the rule editor and is not described by this module. */
 const RAMPS: Record<string, RampUnits> = {
   unwatched: {
+    nearLabel: "Left alone until",
+    farLabel: "Full points at",
+    scaleFrom: "today",
+    scaleTo: "10 years",
     widest: "3650",
     lead: "A title untouched for",
     shape: "direct",
@@ -92,6 +126,10 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   season_rank: {
+    nearLabel: "Left alone until",
+    farLabel: "Full points at",
+    scaleFrom: "newest",
+    scaleTo: "20th-newest",
     widest: "20",
     lead: "A season that is",
     shape: "direct",
@@ -102,6 +140,9 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   few_watchers: {
+    nearLabel: "Enough watchers to leave it alone",
+    scaleFrom: "nobody",
+    scaleTo: "25 watchers",
     widest: "25",
     lead: "A title watched by",
     shape: "shortfall",
@@ -111,6 +152,9 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   low_rating: {
+    nearLabel: "Good enough to leave alone",
+    scaleFrom: "IMDb 0.0",
+    scaleTo: "10.0",
     widest: "10.0",
     lead: "A title rated",
     shape: "shortfall",
@@ -124,6 +168,10 @@ const RAMPS: Record<string, RampUnits> = {
     fromStored: (stored) => stored / 10,
   },
   size: {
+    nearLabel: "Left alone until",
+    farLabel: "Full points at",
+    scaleFrom: "empty",
+    scaleTo: "200 GB",
     widest: "200",
     lead: "A title taking",
     shape: "direct",
@@ -196,6 +244,68 @@ export function rampSentence(
     return `Pays something from ${units.say(units.first)} on, and ${points} at ${ends.earnsAll}.`;
   }
   return `Pays nothing until ${ends.earnsFrom}, and ${points} at ${ends.earnsAll}.`;
+}
+
+/** The strip under a signal's bounds: where it charges, and how hard, drawn to scale.
+ *
+ *  It REPLACES the sentence that used to state the range, rather than joining it. "Pays
+ *  nothing at IMDb 8.0 or above, and all 10 points at IMDb 0.0" is exactly what this draws,
+ *  and keeping both said one thing twice in two grammars.
+ *
+ *  It is what makes the direction visible. Dormancy charges more the further RIGHT a title
+ *  sits and a rating charges more the further LEFT, which no shared sentence can carry
+ *  without the operator holding two rules in their head; two strips leaning opposite ways
+ *  need no holding at all.
+ *
+ *  Percentages of the track, so the caller only has to place them. `deepAt` is where the
+ *  gradient reaches full strength: the point the signal pays its whole weight, which for a
+ *  direct ramp is inside the fill and for a shortfall is at the fill's outer edge. */
+export interface RampStrip {
+  fillFrom: number;
+  fillTo: number;
+  /** Where the bar sits: the bound a title has to clear to be left alone. */
+  bar: number;
+  /** Which end of the fill is at full strength. */
+  deepEnd: "left" | "right";
+  scaleFrom: string;
+  scaleTo: string;
+}
+
+export function rampStrip(
+  id: string,
+  floor: number | null | undefined,
+  saturate: number | null | undefined,
+): RampStrip | null {
+  const units = RAMPS[id];
+  if (!units || floor == null || saturate == null) return null;
+  // Rounded, because these land in inline styles: `55 / 100 * 100` is 55.00000000000001 in
+  // binary floating point, and a browser reads that as 55% while every reader of the DOM
+  // sees the tail. Two places is finer than a pixel on any track this wide.
+  const pct = (v: number) =>
+    Math.round(Math.max(0, Math.min(100, (v / units.probeMax) * 100)) * 100) / 100;
+
+  if (units.shape === "shortfall") {
+    // The bar is the gap, and it charges everything BELOW it, hardest at zero.
+    const bar = pct(saturate - floor);
+    return {
+      fillFrom: 0,
+      fillTo: bar,
+      bar,
+      deepEnd: "left",
+      scaleFrom: units.scaleFrom,
+      scaleTo: units.scaleTo,
+    };
+  }
+  // Charges everything past the near bound, reaching full at the far one and staying there,
+  // which is why the fill runs to the end of the track rather than stopping at `saturate`.
+  return {
+    fillFrom: pct(floor),
+    fillTo: 100,
+    bar: pct(floor),
+    deepEnd: "right",
+    scaleFrom: units.scaleFrom,
+    scaleTo: units.scaleTo,
+  };
 }
 
 /** Points said the way both surfaces say them, so a probe and a row never disagree about

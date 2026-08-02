@@ -8,7 +8,7 @@
 // they get one settable end and not two. A fixture invented here instead would prove the
 // sentence renders and nothing about whether it is true.
 import { describe, expect, it } from "vitest";
-import { rampEnds, rampSentence, rampUnits, rowRampSentence } from "./signalRamp";
+import { rampEnds, rampSentence, rampStrip, rampUnits, rowRampSentence } from "./signalRamp";
 
 describe("what a signal's ramp says", () => {
   it("reads downward for a signal measured on a shortfall", () => {
@@ -104,5 +104,56 @@ describe("what a panel row adds to that", () => {
 
   it("stays silent wherever the ramp is", () => {
     expect(rowRampSentence("low_rating", null, null, 10, 0)).toBeNull();
+  });
+});
+
+// The strip is what makes the DIRECTION visible, and the direction is the thing the words
+// could never carry: a rating charges the further LEFT a title sits, dormancy the further
+// RIGHT. Reading them off two pictures leaning opposite ways needs no rule held in the head.
+describe("the strip drawn under a signal's bounds", () => {
+  it("charges everything below the bar on a shortfall signal", () => {
+    // low_rating ships weight 10, floor 0, saturate 80 on a 0-10 scale.
+    const strip = rampStrip("low_rating", 0, 80)!;
+
+    expect(strip.fillFrom).toBe(0);
+    expect(strip.fillTo).toBe(80);
+    expect(strip.bar).toBe(80);
+    // Hardest at 0.0, which is where it pays in full.
+    expect(strip.deepEnd).toBe("left");
+  });
+
+  it("charges everything past the bar on a direct signal, and keeps charging", () => {
+    // unwatched ships floor 365, saturate 1825, on a 3650-day track. The fill runs to the
+    // END rather than stopping at 1825: past the far bound it still pays in full, and a fill
+    // that stopped there would draw the oldest titles as though they were left alone.
+    const strip = rampStrip("unwatched", 365, 1825)!;
+
+    expect(strip.fillFrom).toBe(10);
+    expect(strip.fillTo).toBe(100);
+    expect(strip.bar).toBe(10);
+    expect(strip.deepEnd).toBe("right");
+  });
+
+  it("leans the two shapes opposite ways", () => {
+    // The whole point, stated as a test: one picture cannot be mistaken for the other.
+    expect(rampStrip("low_rating", 0, 80)!.deepEnd).not.toBe(
+      rampStrip("unwatched", 365, 1825)!.deepEnd,
+    );
+  });
+
+  it("moves the bar with the bound, on the gap a shortfall signal actually stores", () => {
+    // (0,55) and (10,65) are the same curve, so they must draw the same picture.
+    expect(rampStrip("low_rating", 0, 55)!.bar).toBe(55);
+    expect(rampStrip("low_rating", 10, 65)!.bar).toBe(55);
+  });
+
+  it("rounds what it hands to a style attribute", () => {
+    // 55/100*100 is 55.00000000000001 in binary floating point, and that tail reaches the DOM.
+    expect(rampStrip("low_rating", 0, 55)!.bar).toBe(55);
+  });
+
+  it("draws nothing where there is no ramp to draw", () => {
+    expect(rampStrip("my own rule", 0, 80)).toBeNull();
+    expect(rampStrip("low_rating", null, null)).toBeNull();
   });
 });
