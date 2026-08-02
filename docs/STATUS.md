@@ -38,7 +38,7 @@ Last verified against the code: 2026-08-02.
 | **Scales** — per-requester cards over the last scan | ✅ done |
 | **Operator console** — service config, schedule, safety, review | ✅ done |
 | **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
-| **Packaged installs** — Win/macOS binaries, snap, CalVer pipeline, update check | 🟡 no cut yet |
+| **Packaged installs** — Win/macOS binaries + tray, snap, CalVer, update check | 🟡 no cut yet |
 
 ## Open work
 

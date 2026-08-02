@@ -45,6 +45,13 @@ hiddenimports = [
     *collect_submodules("apscheduler"),
 ]
 
+# pystray picks its backend from sys.platform at import time, invisibly to static
+# analysis; only this platform's backend ships, so the other's deps never resolve.
+if sys.platform == "win32":
+    hiddenimports.append("pystray._win32")
+elif sys.platform == "darwin":
+    hiddenimports.append("pystray._darwin")
+
 a = Analysis(
     [str(Path(SPECPATH) / "entry.py")],  # noqa: F821
     pathex=[str(ROOT / "src")],
@@ -60,7 +67,12 @@ exe = EXE(
     a.scripts,
     exclude_binaries=True,
     name="reaper",
-    console=True,
+    # Windowed on Windows: the tray icon is the running-state surface (#431), so a
+    # double-click no longer parks a console window on the desktop. entry.py stands
+    # in for the streams a windowed process lacks; the in-app log page is the log.
+    # macOS keeps the console binary -- it is the run-from-a-terminal artifact, and
+    # the windowed twin below is the .app.
+    console=sys.platform != "win32",
     icon=ICON if sys.platform == "win32" else None,
     # macOS on arm64 refuses to run an unsigned binary at all, so PyInstaller ad-hoc
     # signs when no identity is given. Real signing and notarization are not wired
@@ -77,10 +89,10 @@ coll = COLLECT(
 )
 
 # macOS also ships a double-clickable Reaper.app (in the drag-to-Applications DMG):
-# a windowed twin of the same build, because a console binary inside a bundle would
-# lose Dock quit handling. Its stdout goes nowhere; the in-app log page is the log.
-# The launcher opens the browser once the server is healthy, so a double-click has a
-# visible result.
+# a windowed twin of the same build, so a double-click never flashes a terminal. It
+# runs as a menu-bar app (LSUIElement below): the status item holds Open and Quit.
+# Its stdout goes nowhere; the in-app log page is the log. The launcher opens the
+# browser once the server is healthy, so a double-click has a visible result.
 if sys.platform == "darwin":
     app_exe = EXE(
         pyz,
@@ -108,5 +120,9 @@ if sys.platform == "darwin":
             "CFBundleVersion": _plist_version,
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.utilities",
+            # Menu-bar app: no Dock icon; the status item carries Open and Quit
+            # (#431). launcher.conf's REAPER_DOCK_ICON=true puts the Dock icon back
+            # at runtime (reaper.launcher._show_dock_icon).
+            "LSUIElement": True,
         },
     )

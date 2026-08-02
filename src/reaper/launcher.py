@@ -15,6 +15,12 @@ every install shape answers the same way.
 
 The data folder default is per-platform only when frozen. Run from a source checkout
 this launcher keeps the repo-relative ``data/`` every other dev entry point uses.
+
+The frozen desktop builds also keep a menu-bar (macOS) / tray (Windows) icon while
+the server runs -- Open Reaper and Quit -- so a windowed build is never an invisible
+process (#431). The icon owns the main thread, which AppKit requires, and uvicorn
+serves from a worker thread; ``launcher.conf`` turns the icon off (``REAPER_TRAY``)
+or puts the macOS Dock icon back beside it (``REAPER_DOCK_ICON``).
 """
 
 from __future__ import annotations
@@ -32,8 +38,13 @@ import urllib.request
 import webbrowser
 from collections.abc import MutableMapping
 from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, cast
 
 from reaper.buildinfo import install_root
+
+if TYPE_CHECKING:
+    import uvicorn
 
 _TRUE = {"1", "true", "yes", "on"}
 
@@ -122,6 +133,8 @@ _CONF_TEMPLATE = """\
 # REAPER_HOST=0.0.0.0
 # REAPER_LAUNCH_BROWSER=false
 # REAPER_UPDATE_CHECK=false
+# REAPER_TRAY=false
+# REAPER_DOCK_ICON=true
 """
 
 
@@ -253,6 +266,133 @@ def _open_browser_when_up(port: int) -> None:
     threading.Thread(target=poll, name="reaper-open-browser", daemon=True).start()
 
 
+def _serve_kwargs(host: str, port: int) -> dict[str, Any]:
+    """The one declaration both launch shapes read (rule 104): the plain
+    ``uvicorn.run`` and the tray path's ``uvicorn.Config`` must not drift.
+
+    proxy_headers=False is the same load-bearing choice as the container CMD's
+    --no-proxy-headers: reaper.auth.proxy alone decides peer trust, never a
+    forwarded header rewritten one layer above it. test_launcher pins it on both
+    launch shapes.
+    """
+    return {"factory": True, "host": host, "port": port, "proxy_headers": False}
+
+
+def _tray_wanted(platform: str, env: MutableMapping[str, str], *, frozen: bool) -> bool:
+    """An icon whenever this install would otherwise be invisible: the frozen
+    desktop builds. ``REAPER_TRAY`` overrides either way (a source run can opt in
+    while testing); platforms without a tray to sit in never get one -- the snap is
+    a service snapd already shows."""
+    if platform not in ("win32", "darwin"):
+        return False
+    configured = env.get("REAPER_TRAY", "").strip().lower()
+    if configured:
+        return configured in _TRUE
+    return frozen
+
+
+def _tray_backend() -> ModuleType | None:
+    """pystray, or ``None`` where the ``package`` extra is not installed (a source
+    run). A frozen desktop build always carries it; serving without the icon is
+    still the right failure for a bundle that somehow lost it."""
+    try:
+        import pystray
+    except ImportError:
+        return None
+    return cast("ModuleType", pystray)
+
+
+def _tray_image() -> Any | None:
+    """The committed brand image, from the served SPA's own assets: Vite copies
+    ``frontend/public/`` into ``dist/``, and the bundle carries ``dist``. A source
+    checkout without a built SPA falls back to ``public/`` itself."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    root = install_root() or _repo_root()
+    for candidate in (
+        root / "frontend" / "dist" / "icon-512.png",
+        root / "frontend" / "public" / "icon-512.png",
+    ):
+        if candidate.is_file():
+            return Image.open(candidate)
+    return None
+
+
+def _show_dock_icon() -> None:
+    """Put the Dock icon back beside the menu-bar icon (``REAPER_DOCK_ICON=true``).
+
+    The .app ships ``LSUIElement`` true -- the standard shape for a menu-bar server
+    -- so the Dock icon is opt-in, restored by flipping the live process back to a
+    regular app. Best effort: AppKit ships only in the frozen macOS build, and a
+    Dock icon that cannot be shown must not stop the server."""
+    with contextlib.suppress(Exception):
+        from AppKit import NSApplication, NSApplicationActivationPolicyRegular
+
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
+
+
+def _serve_with_tray(
+    pystray_mod: ModuleType,
+    server: uvicorn.Server,
+    port: int,
+    image: Any,
+    *,
+    dock_icon: bool,
+) -> BaseException | None:
+    """Give the main thread to the icon and serve from a worker thread.
+
+    The macOS status item must own the main thread (AppKit), so uvicorn runs on a
+    worker via ``Server.run()``, which skips signal handlers off the main thread.
+    Quit only sets ``server.should_exit`` -- the graceful stop uvicorn honors
+    between requests; the watcher joins the worker and then stops the icon, so the
+    icon also leaves when the server dies on its own. Returns what killed the
+    worker, or ``None`` for a clean quit.
+    """
+    failure: list[BaseException] = []
+
+    def serve() -> None:
+        try:
+            server.run()
+        except BaseException as exc:  # carried to the caller below, never swallowed
+            failure.append(exc)
+
+    worker = threading.Thread(target=serve, name="reaper-serve")
+    worker.start()
+
+    def open_ui(icon: Any = None, item: Any = None) -> None:
+        webbrowser.open(f"http://127.0.0.1:{port}")
+
+    def quit_(icon: Any = None, item: Any = None) -> None:
+        server.should_exit = True
+
+    icon = pystray_mod.Icon(
+        "Reaper",
+        icon=image,
+        title="Reaper",
+        menu=pystray_mod.Menu(
+            pystray_mod.MenuItem("Open Reaper", open_ui, default=True),
+            pystray_mod.MenuItem("Quit Reaper", quit_),
+        ),
+    )
+
+    def watch(started: Any) -> None:
+        started.visible = True
+        worker.join()
+        started.stop()
+
+    if dock_icon:
+        _show_dock_icon()
+    try:
+        icon.run(setup=watch)
+    except Exception:
+        # No status bar to sit in (a session without a window server, as in CI's
+        # boot probe). The server is already up on the worker; keep serving.
+        worker.join()
+    return failure[0] if failure else None
+
+
 def main() -> None:
     frozen = _bundle_root() is not None
     export_buildinfo(os.environ, _buildinfo_path())
@@ -310,16 +450,23 @@ def main() -> None:
     # underlying error as "could not import module".
     from reaper.main import create_app
 
-    # proxy_headers=False is the same load-bearing choice as the container CMD's
-    # --no-proxy-headers: reaper.auth.proxy alone decides peer trust, never a
-    # forwarded header rewritten one layer above it. test_launcher pins it.
-    uvicorn.run(
-        create_app,
-        factory=True,
-        host=host,
-        port=port,
-        proxy_headers=False,
-    )
+    if _tray_wanted(sys.platform, os.environ, frozen=frozen):
+        backend = _tray_backend()
+        image = _tray_image() if backend is not None else None
+        if backend is not None and image is not None:
+            server = uvicorn.Server(uvicorn.Config(create_app, **_serve_kwargs(host, port)))
+            dock = (
+                sys.platform == "darwin"
+                and os.environ.get("REAPER_DOCK_ICON", "").strip().lower() in _TRUE
+            )
+            error = _serve_with_tray(backend, server, port, image, dock_icon=dock)
+            if error is not None:
+                _say("Reaper stopped unexpectedly. Open it again to restart.", frozen=frozen)
+                raise SystemExit(1)
+            return
+        sys.stderr.write("No tray icon in this install; serving without one.\n")
+
+    uvicorn.run(create_app, **_serve_kwargs(host, port))
 
 
 if __name__ == "__main__":

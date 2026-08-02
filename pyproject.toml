@@ -46,6 +46,7 @@ dependencies = [
 package = [
     "pyinstaller>=6.16.0",
     "pillow>=11.0.0",   # lets PyInstaller cut .ico/.icns from the one committed PNG
+    "pystray>=0.19.5",  # the menu-bar/tray icon the desktop builds keep while serving
 ]
 dev = [
     "ruff>=0.15.22",
@@ -131,7 +132,10 @@ disallow_any_explicit = false
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["plexapi.*", "apscheduler.*"]
+# pystray, PIL, and AppKit ship only in the `package` extra (the desktop builds), so
+# the dev environment mypy runs in never has them; the launcher imports all three
+# behind guards.
+module = ["plexapi.*", "apscheduler.*", "pystray.*", "PIL.*", "AppKit"]
 ignore_missing_imports = true
 
 # ----------------------------------------------------------------------------

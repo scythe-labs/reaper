@@ -46,11 +46,20 @@ The snap builds with `snapcraft` on a Linux host (CI uses LXD on the runner).
 
 ## Running the desktop builds
 
+**The tray icon is the app's presence.** While the server runs, a menu-bar icon
+(macOS) / tray icon (Windows) offers Open Reaper and Quit; the launcher owns it, and
+uvicorn serves from a worker thread because AppKit demands the main one. The .app is
+a menu-bar app (`LSUIElement`), so there is no Dock icon unless `REAPER_DOCK_ICON=true`
+puts it back; the Windows exe is windowed, so nothing else shows a double-click
+worked. `REAPER_TRAY=false` turns the icon off — on macOS that leaves the app with
+no visible presence at all, and quitting means Activity Monitor.
+
 **Configuration.** A double-clicked app receives no environment variables, so the
 launcher reads `launcher.conf` from the data folder (written as a commented template on
 first run): `~/Library/Application Support/Reaper/` on macOS, `%LOCALAPPDATA%\Reaper` on
-Windows. `REAPER_PORT`, `REAPER_HOST`, `REAPER_LAUNCH_BROWSER`, and `REAPER_UPDATE_CHECK`
-belong there; real environment variables still win.
+Windows. `REAPER_PORT`, `REAPER_HOST`, `REAPER_LAUNCH_BROWSER`, `REAPER_UPDATE_CHECK`,
+`REAPER_TRAY`, and `REAPER_DOCK_ICON` belong there; real environment variables still
+win.
 
 **Reaching it from other machines.** The server binds all interfaces (the same
 `0.0.0.0` default as the container); `127.0.0.1` is only the URL the local browser

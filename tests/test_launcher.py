@@ -13,7 +13,10 @@ from __future__ import annotations
 import json
 import socket
 import sys
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -133,7 +136,10 @@ class TestLauncherConf:
         conf = launcher.load_launcher_conf(env, tmp_path / "data")
         assert conf.exists()
         assert env == {}
-        assert "REAPER_PORT" in conf.read_text(encoding="utf-8")
+        text = conf.read_text(encoding="utf-8")
+        assert "REAPER_PORT" in text
+        assert "REAPER_TRAY" in text
+        assert "REAPER_DOCK_ICON" in text
         env2: dict[str, str] = {}
         launcher.load_launcher_conf(env2, tmp_path / "data")
         assert env2 == {}  # the shipped template is all comments
@@ -163,6 +169,171 @@ class TestLoopbackGuard:
         launcher._say("a plain refusal", frozen=False)
         assert "a plain refusal" in capsys.readouterr().err
         assert calls == []
+
+
+class TestTrayChoice:
+    @pytest.mark.parametrize(
+        ("platform", "configured", "frozen", "expected"),
+        [
+            ("darwin", None, True, True),  # the .app would otherwise be invisible
+            ("win32", None, True, True),
+            ("linux", None, True, False),  # the snap is a service snapd already shows
+            ("darwin", None, False, False),  # source runs stay plain
+            ("darwin", "false", True, False),
+            ("win32", "1", False, True),  # a dev run can opt in while testing
+        ],
+    )
+    def test_the_default_follows_the_install_shape(
+        self, platform: str, configured: str | None, frozen: bool, expected: bool
+    ) -> None:
+        env = {} if configured is None else {"REAPER_TRAY": configured}
+        assert launcher._tray_wanted(platform, env, frozen=frozen) is expected
+
+    def test_both_launch_shapes_read_one_declaration(self) -> None:
+        """rule 104: uvicorn.run and the tray path's Config spread this one dict, so
+        proxy_headers=False cannot drift between them."""
+        assert launcher._serve_kwargs("10.0.0.5", 8437) == {
+            "factory": True,
+            "host": "10.0.0.5",
+            "port": 8437,
+            "proxy_headers": False,
+        }
+
+
+class _FakeMenuItem:
+    def __init__(self, label: str, action: Any, default: bool = False) -> None:
+        self.label = label
+        self.action = action
+        self.default = default
+
+
+class _FakeIcon:
+    """pystray's contract: ``run()`` blocks its caller until ``stop()``, and the
+    setup callback runs on a thread pystray starts once the icon is ready."""
+
+    def __init__(self, name: str, icon: Any = None, title: str = "", menu: Any = ()) -> None:
+        self.menu = menu
+        self.visible = False
+        self.stopped = threading.Event()
+
+    def run(self, setup: Any) -> None:
+        runner = threading.Thread(target=setup, args=(self,))
+        runner.start()
+        assert self.stopped.wait(timeout=10), "the tray loop was never stopped"
+        runner.join(timeout=10)
+
+    def stop(self) -> None:
+        self.stopped.set()
+
+
+class _FakeServer:
+    """uvicorn's seam: ``run()`` blocks until ``should_exit``, or dies with the
+    scripted error. Self-terminating, so a failed assertion cannot hang the suite."""
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self.should_exit = False
+        self.running = threading.Event()
+        self._error = error
+
+    def run(self) -> None:
+        self.running.set()
+        if self._error is not None:
+            raise self._error
+        deadline = time.monotonic() + 30
+        while not self.should_exit and time.monotonic() < deadline:
+            time.sleep(0.005)
+
+
+class TestServeWithTray:
+    def _module(self) -> tuple[Any, list[_FakeIcon]]:
+        created: list[_FakeIcon] = []
+
+        def icon(*args: Any, **kwargs: Any) -> _FakeIcon:
+            made = _FakeIcon(*args, **kwargs)
+            created.append(made)
+            return made
+
+        return SimpleNamespace(Icon=icon, Menu=lambda *i: i, MenuItem=_FakeMenuItem), created
+
+    def _item(self, created: list[_FakeIcon], label: str) -> _FakeMenuItem:
+        deadline = time.monotonic() + 10
+        while not created and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert created, "the icon was never built"
+        return next(item for item in created[0].menu if item.label == label)
+
+    def test_quit_stops_the_server_then_the_icon(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The quit path of #431: the menu only sets should_exit (uvicorn's graceful
+        stop); the watcher sees the worker end and takes the icon down after it."""
+        docked: list[bool] = []
+        monkeypatch.setattr(launcher, "_show_dock_icon", lambda: docked.append(True))
+        module, created = self._module()
+        server = _FakeServer()
+
+        def press_quit() -> None:
+            assert server.running.wait(timeout=10)
+            self._item(created, "Quit Reaper").action()
+
+        presser = threading.Thread(target=press_quit)
+        presser.start()
+        error = launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)  # type: ignore[arg-type]
+        presser.join(timeout=10)
+        assert error is None
+        assert server.should_exit is True
+        assert created[0].stopped.is_set()
+        assert created[0].visible is True
+        assert docked == []  # the Dock stays hidden unless asked for
+
+    def test_a_dying_server_takes_the_icon_down_and_is_reported(self) -> None:
+        """A server that cannot come up must not leave a live-looking icon behind,
+        and the caller needs the failure to say something (a windowed build has no
+        stderr anyone reads)."""
+        module, created = self._module()
+        boom = RuntimeError("bind failed")
+        error = launcher._serve_with_tray(
+            module, _FakeServer(error=boom), 8437, object(), dock_icon=False
+        )  # type: ignore[arg-type]
+        assert error is boom
+        assert created[0].stopped.is_set()
+
+    def test_open_reaper_opens_the_local_url_and_is_the_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """default=True is what makes a double-click on the Windows tray icon open
+        the UI rather than only the right-click menu."""
+        opened: list[str] = []
+        monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url))
+        module, created = self._module()
+        server = _FakeServer()
+
+        def drive() -> None:
+            assert server.running.wait(timeout=10)
+            item = self._item(created, "Open Reaper")
+            assert item.default is True
+            item.action()
+            self._item(created, "Quit Reaper").action()
+
+        driver = threading.Thread(target=drive)
+        driver.start()
+        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)  # type: ignore[arg-type]
+        driver.join(timeout=10)
+        assert opened == ["http://127.0.0.1:8437"]
+
+    def test_the_dock_icon_returns_only_when_asked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        docked: list[bool] = []
+        monkeypatch.setattr(launcher, "_show_dock_icon", lambda: docked.append(True))
+        module, created = self._module()
+        server = _FakeServer()
+
+        def press_quit() -> None:
+            assert server.running.wait(timeout=10)
+            self._item(created, "Quit Reaper").action()
+
+        presser = threading.Thread(target=press_quit)
+        presser.start()
+        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=True)  # type: ignore[arg-type]
+        presser.join(timeout=10)
+        assert docked == [True]
 
 
 class TestMain:
@@ -249,6 +420,76 @@ class TestMain:
         assert excinfo.value.code == 1
         assert serve["migrated"] is False
         assert "kwargs" not in serve
+
+    @pytest.fixture
+    def tray(self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        """Route main() down the tray path with every boundary captured."""
+        import uvicorn
+
+        captured: dict[str, Any] = {"tray_error": None}
+
+        class FakeConfig:
+            def __init__(self, app: Any, **kwargs: Any) -> None:
+                captured["app"] = app
+                captured["config_kwargs"] = kwargs
+
+        monkeypatch.setattr(uvicorn, "Config", FakeConfig)
+        monkeypatch.setattr(uvicorn, "Server", lambda config: SimpleNamespace(config=config))
+        monkeypatch.setattr(launcher, "_tray_wanted", lambda *a, **k: True)
+        monkeypatch.setattr(launcher, "_tray_backend", lambda: SimpleNamespace())
+        monkeypatch.setattr(launcher, "_tray_image", lambda: object())
+
+        def fake_tray(
+            mod: Any, server: Any, port: int, image: Any, *, dock_icon: bool
+        ) -> BaseException | None:
+            captured["tray_port"] = port
+            captured["dock_icon"] = dock_icon
+            return captured["tray_error"]
+
+        monkeypatch.setattr(launcher, "_serve_with_tray", fake_tray)
+        return captured
+
+    def test_the_tray_path_carries_the_same_serve_kwargs(
+        self, serve: dict[str, Any], tray: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The second programmatic launch site (rule 72's sibling of the uvicorn.run
+        call): its Config must pin proxy_headers=False exactly as the plain path
+        does. The port is non-default so an argument dropped on the way to Config
+        cannot hide behind the default (rule 141)."""
+        monkeypatch.setenv("REAPER_PORT", "8437")
+        from reaper.main import create_app
+
+        launcher.main()
+        assert tray["app"] is create_app
+        assert tray["config_kwargs"].get("proxy_headers") is False
+        assert tray["config_kwargs"].get("factory") is True
+        assert tray["config_kwargs"].get("port") == 8437
+        assert tray["tray_port"] == 8437
+        assert "kwargs" not in serve  # the plain uvicorn.run path was not taken
+
+    def test_a_tray_serve_failure_is_said_out_loud(
+        self, serve: dict[str, Any], tray: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A windowed build whose icon just vanished has no stderr anyone reads; the
+        dialog is the one signal left."""
+        tray["tray_error"] = RuntimeError("bind failed")
+        said: list[str] = []
+        monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append(m))
+        with pytest.raises(SystemExit) as excinfo:
+            launcher.main()
+        assert excinfo.value.code == 1
+        assert said and "stopped" in said[0]
+
+    def test_without_a_backend_the_plain_path_still_serves(
+        self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bundle that somehow lost pystray serves without an icon rather than
+        refusing: the server itself is fine, and the operator can still reach it."""
+        monkeypatch.setattr(launcher, "_tray_wanted", lambda *a, **k: True)
+        monkeypatch.setattr(launcher, "_tray_backend", lambda: None)
+        launcher.main()
+        assert serve["kwargs"].get("proxy_headers") is False
+        assert serve["kwargs"].get("factory") is True
 
 
 class TestResolveDataDir:
