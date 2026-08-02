@@ -320,7 +320,7 @@ class TestTheExtractorsThemselves:
 
     def test_a_non_dict_match_says_it_could_not_be_read(self) -> None:
         """A match block that is THERE but unreadable holds a hand reap
-        (``condemned.match_state``), so the card has to say that, not something else.
+        (``condemned.match_state``), so the card has to say that.
 
         It used to fall through to "Scored below your threshold" -- a confident sentence
         asserting the opposite of the decision in force on the very same row: the queue

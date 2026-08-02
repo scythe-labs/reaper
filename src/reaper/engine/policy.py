@@ -1328,11 +1328,10 @@ def inspect(
             # Except when the window is ALSO under the short-window floor, where "lower it"
             # is advice in the direction the other warning is pushing back on. Both faults
             # are real and their remedies genuinely oppose, so one message carries the pair
-            # rather than two stacking on one control and cancelling out. Note what is and
-            # is not claimed: shortening to the reach DOES clear the shortfall, it just
-            # buys the other fault to do it -- an even shorter window counts almost nothing
-            # as watched. Waiting is the only move that clears one without deepening the
-            # other, which is why it leads.
+            # rather than two stacking on one control and cancelling out. Shortening to the
+            # reach DOES clear the shortfall, it just buys the other fault to do it -- an
+            # even shorter window counts almost nothing as watched. Waiting is the only move
+            # that clears one without deepening the other, which is why it leads.
             remedy = (
                 "Wait for it to build up: a shorter window would leave almost nothing "
                 "counted as watched."

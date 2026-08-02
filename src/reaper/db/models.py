@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """ORM models.
 
-Conventions that are deliberate, not incidental:
+Conventions that are deliberate:
 
 * Every timestamp is timezone-aware UTC. A naive datetime anywhere in this
   application is a bug -- watch-history comparisons are the whole product, and
@@ -406,7 +406,7 @@ class Snapshot(Base):
 class SizeSource(enum.StrEnum):
     """Which measurement ``Candidate.size_bytes`` holds.
 
-    Load-bearing, not decoration. The executor's growth interlock compares the frozen size
+    Load-bearing. The executor's growth interlock compares the frozen size
     against a live re-read, and without provenance it cannot tell whether the two measure
     the same thing; a size compared against a different quantity reads a real growth as a
     shrink. See ``executor._measures``, whose allow-lists are exhaustive and fail closed,

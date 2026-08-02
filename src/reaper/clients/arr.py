@@ -203,7 +203,7 @@ class SonarrClient(ArrClient):
 class RadarrClient(ArrClient):
     service: ClassVar[str] = "radarr"
 
-    # Radarr's spelling. Note both differ from Sonarr's.
+    # Radarr's spelling. Both differ from Sonarr's.
     exclusion_param: ClassVar[str] = "addImportExclusion"
     exclusion_path: ClassVar[str] = "/exclusions"
 

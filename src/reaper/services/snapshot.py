@@ -1894,7 +1894,7 @@ def _movie_file_size(movie: Mapping[str, Any]) -> int | None:
 
 
 def _summary(text: Any) -> str | None:
-    """A trimmed overview. Kept short -- the card shows a couple of lines, not an essay."""
+    """A trimmed overview. Kept short -- the card shows a couple of lines."""
     if not isinstance(text, str):
         return None
     trimmed = text.strip()

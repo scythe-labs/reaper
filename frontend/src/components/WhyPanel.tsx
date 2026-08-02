@@ -421,7 +421,7 @@ function conflictNote(defersToOwner: boolean | null | undefined): string {
  *
  *  So the match is tested BEFORE the blocked list, and the blocked branch is gone: it can no
  *  longer be the cause of a hold, so there is no shape left for it to describe truthfully.
- *  The order here is load-bearing, not cosmetic -- these branches are mutually reachable and
+ *  The order here is load-bearing -- these branches are mutually reachable and
  *  the first true one wins. */
 /** The FIRED protection a hand reap cannot overrule, if one fired: `verdict.STRUCTURAL_GATES`,
  *  which is something playing right now and the retired `unmanaged`. Neither is a judgment about
@@ -708,7 +708,7 @@ function SignalRow({ row }: { row: Row }) {
  *  carries three signals for movies and four for TV: a default install never collapses
  *  anything, and hiding only ever begins once the operator has added rules of their own.
  *  Never applied to "Couldn't check" -- more reasons Reaper could not read is more cause
- *  to look, not less. */
+ *  to look. */
 const GROUP_ROW_LIMIT = 6;
 
 /** Biggest share first, so whatever gets folded away is always what mattered least.
