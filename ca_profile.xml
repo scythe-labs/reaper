@@ -7,7 +7,7 @@
   per-app templates live in contrib/unraid/.
 -->
 <Profile>
-  <Name>Scythe Labs</Name>
+  <Name>Reaper</Name>
   <Icon>https://raw.githubusercontent.com/scythe-labs/reaper/dev/frontend/public/icon-512.png</Icon>
   <WebPage>https://github.com/scythe-labs/reaper</WebPage>
   <Description>Reaper finds media nobody watches in your Plex library, explains why it thinks each item is expendable, lets you review and approve, then removes approved items through Sonarr and Radarr and refreshes Plex. Deletion stays off until you turn it on, so you can run it for weeks and just read the results.</Description>
