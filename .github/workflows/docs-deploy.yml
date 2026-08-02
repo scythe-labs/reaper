@@ -5,16 +5,25 @@
 # `ci.yml`'s `site` job already builds this tree on every pull request, so by the time anything
 # reaches here it has compiled once. This workflow exists to publish, not to check.
 #
-# It runs from `main` rather than `dev`: the manual describes the release an operator can
-# actually install, and publishing from `dev` would document a container nobody has yet. A doc
-# fix therefore reaches the site when the next release is promoted, which is the same latency
-# every other user-visible change has.
+# It publishes from `dev`, not from `main`, because `dev` is what operators are running: the
+# README tells them to pull `:dev` and says `:latest` follows `main` "once a release is cut",
+# which has not happened. `main` is still the initial commit. Publishing from it would document
+# a release that does not exist, and in practice would mean the manual never appeared at all.
+#
+# **Revisit this the moment a first release is cut.** At that point the site should describe the
+# released container rather than the tip of development, and the honest answer is probably
+# Docusaurus's docs versioning (a snapshot per release, with `dev` served as `next`) rather than
+# just moving this trigger to `main` and leaving `dev` readers with stale pages.
+#
+# `github-pages` is a protected environment whose deployment-branch policy lists `dev` alone. A
+# push from any other branch fails in the deploy job below rather than here, so moving this
+# trigger means editing that policy in the same change.
 name: Deploy the manual
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [dev]
     paths:
       - "manual/**"
       - "website/**"

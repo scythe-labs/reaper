@@ -65,10 +65,9 @@ Last verified against the code: 2026-07-30.
    cap, the theme blocks and the iOS zoom floor. Left: `.notice` still lives in the simulator
    section, and a dead-CSS pass that must stay manual, because 96 sites compute their class name.
 5. **The manual is one source, two renderers** (`frontend/src/docs/toMdx.ts`). Five pages are
-   generated into `manual/` from the typed blocks the app already renders, eight are written by
-   hand beside them, and `website/` serves all thirteen on Docusaurus. `npm run gen-manual`
-   writes them; `manual.gen.test.ts` fails on drift. **GitHub Pages is not switched on yet**, so
-   `docs-deploy.yml` has never run and nothing is published.
+   generated into `manual/` from the app's typed blocks, eight hand-written beside them, all
+   thirteen served by `website/` on Docusaurus. `manual.gen.test.ts` fails on drift. Pages
+   publishes from `dev`; revisit at the first release, probably as Docusaurus versioning.
 
 ## Decisions locked
 
