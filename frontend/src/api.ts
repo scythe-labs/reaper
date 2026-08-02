@@ -561,6 +561,15 @@ export interface PolicyWarning {
 export interface Policy {
   policy_hash: string;
   name: string;
+  /** The shipped bounds for this media type's signals, so a changed one can be put back.
+   *
+   *  Making the ramp editable made it losable: nothing said what 1825 had been, and the
+   *  presets restore weights only. Sent rather than copied into this file, so the number the
+   *  scorer reads is declared once.
+   *
+   *  Weights ride along and the editor ignores them: removal weights must total exactly 100,
+   *  so restoring one on its own would break the budget the save bar enforces. */
+  default_signals?: SignalSetting[];
   /** How far back your watch history goes, for the editor to say beside the controls it
    *  bounds. A never-played title is measured from the later of its arrival and this edge,
    *  so this IS the largest dormancy anything can present: a ramp whose far end sits past

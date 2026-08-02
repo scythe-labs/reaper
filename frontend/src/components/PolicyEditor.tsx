@@ -66,7 +66,7 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
-import { probeSaid, rampStrip, rampUnits } from "./signalRamp";
+import { probeSaid, rampDefaultSaid, rampStrip, rampUnits } from "./signalRamp";
 import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
@@ -685,11 +685,14 @@ function pointsSplit(builtIn: number, yours: number): string {
 function SignalRow({
   signal,
   reachDays,
+  shipped,
   onChange,
 }: {
   signal: SignalSetting;
   /** How far back the watch mirror goes, or null when the scan did not record it. */
   reachDays: number | null;
+  /** This signal's bounds as Reaper ships them, for the way back. */
+  shipped: SignalSetting | undefined;
   onChange: (s: SignalSetting) => void;
 }) {
   const meta = SIGNAL_META[signal.signal] ?? { label: titleCase(signal.signal), help: "" };
@@ -729,7 +732,13 @@ function SignalRow({
         onChange={(e) => onChange({ ...signal, weight: Number(e.target.value) })}
       />
       {signal.weight > 0 && (
-        <SignalRamp signal={signal} label={meta.label} reachDays={reachDays} onChange={onChange} />
+        <SignalRamp
+          signal={signal}
+          label={meta.label}
+          reachDays={reachDays}
+          shipped={shipped}
+          onChange={onChange}
+        />
       )}
     </li>
   );
@@ -763,11 +772,14 @@ function SignalRamp({
   signal,
   label,
   reachDays,
+  shipped,
   onChange,
 }: {
   signal: SignalSetting;
   label: string;
   reachDays: number | null;
+  /** This signal's bounds as Reaper ships them, or undefined where the server sent none. */
+  shipped: SignalSetting | undefined;
   onChange: (s: SignalSetting) => void;
 }) {
   const units = rampUnits(signal.signal);
@@ -864,6 +876,30 @@ function SignalRamp({
           </div>
         </div>
       )}
+      {/* The way back. Making these editable made them losable: 1825 is the measured point
+          the rewatch curve flattens, not a number anyone remembers, and the presets restore
+          weights only. Shown only once the value has actually moved, so it is an undo rather
+          than a permanent button.
+          Bounds alone, never the weight: removal weights total exactly 100, and putting one
+          back on its own would break the budget the save bar enforces. */}
+      {shipped &&
+        (signal.floor !== shipped.floor || signal.saturate_at !== shipped.saturate_at) && (
+          <p className="ramp-restore">
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() =>
+                onChange({
+                  ...signal,
+                  floor: shipped.floor,
+                  saturate_at: shipped.saturate_at,
+                })
+              }
+            >
+              {`Put back Reaper's ${rampDefaultSaid(signal.signal, shipped)}`}
+            </button>
+          </p>
+        )}
       <SignalProbe signal={signal} reachDays={reachDays} />
     </>
   );
@@ -1885,6 +1921,7 @@ export function PolicyEditor({
               // Off the SAVED policy, not the draft: it is a fact about the operator's watch
               // history rather than a policy value, so it does not move as they edit.
               reachDays={saved?.history_reach_days ?? null}
+              shipped={saved?.default_signals?.find((d) => d.signal === signal.signal)}
               onChange={(s) => {
                 const signals = [...draft.signals];
                 signals[i] = s;

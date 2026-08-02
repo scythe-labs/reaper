@@ -300,6 +300,13 @@
   border: 1px solid var(--border-strong);
 }
 
+/* The way back to Reaper's own bounds. A quiet text button rather than a bordered one: it
+   undoes an edit and should not compete with the boxes that made it. Hidden until the value
+   has actually moved, so it reads as an undo and not as a permanent control. */
+.ramp-restore {
+  margin: var(--space-md) 0 0;
+}
+
 /* What a title would earn under the range above. An inset well rather than more help text:
    it is the one line on the card that is an ANSWER rather than a setting, and the quiet
    surface is what tells them apart at a glance. The same fill the explanation panel gives a

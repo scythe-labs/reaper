@@ -699,6 +699,18 @@ class PolicyOut(BaseModel):
     name: str
     body: PolicyIn
 
+    default_signals: list[SignalSettingIn] = []
+    """The SHIPPED bounds for this media type's signals, so the editor can offer a way back.
+
+    Making the ramp bounds editable made them losable: nothing on the page said what 1825
+    had been, and the presets restore weights only. Derived from ``DEFAULT_MOVIE_POLICY`` /
+    ``DEFAULT_TV_POLICY`` on the way out rather than copied into the browser, so there is no
+    second declaration of a number the scorer reads (rule 103).
+
+    Weights are carried but the editor restores only the bounds: removal weights must total
+    exactly 100, so putting one back on its own would break the budget the save bar enforces.
+    """
+
     history_reach_days: float | None = None
     """How far back the watch mirror goes, for the editor to say beside the controls it
     bounds.

@@ -80,6 +80,8 @@ from reaper.engine.fields import Lane, MediaType, vocabulary
 from reaper.engine.gates import PROTECT, GateId, GateResult, thaw_defers_to_owner
 from reaper.engine.observation import Known
 from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    DEFAULT_TV_POLICY,
     ConditionSpec,
     GateSetting,
     PolicyBody,
@@ -1564,6 +1566,16 @@ def _policy_out(
         policy_hash=body.policy_hash(),
         name=name,
         history_reach_days=history_reach_days,
+        # Off the shipped policy for this media type, never off the body being returned:
+        # the whole point is to say what the operator's numbers were BEFORE they were theirs.
+        default_signals=[
+            SignalSettingIn(
+                signal=s.signal, weight=s.weight, saturate_at=s.saturate_at, floor=s.floor
+            )
+            for s in (
+                DEFAULT_TV_POLICY if body.media_type == "tv" else DEFAULT_MOVIE_POLICY
+            ).signals
+        ],
         needs_save=needs_save,
         fell_back=fell_back,
         rating_rules_restored=rating_rules_restored,

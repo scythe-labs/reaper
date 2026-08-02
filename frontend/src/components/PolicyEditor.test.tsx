@@ -1608,3 +1608,59 @@ describe("what the dormancy ramp can actually reach", () => {
     expect(screen.queryByText(/watch history goes back/)).toBeNull();
   });
 });
+
+// Making the ramp editable made it losable. 1825 is the measured point the rewatch curve
+// flattens, not a number anyone remembers, and the presets restore weights only -- so before
+// this there was no way back from a typo except knowing the answer.
+describe("putting a ramp back the way Reaper ships it", () => {
+  const shipped = [
+    { signal: "unwatched", weight: 70, saturate_at: 1825, floor: 365 },
+    { signal: "few_watchers", weight: 20, saturate_at: 3, floor: 0 },
+    { signal: "low_rating", weight: 10, saturate_at: 80, floor: 0 },
+  ];
+
+  it("offers nothing while the bounds are still Reaper's", async () => {
+    const body_ = body();
+    body_.signals = shipped.map((s) => ({ ...s }));
+    renderEditor({ body: body_, default_signals: shipped });
+
+    await screen.findByText("How long it's gone unwatched");
+    expect(screen.queryByText(/Put back Reaper's/)).toBeNull();
+  });
+
+  it("names where it goes, rather than making them press to find out", async () => {
+    renderEditor({ body: body(), default_signals: shipped });
+
+    // body()'s unwatched is 0 -> 365, against a shipped 365 -> 1825.
+    expect(await screen.findByText("Put back Reaper's 1 year to 5 years")).toBeVisible();
+  });
+
+  it("restores both bounds and leaves the weight alone", async () => {
+    const user = userEvent.setup();
+    renderEditor({ body: body(), default_signals: shipped });
+
+    await user.click(await screen.findByText("Put back Reaper's 1 year to 5 years"));
+
+    // Both ends back, and the strip is what shows it: the bar moves to 365 of a 3650 track.
+    await waitFor(() =>
+      expect(stripFor("How long it's gone unwatched").bar.style.left).toBe("10%"),
+    );
+    // The weight is untouched. Removal weights total exactly 100, so putting one back on its
+    // own would break the budget the save bar enforces.
+    expect(screen.getByText("How long it's gone unwatched").closest(".rule-row")).toHaveTextContent(
+      "up to 70 points",
+    );
+    // And the offer goes from THIS row once there is nothing left to undo. Scoped, because
+    // the fixture's rating ramp also differs from shipped and keeps its own offer.
+    const row = screen.getByText("How long it's gone unwatched").closest(".rule-row");
+    expect(within(row as HTMLElement).queryByText(/Put back Reaper's/)).toBeNull();
+  });
+
+  it("offers nothing when the server sent no defaults", async () => {
+    // An older server, or a response that lost the field: no invented "default" to go back to.
+    renderEditor({ body: body() });
+
+    await screen.findByText("How long it's gone unwatched");
+    expect(screen.queryByText(/Put back Reaper's/)).toBeNull();
+  });
+});

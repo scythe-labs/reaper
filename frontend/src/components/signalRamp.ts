@@ -246,6 +246,20 @@ export function rampSentence(
   return `Pays nothing until ${ends.earnsFrom}, and ${points} at ${ends.earnsAll}.`;
 }
 
+/** Reaper's own bounds for a signal, worded so the way back says where it goes.
+ *
+ *  "Put back Reaper's 1 year to 5 years" rather than a bare "Reset": the number the operator
+ *  is undoing to is the whole of what they need to decide whether to press it, and a button
+ *  that hides its own outcome is one they have to press to find out. */
+export function rampDefaultSaid(
+  id: string,
+  shipped: { floor: number; saturate_at: number },
+): string {
+  const ends = rampEnds(id, shipped.floor, shipped.saturate_at);
+  if (!ends) return "default";
+  return ends.shape === "shortfall" ? ends.earnsFrom : `${ends.earnsFrom} to ${ends.earnsAll}`;
+}
+
 /** The strip under a signal's bounds: where it charges, and how hard, drawn to scale.
  *
  *  It REPLACES the sentence that used to state the range, rather than joining it. "Pays
