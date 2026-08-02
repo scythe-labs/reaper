@@ -193,6 +193,23 @@
   accent-color: var(--accent);
 }
 
+/* Where a signal starts earning and where it earns in full. Two labeled boxes on the
+   shared control chrome, wrapping to one column on a phone rather than shrinking the boxes
+   below the standard (rule 40 -- width is the only thing that may vary, and not below what
+   a number needs). */
+.rule-ramp {
+  gap: var(--space-lg);
+}
+.ramp-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.ramp-field > span {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
 /* Keep well-rated titles: the per-source bars as rows of ONE aligned table. The source
    names share a column sized by the longest, so every "at least" lines up whatever the
    name's length -- the bars read as a set without each needing its own box. */

@@ -58,6 +58,7 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
+import { rampSentence, rampUnits } from "./signalRamp";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
@@ -715,7 +716,103 @@ function SignalRow({
         aria-label={`How much "${meta.label}" matters`}
         onChange={(e) => onChange({ ...signal, weight: Number(e.target.value) })}
       />
+      {signal.weight > 0 && <SignalRamp signal={signal} label={meta.label} onChange={onChange} />}
     </li>
+  );
+}
+
+/** Where a signal starts earning its points and where it earns all of them.
+ *
+ *  This was set and never shown. "Up to 10 points" is unreadable without it -- ten points on
+ *  a library of well-rated titles is ten points that can never be earned, and the panel row
+ *  underneath said `0  IMDb 6.4` with nothing naming the 6.0 it fell short of (#410).
+ *
+ *  **One box or two, decided by the signal's shape, and the difference is arithmetic rather
+ *  than taste.** A shortfall signal ramps how far BELOW its bound a value sits, which works
+ *  out to depend on `saturate_at - floor` alone: measured against `evaluate_signal`, the
+ *  pairs (0,60), (10,70) and (40,100) score identically at every rating, and full points
+ *  always land at zero. A second box there would be a control that provably does nothing, so
+ *  editing writes the gap back as `floor: 0` -- one canonical spelling of the same curve.
+ *
+ *  Hidden at weight 0 rather than disabled, matching the gates: a signal worth no points has
+ *  no range worth reading (rule 41). */
+function SignalRamp({
+  signal,
+  label,
+  onChange,
+}: {
+  signal: SignalSetting;
+  label: string;
+  onChange: (s: SignalSetting) => void;
+}) {
+  const units = rampUnits(signal.signal);
+  const said = rampSentence(signal.signal, signal.floor, signal.saturate_at, signal.weight);
+  if (!units || !said) return null;
+
+  // `max` is spread rather than passed, because `exactOptionalPropertyTypes` treats an
+  // explicit `undefined` as a value and refuses it.
+  const box = (
+    value: number,
+    ariaLabel: string,
+    onNext: (stored: number) => void,
+    bounds: { min?: number; max?: number } = {},
+  ) => (
+    <FixedQuantity
+      value={units.fromStored(value)}
+      suffix={units.unit}
+      step={units.step}
+      width="narrow"
+      min={bounds.min ?? 0}
+      {...(bounds.max === undefined ? {} : { max: bounds.max })}
+      ariaLabel={ariaLabel}
+      onChange={(next) => onNext(units.toStored(next))}
+    />
+  );
+
+  return (
+    <>
+      <div className="rule-control rule-ramp">
+        {units.shape === "shortfall" ? (
+          <label className="ramp-field">
+            <span>Pays nothing at or above</span>
+            {box(signal.saturate_at - signal.floor, `Where "${label}" stops paying`, (stored) =>
+              // Floor back to zero with it: the pair carries one degree of freedom, and
+              // leaving a stale floor behind would keep a second number in the body that
+              // nothing reads and nobody can see.
+              onChange({ ...signal, floor: 0, saturate_at: Math.max(1, stored) }),
+            )}
+          </label>
+        ) : (
+          <>
+            <label className="ramp-field">
+              <span>Pays nothing until</span>
+              {box(
+                signal.floor,
+                `Where "${label}" starts paying`,
+                // The server refuses `floor >= saturate_at` outright, so the box cannot
+                // offer it: a policy that will not save is not a state to let an operator
+                // type their way into and discover at the save bar.
+                (stored) =>
+                  onChange({ ...signal, floor: Math.min(stored, signal.saturate_at - 1) }),
+                { max: units.fromStored(signal.saturate_at - 1) },
+              )}
+            </label>
+            <label className="ramp-field">
+              <span>Full points at</span>
+              {box(
+                signal.saturate_at,
+                `Where "${label}" pays in full`,
+                (stored) =>
+                  onChange({ ...signal, saturate_at: Math.max(stored, signal.floor + 1) }),
+                { min: units.fromStored(signal.floor + 1) },
+              )}
+            </label>
+          </>
+        )}
+      </div>
+      {/* Bound to the boxes above it, not to the slider, which has its own help (rule 45). */}
+      <p className="help rule-help">{said}</p>
+    </>
   );
 }
 

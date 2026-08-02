@@ -44,6 +44,14 @@ interface RampUnits {
   /** The number an operator types is not always the number that is stored. */
   toStored: (typed: number) => number;
   fromStored: (stored: number) => number;
+  /** The lowest value this field can actually take, where that is not zero.
+   *
+   *  A ramp whose floor sits BELOW it never pays nothing for any real item, and "pays
+   *  nothing until X" would then be false in the reassuring direction. `season_rank` ships
+   *  floor 0 against a rank that starts at 1, so the newest season on disk already earns a
+   *  sixth of the weight while the help text says older seasons carry more pressure than
+   *  the newest -- which reads as though the newest carries none. */
+  first?: number;
 }
 
 const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
@@ -56,6 +64,7 @@ const RAMPS: Record<string, RampUnits> = {
     shape: "direct",
     say: (n) => (n === 1 ? "the newest season" : `the ${ordinal(n)}-newest season`),
     unit: "seasons",
+    first: 1,
     ...WHOLE,
   },
   few_watchers: {
@@ -132,10 +141,18 @@ export function rampSentence(
 ): string | null {
   const ends = rampEnds(id, floor, saturate);
   if (!ends) return null;
+  const units = RAMPS[id];
   const points = `all ${weight} points`;
-  return ends.shape === "shortfall"
-    ? `Pays nothing at ${ends.earnsFrom} or above, and ${points} at ${ends.earnsAll}.`
-    : `Pays nothing until ${ends.earnsFrom}, and ${points} at ${ends.earnsAll}.`;
+  if (ends.shape === "shortfall") {
+    return `Pays nothing at ${ends.earnsFrom} or above, and ${points} at ${ends.earnsAll}.`;
+  }
+  // A floor below the first value the field can take means nothing real ever lands under
+  // it, so "pays nothing until" would be false about every item there is. Say what happens
+  // instead of what does not.
+  if (units?.first !== undefined && (floor ?? 0) < units.first) {
+    return `Pays something from ${units.say(units.first)} on, and ${points} at ${ends.earnsAll}.`;
+  }
+  return `Pays nothing until ${ends.earnsFrom}, and ${points} at ${ends.earnsAll}.`;
 }
 
 /** The same sentence with what it did to one title, for the row in the explanation panel.

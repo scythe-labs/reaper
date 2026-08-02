@@ -1395,3 +1395,64 @@ describe("why an 'Add rule' will not act", () => {
     expect(screen.getAllByRole("button", { name: "Add rule" }).at(-1)!).toBeEnabled();
   });
 });
+
+// "Up to 10 points" cannot be read without knowing what earns them: ten points on a library
+// of well-rated titles is ten points that can never be earned, and until now the range lived
+// only in the stored body (#410). How many boxes a signal gets is arithmetic, not taste --
+// see `signalRamp`'s two shapes.
+describe("where a signal starts earning", () => {
+  it("gives a shortfall signal one box, because the second would do nothing", async () => {
+    renderEditor({ body: body() });
+
+    // low_rating measures how far BELOW its bound a rating sits, and the engine's fraction
+    // works out to depend on the gap alone: (0,70), (10,80) and (30,100) score identically.
+    // A "full points at" box here would be a control an operator could move for no effect.
+    expect(await screen.findByLabelText('Where "How low it\'s rated" stops paying')).toBeVisible();
+    expect(screen.queryByLabelText('Where "How low it\'s rated" pays in full')).toBeNull();
+    expect(
+      screen.getByText("Pays nothing at IMDb 7.0 or above, and all 10 points at IMDb 0.0."),
+    ).toBeVisible();
+  });
+
+  it("gives a direct signal both ends, because the engine honors both", async () => {
+    renderEditor({ body: body() });
+
+    expect(
+      await screen.findByLabelText('Where "How long it\'s gone unwatched" starts paying'),
+    ).toBeVisible();
+    expect(
+      screen.getByLabelText('Where "How long it\'s gone unwatched" pays in full'),
+    ).toBeVisible();
+  });
+
+  it("writes a shortfall edit back as the gap, floor and all", async () => {
+    const user = userEvent.setup();
+    renderEditor({ body: body() });
+
+    const box = await screen.findByLabelText('Where "How low it\'s rated" stops paying');
+    await user.clear(box);
+    await user.type(box, "5.5");
+
+    // Stored in tenths, and the floor goes back to zero with it: the pair carries one degree
+    // of freedom, so a stale floor would leave a second number in the body that nothing reads
+    // and nobody can see.
+    expect(
+      screen.getByText("Pays nothing at IMDb 5.5 or above, and all 10 points at IMDb 0.0."),
+    ).toBeVisible();
+  });
+
+  it("says nothing about a range for a signal worth no points", async () => {
+    const off = body();
+    off.signals = off.signals.map((s) =>
+      s.signal === "low_rating"
+        ? { ...s, weight: 0 }
+        : s.signal === "unwatched"
+          ? { ...s, weight: s.weight + 10 }
+          : s,
+    );
+    renderEditor({ body: off });
+
+    await screen.findByText("How low it's rated");
+    expect(screen.queryByLabelText('Where "How low it\'s rated" stops paying')).toBeNull();
+  });
+});
