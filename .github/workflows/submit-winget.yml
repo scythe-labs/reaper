@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Submit to WinGet
+
+# Publish the released Windows installer to microsoft/winget-pkgs (the flow
+# Tautulli uses). Two effects: `winget install ScytheLabs.Reaper` works, and every
+# release passes Microsoft's own validation and scanning pipeline, which builds the
+# reputation an unsigned installer otherwise lacks. Defender false positives are
+# fought on three fronts: winget presence (this workflow), per-release submission to
+# https://www.microsoft.com/en-us/wdsi/filesubmission (manual), and code signing
+# (not wired yet; packaging/README.md carries what it would take).
+#
+# Two prerequisites nothing in this repository can create:
+#   - the ScytheLabs.Reaper manifest must exist in winget-pkgs once (first
+#     submission is a hand-written PR; packaging/README.md walks through it)
+#   - a WINGET_TOKEN secret: a PAT with public_repo scope, which wingetcreate
+#     uses to fork winget-pkgs and open the version PR
+# Without either, this workflow says so and exits green.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to submit (CalVer, no leading v)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  winget:
+    # The rolling dev-build prerelease also fires `published`; only real releases
+    # belong in winget.
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: windows-latest
+    steps:
+      - name: Submit the manifest update
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          RAW_VERSION: ${{ inputs.version || github.event.release.tag_name }}
+        run: |
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host "No WINGET_TOKEN secret; skipping winget submission."
+            exit 0
+          }
+          $version = $env:RAW_VERSION -replace '^v', ''
+          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/v$version/Reaper-$version-windows-x64-setup.exe"
+          # wingetcreate is Microsoft's manifest tool. "latest" is deliberate, unlike
+          # every pinned action here: the manifest schema it must emit is
+          # winget-pkgs' current one, not whatever was current when this line landed.
+          Invoke-WebRequest "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
+          .\wingetcreate.exe update ScytheLabs.Reaper `
+            --version $version `
+            --urls $url `
+            --token $env:WINGET_TOKEN `
+            --submit

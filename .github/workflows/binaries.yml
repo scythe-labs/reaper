@@ -1,0 +1,352 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Binaries
+
+# Packaged installs: the Windows and macOS one-folder builds (PyInstaller) and the
+# snap, each booted once against its own health probe before it may ship.
+#
+# Four ways in:
+#   schedule           nightly dev build of the dev tip, skipped when dev has not
+#                      moved since the last one; refreshes the rolling `dev-build`
+#                      prerelease so dev users have something to download.
+#   workflow_dispatch  the same, on demand; refreshing the prerelease is opt-in.
+#   workflow_call      release.yml passes the CalVer. Artifacts are uploaded for the
+#                      caller to attach; nothing publishes from here.
+#   pull_request       proof the packaging still builds, gated on the
+#                      CI/Build-Binaries label so ordinary PRs pay nothing.
+#
+# macOS builds on macos-14 (arm64) because the build image sets the binary's minimum
+# macOS: building on a newer image silently raises the floor for every operator.
+# Intel Macs have no lane; GitHub retired the x64 macOS runners.
+#
+# Actions are pinned to commit SHAs for the same supply-chain reason as ci.yml, and
+# Dependabot moves these pins the same way.
+
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Refresh the rolling dev-build prerelease"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version (CalVer, no leading v)"
+        type: string
+        required: true
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  # One decision, read by every job: what to build, what to call it, whether the
+  # rolling dev prerelease gets refreshed afterward.
+  plan:
+    name: Plan the build
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'CI/Build-Binaries')
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      version: ${{ steps.decide.outputs.version }}
+      release: ${{ steps.decide.outputs.release }}
+      publish: ${{ steps.decide.outputs.publish }}
+      sha: ${{ steps.decide.outputs.sha }}
+      ref: ${{ steps.decide.outputs.ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Decide
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          CALL_VERSION: ${{ inputs.version }}
+          DISPATCH_PUBLISH: ${{ inputs.publish }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          short="$(git rev-parse --short HEAD)"
+          build=true; release=false; publish=false; ref=""
+          version="dev-${short}"
+
+          if [ -n "${CALL_VERSION}" ]; then
+            # Called from release.yml: the caller owns publication.
+            version="${CALL_VERSION}"; release=true
+          elif [ "${EVENT}" = "schedule" ] || [ "${EVENT}" = "workflow_dispatch" ]; then
+            # Pin every later checkout to this exact commit, so a push to dev
+            # mid-run cannot split the build across two commits.
+            ref="${sha}"
+            if [ "${EVENT}" = "schedule" ] || [ "${DISPATCH_PUBLISH}" = "true" ]; then
+              publish=true
+              last="$(gh release view dev-build --json targetCommitish -q .targetCommitish 2>/dev/null || echo none)"
+              if [ "${EVENT}" = "schedule" ] && [ "${last}" = "${sha}" ]; then
+                build=false; publish=false
+                echo "dev has not moved since the last dev build; nothing to do"
+              fi
+            fi
+          fi
+
+          {
+            echo "build=${build}"
+            echo "version=${version}"
+            echo "release=${release}"
+            echo "publish=${publish}"
+            echo "sha=${sha}"
+            echo "ref=${ref}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.slug }}
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            slug: windows-x64
+          - runner: macos-14
+            slug: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build the SPA
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # The same locked set CI tested plus the pinned bundler; nothing resolves fresh.
+      - name: Install
+        run: uv sync --frozen --extra package
+
+      - name: Bake provenance
+        shell: bash
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE: ${{ needs.plan.outputs.release }}
+        run: |
+          set -euo pipefail
+          args=(--out packaging/pyinstaller/buildinfo.json
+                --commit "$(git rev-parse --short HEAD)"
+                --repo "${GITHUB_REPOSITORY}")
+          if [ "${RELEASE}" = "true" ]; then
+            args+=(--version "${VERSION}" --release)
+          fi
+          uv run python scripts/write_buildinfo.py "${args[@]}"
+
+      - name: Build the binary
+        run: >-
+          uv run pyinstaller packaging/pyinstaller/reaper.spec --noconfirm
+          --distpath build/pyinstaller/dist --workpath build/pyinstaller/work
+
+      # A binary that ships must have booted once: fresh data dir, migrations, and a
+      # 200 from its own health probe. This is the packaged twin of ci.yml's docker
+      # buildability gate.
+      - name: Boot the binary and probe it (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          datadir="$(mktemp -d)"
+          REAPER_DATA_DIR="${datadir}" REAPER_LAUNCH_BROWSER=false \
+            REAPER_HOST=127.0.0.1 REAPER_PORT=8461 \
+            ./build/pyinstaller/dist/reaper/reaper > server.log 2>&1 &
+          pid=$!
+          ok=false
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8461/api/health > /dev/null; then ok=true; break; fi
+            sleep 1
+          done
+          kill "${pid}" 2>/dev/null || true
+          if [ "${ok}" != "true" ]; then cat server.log; exit 1; fi
+
+      - name: Boot the binary and probe it (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:REAPER_DATA_DIR = Join-Path $env:RUNNER_TEMP "reaper-smoke"
+          $env:REAPER_LAUNCH_BROWSER = "false"
+          $env:REAPER_HOST = "127.0.0.1"
+          $env:REAPER_PORT = "8461"
+          $p = Start-Process -FilePath "build\pyinstaller\dist\reaper\reaper.exe" -PassThru `
+            -RedirectStandardOutput server.log -RedirectStandardError server.err
+          $ok = $false
+          foreach ($i in 1..60) {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 http://127.0.0.1:8461/api/health
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch {}
+            Start-Sleep -Seconds 1
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { Get-Content server.log, server.err; exit 1 }
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          # ditto keeps the executable bits and symlinks a plain zip tool drops.
+          ditto -c -k --keepParent build/pyinstaller/dist/reaper \
+            "artifacts/Reaper-${VERSION}-macos-arm64.zip"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          # The installer (what winget serves) and a portable zip, both from the
+          # same smoke-tested folder.
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DAppVersion=$env:VERSION `
+            /DSourceDir="$PWD\build\pyinstaller\dist\reaper" `
+            /O"$PWD\artifacts" `
+            packaging\windows\reaper.iss
+          Compress-Archive -Path "build\pyinstaller\dist\reaper" `
+            -DestinationPath "artifacts\Reaper-$env:VERSION-windows-x64.zip"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binaries-${{ matrix.slug }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  snap:
+    name: Build snap ${{ matrix.arch }}
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - name: Bake provenance
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE: ${{ needs.plan.outputs.release }}
+        run: |
+          set -euo pipefail
+          args=(--out buildinfo.json
+                --commit "$(git rev-parse --short HEAD)"
+                --repo "${GITHUB_REPOSITORY}")
+          if [ "${RELEASE}" = "true" ]; then
+            args+=(--version "${VERSION}" --release)
+          fi
+          python3 scripts/write_buildinfo.py "${args[@]}"
+
+      - name: Build
+        id: build
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1.3.0
+
+      # Same bar as the binaries: install it for real, watch it come up healthy.
+      - name: Install the snap and probe it
+        run: |
+          set -euo pipefail
+          sudo snap install --dangerous "${{ steps.build.outputs.snap }}"
+          ok=false
+          for _ in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:8420/api/health > /dev/null; then ok=true; break; fi
+            sleep 1
+          done
+          if [ "${ok}" != "true" ]; then sudo snap logs reaper -n 100 || true; exit 1; fi
+          sudo snap remove reaper
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binaries-snap-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+
+      # Dev builds go to the store's edge channel when credentials exist; releases go
+      # to stable from release.yml. Without the secret this is skipped, never red:
+      # store publication is opt-in infrastructure, not a gate.
+      - name: Check for store credentials
+        id: creds
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -n "${SNAPCRAFT_STORE_CREDENTIALS}" ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "no SNAPCRAFT_STORE_CREDENTIALS secret; skipping store publication"
+          fi
+
+      - name: Publish to edge
+        if: needs.plan.outputs.publish == 'true' && steps.creds.outputs.has == 'true'
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1.2.0
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: edge
+
+  # The rolling `dev-build` prerelease: recreated, not appended to, so it always
+  # holds exactly one night's artifacts and points at the commit they were built
+  # from. Release builds never pass through here.
+  publish-dev:
+    name: Refresh the dev prerelease
+    needs: [plan, build, snap]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: binaries-*
+          merge-multiple: true
+          path: assets
+
+      - name: Recreate the dev-build prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release delete dev-build --repo "${GITHUB_REPOSITORY}" --cleanup-tag --yes || true
+          gh release create dev-build \
+            --repo "${GITHUB_REPOSITORY}" \
+            --prerelease \
+            --target "${SHA}" \
+            --title "Development build (${VERSION})" \
+            --notes "Rolling build of the dev branch, replaced whenever dev moves. For the stable channel, use the newest release instead." \
+            assets/*

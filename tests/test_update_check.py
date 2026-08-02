@@ -133,9 +133,7 @@ class TestReleaseChannel:
         assert len(httpx2_mock.calls) == 2
 
     @pytest.mark.usefixtures("_release_build")
-    async def test_a_successful_answer_is_cached_for_hours(
-        self, httpx2_mock: respx.Router
-    ) -> None:
+    async def test_a_successful_answer_is_cached_for_hours(self, httpx2_mock: respx.Router) -> None:
         httpx2_mock.get(_RELEASES).mock(
             return_value=httpx.Response(200, json={"tag_name": "v2026.8.1"})
         )
@@ -212,9 +210,7 @@ class TestDevChannel:
         assert status.update_available is True
 
     @pytest.mark.usefixtures("_dev_build")
-    async def test_the_current_dev_build_reports_no_update(
-        self, httpx2_mock: respx.Router
-    ) -> None:
+    async def test_the_current_dev_build_reports_no_update(self, httpx2_mock: respx.Router) -> None:
         httpx2_mock.get(_DEV_TIP).mock(
             return_value=httpx.Response(200, json={"sha": "abc1234" + "0" * 33})
         )

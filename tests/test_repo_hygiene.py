@@ -54,7 +54,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 16
+DECISION_SECTIONS = 17
 
 
 def _live_docs() -> list[Path]:
@@ -1482,13 +1482,15 @@ def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None
 #: edit that is not even a change (rule 147).
 _NODE_MAJOR = re.compile(r"""(?:FROM\s+node:|node-version:\s*)["']?(\d+)""")
 
-#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), and docs-deploy.yml. Pinned
-#: because the agreement assertion below is vacuously true on one site, or on none (rule 145).
+#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), docs-deploy.yml, and
+#: binaries.yml (the packaged builds bundle the SPA on the same Node the frontend job tested
+#: it on). Pinned because the agreement assertion below is vacuously true on one site, or on
+#: none (rule 145).
 #:
 #: The manual site's two are here for the same reason as the others rather than as bookkeeping:
 #: it builds with `npm ci` against a committed lockfile, so a Node major that drifts from the
 #: one the lockfile was resolved on is a publish that fails on a tree nothing else exercises.
-_EXPECTED_NODE_SITES = 4
+_EXPECTED_NODE_SITES = 5
 
 
 def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> None:

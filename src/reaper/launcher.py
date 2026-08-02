@@ -29,6 +29,8 @@ import webbrowser
 from collections.abc import MutableMapping
 from pathlib import Path
 
+from reaper.buildinfo import install_root
+
 _TRUE = {"1", "true", "yes", "on"}
 
 #: buildinfo.json key -> the environment value it seeds. Operator-set values win:
@@ -75,8 +77,8 @@ def _buildinfo_path() -> Path | None:
     named = os.environ.get("REAPER_BUILDINFO", "").strip()
     if named:
         return Path(named)
-    bundle = _bundle_root()
-    return bundle / "buildinfo.json" if bundle else None
+    root = install_root()
+    return root / "buildinfo.json" if root else None
 
 
 def default_data_dir(platform: str, env: MutableMapping[str, str]) -> Path:
@@ -180,7 +182,7 @@ def main() -> None:
     if code:
         raise SystemExit(code)
 
-    root = _bundle_root() or _repo_root()
+    root = install_root() or _repo_root()
     _migrate(root)
 
     host = os.environ.get("REAPER_HOST", "").strip() or "0.0.0.0"

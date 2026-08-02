@@ -1,0 +1,170 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Release
+
+# Cut a CalVer release from main. main is release-only, so every push here IS a
+# release: compute the next vYYYY.M.N, tag it, draft the release, build the
+# binaries and snaps (binaries.yml does that work), push the versioned container
+# image, attach everything, publish. Publishing fires submit-winget.yml.
+#
+# The version is year.month.count -- a date names what operators actually ask
+# ("am I on this month's build?"), and the count separates two cuts in one month.
+# The month is unpadded so the tag and the Python version agree: PEP 440
+# normalizes 2026.08 to 2026.8, and two spellings of one release is how version
+# comparisons quietly break.
+#
+# workflow_dispatch exists to re-run a cut that failed partway: the version step
+# is idempotent (an existing tag advances the count), and a draft release left
+# behind by a failed run is safe to delete by hand.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  # Never cancel a release: killing one mid-publish is how :latest ends up
+  # half-published (the same reason ci.yml exempts main from cancellation).
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    name: Compute the version and cut the tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      # Full history: the count is derived from the tags that already exist.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Tag and draft the release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          year="$(date -u +%Y)"
+          month="$(date -u +%-m)"
+          n=1
+          while git rev-parse -q --verify "refs/tags/v${year}.${month}.${n}" > /dev/null; do
+            n=$((n + 1))
+          done
+          version="${year}.${month}.${n}"
+          tag="v${version}"
+          git tag "${tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${tag}"
+          # Draft until the artifacts are attached, so nobody is told about a
+          # release that cannot be downloaded yet.
+          gh release create "${tag}" --draft --generate-notes --title "Reaper ${version}"
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+          } >> "$GITHUB_OUTPUT"
+
+  binaries:
+    needs: cut
+    uses: ./.github/workflows/binaries.yml
+    with:
+      version: ${{ needs.cut.outputs.version }}
+    secrets: inherit
+
+  # The versioned image. ci.yml keeps proving buildability on every commit; this is
+  # the one place :latest and the version tag are pushed, with the release identity
+  # baked so the About page and the update check tell the truth.
+  docker:
+    needs: cut
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and push the release image
+        env:
+          VERSION: ${{ needs.cut.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          short_sha="$(git rev-parse --short HEAD)"
+          docker build \
+            --build-arg "REAPER_GIT_SHA=${short_sha}" \
+            --build-arg "REAPER_RELEASE=1" \
+            --build-arg "REAPER_VERSION=${VERSION}" \
+            --build-arg "REAPER_UPDATE_REPO=${GITHUB_REPOSITORY}" \
+            -t "${image}:${VERSION}" -t "${image}:latest" .
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker push "${image}:${VERSION}"
+          docker push "${image}:latest"
+
+  publish:
+    name: Attach artifacts and publish
+    needs: [cut, binaries, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: binaries-*
+          merge-multiple: true
+          path: assets
+
+      - name: Upload and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.cut.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" assets/*
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+
+  # Stable-channel store publication, once the GitHub release is out. Skipped
+  # without credentials, never red: the store is opt-in infrastructure.
+  snap-stable:
+    name: Release snap ${{ matrix.arch }} to stable
+    needs: [cut, publish]
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: binaries-snap-${{ matrix.arch }}
+          path: snaps
+
+      - name: Check for store credentials
+        id: creds
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -n "${SNAPCRAFT_STORE_CREDENTIALS}" ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "no SNAPCRAFT_STORE_CREDENTIALS secret; skipping store publication"
+          fi
+
+      - name: Find the snap file
+        id: snapfile
+        if: steps.creds.outputs.has == 'true'
+        run: echo "path=$(ls snaps/*.snap)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to stable
+        if: steps.creds.outputs.has == 'true'
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1.2.0
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.snapfile.outputs.path }}
+          release: stable

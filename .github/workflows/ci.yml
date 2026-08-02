@@ -300,22 +300,18 @@ jobs:
           fi
           echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
-      # The short commit and a release flag are baked in as build args so the About page
-      # can show which build is running. main is release-only (it shows the plain version);
-      # every other branch and PR shows "dev (<short commit>)". REF_NAME is the PR number on
-      # a pull request, never "main", so a PR is correctly a dev build.
+      # The short commit and the home repository are baked in as build args, so the
+      # About page can say which build is running and the update check knows whose
+      # dev branch to follow (a fork's images follow the fork). Everything this job
+      # builds is dev provenance, whatever the branch: the RELEASE image -- with the
+      # CalVer baked, tagged :latest and :<version> -- is release.yml's alone, so a
+      # version-labeled image can only exist with the version actually inside it.
       - name: Build image
         run: |
-          RELEASE=""
-          if [ "${GITHUB_REF_NAME}" = "main" ]; then RELEASE="1"; fi
           docker build \
             --build-arg "REAPER_GIT_SHA=${SHORT_SHA}" \
-            --build-arg "REAPER_RELEASE=${RELEASE}" \
+            --build-arg "REAPER_UPDATE_REPO=${GITHUB_REPOSITORY}" \
             -t "${IMAGE}:${TAG}" -t "${IMAGE}:${SHORT_SHA}" .
-
-      - name: Tag latest
-        if: github.ref_name == 'main'
-        run: docker tag "${IMAGE}:${TAG}" "${IMAGE}:latest"
 
       # The automatic GITHUB_TOKEN publishes here, given the packages: write
       # permission declared on this job, so no operator-provided secret is needed

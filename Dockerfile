@@ -77,15 +77,22 @@ EXPOSE 8420
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os,urllib.request,sys; port=os.environ.get('REAPER_PORT','8420'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health', timeout=3).status==200 else 1)"
 
-# Build provenance, shown on the About page. The container has no .git (it is
-# dockerignored), so CI passes the short commit it already computes; REAPER_RELEASE=1
-# marks a release build, which shows the plain version instead. A local `docker build`
-# with neither shows "dev". Kept last so a new commit reuses every layer above; neither
-# value is a secret.
+# Build provenance, shown on the About page and read by the update check. The
+# container has no .git (it is dockerignored), so CI passes the short commit it
+# already computes; release.yml additionally passes REAPER_RELEASE=1 and the CalVer
+# as REAPER_VERSION, which is what the About page then shows. REAPER_UPDATE_REPO
+# names the repository whose releases and dev branch the update check follows, so a
+# fork's images follow the fork. A local `docker build` with none of these shows
+# "dev" and follows the upstream repository. Kept last so a new commit reuses every
+# layer above; none of these values is a secret.
 ARG REAPER_GIT_SHA=""
 ARG REAPER_RELEASE=""
+ARG REAPER_VERSION=""
+ARG REAPER_UPDATE_REPO=""
 ENV REAPER_GIT_SHA=${REAPER_GIT_SHA} \
-    REAPER_RELEASE=${REAPER_RELEASE}
+    REAPER_RELEASE=${REAPER_RELEASE} \
+    REAPER_VERSION=${REAPER_VERSION} \
+    REAPER_UPDATE_REPO=${REAPER_UPDATE_REPO}
 
 COPY docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["docker-entrypoint.sh"]

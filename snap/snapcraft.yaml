@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# The snap: strict confinement, data under /var/snap/reaper/common, served on :8420.
+#
+# core24 ships Python 3.12 and Reaper needs 3.13, so the build installs a relocatable
+# CPython via uv (python-build-standalone) and ships it whole; the app runs as
+# `python -m reaper.launcher`, the same entry every packaged install uses. Console
+# scripts are avoided on purpose: their shebangs would bake the build path.
+#
+# CI (binaries.yml) generates buildinfo.json at the repo root before building, so the
+# snap can name its version, commit, and channel; a local `snapcraft` run synthesizes
+# a dev one from the checkout.
+name: reaper
+title: Reaper
+summary: Find media nobody watches, review why, then remove it safely
+description: |
+  Reaper finds media nobody watches in your Plex library, explains why it thinks
+  each item is expendable, lets you review and approve, then removes approved
+  items through Sonarr and Radarr and refreshes Plex.
+
+  The web UI listens on port 8420. Data lives in /var/snap/reaper/common.
+license: AGPL-3.0-or-later
+source-code: https://github.com/scythe-labs/reaper
+issues: https://github.com/scythe-labs/reaper/issues
+adopt-info: reaper
+base: core24
+grade: stable
+confinement: strict
+
+platforms:
+  amd64:
+  arm64:
+
+apps:
+  reaper:
+    command: opt/python/bin/python3.13 -m reaper.launcher
+    daemon: simple
+    restart-condition: on-failure
+    plugs:
+      - network
+      - network-bind
+    environment:
+      REAPER_HOME: $SNAP
+      REAPER_DATA_DIR: $SNAP_COMMON
+      PYTHONDONTWRITEBYTECODE: "1"
+
+parts:
+  frontend:
+    plugin: nil
+    source: .
+    build-snaps:
+      - node/24/stable
+    override-build: |
+      set -eu
+      cd frontend
+      npm ci
+      npm run build
+      mkdir -p "$CRAFT_PART_INSTALL/frontend"
+      cp -r dist "$CRAFT_PART_INSTALL/frontend/dist"
+
+  reaper:
+    plugin: nil
+    source: .
+    build-packages:
+      - python3-pip
+      - git
+    override-build: |
+      set -eu
+      # uv is pinned by version: the snap is a shipped artifact and its build must
+      # not resolve tooling fresh (rule 15). Dependabot does not watch this pin;
+      # move it by hand when it falls behind.
+      python3 -m pip install --user --break-system-packages "uv==0.12.1"
+      export PATH="$HOME/.local/bin:$PATH"
+
+      # A relocatable CPython 3.13, renamed to a stable path so the app command
+      # never encodes a versioned folder name.
+      export UV_PYTHON_INSTALL_DIR="$CRAFT_PART_BUILD/python-versions"
+      uv python install 3.13
+      mkdir -p "$CRAFT_PART_INSTALL/opt"
+      mv "$CRAFT_PART_BUILD"/python-versions/cpython-3.13* "$CRAFT_PART_INSTALL/opt/python"
+      PY="$CRAFT_PART_INSTALL/opt/python/bin/python3.13"
+
+      # The exact, hash-pinned set CI tested, from the committed lockfile -- the
+      # same install the Dockerfile performs, aimed at the shipped interpreter.
+      uv export --frozen --no-emit-project -o "$CRAFT_PART_BUILD/requirements.txt"
+      uv pip install --system --python "$PY" --no-cache --compile-bytecode \
+        -r "$CRAFT_PART_BUILD/requirements.txt"
+      uv pip install --system --python "$PY" --no-cache --no-deps --compile-bytecode .
+
+      # The pieces that live beside the code; REAPER_HOME=$SNAP points the app here.
+      cp -r alembic "$CRAFT_PART_INSTALL/alembic"
+      if [ -f buildinfo.json ]; then
+        cp buildinfo.json "$CRAFT_PART_INSTALL/buildinfo.json"
+      else
+        "$PY" scripts/write_buildinfo.py --out "$CRAFT_PART_INSTALL/buildinfo.json" \
+          --commit "$(git rev-parse --short HEAD 2>/dev/null || true)"
+      fi
+
+      # The snap's own version string: the baked release version, else dev-<commit>.
+      version="$("$PY" -c "import json; d = json.load(open('$CRAFT_PART_INSTALL/buildinfo.json')); print(d.get('version') or ('dev-' + d['commit'] if d.get('commit') else 'dev'))")"
+      craftctl set version="$version"

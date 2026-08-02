@@ -18,6 +18,7 @@ subprocess. None of these values is a secret.
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -25,6 +26,19 @@ from reaper import __version__
 
 _TRUE = {"1", "true", "yes", "on"}
 _SHORT = 7
+
+
+def install_root() -> Path | None:
+    """Where a packaged install keeps the pieces that live beside the code: the built
+    SPA, the migrations, and ``buildinfo.json``. ``REAPER_HOME`` names it outright
+    (the snap sets it to ``$SNAP``); a frozen (PyInstaller) build is its unpacked
+    bundle. A source checkout returns ``None`` and callers fall back to the repo
+    root, so development never needs either value set."""
+    named = os.environ.get("REAPER_HOME", "").strip()
+    if named:
+        return Path(named)
+    bundle = getattr(sys, "_MEIPASS", None)
+    return Path(bundle) if bundle else None
 
 
 def build_version() -> str:

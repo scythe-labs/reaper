@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -49,7 +48,7 @@ from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.recovery import mint_recovery_token, recovery_base_url
-from reaper.buildinfo import build_version
+from reaper.buildinfo import build_version, install_root
 from reaper.config import (
     Settings,
     get_settings,
@@ -605,10 +604,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # leave a stale second copy of the UI on this one. A missing dist in *production* is
     # a broken image, and should not be papered over by silently serving 404s from a
     # directory that was never built -- so that case still warns rather than passing.
-    # In a frozen (PyInstaller) build the unpacked bundle stands in for the repo root:
-    # the built SPA travels inside it, and there is no src/ level above the package.
-    bundle = getattr(sys, "_MEIPASS", None)
-    root = Path(bundle) if bundle else Path(__file__).resolve().parent.parent.parent
+    # In a packaged install (frozen bundle, snap) the install root stands in for the
+    # repo root: the built SPA travels inside it, with no src/ level above the package.
+    root = install_root() or Path(__file__).resolve().parent.parent.parent
     dist = root / "frontend" / "dist"
     if not settings.serve_spa:
         log.info(

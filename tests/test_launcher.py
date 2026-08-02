@@ -125,9 +125,7 @@ class TestMain:
         import uvicorn
 
         monkeypatch.setattr(uvicorn, "run", fake_run)
-        monkeypatch.setattr(
-            "reaper.preflight.main", lambda: int(captured["preflight_code"])
-        )
+        monkeypatch.setattr("reaper.preflight.main", lambda: int(captured["preflight_code"]))
         monkeypatch.setattr(
             "reaper.launcher._migrate",
             lambda root: captured.__setitem__("migrated", True),
