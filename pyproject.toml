@@ -41,6 +41,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only the binary builds (.github/workflows/binaries.yml) install this group; it rides
+# uv.lock so the bundler is as pinned as everything it bundles (rule 15).
+package = [
+    "pyinstaller>=6.16.0",
+]
 dev = [
     "ruff>=0.15.22",
     "mypy>=2.3.0",
@@ -59,6 +64,9 @@ dev = [
 # The out-of-band escape hatch. Run inside the container:
 #   docker exec -it reaper reaper-admin reset-password --username admin
 reaper-admin = "reaper.cli:main"
+# What a packaged install runs: data dir, preflight, migrations, then the server.
+# The PyInstaller binaries and the snap both enter here; see src/reaper/launcher.py.
+reaper-server = "reaper.launcher:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reaper"]
@@ -103,6 +111,9 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106", "S107", "S311"]   # fake secrets in fixtures; seeded rng in generators
 "scripts/*" = ["S311", "T201"]                 # dev tools: seeded rng, console output
+# A console entry point talks to its operator via print, and its bind-all default is
+# the same one the container CMD ships.
+"src/reaper/launcher.py" = ["T201", "S104"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["reaper"]

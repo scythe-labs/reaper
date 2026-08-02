@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -68,6 +69,7 @@ from reaper.services.scheduler import (
     track_running_jobs,
 )
 from reaper.services.seeding import seed_instances
+from reaper.services.update_check import UpdateChecker
 
 log = structlog.get_logger(__name__)
 
@@ -360,6 +362,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None,
     )
     app.state.settings = settings
+    # One instance for the app's lifetime, so its hours-long answer cache is shared
+    # across requests. Lazy: it fetches nothing until the About surface first asks.
+    app.state.update_checker = UpdateChecker()
 
     @app.exception_handler(RequestValidationError)
     async def _validation_reason(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -600,7 +605,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # leave a stale second copy of the UI on this one. A missing dist in *production* is
     # a broken image, and should not be papered over by silently serving 404s from a
     # directory that was never built -- so that case still warns rather than passing.
-    dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+    # In a frozen (PyInstaller) build the unpacked bundle stands in for the repo root:
+    # the built SPA travels inside it, and there is no src/ level above the package.
+    bundle = getattr(sys, "_MEIPASS", None)
+    root = Path(bundle) if bundle else Path(__file__).resolve().parent.parent.parent
+    dist = root / "frontend" / "dist"
     if not settings.serve_spa:
         log.info(
             "frontend.not_served",

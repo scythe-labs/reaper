@@ -10,6 +10,7 @@ route and forces its response model to resolve.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -1196,3 +1197,20 @@ class AboutOut(BaseModel):
     """Reaper's own database: decisions, audit trail, credentials. Small and precious."""
     cache_db_bytes: int
     """The rebuildable cache: watch history, ratings, lists. Large and disposable."""
+
+
+class UpdateOut(BaseModel):
+    """Whether a newer Reaper exists, on this build's channel. Advisory only: nothing
+    gates on it, and a check that could not answer reads as unknown, never as an error.
+
+    ``update_available`` is three-state: ``None`` when the check is off, unreachable,
+    or the two versions cannot be ordered. The surface renders that as nothing.
+    """
+
+    channel: Literal["release", "dev"]
+    enabled: bool
+    current: str
+    latest: str | None
+    update_available: bool | None
+    url: str | None
+    checked_at: datetime | None
