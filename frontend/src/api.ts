@@ -561,6 +561,12 @@ export interface PolicyWarning {
 export interface Policy {
   policy_hash: string;
   name: string;
+  /** How far back your watch history goes, for the editor to say beside the controls it
+   *  bounds. A never-played title is measured from the later of its arrival and this edge,
+   *  so this IS the largest dormancy anything can present: a ramp whose far end sits past
+   *  it can never pay in full. `null` when the scan did not record it, which the editor
+   *  renders as not knowing rather than as no history at all. */
+  history_reach_days?: number | null;
   body: PolicyBody;
   warnings: PolicyWarning[];
   /** This body was repaired on the way out and is NOT what is stored. Set when a policy

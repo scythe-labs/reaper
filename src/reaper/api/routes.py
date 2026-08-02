@@ -1563,6 +1563,7 @@ def _policy_out(
     return PolicyOut(
         policy_hash=body.policy_hash(),
         name=name,
+        history_reach_days=history_reach_days,
         needs_save=needs_save,
         fell_back=fell_back,
         rating_rules_restored=rating_rules_restored,

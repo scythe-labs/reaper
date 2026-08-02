@@ -1523,3 +1523,50 @@ describe("trying a value against a signal's range", () => {
     );
   });
 });
+
+// "Full points at 5 years" is unreachable on a mirror that only goes back one, and until the
+// probe opened at the mirror's edge nothing on the page said so. Deliberately NOT a warning:
+// the shipped far end is five years, almost nobody's history is that deep, and a warning
+// firing for everyone teaches the page to be ignored.
+describe("what the dormancy ramp can actually reach", () => {
+  it("opens the probe where the evidence runs out", async () => {
+    apiMock.probePolicy.mockResolvedValue({ points: 1.7, detail: "not watched in 1 year" });
+    renderEditor({ body: body(), history_reach_days: 400 });
+
+    await screen.findByLabelText('Try a value against "How long it\'s gone unwatched"');
+
+    // The largest dormancy anything can present, so what it earns there is the most this
+    // signal can ever pay.
+    await waitFor(() =>
+      expect(apiMock.probePolicy).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "signal", signal: "unwatched", value: 400 }),
+      ),
+    );
+    expect(
+      // `humanDays` says "400 days" where the backend's `humanize_days` would say
+      // "1 year, 1 month". Two spellings of one fact, and the editor uses this one
+      // throughout, so the test asserts what the operator actually reads.
+      screen.getByText(/watch history goes back 400 days, and nothing can show/),
+    ).toBeVisible();
+  });
+
+  it("says nothing about history for a signal the mirror does not bound", async () => {
+    renderEditor({ body: body(), history_reach_days: 400 });
+
+    await screen.findByLabelText('Try a value against "How low it\'s rated"');
+
+    // A rating is a rating however short the history, so claiming the mirror bounds it would
+    // be a fact about the wrong signal.
+    expect(screen.getAllByText(/watch history goes back/)).toHaveLength(1);
+  });
+
+  it("keeps its nerve when the scan never recorded a reach", async () => {
+    // Null is "we don't know", not "no history": the probe falls back to the ramp's midpoint
+    // and the page claims nothing about the operator's history.
+    renderEditor({ body: body() });
+
+    await screen.findByLabelText('Try a value against "How long it\'s gone unwatched"');
+
+    expect(screen.queryByText(/watch history goes back/)).toBeNull();
+  });
+});

@@ -699,6 +699,19 @@ class PolicyOut(BaseModel):
     name: str
     body: PolicyIn
 
+    history_reach_days: float | None = None
+    """How far back the watch mirror goes, for the editor to say beside the controls it
+    bounds.
+
+    The dormancy ramp is the one it bounds hard: `dormancy.reference_instant` anchors a
+    never-played item at the LATER of its arrival and the mirror's edge, so the largest
+    dormancy any item can present IS this number. Setting "full points" past it therefore
+    caps what that signal can ever pay, and until the editor could say this, nothing on the
+    page could tell the operator so.
+
+    ``None`` when the scan did not record it, which the editor renders as not knowing rather
+    than as a reach of zero."""
+
     needs_save: bool = False
     """This body was rescaled on the way out and is NOT what is stored.
 

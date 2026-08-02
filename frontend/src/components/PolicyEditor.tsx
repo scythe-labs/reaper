@@ -676,9 +676,12 @@ function pointsSplit(builtIn: number, yours: number): string {
  *  its range. */
 function SignalRow({
   signal,
+  reachDays,
   onChange,
 }: {
   signal: SignalSetting;
+  /** How far back the watch mirror goes, or null when the scan did not record it. */
+  reachDays: number | null;
   onChange: (s: SignalSetting) => void;
 }) {
   const meta = SIGNAL_META[signal.signal] ?? { label: titleCase(signal.signal), help: "" };
@@ -717,7 +720,9 @@ function SignalRow({
         aria-label={`How much "${meta.label}" matters`}
         onChange={(e) => onChange({ ...signal, weight: Number(e.target.value) })}
       />
-      {signal.weight > 0 && <SignalRamp signal={signal} label={meta.label} onChange={onChange} />}
+      {signal.weight > 0 && (
+        <SignalRamp signal={signal} label={meta.label} reachDays={reachDays} onChange={onChange} />
+      )}
     </li>
   );
 }
@@ -740,10 +745,12 @@ function SignalRow({
 function SignalRamp({
   signal,
   label,
+  reachDays,
   onChange,
 }: {
   signal: SignalSetting;
   label: string;
+  reachDays: number | null;
   onChange: (s: SignalSetting) => void;
 }) {
   const units = rampUnits(signal.signal);
@@ -813,7 +820,7 @@ function SignalRamp({
       </div>
       {/* Bound to the boxes above it, not to the slider, which has its own help (rule 45). */}
       <p className="help rule-help">{said}</p>
-      <SignalProbe signal={signal} label={label} />
+      <SignalProbe signal={signal} label={label} reachDays={reachDays} />
     </>
   );
 }
@@ -828,13 +835,34 @@ function SignalRamp({
  *  All three states render (rule 17/36). A probe that showed a stale number while the next
  *  was in flight, or fell silent when the read failed, would be a confident answer to a
  *  question nobody answered -- which is the whole failure this control exists to fix. */
-function SignalProbe({ signal, label }: { signal: SignalSetting; label: string }) {
+function SignalProbe({
+  signal,
+  label,
+  reachDays,
+}: {
+  signal: SignalSetting;
+  label: string;
+  reachDays: number | null;
+}) {
   const units = rampUnits(signal.signal);
-  // Open on the value where the ramp is most interesting: half way up it, which is a real
-  // point on every shape rather than an end that reads as 0 or as the whole weight.
-  const midpoint = Math.round((signal.floor + signal.saturate_at) / 2);
+  // Where the probe opens, and for the dormancy ramp it is not a neutral choice.
+  //
+  // That signal cannot read past the mirror's edge -- a never-played title is measured from
+  // the LATER of its arrival and that edge -- so the edge IS the most a title can ever
+  // present, and what it earns there is the most the signal can ever pay. Opening there
+  // answers "my 70-point rule is worth 70 points, right?" before it is asked, without a
+  // warning that would fire for everyone: the shipped far end is five years and almost
+  // nobody's history is that deep, so a warning here would be noise and would train the
+  // page to be ignored.
+  //
+  // Every other signal opens half way up its ramp, which is a real point on both shapes
+  // rather than an end that reads as 0 or as the whole weight.
+  const bounded = units?.boundedByHistory === true && reachDays !== null;
+  const opensAt = bounded
+    ? Math.round(reachDays)
+    : Math.round((signal.floor + signal.saturate_at) / 2);
   const [value, setValue] = useState<number | null>(null);
-  const tried = value ?? midpoint;
+  const tried = value ?? opensAt;
 
   const probe = useMemo(
     () =>
@@ -877,6 +905,17 @@ function SignalProbe({ signal, label }: { signal: SignalSetting; label: string }
             ? probeSentence(signal.signal, tried, answer.points, signal.weight)
             : `Working out what ${units.say(tried)} earns…`}
       </p>
+      {bounded && (
+        // The fact that makes the number above mean something. Said plainly rather than as
+        // a warning: it is true on every install and only matters once you read it next to
+        // where the far end sits.
+        // One string rather than an interpolation, so the sentence is a single text node:
+        // split across nodes, some screen readers read it out in pieces.
+        <p className="help rule-help">
+          {`Your watch history goes back ${humanDays(Math.round(reachDays))}, and nothing ` +
+            `can show as untouched for longer than that.`}
+        </p>
+      )}
     </div>
   );
 }
@@ -1811,6 +1850,9 @@ export function PolicyEditor({
             <SignalRow
               key={signal.signal}
               signal={signal}
+              // Off the SAVED policy, not the draft: it is a fact about the operator's watch
+              // history rather than a policy value, so it does not move as they edit.
+              reachDays={saved?.history_reach_days ?? null}
               onChange={(s) => {
                 const signals = [...draft.signals];
                 signals[i] = s;

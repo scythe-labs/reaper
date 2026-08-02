@@ -48,6 +48,14 @@ interface RampUnits {
    *  sits inside it with room past the point where it pays in full, so the flat top is
    *  visible rather than implied. */
   probeMax: number;
+  /** Whether the watch mirror caps what this signal can ever read.
+   *
+   *  Only dormancy is capped: a never-played title is measured from the LATER of its
+   *  arrival and the mirror's edge, because Reaper will not claim a file sat untouched for
+   *  five years when it can see one. So the largest value this signal can present IS the
+   *  reach, and a far end past it can never be earned. The others read facts the mirror
+   *  does not bound, and the watcher count's own shortfall has its own policy warning. */
+  boundedByHistory?: boolean;
   /** The lowest value this field can actually take, where that is not zero.
    *
    *  A ramp whose floor sits BELOW it never pays nothing for any real item, and "pays
@@ -63,7 +71,14 @@ const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
 /** Keyed by `SignalId`. A key absent from here is a rule of the operator's own, which
  *  states its own range in the rule editor and is not described by this module. */
 const RAMPS: Record<string, RampUnits> = {
-  unwatched: { shape: "direct", say: humanDays, unit: "days", probeMax: 3650, ...WHOLE },
+  unwatched: {
+    shape: "direct",
+    say: humanDays,
+    unit: "days",
+    probeMax: 3650,
+    boundedByHistory: true,
+    ...WHOLE,
+  },
   season_rank: {
     shape: "direct",
     say: (n) => (n === 1 ? "the newest season" : `the ${ordinal(n)}-newest season`),
