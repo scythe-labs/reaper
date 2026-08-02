@@ -475,10 +475,13 @@ describe("the scoring receipt", () => {
 // lives, so it stays open. The checks that came back clear are the quiet "nothing to see here"
 // block, so they rest folded behind one disclosure the operator opens only to read the list.
 describe("the protection blocks", () => {
+  // Real gate ids, and the sentences those gates really return from their ABSTAIN
+  // branches (src/reaper/engine/gates.py). The third row used to be a "Managed by Sonarr
+  // or Radarr." line on a gate id ("arr") that has never existed.
   const CHECKED = [
-    { gate: "whitelist", detail: "Not on your keep list." },
-    { gate: "streaming", detail: "Nobody is watching it right now." },
-    { gate: "arr", detail: "Managed by Sonarr or Radarr." },
+    { gate: "whitelisted", detail: "Not on your keep list." },
+    { gate: "streaming_now", detail: "Nobody is watching it right now." },
+    { gate: "curated_list", detail: "Not on any protected list." },
   ];
 
   it("rests the cleared list folded, and opens it on click", async () => {
@@ -506,7 +509,7 @@ describe("the protection blocks", () => {
       detail(WORKED_ROWS, {
         explanation: {
           ...base.explanation,
-          protections_fired: [{ gate: "whitelist", detail: "On your keep list." }],
+          protections_fired: [{ gate: "whitelisted", detail: "on your keep list, never reaped" }],
         },
       }),
     );
@@ -514,7 +517,7 @@ describe("the protection blocks", () => {
     const spared = screen.getByRole("heading", { name: "What spared it" });
     // A fired protection is the reason the file lives: its block is always open, never a fold.
     expect(spared.closest("section")?.querySelector("details")).toBeNull();
-    expect(screen.getByText("On your keep list.")).toBeTruthy();
+    expect(screen.getByText("on your keep list, never reaped")).toBeTruthy();
   });
 });
 
@@ -548,14 +551,20 @@ describe("the verdict headline", () => {
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          protections_fired: [fired("streaming_now", "being watched right now")],
+          protections_fired: [fired("streaming_now", "someone is watching it right now")],
         },
       }),
     );
     expect(screen.getByText("Kept for now")).toBeInTheDocument();
-    expect(screen.getByText(/someone is watching it right now/i)).toBeInTheDocument();
     // Dashed red, never the solid "Sanctuary" green and never amber (rule 49).
-    expect(container.querySelector(".verdict-held")).not.toBeNull();
+    const held = container.querySelector(".verdict-held");
+    expect(held).not.toBeNull();
+    // Scoped to that banner, because the sentence appears twice on the page: the fixture
+    // now carries the words `StreamingNowGate` really returns, so the "What spared it"
+    // block below renders the same string the banner quotes. Unscoped, this matched both
+    // and threw. Scoping also makes it the banner's own copy under test, which is what
+    // the test claims to be about.
+    expect(within(held as HTMLElement).getByText(/someone is watching it right now/i)).toBeTruthy();
     expect(container.querySelector(".verdict-protect")).toBeNull();
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
   });
@@ -605,8 +614,11 @@ describe("the verdict headline", () => {
           ...detail(WORKED_ROWS).explanation,
           match: { status: "unmatched", detail: null, rating_key: null },
           protections_unknown: [
-            fired("server_popularity", "could not check who watched it"),
-            fired("min_dormancy", "could not check when it was last played"),
+            fired(
+              "server_popularity",
+              "could not check who watched it in the last year: your watch history only goes back 90 days",
+            ),
+            fired("min_dormancy", "could not check when it was last watched: no history"),
           ],
         },
       }),
@@ -623,7 +635,12 @@ describe("the verdict headline", () => {
         explanation: {
           ...detail(WORKED_ROWS).explanation,
           match: { status: "ambiguous", detail: null, rating_key: null },
-          protections_unknown: [fired("server_popularity", "could not check who watched it")],
+          protections_unknown: [
+            fired(
+              "server_popularity",
+              "could not check who watched it in the last year: your watch history only goes back 90 days",
+            ),
+          ],
         },
       }),
     );
@@ -645,7 +662,12 @@ describe("the verdict headline", () => {
         explanation: {
           ...detail(WORKED_ROWS).explanation,
           match: { status: "conflicted", detail: null, rating_key: null },
-          protections_unknown: [fired("server_popularity", "could not check who watched it")],
+          protections_unknown: [
+            fired(
+              "server_popularity",
+              "could not check who watched it in the last year: your watch history only goes back 90 days",
+            ),
+          ],
         },
       }),
     );

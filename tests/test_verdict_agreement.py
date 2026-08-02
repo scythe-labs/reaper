@@ -47,7 +47,7 @@ BLOCKED = Evaluation(
         GateResult(
             GateId.SERVER_POPULARITY,
             ABSTAIN,
-            detail="could not reach Tautulli",
+            detail="could not check watch history: Tautulli did not respond",
             blocked=True,
         )
     ]
@@ -184,14 +184,23 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
     def test_a_reap_override_does_not_delete_something_streaming_now(self) -> None:
         """The one line that matters: a hand reap must not beat the active-stream veto."""
         streaming = Evaluation(
-            results=[GateResult(GateId.STREAMING_NOW, PROTECT, detail="being watched right now")]
+            results=[
+                GateResult(GateId.STREAMING_NOW, PROTECT, detail="someone is watching it right now")
+            ]
         )
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
         assert _verdict(streaming, 100, 10_000, policy, override="reap") == "protect"
 
     def test_a_reap_override_does_not_delete_an_unmanaged_file(self) -> None:
-        """No *arr owns it, so there is no path to delete through -- reaping it is a lie."""
+        """No *arr owns it, so there is no path to delete through -- reaping it is a lie.
+
+        The detail here answers to no live producer and cannot be quoted from one: the gate
+        was retired as unreachable, and ``GateId.UNMANAGED`` survives only so a stored
+        explanation written before that still decodes (``engine.gates``, below
+        ``DataHorizonGate``). This row IS that legacy shape, and its half of
+        ``STRUCTURAL_GATES`` is kept for it, so the string stays hand-written on purpose.
+        """
         unmanaged = Evaluation(
             results=[GateResult(GateId.UNMANAGED, PROTECT, detail="no *arr manages this file")]
         )
@@ -215,7 +224,10 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         blocked = Evaluation(
             results=[
                 GateResult(
-                    GateId.STREAMING_NOW, ABSTAIN, detail="could not reach Tautulli", blocked=True
+                    GateId.STREAMING_NOW,
+                    ABSTAIN,
+                    detail="could not check active streams: Tautulli did not respond",
+                    blocked=True,
                 )
             ]
         )
@@ -246,6 +258,10 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         The paired ABSTAIN is what keeps this from reading as a blanket loosening. A block
         still keeps the item out of every automatic path; all that changed is that the owner
         may answer it."""
+        # Abstract on purpose, unlike the fixtures elsewhere in this file: the sweep runs one
+        # row per gate and each gate names its own subject ("active streams", "watch
+        # history"), so no single real sentence fits. Nothing here reads the wording -- what
+        # is asserted is the verdict either side of the override.
         blocked = Evaluation(
             results=[GateResult(gate, ABSTAIN, detail="could not check it", blocked=True)]
         )
@@ -272,7 +288,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         ),
         (
             "something is playing right now",
-            [GateResult(GateId.STREAMING_NOW, PROTECT, detail="being watched right now")],
+            [GateResult(GateId.STREAMING_NOW, PROTECT, detail="someone is watching it right now")],
             "protect",
         ),
         (
@@ -282,12 +298,26 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         ),
         (
             "a popularity check that could not run",
-            [GateResult(GateId.SERVER_POPULARITY, ABSTAIN, detail="could not check", blocked=True)],
+            [
+                GateResult(
+                    GateId.SERVER_POPULARITY,
+                    ABSTAIN,
+                    detail="could not check watch history: Tautulli did not respond",
+                    blocked=True,
+                )
+            ],
             "condemn",
         ),
         (
             "a streaming check that could not run",
-            [GateResult(GateId.STREAMING_NOW, ABSTAIN, detail="could not check", blocked=True)],
+            [
+                GateResult(
+                    GateId.STREAMING_NOW,
+                    ABSTAIN,
+                    detail="could not check active streams: Tautulli did not respond",
+                    blocked=True,
+                )
+            ],
             "condemn",
         ),
         (
@@ -319,9 +349,14 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         (
             "a structural stop beside a check that could not run",
             [
-                GateResult(GateId.STREAMING_NOW, PROTECT, detail="being watched right now"),
                 GateResult(
-                    GateId.SERVER_POPULARITY, ABSTAIN, detail="could not check", blocked=True
+                    GateId.STREAMING_NOW, PROTECT, detail="someone is watching it right now"
+                ),
+                GateResult(
+                    GateId.SERVER_POPULARITY,
+                    ABSTAIN,
+                    detail="could not check watch history: Tautulli did not respond",
+                    blocked=True,
                 ),
             ],
             "protect",

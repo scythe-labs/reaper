@@ -266,7 +266,7 @@ class TestKeptChipWording:
             ("streaming_now", "someone is watching it right now", "playing right now"),
             (
                 "rating_floor",
-                "well rated: 6.8 on IMDb from 722,243 votes, at or above the 7.5 you keep",
+                "well rated: 6.8 on IMDb from 722,243 votes",
                 "well rated: 6.8 on IMDb",
             ),
             ("rating_floor", "some future wording", "well rated"),
@@ -419,10 +419,7 @@ class TestChip:
                 fired=[
                     {
                         "gate": "rating_floor",
-                        "detail": (
-                            "well rated: 6.8 on IMDb from 722,243 votes, "
-                            "at or above the 6.0 you keep"
-                        ),
+                        "detail": "well rated: 6.8 on IMDb from 722,243 votes",
                     }
                 ],
             ),
@@ -1008,7 +1005,9 @@ class TestChipWhy:
     def test_a_fired_protection_says_the_same_words_without_the_lead(self) -> None:
         """ "Kept, playing right now" reads "kept for now: playing right now"."""
         chip = _chip(
-            _exp(90, fired=[{"gate": "streaming_now", "detail": "someone is watching"}]),
+            _exp(
+                90, fired=[{"gate": "streaming_now", "detail": "someone is watching it right now"}]
+            ),
             "protect",
             90,
         )
@@ -1081,7 +1080,14 @@ class TestChipWhy:
         ("explanation", "verdict", "score"),
         [
             (_exp(90, fired=[{"gate": "unmanaged", "detail": "not managed"}]), "protect", 90),
-            (_exp(90, fired=[{"gate": "curated_list", "detail": "on a list"}]), "protect", 90),
+            (
+                _exp(
+                    90,
+                    fired=[{"gate": "curated_list", "detail": "on a protected list: imdb_top_250"}],
+                ),
+                "protect",
+                90,
+            ),
             (_exp(82, match_status="unmatched"), "abstain", 82),
             (_exp(50, match_status="ambiguous"), "abstain", 50),
             (

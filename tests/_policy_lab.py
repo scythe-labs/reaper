@@ -25,7 +25,7 @@ from reaper.engine.policy import PolicyBody
 from reaper.engine.signals import SignalConfig
 from reaper.ratings import Rating, RatingSource
 from reaper.services.scan_runner import build_gates
-from reaper.services.snapshot import effective_fate, judge_facts
+from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
 
 FIXTURE = Path(__file__).parent / "fixtures" / "policy_lab_vectors.json"
 
@@ -247,7 +247,7 @@ def judge(
         # Facts. The fixture records the gate's states separately from the override, so the
         # PROTECT is injected here to reproduce that row -- the same shape snapshot passes
         # through ``extra_results``.
-        extra.append(GateResult(GateId.WHITELISTED, PROTECT, detail="spared by hand"))
+        extra.append(GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL))
     if (g := guard_result(vector)) is not None:
         extra.append(g)
     judged = judge_facts(
