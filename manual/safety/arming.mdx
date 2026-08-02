@@ -1,0 +1,26 @@
+---
+id: "arming"
+title: "Turning deletion on"
+description: "Arming is a separate, deliberate, password-gated step. Do it last, after everything else is set."
+sidebar_position: 5
+---
+
+{/* GENERATED FILE. Do not edit.
+    Source:     the "arming" doc in frontend/src/docs/content/
+    Regenerate: npm --prefix frontend run gen-manual */}
+
+Editing a policy changes nothing about whether Reaper can delete. A fresh install is read-only: it can scan, score, and explain, and nothing else. Turning deletion on is its own act, done in the app with your password. The one exception is a deploy that sets `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true`, which starts the first boot armed.
+
+<Callout tone={"note"}>
+
+**Arming and deleting are separate.** Turning the switch on removes nothing. A real run still needs a typed confirmation that matches the exact plan, recomputed on the server.
+
+</Callout>
+
+## When you're ready {#steps}
+
+1. Set your pace and grace, and turn on the Leaving Soon shelf so your users get a warning. To see it before you arm anything, also turn on "Update while read-only" in Settings, Plex.
+2. In Policy, Deletion, turn deletion on. It asks for the admin password you set on your first run. Turning it back off is free.
+3. Keep your first run supervised, and read the exact list before you confirm the phrase.
+
+Even armed, Reaper re-checks safety at the moment of every delete: nothing that is being watched is removed, caps stop a run rather than trimming it while they are on, and the scheduler never deletes. A real reap is always a person typing the phrase.

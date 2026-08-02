@@ -9,7 +9,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GATE_META } from "../components/policyMeta";
 import { expectNoA11yViolations } from "../test/a11y";
 import { docSections } from "./blocks";
-import { understandingPolicy } from "./content/understandingPolicy";
 import { DocBody } from "./DocBody";
 import { DocsModal } from "./DocsModal";
 import { DocsProvider, useDocs } from "./DocsContext";
@@ -225,24 +224,50 @@ describe("useDocs / DocsProvider", () => {
   });
 });
 
-describe("the protections table", () => {
-  // Rule 25: operator copy may only name a feature that is wired. This table hand-lists the
-  // protections and their defaults, so it is a second copy of GATE_META that nothing kept
+describe("the protections tables", () => {
+  // Rule 25: operator copy may only name a feature that is wired. These tables hand-list the
+  // protections and their defaults, so each is a second copy of GATE_META that nothing kept
   // honest -- when the "unmanaged" gate was retired, its entry left GATE_META and the editor
   // while this row stayed, telling operators a protection shipped On that no policy carried.
-  it("names only protections the policy editor can still show", () => {
-    const protections = understandingPolicy.body.find(
-      (b): b is Extract<typeof b, { kind: "table" }> =>
-        b.kind === "table" && b.head[0] === "Protection",
-    );
-    expect(protections).toBeDefined();
+  //
+  // This walks EVERY doc, not one. Guarding `understandingPolicy` alone is how the cheat
+  // sheet's identical table went unchecked and drifted to five of the seven gates, under a
+  // heading promising all of them (rule 144: the ungenerated sibling is the dangerous copy).
+  //
+  // And it checks BOTH directions. The one-way version could only catch a row naming a gate
+  // that no longer exists; a gate ADDED to the engine leaves every listed label still valid,
+  // so the list silently goes incomplete while the test stays green (rule 145).
+  const tables = DOCS.flatMap((doc) =>
+    doc.body
+      .filter(
+        (b): b is Extract<typeof b, { kind: "table" }> =>
+          b.kind === "table" && b.head[0] === "Protection",
+      )
+      .map((table) => ({ docId: doc.id, table })),
+  );
 
-    const known = new Set(Object.values(GATE_META).map((m) => m.label));
-    const listed = protections!.rows.map((r) => r[0] ?? "");
-
-    expect(listed.length).toBeGreaterThan(0);
-    expect(listed.filter((label) => !known.has(label))).toEqual([]);
+  // Pinned: the population the walk collects. A table that stops matching the header drops out
+  // of the walk, and every assertion below then passes over what is left (rule 145).
+  it("finds a protections table in each doc that claims to list them", () => {
+    expect(tables.map((t) => t.docId).sort()).toEqual(["cheat-sheet", "understanding-policy"]);
   });
+
+  it.each(tables.map((t) => [t.docId, t.table] as const))(
+    "%s lists every protection, and only real ones",
+    (docId, table) => {
+      const known = Object.values(GATE_META).map((m) => m.label);
+      const listed = table.rows.map((r) => r[0] ?? "");
+
+      expect(
+        listed.filter((label) => !known.includes(label)),
+        `${docId} names a protection GATE_META no longer has`,
+      ).toEqual([]);
+      expect(
+        known.filter((label) => !listed.includes(label)),
+        `${docId} is missing a protection that ships today`,
+      ).toEqual([]);
+    },
+  );
 });
 
 // Picking a doc from the index swaps the whole article beside it while focus stays on the

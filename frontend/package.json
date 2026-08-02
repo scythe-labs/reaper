@@ -11,6 +11,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "icons": "node scripts/gen-icons.mjs",
+    "gen-wordmark": "vitest run src/brand/wordmark.gen.test.ts -u",
+    "gen-manual": "vitest run src/docs/manual.gen.test.ts -u",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",

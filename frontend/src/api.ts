@@ -1705,7 +1705,7 @@ export const api = {
       current_password: currentPassword ?? null,
     }),
 
-  // The Discord webhook is the one channel that actually warns the household before a title
+  // The Discord webhook is the one channel that actually warns your users before a title
   // is deleted. Like an API key it is write-only: `has_webhook` says only whether one is set.
   notifications: () => request<Notifications>("/api/settings/notifications"),
   setWebhook: (webhook_url: string) =>

@@ -1179,6 +1179,7 @@ _EXPECTED_MANIFEST_KINDS = {
     ("docker-compose", "/"),
     ("uv", "/"),
     ("npm", "/frontend"),
+    ("npm", "/website"),
 }
 
 
@@ -1409,9 +1410,13 @@ def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None
 #: edit that is not even a change (rule 147).
 _NODE_MAJOR = re.compile(r"""(?:FROM\s+node:|node-version:\s*)["']?(\d+)""")
 
-#: The Dockerfile and ci.yml. Pinned because the agreement assertion below is vacuously true
-#: on one site, or on none (rule 145).
-_EXPECTED_NODE_SITES = 2
+#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), and docs-deploy.yml. Pinned
+#: because the agreement assertion below is vacuously true on one site, or on none (rule 145).
+#:
+#: The manual site's two are here for the same reason as the others rather than as bookkeeping:
+#: it builds with `npm ci` against a committed lockfile, so a Node major that drifts from the
+#: one the lockfile was resolved on is a publish that fails on a tree nothing else exercises.
+_EXPECTED_NODE_SITES = 4
 
 
 def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> None:
@@ -2598,4 +2603,117 @@ def test_the_frontend_reap_blockers_read_the_fields_the_server_builds_reap_ready
         f"reads: {sorted(frontend)}\nEvery conjunct of reap_ready needs a sentence in "
         "reapReadiness.ts saying what to go and do about it, or the Reap page and the wizard's "
         "last step promise a run the server refuses."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The manual site's palette
+# ---------------------------------------------------------------------------
+
+#: The site copies Reaper's tokens rather than importing them, because the app and the site are
+#: separate builds and sharing a stylesheet across that boundary would tie two node projects
+#: together for a handful of hex values. A copy is exactly what rule 144 warns about, so the copy
+#: is checked here instead of trusted.
+_APP_TOKEN_CSS = REPO / "frontend" / "src" / "styles" / "00-tokens.css"
+_SITE_TOKEN_CSS = REPO / "website" / "src" / "css" / "custom.css"
+
+#: Reconciled by hand against `website/src/css/custom.css`: every `--rp-*` token it declares in
+#: BOTH themes. Pinned because the comparison below is driven by what the site declares, and a
+#: token deleted from the site drops out of the comparison rather than failing it (rule 145).
+_EXPECTED_SHARED_TOKENS = 19
+
+
+def _css_block(text: str, opener: str) -> str:
+    """The brace-balanced body of the first block introduced by ``opener``."""
+    start = text.index(opener) + len(opener)
+    depth = 1
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+    raise AssertionError(f"unbalanced braces after {opener!r}")
+
+
+#: `--accent-text` is deliberately not the same declaration in the two files, so comparing it
+#: would fail forever on a difference that is correct. The app writes a MEASURED ink at runtime
+#: (`accent.ts` searches for a value clearing WCAG AA against each theme's ground, because the
+#: accent is operator-configurable and a fixed darken does not clear a pale yellow), and the
+#: token there is `var(--accent-text-light, <fallback>)` so the measurement can win. The site has
+#: no runtime measurement and no custom accent, so it carries the fallback alone. The fallbacks
+#: themselves are compared: they are the substring this exclusion does not reach.
+_PALETTE_EXCLUDED = {"--rp-accent-text"}
+
+
+def _declarations(block: str) -> dict[str, str]:
+    """``--name: value`` pairs, whitespace collapsed so formatting cannot fail the compare.
+
+    Comments are stripped first. Both files explain their tokens inline, and a `/* … */` sitting
+    between two declarations otherwise lands inside the preceding value: the first run of this
+    check read `--radius-sm` as seven pixels followed by a paragraph about progress fills.
+    """
+    block = re.sub(r"/\*.*?\*/", "", block, flags=re.DOTALL)
+    return {
+        m.group(1): " ".join(m.group(2).split())
+        for m in re.finditer(r"(--[a-z0-9-]+)\s*:\s*([^;]+);", block)
+    }
+
+
+def test_the_site_palette_matches_the_app_palette() -> None:
+    """Every color the manual site copies from the app still says what the app says.
+
+    Named from `website/src/css/custom.css`, which tells the next author this check exists;
+    rule 7 makes that comment a promise, and this is the promise kept. The failure it exists for
+    is quiet and cosmetic-looking: someone retunes an accent in the app for contrast, the site
+    keeps the old value, and the two surfaces of one product drift apart a shade at a time. The
+    accent tokens are the ones that matter, because the app's are the output of a WCAG AA
+    contrast search and a stale copy here fails that bar while looking fine.
+    """
+    app = _APP_TOKEN_CSS.read_text(encoding="utf-8")
+    site = _SITE_TOKEN_CSS.read_text(encoding="utf-8")
+
+    themes = {
+        "light": (
+            _declarations(_css_block(app, ":root {")),
+            _declarations(_css_block(site, ":root {")),
+        ),
+        "dark": (
+            _declarations(_css_block(app, "@media (prefers-color-scheme: dark) {")),
+            _declarations(_css_block(site, '[data-theme="dark"] {')),
+        ),
+    }
+
+    compared: set[str] = set()
+    wrong: list[str] = []
+    for theme, (app_decls, site_decls) in themes.items():
+        for name, site_value in site_decls.items():
+            if not name.startswith("--rp-") or name in _PALETTE_EXCLUDED:
+                continue
+            app_name = "--" + name.removeprefix("--rp-")
+            if app_name not in app_decls:
+                continue
+            # The site's values reference `--rp-*`; the app's reference the same names without
+            # the prefix. Normalizing lets a `color-mix(...)` be compared as text like any
+            # other value, rather than being skipped as too hard.
+            normalized = site_value.replace("var(--rp-", "var(--")
+            compared.add(name)
+            if normalized != app_decls[app_name]:
+                wrong.append(
+                    f"  {theme}: {name} is {normalized!r} here, "
+                    f"but {app_name} is {app_decls[app_name]!r} in the app"
+                )
+
+    assert not wrong, (
+        "website/src/css/custom.css has drifted from frontend/src/styles/00-tokens.css:\n"
+        + "\n".join(wrong)
+        + "\nThe app's tokens are the source. Copy the new value across, and re-read the "
+        "contrast note beside it before assuming the change is cosmetic."
+    )
+    assert len(compared) == _EXPECTED_SHARED_TOKENS, (
+        f"the palette walk compared {len(compared)} tokens, expected "
+        f"{_EXPECTED_SHARED_TOKENS}. If you added or removed a --rp-* token in both themes of "
+        "website/src/css/custom.css, move this number with it; if you did not, a token dropped "
+        f"out of the comparison and is no longer checked. Compared: {sorted(compared)}"
     )

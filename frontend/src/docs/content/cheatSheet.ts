@@ -37,6 +37,8 @@ export const cheatSheet: Doc = {
         ["Keep well-rated titles", "IMDb 7.5, 1,000 votes"],
         ["Spare titles you've tagged", "`reaper-keep`"],
         ["Honor protected lists", "IMDb Top 250"],
+        ["Never touch something playing right now", "On"],
+        ["Stop if the unwatched time can't be read", "On"],
       ],
     ),
 
@@ -56,7 +58,7 @@ export const cheatSheet: Doc = {
     // "stop", matching understandingPolicy's line about the same mechanism. "Abort" was the
     // only place in the product an operator met that word (U-15).
     p(
-      'Caps stop the whole run when crossed. They never remove just the part that fits. Leave "Limit how much each run removes" on: switching it off drops the two run limits above. Unknown-size items are still held back, and the countdown still runs.',
+      'Caps stop the whole run when crossed. They never remove just the part that fits. Leave "Limit how much each run removes" on: switching it off drops both rows above. Unknown-size items are still held back, and the countdown still runs.',
     ),
 
     h2("Habits that keep you safe", "habits"),

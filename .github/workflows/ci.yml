@@ -54,6 +54,7 @@ jobs:
     outputs:
       code: ${{ steps.decide.outputs.code }}
       prose: ${{ steps.decide.outputs.prose }}
+      site: ${{ steps.decide.outputs.site }}
     steps:
       # Actions are pinned to commit SHAs (the tag in the comment is what the SHA was
       # resolved from): a mutable tag on a third-party action is a supply-chain door
@@ -95,6 +96,7 @@ jobs:
             echo "cannot determine the diff ($1); running both lanes"
             echo "code=true"  >> "$GITHUB_OUTPUT"
             echo "prose=true" >> "$GITHUB_OUTPUT"
+            echo "site=true"  >> "$GITHUB_OUTPUT"
             exit 0
           }
 
@@ -113,17 +115,25 @@ jobs:
 
           code=false
           prose=false
+          site=false
           while IFS= read -r f; do
             [ -n "${f}" ] || continue
             case "${f}" in
-              docs/*|.claude/*|*.md) prose=true ;;
-              *)                     code=true  ;;
+              docs/*|.claude/*|*.md)   prose=true ;;
+              # The manual's words and the site that renders them. Neither ships in the
+              # image, so a docs-only commit does not need the backend, frontend or
+              # docker lanes -- but it DOES need a lane of its own, or an .mdx that fails
+              # to compile lands with nothing having tried to build it. Note `*.md` above
+              # does not match `.mdx`, which is why these are listed rather than assumed.
+              manual/*|website/*)      site=true  ;;
+              *)                       code=true  ;;
             esac
           done <<< "${files}"
 
           echo "code=${code}"   >> "$GITHUB_OUTPUT"
           echo "prose=${prose}" >> "$GITHUB_OUTPUT"
-          echo "verdict: code=${code} prose=${prose}"
+          echo "site=${site}"   >> "$GITHUB_OUTPUT"
+          echo "verdict: code=${code} prose=${prose} site=${site}"
 
   check:
     runs-on: ubuntu-latest
@@ -327,6 +337,40 @@ jobs:
   # The one job that reports on every commit, whichever lane ran, and therefore the one
   # worth naming as a required status check in branch protection.
   #
+  # The manual site. It ships nothing into the container, so it is gated for its own sake: an
+  # `.mdx` that fails to compile, a link to a page that does not exist, or a component the site
+  # never registered all fail the build here rather than on the published site. `onBrokenLinks`
+  # is `throw` in the config, which is what makes a dead cross-reference a red run.
+  #
+  # This lane does NOT check that the generated pages are current. That is the frontend lane's
+  # `manual.gen.test.ts`, which runs against the app's own blocks; a stale page reaching here
+  # would build perfectly well while saying the wrong thing.
+  site:
+    name: Manual site
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
   # `if: always()` is what makes it report at all: without it this job would inherit the
   # skip of anything it needs, which is the exact failure it exists to prevent. A skipped
   # lane is a pass here, because a lane skips only when `changes` proved it had nothing to
@@ -335,7 +379,7 @@ jobs:
     name: CI gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [changes, check, frontend, hygiene, docker]
+    needs: [changes, check, frontend, hygiene, docker, site]
     steps:
       - name: Verdict
         env:

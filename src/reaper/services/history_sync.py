@@ -553,7 +553,7 @@ async def latest(engine: AsyncEngine) -> datetime | None:
     "Did anybody watch anything?", where :func:`horizon` is the reach question. This
     **cannot** answer "is the ingest still running?": a stalled Tautulli ingest and a
     genuinely quiet library produce the identical ``MAX(watched_at)``, so degrading a scan
-    on this reads a household that went away for the weekend as a broken pipeline. Ask
+    on this reads users who went away for the weekend as a broken pipeline. Ask
     :func:`last_synced_at` for that.
     """
     return (await _state(engine)).latest

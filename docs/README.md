@@ -1,8 +1,11 @@
 # What is written down, and where it goes
 
-Reaper keeps four kinds of writing, split by **how long a statement stays true**. Putting a
-sentence in the wrong one is why docs go stale: a fact with a lifespan of days, filed next to
-one with a lifespan of years, makes both untrustworthy.
+Reaper keeps four kinds of writing **for whoever works on it**, split by **how long a statement
+stays true**. Putting a sentence in the wrong one is why docs go stale: a fact with a lifespan
+of days, filed next to one with a lifespan of years, makes both untrustworthy.
+
+Writing for whoever *runs* Reaper is a separate thing and lives outside `docs/`. It is split by
+audience rather than by lifespan, so it gets its own section below.
 
 | Kind | Lives in | Lifespan | How it is edited |
 |---|---|---|---|
@@ -66,6 +69,25 @@ one habit that reliably refills it, and it feels like diligence while it happens
   date; that is what makes an archive lie.
 - **A rule for how to work** → `.claude/rules/`, not here. See `CLAUDE.md`.
 
+## The operator's manual, which lives outside `docs/`
+
+Everything above is written for whoever works on Reaper. The **manual** is written for whoever
+runs it, and it lives in [`manual/`](../manual), served as a site by [`website/`](../website).
+Filing it here would put a page an operator reads next to a review pass they never will.
+
+Half of it is **generated**. The pages under Policy and Safety come from the app's own help
+content (`frontend/src/docs/content/*.ts`) through `frontend/src/docs/toMdx.ts`, so the app's
+help panel and the site say the same thing by construction. Edit the TypeScript, then run
+`npm --prefix frontend run gen-manual`; `manual.gen.test.ts` fails when a page is stale. The
+rest, install and configuration and the like, is hand-written `.mdx` beside them and appears
+only on the site: you cannot read in-app help for a thing you have not installed yet.
+
+**`README.md` is a third surface, and the split is by kind, not by length.** Features and the
+safety posture belong on the front page, because someone deciding whether to trust Reaper with
+their library should not have to hunt for them. **Instructions do not**: install, configuration,
+tags, ports and volumes live in the manual alone, so there is one copy to keep right. A
+`docker compose` line in the README was the second copy that prompted this rule.
+
 ## Figures never identify a server
 
 Reaper ships to operators whose libraries we will never see. Findings are recorded as ratios
@@ -94,6 +116,8 @@ auto-memory note to explain the product, move it here.
 | `CSS_SPLIT_PLAN.md` | state (one feature) | **live** — 3 of 7 stages landed; the last 4 are optional |
 | `I18N_PLAN.md` | state (one feature) | **live** — a proposal; nothing landed, no stage committed to |
 | `brand/README.md` | reference | stable; nothing here ships |
+| `../manual/` | the operator's manual | **live** — half generated from the app's help content |
+| `../website/` | the manual's site | **live** — Docusaurus; owns no words of its own |
 | `history/PLAN-narrative.md` | history | frozen — the retired living plan |
 | `history/CODE_REVIEW.md` | history | frozen — 100/100 findings remediated |
 | `history/CODE_REVIEW_PHASES.md` | history | frozen — 10/10 phases done |
