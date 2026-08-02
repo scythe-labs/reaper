@@ -200,14 +200,31 @@
 .rule-ramp {
   gap: var(--space-lg);
 }
+/* `align-items` is load-bearing, not tidiness. A column flex container stretches its
+   children by default, and `.qty` is a flex box with no width of its own, so each box came
+   out exactly as wide as the caption above it: "Pays nothing at or above" gave a 147px box
+   and "Full points at" a 101px one, for the same 3.6rem input. Two boxes side by side then
+   disagreed on width for a reason that had nothing to do with what they hold, and neither
+   fitted its own contents (rule 40 -- width is the only thing that may vary, and it varies
+   with the VALUE, never with the label). */
 .ramp-field {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--space-xs);
 }
 .ramp-field > span {
   font-size: var(--text-sm);
   color: var(--muted);
+}
+/* The box holds exactly what its own field can show, and no more. A single fixed width was
+   wrong in both directions: `narrow` clipped a four-digit dormancy end to "182", and the
+   standard width left a three-character rating floating in a box built for four. `1ch` is
+   one figure of the tabular face the box already uses, and the addend is the control
+   standard's own padding plus room for the browser's spinner. `--ramp-chars` comes from
+   `PolicyEditor`'s `rampBoxWidth`, which is the one place the count is declared (rule 67). */
+.ramp-field .qty input[type="number"] {
+  width: calc(var(--ramp-chars, 4) * 1ch + 2.4rem);
 }
 
 /* What a title would earn under the range above. An inset well rather than more help text:

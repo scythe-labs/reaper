@@ -48,6 +48,12 @@ interface RampUnits {
   /** The number an operator types is not always the number that is stored. */
   toStored: (typed: number) => number;
   fromStored: (stored: number) => number;
+  /** The widest value this box can ever show, so it can be sized to hold exactly that.
+   *
+   *  A fixed box is wrong in both directions here: 3.6rem clipped "1825", and 5rem left
+   *  "6.0" floating in a box sized for four characters. Width is the one thing rule 40 lets
+   *  vary, so it varies with what the FIELD can hold rather than with a global guess. */
+  widest: string;
   /** The far end of the probe's track, in stored units. Wide enough that the whole ramp
    *  sits inside it with room past the point where it pays in full, so the flat top is
    *  visible rather than implied. */
@@ -76,6 +82,7 @@ const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
  *  states its own range in the rule editor and is not described by this module. */
 const RAMPS: Record<string, RampUnits> = {
   unwatched: {
+    widest: "3650",
     lead: "A title untouched for",
     shape: "direct",
     say: humanDays,
@@ -85,6 +92,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   season_rank: {
+    widest: "20",
     lead: "A season that is",
     shape: "direct",
     say: (n) => (n === 1 ? "the newest season" : `the ${ordinal(n)}-newest season`),
@@ -94,6 +102,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   few_watchers: {
+    widest: "25",
     lead: "A title watched by",
     shape: "shortfall",
     say: (n) => (n === 1 ? "1 watcher" : `${n} watchers`),
@@ -102,6 +111,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   low_rating: {
+    widest: "10.0",
     lead: "A title rated",
     shape: "shortfall",
     say: (n) => `IMDb ${(n / 10).toFixed(1)}`,
@@ -114,6 +124,7 @@ const RAMPS: Record<string, RampUnits> = {
     fromStored: (stored) => stored / 10,
   },
   size: {
+    widest: "200",
     lead: "A title taking",
     shape: "direct",
     say: (n) => `${Math.round(n / 1e9)} GB`,

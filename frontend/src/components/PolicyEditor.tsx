@@ -25,7 +25,15 @@
 //   3. the deletion switch (its own password-gated call).
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import {
   api,
   ApiError,
@@ -742,6 +750,15 @@ function SignalRow({
  *
  *  Hidden at weight 0 rather than disabled, matching the gates: a signal worth no points has
  *  no range worth reading (rule 41). */
+/** How wide a ramp box has to be, as the custom property `14-policy-editor.css` reads.
+ *
+ *  One declaration for a value the TSX and the stylesheet must agree on (rule 67): the
+ *  component knows what the field can hold, the stylesheet knows the chrome it holds it in,
+ *  and neither can size the box alone. */
+function rampBoxWidth(widest: string): CSSProperties {
+  return { "--ramp-chars": widest.length } as CSSProperties;
+}
+
 function SignalRamp({
   signal,
   label,
@@ -772,7 +789,9 @@ function SignalRamp({
       value={units.step < 1 ? units.fromStored(value).toFixed(1) : units.fromStored(value)}
       suffix={units.unit}
       step={units.step}
-      width="narrow"
+      // The standard width, not `narrow`. Narrow is 3.6rem, and a dormancy far end is four
+      // digits plus the browser's spinner: "1825" came out clipped to "182". No new size
+      // either way (rule 40) -- this is the other one that already exists.
       min={bounds.min ?? 0}
       {...(bounds.max === undefined ? {} : { max: bounds.max })}
       ariaLabel={ariaLabel}
@@ -784,7 +803,7 @@ function SignalRamp({
     <>
       <div className="rule-control rule-ramp">
         {units.shape === "shortfall" ? (
-          <label className="ramp-field">
+          <label className="ramp-field" style={rampBoxWidth(units.widest)}>
             <span>Pays nothing at or above</span>
             {box(signal.saturate_at - signal.floor, `Where "${label}" stops paying`, (stored) =>
               // Floor back to zero with it: the pair carries one degree of freedom, and
@@ -795,7 +814,7 @@ function SignalRamp({
           </label>
         ) : (
           <>
-            <label className="ramp-field">
+            <label className="ramp-field" style={rampBoxWidth(units.widest)}>
               <span>Pays nothing until</span>
               {box(
                 signal.floor,
@@ -808,7 +827,7 @@ function SignalRamp({
                 { max: units.fromStored(signal.saturate_at - 1) },
               )}
             </label>
-            <label className="ramp-field">
+            <label className="ramp-field" style={rampBoxWidth(units.widest)}>
               <span>Full points at</span>
               {box(
                 signal.saturate_at,
