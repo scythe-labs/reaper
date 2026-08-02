@@ -1,0 +1,153 @@
+---
+title: Docker
+description: Compose or the CLI. CI publishes an image on every push, so there is nothing to build.
+sidebar_position: 2
+---
+
+# Docker
+
+CI publishes an image on every push, so there is nothing to build. The package is public, so
+the pull needs no login.
+
+<Callout tone="tip">
+  **The named volume below survives updates.** Docker creates `reaper-data` for you and keeps
+  it when the container is recreated or pulled fresh, so your policies, decisions and
+  encryption key carry over with no setup.
+</Callout>
+
+## Installation
+
+<Tabs groupId="docker-method" queryString>
+<TabItem value="docker-compose" label="Docker Compose" default>
+
+```yaml
+services:
+  reaper:
+    image: ghcr.io/scythe-labs/reaper:dev
+    container_name: reaper
+    restart: unless-stopped
+    ports:
+      - "8420:8420"
+    volumes:
+      - reaper-data:/data
+    environment:
+      REAPER_DESTRUCTIVE_ACTIONS_ENABLED: "false"
+      REAPER_LOG_LEVEL: INFO
+      # PUID: "1000"
+      # PGID: "1000"
+      # REAPER_TIMEZONE: "America/New_York"
+
+volumes:
+  reaper-data:
+```
+
+Then:
+
+```bash
+docker compose up -d          # serves on http://localhost:8420
+```
+
+</TabItem>
+<TabItem value="docker-cli" label="Docker CLI">
+
+```bash
+docker run -d \
+  --name reaper \
+  --restart unless-stopped \
+  -p 8420:8420 \
+  -v reaper-data:/data \
+  -e REAPER_DESTRUCTIVE_ACTIONS_ENABLED=false \
+  -e REAPER_LOG_LEVEL=INFO \
+  ghcr.io/scythe-labs/reaper:dev
+```
+
+Reaper then serves on `http://localhost:8420`.
+
+</TabItem>
+</Tabs>
+
+<Callout tone="tip">
+  **No healthcheck to write.** The image declares its own against `/api/health`, so
+  `docker ps` reports real health with no extra configuration. That endpoint is the one route
+  that answers without signing in, so a checker needs no credentials.
+</Callout>
+
+## The volume
+
+One path, `/data`, holding Reaper's own database. Your media stays where it is.
+
+A named volume works with no setup and persists across updates and recreation, which is why the
+examples above use one.
+
+Bind-mount a host directory instead, with `./data:/data`, when you want the files somewhere you
+can see and copy. That is what you want on a NAS, and it makes
+[backing up](/operating/backups) the three files a plain file copy rather than a trip through
+`docker volume`. Reaper's own Settings, Backup works either way.
+
+No `chown` needed either way: the container starts as root, takes ownership of the folder, then
+drops to an unprivileged user before it opens the database.
+
+## Settings worth knowing
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` | `false` | Whether a **brand new** install comes up able to delete. Seeds the first run only. |
+| `REAPER_LOG_LEVEL` | `INFO` | Set `DEBUG` when you are chasing something. |
+| `REAPER_LOG_JSON` | `false` | One JSON object per line, for a log collector. |
+| `PUID` / `PGID` | `1000` | Which user the app runs as. Unraid wants `99` / `100`. |
+| `REAPER_TIMEZONE` | host's zone | First-run default only. Settings, General owns it afterwards. |
+| `REAPER_PORT` | `8420` | The port **inside** the container. Moving it moves the healthcheck too. |
+| `REAPER_SECRET_KEY` | generated | See [the encryption key](/configuration/encryption-key). |
+
+Publishing Reaper on a different host port needs no variable. Change the left side of
+`8420:8420` and leave the right alone.
+
+The full list is in [Configuration](/configuration).
+
+## Which tag
+
+| Tag | Follows |
+| --- | --- |
+| `:dev` | the `dev` branch, where the work lands. **Use this for now.** |
+| `:latest` | `main`, once a release is cut. |
+
+These two are the only tags to put in a compose file.
+
+## Updating
+
+<Tabs groupId="docker-method" queryString>
+<TabItem value="docker-compose" label="Docker Compose" default>
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+</TabItem>
+<TabItem value="docker-cli" label="Docker CLI">
+
+```bash
+docker stop reaper
+docker rm reaper
+docker pull ghcr.io/scythe-labs/reaper:dev
+# then run the same command you installed with
+```
+
+</TabItem>
+</Tabs>
+
+Migrations run on every start, before the app accepts a connection. A half-migrated schema must
+never serve traffic for a tool that deletes media.
+
+## Building from source
+
+Uncomment `build:` in `docker-compose.yml` and run:
+
+```bash
+docker compose up -d --build
+```
+
+## Next
+
+[First run](/getting-started/first-run), in order. The first account to sign in claims the
+install, so it matters who does it.

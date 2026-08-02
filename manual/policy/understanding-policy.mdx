@@ -1,0 +1,248 @@
+---
+id: "understanding-policy"
+title: "Understanding policy"
+description: "Your policy is the rulebook Reaper follows when it decides what to remove."
+sidebar_position: 2
+---
+
+{/* GENERATED FILE. Do not edit.
+    Source:     the "understanding-policy" doc in frontend/src/docs/content/
+    Regenerate: npm --prefix frontend run gen-manual */}
+
+A policy is how you tell Reaper what "nobody watches this" means for your server. It gathers reasons a title looks expendable, adds them into a single score, and flags anything that crosses your line. A whole separate set of protections can keep a title no matter how it scored.
+
+<Callout tone={"tip"}>
+
+**Start cautious, then tighten one nudge at a time.** You can always remove more later, and it is reversible up to the moment of deletion.
+
+</Callout>
+
+## The mental model {#mental-model}
+
+**The flag threshold is your line.** Every title gets a score from 0 to 100. At or above your line, it becomes a candidate for removal. Below it, Reaper leaves it alone. A higher line means Reaper has to be more sure.
+
+**Signals are soft pressure that adds up.** How long it has gone unwatched, how few people watch it, how low it is rated. Each pushes the score up by its weight. In practice, how long it has gone unwatched does almost all the work.
+
+**Protections are hard lines that always win.** They sit in their own lane and can only ever keep a file, never remove one. If any single protection fires, the title stays, whatever it scored.
+
+**Caps stop a run; grace is the heads-up.** Caps limit how much any one run, and any rolling 30 days, can remove, and a cap stops the whole run when it is crossed. Grace shows every flagged title as leaving for a set number of days. Watching a title or sparing it keeps it, and nothing goes until you run a reap yourself.
+
+**Missing information can only protect, never delete.** The score is pressure that adds up from zero. Anything Reaper cannot read, an outage, a stale ratings file, a title it cannot match, adds no pressure.
+
+## The recommended workflow {#workflow}
+
+Follow it in order the first time.
+
+<Steps>
+
+<Step title={"Connect your watch history first."}>
+
+Every score starts from how long a title has sat untouched, and your history source is what tells Reaper when it was last played and how far back it can look. Connect it and let one scan finish against real data before you tune anything.
+
+</Step>
+
+<Step title={"Start on the Cautious footing."}>
+
+Pick Cautious as your starting point. It sets a high line (82), small runs (5 titles or 250 GB), and a long grace window (30 days). Do not hand-edit the points yet.
+
+</Step>
+
+<Step title={"Leave every protection on."}>
+
+Above all, leave the time-to-be-rewatched line at its 3-year default. It is a hard line, so nothing can outvote it.
+
+</Step>
+
+<Step title={"Run a scan and let it finish."}>
+
+A scan freezes all the evidence, then scores, so a brief timeout can never flip a title’s fate mid-run. If it comes back "incomplete," a source failed and Reaper marked the run unusable on purpose. Fix the source and scan again.
+
+</Step>
+
+<Step title={"Read a few \"why\" panels before touching anything."}>
+
+Open several flagged titles and read why each was flagged, and which protections were checked and did not fire. Notice how much of the pressure is just time unwatched.
+
+</Step>
+
+<Step title={"Tune with the simulator, one nudge at a time."}>
+
+Move the line down a step and watch the count, the space reclaimed, and the named titles change live. Tighten gradually over several scans.
+
+</Step>
+
+<Step title={"Set pace and grace, then arm deletion last."}>
+
+Confirm your caps and grace, and turn on the Leaving Soon shelf so your users can rescue anything about to go. To see the shelf before you arm anything, also turn on "Update while read-only" in Settings, Plex. Only then arm deletion, which is password-gated and separate from all tuning.
+
+</Step>
+
+</Steps>
+
+## What's in a policy {#in-a-policy}
+
+A policy has two halves. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan. The limits on how much one run may remove, and how long a title shows as leaving (caps and grace), take effect immediately. Movies and TV are two separate policies, tuned on their own.
+
+### Your starting point {#starting-point}
+
+Pick a starting point, which stages a line, the standard mix of points, and a set of caps into your draft. Review it, then save. The shipped default is the same as Balanced.
+
+| Setting | Cautious | **Balanced (default)** | Aggressive |
+| --- | --- | --- | --- |
+| Flag threshold | 82 | 70 | 58 |
+| Most titles per run | 5 | 10 | 25 |
+| Most disk per run | 250 GB | 500 GB | 1 TB |
+| Most titles per 30 days | 50 | 100 | 150 |
+| Most disk per 30 days | 1 TB | 2 TB | 4 TB |
+| Grace period | 30 days | 14 days | 7 days (minimum) |
+| Protections | All on | All on | All on |
+
+A starting point only sets the line, the point mix, and those caps. It never changes your protections, keep tags, rating bars, or TV season rules.
+
+### The flag threshold {#threshold}
+
+The threshold is a confidence line. A title is flagged only when its score reaches it, so a higher line means Reaper flags fewer titles and has to be more sure. Move it down one step at a time in the simulator and watch what appears.
+
+### Signals: soft pressure {#signals}
+
+Each signal pushes the score up by up to its number of points. The default mix differs for movies and TV.
+
+| Signal | What it means | Movie points | TV points |
+| --- | --- | --- | --- |
+| How long it's gone unwatched | How long it has sat untouched, counted from the last play or from the day it arrived | 70 | 60 |
+| How few people watch it | Fewer recent viewers means more pressure | 20 | 15 |
+| How old a season is | Older seasons carry more pressure (TV only) | not used | 15 |
+| How low it's rated | Lower ratings add a little pressure | 10 | 10 |
+| How big it is on disk | Off by default | 0 (off) | 0 (off) |
+
+**The points share one fixed budget.** Every signal's points, plus any of your own removal rules, must total exactly 100 before you can save. A point is literally how much that signal can add to the score. So lowering one signal frees points you must hand to another signal or removal rule first. Setting a signal to 0 turns it off and returns its points to the pot.
+
+<Callout tone={"note"}>
+
+**Size is off on purpose.** Weighting size aims Reaper at your biggest files, which are usually the 4K titles people chose to keep. Size measures how much space you would reclaim, not whether anyone still wants it. Leave it off, and instead sort the flagged list by size at review time and approve the big ones first.
+
+</Callout>
+
+### Protections: what's always kept {#protections}
+
+All of these are on by default, in both the movie and TV policies. Any one that fires keeps the title, no matter its score. A protection Reaper cannot check keeps the file.
+
+| Protection | What it keeps | Default |
+| --- | --- | --- |
+| Give every title time to be rewatched | Anything younger than the age line | 3 years (cannot go below 5 days) |
+| Keep what your users actually watch | Anything enough people played recently | 3 people, within the last year |
+| Keep well-rated titles | Anything clearing your rating bar | IMDb 7.5, at least 1,000 votes |
+| Spare titles you've tagged | Anything with your keep tag | Tag `reaper-keep`, plus a Never Reap collection |
+| Never touch something playing right now | Anything being watched at that moment | On, re-checked live |
+| Stop if the unwatched time can't be read | Anything Reaper couldn't measure | On |
+| Honor protected lists | Titles on a curated list | On (IMDb Top 250) |
+
+### Pace and limits {#pace}
+
+These limit how much can happen, and are shared by movies and TV. They take effect the moment you save.
+
+| Limit | What it bounds | Default | Floor |
+| --- | --- | --- | --- |
+| Most titles per run | Titles one run may remove | 10 | 1 |
+| Most disk freed per run | Space one run may remove | 500 GB | Any amount |
+| Most titles per 30 days | Titles over any rolling 30 days | 100 | the run cap |
+| Most disk freed per 30 days | Space over any rolling 30 days | 2 TB | the run cap |
+| Grace period | Days a flagged title shows as leaving | 14 days | 7 days |
+| Unknown-size items per run | Titles whose size Reaper cannot read | 0 (held back) | 0 |
+
+Caps stop the whole run when crossed, and the rolling 30-day limits count every run in the window. Turning off "Limit how much each run removes" drops the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.
+
+### Movies and TV are tuned separately {#movies-tv}
+
+They are two policies behind one toggle, each with its own line, signals, and rating bars, plus TV’s season rules: keep the 2 newest seasons and the first season, hold an in-progress viewer’s place for 180 days (and optionally some seasons ahead of it, which starts at none), keep specials, and flag an unusual removal as "Needs a look." Switching the toggle with unsaved edits warns before it discards them.
+
+## Using the simulator {#simulator}
+
+The right-hand "What this would do" panel re-decides your last scan under your draft, with zero calls to Sonarr, Radarr, or your history source. It shows how many titles would be removed, how much space that frees, every title’s score against your line, example titles newly flagged, and how this draft differs from the policy you already saved.
+
+Nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.
+
+**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection's switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. An upgrade that retires a protection can say it too, without you having touched anything. A wrong number that looks live is worse than a blank one.
+
+<Callout tone={"caution"}>
+
+You have gone too far when the examples include titles you would keep, or you want to switch off a protection to "find more." Turning off a protection is the most effective way to remove more, and it looks like simplification. That is the warning sign. If a one-step drop nearly doubles the count, stop there.
+
+</Callout>
+
+## Recipes {#recipes}
+
+Starting points for common goals.
+
+### Reclaim space without risk
+
+Use the Balanced defaults: line 70, the 3-year age line, keep well-rated (IMDb 7.5 with 1,000 votes), keep anything 3 or more people watched in the last year, caps on, 14-day grace. Turn on Leaving Soon. Do not add size to the score. At review time, sort by size and approve the big ones first.
+
+### Very cautious setup
+
+Use Cautious: line 82, 5 titles or 250 GB per run, 50 or 1 TB per 30 days, 30-day grace. Leave every protection on and the unknown-size allowance at 0. Consider raising the age line above 3 years, and live through a couple of grace cycles before loosening anything.
+
+### Big backlog of never-played requests
+
+Keep the defaults, especially the 3-year age line and keep well-rated. Old, never-watched, mediocre requests are exactly what Balanced already flags. For one supervised first cleanup you can raise the per-run cap for that run only, leave the 30-day cap in place, then turn it back down.
+
+### Movies only, or TV only
+
+The two are separate policies. Tune and scan the one you care about, leave the other on its defaults, and do not approve its items. TV’s season rules already keep the 2 newest seasons and the first, hold an in-progress viewer’s place for 180 days, and keep specials.
+
+## Common mistakes {#mistakes}
+
+- **The points don't total 100, so the policy won't save.** Lowering one signal strands its points and holds the policy half back. Pace and grace still save. Safe habit: give the freed points to another signal or removal rule before saving.
+- **Forgetting that saving starts a fresh scan.** A policy change only takes effect after a scan, which begins by itself when you save. Safe habit: expect the rescan. Pace and grace apply immediately while policy changes wait for it.
+- **Treating arming like tuning.** Editing a policy changes nothing about whether Reaper can delete. Safe habit: set caps, grace, and Leaving Soon first, then arm, then keep the first run supervised.
+- **Going aggressive on the first pass.** Removing more is one nudge away and reversible until deletion. Safe habit: start on Cautious and loosen only as far as each supervised cycle proves safe.
+- **Switching off a protection to find more to delete.** This exposes titles the protection was keeping, whatever their score. Safe habit: to remove more, lower the line in the simulator and watch the number.
+- **Setting a rating bar with no vote floor.** A high rating from a few hundred votes is unreliable and would protect titles forever. Safe habit: keep a vote floor on any source that counts votes (the default is 1,000).
+
+## Glossary {#glossary}
+
+<Definitions>
+
+<Def term={"Policy"}>
+
+Your rulebook for one media type: the line, the signals, the protections.
+
+</Def>
+
+<Def term={"Flag threshold"}>
+
+The score, out of 100, at or above which a title becomes a candidate for removal.
+
+</Def>
+
+<Def term={"Signal"}>
+
+One reason to remove, adding up to its number of points to the score.
+
+</Def>
+
+<Def term={"Protection"}>
+
+A hard line that keeps a title no matter its score, and can never remove one.
+
+</Def>
+
+<Def term={"Grace"}>
+
+The days a flagged title shows as leaving, so someone can watch it or you can spare it. You still start every removal by hand.
+
+</Def>
+
+<Def term={"Cap"}>
+
+A limit on how much one run, or a rolling 30 days, may remove, while "Limit how much each run removes" is on. Crossing it stops the run.
+
+</Def>
+
+</Definitions>
+
+<Callout tone={"tip"}>
+
+**Start cautious, watch a few real runs, and tighten one nudge at a time.** You can always remove more later. You can never un-delete.
+
+</Callout>

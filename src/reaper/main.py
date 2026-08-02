@@ -349,7 +349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Reaper",
         version=__version__,
-        description="Explainable media library pruning for Plex.",
+        description="Grave decisions, clearly explained.",
         lifespan=lifespan,
         # The stock /docs, /redoc and /openapi.json sit OUTSIDE /api, which the
         # AuthGuard lets straight through -- so the defaults would publish the whole

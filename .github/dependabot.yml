@@ -176,3 +176,31 @@ updates:
       prefix: "build"
       include: "scope"
     open-pull-requests-limit: 5
+
+  # The manual site. It ships nothing into the container and no operator ever installs it, so a
+  # break here costs a docs build rather than a deployment, and everything can move together in
+  # one grouped pull request. The same 14-day cooldown applies: this tree is small, but it is
+  # still third-party code executing in CI with a token.
+  - package-ecosystem: "npm"
+    directory: "/website"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Etc/UTC"
+    cooldown:
+      default-days: 14
+    groups:
+      # Every `@docusaurus/*` package is released as one version and must be bumped as one, so
+      # they are grouped with majors included. Splitting them produces a pull request whose
+      # `npm ci` fails at peer resolution, the same shape as #364 in the frontend above.
+      docusaurus:
+        patterns: ["@docusaurus/*"]
+      website:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels: ["Kind/Documentation", "Kind/Chore", "Priority/Low"]
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    open-pull-requests-limit: 3

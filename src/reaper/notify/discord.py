@@ -152,7 +152,7 @@ class DiscordNotifier:
         overrules a fired ``min_dormancy`` (that gate is not in ``verdict.STRUCTURAL_GATES``)
         -- so the most ordinary way onto this shelf is the owner watching something, finding
         it in Sanctuary the next day, and reaping it to reclaim the space. The blanket
-        "Unwatched" this used to open with then told the whole household that a film one of
+        "Unwatched" this used to open with then told every user that a film one of
         them watched last night had gone unplayed. The dormancy that would let it branch per
         title is not on this call, so the claim is dropped rather than guessed.
         """

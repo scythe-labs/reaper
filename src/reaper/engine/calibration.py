@@ -14,7 +14,7 @@ per-operator prior nothing computes.
 
 The prior -- "how likely is a film dormant for N days to be watched again this year" --
 is the baseline the scorer must beat. It is **not a constant**, and shipping it as one
-is a bug: every library has its own rhythm. A household of three has a different curve
+is a bug: every library has its own rhythm. Three viewers produce a different curve
 from a server with a hundred users.
 
 ## Two ways to get this catastrophically wrong

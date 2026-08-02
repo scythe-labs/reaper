@@ -10,7 +10,7 @@ its only consumer. An unexpired window does not stop a send, and never has. What
 keeps a file at send time is the executor's own live interlocks, re-checked per item
 (``Executor._being_watched_now`` and ``Executor._watched_since_approval``, both called in
 ``_one_delete``), plus the manual spare and the fact that every deletion is started by hand.
-So the countdown is the household's chance to catch an item, not a lock that holds it: do
+So the countdown is your users' chance to catch an item, not a lock that holds it: do
 not write code or operator copy that treats an unexpired window as protection.
 
 This module computes where each currently-condemned item sits in that window. There is no
@@ -68,7 +68,7 @@ class GraceReport:
     grace_days: int
     in_grace: list[GraceItem]
     """Still counting down, soonest to clear first. Already plannable and already
-    deletable: the countdown is what the household sees, not a hold on the file (see the
+    deletable: the countdown is what your users see, not a hold on the file (see the
     module docstring). A spare ends it at any point, before or after it runs out."""
     ready: list[GraceItem]
     """The countdown has run out. **No more deletable than** ``in_grace`` -- the planner

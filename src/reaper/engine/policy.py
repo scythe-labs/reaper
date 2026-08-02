@@ -814,7 +814,7 @@ class ProfileSettings(Frozen):
     only ever loosens, and the executor re-reads it at execute time."""
 
     grace_days: int = Field(default=14, ge=7)
-    """How long a condemned item is shown as leaving, so the household can catch it.
+    """How long a condemned item is shown as leaving, so your users can catch it.
 
     A **notice** window, not a gate: nothing on the deletion path reads it (see the module
     docstring on ``services/grace.py``), so it drives the Leaving Soon shelf and the

@@ -1,0 +1,110 @@
+---
+id: features
+title: What makes it different
+description: Season logic that follows a viewer, explanations for the keeps, and defaults that err toward keeping.
+sidebar_position: 1
+---
+
+# What makes it different
+
+Reaper is meant to be useful out of the box. Every shipped default is the cautious one, and the
+logic that decides a removal is pinned by tests that fail the moment a verdict changes.
+
+## TV seasons, judged like a viewer would
+
+Most tools treat a show as one thing. Reaper decides **per season**, and never removes a whole
+series in one action: a show you reap fans out into its seasons.
+
+<Callout tone="tip">
+  **It follows where each person actually is.** Someone part-way through a season keeps that
+  season. The moment they finish it, the hold moves to the next one.
+</Callout>
+
+That hold is one season or the other, not both. It only holds both when Reaper cannot read the
+episode counts, which is the safe way to be wrong. Two details that matter in a real library:
+
+- It steps **over gaps**. Finish season 3 when only 3 and 5 are on disk and it holds 5.
+- It anchors on the **most recent play**, not the highest season number, so a re-watcher and
+  someone watching out of order are both protected.
+
+### Keeping a cushion in front of a binge
+
+By default the hold is one season: where each viewer is now. Set **"also keep N seasons ahead
+of where they are"** and Reaper holds that many more in front of every viewer, so someone on
+season 1 with a cushion of 2 keeps seasons 1, 2 and 3.
+
+<Callout tone="note">
+  **This starts at 0**, which means no cushion. Raise it if your users binge faster than
+  you scan, so Reaper is never deleting the season someone reaches tomorrow.
+</Callout>
+
+The hold lasts 180 days from that person's last play of the show. Set it to `0` to hold
+indefinitely.
+
+| Rule | Default |
+| --- | --- |
+| Always keep the newest seasons | 2, counting only seasons with files |
+| Always keep a show's first season | on, and it means the earliest on disk |
+| Never remove specials | on |
+| Keep seasons someone is partway through | on, 180 days |
+| Also keep seasons ahead of where they are | 0, no cushion |
+| Never remove a season with episodes missing | on, so a removal never races a download |
+| Ask me first when a removal looks unusual | on |
+
+The last one is worth spelling out. If the keep rule would remove a season **more people
+watched** than one it is keeping, Reaper stops and asks rather than deleting. A currently
+airing show's newest season is protected outright, with no switch to turn that off.
+
+<Callout tone="caution">
+  **A short watch history holds everything.** Where your history does not reach as far back as
+  your library, Reaper cannot tell who is partway through, so it holds every prunable season.
+  Automatic TV pruning stays inert until the history catches up. Working as intended, and
+  surprising if you are waiting for it to do something.
+</Callout>
+
+## It explains the keeps
+
+Every candidate carries the protections that were **checked and did not fire**, with the real
+numbers: *"Only 2 people watched it here in the last year, and it takes 3 to keep on that
+alone."* Nothing short-circuits, so every protection reports even once the answer is settled.
+
+The panel separates what spared a title, what it cleared, and what Reaper could not check and
+is leaving to you.
+
+## Safety you do not configure
+
+These are always on, with no setting to get wrong:
+
+- **The test file.** The smallest measured item goes first, alone, and is verified before
+  anything else is touched. If it misbehaves, the whole run halts.
+- **A phrase bound to the plan.** You type `REAP 7 SOULS 214 GB`, recomputed on the server, so
+  a stale tab and muscle memory both fail.
+- **A practice run** that walks every interlock and sends nothing.
+- **Unknown sizes are kept.** An item Reaper could not measure is never removed, and can never
+  be the test item.
+- **The scheduler never deletes.** Scans are automatic; removals are not.
+
+## Protections worth knowing about
+
+- **Curated lists.** The IMDb Top 250 ships as a protected list, refreshed before every scan.
+- **Keep tags.** Tag `reaper-keep` in Sonarr or Radarr, or curate a Plex collection named
+  `Never Reap` from your phone.
+- **Well-rated titles**, with a vote floor so a handful of votes cannot protect forever.
+
+## Things you turn on
+
+Off until you ask for them, so nothing surprises you:
+
+- **The Leaving Soon shelf**, a real Plex collection and label so your users can rescue a title
+  by watching it. It also needs deletion armed, unless you turn on "Update while read-only".
+- **Discord**, which announces one thing: what is leaving soon.
+- **HD/4K library mapping**, so Reaper can tell two copies of one title apart. Unmapped
+  duplicates are kept.
+
+## Before you commit to a change
+
+The simulator re-decides your last scan under a draft policy with no calls to your services, so
+you can move a number and watch the count, the space, and the named titles change.
+
+When an edit changes what a *scan would gather*, it stops showing numbers and asks for a fresh
+scan instead of showing you a confident wrong figure.

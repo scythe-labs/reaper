@@ -2,7 +2,7 @@
 """Calibration: deriving the rewatch prior from the owner's OWN history.
 
 The prior is the baseline the scorer must beat. Shipping it as a constant is a bug:
-every library has its own rhythm, and a household of three has nothing in common with
+every library has its own rhythm, and three viewers produce a different curve from
 a server used by a hundred people.
 
 Two ways this goes catastrophically wrong, both of which happened while building

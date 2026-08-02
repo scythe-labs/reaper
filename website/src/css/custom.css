@@ -1,0 +1,367 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The site wears Reaper's palette, so a callout here and a callout in the app's help panel are
+ * the same color because they are the same values, not because someone matched them by eye.
+ *
+ * The tokens below are copied from `frontend/src/styles/00-tokens.css`. Copied, because the app
+ * is a separate build with its own dependency tree and importing across that boundary would tie
+ * two node projects together for a stylesheet. That makes this a second copy under rule 144, so
+ * `tests/test_repo_hygiene.py::test_the_site_palette_matches_the_app_palette` reads both files
+ * and fails naming this one when they disagree. Retune a token in the app and this must follow.
+ *
+ * Infima (Docusaurus's own framework) is driven entirely from --ifm-* variables, so mapping our
+ * tokens onto those re-themes the navbar, sidebar, tables and code blocks in one place rather
+ * than overriding component by component. */
+
+:root {
+  /* ---- Reaper tokens, light ---- */
+  --rp-bg: #f4f5f8;
+  --rp-surface: #ffffff;
+  --rp-surface-2: #eef0f4;
+  --rp-border: #e4e6ec;
+  --rp-border-strong: #d3d6df;
+  --rp-text: #16181d;
+  --rp-muted: #666b78;
+  --rp-faint: #9aa0ad;
+
+  --rp-condemn: #c62630;
+  --rp-condemn-soft: #fdecec;
+  --rp-protect: #167c4d;
+  --rp-protect-soft: #e6f6ec;
+  --rp-unknown: #9a6212;
+  --rp-unknown-soft: #fcf3e1;
+
+  --rp-accent: #25c3ff;
+  --rp-accent-soft: color-mix(in srgb, var(--rp-accent) 15%, var(--rp-surface));
+  --rp-accent-ring: color-mix(in srgb, var(--rp-accent) 42%, transparent);
+  /* The accent is a fill, not an ink: at 2.03:1 on --rp-surface it fails WCAG AA as text, so
+   * accent-colored TEXT darkens 42%, which is what the app does and why. */
+  --rp-accent-text: color-mix(in srgb, var(--rp-accent), #000 42%);
+
+  --rp-radius: 11px;
+  --rp-radius-sm: 7px;
+
+  /* ---- Infima, driven from the above ---- */
+  --ifm-color-primary: var(--rp-accent-text);
+  --ifm-color-primary-dark: color-mix(in srgb, var(--rp-accent), #000 52%);
+  --ifm-color-primary-darker: color-mix(in srgb, var(--rp-accent), #000 58%);
+  --ifm-color-primary-darkest: color-mix(in srgb, var(--rp-accent), #000 68%);
+  --ifm-color-primary-light: color-mix(in srgb, var(--rp-accent), #000 32%);
+  --ifm-color-primary-lighter: color-mix(in srgb, var(--rp-accent), #000 24%);
+  --ifm-color-primary-lightest: color-mix(in srgb, var(--rp-accent), #000 14%);
+
+  --ifm-background-color: var(--rp-bg);
+  --ifm-background-surface-color: var(--rp-surface);
+  --ifm-font-color-base: var(--rp-text);
+  --ifm-heading-color: var(--rp-text);
+  --ifm-color-emphasis-300: var(--rp-border-strong);
+  --ifm-toc-border-color: var(--rp-border);
+  --ifm-table-border-color: var(--rp-border);
+  --ifm-table-stripe-background: var(--rp-surface-2);
+  --ifm-code-background: var(--rp-surface-2);
+  --ifm-navbar-background-color: var(--rp-surface);
+  --ifm-navbar-shadow: inset 0 -1px 0 var(--rp-border);
+  --ifm-footer-background-color: #101218;
+
+  --ifm-font-family-base: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ifm-font-family-monospace: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ifm-global-radius: var(--rp-radius-sm);
+  --ifm-code-font-size: 0.85em;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] {
+  --rp-bg: #0e0f13;
+  --rp-surface: #191b21;
+  --rp-surface-2: #22242c;
+  --rp-border: #2b2e37;
+  --rp-border-strong: #3a3e49;
+  --rp-text: #edeef1;
+  --rp-muted: #9ba1af;
+  --rp-faint: #6b7180;
+
+  --rp-condemn: #ff8086;
+  --rp-condemn-soft: #2c1618;
+  --rp-protect: #5fce97;
+  --rp-protect-soft: #12241b;
+  --rp-unknown: #e0a33f;
+  --rp-unknown-soft: #2a2013;
+
+  --rp-accent-soft: color-mix(in srgb, var(--rp-accent) 22%, var(--rp-surface));
+  --rp-accent-ring: color-mix(in srgb, var(--rp-accent) 45%, transparent);
+  /* The same sky reads 8.47:1 on the dark surface, so it is its own ink here. */
+  --rp-accent-text: var(--rp-accent);
+
+  --ifm-color-primary: var(--rp-accent);
+  --ifm-color-primary-dark: color-mix(in srgb, var(--rp-accent), #000 12%);
+  --ifm-color-primary-darker: color-mix(in srgb, var(--rp-accent), #000 20%);
+  --ifm-color-primary-darkest: color-mix(in srgb, var(--rp-accent), #000 32%);
+  --ifm-color-primary-light: color-mix(in srgb, var(--rp-accent), #fff 14%);
+  --ifm-color-primary-lighter: color-mix(in srgb, var(--rp-accent), #fff 22%);
+  --ifm-color-primary-lightest: color-mix(in srgb, var(--rp-accent), #fff 34%);
+
+  --ifm-footer-background-color: #0a0b0e;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+}
+
+/* ---------- callouts ---------- */
+
+.rp-callout {
+  display: block;
+  padding: 0.85rem 1rem;
+  border: 1px solid;
+  border-radius: var(--rp-radius);
+  margin: 1.1rem 0;
+  font-size: 0.94rem;
+}
+.rp-callout__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.4rem;
+}
+.rp-callout__ic {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+}
+.rp-callout__ic svg {
+  width: 100%;
+  height: 100%;
+}
+.rp-callout__body > :last-child {
+  margin-bottom: 0;
+}
+
+.rp-callout--tip {
+  background: var(--rp-protect-soft);
+  border-color: color-mix(in srgb, var(--rp-protect) 28%, transparent);
+}
+.rp-callout--tip .rp-callout__head {
+  color: var(--rp-protect);
+}
+.rp-callout--note {
+  background: var(--rp-accent-soft);
+  border-color: var(--rp-accent-ring);
+}
+.rp-callout--note .rp-callout__head {
+  color: var(--rp-accent-text);
+}
+.rp-callout--caution {
+  background: var(--rp-unknown-soft);
+  border-color: color-mix(in srgb, var(--rp-unknown) 30%, transparent);
+}
+.rp-callout--caution .rp-callout__head {
+  color: var(--rp-unknown);
+}
+
+/* ---------- steps ---------- */
+
+.rp-steps {
+  list-style: none;
+  counter-reset: rp-step;
+  padding: 0;
+  margin: 1.2rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.rp-step {
+  counter-increment: rp-step;
+  position: relative;
+  padding-left: 2.4rem;
+}
+.rp-step::before {
+  content: counter(rp-step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--rp-accent-text);
+  background: var(--rp-accent-soft);
+  border: 1px solid var(--rp-accent-ring);
+}
+.rp-step__title {
+  font-weight: 650;
+  margin-bottom: 0.15rem;
+}
+.rp-step__body > :last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- definitions ---------- */
+
+.rp-defs {
+  margin: 1.2rem 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.rp-defs__term {
+  font-weight: 700;
+  font-size: 0.94rem;
+}
+.rp-defs__body {
+  margin: 0.1rem 0 0;
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--rp-border-strong);
+  color: var(--rp-muted);
+}
+
+/* ---------- diagram ---------- */
+
+.rp-dg {
+  margin: 1.4rem 0;
+  padding: 1.1rem;
+  background: var(--rp-surface);
+  border: 1px solid var(--rp-border);
+  border-radius: var(--rp-radius);
+}
+.rp-dg__title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  margin-bottom: 0.9rem;
+  text-align: center;
+  color: var(--rp-muted);
+}
+/* A narrow screen scrolls the flow rather than clipping a branch off the edge. */
+.rp-dg__scroll {
+  overflow-x: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.rp-dg__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+.rp-dg__phase {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: var(--rp-faint);
+  border-top: 1px dashed var(--rp-border-strong);
+  width: 100%;
+  text-align: center;
+  padding-top: 0.6rem;
+  margin-top: 0.7rem;
+}
+.rp-dg__arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.3rem 0;
+}
+.rp-dg__line {
+  width: 1px;
+  height: 0.9rem;
+  background: var(--rp-border-strong);
+}
+.rp-dg__label {
+  font-size: 0.72rem;
+  color: var(--rp-muted);
+}
+.rp-dg__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: center;
+  width: 100%;
+}
+.rp-dg__node {
+  background: var(--rp-surface-2);
+  border: 1px solid var(--rp-border-strong);
+  border-radius: var(--rp-radius-sm);
+  padding: 0.5rem 0.85rem;
+  font-size: 0.86rem;
+  text-align: center;
+  min-width: 11rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.rp-dg__node--decision {
+  border-radius: 999px;
+  border-style: dashed;
+}
+.rp-dg__node--term {
+  border-radius: 999px;
+  font-weight: 650;
+}
+.rp-dg__node--keep {
+  background: var(--rp-protect-soft);
+  border-color: color-mix(in srgb, var(--rp-protect) 40%, transparent);
+  color: var(--rp-protect);
+}
+.rp-dg__node--stop {
+  background: var(--rp-condemn-soft);
+  border-color: color-mix(in srgb, var(--rp-condemn) 40%, transparent);
+  color: var(--rp-condemn);
+}
+.rp-dg__sub {
+  font-size: 0.74rem;
+  color: var(--rp-muted);
+}
+.rp-dg__branch {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.rp-dg__branch-line {
+  width: 1.4rem;
+  height: 1px;
+  background: var(--rp-border-strong);
+  flex: none;
+}
+.rp-dg__legend {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  justify-content: center;
+  font-size: 0.78rem;
+}
+.rp-dg__key {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.rp-dg__key::before {
+  content: "";
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 3px;
+  display: block;
+}
+.rp-dg__key--keep::before {
+  background: var(--rp-protect);
+}
+.rp-dg__key--stop::before {
+  background: var(--rp-condemn);
+}
+
+/* ---------- prose ---------- */
+
+.markdown table {
+  display: table;
+  width: 100%;
+}
+.markdown > h2 {
+  margin-top: 2.2rem;
+}

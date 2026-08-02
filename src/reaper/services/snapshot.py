@@ -602,8 +602,8 @@ async def scan(
         #
         # Ask when the INGEST last ran (`history_sync.last_synced_at`), never when somebody
         # last watched something (`mirror.latest`). The two are identical for a stalled
-        # ingest and for a quiet library, so gating on the newest play tells a household
-        # that went away for a weekend that its watch history is broken, and blocks every
+        # ingest and for a quiet library, so gating on the newest play tells a server whose
+        # users went away for a weekend that its watch history is broken, and blocks every
         # deletion until somebody watches something.
         synced = await history_sync.last_synced_at(engine)
         if synced is None or utcnow() - synced > MIRROR_STALE_AFTER:

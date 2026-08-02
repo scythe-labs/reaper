@@ -254,3 +254,7 @@ mutation-report-*.json
 
 # The screenshot page is a build product; the PNG beside it is what ships.
 docs/media/review-queue.html
+
+# Docusaurus's build cache. `website/build` and `website/node_modules` are already covered by
+# the `build/` and `node_modules/` rules above.
+.docusaurus/
