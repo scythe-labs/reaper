@@ -42,26 +42,23 @@ Everyone taking part agrees to the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## AI assistance
 
 Reaper is built with AI assistance, so using an assistant to write code here is ordinary and
-welcome. Disclose it, understand it, and you are on solid ground.
+welcome.
 
 **Understand what you are submitting.** You should be able to explain why it works, and
-answer a question about it next week. This is the entire standard. Everything below is a
-consequence of it.
+answer a question about it next week. Everything below follows from that.
 
-**Say so in the pull request.** One line in the template. It tells a reviewer where to read
-closely, and it is a courtesy to whoever is spending their evening on your diff. "None" is
-a perfectly good answer.
+**Say so in the pull request.** One line in the template tells a reviewer where to read
+closely. "None" is a perfectly good answer.
 
 **Keep it to one thing.** A broad prompt produces a broad diff. A patch that fixes one bug
 while quietly reformatting four other files is slow to review and easy to get wrong. Extra
 work is welcome as its own pull request.
 
 **Write the description in your own words.** A summary generated from the diff describes the
-diff, and the reviewer already has that. The useful part is what only you know: what you were
-trying to do, and what you tried first.
+diff, and the reviewer already has that. Say what you were trying to do, and what you tried
+first.
 
-Two failure modes show up often enough to name, because both read as correct and both survive
-a green test run:
+Two failure modes read as correct and survive a green test run:
 
 - **A comment that claims a safeguard the code does not implement.** Assistants write
   confident prose about protections that were discussed and never built. When a comment names
