@@ -93,7 +93,7 @@ class TestTheStdlibBridgeScrubs:
         text = _ring_text()
         assert "SUPERSECRET" not in text
         assert text.count(REDACTED) == 1, text
-        # And the traceback still arrives, which is the whole reason exc_info was set.
+        # And the traceback still arrives, which is why exc_info was set.
         assert "ValueError: boom" in text
 
     def test_the_traceback_itself_is_scrubbed(self) -> None:

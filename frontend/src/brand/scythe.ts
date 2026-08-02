@@ -10,12 +10,12 @@
 // crescent sweeping LEFT from the head, and the snath is the straight shaft running down-left
 // from that same head, so the two leave the head in clearly different directions.
 //
-// That separation is the whole point of the drawing. The first version had the blade as a short
-// filled wedge pointing the same way the snath ran, which at icon size collapsed into one solid
-// diagonal mass -- it read as a pickaxe or an arrow, never a scythe. It survived in the queue
-// only because context carried it (a red row, beside a button labeled Reap); put in the section
-// nav with no label, it said the wrong thing outright. The blade is now long enough, and angled
-// far enough off the snath, to read on its own at 13px.
+// The first version had the blade as a short filled wedge pointing the same way the snath
+// ran, which at icon size collapsed into one solid diagonal mass -- it read as a pickaxe or
+// an arrow, never a scythe. It survived in the queue only because context carried it (a red
+// row, beside a button labeled Reap); put in the section nav with no label, it said the wrong
+// thing outright. The blade is now long enough, and angled far enough off the snath, to read
+// on its own at 13px.
 export const SCYTHE_VIEWBOX = "0 0 48 48";
 export const SCYTHE_BLADE_D = "M41 10C33 3 15 6 6 17C15 12 28 13 38 16Z";
 export const SCYTHE_SNATH_D = "M38 12 21 42";

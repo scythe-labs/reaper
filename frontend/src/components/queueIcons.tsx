@@ -227,7 +227,7 @@ export function PenGlyph() {
 }
 
 /** The selection tick a card wears in Select mode: an empty ring until picked, a filled check
- *  once it is. Replaces the raw checkbox -- it reads as part of the card, not bolted on. */
+ *  once it is. Replaces the raw checkbox -- it reads as part of the card. */
 export function SelectTick({ selected }: { selected: boolean }) {
   return (
     <span className={`select-tick ${selected ? "on" : ""}`} aria-hidden="true">

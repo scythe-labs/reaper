@@ -159,8 +159,8 @@ class LeavingSoonResult:
     notified: bool
     announced: frozenset[int]
     """The updated set of rating keys that have been announced and are still in grace.
-    The caller persists this so the next pass knows what was already announced -- the
-    whole reason the heads-up is idempotent even when the shelf write never lands."""
+    The caller persists this so the next pass knows what was already announced -- why
+    the heads-up is idempotent even when the shelf write never lands."""
     movies_on_shelves: int
     seasons_on_shelves: int
 

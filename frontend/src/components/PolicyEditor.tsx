@@ -607,8 +607,8 @@ function RatingFloorRow({
   );
 }
 
-/** The 100-point removal budget, in the savebar. The whole reason weights can be labeled
- *  as points: the server refuses any policy whose removal weights do not total exactly 100
+/** The 100-point removal budget, in the savebar. Weights can be labeled as points only
+ *  because the server refuses any policy whose removal weights do not total exactly 100
  *  (PolicyBody._weights_total_one_hundred), so the number on a rule IS what it adds.
  *
  *  Both directions block Save. Over-budget is obvious. Under-budget matters just as much:

@@ -173,10 +173,10 @@ class TestBuildLinks:
         )
 
     def test_an_abstain_offers_a_link_to_each_row_it_could_not_choose_between(self) -> None:
-        """The whole point of carrying the candidate keys. An abstain has NO rating key of
-        its own, so every link built from one is ``None`` -- which left the panel naming a
-        problem in the operator's Plex and offering nothing to open. These are built through
-        the same two helpers, so they cannot drift from the item's own links."""
+        """An abstain has NO rating key of its own, so every link built from one is
+        ``None`` -- which left the panel naming a problem in the operator's Plex and
+        offering nothing to open. Carrying the candidate keys is the fix, built through
+        the same two helpers so they cannot drift from the item's own links."""
         kwargs = {**self.KWARGS, "plex_rating_key": None, "candidate_rating_keys": [555, 777]}
         links = build_links("radarr:2:1542", **kwargs)
         assert links.plex is None and links.tautulli is None  # the state that motivated it

@@ -51,7 +51,7 @@ class TestPost:
     async def test_a_network_error_never_raises(self, httpx2_mock: respx.Router) -> None:
         httpx2_mock.post(WEBHOOK).mock(side_effect=httpx2.ConnectError("down"))
         notifier = _notifier()
-        # The whole point: a dead webhook returns False, it does not blow up the caller.
+        # A dead webhook returns False, it does not blow up the caller.
         assert await notifier.post(Embed(title="hi", description="x")) is False
 
 

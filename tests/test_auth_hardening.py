@@ -85,8 +85,8 @@ class TestTheRateLimiter:
         assert limiter.retry_after("b") == 0.0
 
     def test_success_does_not_forgive_it(self) -> None:
-        """The difference from ``Throttle``, and the whole point: a flood made of calls
-        that all succeed is exactly the case a failure-lockout cannot see."""
+        """The difference from ``Throttle``: a flood made of calls that all succeed is
+        exactly the case a failure-lockout cannot see."""
         limiter = RateLimiter(limit=2, window=60.0, clock=lambda: 0.0)
         limiter.retry_after("k")
         limiter.retry_after("k")

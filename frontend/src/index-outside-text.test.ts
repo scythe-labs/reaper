@@ -50,8 +50,8 @@ type Site = {
   seenIn: string[];
   /** Set when the element takes its value from its parent instead of declaring one. */
   forwards?: string[];
-  /** Set when this site deliberately does NOT wrap. The string is the reason, and it is the
-   *  whole point of the field: an exception nobody wrote down reads as an omission. */
+  /** Set when this site deliberately does NOT wrap. The string is the reason, and the reason
+   *  is what the field is for: an exception nobody wrote down reads as an omission. */
   exempt?: string;
 };
 

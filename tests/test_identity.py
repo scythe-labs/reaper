@@ -89,7 +89,7 @@ class TestTheIdTierBindsAndDisambiguates:
             file_basename=None,
             index=index,
         )
-        # Bound by id even though the title differs -- the whole point of the id tier.
+        # Bound by id even though the title differs -- exactly what the id tier is for.
         assert res.rating_key == 300
         assert res.matched_by is MatchedBy.TVDB
 
@@ -1770,18 +1770,14 @@ class TestTheBasenameTier:
 
 
 class TestTheBasenameCrossChecksAnIdBind:
-    """The basename tier runs even when an id already bound, as a cross-check only.
-
-    It was promoted from "consulted only if nothing bound" to always-on so a corroborating
-    kind can raise an abstain it would otherwise have been structurally unable to raise
-    (rule 109). The cost of that is real and worth pinning: the window after an *arr renames
-    a file and before Plex rescans is exactly when the candidate's basename and Plex's
-    stored one disagree.
-
-    The cases below draw the line. Disagreement only abstains when the new name positively
-    names a DIFFERENT row; a name Plex has simply never heard of is silence, and silence
-    leaves the id bind standing. Otherwise every rename would cost a scan's worth of
-    deletability, which is a price this tier is not meant to charge.
+    """The basename tier runs even when an id already bound, as a cross-check only:
+    promoted from "consulted only if nothing bound" to always-on so a corroborating kind
+    can raise an abstain it was otherwise structurally unable to raise (rule 109). The
+    cost is real: after an *arr renames a file and before Plex rescans, the candidate's
+    basename and Plex's stored one disagree. So disagreement abstains only when the new
+    name positively names a DIFFERENT row; a name Plex has simply never heard of is
+    silence and leaves the id bind standing, or every rename would cost a scan's worth
+    of deletability.
     """
 
     def test_a_renamed_file_plex_has_not_rescanned_still_binds_by_id(self) -> None:

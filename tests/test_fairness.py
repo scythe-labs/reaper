@@ -193,9 +193,9 @@ class TestRollUp:
         assert report.rows[0].played_by_them == 1
 
     def test_watched_is_keyed_on_the_candidates_rating_key_not_the_requests(self) -> None:
-        """The whole point of sitting on the scan: watches are found by the candidate's own
-        key, so a stale key on the Seerr request can no longer read a play as never-watched.
-        The requester carries no rating key at all here, and is still credited with the play."""
+        """Sitting on the scan means watches are found by the candidate's own key, so a
+        stale key on the Seerr request can no longer read a play as never-watched. The
+        requester carries no rating key at all here, and is still credited with the play."""
         report = roll_up(
             [_req(plex_id=100, name="Alice")],
             [_cand(verdict="condemn", rating_key=900)],

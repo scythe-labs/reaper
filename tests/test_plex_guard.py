@@ -81,8 +81,8 @@ class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
             session.put("http://127.0.0.1:1/library/x")
 
     def test_a_put_is_blocked_when_armed_but_not_declared(self) -> None:
-        """Armed, but nobody wrote the intent to the journal. The whole point of the
-        declaration is that a mutation which skipped the executor cannot reach Plex."""
+        """Armed, but nobody wrote the intent to the journal. The declaration is there so
+        a mutation which skipped the executor cannot reach Plex."""
         session = GuardedSession(ARMED)
 
         with pytest.raises(SafetyViolationError, match="not declared"):
@@ -129,8 +129,8 @@ class TestTheBenignShelfIsGatedSeparately:
         assert _sent(send) == ("PUT", "http://127.0.0.1:1/library/sections/3/all?type=1&id=42")
 
     def test_the_label_writes_read_only_when_opted_in(self) -> None:
-        """The whole point: the warning can be written during the grace countdown, before
-        deletion is ever enabled."""
+        """The warning can be written during the grace countdown, before deletion is ever
+        enabled."""
         session = GuardedSession(SHELF_UNARMED)
         with _transport() as send, benign_shelf_write():
             session.put("http://127.0.0.1:1/library/sections/3/all?type=1&id=42", timeout=0.05)

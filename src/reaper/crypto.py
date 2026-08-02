@@ -39,7 +39,7 @@ _DEFAULT_KDF_SALT = b"reaper.at-rest.credential-key.v1"
 
 # scrypt cost. n must be a power of two, and the working set is 128 * n * r bytes.
 #
-# The whole point of this KDF is the OFFLINE case: a leaked database plus a low-entropy
+# The threat this KDF answers is the OFFLINE case: a leaked database plus a low-entropy
 # operator-supplied REAPER_SECRET_KEY. That attacker runs guesses on their own hardware,
 # so only the per-guess cost bounds them -- and the memory term is the part that resists
 # GPUs and ASICs, which have arithmetic to spare and bandwidth to spare much less of. The

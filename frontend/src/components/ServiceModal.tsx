@@ -85,8 +85,8 @@ export function serviceKindLabel(kind: SeerrService["kind"]): string {
 /** What a connection test SAYS, written once because two surfaces state it.
  *
  *  `TestBadge` renders it for whoever navigates onto the badge, and every test mutation
- *  announces it for whoever does not (#192). Deriving both from here is rule 144's whole point:
- *  one fact, and the copy that is spoken cannot drift away from the copy that is read.
+ *  announces it for whoever does not (#192). Deriving both from here is what rule 144 asks
+ *  for: one fact, and the copy that is spoken cannot drift away from the copy that is read.
  *
  *  `detail` is already a whole sentence from the server ("Connected to Sonarr.", or an explained
  *  failure), so the lead is the only thing added -- for the reason it was added to the badge in
@@ -630,9 +630,9 @@ export function ServiceModal({
    *
    *  The floor lifts when there is nothing to satisfy it WITH: no folders read, or no libraries
    *  to pick from (a Plex that is down, or one that has never been synced). A requirement the
-   *  operator has no way to meet is not a safeguard, it is a locked door -- and the whole point
-   *  of the map is to tell an HD copy from a 4K one, which needs a library list to be possible
-   *  at all. Seerr takes the prefill but no floor: its own help text says leaving a service
+   *  operator has no way to meet is not a safeguard, it is a locked door -- and the map is
+   *  there to tell an HD copy from a 4K one, which needs a library list to be possible at
+   *  all. Seerr takes the prefill but no floor: its own help text says leaving a service
    *  unset is a real choice, meaning "credit everyone who asked". */
   const mappedFolders = folders ? folders.filter((f) => libMap[f.path]).length : 0;
   const mapFloorApplies = isArr && (folders?.length ?? 0) > 0 && libOptions.length > 0;

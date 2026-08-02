@@ -231,7 +231,7 @@ def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArc
             tar.add(salt_path, arcname=SALT_FILENAME)
 
     # The snapshot now lives inside the archive; drop the loose copy so the temp dir
-    # holds one file, not two, while the (possibly large) archive is streamed out.
+    # holds one file while the (possibly large) archive is streamed out.
     snapshot.unlink(missing_ok=True)
 
     return BackupArchive(

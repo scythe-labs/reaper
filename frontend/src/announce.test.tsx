@@ -223,8 +223,8 @@ describe("a wait that runs long", () => {
   });
 
   it("says nothing when the thing arrives before the wait is up", () => {
-    // The common case, and the whole reason this is a delay rather than an announcement on
-    // mount: a lazily-loaded route lands well inside the window on any ordinary connection.
+    // The common case, and why this is a delay rather than an announcement on mount: a
+    // lazily-loaded route lands well inside the window on any ordinary connection.
     vi.useFakeTimers();
     const view = render(
       <>

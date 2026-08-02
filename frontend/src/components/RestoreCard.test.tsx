@@ -401,8 +401,8 @@ describe("what an operator is told when a restore arms", () => {
     // which is the only version of this assertion that can catch them drifting.
     await arm();
 
-    // Scoped to the notice on the card, because the live region holds these words too now -- which
-    // is the whole point, and also why an unscoped text query cannot be the assertion.
+    // Scoped to the notice on the card, because the live region holds these words too now --
+    // exactly what the change was for, and why an unscoped text query cannot be the assertion.
     // Anchored on the bolded lead's parent, not on the first span in the card: `Notice` opens with
     // its own visually-hidden "Warning: ", which belongs to the notice and not to this sentence.
     const notice = await waitFor(() => {

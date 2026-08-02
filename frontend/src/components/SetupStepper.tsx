@@ -67,9 +67,9 @@ function Stepper({ current }: { current: SetupStepKey }) {
  *
  *  A context rather than a prop because every step renders its own `StepCard`, so a prop would
  *  be the same boolean threaded through four components that have no other use for it. The
- *  distinction is the whole point: focusing a heading on a fresh load would steal focus from a
- *  page the operator has not read, while NOT focusing it after a press leaves them at the top
- *  of the document with the button they pressed gone. */
+ *  distinction is why the boolean exists at all: focusing a heading on a fresh load would steal
+ *  focus from a page the operator has not read, while NOT focusing it after a press leaves them
+ *  at the top of the document with the button they pressed gone. */
 const StepMovedContext = createContext(false);
 
 export function StepMovedProvider({ moved, children }: { moved: boolean; children: ReactNode }) {

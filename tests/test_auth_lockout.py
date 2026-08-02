@@ -65,9 +65,8 @@ class TestLastAdminInvariant:
     async def test_a_plex_only_user_does_not_count_as_a_way_back_in(
         self, session: AsyncSession
     ) -> None:
-        """The whole point. A Plex-authenticated admin is useless if plex.tv is
-        unreachable or the token has been revoked, so it must not satisfy the
-        'at least one admin' invariant."""
+        """A Plex-authenticated admin is useless if plex.tv is unreachable or the token
+        has been revoked, so it must not satisfy the 'at least one admin' invariant."""
         session.add(
             AppUser(
                 provider=AuthProvider.PLEX,

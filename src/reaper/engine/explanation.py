@@ -90,7 +90,7 @@ class GateOutcomeOut(BaseModel):
     stand behind the counts it reports. All three send the item to the operator; only the
     first may be described to them as "watched more than a season your rule keeps".
 
-    **Three-state, and the third state is the whole point (rule 142).** A row frozen before
+    **Three-state, and the third state is what matters (rule 142).** A row frozen before
     the flag existed carries no key, and nothing in it can tell the shapes apart -- the
     wording that used to stand in for the flag is exactly what failed. ``None`` is that row,
     and a plain ``bool`` here would silently assert one shape about every legacy

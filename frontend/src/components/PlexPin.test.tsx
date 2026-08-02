@@ -227,7 +227,7 @@ describe("the account that owns several servers", () => {
 
   it("is announced for a caller that passes no handler at all", async () => {
     // Deliberately no `onChooseServer`. A caller cannot reach the picker without the sentence,
-    // which is the whole point of moving it off the two handlers that used to carry it.
+    // which is why it moved off the two handlers that used to carry it.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { poll, answer } = deferredPolls();

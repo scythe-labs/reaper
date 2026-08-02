@@ -259,7 +259,7 @@ async def ensure_schema(engine: AsyncEngine) -> None:
       have kept the bad data the shape change existed to fix.
 
     The cost is one full re-sync, and a scan in between degrades loudly rather than
-    judging on a thin mirror. That is the right direction to fail.
+    judging on a thin mirror.
     """
     # Common path: the table exists and its shape is current. Check that in a READ
     # connection -- no write lock, no fsync -- and return. ensure_schema runs several times

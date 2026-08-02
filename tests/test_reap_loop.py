@@ -106,10 +106,8 @@ async def _stored_run(factory: async_sessionmaker[AsyncSession], run_id: int) ->
     """The run row as the DATABASE has it, read through a session nothing in the test wrote.
 
     The point of the second session is its empty identity map: this ``get`` issues a SELECT,
-    so a terminal state the executor only ever set in memory reads as the value on disk
-    instead of as the value it meant to write. Detached on return, with every column already
-    loaded (rule 118: an assertion that cannot fail for the reason it names is worse than
-    none).
+    so a terminal state the executor only ever set in memory reads as the value on disk.
+    Detached on return, with every column already loaded (rule 118).
     """
     async with factory() as fresh:
         stored = await fresh.get(ReapRun, run_id)
@@ -1069,7 +1067,7 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         It cannot tell "left out of the total" from "summed as the zero its stored size
         implies" -- both produce 10 GB, so that distinction is unfalsifiable at this
         function's interface. What bounds the unmeasured item is the item cap, not this
-        number, which is the whole reason the allowance is a count rather than a size.
+        number, which is why the allowance is a count rather than a size.
         """
         deletable = [
             _Delete(steps=(), candidate=_fake_candidate("radarr:1:1", 10 * GB)),
@@ -1360,10 +1358,10 @@ class TestUsingTheAllowanceDoesNotBrickTheNextThirtyDays:
 class TestTheAllowanceIsACountNotASwitch:
     """The executor must enforce the NUMBER, not merely whether it is above zero.
 
-    The whole reason this setting is safe to keep out of the policy hash is that both
-    directions of a change resolve toward keeping. That only holds if a tightening is
-    actually honored at execute time -- otherwise lowering 25 to 1 is silently ignored on
-    the one population no byte cap can bound.
+    The one thing that makes this setting safe to keep out of the policy hash is that
+    both directions of a change resolve toward keeping. That only holds if a tightening
+    is actually honored at execute time -- otherwise lowering 25 to 1 is silently ignored
+    on the one population no byte cap can bound.
     """
 
     async def test_lowering_it_to_a_smaller_non_zero_value_is_enforced(
@@ -4756,8 +4754,8 @@ class TestTwoMarksInARowBothReachTheDisk:
 
     Driven through ``_mark_sent`` and ``_mark_verified`` directly (rule 118): the corruption
     lasts exactly one commit, and every public path takes a third commit that repairs it
-    before a test could look. Reading it back through an engine of this test's own is the
-    whole point -- the run's session answers from memory, where the row is always right.
+    before a test could look. The read-back goes through an engine of this test's own
+    because the run's session answers from memory, where the row is always right.
     """
 
     async def test_the_second_mark_does_not_write_the_first_ones_values_back(
@@ -4873,9 +4871,8 @@ class TestARecoveredWriteCarriesEveryColumn:
     """
 
     def test_every_action_step_column_is_classified_as_replayed_or_write_once(self) -> None:
-        """A column added to ``ActionStep`` is on one side or the other, and saying which is
-        the whole point: a mutable one that nobody classifies is one the replay silently
-        drops."""
+        """A column added to ``ActionStep`` is on one side or the other, and someone has to
+        say which: a mutable one that nobody classifies is one the replay silently drops."""
         assert {c.key for c in sa_inspect(ActionStep).column_attrs} == (
             set(_REPLAYED_STEP_COLUMNS) | _WRITE_ONCE_STEP_COLUMNS
         )

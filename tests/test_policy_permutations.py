@@ -665,7 +665,7 @@ class TestTheLabJudgesWithTheScansOwnCode:
 #:
 #: Every field the row does not name takes ``_DECISION_BASE``: nothing protected, nothing
 #: blocked, no override, full coverage against no floor, a zero score against a threshold of
-#: 70 -- i.e. a plain abstain, so each row's own fields are the whole reason its answer differs.
+#: 70 -- i.e. a plain abstain, so each row's own fields are the only reason its answer differs.
 _DECISION_BASE: dict[str, object] = {
     "protected": False,
     "blocked": False,

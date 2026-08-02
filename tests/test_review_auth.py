@@ -207,8 +207,8 @@ class TestLocalLoginThrottle:
     def test_once_locked_even_the_right_password_is_refused(
         self, client: TestClient, settings: Settings
     ) -> None:
-        """The whole point of the lock: past the threshold, the endpoint stops
-        answering credential questions for a while -- correct or not."""
+        """Past the threshold, the endpoint stops answering credential questions
+        for a while -- correct or not."""
         seed_admin(settings)
         for _ in range(6):
             client.post(

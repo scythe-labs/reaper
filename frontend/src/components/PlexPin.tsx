@@ -15,12 +15,9 @@ import type { PlexServerChoice } from "../api";
 
 /** What the app says when a sign-in lands on the server picker.
  *
- *  One declaration because there are two callers. The login screen and the Settings link panel
- *  both reach this state through this hook, and each said this sentence in its own handler, in
- *  its own words -- two hand-written copies of one fact, which is the drift rule 144 asks to be
- *  generated from a single declaration instead. They had already been out of step once: the
- *  Settings panel announced the picker and the login screen, the identical transition through
- *  the identical hook, said nothing at all (#177, rule 72).
+ *  The login screen and the Settings link panel both reach this state through this hook, and
+ *  each said this sentence by hand in its own words (rule 144). They had already been out of
+ *  step once: Settings announced the picker and the login screen said nothing (#177, rule 72).
  *
  *  Exported because `PlexPin.test.tsx` reads the two callers' source and fails by name in
  *  whichever one states it again. */

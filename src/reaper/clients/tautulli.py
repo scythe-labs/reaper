@@ -146,9 +146,8 @@ class TautulliClient(BaseClient):
         database on every call, so ``refresh=true`` is *not* needed for fresh watch
         data (it only re-pulls the item list and file sizes from Plex).
 
-        Note the invariant: ``section_type`` must never be sent without a
-        ``rating_key`` -- doing so corrupts the user's own Tautulli Media Info page.
-        This client never sends it.
+        ``section_type`` must never be sent without a ``rating_key`` -- doing so
+        corrupts the user's own Tautulli Media Info page. This client never sends it.
         """
         data = await self.call(
             "get_library_media_info",
@@ -176,7 +175,7 @@ class TautulliClient(BaseClient):
     ) -> dict[str, Any]:
         """Watch history.
 
-        Note the key names: it is ``order_column``, not ``order_by``. And for TV,
+        The key name is ``order_column``, not ``order_by``. And for TV,
         query by ``grandparent_rating_key`` -- Seerr stores the *show* rating key,
         but history rows are per-episode, so filtering on ``rating_key`` would find
         nothing and report a watched show as never played.
@@ -225,8 +224,8 @@ class TautulliClient(BaseClient):
         try:
             response = await self._send("GET", "/api/v2", params=params)
         except IntegrationError as exc:
-            # Logged, not swallowed silently: a placeholder in the queue is otherwise
-            # indistinguishable from an item that simply has no art.
+            # Logged: a placeholder in the queue is otherwise indistinguishable from an
+            # item that simply has no art.
             log.warning("artwork.fetch_failed", error=str(exc))
             return None
         content = response.content

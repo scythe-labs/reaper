@@ -170,8 +170,8 @@ class ConditionSpec(Frozen):
 
     Protect-only *by construction*. It is validated against the PROTECT lane of the field
     registry, so the worst a mis-authored condition can do is fail to keep something -- it can
-    never mark a title for removal. That asymmetry is the whole reason these are safe to hand
-    to the owner (see ``engine.fields``).
+    never mark a title for removal. That asymmetry is why these are safe to hand to the
+    owner (see ``engine.fields``).
     """
 
     field: str
@@ -1189,8 +1189,8 @@ def inspect(
     # world-fact at all. ``gates.ServerPopularityGate.evaluate`` fails closed when the mirror
     # is shorter than the window it is being asked about: a count over three months cannot
     # answer "who watched this in the last year", so the gate blocks. The reach is a property
-    # of the operator's DATA rather than of any one title, so it blocks library-wide, and it
-    # goes on blocking for as long as the shortfall lasts.
+    # of the operator's DATA rather than of any one title, so it blocks library-wide for as
+    # long as the shortfall lasts.
     #
     # Most blocks clear on the next scan (an unreachable Seerr, an unread session list, a
     # missing id), which is why no surface was ever obliged to name a remedy for one. The
@@ -1227,9 +1227,9 @@ def inspect(
     # which is why the lean check does not read the gate either (rules 7/24, 140).
     #
     # This branch remains about the PROTECT lane only. The three lanes and what each does under
-    # a shortfall, since the asymmetry is the whole reason there are separate checks: a protect
-    # blocks and abstains, a lean takes its full discount, and a condemn rule withholds its
-    # pressure while keeping its weight in the denominator.
+    # a shortfall, since the asymmetry is why there are separate checks: a protect blocks and
+    # abstains, a lean takes its full discount, and a condemn rule withholds its pressure
+    # while keeping its weight in the denominator.
     #
     # That last one lowers scores without blocking anything, so it cannot empty the list
     # through PRESSURE -- but it can through COVERAGE, and **that lane is warned about now
@@ -1328,11 +1328,10 @@ def inspect(
             # Except when the window is ALSO under the short-window floor, where "lower it"
             # is advice in the direction the other warning is pushing back on. Both faults
             # are real and their remedies genuinely oppose, so one message carries the pair
-            # rather than two stacking on one control and cancelling out. Note what is and
-            # is not claimed: shortening to the reach DOES clear the shortfall, it just
-            # buys the other fault to do it -- an even shorter window counts almost nothing
-            # as watched. Waiting is the only move that clears one without deepening the
-            # other, which is why it leads.
+            # rather than two stacking on one control and cancelling out. Shortening to the
+            # reach DOES clear the shortfall, it just buys the other fault to do it -- an
+            # even shorter window counts almost nothing as watched. Waiting is the only move
+            # that clears one without deepening the other, which is why it leads.
             remedy = (
                 "Wait for it to build up: a shorter window would leave almost nothing "
                 "counted as watched."

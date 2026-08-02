@@ -80,10 +80,9 @@ class PlexServerChoiceNeededError(PlexLinkError):
     Not a refusal: the sign-in succeeded and the owner merely has to say which library
     this deletion tool should manage. Callers that can render a choice (the web flows,
     the CLI) catch this, present ``candidates``, and retry with an explicit pick. Like
-    the retryable error it must NOT consume the pending PIN -- the whole point is that
-    the same sign-in finishes once the choice is made. A subclass of ``PlexLinkError``
-    so any caller not yet showing a picker degrades to the old refusal, never to a
-    silent guess.
+    the retryable error it must NOT consume the pending PIN -- the same sign-in has to
+    finish once the choice is made. A subclass of ``PlexLinkError`` so any caller not
+    yet showing a picker degrades to the old refusal, never to a silent guess.
     """
 
     def __init__(self, candidates: list[PlexServerCandidate]) -> None:
@@ -171,7 +170,7 @@ async def link(
     writing the server row at the end. **The multi-minute wait for the human to sign in
     happens with no transaction open at all.**
 
-    That is not tidiness. SQLite gives a writer the database, and an ``AsyncSession`` held
+    SQLite gives a writer the database, and an ``AsyncSession`` held
     open across ``wait_for_pin`` keeps a connection (and its lock) for up to five minutes
     -- long enough to block every other writer and, on a busy instance, to stall the app
     while someone fishes out their phone. Hold the lock for milliseconds, not minutes.

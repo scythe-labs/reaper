@@ -130,7 +130,7 @@ def _rating_obs(value: float | None, looked_up: bool, dataset_degraded: bool) ->
 #: bounds only the Sonarr ``episodes()`` fan-out (episode-precise mid-binge) and the season
 #: sweep's per-show fallback (a show Plex did not return). Set high enough to collapse many
 #: round trips into a handful of batches, low enough that a modest self-hosted Tautulli/Sonarr
-#: sees a bounded burst, never a stampede. Every call is a read that fails closed (an
+#: sees a bounded burst. Every call is a read that fails closed (an
 #: unresolved show abstains; a failed episodes() falls back to season-level protection), so a
 #: timeout under load never over-condemns -- it only keeps.
 RESOLVE_CONCURRENCY = 8
@@ -1457,7 +1457,7 @@ async def gather(
     # servers; sharing one bound would halve each for no one's protection). A large
     # library prunes hundreds of shows, and reading them one show at a time was the
     # scan's longest sequential stretch; the bound keeps a modest self-hosted service at
-    # a handful of parallel reads, never a stampede. Failure semantics are per call and
+    # a handful of parallel reads. Failure semantics are per call and
     # unchanged: an unresolvable show's seasons stay Unknown (abstain), a failed episode
     # read falls back to season-level protection.
     tautulli_bound = asyncio.Semaphore(RESOLVE_CONCURRENCY)

@@ -137,8 +137,8 @@ class TestTheMovieJoinAtTheScanLane:
         assert items[0].matched_by is identity.MatchedBy.TITLE_YEAR
 
     def test_raw_items_binds_by_tmdb_across_a_title_difference(self) -> None:
-        """The whole point of id matching: a Plex row whose title differs (a regional or
-        renamed title) still binds when the tmdb id agrees."""
+        """A Plex row whose title differs (a regional or renamed title) still binds when
+        the tmdb id agrees. That is what id matching is for."""
         index = identity.PlexIndex.build(
             [
                 identity.PlexItem(

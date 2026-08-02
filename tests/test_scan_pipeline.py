@@ -488,8 +488,7 @@ class TestScanPipelineEndToEnd:
         # Seasons rode the same judge: the keep-last/keep-first guards protected
         # seasons 1, 4 and 5; the prunable middle seasons were scored (and, dormant
         # since they arrived 1500 days ago with nobody watching, condemned). That the
-        # mirror covers those 1500 days is load-bearing, not incidental -- see
-        # ``SEASONS_ADDED``.
+        # mirror covers those 1500 days is load-bearing -- see ``SEASONS_ADDED``.
         assert rows["sonarr:1:42:1"].verdict == "protect"
         assert rows["sonarr:1:42:4"].verdict == "protect"
         assert rows["sonarr:1:42:5"].verdict == "protect"

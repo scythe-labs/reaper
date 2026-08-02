@@ -1182,8 +1182,8 @@ class TestTheSimulator:
         assert sum(result["histogram"]) == 4  # type: ignore[arg-type]
 
     def test_a_threshold_only_change_is_exact(self, client: TestClient) -> None:
-        """The whole point. Moving condemn_at re-compares a STORED score against a new
-        number, which needs no API call and is not an approximation."""
+        """Moving condemn_at re-compares a STORED score against a new number, which
+        needs no API call and is not an approximation."""
         assert self._simulate(client, 50)["exact"] is True
 
     def test_it_names_what_a_change_would_newly_condemn(self, client: TestClient) -> None:

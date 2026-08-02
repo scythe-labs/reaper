@@ -182,7 +182,7 @@ class PlexError(RuntimeError):
 # plexapi is ``requests``, so it would sail straight past it: label writes, collection
 # edits and -- the one that matters -- ``emptyTrash`` would all be unguarded.
 #
-# That is not a gap we can accept. An unmounted library plus a scan plus emptyTrash is
+# An unmounted library plus a scan plus emptyTrash is
 # how people lose an entire Plex library, and it would have been the single destructive
 # call in the codebase with no safety interlock in front of it.
 #

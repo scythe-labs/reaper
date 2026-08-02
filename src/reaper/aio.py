@@ -38,7 +38,7 @@ async def reap(tasks: Sequence[asyncio.Task[Any]]) -> None:
             await task
         except asyncio.CancelledError:
             pass
-        except BaseException as exc:  # observed and logged, never lost
+        except BaseException as exc:  # observed and logged
             log.warning("aio.reaped_failure", error=str(exc))
 
 

@@ -273,8 +273,8 @@ class TestCustomProtectGate:
 
 class TestSeasonPruningNeedsNoBooleanCleverness:
     def test_keep_the_last_two_seasons_is_one_condition(self) -> None:
-        """The whole reason the condemn lane needs no OR or nesting: this was never
-        a logic problem, it is a derived field."""
+        """The condemn lane needs no OR or nesting because this was never a logic
+        problem, it is a derived field."""
         older_season = _facts(season_rank=Known(value=5, source="sonarr"))
         newest_two = _facts(season_rank=Known(value=2, source="sonarr"))
 

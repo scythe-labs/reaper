@@ -73,8 +73,8 @@ class TestOwnershipCheck:
     async def test_a_stranger_with_a_valid_plex_account_is_refused(
         self, httpx2_mock: respx.Router
     ) -> None:
-        """The whole point. They authenticated successfully -- plex.tv gave them a
-        real token -- but they own no server, so they are not our owner."""
+        """They authenticated successfully -- plex.tv gave them a real token -- but
+        they own no server, so they are not our owner."""
         httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(200, json=[])
         )

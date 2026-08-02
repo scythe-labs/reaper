@@ -280,11 +280,9 @@ export function PlexPanel({
       announce(said);
       done();
     },
-    // The picker's announcement is `usePlexPinPoll`'s, not this panel's. It was written here
-    // first and then a second time on the login screen, in that screen's own words -- one fact
-    // spelled out twice, which is what rule 144 asks to be generated from a single declaration
-    // (`CHOOSE_SERVER_SAID`). Saying it here as well would say it twice, and
-    // `PlexPin.test.tsx` fails by name if this file states it again.
+    // The picker's announcement is `usePlexPinPoll`'s (`CHOOSE_SERVER_SAID`), not this panel's.
+    // It was written here first and again on the login screen in that screen's own words (rule
+    // 144), and `PlexPin.test.tsx` fails by name if this file states it again.
     //
     // A sign-in that never completed is a failure, not status: it goes to `plexError`
     // so it renders as an error, not in the gray slot "Linked to ..." uses.
@@ -475,10 +473,9 @@ export function PlexPanel({
       setForgetPassword("");
       setForgotten(result.forgotten);
       afterForget.arriving();
-      // The status line's own sentence, said out loud, because it is the only thing that moves
-      // and it sits in an unfocused subtree (rule 144: one fact, and the visible copy is a few
-      // lines down, so keep the two reading alike). From the settled mutation, never at
-      // issuance (rule 85).
+      // The status line's own sentence, said out loud: it is the only thing that moves and it
+      // sits in an unfocused subtree (rule 144: the visible copy is a few lines down). From
+      // the settled mutation, never at issuance (rule 85).
       announce(
         `Forgotten for ${result.forgotten.toLocaleString()} ${
           result.forgotten === 1 ? "title" : "titles"
