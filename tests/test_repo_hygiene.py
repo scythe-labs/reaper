@@ -1320,6 +1320,23 @@ def test_every_ecosystem_quarantines_a_release_before_proposing_it() -> None:
 #: TypeScript 5 indefinitely.
 _TS_ESLINT_PEER_ON_TYPESCRIPT = ">=4.8.4 <6.1.0"
 FRONTEND_LOCK = REPO / "frontend" / "package-lock.json"
+WEBSITE_LOCK = REPO / "website" / "package-lock.json"
+
+
+def _npm_majors_ignored_in(directory: str) -> set[str]:
+    """Names whose majors ``.github/dependabot.yml`` declines for one npm tree.
+
+    Scoped by directory rather than by ecosystem. Two npm trees now defer TypeScript 7 for
+    unrelated causes, so an unscoped read is satisfied by whichever entry still carries the
+    ignore, and it would call the other one guarded while its deferral was being deleted.
+    """
+    return {
+        entry.get("dependency-name")
+        for update in _dependabot_updates()
+        if update.get("package-ecosystem") == "npm" and update.get("directory") == directory
+        for entry in (update.get("ignore") or [])
+        if "version-update:semver-major" in (entry.get("update-types") or [])
+    }
 
 
 def test_the_typescript_deferral_still_has_a_reason() -> None:
@@ -1352,17 +1369,60 @@ def test_the_typescript_deferral_still_has_a_reason() -> None:
         "If it still excludes 7.x, update the constant above and leave the ignore alone."
     )
 
-    ignored = {
-        entry.get("dependency-name")
-        for update in _dependabot_updates()
-        if update.get("package-ecosystem") == "npm"
-        for entry in (update.get("ignore") or [])
-    }
-    assert "typescript" in ignored, (
+    assert "typescript" in _npm_majors_ignored_in("/frontend"), (
         "typescript-eslint still pins a peer range that excludes TypeScript 7, so a lone\n"
         "`typescript` major cannot install. Dependabot will raise one every week and it will\n"
         "be red every week (#364, then #368). Keep the ignore until this test tells you the\n"
         "range moved."
+    )
+
+
+#: The ``@docusaurus/tsconfig`` release the manual site's TypeScript 7 deferral was measured
+#: against. Its shipped ``tsconfig.json`` sets ``baseUrl``, which TypeScript 7 removed, so
+#: ``npm run typecheck`` in ``website/`` fails on an inherited option before it compiles a line.
+#:
+#: The cause lives inside somebody else's package rather than in this repository, and node_modules
+#: is not committed, so a version is the only handle the suite has on it. That makes this pin
+#: fire on every Docusaurus release, which is the intended cadence: a release is exactly when to
+#: re-read whether the option was dropped.
+_DOCUSAURUS_TSCONFIG_WITH_BASEURL = "3.10.2"
+
+
+def test_the_manual_sites_typescript_deferral_still_has_a_reason() -> None:
+    """The site defers TypeScript 7 on its own cause, so it needs its own notice.
+
+    TypeScript 7 removed ``baseUrl``. ``@docusaurus/tsconfig`` still sets one, and
+    ``website/tsconfig.json`` extends it, so ``tsc --noEmit`` fails on the inherited option no
+    matter what the local config says (#414). Escaping it means inlining upstream's compiler
+    options and never tracking them again, which is a poor trade for a typecheck-only bump.
+
+    When it fails, read the new ``@docusaurus/tsconfig``. If ``baseUrl`` is gone, drop the
+    ``typescript`` entry from the ``/website`` ``ignore``. If it is still there, move the
+    constant to the version you just read.
+    """
+    lock = json.loads(WEBSITE_LOCK.read_text(encoding="utf-8"))
+    entries = [
+        meta
+        for name, meta in lock.get("packages", {}).items()
+        if name.endswith("node_modules/@docusaurus/tsconfig")
+    ]
+    assert len(entries) == 1, (
+        f"expected exactly one locked @docusaurus/tsconfig, found {len(entries)}. The\n"
+        "lockfile's shape changed; fix this walk before trusting the assertion below."
+    )
+    version = entries[0].get("version")
+    assert version == _DOCUSAURUS_TSCONFIG_WITH_BASEURL, (
+        f"@docusaurus/tsconfig is now {version!r}, was "
+        f"{_DOCUSAURUS_TSCONFIG_WITH_BASEURL!r} when TypeScript 7 was deferred for the site.\n\n"
+        "Read its shipped tsconfig.json. If `baseUrl` is gone, the block is gone: drop the\n"
+        "`typescript` entry from the `/website` `ignore` in .github/dependabot.yml.\n"
+        "If it still sets `baseUrl`, update the constant above and leave the ignore alone."
+    )
+
+    assert "typescript" in _npm_majors_ignored_in("/website"), (
+        "@docusaurus/tsconfig still sets `baseUrl`, which TypeScript 7 removed, so\n"
+        "`npm run typecheck` in website/ cannot pass on 7 however the local tsconfig is\n"
+        "written (#414). Keep the ignore until this test tells you the option was dropped."
     )
 
 

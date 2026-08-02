@@ -199,6 +199,23 @@ updates:
       website:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # TypeScript 7 is deferred here too, on a different cause than the frontend's above.
+      # TypeScript 7 removed `baseUrl`, and `@docusaurus/tsconfig` still sets it, so
+      # `tsc --noEmit` fails on an option this repository does not write: deleting the
+      # `baseUrl` in `website/tsconfig.json` only moves the error onto the inherited one,
+      # and 3.10.2 is the newest Docusaurus there is. #414 was that pull request.
+      #
+      # The way out is to stop extending `@docusaurus/tsconfig` and inline its options,
+      # which detaches this tree from upstream's config permanently to buy a bump in the
+      # tool that only typechecks it. `docusaurus build` never runs tsc and passes on 7
+      # today, so the deferral costs nothing the site renders.
+      #
+      # Lifting this is one line, and it is NOT left to memory: tests/test_repo_hygiene.py
+      # pins the locked `@docusaurus/tsconfig` version and fails on the next release, which
+      # is the release to re-read for a dropped `baseUrl`.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     labels: ["Kind/Documentation", "Kind/Chore", "Priority/Low"]
     commit-message:
       prefix: "build"
