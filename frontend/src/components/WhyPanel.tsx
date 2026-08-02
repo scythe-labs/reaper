@@ -760,8 +760,11 @@ function SignalRow({ row }: { row: Row }) {
   // chrome, no ramp cap, or the bar would imply a sliding scale that does not exist.
   const flat = custom && (signal.contribution === 0 || signal.contribution === signal.weight);
   // The line this row was measured against, if the scan recorded one. A row that could not
-  // be read gets none: there is a line, but nothing was compared to it, and a sentence
-  // saying what it "added" would describe arithmetic that never ran.
+  // be read gets none, because its share column prints "Couldn't check" rather than a
+  // number, and "added 0" would contradict the column and assert the very zero the panel is
+  // refusing to state. A `not_applicable` row also returns before the ramp runs, and it DOES
+  // keep the sentence: it sits inside a disclosure headed "didn't apply here", beside a
+  // detail line naming what was missing, and its "added 0" agrees with the 0 in its column.
   const why =
     state === "unreadable"
       ? null

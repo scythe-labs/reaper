@@ -63,7 +63,7 @@ export function coverage(bp: number): string {
  *  because the two sit side by side on the policy page: the server words the history
  *  warnings and this words the controls beside them, so one saying "1 year, 1 month" while
  *  the other says "400 days" about the same number is rule 144's drift, on a page whose
- *  whole job is to be read (#410). `format.humanDays.test.ts` pins them against a table.
+ *  whole job is to be read (#410). `humanDays.test.ts` pins them against a table.
  *
  *  It only humanized EXACT multiples before, which is the shape that let it disagree:
  *  everything but a round year or month came out as a bare day count, and a real watch

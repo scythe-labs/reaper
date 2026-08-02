@@ -5,7 +5,7 @@
 // Shared by every probe kind, present and future: the request is the discriminated
 // `PolicyProbe` and the answer is one shape, so a second kind reuses this file untouched.
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api, type PolicyProbe, type PolicyProbeResult } from "./api";
 
@@ -40,9 +40,10 @@ export function usePolicyProbe(probe: PolicyProbe | null): Probe {
     queryKey: ["policy-probe", settled],
     queryFn: () => api.probePolicy(settled!),
     enabled: settled !== null,
-    // Hold the last answer while the next is in flight, so the sentence does not blink
-    // empty across a drag. `pending` below still says one is coming.
-    placeholderData: keepPreviousData,
+    // No `placeholderData`: holding the last answer would contradict the top of this file.
+    // `pending` covers the debounce AND the request, and the caller drops `answer` for the
+    // whole of it, so a held number could only ever reach the screen as an answer about a
+    // value the operator has already moved past.
     retry: false,
   });
 

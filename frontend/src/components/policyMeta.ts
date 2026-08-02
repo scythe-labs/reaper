@@ -88,11 +88,11 @@ export const SIGNAL_META: Record<string, { label: string; help: string }> = {
     // never-played backlog -- exactly the titles whose clock starts at arrival instead
     // (rule 72, with the review chip fixed for the same divergence).
     // The third sentence used to be "It earns its full points only at the far end." It is
-    // gone because the card now says that with the operator's own numbers two lines below
-    // it -- the range sentence, then a worked example against a real value -- and a vaguer
-    // second copy of a fact computed live underneath it is what drifts (rule 144). A static
-    // example written in here would be the same trap: it would go stale the moment they
-    // moved either end of the ramp.
+    // gone because the card now says that with the operator's own numbers below it: the two
+    // labeled bound boxes, then a worked example the engine answers against a real value. A
+    // vaguer second copy of a fact computed live underneath it is what drifts (rule 144). A
+    // static example written in here would be the same trap: it would go stale the moment
+    // they moved either end of the ramp.
     help: "The longer it sits untouched, the stronger the reason to remove it. The clock starts at the last play, or at the day it arrived when there has never been one.",
   },
   few_watchers: {

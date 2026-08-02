@@ -1463,6 +1463,22 @@ describe("where a signal starts earning", () => {
     ).toBeVisible();
   });
 
+  it("colors a direct ramp deepest at the bound it pays in full at", async () => {
+    renderEditor({ body: body() });
+    await screen.findByLabelText('Where "How long it\'s gone unwatched" pays in full');
+
+    // This fixture pays in full at 365 days on a 3650-day track, so the flat top starts one
+    // tenth along and the fill still runs to the end: past the far bound the signal keeps
+    // paying all of it. Full color therefore belongs at 10%, not at the edge the fill happens
+    // to stop on. Drawing one gradient edge to edge put it at 3650 days, ten times the bound,
+    // while the key underneath says "deepest where it pays in full" -- the picture and the
+    // words disagreeing about the one fact the picture exists to carry.
+    const { fill } = stripFor("How long it's gone unwatched");
+    expect(fill.style.background).toBe(
+      "linear-gradient(to right, color-mix(in srgb, var(--condemn) 6%, transparent), var(--condemn) 10%)",
+    );
+  });
+
   it("writes a shortfall edit back as the gap, floor and all", async () => {
     const user = userEvent.setup();
     renderEditor({ body: body() });
@@ -1471,9 +1487,6 @@ describe("where a signal starts earning", () => {
     await user.clear(box);
     await user.type(box, "5.5");
 
-    // Stored in tenths, and the floor goes back to zero with it: the pair carries one degree
-    // of freedom, so a stale floor would leave a second number in the body that nothing reads
-    // and nobody can see.
     // Stored in tenths, and the floor goes back to zero with it: the pair carries one degree
     // of freedom, so a stale floor would leave a second number in the body that nothing reads
     // and nobody can see. The strip is what shows it landed -- the bar moves to 5.5 of 10.

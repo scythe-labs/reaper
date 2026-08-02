@@ -66,7 +66,7 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
-import { probeSaid, rampStrip, rampUnits } from "./signalRamp";
+import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
 import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
@@ -930,7 +930,7 @@ function SignalRamp({
                 style={{
                   left: `${strip.fillFrom}%`,
                   width: `${strip.fillTo - strip.fillFrom}%`,
-                  background: `linear-gradient(to ${strip.deepEnd === "left" ? "right" : "left"}, var(--condemn), color-mix(in srgb, var(--condemn) 6%, transparent))`,
+                  background: rampFill(strip),
                 }}
               />
               <div className="ramp-strip-bar" style={{ left: `${strip.bar}%` }} />
@@ -1973,8 +1973,11 @@ export function PolicyEditor({
           ))}
         </ul>
         {/* One key for the section, at its foot. Three strips down a column want one legend,
-            not three, which is how the explanation panel does it too. */}
-        <p className="ramp-key">
+            not three, which is how the explanation panel does it too. Hidden from a reader
+            for the same reason the strips are: it captions a picture, and read on its own it
+            is two colour names with nothing to attach them to. Every bound it describes is
+            already in a labeled box above, spoken. */}
+        <p className="ramp-key" aria-hidden="true">
           <span>
             <i className="earns" aria-hidden="true" /> earns points, deepest where it pays in full
           </span>

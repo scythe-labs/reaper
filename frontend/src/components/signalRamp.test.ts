@@ -8,7 +8,14 @@
 // they get one settable end and not two. A fixture invented here instead would prove the
 // sentence renders and nothing about whether it is true.
 import { describe, expect, it } from "vitest";
-import { rampEnds, rampSentence, rampStrip, rampUnits, rowRampSentence } from "./signalRamp";
+import {
+  rampEnds,
+  rampFill,
+  rampSentence,
+  rampStrip,
+  rampUnits,
+  rowRampSentence,
+} from "./signalRamp";
 
 describe("what a signal's ramp says", () => {
   it("reads downward for a signal measured on a shortfall", () => {
@@ -41,6 +48,17 @@ describe("what a signal's ramp says", () => {
     expect(rampSentence("season_rank", 0, 6, 15)).toBe(
       "Pays something from the newest season on, and all 15 points at the 6th-newest season.",
     );
+  });
+
+  it("words a season rank past the twenty the scale draws", () => {
+    // Nothing caps the far bound: `saturate_at` is `ge=1` with no ceiling and the box passes
+    // only a `min`, so 21 saves and has to be worded. The last two digits decide the suffix,
+    // because 11-13 take "th" where 21-23 do not.
+    expect(rampSentence("season_rank", 2, 21, 15)).toContain("the 21st-newest season");
+    expect(rampSentence("season_rank", 2, 22, 15)).toContain("the 22nd-newest season");
+    expect(rampSentence("season_rank", 2, 23, 15)).toContain("the 23rd-newest season");
+    expect(rampSentence("season_rank", 2, 13, 15)).toContain("the 13th-newest season");
+    expect(rampSentence("season_rank", 2, 11, 15)).toContain("the 11th-newest season");
   });
 
   it("says 'pays nothing until' once the floor is inside the seasons that exist", () => {
@@ -155,5 +173,46 @@ describe("the strip drawn under a signal's bounds", () => {
   it("draws nothing where there is no ramp to draw", () => {
     expect(rampStrip("my own rule", 0, 80)).toBeNull();
     expect(rampStrip("low_rating", null, null)).toBeNull();
+  });
+});
+
+// A direct ramp pays its whole weight from the far bound ONWARD, so the picture has a flat
+// top. Running one gradient edge to edge drew that flat top as a colour still deepening, and
+// the section key underneath asserts the opposite in words ("deepest where it pays in full").
+describe("where the fill reaches full strength", () => {
+  it("saturates at the far bound on a direct signal, not at the end of the track", () => {
+    // unwatched ships floor 365, saturate 1825, track 3650. Full points land at 1825, which
+    // is half way along the track, NOT at 3650 where the fill happens to stop.
+    expect(rampStrip("unwatched", 365, 1825)!.deepAt).toBe(50);
+  });
+
+  it("saturates at the fill's own edge on a shortfall signal", () => {
+    // A shortfall pays most at zero, which is where the fill already starts, so deep point
+    // and edge coincide and there is no flat region to place.
+    expect(rampStrip("low_rating", 0, 80)!.deepAt).toBe(0);
+  });
+
+  it("places the gradient stop inside the fill, so the flat top is drawn flat", () => {
+    // The fill box spans 10% -> 100% of the track and saturates at 50%, which is (50-10)/90
+    // = 44.44% of the way into the box. Everything past that stop holds full colour, which
+    // is what "pays in full and keeps paying" looks like.
+    expect(rampFill(rampStrip("unwatched", 365, 1825)!)).toBe(
+      "linear-gradient(to right, color-mix(in srgb, var(--condemn) 6%, transparent), var(--condemn) 44.44%)",
+    );
+  });
+
+  it("keeps a shortfall's deep end on the left", () => {
+    // Measured the other way round: the stop sits at 100% of a `to left` gradient, which is
+    // the box's LEFT edge, where a rating of 0.0 pays all 10 points.
+    expect(rampFill(rampStrip("low_rating", 0, 80)!)).toBe(
+      "linear-gradient(to left, color-mix(in srgb, var(--condemn) 6%, transparent), var(--condemn) 100%)",
+    );
+  });
+
+  it("puts full colour at the far bound wherever the operator moves it", () => {
+    // The bound is what decides the stop, so a shorter ramp saturates sooner. 365 -> 730 on
+    // the same 3650 track is 20% of the track and (20-10)/90 = 11.11% into the fill.
+    expect(rampStrip("unwatched", 365, 730)!.deepAt).toBe(20);
+    expect(rampFill(rampStrip("unwatched", 365, 730)!)).toContain("var(--condemn) 11.11%");
   });
 });

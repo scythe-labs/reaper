@@ -201,10 +201,25 @@ const RAMPS: Record<string, RampUnits> = {
   },
 };
 
+/** The far bound takes no ceiling on either side of the wire (`saturate_at` is `ge=1` and the
+ *  box passes only a `min`), so this has to word every number an operator can save, not just
+ *  the twenty the scale draws. The suffix keys on the last two digits first, because 11, 12
+ *  and 13 take "th" where 21, 22 and 23 do not. */
 function ordinal(n: number): string {
   if (n === 2) return "second";
   if (n === 3) return "third";
-  return `${n}th`;
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
 }
 
 /** What the operator can set on this signal, or `null` where this module has nothing to
@@ -284,6 +299,10 @@ export interface RampStrip {
   bar: number;
   /** Which end of the fill is at full strength. */
   deepEnd: "left" | "right";
+  /** Where the gradient reaches full strength, as a percentage of the TRACK. A direct ramp
+   *  saturates inside its fill and is flat-full from there to the end, so this is the only
+   *  thing that puts "pays in full" where the operator can see it. */
+  deepAt: number;
   scaleFrom: string;
   scaleTo: string;
 }
@@ -309,6 +328,9 @@ export function rampStrip(
       fillTo: bar,
       bar,
       deepEnd: "left",
+      // A shortfall pays most at zero, which IS the fill's outer edge, so the deep point and
+      // the edge coincide and the gradient has no flat region to draw.
+      deepAt: 0,
       scaleFrom: units.scaleFrom,
       scaleTo: units.scaleTo,
     };
@@ -320,9 +342,30 @@ export function rampStrip(
     fillTo: 100,
     bar: pct(floor),
     deepEnd: "right",
+    deepAt: pct(saturate),
     scaleFrom: units.scaleFrom,
     scaleTo: units.scaleTo,
   };
+}
+
+/** The fill's `background`, with full strength placed at `deepAt` instead of at whichever
+ *  edge the gradient happens to end on.
+ *
+ *  A direct ramp pays its whole weight from `saturate_at` onward, so the picture has to go
+ *  flat-full there and stay flat to the end of the track. Running one gradient edge to edge
+ *  drew that flat top as a colour still deepening: on the shipped movie dormancy (365 ->
+ *  1825, track 3650) full red landed at ten years, and five years, where the signal already
+ *  pays all 70, sat at under half strength. A CSS gradient holds its last stop's colour to
+ *  the end of the box, so placing that stop at `deepAt` is the whole fix. */
+export function rampFill(strip: RampStrip): string {
+  const faint = "color-mix(in srgb, var(--condemn) 6%, transparent)";
+  const span = strip.fillTo - strip.fillFrom;
+  // A zero-width fill has no inside to place a stop in; either end reads the same.
+  const within = span <= 0 ? 0 : ((strip.deepAt - strip.fillFrom) / span) * 100;
+  const at = Math.round(Math.max(0, Math.min(100, within)) * 100) / 100;
+  return strip.deepEnd === "left"
+    ? `linear-gradient(to left, ${faint}, var(--condemn) ${100 - at}%)`
+    : `linear-gradient(to right, ${faint}, var(--condemn) ${at}%)`;
 }
 
 /** Points said the way both surfaces say them, so a probe and a row never disagree about
