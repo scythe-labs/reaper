@@ -2,17 +2,20 @@
 <!--
   SPDX-License-Identifier: AGPL-3.0-or-later
 
-  Unraid container template. Copy to the Unraid server at
-  /boot/config/plugins/dockerMan/templates-user/my-Reaper.xml, then add the container
-  from Docker > Add Container and pick "Reaper" in the template dropdown.
+  Unraid container template for the DEV channel. Installed through Community
+  Applications (this repository is submitted there), or by hand: copy to the Unraid
+  server at /boot/config/plugins/dockerMan/templates-user/my-Reaper-Dev.xml and add
+  the container from Docker > Add Container.
 
   The package is public, so the pull needs no login.
 
-  The :dev tag tracks the dev branch, which is where pre-release work lands. :latest
-  follows main once a release is cut.
+  The :dev tag tracks the dev branch, which is where pre-release work lands. The
+  stable "Reaper" template joins this folder at the first release, pointing at
+  :latest; it cannot land earlier because CA validates every template's image as
+  pullable, and :latest exists only once a release is cut.
 -->
 <Container version="2">
-  <Name>Reaper</Name>
+  <Name>Reaper-Dev</Name>
   <Repository>ghcr.io/scythe-labs/reaper:dev</Repository>
   <Registry>https://ghcr.io/scythe-labs/reaper</Registry>
   <Network>bridge</Network>
@@ -21,7 +24,9 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/scythe-labs/reaper/issues</Support>
   <Project>https://github.com/scythe-labs/reaper</Project>
-  <Overview>Reaper finds media nobody watches, explains why it thinks each item is expendable, and removes it safely through Sonarr and Radarr. It reads watch history from Tautulli and requests from Seerr, and it refreshes Plex when it is done.
+  <Overview>This is Reaper's dev channel: it follows the dev branch and changes daily. Run it to help test what is coming; once releases exist, the Reaper entry is the steadier choice.
+
+Reaper finds media nobody watches, explains why it thinks each item is expendable, and removes it safely through Sonarr and Radarr. It reads watch history from Tautulli and requests from Seerr, and it refreshes Plex when it is done.
 
 Deletion is off until you turn it on. Until then Reaper can only scan, score and explain, so you can run it for weeks and just read the results. It never touches your files directly: everything goes through Sonarr and Radarr, so this container needs no access to your media shares.
 
@@ -34,8 +39,8 @@ Back up the data folder. It holds reaper.db and secret.key, and secret.key is th
 Locked out? Open this container's console and run: reaper-admin reset-password --username yourname</Overview>
   <Category>MediaApp:Video Tools:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8420]/</WebUI>
-  <TemplateURL/>
-  <Icon/>
+  <TemplateURL>https://raw.githubusercontent.com/scythe-labs/reaper/dev/contrib/unraid/my-Reaper-Dev.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/scythe-labs/reaper/dev/frontend/public/icon-512.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
