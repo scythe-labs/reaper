@@ -19,7 +19,15 @@
 // that only explains its deletions cannot be trusted about its keeps.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   api,
   type CandidateDetail,
@@ -171,15 +179,55 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
   );
 }
 
-/** The synopsis, clamped to two lines with a "more" to expand. The card shows the *reason*
- *  now, so this slide-out is the one place the plot lives -- but it still should not push the
- *  reasoning below the fold, hence the clamp. Shared with the show panel. */
+/** The synopsis, clamped to two lines with a "more" to expand -- offered whenever the text is
+ *  actually cut, at whatever width the panel has. The card shows the *reason* now, so this
+ *  slide-out is the one place the plot lives, but it still should not push the reasoning below
+ *  the fold, hence the clamp. Shared with the show panel. */
 export function Synopsis({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  // This component is reused when the selection changes without an unmount in between --
+  // `WhyHero` documents the same reuse -- so a synopsis left open would open the next title's
+  // too, and the measurement below, which is skipped while open, would go on answering for the
+  // previous text. Before paint, so the new title never flashes expanded.
+  useLayoutEffect(() => setExpanded(false), [text]);
+
+  // Whether two lines are enough is a question about how wide the panel is, never about how
+  // long the string is. The old `text.length > 150` answered it at one width, and the width it
+  // was right at is not the one a phone has: measured against this stylesheet, the first length
+  // two lines cannot hold is 115 characters at a 393px panel, 135 at 430px and 145 at 480px,
+  // against a control that waited for 151 everywhere. Everything inside that band was cut with
+  // nothing on screen to open it, and the band is widest exactly where the panel is narrowest
+  // (#407). Ask the element instead, which is also right at a text size or browser zoom nobody
+  // predicted.
+  //
+  // Same shape as `usePopoverShift` (rule 18): layout rather than paint, so the control is
+  // there in the first frame instead of appearing after it, and re-measured on every render
+  // plus a window listener, because React re-renders nothing on a resize. Setting the same
+  // value bails out of the re-render, so this settles rather than looping.
+  useLayoutEffect(() => {
+    // An open synopsis is not clamped, so it measures as "nothing hidden" and would take away
+    // the control that closes it. Its last collapsed answer stands until it is collapsed again.
+    if (expanded) return;
+    const measure = () => {
+      const el = ref.current;
+      // A pixel of tolerance: both heights are rounded to integers, and a line box whose
+      // height does not land on one can leave a 1px difference with nothing actually hidden.
+      if (el) setClipped(el.scrollHeight > el.clientHeight + 1);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  });
+
   return (
     <p className="why-summary">
-      <span className={expanded ? undefined : "clamp-2"}>{text}</span>
-      {text.length > 150 && (
+      <span ref={ref} className={expanded ? "why-synopsis" : "why-synopsis clamp-2"}>
+        {text}
+      </span>
+      {(clipped || expanded) && (
         <button
           className="link-btn"
           // A disclosure that never said it was one. The clamp is CSS-only (`.clamp-2`), so the
