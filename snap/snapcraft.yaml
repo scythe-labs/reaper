@@ -86,9 +86,13 @@ parts:
       # The exact, hash-pinned set CI tested, from the committed lockfile -- the
       # same install the Dockerfile performs, aimed at the shipped interpreter.
       uv export --frozen --no-emit-project -o "$CRAFT_PART_BUILD/requirements.txt"
-      uv pip install --system --python "$PY" --no-cache --compile-bytecode \
-        -r "$CRAFT_PART_BUILD/requirements.txt"
-      uv pip install --system --python "$PY" --no-cache --no-deps --compile-bytecode .
+      # --break-system-packages: uv marks its managed interpreters externally
+      # managed so nothing mutates them by accident. This one exists only to be
+      # mutated here; it IS the snap's runtime.
+      uv pip install --system --python "$PY" --break-system-packages --no-cache \
+        --compile-bytecode -r "$CRAFT_PART_BUILD/requirements.txt"
+      uv pip install --system --python "$PY" --break-system-packages --no-cache \
+        --no-deps --compile-bytecode .
 
       # The pieces that live beside the code; REAPER_HOME=$SNAP points the app here.
       cp -r alembic "$CRAFT_PART_INSTALL/alembic"
