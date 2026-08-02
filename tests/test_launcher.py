@@ -11,6 +11,7 @@ captured value is asserted, not just the call).
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -134,6 +135,10 @@ class TestMain:
         monkeypatch.setenv("REAPER_LAUNCH_BROWSER", "false")
         monkeypatch.delenv("REAPER_HOST", raising=False)
         monkeypatch.delenv("REAPER_PORT", raising=False)
+        # main() reads these through export_buildinfo/install_root; a machine that
+        # happens to set them would change what this suite proves (rule 133).
+        monkeypatch.delenv("REAPER_HOME", raising=False)
+        monkeypatch.delenv("REAPER_BUILDINFO", raising=False)
         return captured
 
     def test_the_serve_call_never_trusts_forwarded_headers(self, serve: dict[str, Any]) -> None:
@@ -148,6 +153,19 @@ class TestMain:
         assert serve["kwargs"].get("port") == 8420
         assert serve["migrated"] is True
 
+    def test_an_install_without_migrations_stops_before_touching_disk(
+        self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A plain `pip install reaper` puts reaper-server on PATH with no alembic/
+        beside it; continuing would create a data folder nothing can bring current.
+        The refusal lands before preflight, so not even the folder is created."""
+        monkeypatch.setenv("REAPER_HOME", str(tmp_path))  # a root with no alembic/
+        with pytest.raises(SystemExit) as excinfo:
+            launcher.main()
+        assert excinfo.value.code == 2
+        assert serve["migrated"] is False
+        assert "kwargs" not in serve
+
     def test_a_failed_preflight_stops_before_migrations_or_serving(
         self, serve: dict[str, Any]
     ) -> None:
@@ -159,3 +177,38 @@ class TestMain:
         assert excinfo.value.code == 1
         assert serve["migrated"] is False
         assert "kwargs" not in serve
+
+
+class TestResolveDataDir:
+    def test_frozen_without_a_choice_gets_the_platform_folder(self) -> None:
+        env: dict[str, str] = {}
+        launcher._resolve_data_dir(env, frozen=True)
+        assert env["REAPER_DATA_DIR"] == str(launcher.default_data_dir(sys.platform, env))
+
+    def test_an_operator_choice_is_never_overridden(self) -> None:
+        env = {"REAPER_DATA_DIR": "/somewhere/else"}
+        launcher._resolve_data_dir(env, frozen=True)
+        assert env["REAPER_DATA_DIR"] == "/somewhere/else"
+
+    def test_a_source_run_keeps_the_repo_relative_default(self) -> None:
+        env: dict[str, str] = {}
+        launcher._resolve_data_dir(env, frozen=False)
+        assert "REAPER_DATA_DIR" not in env
+
+
+class TestBuildinfoPath:
+    def test_a_named_path_wins(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("REAPER_BUILDINFO", str(tmp_path / "info.json"))
+        assert launcher._buildinfo_path() == tmp_path / "info.json"
+
+    def test_the_install_root_is_the_fallback(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.delenv("REAPER_BUILDINFO", raising=False)
+        monkeypatch.setenv("REAPER_HOME", str(tmp_path))
+        assert launcher._buildinfo_path() == tmp_path / "buildinfo.json"
+
+    def test_a_source_checkout_has_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("REAPER_BUILDINFO", raising=False)
+        monkeypatch.delenv("REAPER_HOME", raising=False)
+        assert launcher._buildinfo_path() is None

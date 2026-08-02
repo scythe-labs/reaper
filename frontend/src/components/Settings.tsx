@@ -1485,16 +1485,27 @@ export function AboutPanel() {
         </div>
       )}
       {changesOpen && update.data && (
-        <ChangesModal changes={update.data.changes} onClose={() => setChangesOpen(false)} />
+        <ChangesModal
+          changes={update.data.changes}
+          url={update.data.url}
+          onClose={() => setChangesOpen(false)}
+        />
       )}
     </div>
   );
 }
 
 /** The Update row's sentence, one branch per state the check can be in. Pending and a
- *  failed read are spelled out (rule 17/36), and both failure shapes -- the HTTP call
- *  failing, and the server answering "unknown" -- read the same, because to the
- *  operator they are the same fact: no answer today, and nothing they must do. */
+ *  failed read are spelled out (rule 17/36), and both no-answer shapes -- the HTTP
+ *  call failing with nothing in hand, and the server answering "unknown" -- read the
+ *  same, because to the operator they are the same fact: no answer today, and nothing
+ *  they must do.
+ *
+ *  A failed REFETCH is deliberately not a branch: React Query keeps the last good
+ *  answer and raises `isError` beside it, and the pill, the chip light, and the dev
+ *  banner all render that retained answer -- so this row must too, or the pill says
+ *  "Update available" directly above a row claiming the check failed (the exact
+ *  stale-read split the `about` query above documents). */
 function UpdateCell({
   status,
   onSeeChanges,
@@ -1502,15 +1513,15 @@ function UpdateCell({
   status: ReturnType<typeof useUpdateStatus>;
   onSeeChanges: () => void;
 }) {
-  const { data, isPending, isError } = status;
+  const { data, isPending } = status;
   if (isPending) return <span className="muted">Checking for updates…</span>;
-  if (!data || isError)
+  if (!data)
     return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
   if (!data.enabled)
     return (
       <span className="muted">
-        Update checks are off, so Reaper never asks GitHub for versions. Remove
-        REAPER_UPDATE_CHECK=false to turn them back on.
+        Update checks are off, so Reaper never asks GitHub for versions. Remove REAPER_UPDATE_CHECK
+        from your environment to turn them back on.
       </span>
     );
   if (data.update_available === null)
@@ -1552,14 +1563,32 @@ function UpdateCell({
 
 /** The GitHub changelog for every release the operator has not taken, newest first, in
  *  the one modal shell. The markdown is rendered sanitized -- react-markdown emits no
- *  raw HTML -- and every link inside it leaves for GitHub in a new tab. */
-function ChangesModal({ changes, onClose }: { changes: ReleaseChange[]; onClose: () => void }) {
+ *  raw HTML, images are dropped so a note cannot phone home just for being read, and
+ *  headings are demoted under the dialog's own so the outline stays honest. Every
+ *  link inside leaves for GitHub in a new tab. */
+function ChangesModal({
+  changes,
+  url,
+  onClose,
+}: {
+  changes: ReleaseChange[];
+  url: string | null;
+  onClose: () => void;
+}) {
   return (
     <ModalShell title="What changed" onClose={onClose} className="modal-changes">
       <div className="changes-body">
         {changes.length === 0 && (
           <p className="muted">
-            No release notes to show. The releases page on GitHub has the full story.
+            No release notes to show.{" "}
+            {url ? (
+              <a href={url} target="_blank" rel="noreferrer">
+                The release page on GitHub
+              </a>
+            ) : (
+              "The releases page on GitHub"
+            )}{" "}
+            has the full story.
           </p>
         )}
         {changes.map((c) => (
@@ -1568,10 +1597,21 @@ function ChangesModal({ changes, onClose }: { changes: ReleaseChange[]; onClose:
             {c.notes ? (
               <div className="changes-notes">
                 <Markdown
+                  // Images out: a rendered <img> fetches from wherever the note says,
+                  // beside copy promising nothing leaves the box just for reading.
+                  disallowedElements={["img"]}
                   components={{
                     a: ({ node: _node, ...props }) => (
                       <a {...props} target="_blank" rel="noreferrer" />
                     ),
+                    // GitHub's generated notes open at h2; undemoted that outranks the
+                    // per-release h3 and sits level with the dialog's own name.
+                    h1: ({ node: _node, ...props }) => <h4 {...props} />,
+                    h2: ({ node: _node, ...props }) => <h4 {...props} />,
+                    h3: ({ node: _node, ...props }) => <h4 {...props} />,
+                    h4: ({ node: _node, ...props }) => <h4 {...props} />,
+                    h5: ({ node: _node, ...props }) => <h4 {...props} />,
+                    h6: ({ node: _node, ...props }) => <h4 {...props} />,
                   }}
                 >
                   {c.notes}

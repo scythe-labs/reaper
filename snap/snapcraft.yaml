@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# The snap: strict confinement, data under /var/snap/reaper/common, served on :8420.
+# The snap: strict confinement, data under /var/snap/scythe-labs-reaper/common,
+# served on :8420.
 #
 # core24 ships Python 3.12 and Reaper needs 3.13, so the build installs a relocatable
 # CPython via uv (python-build-standalone) and ships it whole; the app runs as

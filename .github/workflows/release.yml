@@ -12,9 +12,12 @@ name: Release
 # normalizes 2026.08 to 2026.8, and two spellings of one release is how version
 # comparisons quietly break.
 #
-# workflow_dispatch exists to re-run a cut that failed partway: the version step
-# is idempotent (an existing tag advances the count), and a draft release left
-# behind by a failed run is safe to delete by hand.
+# workflow_dispatch exists to re-run a cut that failed partway, and the whole
+# pipeline is shaped so a failed run leaves nothing half-claimed: no git tag is
+# created until the draft is published (gh mints it at publish time), so a failed
+# run leaves only a draft, a rerun that computes the same number replaces its own
+# leftover draft, and the version count is never consumed by a release that never
+# shipped. The asset upload is idempotent (--clobber) for the same reason.
 
 on:
   push:
@@ -32,7 +35,11 @@ concurrency:
 
 jobs:
   cut:
-    name: Compute the version and cut the tag
+    name: Compute the version and draft the release
+    # Dispatch exists to re-run a failed cut, and the UI's ref dropdown defaults to
+    # dev: without this guard one misclick would tag and release the dev tip as
+    # stable. Everything downstream needs this job, so the skip covers the run.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -45,7 +52,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Tag and draft the release
+      - name: Draft the release
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,11 +66,24 @@ jobs:
           done
           version="${year}.${month}.${n}"
           tag="v${version}"
-          git tag "${tag}" "${GITHUB_SHA}"
-          git push origin "refs/tags/${tag}"
-          # Draft until the artifacts are attached, so nobody is told about a
-          # release that cannot be downloaded yet.
-          gh release create "${tag}" --draft --generate-notes --title "Reaper ${version}"
+          # The newest released line, for the notes range. Pinned rather than left to
+          # GitHub's own pick: the rolling dev-build prerelease tag lives in this same
+          # repo, and every release's notes would otherwise rest on GitHub never
+          # choosing it. Empty on the first cut, and then omitted.
+          prev="$(git for-each-ref --sort=-v:refname --format='%(refname:short)' --count=1 'refs/tags/v*')"
+          # A leftover DRAFT with this tag is this pipeline's own failed attempt
+          # (drafts hold no git tag, so the count above recomputes the same number):
+          # replace it. A published release never matches isDraft and is never touched.
+          if [ "$(gh release view "${tag}" --json isDraft -q .isDraft 2>/dev/null || echo false)" = "true" ]; then
+            gh release delete "${tag}" --yes
+          fi
+          # Draft until the artifacts are attached, so nobody is told about a release
+          # that cannot be downloaded yet. gh creates the git tag at publish time.
+          args=(--draft --target "${GITHUB_SHA}" --generate-notes --title "Reaper ${version}")
+          if [ -n "${prev}" ]; then
+            args+=(--notes-start-tag "${prev}")
+          fi
+          gh release create "${tag}" "${args[@]}"
           {
             echo "version=${version}"
             echo "tag=${tag}"
@@ -78,9 +98,12 @@ jobs:
 
   # The versioned image. ci.yml keeps proving buildability on every commit; this is
   # the one place :latest and the version tag are pushed, with the release identity
-  # baked so the About page and the update check tell the truth.
+  # baked so the About page and the update check tell the truth. It waits for the
+  # binaries: :latest moving while a lane fails would put operators on a version
+  # whose release never published, the same half-published state the concurrency
+  # group guards against from the cancellation side.
   docker:
-    needs: cut
+    needs: [cut, binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -125,7 +148,9 @@ jobs:
           TAG: ${{ needs.cut.outputs.tag }}
         run: |
           set -euo pipefail
-          gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" assets/*
+          # --clobber: a rerun after a partial upload replaces what landed instead of
+          # failing on the first name that already exists.
+          gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber assets/*
           gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
 
   # Stable-channel store publication, once the GitHub release is out. Skipped

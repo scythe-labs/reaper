@@ -7,10 +7,11 @@ verify it (preflight, which also applies a staged restore), apply migrations, th
 serve. A half-migrated schema must never serve traffic for a tool that deletes media.
 
 Provenance rides along as ``buildinfo.json``: a frozen bundle carries it next to the
-executable, the snap points ``REAPER_BUILDINFO`` at its copy, and its values are
-exported into the environment (never overriding one the operator set) before anything
-reads them -- :mod:`reaper.buildinfo` and the update check read only the environment,
-so every install shape answers the same way.
+executable, the snap's copy is found through ``REAPER_HOME`` (``REAPER_BUILDINFO``
+exists to name a path outright when neither applies), and its values are exported
+into the environment (never overriding one the operator set) before anything reads
+them -- :mod:`reaper.buildinfo` and the update check read only the environment, so
+every install shape answers the same way.
 
 The data folder default is per-platform only when frozen. Run from a source checkout
 this launcher keeps the repo-relative ``data/`` every other dev entry point uses.
@@ -147,10 +148,11 @@ def _open_browser_when_up(port: int) -> None:
     """From a daemon thread: wait for our own health probe, then open the UI.
 
     The poll is stdlib urllib against this process's loopback port -- the same probe
-    the container HEALTHCHECK runs, not an integration call, which is why it does not
-    go through ``clients/`` (rule 33 governs external services; this asks ourselves).
-    Give up silently after a minute: the server log is the fallback signal, and a
-    browser that never opens must not stop the server that is otherwise fine.
+    the container HEALTHCHECK runs. It is a sanctioned exception to rule 33 (recorded
+    in ``.claude/rules/backend.md``): the request asks Reaper itself, carries no
+    credentials, and can mutate nothing. Give up silently after a minute: the server
+    log is the fallback signal, and a browser that never opens must not stop the
+    server that is otherwise fine.
     """
 
     def poll() -> None:
@@ -174,6 +176,17 @@ def main() -> None:
     export_buildinfo(os.environ, _buildinfo_path())
     _resolve_data_dir(os.environ, frozen=frozen)
 
+    # Before anything touches the disk: a plain `pip install reaper` puts this script
+    # on PATH with no migrations beside it (site-packages has no alembic/), and
+    # continuing would create a data folder that can never be brought current.
+    root = install_root() or _repo_root()
+    if not (root / "alembic").is_dir():
+        sys.stderr.write(
+            "Reaper can't find its database migrations next to this install. Run the "
+            "container, a packaged binary, the snap, or a source checkout instead.\n"
+        )
+        raise SystemExit(2)
+
     # Imported after the environment is settled: get_settings() caches on first call,
     # and that first call must see the data dir chosen above.
     from reaper.preflight import main as preflight
@@ -182,7 +195,6 @@ def main() -> None:
     if code:
         raise SystemExit(code)
 
-    root = install_root() or _repo_root()
     _migrate(root)
 
     host = os.environ.get("REAPER_HOST", "").strip() or "0.0.0.0"

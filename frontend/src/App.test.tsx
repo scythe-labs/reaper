@@ -54,6 +54,13 @@ vi.mock("./api", async (importOriginal) => ({
   api: apiMock,
 }));
 
+// Answered file-wide: UserMenu rides along in every shell mount, and rule 135's gate
+// cannot see a mock fn that exists and returns undefined. Describes that vary the
+// answer set their own value after their reset.
+beforeEach(() => {
+  apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+});
+
 const snapshot: Snapshot = {
   id: 1,
   created_at: "2026-01-01T00:00:00+00:00",

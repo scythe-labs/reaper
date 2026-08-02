@@ -41,7 +41,10 @@ DEFAULT_REPO = "scythe-labs/reaper"
 
 #: ``owner/name`` and nothing else: the slug is spliced into a URL path, so a value
 #: that could smuggle a separator falls back to the default instead of being sent.
-_REPO_SHAPE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+#: The owner charset is GitHub's own (no dots), and the name must hold at least one
+#: non-dot character, or ``../..`` would pass the charset and normalize into a path
+#: escape before the request leaves.
+_REPO_SHAPE = re.compile(r"^[A-Za-z0-9-]+/(?=.*[^.])[A-Za-z0-9._-]+$")
 
 _FALSE = {"0", "false", "no", "off"}
 
@@ -76,9 +79,10 @@ class UpdateStatus:
 
     ``update_available`` is three-state on purpose: ``None`` means the check could not
     answer (disabled, unreachable, or an unparseable version), which the surface shows
-    as nothing rather than as either verdict. ``changes`` holds every release newer
-    than the running one, newest first; it is empty whenever ``update_available`` is
-    not ``True``, and always empty on the dev channel, whose builds have no notes.
+    as nothing rather than as either verdict. ``changes`` holds the releases newer
+    than the running one (bounded by one API page), newest first; it is empty whenever
+    ``update_available`` is not ``True``, and always empty on the dev channel, whose
+    builds have no notes.
     """
 
     channel: Channel
@@ -150,6 +154,10 @@ class UpdateChecker:
 
         The disabled answer is never cached: flipping ``REAPER_UPDATE_CHECK`` back on
         must take effect on the next request, not after a TTL.
+
+        The lock is held across the fetch on purpose: concurrent requests during the
+        once-per-TTL refresh wait for one GitHub call instead of each making their
+        own, and the wait is bounded by the client's own retry budget.
         """
         if not _enabled():
             return UpdateStatus(channel=_channel(), enabled=False, current=build_version())
@@ -174,16 +182,24 @@ class UpdateChecker:
             return UpdateStatus(channel=channel, enabled=True, current=current)
 
     async def _check_release(self, current: str) -> UpdateStatus:
-        """The newest release as the headline, plus notes for every release the
-        operator has not taken, so the what-changed modal can show the whole gap.
+        """The newest release as the headline, plus notes for the releases the
+        operator has not taken, newest first.
 
         The list read replaces ``releases/latest`` because ``latest`` carries one
         body: an operator two releases behind would be shown only the newest one's
         notes and read the middle release as never having happened. Drafts are not
         visible to this anonymous read; prereleases (the rolling dev build) are
         filtered because they are not the release channel.
+
+        **The newest release is chosen by version, never by list position.** GitHub
+        orders this endpoint by creation date, so a hotfix cut for an older line
+        sits first; trusting position would report that hotfix as the headline and
+        suppress a genuinely newer release for a whole cache TTL.
+
+        One API page bounds what this can describe: an operator further behind than
+        a page still gets the right headline and the newest page of notes.
         """
-        payload = await self._fetch(f"/repos/{self._repo}/releases", params={"per_page": 10})
+        payload = await self._fetch(f"/repos/{self._repo}/releases", params={"per_page": 30})
         if not isinstance(payload, list):
             raise IntegrationError("update-check", "expected a list of releases")
         entries: list[tuple[str, dict[str, Any]]] = []
@@ -196,10 +212,21 @@ class UpdateChecker:
         if not entries:
             raise IntegrationError("update-check", "the answer carried no releases")
 
-        latest, headline = entries[0]
+        orderable = sorted(
+            ((parsed, version, row) for version, row in entries if (parsed := _parse(version))),
+            key=lambda item: item[0],
+            reverse=True,
+        )
+        # No orderable version anywhere: show whatever sits newest and answer
+        # "unknown", never a guess (list position is a creation date, not a verdict).
+        latest, headline = (orderable[0][1], orderable[0][2]) if orderable else entries[0]
         mine = version_number()
         newer = _newer(latest, mine)
-        changes = tuple(_change(version, row) for version, row in entries if _newer(version, mine))
+        changes = tuple(
+            _change(version, row)
+            for _, version, row in orderable  # already sorted newest-first
+            if _newer(version, mine)
+        )
         url = headline.get("html_url")
         return UpdateStatus(
             channel="release",
@@ -207,7 +234,7 @@ class UpdateChecker:
             current=current,
             latest=latest,
             update_available=newer,
-            url=url if isinstance(url, str) else None,
+            url=url if isinstance(url, str) and url.startswith("https://") else None,
             checked_at=utcnow(),
             changes=changes if newer else (),
         )
@@ -251,6 +278,8 @@ def _change(version: str, row: dict[str, Any]) -> ReleaseChange:
         notes = notes[:_MAX_NOTES] + "\n\nRead the rest on GitHub."
     return ReleaseChange(
         version=version,
-        url=url if isinstance(url, str) else None,
+        # The UI puts this straight into a link; only an https URL qualifies, however
+        # the API answer was bent on the way here.
+        url=url if isinstance(url, str) and url.startswith("https://") else None,
         notes=notes if isinstance(notes, str) else None,
     )

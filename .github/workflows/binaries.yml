@@ -47,8 +47,15 @@ permissions:
 # ref folds those into one running build; only PR builds may be cancelled, since a
 # superseded PR build is answering a question nobody is still asking, while a
 # half-cancelled publish is the failure release.yml's own group exists to prevent.
+# Schedule and dispatch share ONE group: both can recreate the dev-build prerelease,
+# and two of those interleaving delete/create against the same release is a race no
+# ordering inside either run can fix.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      && 'dev-publish'
+      || format('{0}-{1}', github.event_name, github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -134,8 +141,12 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # bash on both platforms: under Windows' default pwsh only the LAST command
+      # decides the step, so a failed `npm ci` would be discarded (rule 134's trap
+      # in shell-default form).
       - name: Build the SPA
         working-directory: frontend
+        shell: bash
         run: |
           npm ci
           npm run build
@@ -148,7 +159,8 @@ jobs:
       - name: Set up Python
         run: uv python install 3.13
 
-      # The same locked set CI tested plus the pinned bundler; nothing resolves fresh.
+      # PyInstaller and every dependency ride uv.lock; uv itself arrives via the
+      # same unpinned-channel setup-uv posture ci.yml uses.
       - name: Install
         run: uv sync --frozen --extra package
 

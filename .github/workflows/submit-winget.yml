@@ -14,7 +14,8 @@ name: Submit to WinGet
 #     submission is a hand-written PR; packaging/README.md walks through it)
 #   - a WINGET_TOKEN secret: a PAT with public_repo scope, which wingetcreate
 #     uses to fork winget-pkgs and open the version PR
-# Without either, this workflow says so and exits green.
+# Without the token this workflow says so and exits green; without the manifest,
+# wingetcreate itself fails and the log names the missing package.
 
 on:
   release:

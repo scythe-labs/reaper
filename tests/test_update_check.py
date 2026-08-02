@@ -120,6 +120,46 @@ class TestReleaseChannel:
         assert [c.version for c in status.changes] == ["2026.9.2", "2026.9.1"]
 
     @pytest.mark.usefixtures("_release_build")
+    async def test_the_headline_is_the_newest_version_not_the_newest_row(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """GitHub orders /releases by creation date, so a hotfix cut for an older
+        line sits FIRST. Trusting position reported that hotfix as the headline and
+        suppressed a genuinely newer release for a whole cache TTL; the current
+        2026.8.1 build here must still be told about 2026.9.1."""
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    _release("v2026.7.2", notes="hotfix for the old line"),  # newest ROW
+                    _release("v2026.9.1", notes="the real newest"),
+                    _release("v2026.8.1", notes="taken already"),
+                    _release("v2026.7.1"),
+                ],
+            )
+        )
+        status = await UpdateChecker().status()
+        assert status.latest == "2026.9.1"
+        assert status.update_available is True
+        assert status.url is not None and status.url.endswith("v2026.9.1")
+        assert [c.version for c in status.changes] == ["2026.9.1"]
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_an_unparseable_head_does_not_blank_the_parseable_rest(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(
+                200,
+                json=[_release("nightly-special"), _release("v2026.9.1", notes="real")],
+            )
+        )
+        status = await UpdateChecker().status()
+        assert status.latest == "2026.9.1"
+        assert status.update_available is True
+        assert [c.version for c in status.changes] == ["2026.9.1"]
+
+    @pytest.mark.usefixtures("_release_build")
     async def test_the_rolling_dev_prerelease_is_not_a_release(
         self, httpx2_mock: respx.Router
     ) -> None:
@@ -242,7 +282,7 @@ class TestReleaseChannel:
         await UpdateChecker().status()
         assert len(forked.calls) == 1
 
-        monkeypatch.setenv("REAPER_UPDATE_REPO", "../repos/evil")
+        monkeypatch.setenv("REAPER_UPDATE_REPO", "../..")
         upstream = httpx2_mock.get(_RELEASES).mock(
             return_value=httpx.Response(200, json=[{"tag_name": "v2026.8.1"}])
         )
