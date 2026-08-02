@@ -97,7 +97,7 @@ undefined CSS variable, a native `confirm()`, or white-on-`--accent` text that f
 `FixedQuantity` with the unit as a suffix in the same box (both in
 `components/QuantityInput.tsx`, sharing the `.qty` chrome). Never a bare `<input type="number">`
 beside loose unit text, and never a new input size: every text, number, and select box sits on
-the one control standard documented in `styles/00-tokens.css` (`0.42rem 0.6rem` padding,
+the one control standard documented in `styles/00-tokens.css` (`--control-pad` padding,
 `--border-strong`, `--radius-sm`, `--bg` fill, accent focus ring). Width is the only thing that
 may vary.
 

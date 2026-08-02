@@ -44,6 +44,22 @@ describe("the styles barrel", () => {
     // barrel ever needs to depart from them, renumber the files rather than silently disagree.
     expect([...FILES]).toEqual([...FILES].sort());
   });
+
+  it("keeps every file under the size that made the last one unnavigable", () => {
+    // A file this size can only be added to, never filed into, which is what the split fixed
+    // and what nothing otherwise stops recurring a file at a time. 20-queue-cards.css had
+    // reached 1,044 lines across four unrelated features before it was cut into 20-23. STATUS.md
+    // is the precedent: a budget nobody enforces reads green while the file it measures grows.
+    //
+    // Raising the cap is a decision, and costs a line here and a sentence in the pull request.
+    const CAP = 800;
+    const over = FILES.map(
+      (f) => [f, readFileSync(join(SRC, f), "utf8").split("\n").length] as const,
+    )
+      .filter(([, n]) => n > CAP)
+      .map(([f, n]) => `${f} is ${n} lines`);
+    expect(over).toEqual([]);
+  });
 });
 
 describe("siteOf", () => {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
+import { DISSOLVE_BONE, DISSOLVE_INK } from "./brand/dissolve";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -228,8 +229,8 @@ describe("applyAccent favicon", () => {
     applyAccent("#24b26b");
     const svg = decodeURIComponent(appIconDataUri("#24b26b"));
     expect(svg.match(/#24b26b/g)).toHaveLength(2); // both eyes ride the accent
-    expect(svg).toContain("#14161C"); // the shell does not
-    expect(svg).toContain("#EDE7DA"); // nor the figure
+    expect(svg).toContain(DISSOLVE_INK); // the shell does not
+    expect(svg).toContain(DISSOLVE_BONE); // nor the figure
   });
 
   it("does not touch the favicon for a malformed color", () => {

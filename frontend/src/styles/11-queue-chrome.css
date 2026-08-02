@@ -8,14 +8,14 @@
    top margin and hug-content width live here. The masthead's nav is deliberately NOT in this
    track any more, so a lane switcher and a section switcher no longer wear the same chrome. */
 .tabs {
-  margin-top: 1rem;
+  margin-top: var(--space-3xl);
   width: fit-content;
 }
 
 .queue-total {
-  font-size: 0.88rem;
+  font-size: var(--text-md);
   color: var(--muted);
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-md);
 }
 
 /* A scan finished under an open review. Built from the app's own tokens so it reads as
@@ -25,11 +25,11 @@
 .scan-nudge {
   position: sticky;
   top: 0.5rem;
-  z-index: 20;
+  z-index: var(--z-sticky);
   display: flex;
   align-items: center;
-  gap: 0.7rem;
-  margin: 0 0 0.7rem;
+  gap: var(--space-xl);
+  margin: 0 0 var(--space-xl);
   padding: 0.55rem 0.6rem 0.55rem 0.85rem;
   background: var(--accent-soft);
   border: 1px solid var(--accent-ring);
@@ -41,14 +41,14 @@
   flex: none;
   width: 9px;
   height: 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent);
 }
 .nudge-dot::after {
   content: "";
   position: absolute;
   inset: -5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1.5px solid var(--accent);
   opacity: 0.6;
   animation: nudge-pulse 1.8s var(--ease) infinite;
@@ -60,11 +60,11 @@
   min-width: 0;
 }
 .nudge-text b {
-  font-weight: 600;
-  font-size: 0.9rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
 }
 .nudge-text span {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 .nudge-actions {
@@ -73,7 +73,16 @@
   align-items: center;
   gap: 0.3rem;
 }
+/* Sized from --tap-min for the same reason .bar-x is, and it is the same shape: a bare glyph
+   with no border, sitting flush against a control that does something else. `line-height: 0`
+   plus a 13px glyph and 0.3rem of padding came to 22.6px, under WCAG 2.2 SC 2.5.8's 24px, and
+   the spacing exception cannot rescue it -- the `Show latest` button is 4.8px away, so a touch
+   meaning "see the new scan" lands on "dismiss it" instead. */
 .nudge-x {
+  display: inline-grid;
+  place-items: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
   border: none;
   background: none;
   box-shadow: none;
@@ -93,17 +102,17 @@
 .scan-behind {
   position: sticky;
   top: 0.5rem;
-  z-index: 20;
+  z-index: var(--z-sticky);
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  margin: 0 0 0.7rem;
+  margin: 0 0 var(--space-xl);
   padding: 0.32rem 0.7rem;
   border: 1px solid var(--accent-ring);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   box-shadow: var(--shadow-sm);
 }
 .scan-behind:hover:not(:disabled) {
@@ -113,7 +122,7 @@
 }
 .scan-behind-cta {
   color: var(--accent-text);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .scan-behind .nudge-dot::after {
   animation: none;
@@ -126,16 +135,16 @@
   position: fixed;
   left: 50%;
   bottom: 1.1rem;
-  z-index: 60;
+  z-index: var(--z-modal);
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
   padding: 0.42rem 0.85rem 0.42rem 0.7rem;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface);
   color: var(--text);
-  font-size: 0.84rem;
+  font-size: var(--text-md);
   box-shadow: var(--shadow-lg);
   pointer-events: none;
   animation: scan-toast 2.6s var(--ease) forwards;
@@ -196,20 +205,20 @@
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 th {
   text-align: left;
-  font-size: 0.74rem;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
   padding: 0.4rem 0.6rem;
   border-bottom: 1px solid var(--border);
 }
 td {
-  padding: 0.5rem 0.6rem;
+  padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--border);
 }
 tbody tr {
@@ -235,8 +244,8 @@ tbody tr.selected {
   padding: 0.1rem 0.35rem;
   border-radius: 5px;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  font-size: 0.85rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-md);
 }
 .score-condemn {
   background: var(--condemn-soft);

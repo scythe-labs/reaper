@@ -7,11 +7,11 @@
 .banner {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  margin: 1rem 0;
+  gap: var(--space-lg);
+  margin: var(--space-3xl) 0;
   padding: 0.6rem 0.9rem;
   border-radius: var(--radius);
-  font-size: 0.88rem;
+  font-size: var(--text-md);
   border: 1px solid transparent;
 }
 .banner-dot {
@@ -77,28 +77,28 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem 0.5rem;
+  gap: var(--space-sm) var(--space-md);
   margin-top: 0.55rem;
-  padding-top: 0.5rem;
+  padding-top: var(--space-md);
   border-top: 1px solid color-mix(in srgb, var(--unknown) 32%, transparent);
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 /* Each row's two pills stay together when the row wraps -- "Plex 2" and "Tautulli 2" name
    the same Plex entry, and splitting them across lines pairs each with the wrong number. */
 .candidate-group {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-xs);
 }
 
 .error {
   color: var(--condemn);
-  font-size: 0.88rem;
-  margin: 0.5rem 0;
+  font-size: var(--text-md);
+  margin: var(--space-md) 0;
 }
 
 .empty {
   color: var(--muted);
-  padding: 2rem 0;
+  padding: var(--space-6xl) 0;
 }

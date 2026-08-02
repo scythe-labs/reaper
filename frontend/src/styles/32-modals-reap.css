@@ -6,7 +6,7 @@
 .modal-scrim {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -41,17 +41,17 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-3xl);
 }
 .modal-head h2 {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: var(--text-xl);
 }
 .icon-btn {
   border: none;
   background: none;
   color: var(--muted);
-  font-size: 1rem;
+  font-size: var(--text-lg);
   cursor: pointer;
   padding: 0.2rem 0.4rem;
   border-radius: var(--radius-sm);
@@ -63,13 +63,13 @@
 .reap-confirm-phrase {
   margin: 0.7rem 0 0.3rem;
   font-family: var(--mono, ui-monospace, monospace);
-  font-weight: 700;
-  font-size: 1.25rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xl);
   letter-spacing: 0.03em;
   color: var(--condemn);
 }
 .small {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 .dry-ok {
   margin: 0.8rem 0 0.2rem;
@@ -77,27 +77,27 @@
    * theme-aware success token as every other green in the app -- the old --spare
    * variable was never defined and silently fell back to an off-theme literal. */
   color: var(--protect);
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 .reap-arm {
-  margin-top: 1rem;
-  padding-top: 1rem;
+  margin-top: var(--space-3xl);
+  padding-top: var(--space-3xl);
   border-top: 1px solid var(--border);
 }
 .reap-disarmed {
   padding: 0.7rem 0.9rem;
   background: var(--surface-2);
   border-radius: var(--radius);
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 .reap-confirm-label {
   display: block;
   margin-bottom: 0.4rem;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 .reap-confirm-label code,
 .reap-disarmed code {
-  font-weight: 700;
+  font-weight: var(--weight-bold);
 }
 .reap-confirm-input {
   width: 100%;
@@ -107,7 +107,7 @@
   background: var(--bg, var(--surface));
   color: var(--text);
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 1rem;
+  font-size: var(--text-lg);
   box-sizing: border-box;
 }
 /* The red border alone is NOT the focus indicator. This selector is 0-2-0, so it outranks
@@ -126,11 +126,11 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.6rem;
-  margin-top: 1rem;
+  gap: var(--space-lg);
+  margin-top: var(--space-3xl);
 }
 .bulk-error {
-  margin: 0.6rem 1rem;
+  margin: var(--space-lg) var(--space-3xl);
 }
 
 /* --- A running reap: live progress and the graceful Stop -----------------------------------
@@ -142,7 +142,7 @@
   border-color: var(--protect);
   color: var(--protect);
   background: var(--protect-soft);
-  font-weight: 550;
+  font-weight: var(--weight-semi);
 }
 .stop-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--protect) 16%, var(--surface));
@@ -152,8 +152,8 @@
   margin-right: auto;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
+  gap: var(--space-md);
+  font-size: var(--text-base);
 }
 .reap-running.deleting {
   color: var(--condemn);
@@ -186,12 +186,12 @@
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 0.6rem;
-  font-size: 0.88rem;
+  gap: var(--space-lg);
+  font-size: var(--text-md);
   margin-bottom: 0.4rem;
 }
 .prog-count {
-  font-weight: 600;
+  font-weight: var(--weight-semi);
   font-variant-numeric: tabular-nums;
 }
 .prog-note {
@@ -199,14 +199,14 @@
 }
 .prog-track {
   height: 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-2);
   overflow: hidden;
 }
 .prog-fill {
   height: 100%;
   background: var(--condemn);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: width 0.4s var(--ease);
 }
 
@@ -220,11 +220,11 @@
   /* Wraps so a failed Stop can drop onto its own full-width line without squeezing the
      count or moving the Stop button (.reap-bar-error below). */
   flex-wrap: wrap;
-  gap: 0.7rem;
-  margin: 1rem 0;
+  gap: var(--space-xl);
+  margin: var(--space-3xl) 0;
   padding: 0.55rem 0.9rem;
   border-radius: var(--radius);
-  font-size: 0.88rem;
+  font-size: var(--text-md);
   background: var(--condemn-soft);
   border: 1px solid color-mix(in srgb, var(--condemn) 45%, transparent);
 }
@@ -258,12 +258,12 @@
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 .reap-bar .stop-btn {
   min-width: 6.4rem;
   padding: 0.28rem 0.6rem;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 /* A failed Stop, stated in the bar itself: full width under the row, so the run's count and
    its Stop keep their places while the reap keeps going. */
@@ -279,12 +279,11 @@
   background: var(--condemn);
   transition: width 0.4s var(--ease);
 }
+/* Only what this file declares. `.spinner` and `.why-loading` used to be stopped from here
+   too, far from the rules that start them -- see the note in 06-spinner.css for what that
+   cost. */
 @media (prefers-reduced-motion: reduce) {
-  .spinner,
   .reap-running .spinner {
-    animation: none;
-  }
-  .why-loading {
     animation: none;
   }
   .prog-fill,
@@ -295,8 +294,8 @@
 
 /* --- The reap result: a per-item checklist, like the why-panel's ticks ------------------- */
 .reap-result {
-  margin-top: 1rem;
-  padding-top: 1rem;
+  margin-top: var(--space-3xl);
+  padding-top: var(--space-3xl);
   border-top: 1px solid var(--border);
 }
 .reap-tally {
@@ -307,7 +306,7 @@
   margin-bottom: 0.9rem;
 }
 .reap-souls {
-  font-size: 1.15rem;
+  font-size: var(--text-xl);
   color: var(--condemn);
 }
 .reap-halt {
@@ -316,7 +315,7 @@
   border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: var(--text-md);
 }
 .reap-checklist {
   list-style: none;
@@ -324,7 +323,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
+  gap: var(--space-xl);
 }
 .reap-item {
   padding: 0.6rem 0.8rem;
@@ -336,8 +335,8 @@
 }
 .reap-item-title {
   display: block;
-  font-weight: 600;
-  margin-bottom: 0.35rem;
+  font-weight: var(--weight-semi);
+  margin-bottom: var(--space-sm);
   /* The title, or the media key when there is no title -- a machine key with nothing to break
      on, on the screen that confirms a deletion (rule 139). */
   overflow-wrap: anywhere;
@@ -354,7 +353,7 @@
   display: flex;
   align-items: baseline;
   gap: 0.45rem;
-  font-size: 0.88rem;
+  font-size: var(--text-md);
   color: var(--muted);
 }
 .reap-checks .check-ok .gate-mark {

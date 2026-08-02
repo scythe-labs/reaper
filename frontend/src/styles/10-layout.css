@@ -7,7 +7,7 @@
 main.split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(360px, 460px);
-  gap: 1.25rem;
+  gap: var(--space-4xl);
   align-items: start;
 }
 
@@ -34,7 +34,7 @@ main.split {
     height: 100dvh;
     max-height: none;
     width: min(440px, calc(100vw - 1.25rem));
-    z-index: 40;
+    z-index: var(--z-overlay);
     border-radius: var(--radius) 0 0 var(--radius);
     border-right: none;
     box-shadow: var(--shadow-lg);
@@ -66,7 +66,7 @@ main.split {
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 30;
+    z-index: var(--z-nav);
     /* The bar's height is declared here and read by everything that has to clear it, so the
        three can never drift apart (rule 67). Content-sized would make it a guess. */
     height: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px));
@@ -82,7 +82,7 @@ main.split {
     place-items: center;
     flex: 1;
     min-width: 0;
-    padding: 0 0.15rem;
+    padding: 0 var(--space-2xs);
   }
   /* The cut mirrors onto the bar's top edge: the same mark on the app's other chrome boundary. */
   .view-tab::before {

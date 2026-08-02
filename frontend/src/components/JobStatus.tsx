@@ -80,7 +80,7 @@ export function useJobFlash(running: boolean, result: JobFlash | null): JobFlash
  * rows below it. In priority order: the manual-run `flash`, then the running spinner, then
  * the resting "Last run ..." line (green dot for a success, red for a failure), then
  * "Hasn't run yet". Each state is keyed so React remounts it on a change and it fades in on
- * opacity alone -- never a height or margin change. See `.jobrow-status` in `styles/23-settings.css`.
+ * opacity alone -- never a height or margin change. See `.jobrow-status` in `styles/26-settings.css`.
  */
 export function JobStatus({
   running,

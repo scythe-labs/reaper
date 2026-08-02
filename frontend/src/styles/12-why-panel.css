@@ -32,14 +32,14 @@
   gap: 0.75rem;
   text-align: center;
   min-height: 45dvh;
-  padding: 2rem 1rem;
+  padding: var(--space-6xl) var(--space-3xl);
   color: var(--muted);
   animation: why-loading-in 0.28s var(--ease) both;
 }
 .why-loading-lead {
   margin: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semi);
   color: var(--text);
 }
 @keyframes why-loading-in {
@@ -50,6 +50,13 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* Honored here, beside the animation it stops (see 06-spinner.css). */
+@media (prefers-reduced-motion: reduce) {
+  .why-loading {
+    animation: none;
   }
 }
 
@@ -68,15 +75,15 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 .why-actions-row {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
 }
 .why-actions .error {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 
 /* The note beside a season's Spare/Reap when a whole-show decision is what keeps or reaps it:
@@ -90,14 +97,14 @@
   margin: 0;
   padding: 0.4rem 0.6rem;
   border-radius: var(--radius-sm);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   line-height: 1.4;
   background: var(--surface-2);
   color: var(--muted);
 }
 .kept-note b {
   color: var(--text);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .kept-note-mark {
   flex: none;
@@ -110,8 +117,8 @@
   color: var(--condemn);
 }
 .kept-note-mark .mk-inf {
-  font-weight: 700;
-  font-size: 0.95rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-base);
   line-height: 1;
 }
 .kept-note-mark .scythe {
@@ -123,8 +130,8 @@
 /* The way back up from a season's reasoning to its show. */
 .back-to-show {
   display: inline-block;
-  margin: 0 0 0.35rem;
-  font-size: 0.82rem;
+  margin: 0 0 var(--space-sm);
+  font-size: var(--text-sm);
 }
 
 /* The full sentence behind the show's status chip -- a keep-rule conflict's complete
@@ -134,7 +141,7 @@
   padding: 0.55rem 0.7rem;
   border-radius: var(--radius-sm);
   background: var(--surface-2);
-  font-size: 0.86rem;
+  font-size: var(--text-md);
   line-height: 1.5;
 }
 
@@ -151,13 +158,13 @@
 .panel-season {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   width: 100%;
   padding: 0.45rem 0.2rem;
   background: none;
   border: none;
   text-align: left;
-  font-size: 0.88rem;
+  font-size: var(--text-md);
   color: var(--text);
   cursor: pointer;
   border-radius: 6px;
@@ -174,7 +181,7 @@
    hurts, so it is the branch that carries the break opportunity (rule 139). Splitting the two
    apart beats choosing between them: ShowPanel adds .is-server-title on exactly that branch. */
 .panel-season-name {
-  font-weight: 550;
+  font-weight: var(--weight-semi);
   white-space: nowrap;
 }
 .panel-season-name.is-server-title {
@@ -185,7 +192,7 @@
 .panel-season-size {
   margin-left: auto;
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   /* The size never wraps to a second line: a long chip beside it shortens (it carries
      the ellipsis), and the row stays one line tall with everything centered. */
   white-space: nowrap;
@@ -219,14 +226,14 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 /* A panel with no hero art floats the close disc over its header's top-right corner, so that
    header reserves the disc's width on the right and the title can never tuck under it. The
    adjacency matches only when no .why-hero sits between the close and the head; the art panels
    float the disc over the poster instead, well clear of the header. */
 .why-close + .why-head {
-  padding-right: 2rem;
+  padding-right: var(--space-6xl);
 }
 /* The panel's title is the same media title the queue card carries in .card-title, and takes the
    same break opportunity (rule 139, rule 72). Here it matters more: the panel clips, so a title
@@ -235,8 +242,8 @@
   overflow-wrap: anywhere;
 }
 .why-head p {
-  margin: 0.15rem 0 0;
-  font-size: 0.82rem;
+  margin: var(--space-2xs) 0 0;
+  font-size: var(--text-sm);
 }
 /* The panel's close: a media-sheet button floated over the hero art rather than a boxed
    glyph in the title row, where it read as a stray form control. A translucent dark disc,
@@ -256,7 +263,7 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: #fff;
   background: rgba(10, 11, 14, 0.42);
   border: 1px solid rgba(255, 255, 255, 0.22);
@@ -304,13 +311,18 @@
   gap: 0.45rem;
   flex-wrap: wrap;
 }
+/* A link, so --tap-min is a min-height rather than a box: the pill keeps the width its text
+   gives it and grows only downward to the 24px floor (SC 2.5.8). It was 21.3px with 7.2px
+   between neighbors, too close for the spacing exception. The padding stays as it was -- the
+   min-height absorbs the difference, so the pill does not visibly change size. */
 .jump-pill {
   display: inline-flex;
   align-items: center;
-  font-size: 0.78rem;
-  font-weight: 600;
+  min-height: var(--tap-min);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
   padding: 0.06rem 0.55rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent-text);
   text-decoration: none;
@@ -324,18 +336,18 @@
 .why-meta {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
   flex-wrap: wrap;
-  margin: 0.6rem 0 0;
-  font-size: 0.8rem;
+  margin: var(--space-lg) 0 0;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 .why-meta .cert {
   border: 1px solid var(--border-strong);
   border-radius: 4px;
   padding: 0 0.3rem;
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   color: var(--text);
 }
 
@@ -351,13 +363,13 @@
 .rating-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-sm);
   padding: 0.22rem 0.55rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
   font-variant-numeric: tabular-nums;
   color: var(--text);
   text-decoration: none;
@@ -368,8 +380,8 @@ a.rating-chip:hover {
   color: var(--text);
 }
 .rating-src {
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
   color: var(--muted);
 }
 .rating-imdb {
@@ -388,8 +400,8 @@ a.rating-chip:hover {
   margin-left: 0.4rem;
   padding: 0 0.3rem;
   border-radius: 4px;
-  font-size: 0.62rem;
-  font-weight: 700;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.03em;
   background: var(--accent-soft);
   color: var(--accent-text);
@@ -407,8 +419,8 @@ a.rating-chip:hover {
   color: var(--accent-text);
 }
 .why-summary {
-  margin: 0.6rem 0 0;
-  font-size: 0.88rem;
+  margin: var(--space-lg) 0 0;
+  font-size: var(--text-md);
   line-height: 1.5;
   color: var(--muted);
 }
@@ -430,8 +442,8 @@ a.rating-chip:hover {
   background: none;
   color: var(--accent-text);
   font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
   cursor: pointer;
   padding: 0.1rem 0;
   margin-top: 0.2rem;
@@ -474,7 +486,7 @@ a.rating-chip:hover {
     position: fixed;
     inset: 0;
     width: auto;
-    z-index: 50;
+    z-index: var(--z-panel);
     max-height: 100dvh;
     border: none;
     border-radius: 0;
@@ -495,18 +507,18 @@ a.rating-chip:hover {
    control -- amber here, because a `warn` notice's border is `--unknown`. */
 .watch-blind-act {
   margin-top: 0.55rem;
-  padding-top: 0.5rem;
+  padding-top: var(--space-md);
   border-top: 1px solid color-mix(in srgb, var(--unknown) 35%, transparent);
 }
 /* The help sits directly beneath its one button (rule 45), not beside it: the notice is as
    narrow as the panel, and a second column would put the sentence on four lines. */
 .watch-blind-act .help {
-  margin-top: 0.35rem;
+  margin-top: var(--space-sm);
 }
 
 .verdict {
   margin: 0.9rem 0;
-  padding: 0.7rem 0.85rem;
+  padding: var(--space-xl) var(--space-2xl);
   border-radius: var(--radius);
   border: 1px solid;
 }
@@ -536,8 +548,8 @@ a.rating-chip:hover {
 .verdict-label {
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-size: 0.7rem;
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
 }
 .verdict-condemn .verdict-label {
   color: var(--condemn);
@@ -550,26 +562,26 @@ a.rating-chip:hover {
 }
 
 .verdict-score strong {
-  font-size: 1.7rem;
+  font-size: var(--text-3xl);
   font-variant-numeric: tabular-nums;
 }
 .verdict-score span {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   margin-left: 0.3rem;
 }
 .verdict-note {
   margin: 0.4rem 0 0;
-  font-size: 0.84rem;
+  font-size: var(--text-md);
 }
 
 .flagged {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--muted);
-  margin: 0.5rem 0;
+  margin: var(--space-md) 0;
 }
 
 .block {
-  margin-top: 0.5rem;
+  margin-top: var(--space-md);
 }
 
 /* signals */
@@ -582,17 +594,17 @@ a.rating-chip:hover {
 }
 
 .signal {
-  margin-bottom: 0.7rem;
+  margin-bottom: var(--space-xl);
 }
 .signal-head {
   display: flex;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   align-items: baseline;
-  font-size: 0.86rem;
+  font-size: var(--text-md);
 }
 .signal-amount {
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: var(--weight-semi);
   min-width: 4.2rem;
 }
 .signal-detail {
@@ -608,7 +620,7 @@ a.rating-chip:hover {
   opacity: 0.75;
 }
 .signal-note {
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   margin: 0.2rem 0 0 4.8rem;
 }

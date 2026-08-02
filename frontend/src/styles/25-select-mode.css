@@ -15,8 +15,8 @@
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--muted);
-  font-size: 0.85rem;
-  font-weight: 550;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semi);
   cursor: pointer;
   white-space: nowrap;
   transition:
@@ -92,12 +92,12 @@
 .bulk-bar {
   position: sticky;
   bottom: 1rem;
-  z-index: 20;
+  z-index: var(--z-sticky);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  margin: 1rem auto 0;
+  gap: var(--space-3xl);
+  margin: var(--space-3xl) auto 0;
   padding: 0.6rem 0.9rem;
   max-width: min(880px, 100%);
   border-radius: var(--radius);
@@ -120,7 +120,7 @@
   }
 }
 .bulk-count {
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   color: var(--muted);
   white-space: nowrap;
   flex-shrink: 0;
@@ -135,7 +135,7 @@
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
-  font-weight: 550;
+  font-weight: var(--weight-semi);
 }
 .select-done:hover:not(:disabled) {
   background: var(--accent-hover);
@@ -158,7 +158,7 @@
   text-align: left;
   background: none;
   border: none;
-  padding: 0.7rem;
+  padding: var(--space-xl);
   border-radius: var(--radius);
   cursor: pointer;
 }
@@ -182,9 +182,9 @@
   align-items: center;
   gap: 0.3rem;
   padding: 0.06rem 0.55rem 0.06rem 0.4rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  border-radius: 999px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border-strong);
   background: var(--surface-2);
   color: var(--muted);
@@ -209,6 +209,13 @@
 .season-expander .chevron.open {
   transform: rotate(90deg);
 }
+/* Its twin, .fold-caret in 13-receipt.css, was already stopped; this one was the sibling the
+   fix did not reach (rule 72). Same widget, same rotate. */
+@media (prefers-reduced-motion: reduce) {
+  .season-expander .chevron {
+    transition: none;
+  }
+}
 
 /* The banner atop an expanded show whose whole-show decision drives its seasons: the sentence
    the rows used to each repeat, said once. A reap tints faint red, a spare faint green, matching
@@ -216,17 +223,17 @@
 .show-inherit {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
+  gap: var(--space-md);
   margin: 0.5rem 0.7rem 0.3rem;
   padding: 0.55rem 0.7rem;
   border-radius: var(--radius-sm);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   line-height: 1.4;
   color: var(--muted);
 }
 .show-inherit b {
   color: var(--text);
-  font-weight: 650;
+  font-weight: var(--weight-semi);
 }
 .show-inherit-reap {
   background: color-mix(in srgb, var(--condemn) 9%, var(--surface));
@@ -248,8 +255,8 @@
   color: var(--protect);
 }
 .show-inherit-mark .mk-inf {
-  font-weight: 700;
-  font-size: 0.95rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-base);
   line-height: 1;
 }
 .show-inherit-mark .scythe {
@@ -274,8 +281,8 @@
     2.6rem minmax(0, 1fr)
     var(--btns, calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))) 4.75rem;
   align-items: center;
-  column-gap: 0.7rem;
-  row-gap: 0.25rem;
+  column-gap: var(--space-xl);
+  row-gap: var(--space-xs);
   padding: 0.4rem 0.5rem;
   margin: 0 -0.5rem;
   border-radius: 6px;
@@ -303,7 +310,7 @@
   grid-column: 2 / 5;
   grid-row: 2;
   margin: 0;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   line-height: 1.35;
   color: var(--muted);
 }
@@ -333,8 +340,8 @@
      grew the row taller when the list narrowed to seat the open why panel, which shifted every
      card below it -- nowrap holds the row height steady at any width. */
   flex-wrap: nowrap;
-  gap: 0.5rem;
-  font-size: 0.88rem;
+  gap: var(--space-md);
+  font-size: var(--text-md);
   min-width: 0;
 }
 /* The name holds its width and never wraps, so only the pill gives when space runs short.
@@ -360,7 +367,7 @@
   margin: 0;
   padding: 0.6rem 0.9rem 0.8rem 2.4rem;
   border-top: 1px solid var(--border);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 /* The stale-read line, above rows that are still drawn: the app's "we could not look" amber
@@ -371,6 +378,6 @@
 
 .season-size {
   color: var(--muted);
-  font-size: 0.84rem;
+  font-size: var(--text-md);
   text-align: right;
 }

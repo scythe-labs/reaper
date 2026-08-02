@@ -54,7 +54,7 @@ for (const file of FILES) {
 /** Every imported file, concatenated in load order: what the browser ends up with. */
 export const CSS = text;
 
-/** Where an offset in `CSS` actually lives, as `styles/20-queue-cards.css:431`. */
+/** Where an offset in `CSS` actually lives, as `styles/21-queue-cards.css:431`. */
 export function siteOf(offset: number): string {
   let seg = segments[0];
   // Unreachable while the barrel imports anything, which is checked above; stated so the

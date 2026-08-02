@@ -1,16 +1,27 @@
 # Splitting `index.css`: a stylesheet that outgrew one document
 
-> **LIVE — Stages 1 to 3 landed 2026-07-29. Four remain, and every one of them is optional.**
-> The stylesheet is 31 files behind a barrel, the three tests that walk it read the concatenation
-> in load order, and every live cross-reference names the file that now holds the thing.
+> **LIVE — Stages 1 to 4 and 6 landed. Stage 5 is half done and Stage 7 is untouched, both
+> optional.** The stylesheet is 34 files behind a barrel, and every `font-size` and
+> `font-weight` in it is a token.
 >
-> **The cut is proven, not argued:** built before and after, the emitted CSS is byte-identical —
-> sha `889c45e2…`, 122,006 bytes both sides — so the app renders exactly what it rendered before.
-> Re-verified after prettier ran over the new files, since a formatter is the obvious way for a
-> "pure move" to stop being one.
+> **The cuts are proven, not argued:** built before and after, the emitted CSS is byte-identical
+> both times — Stage 1 at sha `889c45e2…` / 122,006 bytes, and the 2026-08-01 cut of
+> `20-queue-cards.css` into four at `3e79e768…` / 137,140 bytes. Each re-verified after prettier
+> ran over the new files, since a formatter is the obvious way for a "pure move" to stop being one.
 >
-> Stages 4 to 7 are separately gated and none is a prerequisite for another. **Stage 4's gate as
-> originally written was wrong and is corrected in place below** — found while executing Stage 1.
+> **Stage 6 could not be proven that way and was not** — it changes the emitted text by design.
+> It is proven instead by resolving every `var()` in the built stylesheet and diffing computed
+> values against the previous build: of 5,825 declarations, exactly 224 `font-size` and 39
+> `font-weight` differ, 73% of them by under half a pixel, and spacing, radius and stacking order
+> come out identical. **Stage 4's gate as originally written was wrong and is corrected in place
+> below** — found while executing Stage 1, and it is the reason that check exists.
+>
+> **What is left of Stage 5:** `.qty` got its own file in the Stage 1 cut, which was most of that
+> stage. `.notice` still sits inside `16-simulator.css` while rendering at 115 call sites, and the
+> queue is now four files rather than two non-adjacent regions. Stage 7 stands as written: don't.
+>
+> **What the plan did not have a stage for, and now does:** the icon vocabulary (§8), which is
+> the largest remaining inconsistency in the app's visual language and lives in TSX, not CSS.
 
 Written 2026-07-29 against `frontend/src/index.css` at 9,075 lines.
 
@@ -226,6 +237,17 @@ than Stage 1 rather than a free rider on it. Both are still worth doing:
 - **Stacking order.** 22 `z-index` uses across **12 distinct unnamed values** (0,1,2,3,5,20,30,
   40,50,55,60,100). The gap between 50, 55 and 60 is where the next overlay bug lives.
 
+**Landed 2026-08-01**, along with `--radius-pill` (the literal `999px`, 39 sites across 16 files,
+the most-used unnamed value in the tree) and `--radius-xs`. The computed-value check this section
+called for was written rather than done by hand, and is what proves Stage 6 as well.
+
+One correction to the stacking half, found while doing it: **the ladder is eight values, not
+twelve.** The low four (0,1,2,3) layer a background, a scrim and its content inside a single
+component's own stacking context — `.card-bg` under `.card-scrim` under the card's children —
+so they never compare against a dropdown or a modal at all. Naming them would have claimed a
+relationship that does not exist. They stay literal, and the ladder covers only the surfaces
+that genuinely stack against each other across the app.
+
 ### Stage 5 — rehome the misfiled primitives *(reorders; needs a browser pass)*
 
 `.notice` out of the simulator section and `.qty` out of the setup wizard, both into the
@@ -245,6 +267,29 @@ space. The result is drift, not variety:
 Collapsing these moves text, so `CLAUDE.md`'s golden rule binds: a rendered HTML mockup, approved,
 before any CSS edit. This is the only stage that a reviewer must look at rather than diff.
 
+**Landed 2026-08-01, off an approved mockup, and with one cause this section had not found.**
+
+The type drift is not only that nobody named the sizes. The scale is written in `rem`, whose root
+is 16px, while `body` is 15px — so `1rem` names a size the app never uses, and "the same size as
+body text" could only be reached by guessing at the ratio. That is why six values sat inside
+1.3px of each other. `--text-base` is `0.9375rem`, and it is spelled once so nobody types it.
+
+Nine type steps and four weight steps, anchored on the values already carrying the most weight
+rather than on a ratio: 73% of changed declarations moved under half a pixel, five moved 1.6px,
+all display text. **Weight mattered more than it looked**: seven of the twelve old values render
+as authored only on a variable UI font, so on Win10's Segoe UI and older Roboto they already
+snapped — the distinctions were real on the machine they were written on and invisible on most
+machines running Reaper.
+
+**Space is the one that resisted, and is deliberately half done.** 0.3 through 0.6rem are all
+heavily used and 0.8px apart: that is a continuum, not a scale, and no set of steps collapses it
+without moving pixels on every screen at once. So the eleven steps went in only where a
+declaration already sat exactly on one — 297 of them, at zero visual change — and 294 literals
+remain under a ratchet in `styles-scales.test.ts` that may only fall. A literal there means
+"nobody has judged this one yet", and snapping one is a visual change wanting an eye on it, a
+file at a time. **Finishing it by sweeping is the wrong move** and the ratchet is not an
+invitation to.
+
 ### Stage 7 — dead CSS *(last, and manually)*
 
 Deliberately last, because **96 sites compute their class name** rather than writing it —
@@ -261,6 +306,21 @@ A hygiene test capping any `styles/*.css` at ~800 lines, on the `STATUS.md` prec
 has already learned once that a budget nobody enforces is a budget that reads green while the
 file it measures grows in the dimension it does not measure.
 
+**Landed 2026-08-01, at 800 lines, in `styles-barrel.test.ts`** — with the cut it forced.
+`20-queue-cards.css` had reached 1,044 lines holding four unrelated features, so it became
+`20-queue-toolbar`, `21-queue-cards`, `22-queue-filters` and `23-queue-chips`, and files 21–30
+shifted up by three to keep the prefixes contiguous. Three more gates went in beside it: every
+`font-size` and `font-weight` is a token, the three theme blocks declare the same token set, and
+the iOS no-zoom floor is declared at 16px and cannot be outranked by any rule sizing a field.
+
+Two of those were wrong when first written, and a mutation pass is what found it — worth
+recording, because both failures were silent green. The theme-block walk matched on the rule's
+own selector, but the dark palette sits inside `@media (prefers-color-scheme: dark)` where that
+selector is a bare `:root`, so all three blocks collapsed into one and the check agreed with
+itself. And the spacing ratchet was seeded from the migration script's count of declarations it
+declined to rewrite — a different population than the one the test measures — leaving 173 of
+slack, enough that three freshly-written off-scale values changed nothing.
+
 ## 7. What this plan does not do
 
 - **No visual change through Stage 5.** If anything looks different, the change is wrong.
@@ -271,3 +331,23 @@ file it measures grows in the dimension it does not measure.
 - **Stages 5–7 are genuinely optional.** Stages 1–3 deliver the whole navigational win and are
   the only ones with a mechanical proof of safety. If the appetite runs out after Stage 3, the
   result is complete, not half-done.
+
+
+## 8. The icon vocabulary — the part this plan never had a stage for
+
+Added 2026-08-01. This plan is about CSS, so it never measured the other half of the visual
+language, and that half is now the largest inconsistency in the app: **39 inline `<svg>` in
+non-test TSX, 18 of them defined at their use site rather than in a module, across 4 viewBox
+grids and 12 stroke widths — beside 23 sites where the icon is a unicode glyph instead.**
+
+A tick exists as `✓` at nine sites and as four distinct SVG paths. Close was two different
+characters until this change unified them on `✕`, and is still a glyph at six sites and an SVG at
+two. The sharpest instance is `queueIcons.tsx`'s `SpareGlyph`, which returns an SVG on one branch
+and a `<span>∞</span>` on the other — same function, same slot, two rendering technologies.
+
+It matters for the same reason the type scale did: a glyph takes the text font's metrics and
+weight, an SVG takes a stroke width, so the two sit differently on the baseline and neither
+tracks the other when the type scale moves. Which one to standardize on is a **visual decision
+needing a mockup**, not a sweep — `.why-close` is a white stroke on a translucent disc over
+arbitrary poster art, where a text glyph is thinner and font-dependent, and that context is a
+real argument rather than an oversight. Tracked as an issue rather than staged here.

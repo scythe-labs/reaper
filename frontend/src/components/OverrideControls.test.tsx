@@ -287,6 +287,48 @@ describe("the spare-length menu's keyboard reach", () => {
     expect(screen.getByRole("button", { name: /^30 days/ })).toHaveFocus();
   });
 
+  // The custom-length box is the spare menu's own field, and it had no test at all while it was
+  // a hand-built copy of `FixedQuantity`'s markup -- so nothing would have noticed when it stopped
+  // matching the control it was copied from. It is the shared control now (rule 40), and these
+  // pin the two things the swap had to carry across: it opens focused, and Enter commits.
+  describe("the custom spare length", () => {
+    /** Open the menu and reveal the custom box. */
+    async function openCustom(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: CARET }));
+      await user.click(screen.getByRole("button", { name: /Custom length/ }));
+      return screen.getByRole("spinbutton", { name: "Custom spare length" });
+    }
+
+    it("opens focused, so a length can be typed without reaching for the box", async () => {
+      const user = userEvent.setup();
+      draw({}, 30);
+      expect(await openCustom(user)).toHaveFocus();
+    });
+
+    it("commits on Enter, in days", async () => {
+      const user = userEvent.setup();
+      const onSet = vi.fn();
+      draw({ onSet }, 30);
+      const box = await openCustom(user);
+      await user.clear(box);
+      await user.type(box, "45");
+      await user.keyboard("{Enter}");
+      expect(onSet).toHaveBeenCalledWith("spare", 45);
+    });
+
+    // The unit is bound as the box's DESCRIPTION rather than folded into its name, which is the
+    // whole reason `FixedQuantity` exists in the shape it does. The hand-built copy had put
+    // `aria-hidden` back on the suffix and carried "in days" in the label instead -- the same
+    // outcome by the opposite route, and one that stutters the moment it uses the real control.
+    it("speaks its unit once, after the value", async () => {
+      const user = userEvent.setup();
+      draw({}, 30);
+      const box = await openCustom(user);
+      expect(box).toHaveAccessibleName("Custom spare length");
+      expect(box).toHaveAccessibleDescription("days");
+    });
+  });
+
   it("hands focus back to the caret on Escape, which starts no mutation", async () => {
     const user = userEvent.setup();
     draw({}, 30);

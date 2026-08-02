@@ -20,18 +20,13 @@
 // same way.
 
 import {
-  DISSOLVE_BLOCKS_LOWER,
-  DISSOLVE_BLOCKS_UPPER,
   DISSOLVE_BONE,
-  DISSOLVE_CUT,
   DISSOLVE_EYE_LEFT_D,
   DISSOLVE_EYE_RIGHT_D,
-  DISSOLVE_FACE_D,
-  DISSOLVE_HOOD_D,
   DISSOLVE_INK,
   DISSOLVE_VIEWBOX,
-  dissolveBlockRects,
 } from "./dissolve";
+import { DISSOLVE_FIGURE_D } from "./dissolve.generated";
 
 export interface AppIconOptions {
   /** Corner radius on the 64 grid. 14 is the rounded badge (browser tab, in-app); 0 is a
@@ -51,20 +46,15 @@ export const APP_ICON_RADIUS = 14;
  *  page must use BrandBadge/BrandMark instead, which scope their ids with `useId`. */
 export function appIconSvg(accent: string, opts: AppIconOptions = {}): string {
   const r = opts.radius ?? APP_ICON_RADIUS;
-  const { x, y, width, height } = DISSOLVE_CUT;
   const shell = `<rect width="64" height="64" rx="${r}" fill="${DISSOLVE_INK}"/>`;
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${DISSOLVE_VIEWBOX}">` +
     `<clipPath id="r"><rect width="64" height="64" rx="${r}"/></clipPath>` +
     shell +
     `<g clip-path="url(#r)">` +
-    `<path d="${DISSOLVE_HOOD_D}" fill="${DISSOLVE_BONE}"/>` +
-    `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${DISSOLVE_INK}"/>` +
-    dissolveBlockRects(DISSOLVE_BLOCKS_UPPER, DISSOLVE_BONE) +
-    `<path d="${DISSOLVE_FACE_D}" fill="${DISSOLVE_INK}"/>` +
+    `<path d="${DISSOLVE_FIGURE_D}" fill="${DISSOLVE_BONE}"/>` +
     `<path d="${DISSOLVE_EYE_LEFT_D}" fill="${accent}"/>` +
     `<path d="${DISSOLVE_EYE_RIGHT_D}" fill="${accent}"/>` +
-    dissolveBlockRects(DISSOLVE_BLOCKS_LOWER, DISSOLVE_BONE) +
     `</g>` +
     `</svg>`
   );

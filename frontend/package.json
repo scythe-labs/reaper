@@ -15,7 +15,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "mark": "node scripts/gen-mark.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "5.101.4",

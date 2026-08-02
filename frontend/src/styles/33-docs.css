@@ -13,7 +13,7 @@
 .policy-head-actions {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   flex-wrap: wrap;
 }
 .doc-help {
@@ -26,8 +26,8 @@
   padding: 0.42rem 0.7rem;
   border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 0.86rem;
-  font-weight: 560;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semi);
   cursor: pointer;
 }
 .doc-help:hover {
@@ -41,7 +41,7 @@
 .policy-section {
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   flex-wrap: wrap;
 }
 .doc-learn {
@@ -50,8 +50,8 @@
   background: none;
   color: var(--accent-text);
   font: inherit;
-  font-size: 0.82rem;
-  font-weight: 520;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   padding: 0;
 }
@@ -89,13 +89,13 @@
   background: var(--surface);
 }
 .docs-index-group {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-3xl);
 }
 .docs-index-h {
-  margin: 0 0 0.35rem;
+  margin: 0 0 var(--space-sm);
   padding: 0 0.55rem;
   font-family: var(--mono);
-  font-size: 0.64rem;
+  font-size: var(--text-2xs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
@@ -110,7 +110,7 @@
   padding: 0.4rem 0.55rem;
   border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   line-height: 1.3;
   cursor: pointer;
 }
@@ -121,7 +121,7 @@
 .docs-index-item.active {
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 /* The doc you are reading deepens under the pointer instead of swallowing its own selected
    wash: equal specificity with .active declared later would otherwise leave hover a no-op. */
@@ -134,8 +134,8 @@
 .docs-index-item small {
   display: block;
   color: var(--muted);
-  font-weight: 400;
-  font-size: 0.75rem;
+  font-weight: var(--weight-normal);
+  font-size: var(--text-xs);
   margin-top: 0.1rem;
 }
 /* Tinted toward the accent so it reads as part of the selected item, but mixed from the
@@ -146,7 +146,7 @@
 }
 .docs-index-sections {
   list-style: none;
-  margin: 0.15rem 0 0.35rem;
+  margin: var(--space-2xs) 0 var(--space-sm);
   padding: 0;
   border-left: 1px solid var(--border);
   margin-left: 0.75rem;
@@ -159,7 +159,7 @@
   background: none;
   color: var(--muted);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   padding: 0.24rem 0.55rem;
   cursor: pointer;
 }
@@ -168,10 +168,10 @@
 }
 .docs-index-foot {
   margin: 0.5rem 0.1rem 0;
-  padding-top: 0.6rem;
+  padding-top: var(--space-lg);
   border-top: 1px dashed var(--border-strong);
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
 }
 
 /* --- reading pane (right) --- */
@@ -183,9 +183,9 @@
   max-width: 42rem;
 }
 .docs-content .doc-kicker {
-  margin: 0 0 0.35rem;
+  margin: 0 0 var(--space-sm);
   font-family: var(--mono);
-  font-size: 0.66rem;
+  font-size: var(--text-2xs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--accent-text);
@@ -195,34 +195,34 @@
  * below are unchanged, so this is an outline fix and not a visual one. */
 .docs-content h3 {
   margin: 0 0 0.4rem;
-  font-size: 1.6rem;
+  font-size: var(--text-3xl);
   line-height: 1.1;
   letter-spacing: -0.02em;
-  font-weight: 700;
+  font-weight: var(--weight-bold);
   text-wrap: balance;
 }
 .docs-content .doc-summary {
   margin: 0 0 1.3rem;
   color: var(--muted);
-  font-size: 1.02rem;
+  font-size: var(--text-lg);
 }
 .docs-content h4 {
   margin: 1.9rem 0 0.5rem;
-  font-size: 1.16rem;
-  font-weight: 640;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semi);
   letter-spacing: -0.01em;
-  padding-bottom: 0.35rem;
+  padding-bottom: var(--space-sm);
   border-bottom: 1px solid var(--border);
-  scroll-margin-top: 0.5rem;
+  scroll-margin-top: var(--space-md);
 }
 .docs-content h5 {
   margin: 1.4rem 0 0.35rem;
-  font-size: 1rem;
-  font-weight: 620;
-  scroll-margin-top: 0.5rem;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semi);
+  scroll-margin-top: var(--space-md);
 }
 .docs-content p {
-  margin: 0.7rem 0;
+  margin: var(--space-xl) 0;
   line-height: 1.6;
 }
 .docs-content code {
@@ -238,12 +238,12 @@
 .doc-callout {
   display: grid;
   grid-template-columns: 1.3rem 1fr;
-  gap: 0.7rem;
-  padding: 0.85rem 1rem;
+  gap: var(--space-xl);
+  padding: var(--space-2xl) var(--space-3xl);
   border-radius: var(--radius);
   margin: 1.1rem 0;
   border: 1px solid;
-  font-size: 0.94rem;
+  font-size: var(--text-base);
 }
 .doc-callout p {
   margin: 0;
@@ -281,17 +281,17 @@
 
 /* lists and steps */
 .docs-content .doc-list {
-  margin: 0.7rem 0;
+  margin: var(--space-xl) 0;
   padding-left: 1.2rem;
 }
 .docs-content .doc-list li {
-  margin: 0.35rem 0;
+  margin: var(--space-sm) 0;
   line-height: 1.55;
 }
 .docs-content .doc-steps {
   list-style: none;
   counter-reset: docstep;
-  margin: 1rem 0;
+  margin: var(--space-3xl) 0;
   padding: 0;
 }
 .docs-content .doc-steps li {
@@ -317,49 +317,49 @@
   border: 1px solid var(--accent-ring);
   color: var(--accent-text);
   font-family: var(--mono);
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
   display: grid;
   place-items: center;
   font-variant-numeric: tabular-nums;
 }
 .docs-content .doc-steps b {
   display: block;
-  margin-bottom: 0.15rem;
-  font-weight: 620;
+  margin-bottom: var(--space-2xs);
+  font-weight: var(--weight-semi);
 }
 .docs-content .doc-steps span {
   color: var(--muted);
-  font-size: 0.93rem;
+  font-size: var(--text-base);
 }
 
 /* tables */
 .docs-content .doc-table {
   overflow-x: auto;
-  margin: 1rem 0;
+  margin: var(--space-3xl) 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
 .docs-content .doc-table table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.87rem;
+  font-size: var(--text-md);
 }
 .docs-content .doc-table th {
   text-align: left;
   font-family: var(--mono);
-  font-size: 0.64rem;
+  font-size: var(--text-2xs);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--muted);
-  font-weight: 600;
-  padding: 0.5rem 0.7rem;
+  font-weight: var(--weight-semi);
+  padding: var(--space-md) var(--space-xl);
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-strong);
   white-space: nowrap;
 }
 .docs-content .doc-table td {
-  padding: 0.5rem 0.7rem;
+  padding: var(--space-md) var(--space-xl);
   border-bottom: 1px solid var(--border);
   vertical-align: top;
   font-variant-numeric: tabular-nums;
@@ -368,11 +368,11 @@
   border-bottom: none;
 }
 .docs-content .doc-table td:first-child {
-  font-weight: 560;
+  font-weight: var(--weight-semi);
 }
 .docs-content .doc-table td.hi {
   color: var(--accent-text);
-  font-weight: 620;
+  font-weight: var(--weight-semi);
 }
 
 /* definition lists (mental model, glossary) */
@@ -383,7 +383,7 @@
   display: grid;
   grid-template-columns: minmax(7rem, 9rem) 1fr;
   gap: 0.4rem 1.1rem;
-  padding: 0.6rem 0;
+  padding: var(--space-lg) 0;
   border-top: 1px solid var(--border);
   align-items: baseline;
 }
@@ -391,13 +391,13 @@
   border-bottom: 1px solid var(--border);
 }
 .docs-content .doc-defs dt {
-  font-weight: 620;
-  font-size: 0.92rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
 }
 .docs-content .doc-defs dd {
   margin: 0;
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: var(--text-base);
 }
 
 /* flowcharts (the `diagram` block). Hand-drawn from the app's tokens, no Mermaid dependency:
@@ -416,7 +416,7 @@
 .docs-content .doc-diagram-cap {
   margin: 0 0 0.9rem;
   font-family: var(--mono);
-  font-size: 0.66rem;
+  font-size: var(--text-2xs);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
@@ -425,14 +425,14 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1.1rem;
-  margin: 0 0 1rem;
+  margin: 0 0 var(--space-3xl);
 }
 .docs-content .doc-diagram-legend span {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 .doc-diagram .dd-sw {
@@ -473,8 +473,8 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 0.5rem 0.8rem;
-  font-size: 0.82rem;
-  font-weight: 560;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
   color: var(--text);
   box-shadow: var(--shadow-sm);
   line-height: 1.3;
@@ -483,19 +483,19 @@
 }
 .doc-diagram .dd-sub {
   display: block;
-  font-size: 0.68rem;
+  font-size: var(--text-xs);
   color: var(--muted);
-  font-weight: 450;
+  font-weight: var(--weight-normal);
   margin-top: 0.12rem;
 }
 .doc-diagram .dd-decision {
   border-color: var(--accent-ring);
   background: var(--accent-soft);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 0.5rem 1.05rem;
 }
 .doc-diagram .dd-term {
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .doc-diagram .dd-keep {
   background: var(--protect-soft);
@@ -531,12 +531,12 @@
 }
 .doc-diagram .dd-elabel {
   font-family: var(--mono);
-  font-size: 0.64rem;
+  font-size: var(--text-2xs);
   color: var(--muted);
   background: var(--surface-2);
   border: 1px solid var(--border);
   padding: 0.05rem 0.45rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
 }
 .doc-diagram .dd-branch {
@@ -563,7 +563,7 @@
 .doc-diagram .dd-branch .dd-node {
   box-shadow: none;
   padding: 0.38rem 0.7rem;
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
 }
 .doc-diagram .dd-branch.dd-keep .dd-hline {
   background: color-mix(in srgb, var(--protect) 55%, var(--border-strong));
@@ -581,11 +581,11 @@
   align-self: center;
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   width: 232px;
   margin: 0.5rem 0 0.1rem;
   font-family: var(--mono);
-  font-size: 0.58rem;
+  font-size: var(--text-2xs);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);

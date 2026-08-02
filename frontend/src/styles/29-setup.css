@@ -23,14 +23,17 @@
   align-items: center;
   gap: 0.65rem;
 }
+/* Bigger than the masthead's 34px on purpose. This is the app introducing itself on a screen
+   with room, and the mark carries enough internal detail -- a cowl, two eyes, a field of
+   falling blocks -- that at 34px it reads as a smudge beside the word. */
 .setup-brand .brand-mark {
-  width: 34px;
-  height: 34px;
+  width: 56px;
+  height: 56px;
   color: var(--text);
 }
 .setup-brand .brand-word {
-  font-size: 1.05rem;
-  font-weight: 650;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semi);
   letter-spacing: 0.01em;
 }
 
@@ -55,15 +58,15 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 0.15rem;
+  gap: var(--space-3xl);
+  margin-bottom: var(--space-2xs);
 }
 .step-head h2 {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: var(--text-xl);
 }
 .step-of {
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -78,18 +81,18 @@
   align-items: center;
   gap: 0.4rem;
   padding: 0;
-  margin: 0 0 1rem;
+  margin: 0 0 var(--space-3xl);
 }
 .stepper li {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 .stepper li.now {
   color: var(--text);
-  font-weight: 600;
+  font-weight: var(--weight-semi);
 }
 .step-rule {
   flex: 1;
@@ -103,8 +106,8 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-bold);
   background: var(--surface-2);
   color: var(--faint);
   flex: none;
@@ -127,7 +130,7 @@
 .step-actions {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   margin-top: 1.2rem;
   flex-wrap: wrap;
 }
@@ -138,7 +141,7 @@
   margin-top: 0.9rem;
   padding-top: 0.9rem;
   border-top: 1px solid var(--border);
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   color: var(--muted);
 }
 /* A footer that is a door rather than a note: the sentence and the control that acts on it,
@@ -163,7 +166,7 @@
 }
 .btn-lg {
   padding: 0.7rem 1.4rem;
-  font-size: 1rem;
+  font-size: var(--text-lg);
 }
 
 /* ---- connection rows -----------------------------------------------------
@@ -180,7 +183,7 @@
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.6rem 0.7rem;
+  padding: var(--space-lg) var(--space-xl);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--bg);
@@ -195,8 +198,8 @@
   width: 34px;
   height: 26px;
   border-radius: var(--radius-sm);
-  font-size: 0.62rem;
-  font-weight: 700;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.02em;
 }
 .conn-name {
@@ -204,18 +207,18 @@
   align-items: center;
   gap: 0.4rem;
   flex-wrap: wrap;
-  font-weight: 600;
-  font-size: 0.92rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
 }
 .conn-why {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 .conn-instances {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.15rem;
+  gap: var(--space-sm);
+  margin-top: var(--space-2xs);
 }
 /* A chip names one instance and carries the two controls for it -- edit, and forget. It holds
    both rather than being one button, which is what lets a kind hold several without the row
@@ -228,12 +231,12 @@
   gap: 0.3rem;
   min-height: var(--tap-min);
   padding: 0.1rem 0.3rem 0.1rem 0.55rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid color-mix(in srgb, var(--protect) 45%, transparent);
   background: var(--surface);
   color: var(--text);
-  font-size: 0.78rem;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   overflow-wrap: anywhere;
 }
 .inst-chip:hover {
@@ -255,7 +258,7 @@
   color: inherit;
   background: none;
   border: 0;
-  padding: 0 0.15rem;
+  padding: 0 var(--space-2xs);
   cursor: pointer;
   overflow-wrap: anywhere;
 }
@@ -263,9 +266,9 @@
   justify-content: center;
   min-width: var(--tap-min);
   padding: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--muted);
-  font-weight: 700;
+  font-weight: var(--weight-bold);
   line-height: 1;
 }
 /* Red on approach, so the destructive one of the chip's two controls says so before it is
@@ -277,7 +280,7 @@
 .inst-chip .chip-x:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 /* The confirm, in the chip's own slot: a red-ink Remove and a plain Cancel, the same two-step
    the services panel uses for this act rather than a second way of asking. */
@@ -285,36 +288,36 @@
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  font-size: 0.78rem;
+  gap: var(--space-sm);
+  font-size: var(--text-sm);
 }
 .chip-confirm-q {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
 .chip-confirm button {
-  font-size: 0.78rem;
-  font-weight: 600;
-  padding: 0.15rem 0.5rem;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  padding: var(--space-2xs) var(--space-md);
   min-height: var(--tap-min);
 }
 .inst-chip .tick {
   color: var(--protect);
-  font-weight: 700;
+  font-weight: var(--weight-bold);
 }
 .conn-add {
   padding: 0.3rem 0.6rem;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 .conn-tag {
   padding: 0.08rem 0.36rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
   letter-spacing: 0.02em;
 }
 .conn-tag.required {
@@ -327,11 +330,11 @@
 .conn-split {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
   margin: 1rem 0 0.3rem;
   color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
@@ -342,8 +345,8 @@
   background: var(--border);
 }
 .conn-note {
-  margin: 0.15rem 0 0;
-  font-size: 0.8rem;
+  margin: var(--space-2xs) 0 0;
+  font-size: var(--text-sm);
   color: var(--muted);
 }
 
@@ -360,20 +363,20 @@
   border: 1px solid color-mix(in srgb, var(--protect) 45%, transparent);
   border-radius: var(--radius);
   background: var(--protect-soft);
-  font-size: 0.88rem;
+  font-size: var(--text-md);
 }
 .plex-who .tick {
   grid-row: span 2;
   color: var(--protect);
-  font-weight: 700;
-  font-size: 1.1rem;
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xl);
 }
 .plex-who .who-name {
-  font-weight: 600;
+  font-weight: var(--weight-semi);
   overflow-wrap: anywhere;
 }
 .plex-who .who-sub {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   overflow-wrap: anywhere;
 }
@@ -382,7 +385,7 @@
 .pick-row {
   display: flex;
   align-items: stretch;
-  gap: 0.5rem;
+  gap: var(--space-md);
   min-width: 0;
 }
 .pick-row select {
@@ -396,7 +399,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-md);
 }
 .manual-row .m-host {
   flex: 1 1 11rem;
@@ -409,7 +412,7 @@
    inside its flex track is this row's own. */
 .manual-row input {
   width: 100%;
-  padding: 0.42rem 0.6rem;
+  padding: var(--control-pad);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
@@ -422,7 +425,7 @@
 }
 .manual-uri {
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--muted);
   overflow-wrap: anywhere;
 }
@@ -432,16 +435,16 @@
 .setup-scanning {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--space-lg);
 }
 .setup-scanmsg {
-  margin-top: 0.6rem;
+  margin-top: var(--space-lg);
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 .setup-later {
   margin: 1.3rem 0 0;
-  padding-top: 1rem;
+  padding-top: var(--space-3xl);
   border-top: 1px solid var(--border);
 }
 

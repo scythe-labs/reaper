@@ -30,6 +30,7 @@ import { useBackGuard } from "../backnav";
 import { useDialogFocus } from "../focus";
 import { spareRemaining } from "../format";
 import { trapTab } from "./ModalShell";
+import { FixedQuantity } from "./QuantityInput";
 import { CaretDownGlyph, ClockGlyph, PenGlyph, ScytheIcon, SpareGlyph } from "./queueIcons";
 import { useDefaultSpareDays } from "./queueSettings";
 
@@ -476,23 +477,25 @@ function SpareMenu({
       <div className="dur-div" />
       {custom ? (
         <div className="dur-custom">
-          <span className="qty qty-narrow">
-            <input
-              type="number"
-              min={1}
-              max={3650}
-              value={customText}
-              autoFocus
-              aria-label="Custom spare length in days"
-              onChange={(e) => setCustomText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") spareCustom();
-              }}
-            />
-            <span className="qty-suffix" aria-hidden="true">
-              days
-            </span>
-          </span>
+          <FixedQuantity
+            value={customText}
+            onChange={(n) => setCustomText(String(n))}
+            suffix="days"
+            min={1}
+            max={3650}
+            step={1}
+            width="narrow"
+            // "Custom spare length", not "...in days": FixedQuantity binds the visible "days"
+            // suffix as the box's description, so the unit is spoken after the value. Naming it
+            // here too would read "custom spare length in days, 30, days" -- the stutter the
+            // shared control's own comment warns about, and the reason the unit is a
+            // description rather than part of the name.
+            ariaLabel="Custom spare length"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") spareCustom();
+            }}
+          />
           <button type="button" className="dur-spare-go" onClick={spareCustom}>
             Spare
           </button>

@@ -9,7 +9,7 @@
   inset: 0;
   display: grid;
   place-items: center;
-  padding: 1.5rem;
+  padding: var(--space-5xl);
   overflow: hidden;
 }
 /* A soft, theme-aware aurora so the sign-in screen has depth without an image. */
@@ -72,21 +72,21 @@
   display: block;
   width: 64px;
   height: 64px;
-  margin: 0 auto 1rem;
+  margin: 0 auto var(--space-3xl);
   filter: drop-shadow(0 8px 18px rgba(6, 22, 32, 0.45));
 }
 .auth-card .brand-word {
-  font-size: 1.7rem;
+  font-size: var(--text-3xl);
   letter-spacing: -0.03em;
 }
 .auth-tagline {
   color: var(--muted);
-  font-size: 0.9rem;
-  margin: 0.15rem 0 0;
+  font-size: var(--text-base);
+  margin: var(--space-2xs) 0 0;
 }
 .auth-note {
   color: var(--text);
-  font-size: 0.92rem;
+  font-size: var(--text-base);
   margin: 1.1rem 0 1.4rem;
   line-height: 1.5;
 }
@@ -102,8 +102,8 @@
   border: none;
   background: var(--plex);
   color: var(--plex-ink);
-  font-weight: 650;
-  font-size: 0.95rem;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-base);
   box-shadow: var(--shadow-sm);
 }
 .btn-plex:hover:not(:disabled) {
@@ -112,12 +112,12 @@
 }
 
 .auth-alt {
-  margin-top: 0.85rem;
+  margin-top: var(--space-2xl);
   background: none;
   border: none;
   color: var(--muted);
-  font-size: 0.88rem;
-  font-weight: 500;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
 }
 .auth-alt:hover {
   background: none;
@@ -127,11 +127,11 @@
 }
 
 .auth-safety {
-  margin: 1.5rem 0 0;
-  padding-top: 1rem;
+  margin: var(--space-5xl) 0 0;
+  padding-top: var(--space-3xl);
   border-top: 1px solid var(--border);
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 
@@ -140,18 +140,18 @@
   align-items: center;
   gap: 0.8rem;
   text-align: left;
-  padding: 0.85rem 1rem;
+  padding: var(--space-2xl) var(--space-3xl);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-2);
 }
 .plex-waiting p {
   margin: 0.1rem 0 0;
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 .plex-waiting .link {
   margin-left: auto;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 /* The server picker: shown when the signing-in account owns several Plex servers.
@@ -159,30 +159,30 @@
 .server-pick {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-md);
   text-align: left;
-  padding: 0.85rem 1rem;
+  padding: var(--space-2xl) var(--space-3xl);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-2);
 }
 .server-pick > strong {
-  font-size: 0.92rem;
+  font-size: var(--text-base);
 }
 .server-pick > p {
-  margin: 0 0 0.25rem;
-  font-size: 0.8rem;
+  margin: 0 0 var(--space-xs);
+  font-size: var(--text-sm);
 }
 .server-pick-row {
   width: 100%;
   text-align: left;
-  padding: 0.7rem 0.85rem;
+  padding: var(--space-xl) var(--space-2xl);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
-  font-size: 0.9rem;
-  font-weight: 550;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semi);
   /* The server's name comes from plex.tv, and a <button> does not take the page's wrapping the
      way surrounding text does, so it declares the break opportunity itself (rule 139). */
   overflow-wrap: anywhere;
@@ -197,5 +197,5 @@
 }
 .server-pick .link {
   align-self: flex-start;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }

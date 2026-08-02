@@ -156,7 +156,7 @@ def poster(title: str, year: str, palette: tuple[str, str, str], shape: str) -> 
 
 
 def backdrop(palette: tuple[str, str, str], shape: str) -> str:
-    # Bright end first. A row's art rides at 0.22 opacity under `.card-scrim` (20-queue-cards.css),
+    # Bright end first. A row's art rides at 0.22 opacity under `.card-scrim` (21-queue-cards.css),
     # so a backdrop built from the poster's dark end lands on near-black and the row reads as
     # having no art at all -- which is the one thing the real queue never looks like.
     top, _bottom, ink = palette

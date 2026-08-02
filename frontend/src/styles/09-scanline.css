@@ -9,7 +9,7 @@
   background: var(--surface-2);
   border-radius: 3px;
   overflow: hidden;
-  margin-top: 0.6rem;
+  margin-top: var(--space-lg);
 }
 .bar-fill {
   height: 100%;
@@ -27,7 +27,7 @@
   top: 0;
   left: 0;
   right: 0;
-  z-index: 55;
+  z-index: var(--z-scanline);
   height: 3px;
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   opacity: 0;
