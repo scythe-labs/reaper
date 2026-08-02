@@ -1511,8 +1511,15 @@ describe("trying a value against a signal's range", () => {
     // a component doing its own arithmetic would overwrite it, and this is what notices.
     // Read off the bolded element rather than the sentence, which is split across nodes
     // precisely so the two numbers can be picked out of it.
-    await waitFor(() => expect(screen.getByText("3.5")).toBeVisible());
-    expect(screen.getAllByText(/of these/).length).toBeGreaterThan(0);
+    //
+    // Scoped to the row. Unscoped this was a FLAKE, and it went green locally and red on CI:
+    // one mock answers every signal's probe, so all three rows end up showing 3.5, and
+    // whether `getByText` found one or three came down to how many had settled by the time
+    // the assertion ran. A query that depends on which requests have landed is not a test of
+    // the thing it names.
+    const row = screen.getByText("How low it's rated").closest(".rule-row") as HTMLElement;
+    await waitFor(() => expect(within(row).getByText("3.5")).toBeVisible());
+    expect(within(row).getByText(/of these/)).toBeVisible();
     expect(apiMock.probePolicy).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "signal", signal: "low_rating", weight: 10 }),
     );
