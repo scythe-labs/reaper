@@ -265,9 +265,10 @@ export function rampSentence(
 
 /** Reaper's own bounds for a signal, worded so the way back says where it goes.
  *
- *  "Put back Reaper's 1 year to 5 years" rather than a bare "Reset": the number the operator
- *  is undoing to is the whole of what they need to decide whether to press it, and a button
- *  that hides its own outcome is one they have to press to find out. */
+ *  Carried in the label -- "Set to default (1 year to 5 years)" -- rather than left to a bare
+ *  "Reset": the value being undone to is the whole of what an operator needs to decide
+ *  whether to press it, and a control that hides its own outcome is one they have to press
+ *  to find out. */
 export function rampDefaultSaid(
   id: string,
   shipped: { floor: number; saturate_at: number },

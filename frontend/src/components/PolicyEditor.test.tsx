@@ -1632,21 +1632,21 @@ describe("putting a ramp back the way Reaper ships it", () => {
     renderEditor({ body: body_, default_signals: shipped });
 
     await screen.findByText("How long it's gone unwatched");
-    expect(screen.queryByText(/Put back Reaper's/)).toBeNull();
+    expect(screen.queryByText(/Set to default/)).toBeNull();
   });
 
   it("names where it goes, rather than making them press to find out", async () => {
     renderEditor({ body: body(), default_signals: shipped });
 
     // body()'s unwatched is 0 -> 365, against a shipped 365 -> 1825.
-    expect(await screen.findByText("Put back Reaper's 1 year to 5 years")).toBeVisible();
+    expect(await screen.findByText("Set to default (1 year to 5 years)")).toBeVisible();
   });
 
   it("restores both bounds and leaves the weight alone", async () => {
     const user = userEvent.setup();
     renderEditor({ body: body(), default_signals: shipped });
 
-    await user.click(await screen.findByText("Put back Reaper's 1 year to 5 years"));
+    await user.click(await screen.findByText("Set to default (1 year to 5 years)"));
 
     // Both ends back, and the strip is what shows it: the bar moves to 365 of a 3650 track.
     await waitFor(() =>
@@ -1660,7 +1660,7 @@ describe("putting a ramp back the way Reaper ships it", () => {
     // And the offer goes from THIS row once there is nothing left to undo. Scoped, because
     // the fixture's rating ramp also differs from shipped and keeps its own offer.
     const row = screen.getByText("How long it's gone unwatched").closest(".rule-row");
-    expect(within(row as HTMLElement).queryByText(/Put back Reaper's/)).toBeNull();
+    expect(within(row as HTMLElement).queryByText(/Set to default/)).toBeNull();
   });
 
   it("offers nothing when the server sent no defaults", async () => {
@@ -1668,7 +1668,7 @@ describe("putting a ramp back the way Reaper ships it", () => {
     renderEditor({ body: body() });
 
     await screen.findByText("How long it's gone unwatched");
-    expect(screen.queryByText(/Put back Reaper's/)).toBeNull();
+    expect(screen.queryByText(/Set to default/)).toBeNull();
   });
 });
 

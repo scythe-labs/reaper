@@ -895,7 +895,7 @@ function SignalRamp({
                 })
               }
             >
-              {`Put back Reaper's ${rampDefaultSaid(signal.signal, shipped)}`}
+              {`Set to default (${rampDefaultSaid(signal.signal, shipped)})`}
             </button>
           </p>
         )}
