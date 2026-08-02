@@ -44,6 +44,10 @@ interface RampUnits {
   /** The number an operator types is not always the number that is stored. */
   toStored: (typed: number) => number;
   fromStored: (stored: number) => number;
+  /** The far end of the probe's track, in stored units. Wide enough that the whole ramp
+   *  sits inside it with room past the point where it pays in full, so the flat top is
+   *  visible rather than implied. */
+  probeMax: number;
   /** The lowest value this field can actually take, where that is not zero.
    *
    *  A ramp whose floor sits BELOW it never pays nothing for any real item, and "pays
@@ -59,11 +63,12 @@ const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
 /** Keyed by `SignalId`. A key absent from here is a rule of the operator's own, which
  *  states its own range in the rule editor and is not described by this module. */
 const RAMPS: Record<string, RampUnits> = {
-  unwatched: { shape: "direct", say: humanDays, unit: "days", ...WHOLE },
+  unwatched: { shape: "direct", say: humanDays, unit: "days", probeMax: 3650, ...WHOLE },
   season_rank: {
     shape: "direct",
     say: (n) => (n === 1 ? "the newest season" : `the ${ordinal(n)}-newest season`),
     unit: "seasons",
+    probeMax: 20,
     first: 1,
     ...WHOLE,
   },
@@ -71,12 +76,14 @@ const RAMPS: Record<string, RampUnits> = {
     shape: "shortfall",
     say: (n) => (n === 1 ? "1 watcher" : `${n} watchers`),
     unit: "people",
+    probeMax: 25,
     ...WHOLE,
   },
   low_rating: {
     shape: "shortfall",
     say: (n) => `IMDb ${(n / 10).toFixed(1)}`,
     unit: "IMDb",
+    probeMax: 100,
     step: 0.1,
     // Stored in tenths because the policy body is integers-only: floats do not canonicalise,
     // and an unstable hash would void approvals at random (the same reason coverage is bp).
@@ -87,6 +94,7 @@ const RAMPS: Record<string, RampUnits> = {
     shape: "direct",
     say: (n) => `${Math.round(n / 1e9)} GB`,
     unit: "GB",
+    probeMax: 200e9,
     step: 1,
     toStored: (typed) => Math.round(typed * 1e9),
     fromStored: (stored) => Math.round(stored / 1e9),
@@ -155,6 +163,28 @@ export function rampSentence(
   return `Pays nothing until ${ends.earnsFrom}, and ${points} at ${ends.earnsAll}.`;
 }
 
+/** Points said the way both surfaces say them, so a probe and a row never disagree about
+ *  how to spell the same number. Whole where it is whole, one place where it is not, and
+ *  "less than 1" rather than a "0" beside a bar with color in it. */
+export function sayPoints(points: number): string {
+  if (points <= 0) return "0";
+  if (points < 1) return "less than 1";
+  return Number.isInteger(points) ? String(points) : points.toFixed(1);
+}
+
+/** What the engine answered for a value the operator is trying, as a sentence.
+ *
+ *  The points come from the server (`POST /api/policy/probe`), never from arithmetic here:
+ *  a local copy of the ramp beside the control that tunes deletions is a second scorer free
+ *  to drift from the one that decides. This only words the answer. */
+export function probeSentence(id: string, value: number, points: number, weight: number): string {
+  const units = RAMPS[id];
+  const said = units ? units.say(value) : String(value);
+  return points >= weight
+    ? `${said} earns the whole ${weight} points.`
+    : `${said} earns ${sayPoints(points)} of these ${weight} points.`;
+}
+
 /** The same sentence with what it did to one title, for the row in the explanation panel.
  *
  *  `added` and `weight` both come from the stored explanation. This states them; it does
@@ -169,8 +199,5 @@ export function rowRampSentence(
 ): string | null {
   const ramp = rampSentence(id, floor, saturate, weight);
   if (!ramp) return null;
-  // "0" and "<1" the same way the row's own points column says them, so the sentence and
-  // the number above it can never read as two different answers.
-  const points = added <= 0 ? "0" : added < 1 ? "less than 1" : String(Math.round(added));
-  return `${ramp} This one added ${points}.`;
+  return `${ramp} This one added ${sayPoints(Math.round(added * 10) / 10)}.`;
 }

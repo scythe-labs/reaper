@@ -58,7 +58,8 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
-import { rampSentence, rampUnits } from "./signalRamp";
+import { probeSentence, rampSentence, rampUnits } from "./signalRamp";
+import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
@@ -812,7 +813,71 @@ function SignalRamp({
       </div>
       {/* Bound to the boxes above it, not to the slider, which has its own help (rule 45). */}
       <p className="help rule-help">{said}</p>
+      <SignalProbe signal={signal} label={label} />
     </>
+  );
+}
+
+/** Try a value against the range above and let the engine answer.
+ *
+ *  The number comes from `POST /api/policy/probe`, which runs the same `evaluate_signal` a
+ *  scan runs. Computing it here instead would be a second scorer sitting beside the control
+ *  that tunes deletions, free to drift from the one that decides and reading as
+ *  authoritative while it did (rule 3/22). One round trip per drag, debounced.
+ *
+ *  All three states render (rule 17/36). A probe that showed a stale number while the next
+ *  was in flight, or fell silent when the read failed, would be a confident answer to a
+ *  question nobody answered -- which is the whole failure this control exists to fix. */
+function SignalProbe({ signal, label }: { signal: SignalSetting; label: string }) {
+  const units = rampUnits(signal.signal);
+  // Open on the value where the ramp is most interesting: half way up it, which is a real
+  // point on every shape rather than an end that reads as 0 or as the whole weight.
+  const midpoint = Math.round((signal.floor + signal.saturate_at) / 2);
+  const [value, setValue] = useState<number | null>(null);
+  const tried = value ?? midpoint;
+
+  const probe = useMemo(
+    () =>
+      units
+        ? ({
+            kind: "signal",
+            signal: signal.signal,
+            weight: signal.weight,
+            saturate_at: signal.saturate_at,
+            floor: signal.floor,
+            value: tried,
+          } as const)
+        : null,
+    [units, signal.signal, signal.weight, signal.saturate_at, signal.floor, tried],
+  );
+  const { answer, pending, failed } = usePolicyProbe(probe);
+  if (!units) return null;
+
+  return (
+    <div className="ramp-probe">
+      <label className="ramp-field">
+        <span>Try a value</span>
+        <input
+          type="range"
+          min={0}
+          max={units.probeMax}
+          step={1}
+          value={tried}
+          aria-label={`Try a value against "${label}"`}
+          onChange={(e) => setValue(Number(e.target.value))}
+        />
+      </label>
+      {/* Deliberately not a live region: this changes on every step of a drag, and a
+          screen reader already announces the slider's own value as it moves. Announcing a
+          derived number on top of that is noise on the one control it would drown. */}
+      <p className="help rule-help">
+        {failed
+          ? "Reaper couldn't work that one out. It's still set, this is just the preview."
+          : answer && !pending
+            ? probeSentence(signal.signal, tried, answer.points, signal.weight)
+            : `Working out what ${units.say(tried)} earns…`}
+      </p>
+    </div>
   );
 }
 

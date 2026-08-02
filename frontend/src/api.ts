@@ -427,6 +427,35 @@ export interface SignalSetting {
   floor: number;
 }
 
+/** Try one signal's settings against one value.
+ *
+ *  `kind` is a discriminator, not decoration: a second probe -- what a keep rule would
+ *  discount, what a graded rule of your own would add -- joins this union and every client
+ *  already sending `kind` keeps working. Inferring the shape from which fields turned up is
+ *  what rule 142 exists to stop, and it is far cheaper to type before the format ships. */
+export interface SignalProbe {
+  kind: "signal";
+  signal: string;
+  weight: number;
+  saturate_at: number;
+  floor: number;
+  /** In the units the signal stores: days, watchers, a season's rank, a rating in tenths,
+   *  or bytes. */
+  value: number;
+  window_days?: number;
+}
+
+/** What `POST /api/policy/probe` accepts. One member today; see `SignalProbe`. */
+export type PolicyProbe = SignalProbe;
+
+/** One answer, the same shape for every probe kind, so a new kind needs no new rendering. */
+export interface PolicyProbeResult {
+  /** What the rule moves the score by, in its own direction. */
+  points: number;
+  /** The engine's own words for it, the sentence the panel's row would carry. */
+  detail: string;
+}
+
 export interface Condition {
   field: string;
   op: string;
@@ -1693,6 +1722,13 @@ export const api = {
         : { draft_max_unmeasured_per_run: maxUnmeasured }),
     }),
   simulate: (body: PolicyBody) => post<Simulation>("/api/policy/simulate", body),
+  /** Try one policy rule against one value and let the engine answer.
+   *
+   *  A round trip for a number a slider could compute locally, deliberately: the local copy
+   *  would be a second scorer beside the control that tunes deletions, free to drift from
+   *  the one that actually decides. Stateless and snapshot-free, so it is cheap enough to
+   *  sit under a drag. */
+  probePolicy: (probe: PolicyProbe) => post<PolicyProbeResult>("/api/policy/probe", probe),
   /** The season-count distribution from the latest snapshot, for the keep-last advisory.
    *  Independent of the current keep-last value, so it needs no re-scan. */
   seasonShape: () => request<SeasonShape>("/api/snapshot/season-shape"),

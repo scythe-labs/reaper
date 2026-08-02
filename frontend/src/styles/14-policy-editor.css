@@ -210,6 +210,19 @@
   color: var(--muted);
 }
 
+/* Try a value against the range above. The track fills the row like the weight slider does,
+   so the two read as the same kind of control rather than as a box and a stray input. */
+.ramp-probe {
+  margin-top: var(--space-lg);
+}
+.ramp-probe .ramp-field {
+  gap: var(--space-xs);
+}
+.ramp-probe input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 /* Keep well-rated titles: the per-source bars as rows of ONE aligned table. The source
    names share a column sized by the longest, so every "at least" lines up whatever the
    name's length -- the bars read as a set without each needing its own box. */

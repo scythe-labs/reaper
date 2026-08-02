@@ -8,7 +8,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -19,6 +19,7 @@ import { PolicyEditor, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     policy: vi.fn(),
+    probePolicy: vi.fn(),
     profile: vi.fn(),
     safety: vi.fn(),
     scanStatus: vi.fn(),
@@ -37,6 +38,14 @@ const { apiMock } = vi.hoisted(() => ({
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return { ...actual, api: apiMock };
+});
+
+// The probe under each signal's range fires on a 250ms debounce, so most tests here finish
+// before it runs. Seeded anyway: rule 135's gate only catches a queryFn that actually ran, so
+// an unmocked one would sit silent until the first test that waits long enough. Seeded HERE
+// rather than inside `renderEditor`, which runs after a test's own mock and would overwrite it.
+beforeEach(() => {
+  apiMock.probePolicy.mockResolvedValue({ points: 0.8, detail: "a value" });
 });
 
 function body(custom: CustomCondemn[] = []): PolicyBody {
@@ -1231,10 +1240,15 @@ describe("the controls a screen reader has to tell apart", () => {
   //
   // Rule 145: this walks a population, so it counts. Asserting "every slider I collected has a
   // name" reads green when the walk collects nothing. The count below is every `range` this
-  // fixture renders -- the two thresholds plus one per built-in signal in `body()` (3) --
-  // reconciled by hand against the source. Its honest limit: a slider added to a section this
-  // fixture does not mount is missing from both the table and the count, and the two absences
-  // hide each other.
+  // fixture renders -- the two thresholds, plus a weight and a probe per built-in signal in
+  // `body()` (3 signals, 2 each) -- reconciled by hand against the source. Its honest limit: a
+  // slider added to a section this fixture does not mount is missing from both the table and
+  // the count, and the two absences hide each other.
+  //
+  // The probe sliders raised this from 5 to 8 and the guard is what said so, which is the
+  // whole point of pinning a number nobody would otherwise re-derive: each one is a second
+  // range control sitting under a weight, and a pair of unnamed neighbours is exactly the
+  // confusion the test above it was written for.
   it("names both thresholds for their label, never for the help text under it", async () => {
     renderEditor({ body: body() });
 
@@ -1244,8 +1258,12 @@ describe("the controls a screen reader has to tell apart", () => {
     expect(floor).toHaveAttribute("type", "range");
 
     const sliders = document.querySelectorAll<HTMLInputElement>('input[type="range"]');
-    expect(sliders).toHaveLength(5);
+    expect(sliders).toHaveLength(8);
     for (const s of sliders) expect(s.getAttribute("aria-label")).toBeTruthy();
+    // The two per signal must not answer to the same name, which is the failure this whole
+    // test is about and the one a truthiness check on each cannot see.
+    const names = [...sliders].map((s) => s.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(names.length);
   });
 
   // A placeholder is an accessible name of last resort, so this box announced itself as the
@@ -1454,5 +1472,54 @@ describe("where a signal starts earning", () => {
 
     await screen.findByText("How low it's rated");
     expect(screen.queryByLabelText('Where "How low it\'s rated" stops paying')).toBeNull();
+  });
+});
+
+// The probe is a round trip for a number a slider could have computed locally, and that is
+// the point: a local copy of the ramp beside the control that tunes deletions is a second
+// scorer, free to drift from the one that decides. So what matters here is that the sentence
+// only ever shows what the server said, and says so plainly when it has not said it yet.
+describe("trying a value against a signal's range", () => {
+  it("shows what the engine answered, not a number worked out here", async () => {
+    apiMock.probePolicy.mockResolvedValue({ points: 3.5, detail: "IMDb 3.0" });
+    renderEditor({ body: body() });
+
+    await screen.findByLabelText('Try a value against "How low it\'s rated"');
+
+    // The value in the sentence is the server's, and it is deliberately not what this ramp
+    // would produce: a component doing its own arithmetic would overwrite it and this test
+    // is the thing that notices.
+    await waitFor(() => expect(screen.getByText(/earns 3.5 of these 10 points/)).toBeVisible());
+    expect(apiMock.probePolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "signal", signal: "low_rating", weight: 10 }),
+    );
+  });
+
+  it("says it is still working rather than showing a stale answer", async () => {
+    // Never resolves: the state between a drag and an answer is a real state, and the honest
+    // thing on screen is that nothing has come back yet.
+    apiMock.probePolicy.mockReturnValue(new Promise(() => {}));
+    renderEditor({ body: body() });
+
+    await screen.findByLabelText('Try a value against "How low it\'s rated"');
+
+    expect(screen.getAllByText(/Working out what/).length).toBeGreaterThan(0);
+  });
+
+  it("owns up when the read fails instead of going quiet", async () => {
+    // Silence here would read as "this rule earns nothing", which is a claim about the
+    // operator's policy that a failed request never made (rule 17/36).
+    apiMock.probePolicy.mockRejectedValue(new Error("nope"));
+    renderEditor({ body: body() });
+
+    await screen.findByLabelText('Try a value against "How low it\'s rated"');
+
+    await waitFor(() =>
+      expect(screen.getAllByText(/couldn't work that one out/).length).toBeGreaterThan(0),
+    );
+    // And it says the setting itself is fine, because a failed preview is not a failed save.
+    expect(screen.getAllByText(/It's still set, this is just the preview/).length).toBeGreaterThan(
+      0,
+    );
   });
 });

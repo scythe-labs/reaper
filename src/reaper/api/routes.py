@@ -55,6 +55,8 @@ from reaper.api.schemas import (
     LinksOut,
     PolicyIn,
     PolicyOut,
+    PolicyProbeIn,
+    PolicyProbeOut,
     PolicyValidateIn,
     PolicyWarningOut,
     RatingsOut,
@@ -86,6 +88,7 @@ from reaper.engine.policy import (
     combine_hashes,
     inspect,
 )
+from reaper.engine.preview import UnprobableSignalError, probe_signal
 from reaper.engine.signals import SignalConfig
 from reaper.engine.verdict import decide_verdict
 from reaper.services import app_settings, backup, whitelist
@@ -1728,6 +1731,55 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
         settings=settings,
         history_reach_days=reach_days,
     )
+
+
+@router.post("/policy/probe", tags=[api_tags.POLICY])
+async def probe_policy(payload: PolicyProbeIn) -> PolicyProbeOut:
+    """Try one policy rule against one value, and answer from the engine.
+
+    The editor asks this while the operator drags a signal's probe. It exists so that number
+    is not computed in the browser: a second copy of the ramp beside the control that tunes
+    deletions would be free to drift from the scorer, and would read as authoritative while
+    doing it (rule 3/22). The answer here comes from the same ``evaluate_signal`` a scan
+    runs.
+
+    Stateless and read-only. It touches no snapshot and no session, which is why it is fast
+    enough to sit under a slider, and why it can say nothing about the operator's library --
+    it describes the RULE, not any item. ``engine.preview`` carries what that costs.
+
+    A second probe kind is a member on ``PolicyProbeIn`` and an arm below; see
+    ``engine.preview``.
+    """
+    # The engine's own settings model, so a probe refuses what a save refuses -- including
+    # `floor < saturate_at`, which lives there and nowhere else (rule 131/104).
+    try:
+        setting = SignalSetting(
+            signal=payload.signal,
+            weight=payload.weight,
+            saturate_at=payload.saturate_at,
+            floor=payload.floor,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            422, "That range doesn't work: the starting point has to come before the far end."
+        ) from exc
+
+    match payload.kind:
+        case "signal":
+            try:
+                answer = probe_signal(
+                    SignalConfig(
+                        signal=setting.signal,
+                        weight=setting.weight,
+                        saturate_at=setting.saturate_at,
+                        floor=setting.floor,
+                    ),
+                    payload.value,
+                    window_days=payload.window_days,
+                )
+            except UnprobableSignalError as exc:
+                raise HTTPException(422, "Reaper can't try values against that rule.") from exc
+    return PolicyProbeOut(points=answer.points, detail=answer.detail)
 
 
 @router.post("/policy/validate", tags=[api_tags.POLICY])

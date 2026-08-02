@@ -63,6 +63,10 @@ ALIAS = {
     "VocabField": "FieldOut",
     "GradedKeep": "GradedKeepSpec",
     "RatingRule": "RatingRuleSpec",
+    # The probe's answer. The server suffixes its response models ``Out``; the browser
+    # names this one for what it is rather than for which direction it travels, because the
+    # editor reads it as a result and never posts it.
+    "PolicyProbeResult": "PolicyProbeOut",
 }
 
 #: Browser types with no server declaration to mirror, classified rather than silenced
@@ -82,8 +86,13 @@ CLIENT_ONLY = {
 #: the first number; a walk that silently stopped collecting would drop below it while every
 #: name-comparison below still passed, because a type absent from the walk is absent from both
 #: halves of the comparison.
-EXPECTED_INTERFACES = 82
-EXPECTED_PAIRS = 79
+# Both +2, for the policy probe's request and its answer: `SignalProbe` pairs with
+# `SignalProbeIn` on the suffix rule, and `PolicyProbeResult` needed the ALIAS entry above.
+# The third new name, `PolicyProbe`, is a type alias rather than an interface and is counted
+# by neither walk -- which is the reason these two numbers are reconciled against the tree
+# separately instead of one being derived from the other.
+EXPECTED_INTERFACES = 84
+EXPECTED_PAIRS = 81
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

@@ -1967,6 +1967,18 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/components/SetupRestoreModal.tsx": 1,
     "frontend/src/components/SetupWizard.tsx": 1,
     "frontend/src/components/queueSettings.tsx": 1,
+    # The policy editor's probe: what the engine says a rule would do at a value the operator
+    # is dragging. A READ, and one that deliberately does NOT keep its content -- the hook
+    # nulls the answer on failure rather than leaving the last one on screen, because the
+    # last one is about a value the operator has already moved past, and a points figure
+    # under a slider reads as being about where the slider is now.
+    #
+    # It is one handle rather than two because the hook answers the read-or-action question
+    # once and hands down a `failed` boolean, so `PolicyEditor` stays at 4: its branch is on
+    # the derived flag and this walk never sees it. That is the arrangement this population
+    # is meant to encourage, not a gap in it -- the decision is made in one place instead of
+    # re-made at every call site.
+    "frontend/src/usePolicyProbe.ts": 1,
 }
 
 # The hooks that hand back a READ's failure. The last three wrap a ``useQuery`` in their own

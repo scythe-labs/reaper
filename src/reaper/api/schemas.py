@@ -577,6 +577,53 @@ class SignalSettingIn(BaseModel):
     floor: int = Field(default=0, ge=0)
 
 
+class SignalProbeIn(SignalSettingIn):
+    """Try one signal's settings against one value.
+
+    Inherits the settings half rather than restating it, so a probe refuses exactly what a
+    save refuses (rule 131): answering for a pair the editor could not then store would
+    describe a policy that cannot exist.
+    """
+
+    kind: Literal["signal"] = "signal"
+
+    value: float = Field(ge=0, le=1e15)
+    """The value to try, in the units the signal is stored in: days, watchers, a season's
+    rank, a rating in tenths, or bytes. The ceiling is a boundary bound rather than a real
+    one (rule 95) -- above any file anyone has, and below where a float stops counting whole
+    numbers."""
+
+    window_days: int = Field(default=365, ge=1, le=36_500)
+    """The policy's popularity window, which phrases the watcher signal's answer."""
+
+
+#: What ``POST /api/policy/probe`` accepts.
+#:
+#: One member today, and typed as a discriminated ``kind`` anyway, which is the whole point:
+#: a second probe -- what a keep rule would discount, what a graded rule of the operator's
+#: own would add -- becomes ``Annotated[SignalProbeIn | KeepProbeIn,
+#: Field(discriminator="kind")]`` and every client that already sends ``kind`` keeps working.
+#: Inferring the shape from which fields happened to be present is the thing rule 142 exists
+#: to stop, and it is far cheaper to type it now than to add the discriminator to a wire
+#: format that already shipped without one.
+#:
+#: No speculative members: a probe kind arrives with the surface that asks it and the tests
+#: that pin it, or it does not exist (rule 38/117).
+PolicyProbeIn = SignalProbeIn
+
+
+class PolicyProbeOut(BaseModel):
+    """What the engine answered. One shape for every probe kind, so the editor reads them
+    the same way and a new kind needs no new rendering path."""
+
+    points: float
+    """What this rule would move the score by, in the rule's own direction: pressure for a
+    signal, and a discount for a keep rule when one is added."""
+
+    detail: str
+    """The engine's own words for it, the same sentence the panel's row would carry."""
+
+
 class ConditionIn(BaseModel):
     """One user-authored protect condition: keep a title when ``field op value``."""
 
