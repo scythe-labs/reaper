@@ -1,0 +1,10 @@
+{
+  "generator": "frontend/scripts/gen-social-card.mjs",
+  "accent": "#25c3ff",
+  "file": ".github/social-preview.png",
+  "width": 1280,
+  "height": 640,
+  "sourceSha256": "867cdf66902fcaa2f8148172d24e84c19ab68b0daa861e22a440e983e01e21a1",
+  "sha256": "772fa061b2f5a3f4fe4de008b67d5ab153b9414dc1eb254d83477d2378fc2fe4",
+  "bytes": 91234
+}
