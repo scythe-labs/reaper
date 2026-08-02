@@ -1014,6 +1014,55 @@ export function GeneralPanel({
         </p>
       </div>
 
+      {/* Present only when the server says it runs as the Mac or Windows app; the container,
+          the snap, and a source run report null and no group renders. Each Switch saves on
+          the spot (the reverse-proxy Switch's shape) and the values render from the query
+          data the save's response refreshed, so there is nothing here for the save bar. */}
+      {data.desktop && (
+        <div className="set-group">
+          <h3>Desktop app</h3>
+          <p className="group-blurb">These settings apply the next time Reaper opens.</p>
+          <div className="set-rows">
+            {data.desktop.platform === "macos" && (
+              <div className="set-row set-row-plain">
+                <span className="set-label">Show the Dock icon</span>
+                <p className="help">
+                  Reaper lives in the menu bar. Turn this on to show a Dock icon too.
+                </p>
+                <div className="set-control">
+                  <Switch
+                    checked={data.desktop.dock_icon}
+                    disabled={save.isPending}
+                    ariaLabel="Show the Dock icon"
+                    onChange={(enabled) => save.mutate({ dock_icon: enabled })}
+                  />
+                </div>
+              </div>
+            )}
+            <div className="set-row set-row-plain">
+              <span className="set-label">
+                {data.desktop.platform === "macos" ? "Menu bar icon" : "Tray icon"}
+              </span>
+              <p className="help">
+                {data.desktop.platform === "macos"
+                  ? "Open and quit Reaper from the menu bar. With this off, Reaper runs " +
+                    "with nothing on screen, and quitting takes Activity Monitor."
+                  : "Open and quit Reaper from the tray, next to the clock. With this off, " +
+                    "Reaper runs with nothing on screen, and quitting takes Task Manager."}
+              </p>
+              <div className="set-control">
+                <Switch
+                  checked={data.desktop.tray}
+                  disabled={save.isPending}
+                  ariaLabel={data.desktop.platform === "macos" ? "Menu bar icon" : "Tray icon"}
+                  onChange={(enabled) => save.mutate({ tray: enabled })}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Only when there is no bar to put it in. A control that saves on the spot fails with
           nothing unsaved, so its refusal has nowhere else to go; a refused BAR save renders
           inside the bar instead, beside the fields it just refused to write. */}

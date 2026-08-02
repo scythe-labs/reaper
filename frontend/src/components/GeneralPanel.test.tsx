@@ -45,6 +45,7 @@ const STORED: GeneralSettings = {
   default_spare_days: 0,
   proxy_trust_enabled: false,
   trusted_proxies: [],
+  desktop: null,
 };
 
 // The same row with the two self-gating fields switched ON. `STORED` leaves the proxy switch
@@ -752,5 +753,83 @@ describe("a control that saves on the spot", () => {
     // The untouched draft is still exactly as it was left, and still offered by the bar.
     expect(url).toHaveValue("https://reaper.example.com");
     expect(bar()!.textContent).toContain("Application URL");
+  });
+});
+
+describe("the Desktop app group", () => {
+  // The three install shapes the server can report. Only the two desktop ones render the
+  // group, and the rows differ by platform; every other install is `desktop: null`, which
+  // `STORED` already holds, so the absence case rides the default fixture.
+  const MACOS: GeneralSettings = {
+    ...STORED,
+    desktop: { platform: "macos", tray: true, dock_icon: false },
+  };
+  const WINDOWS: GeneralSettings = {
+    ...STORED,
+    desktop: { platform: "windows", tray: true, dock_icon: false },
+  };
+
+  /** Fold a tray/dock save back into the desktop object the way the server does, so the
+   *  switch's post-save state renders from the response rather than a stray top-level key. */
+  const foldDesktop = (stored: GeneralSettings) =>
+    apiMock.saveGeneral.mockImplementation((body: { tray?: boolean; dock_icon?: boolean }) =>
+      Promise.resolve({
+        ...stored,
+        desktop: {
+          ...stored.desktop!,
+          ...(body.tray !== undefined ? { tray: body.tray } : {}),
+          ...(body.dock_icon !== undefined ? { dock_icon: body.dock_icon } : {}),
+        },
+      }),
+    );
+
+  it("never renders off the desktop builds", async () => {
+    renderPanel();
+    await screen.findByLabelText("Behind a reverse proxy");
+    expect(screen.queryByText("Desktop app")).toBeNull();
+    expect(screen.queryByLabelText("Tray icon")).toBeNull();
+    expect(screen.queryByLabelText("Menu bar icon")).toBeNull();
+  });
+
+  it("offers the Mac rows, and the Dock icon saves on the spot", async () => {
+    apiMock.general.mockResolvedValue(MACOS);
+    foldDesktop(MACOS);
+    const person = renderPanel();
+    const dock = await screen.findByLabelText("Show the Dock icon");
+    expect(screen.getByLabelText("Menu bar icon")).toBeChecked();
+    expect(dock).not.toBeChecked();
+
+    await person.click(dock);
+    await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalled());
+    expect(apiMock.saveGeneral.mock.calls[0]![0]).toEqual({ dock_icon: true });
+    // On the spot means no bar: nothing is left unsaved by this press.
+    expect(bar()).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("Show the Dock icon")).toBeChecked());
+  });
+
+  it("offers only the tray on Windows", async () => {
+    apiMock.general.mockResolvedValue(WINDOWS);
+    foldDesktop(WINDOWS);
+    const person = renderPanel();
+    const tray = await screen.findByLabelText("Tray icon");
+    expect(screen.queryByLabelText("Show the Dock icon")).toBeNull();
+    expect(screen.queryByLabelText("Menu bar icon")).toBeNull();
+
+    await person.click(tray);
+    await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalled());
+    expect(apiMock.saveGeneral.mock.calls[0]![0]).toEqual({ tray: false });
+    await waitFor(() => expect(screen.getByLabelText("Tray icon")).not.toBeChecked());
+  });
+
+  it("has no accessibility violations with the group shown", async () => {
+    apiMock.general.mockResolvedValue(MACOS);
+    const { container } = render(
+      <QueryClientProvider client={testQueryClient()}>
+        <Announcer />
+        <GeneralPanel />
+      </QueryClientProvider>,
+    );
+    await screen.findByLabelText("Show the Dock icon");
+    await expectNoA11yViolations(container);
   });
 });

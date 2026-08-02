@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 from ipaddress import ip_network
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import SplitResult, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -31,6 +32,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper import launcher
 from reaper.api import tags as api_tags
 from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin_password
 from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
@@ -1698,6 +1700,19 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
+class DesktopSettingsOut(BaseModel):
+    """The desktop build's own knobs, present only when Reaper runs as the Mac or
+    Windows app. Backed by ``launcher.conf`` in the data folder, which the launcher
+    reads at start, so every change applies the next time Reaper opens."""
+
+    platform: Literal["macos", "windows"]
+    tray: bool
+    """The menu-bar (macOS) / tray (Windows) icon with Open Reaper and Quit."""
+    dock_icon: bool
+    """macOS only: show the Dock icon beside the menu-bar icon. The UI never renders
+    the row on Windows; the field just rides along false there."""
+
+
 class GeneralSettingsOut(BaseModel):
     application_name: str
     application_url: str | None = None
@@ -1719,6 +1734,9 @@ class GeneralSettingsOut(BaseModel):
     from its Spare menu; this is only what the button does by default."""
     proxy_trust_enabled: bool
     trusted_proxies: list[str]
+    desktop: DesktopSettingsOut | None = None
+    """Present only on the Windows and macOS apps; the container, the snap, and a
+    source run report ``null`` and the UI shows no Desktop app group."""
 
 
 class GeneralSettingsIn(BaseModel):
@@ -1736,10 +1754,25 @@ class GeneralSettingsIn(BaseModel):
     """Days a plain Spare keeps an item; ``0`` = forever. ``None`` leaves it unchanged."""
     proxy_trust_enabled: bool | None = None
     trusted_proxies: list[str] | None = Field(default=None, max_length=20)
+    tray: bool | None = None
+    """The desktop build's menu-bar/tray icon; refused off a desktop build."""
+    dock_icon: bool | None = None
+    """The macOS app's Dock icon; refused off a desktop build."""
 
 
 class ApiKeyOut(BaseModel):
     key: str
+
+
+def _desktop_out() -> DesktopSettingsOut | None:
+    platform = launcher.desktop_platform()
+    if platform is None:
+        return None
+    return DesktopSettingsOut(
+        platform=platform,
+        tray=launcher.desktop_flag(launcher.DESKTOP_TRAY_KEY, default=True),
+        dock_icon=launcher.desktop_flag(launcher.DESKTOP_DOCK_KEY, default=False),
+    )
 
 
 async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSettingsOut:
@@ -1753,6 +1786,7 @@ async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSett
         default_spare_days=await app_settings.get_default_spare_days(session),
         proxy_trust_enabled=await app_settings.proxy_trust_enabled(session, settings),
         trusted_proxies=await app_settings.get_trusted_proxies(session, settings),
+        desktop=_desktop_out(),
     )
 
 
@@ -1867,6 +1901,25 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
             await app_settings.set_proxy_trust_enabled(session, enabled=payload.proxy_trust_enabled)
         if payload.trusted_proxies is not None:
             await app_settings.set_trusted_proxies(session, payload.trusted_proxies)
+        if payload.tray is not None or payload.dock_icon is not None:
+            if launcher.desktop_platform() is None:
+                raise HTTPException(422, "These settings exist only on the Windows and macOS apps.")
+            desktop_values: dict[str, str] = {}
+            if payload.tray is not None:
+                desktop_values[launcher.DESKTOP_TRAY_KEY] = "true" if payload.tray else "false"
+            if payload.dock_icon is not None:
+                desktop_values[launcher.DESKTOP_DOCK_KEY] = "true" if payload.dock_icon else "false"
+            try:
+                launcher.write_conf_values(_settings(request).data_dir, desktop_values)
+            except OSError:
+                raise HTTPException(
+                    500, "Reaper couldn't save this to launcher.conf in its data folder."
+                ) from None
+            # The environment is the boot-resolved record _desktop_out reads (the
+            # launcher seeded the file into it), so mirror the write there too:
+            # the response and every later read then show the value the next start
+            # will use, instead of snapping the switch back.
+            os.environ.update(desktop_values)
         await session.commit()
         await _refresh_proxy_state(request, session)
         if cleaned_timezone is not None:

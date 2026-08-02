@@ -42,6 +42,9 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   default_spare_days: 0,
   proxy_trust_enabled: false,
   trusted_proxies: [],
+  // Not a desktop build: the shape every install other than the Mac and Windows
+  // apps reports, and the one that renders no Desktop app group.
+  desktop: null,
 };
 
 /** No watch record held, and no scan has counted: the state a fresh install is in, and the

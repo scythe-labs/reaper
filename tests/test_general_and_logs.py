@@ -141,6 +141,9 @@ class TestGeneralSettings:
             "default_spare_days": 0,
             "proxy_trust_enabled": False,
             "trusted_proxies": [],
+            # The suite runs from source, which is not a desktop build, so the
+            # Desktop app group is absent; TestDesktopSettings drives the other arm.
+            "desktop": None,
         }
 
     def test_a_valid_accent_is_saved_lowercased(self, client: TestClient) -> None:
@@ -287,6 +290,76 @@ class TestGeneralSettings:
 
         client.put("/api/settings/general", json={"proxy_trust_enabled": False})
         assert client.app.state.trusted_proxies == ()  # type: ignore[attr-defined]
+
+
+class TestDesktopSettings:
+    """The Desktop app group's lane: present only on a frozen desktop build, saved to
+    launcher.conf so the next start reads it, mirrored into the environment so this
+    process keeps answering with the value it just accepted."""
+
+    @pytest.fixture
+    def desktop_env(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+        """A clean slate for the two keys, restored even though the PUT route writes
+        os.environ directly (monkeypatch cannot see that write, rule 133)."""
+        import os
+
+        monkeypatch.delenv("REAPER_TRAY", raising=False)
+        monkeypatch.delenv("REAPER_DOCK_ICON", raising=False)
+        yield
+        os.environ.pop("REAPER_TRAY", None)
+        os.environ.pop("REAPER_DOCK_ICON", None)
+
+    def test_saving_tray_off_a_desktop_build_is_refused(self, client: TestClient) -> None:
+        response = client.put("/api/settings/general", json={"tray": False})
+        assert response.status_code == 422
+        assert "Windows and macOS apps" in response.json()["detail"]
+
+    def test_a_desktop_save_lands_in_launcher_conf_and_the_next_read(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        desktop_env: None,
+    ) -> None:
+        from reaper import launcher
+
+        monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "macos")
+        fresh = client.get("/api/settings/general").json()["desktop"]
+        assert fresh == {"platform": "macos", "tray": True, "dock_icon": False}
+
+        saved = client.put("/api/settings/general", json={"tray": False, "dock_icon": True}).json()[
+            "desktop"
+        ]
+        assert saved == {"platform": "macos", "tray": False, "dock_icon": True}
+
+        conf = (tmp_path / "launcher.conf").read_text(encoding="utf-8")
+        assert "REAPER_TRAY=false" in conf
+        assert "REAPER_DOCK_ICON=true" in conf
+        # A later read answers from what was just accepted, not the boot-time value.
+        again = client.get("/api/settings/general").json()["desktop"]
+        assert again == {"platform": "macos", "tray": False, "dock_icon": True}
+
+    def test_a_desktop_save_keeps_the_operator_lines_around_it(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        desktop_env: None,
+    ) -> None:
+        """launcher.conf is the operator's file; Settings edits its own keys in place
+        and never rewrites the rest."""
+        from reaper import launcher
+
+        monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "macos")
+        (tmp_path / "launcher.conf").write_text(
+            "# my note\nREAPER_PORT=8421\nREAPER_TRAY=true\n", encoding="utf-8"
+        )
+        client.put("/api/settings/general", json={"tray": False})
+        conf = (tmp_path / "launcher.conf").read_text(encoding="utf-8")
+        assert "# my note" in conf
+        assert "REAPER_PORT=8421" in conf
+        assert conf.count("REAPER_TRAY") == 1
+        assert "REAPER_TRAY=false" in conf
 
 
 class TestReverseProxyEnvSeed:

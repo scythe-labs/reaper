@@ -59,7 +59,8 @@ launcher reads `launcher.conf` from the data folder (written as a commented temp
 first run): `~/Library/Application Support/Reaper/` on macOS, `%LOCALAPPDATA%\Reaper` on
 Windows. `REAPER_PORT`, `REAPER_HOST`, `REAPER_LAUNCH_BROWSER`, `REAPER_UPDATE_CHECK`,
 `REAPER_TRAY`, and `REAPER_DOCK_ICON` belong there; real environment variables still
-win.
+win. The desktop builds also show a Desktop app group in Settings, General, which edits
+the tray and Dock icon keys in this file and applies them at the next start.
 
 **Reaching it from other machines.** The server binds all interfaces (the same
 `0.0.0.0` default as the container); `127.0.0.1` is only the URL the local browser

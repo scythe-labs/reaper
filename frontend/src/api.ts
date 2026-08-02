@@ -937,6 +937,18 @@ export interface Update {
  *  when it was on. */
 export type ExpandSeasonsMode = "off" | "desktop" | "both" | "mobile";
 
+/** The desktop build's own knobs, present only when Reaper runs as the Mac or Windows
+ *  app. Backed by launcher.conf in the data folder, which the launcher reads at start,
+ *  so every change applies the next time Reaper opens. */
+export interface DesktopSettings {
+  platform: "macos" | "windows";
+  /** The menu-bar (macOS) / tray (Windows) icon with Open Reaper and Quit. */
+  tray: boolean;
+  /** macOS only: show the Dock icon beside the menu-bar icon. Rides along false on
+   *  Windows and the row never renders there. */
+  dock_icon: boolean;
+}
+
 export interface GeneralSettings {
   application_name: string;
   application_url: string | null;
@@ -954,6 +966,9 @@ export interface GeneralSettings {
   default_spare_days: number;
   proxy_trust_enabled: boolean;
   trusted_proxies: string[];
+  /** Present only on the Windows and macOS apps; null everywhere else, and the UI
+   *  then shows no Desktop app group. */
+  desktop: DesktopSettings | null;
 }
 
 export interface LogLine {
@@ -1665,6 +1680,8 @@ export const api = {
     default_spare_days?: number;
     proxy_trust_enabled?: boolean;
     trusted_proxies?: string[];
+    tray?: boolean;
+    dock_icon?: boolean;
   }) => put<GeneralSettings>("/api/settings/general", body),
   /** The stored key, for the Show button. Session-only; 404 when none exists yet. */
   revealApiKey: () => request<{ key: string }>("/api/settings/general/api-key"),

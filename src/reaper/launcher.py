@@ -167,6 +167,60 @@ def load_launcher_conf(env: MutableMapping[str, str], data_dir: Path) -> Path:
     return conf
 
 
+#: The two launcher.conf keys Settings -> General edits on a desktop install.
+DESKTOP_TRAY_KEY = "REAPER_TRAY"
+DESKTOP_DOCK_KEY = "REAPER_DOCK_ICON"
+
+
+def desktop_platform(platform: str | None = None, *, frozen: bool | None = None) -> str | None:
+    """``"macos"`` or ``"windows"`` when this process is a frozen desktop build,
+    else ``None``. What gates the Desktop app group in Settings -> General: the
+    container, the snap, and a source run never see it."""
+    if frozen is None:
+        frozen = _bundle_root() is not None
+    if not frozen:
+        return None
+    resolved = sys.platform if platform is None else platform
+    if resolved == "darwin":
+        return "macos"
+    if resolved == "win32":
+        return "windows"
+    return None
+
+
+def desktop_flag(key: str, *, default: bool) -> bool:
+    """The value the launcher resolved this boot. ``load_launcher_conf`` seeded the
+    file into the environment before serving, so the environment is the effective
+    record; the file only matters again at the next start."""
+    raw = os.environ.get(key, "").strip().lower()
+    return raw in _TRUE if raw else default
+
+
+def write_conf_values(data_dir: Path, values: MutableMapping[str, str]) -> None:
+    """Set keys in ``launcher.conf``, preserving everything else the operator wrote.
+
+    An active ``KEY=`` line is rewritten in place; a key with no active line is
+    appended. The file is how a double-clicked install is configured, so Settings
+    edits it rather than inventing a second store the launcher would not read
+    (rule 104: one declaration, here the file itself). Raises ``OSError`` for the
+    caller to turn into a plain refusal; a settings save must not half-apply
+    silently."""
+    conf = data_dir / "launcher.conf"
+    text = conf.read_text(encoding="utf-8") if conf.exists() else _CONF_TEMPLATE
+    lines = text.splitlines()
+    remaining = dict(values)
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.partition("=")[0].strip()
+        if key in remaining:
+            lines[index] = f"{key}={remaining.pop(key)}"
+    lines.extend(f"{key}={value}" for key, value in remaining.items())
+    data_dir.mkdir(parents=True, exist_ok=True)
+    conf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _migrate(root: Path) -> None:
     """``alembic upgrade head``, addressed into this install's copy of ``alembic/``.
 

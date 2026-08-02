@@ -171,6 +171,60 @@ class TestLoopbackGuard:
         assert calls == []
 
 
+class TestDesktopHelpers:
+    """What Settings -> General's Desktop app group stands on: the platform gate,
+    the boot-resolved flag read, and the in-place launcher.conf write."""
+
+    @pytest.mark.parametrize(
+        ("platform", "frozen", "expected"),
+        [
+            ("darwin", True, "macos"),
+            ("win32", True, "windows"),
+            ("linux", True, None),  # the snap freezes nothing, but hold the line anyway
+            ("darwin", False, None),  # a source run on a Mac is not the Mac app
+        ],
+    )
+    def test_the_platform_gate(self, platform: str, frozen: bool, expected: str | None) -> None:
+        assert launcher.desktop_platform(platform, frozen=frozen) == expected
+
+    def test_a_flag_reads_the_environment_else_its_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("REAPER_TRAY", raising=False)
+        assert launcher.desktop_flag("REAPER_TRAY", default=True) is True
+        assert launcher.desktop_flag("REAPER_TRAY", default=False) is False
+        monkeypatch.setenv("REAPER_TRAY", "false")
+        assert launcher.desktop_flag("REAPER_TRAY", default=True) is False
+        monkeypatch.setenv("REAPER_TRAY", "1")
+        assert launcher.desktop_flag("REAPER_TRAY", default=False) is True
+
+    def test_writing_replaces_in_place_and_appends_the_rest(self, tmp_path: Path) -> None:
+        (tmp_path / "launcher.conf").write_text(
+            "# a note the operator wrote\nREAPER_PORT=8421\nREAPER_TRAY=true\n",
+            encoding="utf-8",
+        )
+        launcher.write_conf_values(tmp_path, {"REAPER_TRAY": "false", "REAPER_DOCK_ICON": "true"})
+        text = (tmp_path / "launcher.conf").read_text(encoding="utf-8")
+        assert text.splitlines() == [
+            "# a note the operator wrote",
+            "REAPER_PORT=8421",
+            "REAPER_TRAY=false",
+            "REAPER_DOCK_ICON=true",
+        ]
+
+    def test_writing_into_nothing_starts_from_the_template(self, tmp_path: Path) -> None:
+        """A first save must leave the same self-describing file a first launch
+        writes, with the new value active at the end of it."""
+        launcher.write_conf_values(tmp_path / "data", {"REAPER_DOCK_ICON": "true"})
+        text = (tmp_path / "data" / "launcher.conf").read_text(encoding="utf-8")
+        assert text.startswith("# Reaper reads this file when it starts.")
+        assert text.rstrip().endswith("REAPER_DOCK_ICON=true")
+        # The round trip: what was written is what the next boot's read applies.
+        env: dict[str, str] = {}
+        launcher.load_launcher_conf(env, tmp_path / "data")
+        assert env == {"REAPER_DOCK_ICON": "true"}
+
+
 class TestTrayChoice:
     @pytest.mark.parametrize(
         ("platform", "configured", "frozen", "expected"),
