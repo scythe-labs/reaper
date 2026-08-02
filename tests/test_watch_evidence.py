@@ -284,9 +284,9 @@ class TestRecallAndForget:
     async def test_forget_one_takes_that_title_and_leaves_the_rest(
         self, session: AsyncSession
     ) -> None:
-        # The whole point of #275: before this existed, clearing one stale mark meant
-        # `forget_all`, which discards every real mark protecting every other title. So the
-        # assertion that matters is the SECOND one -- what survives, not what went.
+        # Before #275, clearing one stale mark meant `forget_all`, which discards every
+        # real mark protecting every other title. So the assertion that matters is the
+        # SECOND one -- what survives, not what went.
         await watch_evidence.record(
             session,
             {"radarr:1:5": Reading(4, NOW), "sonarr:1:9:2": Reading(2, NOW)},

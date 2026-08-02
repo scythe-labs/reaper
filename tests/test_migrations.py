@@ -432,7 +432,7 @@ def test_the_secondary_migration_retires_an_inert_number(
     assert len(after) == len(before) + 1
     _, new_hash, new_body = after[-1]
     assert all("secondary" not in g for g in json.loads(new_body)["gates"])
-    # It loads into the model the field was removed from -- the whole point of the exercise.
+    # It loads into the model the field was removed from.
     assert PolicyBody.model_validate_json(new_body)
     # And the row's own hash describes its own content, so nothing reads as stale on arrival.
     assert new_hash == PolicyBody.model_validate_json(new_body).policy_hash()

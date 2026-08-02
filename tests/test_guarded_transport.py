@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""GuardedTransport and the Tautulli allow-list.
-
-These are the tests that matter most in the whole suite. Everything else is
-correctness; this is the thing standing between a bug and someone's media library.
-"""
+"""GuardedTransport and the Tautulli allow-list: the tests that matter most in the
+suite, the thing standing between a bug and someone's media library."""
 
 from __future__ import annotations
 
@@ -109,11 +106,11 @@ class TestTlsVerificationReachesTheTransport:
 
 
 class TestClosingAClientReleasesItsSockets:
-    """Rule 34's whole point is that someone owns the close. ``scan_runner`` enters or
-    push-callbacks every Radarr, Sonarr, Tautulli and Seerr client it builds -- and every one
-    of those closes released nothing, because ``AsyncClient.aclose()`` closes exactly one
-    thing (its transport), that transport was the guard, and ``AsyncBaseTransport.aclose`` is
-    a no-op the guard inherited. The real connection pool was never told."""
+    """Rule 34 says someone owns the close. ``scan_runner`` enters or push-callbacks every
+    Radarr, Sonarr, Tautulli and Seerr client it builds -- and every one of those closes
+    released nothing, because ``AsyncClient.aclose()`` closes exactly one thing (its
+    transport), that transport was the guard, and ``AsyncBaseTransport.aclose`` is a no-op
+    the guard inherited. The real connection pool was never told."""
 
     async def test_the_wrapped_transport_is_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         closed: list[bool] = []

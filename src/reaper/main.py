@@ -73,7 +73,7 @@ log = structlog.get_logger(__name__)
 
 
 class HealthResponse(BaseModel):
-    """Note: route return types must be resolvable at runtime.
+    """Route return types must be resolvable at runtime.
 
     ``from __future__ import annotations`` turns them into strings, and FastAPI
     builds a response model by resolving them -- so a type imported only under
@@ -194,7 +194,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Background maintenance. Refreshes only -- it never deletes. The startup catch-up
     # runs in a task rather than inline so a first-boot 280 MB dataset download does not
     # block the app from serving; the first scan degrades until it lands, which is the
-    # correct, loud behavior, not a broken one.
+    # correct, loud behavior.
     # The server time zone every timed job runs on: the stored setting, else the
     # REAPER_TIMEZONE seed, else the host's own zone (see app_settings.get_timezone). A cron
     # set for 2 AM fires at 2 AM here; without a pinned zone APScheduler would use the
@@ -408,7 +408,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         can fall behind it. A session-only operation also says so in words, because a
         security requirement is a quiet signal and a 403 nobody predicted is a loud one.
 
-        **The order of the two schemes is load-bearing, not cosmetic.** Scalar preselects
+        **The order of the two schemes is load-bearing.** Scalar preselects
         the FIRST one an operation accepts and sends it, so with ``ApiKey`` first every
         try-it-out went out carrying an ``X-Api-Key`` header holding the unfilled scheme's
         placeholder, which is the empty string -- and the guard judges a presented key on

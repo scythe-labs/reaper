@@ -585,12 +585,12 @@ describe("the authenticated app's heading outline", () => {
     profile_url: null,
   };
 
-  // The whole point of opening a title from Scales is to see it in Review -- and the queue there
-  // is one lane of three. Landing on whichever lane the operator last used put the title's panel
-  // above a list the title is not in, so the card they came to see was simply absent, and the two
-  // ways back to it (the scroll to the open card, the j/k step) both no-op off-lane. Driven
-  // through the real shell rather than the callback, because the lane, the selection and the view
-  // are three pieces of state set together and only the assembled app proves they agree.
+  // Opening a title from Scales means seeing it in Review -- and the queue there is one lane of
+  // three. Landing on whichever lane the operator last used put the title's panel above a list
+  // the title is not in, so the card they came to see was simply absent, and the two ways back to
+  // it (the scroll to the open card, the j/k step) both no-op off-lane. Driven through the real
+  // shell rather than the callback, because the lane, the selection and the view are three
+  // pieces of state set together and only the assembled app proves they agree.
   it("lands a Scales title on the lane it lives in, not the one the queue was left on", async () => {
     const person = userEvent.setup();
     mountTheShell();

@@ -216,7 +216,7 @@ class TestAShortRatingsReadDegradesTheScan:
         )
 
         assert any("ratings" in r and "nothing may be deleted" in r.lower() for r in reasons)
-        assert set(index.by_rating_key) == {41, 42}  # the sweep was kept, not thrown away
+        assert set(index.by_rating_key) == {41, 42}  # the sweep was kept
 
 
 class _FakeTautulli:

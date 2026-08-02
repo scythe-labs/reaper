@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The GUID sweep parses listing XML directly, with no hidden per-item requests.
 
-The trap this pins down was measured, not imagined: walking ``section.all()`` objects
+The trap this pins down was measured: walking ``section.all()`` objects
 made plexapi silently reload any item whose accessed attribute was ``None``, one
 metadata request per title, and the "single sweep" cost minutes on a large library.
 The raw parser must extract every field the resolver and the review view rely on --

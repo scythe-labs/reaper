@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Wire formats.
 
-Note that route return types must be **resolvable at runtime**. ``from __future__
+Route return types must be **resolvable at runtime**. ``from __future__
 import annotations`` turns them into strings, and FastAPI builds a response model by
 resolving them -- so a type imported only under ``TYPE_CHECKING`` yields a 500 at
 request time rather than an error at import time. There is a test that walks every

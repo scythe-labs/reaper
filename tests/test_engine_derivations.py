@@ -53,8 +53,8 @@ class TestTheFrozenFieldListFollowsTheDataclass:
         assert set(facts_codec._OBS_FIELDS) == every - {"title", "ratings"}
 
     def test_a_field_added_to_facts_is_picked_up_without_being_listed(self) -> None:
-        """The whole point, tested against a stand-in for a future ``Facts`` rather than
-        waiting for the commit that adds one."""
+        """A new field is picked up without anyone listing it, tested against a stand-in
+        for a future ``Facts`` rather than waiting for the commit that adds one."""
 
         @dataclasses.dataclass(frozen=True)
         class _FutureFacts:

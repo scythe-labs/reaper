@@ -44,11 +44,9 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     // sign-in stays valid while the picker is up, and the pick carries the answer.
     //
     // The announcement that goes with it is `usePlexPinPoll`'s (`CHOOSE_SERVER_SAID`), not this
-    // handler's. It was written into both callers by hand -- one fact spelled out twice, which
-    // is what rule 144 asks to be generated from a single declaration, and the pair had already
-    // been out of step once: Settings announced the picker and this screen, the same transition
-    // through the same hook, said nothing (#177, rule 72). The hook now speaks for every caller,
-    // so this one only has to move itself.
+    // handler's. It was hand-written into both callers (rule 144), and the pair had already been
+    // out of step once: Settings announced the picker and this screen said nothing (#177, rule
+    // 72). The hook now speaks for every caller, so this one only has to move itself.
     onChooseServer: () => setPhase("choose"),
     onTimedOut: () => {
       setPhase("error");

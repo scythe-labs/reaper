@@ -83,7 +83,7 @@ def match_state(explanation: Mapping[str, Any]) -> str | None:
     operator the item had merely "scored below your threshold", which is the opposite of
     the decision actually in force (rule 61).
 
-    Three answers, and the middle one is the whole point:
+    Three answers, and the middle one is the one to get right:
 
     * a status the resolver recorded (:class:`~reaper.engine.identity.MatchStatus`);
     * :data:`MATCH_UNREADABLE`, when the block is THERE but is not an object. That is "we

@@ -768,8 +768,8 @@ function Dashboard({ user }: { user: AuthUser }) {
 
   // The background-scan cue, polled from the shell so it lights up on every screen. Fast
   // while a scan runs; a gentle idle poll so a scan started elsewhere (the scheduler,
-  // another device) still surfaces here without a manual start or a tab refocus -- the
-  // whole point of a global "something is running" line. Shares the ["scanStatus"] cache
+  // another device) still surfaces here without a manual start or a tab refocus -- that
+  // is what a global "something is running" line is for. Shares the ["scanStatus"] cache
   // with the scan bar, so the two never disagree.
   const { data: scanStatus } = useQuery({
     queryKey: ["scanStatus"],
@@ -1082,7 +1082,7 @@ function Authed({ user }: { user: AuthUser }) {
   // invalidates `["setup"]`: linking or unlinking Plex, saving a service, saving general settings.
   //
   // Both gates keep their surface WITHOUT a `StaleReadNotice`, which every surface that keeps
-  // its content pairs with it, and the departure is deliberate rather than a site nobody swept: these two
+  // its content pairs with it, and the departure is deliberate: these two
   // reads route, they do not render. Nothing on the Dashboard is derived from `setup.complete`,
   // and a stale `["me"]` at worst shows a yesterday's username in the menu, so an app-wide amber
   // banner would state a staleness the operator cannot see the effect of (rule 21).

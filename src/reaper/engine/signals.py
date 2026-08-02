@@ -354,15 +354,15 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
             # really are identical either way -- zero pressure, weight retained, coverage
             # discounted -- so only the sentence changes.
             #
-            # ABSENT is deliberately NOT exempted, and the distinction is the whole point.
-            # "We looked and there is genuinely nothing" is a claim about the window, and a
-            # mirror that does not span the window cannot support it: it establishes only
-            # that nothing happened in the part it holds. So rule 93's precondition (a
-            # GENUINE absence) is not met, rule 140 governs as the more specific, and the
-            # count stays on the reach check. Exempting it would move this signal to the
-            # fail-open side of its own twin -- ``_blocked`` matches Unknown only, so an
-            # Absent count falls through to the gate's shortfall arm and blocks -- while
-            # reporting coverage 1.0, which is exactly the hole the branch above describes.
+            # ABSENT is deliberately NOT exempted. "We looked and there is genuinely
+            # nothing" is a claim about the window, and a mirror that does not span the
+            # window cannot support it: it establishes only that nothing happened in the
+            # part it holds. So rule 93's precondition (a GENUINE absence) is not met,
+            # rule 140 governs as the more specific, and the count stays on the reach
+            # check. Exempting it would move this signal to the fail-open side of its own
+            # twin -- ``_blocked`` matches Unknown only, so an Absent count falls through
+            # to the gate's shortfall arm and blocks -- while reporting coverage 1.0,
+            # which is exactly the hole the branch above describes.
             span = f"in the last {humanize_window(window_days)}"
             short = (
                 None

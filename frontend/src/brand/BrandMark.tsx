@@ -2,10 +2,10 @@
 //
 // The brand mark worn flat, with no shell: the header and the setup wizard. The figure rides
 // `currentColor` so the caller's CSS supplies it (`.brand-mark` sets --text), the cowl opening
-// is left TRANSPARENT so the page shows through it, and the eyes keep --accent. That is the
-// whole reason this exists alongside BrandBadge: dropping the full ink tile into the masthead
-// reads as a sticker in light mode and disappears into the page in dark mode, while the badge
-// form is right on the login screen, where the app is introducing itself and has room.
+// is left TRANSPARENT so the page shows through it, and the eyes keep --accent. That is why
+// this exists alongside BrandBadge: dropping the full ink tile into the masthead reads as a
+// sticker in light mode and disappears into the page in dark mode, while the badge form is
+// right on the login screen, where the app is introducing itself and has room.
 //
 // It draws the FINISHED shape (./dissolve.generated), not the recipe. Composing the recipe here
 // meant cutting the ink parts out of a luminance mask, and a mask is rasterized into an

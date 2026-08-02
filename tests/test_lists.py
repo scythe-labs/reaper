@@ -333,8 +333,8 @@ class TestImdbTop250:
     async def test_a_failed_fetch_leaves_the_previous_list_intact(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
-        """The whole point of the atomic swap. A protection must never silently empty
-        itself because a third-party service had a bad minute.
+        """The atomic swap is there so a protection never silently empties itself
+        because a third-party service had a bad minute.
 
         Both of these name the error the sync really raises. A bare
         ``pytest.raises(Exception)`` is satisfied by one raised BEFORE the swap is reached

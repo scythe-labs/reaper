@@ -10,8 +10,8 @@ The method:
 1. Pick a cutoff -- say a year ago.
 2. Rebuild each item's facts **as they were on that day**: how long it had gone
    unwatched *then*, how many people had watched it *by then*. Deliberately not
-   today's facts; the whole point is to judge with the information available at the
-   time.
+   today's facts; the policy is judged with the information it would have had at
+   the time.
 3. Score, and see what the policy would have deleted.
 4. Then look at what actually happened *afterwards*. Anyone who played a condemned
    item after the cutoff is a **regret** -- a real person who would have gone

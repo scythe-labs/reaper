@@ -8,13 +8,13 @@
 // safer. This is safety UI, so it never renders nothing: while the state is unknown it
 // says so, in the amber "we could not look" tone, never in a way that reads as safe.
 //
-// **It says which way it went, out loud.** This switch decides whether Reaper may remove
-// anything at all, and it signalled the outcome the way the rest of the app used to: the form
-// unmounted and a `<strong>` in an unfocused subtree rewrote itself. Focus fell to `<body>`,
-// nothing was announced, and an operator driving by ear could not tell whether they had just
-// armed the app to delete their library (#170). Both directions now `announce()`, and focus
-// goes back to the button that opened the form on both of its exits -- the confirm and the
-// cancel -- because the form takes the focused element with it when it goes.
+// **It says which way it went, out loud.** It used to signal the outcome the way the rest of
+// the app did: the form unmounted and a `<strong>` in an unfocused subtree rewrote itself.
+// Focus fell to `<body>`, nothing was announced, and an operator driving by ear could not
+// tell whether they had just armed the app to delete their library (#170). Both directions
+// now `announce()`, and focus goes back to the button that opened the form on both of its
+// exits -- the confirm and the cancel -- because the form takes the focused element with it
+// when it goes.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -83,12 +83,10 @@ export function DeletionToggle() {
   if (isLoading) {
     return <p className="muted">Checking whether deletion is on…</p>;
   }
-  // Unknown must never read as safe: say it plainly, in amber -- and still offer the one
-  // direction that can only make Reaper safer. Turning deletion OFF takes no password and
-  // needs no prior state, so the operator who wants read-only RIGHT NOW must not be handed
-  // advice to assume the worst and nothing to click. (Turning it ON is the direction that
-  // stays gone: it takes a password, and offering it against a state we could not read would
-  // be arming on a guess.)
+  // Unknown must never read as safe: say it plainly, in amber, and still offer OFF -- no
+  // password, no prior state, the one direction that can only make Reaper safer -- so the
+  // operator who wants read-only RIGHT NOW has something to click. ON stays gone: it takes a
+  // password, and offering it against a state we could not read would be arming on a guess.
   if (isError || !data) {
     return (
       <>

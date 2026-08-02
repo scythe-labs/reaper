@@ -43,7 +43,7 @@ class TestAutoGeneration:
         assert key_file_path(_settings(tmp_path)).is_file()
 
     def test_the_key_is_stable_across_boots(self, tmp_path: Path) -> None:
-        """The whole point. A key that changes destroys every stored credential."""
+        """A key that changes destroys every stored credential."""
         first = resolve_secret_key(_settings(tmp_path))
         second = resolve_secret_key(_settings(tmp_path))
 

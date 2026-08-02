@@ -77,9 +77,9 @@ regional titles). The ladder, top to bottom:
 3. **Title + year** -- the original fail-closed rule, kept verbatim as the backstop.
 
 The reconcile is the load-bearing rule: a title *not resolving* is **silence**, and an id
-still binds through silence (that is the whole point -- a renamed or regional title must
-not stop a clean id match). But two tiers that both *resolve* to **different** rating keys
-is a positive contradiction, and it **abstains**. Corroborate-or-silent, never contradict.
+still binds through silence (a renamed or regional title must not stop a clean id
+match). But two tiers that both *resolve* to **different** rating keys is a positive
+contradiction, and it **abstains**. Corroborate-or-silent, never contradict.
 Both ``abstain`` and ``unmatched`` yield ``rating_key=None``, so the verdict path is
 byte-identical to today's no-match (Unknown facts -> ABSTAIN -> the executor spares); only
 ``detail`` differs, which is what lets the why-panel be honest about *why* a file was kept.
@@ -649,12 +649,12 @@ class Resolution:
     """The Plex rows this resolution was choosing between, when it refused to choose.
 
     Set on ``AMBIGUOUS`` and ``CONFLICTED`` only, and only for display: nothing in the
-    verdict reads it, because the whole point of the abstain is that Reaper does not know
-    which of these the file is. The why-panel offers a Plex and a Tautulli link per key, so
-    an operator told "we could not tell which one this is" can open the rows in question and
-    fix the metadata, rather than reading a dead end. ``detail`` has always named these keys
-    inside a sentence; this is the same fact typed, since the sentence is jargon and rule 21
-    keeps it off the screen."""
+    verdict reads it, because an abstain means Reaper does not know which of these the
+    file is. The why-panel offers a Plex and a Tautulli link per key, so an operator told
+    "we could not tell which one this is" can open the rows in question and fix the
+    metadata, rather than reading a dead end. ``detail`` has always named these keys
+    inside a sentence; this is the same fact typed, since the sentence is jargon and
+    rule 21 keeps it off the screen."""
 
     @classmethod
     def bound(

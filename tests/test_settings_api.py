@@ -176,7 +176,7 @@ class TestInstancesCrud:
 
     def test_multiple_seerr_and_arr_instances_are_allowed(self, client: TestClient) -> None:
         """Radarr, Sonarr and Seerr are genuinely multi (HD + 4K servers, two request
-        portals): a second of each, under its own name, is accepted, not refused."""
+        portals): a second of each, under its own name, is accepted."""
         for kind, name in [
             ("radarr", "HD"),
             ("radarr", "4K"),

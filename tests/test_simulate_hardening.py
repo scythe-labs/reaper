@@ -425,7 +425,7 @@ class TestTheHelpersThemselves:
         assert _contribution(stored) == expected
 
     def test_the_sort_key_orders_a_mixed_block_without_raising(self) -> None:
-        """The whole point of the coercion: the three types in one block are comparable."""
+        """The coercion is there so the three types in one block are comparable."""
         ordered = sorted(MIXED_SIGNALS, key=_contribution, reverse=True)
         assert [s["id"] for s in ordered] == ["low_rating", "unwatched", "few_watchers"]
 
@@ -921,7 +921,7 @@ class TestTheReplayKnowsHowFarTheStoredHistoryReached:
     def test_a_shallow_stored_horizon_holds_the_row(self, tmp_path: Path) -> None:
         """Three months of history behind a one-year window. The zero watcher count is a
         lower bound, so the protection cannot be reported as checked and the row is held --
-        the whole point of the fix, arriving through the simulator too."""
+        exactly what the fix is for, arriving through the simulator too."""
         for client in _reach_client(tmp_path, horizon_days=90):
             assert self._condemned(client) == 0
 

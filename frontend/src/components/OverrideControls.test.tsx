@@ -91,7 +91,7 @@ describe("the control an operator decides with, audited", () => {
   });
 
   it("has none with the spare-length menu open, which is not in the render container", async () => {
-    // `document.body`, and that is the whole point of this case. The menu is the app's only
+    // `document.body`, and that is exactly what this case pins. The menu is the app's only
     // `createPortal`, so it lands OUTSIDE the tree `render()` returns -- an audit scoped to
     // `container` walks right past it and reports clean on a menu it never saw. It carries its
     // own `role="group"` and its own Tab trap, which is exactly the markup worth auditing.
@@ -316,10 +316,10 @@ describe("the spare-length menu's keyboard reach", () => {
       expect(onSet).toHaveBeenCalledWith("spare", 45);
     });
 
-    // The unit is bound as the box's DESCRIPTION rather than folded into its name, which is the
-    // whole reason `FixedQuantity` exists in the shape it does. The hand-built copy had put
-    // `aria-hidden` back on the suffix and carried "in days" in the label instead -- the same
-    // outcome by the opposite route, and one that stutters the moment it uses the real control.
+    // The unit is bound as the box's DESCRIPTION rather than folded into its name, which is why
+    // `FixedQuantity` exists in the shape it does. The hand-built copy had put `aria-hidden`
+    // back on the suffix and carried "in days" in the label instead -- the same outcome by the
+    // opposite route, and one that stutters the moment it uses the real control.
     it("speaks its unit once, after the value", async () => {
       const user = userEvent.setup();
       draw({}, 30);

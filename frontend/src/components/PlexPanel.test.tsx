@@ -833,8 +833,8 @@ describe("the groups below the form, through a failed refetch", () => {
     // out of date and `.panel` is plain block flow.
     const grid = screen.getByRole("switch", { name: "Let Reaper touch Movies" });
     expect(lines[0]!.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The controls under it are all still drawn and operable, which is the whole reason the
-    // panel keeps its surface through a failed refetch.
+    // The controls under it are all still drawn and operable, which is why the panel keeps
+    // its surface through a failed refetch.
     expect(grid).toBeEnabled();
     expect(screen.getByRole("button", { name: "Forget…" })).toBeEnabled();
   });
@@ -962,7 +962,7 @@ describe("forgetting the recorded watch history", () => {
     const open = await screen.findByRole("button", { name: "Forget…" });
     await user.click(open);
 
-    // Armed, and still nothing sent: the whole point of the second press.
+    // Armed, and still nothing sent: the second press is the one that sends.
     expect(apiMock.resetWatchEvidence).not.toHaveBeenCalled();
     const confirm = screen.getByRole("button", { name: "Confirm forget" });
     expect(screen.queryByRole("button", { name: "Forget…" })).toBeNull();

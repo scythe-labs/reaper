@@ -169,7 +169,7 @@ class TestTheWindow:
 
     async def test_the_shipped_window_is_thirty(self) -> None:
         """A promise about disk: at ~4 KB per item per scan this is what the operator pays
-        to keep a month of history, so changing it is a deliberate act, not a tweak."""
+        to keep a month of history, so changing it is a deliberate act."""
         assert retention.KEEP_SNAPSHOTS == 30
 
 

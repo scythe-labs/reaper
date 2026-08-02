@@ -153,9 +153,9 @@ class TestTheMinDormancyGate:
     def test_a_gigantic_low_rated_film_is_still_protected_if_it_is_too_recent(
         self,
     ) -> None:
-        """The whole point of a gate. This item is 50 GB, rated 6.0, watched by nobody
-        -- it would score near the top under any weighting. It is still 400 days
-        dormant, so it is spared regardless."""
+        """A gate does not care about the score. This item is 50 GB, rated 6.0, watched
+        by nobody -- it would score near the top under any weighting. It is still 400
+        days dormant, so it is spared regardless."""
         result = GATE.evaluate(_facts(400))
 
         assert result.outcome == PROTECT
@@ -234,13 +234,10 @@ class TestTheRewatchPrior:
         assert rewatch_prior(100) > rewatch_prior(1200) > rewatch_prior(2000)
 
     def test_there_is_no_cliff(self) -> None:
-        """The finding that reframes the whole product.
-
-        A film dormant for FIVE YEARS still has a 13% chance of being watched next
-        year. Deletion is never free on an active library -- there is only cheaper and
-        dearer. Any tool claiming a five-year-old file is safe to remove is lying.
-
-        This is why the grace period and the human approval gate are not decoration."""
+        """The finding that reframes the whole product: a film dormant for FIVE YEARS
+        still has a 13% chance of being watched next year, so deletion is never free
+        on an active library. This is why the grace period and the human approval
+        gate are not decoration."""
         assert rewatch_prior(2000) > 0.10
 
 

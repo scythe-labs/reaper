@@ -11,14 +11,14 @@
 // indistinguishable, which on the page that decides what gets deleted is the wrong thing to be
 // unsure about.
 //
-// **The region pre-exists its messages, and that is the whole reason it is a module.** A polite
-// region inserted into the DOM in the same commit as its text is unreliably announced -- several
-// readers only watch regions that were already there -- which is exactly why `Notice` had to
-// reach for `role="alert"` instead. `ReviewQueue`'s scan nudge and catch-up toast were the two
-// nodes with that bug: bare `role="status"`, mounted with their own text, correct-looking and
-// mute. They now drop the role and speak through here instead (#177). Mounting one region once,
-// above every route, is the shape that makes `polite` work. Polite and not assertive: a save that
-// worked must not cut off whatever the operator is reading.
+// **The region pre-exists its messages.** A polite region inserted into the DOM in the same
+// commit as its text is unreliably announced -- several readers only watch regions that were
+// already there -- which is exactly why `Notice` had to reach for `role="alert"` instead.
+// `ReviewQueue`'s scan nudge and catch-up toast were the two nodes with that bug: bare
+// `role="status"`, mounted with their own text, correct-looking and mute. They now drop the
+// role and speak through here instead (#177). Mounting one region once, above every route, is
+// the shape that makes `polite` work. Polite and not assertive: a save that worked must not
+// cut off whatever the operator is reading.
 //
 // The app's six loading affordances were the same bug and were swept the same way (#332, rule
 // 72), through `useSlowWait` below -- with the extra clause that a wait is only worth saying

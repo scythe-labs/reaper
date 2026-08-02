@@ -1869,8 +1869,8 @@ describe("one row's write does not disable another row's controls", () => {
     expect(mine).toBeDisabled();
     await user.click(mine);
     expect(apiMock.override).toHaveBeenCalledTimes(1);
-    // The show's other season is not writing and stays pressable, which is the whole point of
-    // scoping the wait rather than restoring the old list-wide `pending`.
+    // The show's other season is not writing and stays pressable, which is what scoping the
+    // wait buys over restoring the old list-wide `pending`.
     expect(other).toBeEnabled();
 
     await act(async () => {

@@ -1038,11 +1038,10 @@ def _chip(
                 # Two rows reach here saying nothing: one frozen before the flag, which carries
                 # no key, and one carrying a value that is not a bool, which carries no legible
                 # answer -- `thaw_defers_to_owner` reads both to ``None`` and holds the rule.
-                # Nothing in either can tell a made comparison from a refused one, the wording
-                # that used to stand in for the flag being exactly what failed. So neither names
-                # a shape and both fall to the vague-but-true chip below. Recovering it from
-                # the wording was tried
-                # and is wrong: it read "more than watched Season" as a deferral while
+                # Nothing in either can tell a made comparison from a refused one. So neither
+                # names a shape and both fall to the vague-but-true chip below. Recovering it
+                # from the wording was tried and is wrong: it read "more than watched Season"
+                # as a deferral while
                 # ``condemned.reap_override_verdict`` read the absent key as a hold, so the
                 # card offered a conflict to settle and then refused the reap by citing that
                 # same conflict back at the operator.

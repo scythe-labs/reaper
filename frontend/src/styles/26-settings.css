@@ -540,12 +540,12 @@ button.danger:hover:not(:disabled) {
 }
 
 /* The one status line every job wears (JobStatus.tsx), used by the scan row, the Leaving
-   Soon row, and every upkeep job. Its whole point is that every state -- the resting
-   "Last run ..." line, the running spinner, and the manual-run confirmation -- lives in
-   this ONE fixed-height slot, vertically centered, so swapping between them never changes
-   the slot's height or margin and nothing below it moves. The inner element is keyed by
-   state in the TSX, so React remounts it on a change and it fades in on OPACITY ALONE --
-   no transform, no height change, no reflow. */
+   Soon row, and every upkeep job. Every state -- the resting "Last run ..." line, the
+   running spinner, and the manual-run confirmation -- lives in this ONE fixed-height slot,
+   vertically centered, so swapping between them never changes the slot's height or margin
+   and nothing below it moves. The inner element is keyed by state in the TSX, so React
+   remounts it on a change and it fades in on OPACITY ALONE -- no transform, no height
+   change, no reflow. */
 .jobrow-status {
   margin: 0.42rem 0 0;
   min-height: 1.45rem;

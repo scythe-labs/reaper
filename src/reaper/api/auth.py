@@ -105,7 +105,7 @@ def _throttled(throttle: Throttle, *keys: str) -> None:
     """Raise 429 if any of ``keys`` is currently locked out, else return.
 
     Checked *before* any password work happens, so a locked-out attacker never
-    reaches the expensive Argon2 verify -- the whole point of the throttle.
+    reaches the expensive Argon2 verify -- that is what the throttle is for.
     """
     retry = max((throttle.retry_after(k) for k in keys), default=0.0)
     _refuse_if_waiting(retry)

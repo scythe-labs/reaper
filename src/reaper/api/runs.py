@@ -659,7 +659,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             status.stopping = False
 
     # Held on app.state so the task is not garbage-collected mid-run. Deliberately NOT tied
-    # to this request's lifetime -- that decoupling is the whole point.
+    # to this request's lifetime: the reap must outlive the request that started it.
     app.state.reap_task = asyncio.create_task(_reap())
     return status
 

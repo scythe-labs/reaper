@@ -1,19 +1,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The scan and the simulator must never disagree about the same item.
 
-They are two implementations of one question -- *"would this policy delete this?"* --
-and they run against the same snapshot. The scan decides it while it has the full
-evidence in hand; the simulator re-decides it later from nothing but the stored row.
-If those two answers can differ, the product lies to you: the review queue shows an
-item under "not judged" while the policy editor counts it as one of the deletions.
+Both answer *"would this policy delete this?"* against the same snapshot: the scan with
+the full evidence in hand, the simulator later from nothing but the stored row. If the
+answers can differ, the product lies to you: the review queue shows an item under "not
+judged" while the policy editor counts it as one of the deletions.
 
 Found by running the real UI against a real library: the scan compared the *float*
-score (69.7) against the threshold and abstained, but persisted ``round(69.7)`` = 70.
-The simulator, which only ever sees the stored 70, condemned it. The queue and the
-editor disagreed about a real film, at the same threshold, on the same snapshot.
-
-The fix is structural rather than a patched comparison: round once, store that, and
-make **everything** decide on the stored integer.
+score (69.7) against the threshold and abstained, but persisted ``round(69.7)`` = 70,
+and the simulator, which only ever sees the stored 70, condemned a real film. The fix
+is structural rather than a patched comparison: round once, store that, and make
+**everything** decide on the stored integer.
 """
 
 from __future__ import annotations

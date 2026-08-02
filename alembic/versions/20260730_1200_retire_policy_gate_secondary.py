@@ -15,10 +15,10 @@ carries a *recoverable* bar -- ``keep_rating_rules`` absent, an ENABLED ``rating
 and numbers the old validator would have taken -- is left completely untouched, because
 ``secondary`` is the only surviving copy of that operator's protection. Writing the recovered
 bar here would persist a safety value the operator never approved, with no flag, no degraded
-scan and no editor draft: exactly the silent substitution rules 65 and 105 forbid, and the
-whole reason the recovery lives at load time. Those rows keep the key, and the shim keeps
-reading it; the shim now strips it from the body it hands back, so the field's removal does not
-break that path. They migrate themselves the first time the operator saves the draft the editor
+scan and no editor draft: exactly the silent substitution rules 65 and 105 forbid, and why
+the recovery lives at load time. Those rows keep the key, and the shim keeps reading it;
+the shim now strips it from the body it hands back, so the field's removal does not break
+that path. They migrate themselves the first time the operator saves the draft the editor
 opens for them.
 
 Every other row -- the key present but inert -- is rewritten without it.

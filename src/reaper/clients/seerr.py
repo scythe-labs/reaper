@@ -95,7 +95,7 @@ class MediaRequest:
     tvdb_id: int | None
     imdb_id: str | None
 
-    # The join keys. Note 4K lives in parallel fields: a 4K request correlates to
+    # The join keys. 4K lives in parallel fields: a 4K request correlates to
     # ratingKey4k and externalServiceId4k, and watch data must be summed across
     # both, or a film watched in 4K looks unwatched in HD.
     plex_rating_key: str | None

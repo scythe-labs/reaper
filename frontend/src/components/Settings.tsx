@@ -117,7 +117,7 @@ function applyTheme(choice: ThemeChoice) {
 
 // Quick-pick accents. The first is the built-in default; the rest are a spread of hues that
 // stay clear of the fixed red "remove" and green "keep" verdict colors. Any hex is allowed
-// via the field, so this is a shortcut, not the whole choice.
+// via the field, so this is a shortcut.
 // Each carries the color's name, because the swatch is a bare colored circle: its only other
 // name would be the hex, which a screen reader spells out one character at a time and which
 // rule 21 would not accept as operator copy either.
@@ -2636,7 +2636,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   const [switchNonce, setSwitchNonce] = useState(0);
 
   // Every panel classified, in `PANELS` order. A `false` here is a claim that the section has
-  // nothing to lose on the way out, so each one says why -- verified in the tree, not assumed.
+  // nothing to lose on the way out, so each one says why -- verified in the tree.
   const dirtyPanels: Record<Panel, boolean> = {
     general: generalDirty,
     // Its drafts live in `ServiceModal`, inside a `ModalShell`, whose scrim

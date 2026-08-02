@@ -173,7 +173,7 @@ def _payload_size(value: object) -> int | None:
     None (missing field, junk type, negative, **zero**) means the size cannot be
     confirmed, and the caller treats that as drift it cannot rule out: the item is kept.
 
-    Zero counts as unreadable, and that is the whole point. The scan-side parsers already
+    Zero counts as unreadable, and that is deliberate. The scan-side parsers already
     treat it that way (``snapshot._reported_size``, ``sonarr_stats._reported_size``),
     because an *arr that reports a file it holds with no size is sending a partial
     payload, not describing an empty file. This function used to disagree -- it accepted
@@ -718,7 +718,7 @@ def _deletable_bytes(deletable: Sequence[_Delete], *, allow_unmeasured: bool = F
 
     With the operator's allowance open, an unmeasured item is a legitimate member of the
     set, so it is simply left OUT of the byte total. It is not counted as zero: the item
-    caps bound it instead, which is the whole reason the allowance is a count.
+    caps bound it instead, which is why the allowance is a count.
     """
     unknown = sorted(d.candidate.media_key for d in deletable if d.candidate.size_bytes is None)
     if unknown and not allow_unmeasured:
@@ -1109,7 +1109,7 @@ class Executor:
             # where it stood. Handled apart from the catch-all below only for the copy: this
             # is a known shape with a known remedy, not an unexpected error, and the operator
             # is told what to check. The terminal write below does not depend on the session
-            # being healthy, which is the whole point of it going through _commit_journal.
+            # being healthy, which is why it goes through _commit_journal.
             log.warning("reap.journal_halt", run_id=run_id)
             report.state = RunState.ABORTED
             report.aborted_reason = _JOURNAL_HALT
@@ -1651,9 +1651,9 @@ class Executor:
     async def _refresh_overrides(self) -> None:
         """Re-read the owner's spare/reap decisions, mid-run, before the next item.
 
-        A 200-item reap takes minutes, and the whole point of the grace window is that the
-        owner may change their mind inside it. They watch the bar, see a title they want to
-        keep, click Spare in the review queue -- and that decision has to reach this run.
+        A 200-item reap takes minutes, and the grace window is there so the owner may
+        change their mind inside it. They watch the bar, see a title they want to keep,
+        click Spare in the review queue -- and that decision has to reach this run.
 
         A plain re-query is enough: ``whitelist.overrides`` is a two-column Core select, not
         an ORM entity load, so the identity-map staleness that forced ``armed_recheck`` onto
@@ -2505,7 +2505,7 @@ class Executor:
         # the ``expected <= 0`` guard in ``_trash_delta_is_ours``.
         #
         # Pruning a show's LAST season may well drop the show, and that purge is declined
-        # too. That is the cost, and it is the right way round: a lingering "unavailable"
+        # too. That is the cost: a lingering "unavailable"
         # entry is cosmetic, and purging someone else's trashed items is not.
         series_path = str(series.get("path") or "")
         deleted = set(file_ids)

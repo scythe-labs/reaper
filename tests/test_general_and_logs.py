@@ -814,12 +814,12 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
     ) -> None:
         """Rule 119: the scheme's copy is checked against the guard, not against itself.
 
-        A bare cookie reads and does not write. That asymmetry is the whole reason the
-        Session description names the header, and it is what a script author writing their
-        own client meets on their first write. The reference page no longer meets it
-        (#120, the test below), which changes who needs telling and changes nothing about
-        the guard: if this stops being a refusal, the sentence naming the header is the
-        line to delete.
+        A bare cookie reads and does not write. That asymmetry is why the Session
+        description names the header, and it is what a script author writing their own
+        client meets on their first write. The reference page no longer meets it (#120,
+        the test below), which changes who needs telling and changes nothing about the
+        guard: if this stops being a refusal, the sentence naming the header is the line
+        to delete.
         """
         panel = _bare(client)
         panel.cookies.update(client.cookies)

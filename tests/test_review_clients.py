@@ -330,7 +330,7 @@ class TestPlexTvErrorsAreMapped:
                 await plextv.resources("user-token")
 
     async def test_owns_server_fails_closed_on_outage(self, httpx2_mock: respx.Router) -> None:
-        """The whole point: an outage denies access cleanly rather than crashing the guard."""
+        """An outage denies access cleanly rather than crashing the guard."""
         httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             side_effect=httpx2.ConnectTimeout("down")
         )

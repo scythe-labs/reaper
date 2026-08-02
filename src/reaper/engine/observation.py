@@ -11,10 +11,10 @@ things they shouldn't:
   stale; Plex has not matched the item. This is **not** evidence of anything, and
   it may never condemn.
 
-The distinction is the whole point. An empty list from a *successful* query means
-"nobody watched it". An empty list from a *failed* query means "we have no idea" --
-and they look identical if you only model presence and absence. Every competitor
-that conflates them eventually deletes a beloved film during an API outage.
+The distinction is why this module exists. An empty list from a *successful* query
+means "nobody watched it". An empty list from a *failed* query means "we have no
+idea" -- and they look identical if you only model presence and absence. Every
+competitor that conflates them eventually deletes a beloved film during an API outage.
 
 So: a failed call must produce ``Unknown``, never ``Absent`` and never ``[]``.
 There is a test per adapter asserting exactly that.

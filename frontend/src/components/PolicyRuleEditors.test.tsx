@@ -35,8 +35,8 @@ const GENRE: VocabField = {
   ops: ["contains"],
 };
 
-/** Comfortably more than the popup's 14rem window holds, which is the whole point: the bug is
- *  invisible on a list that fits. Named by index so an assertion can say which one it meant. */
+/** Comfortably more than the popup's 14rem window holds, on purpose: the bug is invisible on
+ *  a list that fits. Named by index so an assertion can say which one it meant. */
 const VALUES = Array.from({ length: 40 }, (_, i) => `value-${String(i).padStart(2, "0")}`);
 
 function optionNamed(name: string): HTMLElement {

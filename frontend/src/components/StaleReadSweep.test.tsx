@@ -4,10 +4,10 @@
 // asks only "did the read fail" either REPLACES content the app is still holding or CONTRADICTS
 // content it is still drawing. Both shapes are here.
 //
-// Every one is pinned in BOTH directions, which is the whole point: the never-loaded arm is the
-// reason these branches exist, and a "fix" that showed the stale line in both cases -- or that
-// simply deleted the `isError` test -- passes a one-sided test while breaking the case the branch
-// was written for (#140, #166, rule 118). So each surface gets two its: one that blinks a
+// Every one is pinned in BOTH directions, and both matter: the never-loaded arm is the reason
+// these branches exist, and a "fix" that showed the stale line in both cases -- or that simply
+// deleted the `isError` test -- passes a one-sided test while breaking the case the branch was
+// written for (#140, #166, rule 118). So each surface gets two its: one that blinks a
 // successful read and demands the content survive, one that fails the FIRST read and demands the
 // failure sentence.
 //

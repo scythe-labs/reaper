@@ -968,9 +968,9 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         assert result.detail == "watched here: 3 people in the last year"
 
     def test_a_history_covering_the_window_answers_as_it_always_did(self) -> None:
-        """The whole point of the reach check is that it changes nothing once the
-        evidence is there. Two years of history over a one-year window is a real
-        no-watchers finding, and it still reads as one."""
+        """The reach check changes nothing once the evidence is there. Two years of
+        history over a one-year window is a real no-watchers finding, and it still
+        reads as one."""
         result = self.gate.evaluate(_popularity_facts(0, Known(value=730.0, source="t")))
 
         assert result.outcome == ABSTAIN

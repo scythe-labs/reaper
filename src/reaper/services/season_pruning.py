@@ -119,7 +119,7 @@ class ProtectedSeason:
     ("couldn't check") rather than green ("checked and passed"), and the operator can see
     which of the two they are looking at.
 
-    **That is now the whole reason, and it is the durable one.** The flag was originally
+    **That is now the only reason, and it is the durable one.** The flag was originally
     added for a second reason that has lapsed: a block used to hold a hand reap where a
     plain PROTECT on this gate did not, which made ``blocked`` the strictly stronger
     encoding. No blocked gate holds a hand reap any more (``engine.verdict``), so both
@@ -653,7 +653,7 @@ def _detect_conflicts(
     ``protect_incomplete`` is holding while Sonarr fills it, is kept AND unresolved, so
     every watched prunable season below it conflicts against it and the show sits in
     "Needs a look" until Plex catches up. That is fail-closed and it clears itself. It is
-    the price of not letting an unread number clear a hold, and it is the right way round.
+    the price of not letting an unread number clear a hold.
 
     **A count the mirror cannot support is a third state, and neither of the two above.**
     Both counts are all-time and the mirror begins at its horizon, so a season that arrived

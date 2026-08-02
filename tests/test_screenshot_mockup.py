@@ -59,7 +59,7 @@ def test_the_generator_builds_a_page_from_the_current_stylesheet(gen, html: str)
 
 
 def test_nothing_in_the_picture_comes_off_a_real_server(html: str) -> None:
-    """The whole point of drawing it. Every image is one this script drew, and nothing loads.
+    """Every image is one this script drew, and nothing loads.
 
     A remote `src` would put someone else's artwork in the README; a local one would put a
     path off this machine there. Both are the same failure, so neither is allowed: an `img`

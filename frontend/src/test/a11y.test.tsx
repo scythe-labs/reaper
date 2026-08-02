@@ -29,8 +29,8 @@ describe("the accessibility gate", () => {
   });
 
   it("sees through a custom component to the input it renders", async () => {
-    // The whole reason this is a runtime gate. A static linter reads the JSX below, sees a
-    // <Field> it knows nothing about, and reports nothing. axe reads the DOM React built.
+    // This is a runtime gate because a static linter reads the JSX below, sees a <Field> it
+    // knows nothing about, and reports nothing. axe reads the DOM React built.
     function Field() {
       return <input type="text" />;
     }
