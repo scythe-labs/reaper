@@ -280,7 +280,7 @@ export function rampDefaultSaid(
 /** The strip under a signal's bounds: where it charges, and how hard, drawn to scale.
  *
  *  It REPLACES the sentence that used to state the range, rather than joining it. "Pays
- *  nothing at IMDb 8.0 or above, and all 10 points at IMDb 0.0" is exactly what this draws,
+ *  nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0" is exactly what this draws,
  *  and keeping both said one thing twice in two grammars.
  *
  *  It is what makes the direction visible. Dormancy charges more the further RIGHT a title
