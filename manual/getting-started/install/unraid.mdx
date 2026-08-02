@@ -21,7 +21,7 @@ Set **`PUID` to `99`** and **`PGID` to `100`**, so the appdata folder stays owne
 
 <Callout tone="note">
   The container starts as root only to take ownership of its data folder, then drops to that
-  user before it opens the database. The app process itself never runs as root.
+  user before it opens the database. At the default the app runs as that user, not as root.
 </Callout>
 
 ## Where the data goes

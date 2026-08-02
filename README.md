@@ -47,7 +47,7 @@ policy tuning, and the safety model in full.
   services, so you can move a number and watch the outcome change.
 - **A test file first.** The smallest item goes alone and is verified before anything else is
   touched. If it misbehaves, the run halts.
-- **Sensible defaults, and deletion logic that is tested and re-tested.** Every shipped default
+- **Sensible defaults, and deletion logic pinned by tests.** Every shipped default
   errs toward keeping. The scoring and the protections are pinned by tests that fail the moment
   a verdict changes, and the season rules, the caps and the live checks each have their own.
 - **One container**, no access to your media, and one small volume.

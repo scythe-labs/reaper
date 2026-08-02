@@ -152,7 +152,7 @@ export const deletionSafety: Doc = {
       "**The countdown is the time your users have to catch it.** When it ends, the title is simply ready for your next review, and you still start every deletion by hand. To keep a title, watch it or spare it. Both win at the moment of deletion, through the live checks above.",
     ),
 
-    h2("Things worth knowing", "edges"),
+    h2("Sharp edges", "edges"),
     ul([
       "**A scripted deploy can start armed.** The password gate covers the switch in the app. Setting `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true` in the environment turns deletion on at first boot with no password. That is meant for infrastructure-as-code installs.",
       "**That environment setting is the default until you use the switch.** The moment you turn deletion on or off in the app, the app's switch wins for good. To return a running install to read-only, use Policy, Deletion.",

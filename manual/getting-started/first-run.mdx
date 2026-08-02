@@ -10,7 +10,7 @@ sidebar_position: 3
 ## Signing in
 
 The first account to sign in claims the install and creates its admin in the same step,
-provided it owns the server.
+provided that account owns the server.
 
 On a fresh install the button reads **Sign in with Plex to set up Reaper**.
 
@@ -28,7 +28,7 @@ on the server, so you can close the tab and come back to the step you left.
 <Steps>
   <Step title="Set your password.">
     Reaper asks for this before anything else and waits for it. The password signs you in when
-    Plex is unreachable, it confirms every deletion, and it is what a restore checks. Twelve
+    Plex is unreachable, it confirms every deletion, and a restore checks it. Twelve
     characters minimum. Your local account is called `admin`.
   </Step>
   <Step title="Connect Plex.">
@@ -42,7 +42,7 @@ on the server, so you can close the tab and come back to the step you left.
     deployment.
   </Step>
   <Step title="Run your first scan.">
-    Deletion is off, so this reads and scores. Every candidate shows its score and, more
+    Unless your deploy armed it, deletion is off, so this first scan reads and scores. Every candidate shows its score and, more
     usefully, every protection that was checked and did not fire.
   </Step>
 </Steps>
@@ -55,12 +55,12 @@ on the server, so you can close the tab and come back to the step you left.
 
 ## Turning deletion on
 
-That is a separate act, done later and on purpose. Read
+Arming is a separate act, done later and on purpose. Read
 [Turning deletion on](/safety/arming) when you trust what the scan is showing you.
 
 ## Running more than one Plex server
 
-Reaper asks which library to point a deletion tool at.
+Reaper links one server at a time, so it asks which one rather than guessing.
 
 Pick the server during sign-in, or pass `--server <name>` to `reaper-admin link-plex`. To change
 it later, unlink in Settings.

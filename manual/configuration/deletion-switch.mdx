@@ -27,13 +27,11 @@ The switch lives in the web UI, under **Policy, Deletion**.
   still needs a typed confirmation matching the exact plan, recomputed on the server.
 </Callout>
 
-One function assembles the answer, and every client and health check is built from it, so there
-is no second place for the effective permission to drift.
+One function decides whether deletion is on, and every client and health check reads that one
+answer, so the two can never disagree.
 
 ## Before you arm it
 
-[Turning deletion on](/safety/arming) is the checklist, and it is worth reading first. The short
-version: set your pace and grace, turn on the Leaving Soon shelf so your users get a
-warning, and keep your first run supervised.
-
-Arming asks for the password you set on your first run.
+[Turning deletion on](/safety/arming) is the full checklist. In short: set your pace and grace,
+turn on the Leaving Soon shelf and "Update while read-only" so your users are warned before you
+arm anything, and keep your first run supervised.

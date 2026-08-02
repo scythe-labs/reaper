@@ -7,7 +7,7 @@ sidebar_position: 1
 
 # Configuration
 
-Three tiers, with a deliberate rule: **`.env` holds only what must exist *before* the database,
+Two homes, with a deliberate rule: **`.env` holds only what must exist *before* the database,
 or be changeable *without* the web UI.** Everything else lives in the database, encrypted, and
 is edited in the UI.
 
@@ -18,12 +18,12 @@ is edited in the UI.
 | `.env` | `REAPER_RECOVERY` | Must work when the UI has locked you out, so it has no setting in the UI |
 | `.env` | `REAPER_ALLOW_UNARMED_LEAVING_SOON` | Seeds the first run only. After that the UI owns it, under Settings, Plex, as "Update while read-only" |
 | `.env` | `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` | Seeds the first run only. The UI owns it after that |
-| `.env` | `REAPER_SERVE_SPA` | Development only, so Vite can serve the UI instead. Production leaves it on |
+| `.env` | `REAPER_SERVE_SPA` | On by default. Turn it off in development so Vite serves the UI |
 | **Database**, encrypted | Instance URLs and API keys, the Discord webhook, policies, schedules, whitelist | Editable and rotatable without a redeploy |
 
 ## Seeding services from the environment
 
-Instances may be seeded for declarative deployments:
+Seed instances from the environment for a declarative deployment:
 
 ```bash
 REAPER_SONARR_HD_URL=https://sonarr.example.net
