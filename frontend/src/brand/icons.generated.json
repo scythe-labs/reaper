@@ -6,14 +6,14 @@
       "file": "favicon.svg",
       "kind": "svg",
       "radius": 14,
-      "sourceSha256": "fc948a822903ee861334796d26e5b2f08308eff85b916699acea6de0e8e1480b"
+      "sourceSha256": "b24b98b92a208ad5adeab209a8534cdbcddb2ff5ebeeae590897b30dbf52f337"
     },
     {
       "file": "favicon-32.png",
       "kind": "png",
       "size": 32,
       "radius": 14,
-      "sourceSha256": "fc948a822903ee861334796d26e5b2f08308eff85b916699acea6de0e8e1480b",
+      "sourceSha256": "b24b98b92a208ad5adeab209a8534cdbcddb2ff5ebeeae590897b30dbf52f337",
       "sha256": "a6c8c16b1bc7907d761e71b4f337963d405a3bfd3582897ce1288ed1d1f368c9"
     },
     {
@@ -21,15 +21,15 @@
       "kind": "png",
       "size": 180,
       "radius": 0,
-      "sourceSha256": "985add84721b9877dabfc8e09b7ac447c0b736ba0b463d16be7dbc7da3b6fde8",
-      "sha256": "ab3303f4d095b76d7cb79176258fe218b0541eb47dc19f45b5382f024027867e"
+      "sourceSha256": "8df88789fd32a268db349788b47cef459a51d4e471534c0f4391e7ef86df3f48",
+      "sha256": "559db7876be9505ede3c8b5f49cfd84170473c86b85d6bedd46b76980fa852d3"
     },
     {
       "file": "icon-192.png",
       "kind": "png",
       "size": 192,
       "radius": 14,
-      "sourceSha256": "fc948a822903ee861334796d26e5b2f08308eff85b916699acea6de0e8e1480b",
+      "sourceSha256": "b24b98b92a208ad5adeab209a8534cdbcddb2ff5ebeeae590897b30dbf52f337",
       "sha256": "e28220ab3082ebb795e7c161c01e28523af11ae01bf578635095ca8899438b61"
     },
     {
@@ -37,7 +37,7 @@
       "kind": "png",
       "size": 512,
       "radius": 14,
-      "sourceSha256": "fc948a822903ee861334796d26e5b2f08308eff85b916699acea6de0e8e1480b",
+      "sourceSha256": "b24b98b92a208ad5adeab209a8534cdbcddb2ff5ebeeae590897b30dbf52f337",
       "sha256": "4f18727f01084dace9d5d795041a5efef3bab94a74c0bb959f058aaaed98ba1f"
     },
     {
@@ -45,7 +45,7 @@
       "kind": "png",
       "size": 512,
       "radius": 0,
-      "sourceSha256": "985add84721b9877dabfc8e09b7ac447c0b736ba0b463d16be7dbc7da3b6fde8",
+      "sourceSha256": "8df88789fd32a268db349788b47cef459a51d4e471534c0f4391e7ef86df3f48",
       "sha256": "0474cb3294082dbd441f2eb5ac4aeeb6d3501bd8c7c95c2929aa9f7c643c4e8f"
     }
   ]

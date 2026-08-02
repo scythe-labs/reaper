@@ -12,12 +12,16 @@
 // offscreen buffer sized to the element's layout box -- so pinch-zoom scaled a bitmap and the
 // figure went soft while the eyes, the only part outside the mask, stayed sharp. At
 // `.brand-mark`'s 34px that buffer is about a hundred device pixels, which a zoom has nothing
-// to work with. Two plain paths carry no buffer and stay vector at any scale.
+// to work with. A plain path carries no buffer and stays vector at any scale.
+//
+// The figure is ONE path for a second reason, found the same way: two shapes that share an edge
+// are antialiased apart and composited one over the other, so the join shows as a hairline at
+// the zoom levels where it falls between device pixels. It did, on iOS, in both directions.
 //
 // Edit ./dissolve.ts and run `npm run mark`; appIcon.test.ts fails if the two fall out of step.
 
 import { DISSOLVE_EYE_LEFT_D, DISSOLVE_EYE_RIGHT_D, DISSOLVE_VIEWBOX } from "./dissolve";
-import { DISSOLVE_FIGURE_BLOCKS_D, DISSOLVE_FIGURE_HEAD_D } from "./dissolve.generated";
+import { DISSOLVE_FIGURE_D } from "./dissolve.generated";
 
 export function BrandMark({
   className,
@@ -40,12 +44,9 @@ export function BrandMark({
       aria-label={title}
       aria-hidden={title ? undefined : true}
     >
-      {/* evenodd, because the cowl opening is a hole inside the head rather than a shape beside
-          it; the default nonzero would fill it in. */}
-      <path d={DISSOLVE_FIGURE_HEAD_D} fill="currentColor" fillRule="evenodd" />
-      {/* And nonzero here, just as deliberately: the blocks overlap so no renderer can seam
-          their joins, and evenodd would turn every overlap into a hole. */}
-      <path d={DISSOLVE_FIGURE_BLOCKS_D} fill="currentColor" />
+      {/* One path, and no fill rule: the figure is a single contour plus blocks that only
+          overlap it, which nonzero unions. Do not split this back into two. */}
+      <path d={DISSOLVE_FIGURE_D} fill="currentColor" />
       <path d={DISSOLVE_EYE_LEFT_D} fill="var(--accent)" />
       <path d={DISSOLVE_EYE_RIGHT_D} fill="var(--accent)" />
     </svg>

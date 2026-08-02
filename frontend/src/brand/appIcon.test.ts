@@ -21,12 +21,12 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { Resvg } from "@resvg/resvg-js";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ACCENT } from "../accent";
 import { APP_ICON_RADIUS, appIconSvg } from "./appIcon";
-import { DISSOLVE_BONE, DISSOLVE_INK } from "./dissolve";
-import { DISSOLVE_FIGURE_HEAD_D } from "./dissolve.generated";
+import { DISSOLVE_BONE, DISSOLVE_CUT, DISSOLVE_INK } from "./dissolve";
 import manifest from "./icons.generated.json";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -66,13 +66,69 @@ describe("the flattened mark", () => {
     expect(after).toBe(before);
   }, 60_000);
 
-  it("draws the head with a hole and the blocks without one", () => {
-    // The two fill rules are not interchangeable and each is load-bearing: the head needs
-    // evenodd or the cowl opening fills in, and the blocks need nonzero or every deliberate
-    // overlap between them becomes a hole. Asserted here because a component swapping one for
-    // the other still renders a plausible mark.
-    expect(DISSOLVE_FIGURE_HEAD_D.match(/Z/g) ?? []).toHaveLength(2);
-    expect(appIconSvg(DEFAULT_ACCENT)).toContain('fill-rule="evenodd"');
+  // The mark draws on the DEFAULT nonzero rule, and the blocks depend on it: they overlap on
+  // purpose, and evenodd would turn every overlap into a hole. Nothing needs evenodd any more --
+  // the cowl opening is a notch in the silhouette's one contour rather than a hole beside it --
+  // so a fill rule reappearing here means someone split that contour back apart.
+  it("draws on the default fill rule", () => {
+    expect(appIconSvg(DEFAULT_ACCENT)).not.toContain("fill-rule");
+  });
+
+  // The cut is where the mark used to seam, in both directions at once. The cowl opening's
+  // bottom edge lay exactly on the hood's, and two coincident edges under evenodd can be painted
+  // as a faint LIGHT line across an opening that is empty; the two blocks below the cut abutted
+  // the hood from a second path, and two shapes antialiased separately then composited leave a
+  // DARK one. Both showed only where the cut fell between device pixels, which is why this
+  // sweeps widths instead of picking one, and why it reads a rendering rather than the `d`
+  // string: what seams is the rasterization, and the path text looked reasonable throughout.
+  //
+  // Mutation-checked against the two-path geometry this replaced, which fails it at four of
+  // these eight widths. The other four land the cut on a pixel boundary and seam either way;
+  // which four that is belongs to the geometry, so all eight stay and the sampled-pixel counts
+  // are asserted -- a box that rounds down to nothing passes every assertion made about it.
+  it("draws no seam where the figure crosses the cut", () => {
+    const svg = appIconSvg(DEFAULT_ACCENT);
+    const red = (hex: string) => parseInt(hex.slice(1, 3), 16);
+    const cut = DISSOLVE_CUT.y;
+
+    for (const width of [96, 121, 137, 180, 211, 256, 301, 384]) {
+      const { pixels, width: rendered } = new Resvg(svg, {
+        fitTo: { mode: "width", value: width },
+      }).render();
+      const scale = rendered / 64;
+      /** The red channel over a box given on the 64 grid: bone reads 0xed, ink 0x14. */
+      const box = (x0: number, y0: number, x1: number, y1: number) => {
+        let min = 255,
+          max = 0,
+          count = 0;
+        for (let y = Math.ceil(y0 * scale); y < Math.floor(y1 * scale); y++) {
+          for (let x = Math.ceil(x0 * scale); x < Math.floor(x1 * scale); x++) {
+            const v = pixels[(y * rendered + x) * 4];
+            // Thrown rather than defaulted: either default silently relaxes one of the two
+            // assertions below, in the direction that makes a seam look clean.
+            if (v === undefined) throw new Error(`sampled outside the rendering at ${x},${y}`);
+            count++;
+            if (v < min) min = v;
+            if (v > max) max = v;
+          }
+        }
+        return { min, max, count };
+      };
+
+      // Under the right-hand block the figure is solid on both sides of the cut, so every pixel
+      // between them is bone. A seam is a dip.
+      const join = box(46.5, cut - 0.8, 49.5, cut + 0.8);
+      expect(join.count, `no pixels sampled at the join, width ${width}`).toBeGreaterThan(0);
+      expect(join.min, `the figure is seamed at the cut, width ${width}`).toBe(red(DISSOLVE_BONE));
+
+      // Inside the cowl opening the figure is absent on both sides of it, so every pixel is the
+      // shell showing through. Anything brighter is paint where the mark has no shape.
+      const open = box(27, cut - 1.4, 37, cut + 1.4);
+      expect(open.count, `no pixels sampled in the opening, width ${width}`).toBeGreaterThan(0);
+      expect(open.max, `the cowl opening is painted at the cut, width ${width}`).toBe(
+        red(DISSOLVE_INK),
+      );
+    }
   });
 });
 

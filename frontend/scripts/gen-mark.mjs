@@ -12,20 +12,24 @@
 // pinch-zoom scales a bitmap: the figure went soft while the eyes, the only part outside the
 // mask, stayed sharp.
 //
-// So the composition happens ONCE, here, and what ships is geometry. Two paths come out:
+// So the composition happens ONCE, here, and what ships is geometry: one path, on the default
+// nonzero rule. The silhouette is a single closed contour -- the hood, with the cowl opening
+// spliced into its bottom edge as a notch and the two blocks that meet the cut spliced in as
+// detours -- followed by the remaining blocks, which only ever overlap what is already drawn.
 //
-//   HEAD    the hood above the cut, with the cowl opening as an evenodd hole
-//   BLOCKS  everything below the cut -- the trimmed left column, and the blocks that need no
-//           trimming at all -- as one nonzero path, so overlapping blocks union instead of
-//           cancelling
+// One contour, because an edge shared between two outlines is the one thing a rasterizer is
+// free to disagree about, and two of them disagreed. The opening used to be an evenodd hole
+// whose bottom edge lay exactly on the hood's, and the blocks used to abut the hood from a
+// second path: the first showed on iOS as a faint LIGHT line across an opening that is empty,
+// the second as a DARK line under the shoulders, each only at the zoom levels where the cut
+// fell between two device pixels. Nothing shares an edge now, and no fill rule is needed.
 //
-// Neither needs a mask, and both stay vector at any zoom.
-//
-// The only geometry operation involved is splitting a cubic at a parameter (de Casteljau).
-// There is no boolean here and none is needed, which is worth stating because it looks like
-// there should be: above the cut the cowl opening lies strictly inside the hood, so evenodd
-// gives the hole for free; below it, the right-hand and scattered blocks sit clear of the
-// cavity entirely, and only the left column is trimmed -- by a single bezier segment.
+// The only geometry operations involved are splitting a cubic at a parameter (de Casteljau) and
+// ordering x along a horizontal line. There is no boolean here and none is needed, which is
+// worth stating because it looks like there should be: everything that meets the cut meets it
+// on the hood's own straight bottom edge, so splicing by x unions them exactly; below the cut,
+// the right-hand and scattered blocks sit clear of the cavity, and only the left column is
+// trimmed -- by a single bezier segment.
 //
 // `appIcon.test.ts`'s sibling drift test is what keeps this honest: it re-runs the flattening
 // and fails if the committed output no longer matches the recipe.
@@ -193,6 +197,32 @@ function truncateAbove(segs, y) {
 
 const cubicOrLine = (s, t) => (s.t === "C" ? cubicAt(s, t) : lerp(s.p0, s.p3, t));
 
+const reverseSeg = (s) =>
+  s.t === "L" ? { t: "L", p0: s.p3, p3: s.p0 } : { t: "C", p0: s.p3, p1: s.p2, p2: s.p1, p3: s.p0 };
+
+/** The index of the straight edge `truncateAbove` closed an outline off with, along `y`. Exactly
+ *  one is expected: a second edge lying on the cut would mean the outline touches it somewhere
+ *  else too, and splicing into the wrong one would turn the figure inside out. */
+function bottomEdge(segs, y) {
+  const found = segs.flatMap((s, i) =>
+    s.t === "L" && Math.abs(s.p0[1] - y) < 1e-6 && Math.abs(s.p3[1] - y) < 1e-6 ? [i] : [],
+  );
+  if (found.length !== 1) {
+    throw new Error(`gen-mark: ${found.length} edges lie along y=${y}, expected 1`);
+  }
+  return found[0];
+}
+
+/** A closed outline reopened into a walk between its two corners on the cut, with the edge along
+ *  the cut itself dropped. Oriented to run from the higher-x corner to the lower-x one, which is
+ *  the direction the hood's own bottom edge is walked, so the piece splices straight in. */
+function excursion(segs, idx) {
+  const rotated = [...segs.slice(idx + 1), ...segs.slice(0, idx)];
+  const walk =
+    segs[idx].p0[0] > segs[idx].p3[0] ? rotated.reverse().map(reverseSeg) : rotated.slice();
+  return { start: walk[0].p0, end: walk[walk.length - 1].p3, segs: walk };
+}
+
 /** One side of an outline between two heights, oriented top-to-bottom.
  *
  *  Both sides of the cowl opening span the heights a block covers, so the side is CHOSEN by x
@@ -250,15 +280,9 @@ const CUT_Y = DISSOLVE_CUT.y;
 const hood = parsePath(DISSOLVE_HOOD_D);
 const face = parsePath(DISSOLVE_FACE_D);
 
-// 1. The head: hood above the cut, with the cowl opening as an evenodd hole. The opening lies
-//    strictly inside the hood there, so no boolean is involved.
-const headOuter = truncateAbove(hood, CUT_Y);
-const headHole = truncateAbove(face, CUT_Y);
-const HEAD_D = toPath(headOuter) + toPath(headHole);
-
-// 2. Below the cut. A block is trimmed by the cowl opening only where it reaches into it; the
-//    rest are rectangles. Which is which is DERIVED, never assumed -- the opening's edges are
-//    sampled across each block's own height, so moving a block changes what comes out.
+// Below the cut. A block is trimmed by the cowl opening only where it reaches into it; the
+// rest are rectangles. Which is which is DERIVED, never assumed -- the opening's edges are
+// sampled across each block's own height, so moving a block changes what comes out.
 const blocks = [...DISSOLVE_BLOCKS_UPPER, ...DISSOLVE_BLOCKS_LOWER].map(([x, y, s]) => ({
   x,
   y,
@@ -277,7 +301,32 @@ function openingAt(y) {
   return [Math.min(...xs), Math.max(...xs)];
 }
 
+/** A block's closed boundary, clockwise, with its TOP edge first. Splitting it out that way is
+ *  what lets a block that meets the cut be reopened into a detour: drop the top edge and the
+ *  rest is already a walk from the block's top-right corner around to its top-left one. */
+function blockBoundary(b, trimmed) {
+  const { x, y, s } = b;
+  if (!trimmed) {
+    return [
+      { t: "L", p0: [x, y], p3: [x + s, y] },
+      { t: "L", p0: [x + s, y], p3: [x + s, y + s] },
+      { t: "L", p0: [x + s, y + s], p3: [x, y + s] },
+      { t: "L", p0: [x, y + s], p3: [x, y] },
+    ];
+  }
+  const edge = edgeBetween(face, y, y + s, "left");
+  const top = cubicAt(edge, 0);
+  const bot = cubicAt(edge, 1);
+  return [
+    { t: "L", p0: [x, y], p3: top },
+    { t: "C", p0: top, p1: edge.p1, p2: edge.p2, p3: bot },
+    { t: "L", p0: bot, p3: [x, y + s] },
+    { t: "L", p0: [x, y + s], p3: [x, y] },
+  ];
+}
+
 const pieces = [];
+const detours = [];
 const notes = [];
 for (const b of blocks) {
   // Only the upper blocks are cut by the opening: the scattered ones are laid down after it.
@@ -287,29 +336,77 @@ for (const b of blocks) {
   const opensLeft = left.length ? Math.min(...left) : Infinity;
   const opensRight = right.length ? Math.max(...right) : -Infinity;
 
+  let trimmed = false;
   if (b.upper && b.x + b.s > opensLeft && b.x < opensRight) {
     if (b.x >= opensLeft && b.x + b.s <= opensRight) {
       notes.push(`  dropped ${JSON.stringify([b.x, b.y, b.s])}: wholly inside the cowl opening`);
       continue;
     }
-    if (b.x < opensLeft) {
-      // Trimmed on the right by the opening's left edge.
-      const edge = edgeBetween(face, b.y, b.y + b.s, "left");
-      const top = cubicAt(edge, 0);
-      const bot = cubicAt(edge, 1);
-      pieces.push(
-        `M${n(b.x)} ${n(b.y)}L${n(top[0])} ${n(top[1])}` +
-          `C${n(edge.p1[0])} ${n(edge.p1[1])} ${n(edge.p2[0])} ${n(edge.p2[1])} ${n(bot[0])} ${n(bot[1])}` +
-          `L${n(b.x)} ${n(b.y + b.s)}Z`,
-      );
-      notes.push(`  trimmed ${JSON.stringify([b.x, b.y, b.s])} against the opening's left edge`);
-      continue;
-    }
+    // Trimmed on the right by the opening's left edge.
+    trimmed = b.x < opensLeft;
+  }
+
+  // A block whose top edge lies ON the cut is not a separate shape at all: it is the hood
+  // continuing downward. Hand it to the splice below as a detour rather than drawing it beside
+  // the hood, because two shapes that share an edge are antialiased independently and
+  // composited one over the other, which leaves a hairline of the background between them.
+  if (b.y === CUT_Y) {
+    const boundary = blockBoundary(b, trimmed);
+    detours.push({ start: boundary[0].p3, end: boundary[0].p0, segs: boundary.slice(1) });
+    notes.push(`  joined ${JSON.stringify([b.x, b.y, b.s])} into the hood: it meets the cut`);
+    continue;
+  }
+  if (trimmed) {
+    // The closing edge is dropped: `toPath` closes with Z.
+    pieces.push(toPath(blockBoundary(b, true).slice(0, -1)));
+    notes.push(`  trimmed ${JSON.stringify([b.x, b.y, b.s])} against the opening's left edge`);
+    continue;
   }
   pieces.push(`M${n(b.x)} ${n(b.y)}H${n(b.x + b.s)}V${n(b.y + b.s)}H${n(b.x)}Z`);
 }
 
-const BLOCKS_D = pieces.join("");
+// The figure as ONE closed contour, plus the blocks that touch nothing but each other.
+//
+// The hood's bottom edge is a single straight line along the cut, and everything that meets the
+// cut meets it there: the cowl opening reaches it from above, the two blocks below it reach it
+// from below. So each is spliced into that edge as a detour and the whole silhouette closes in
+// one walk -- which needs no boolean, only the ordering of x along a horizontal line.
+//
+// That is the difference between a shape and a stack of shapes. Before this, the opening was an
+// evenodd hole whose bottom edge lay exactly on top of the hood's, and the blocks abutted the
+// hood from a second path; both are edges shared between two outlines, and a rasterizer is free
+// to disagree about them. It did: the shared bottom edge showed as a faint LIGHT line across
+// the opening on iOS, and the abutting blocks as a DARK one, each appearing only at the zoom
+// levels where the cut fell between two device pixels. A single outline has no shared edge to
+// disagree about, and needs no fill rule either.
+const outer = truncateAbove(hood, CUT_Y);
+const bottomIdx = bottomEdge(outer, CUT_Y);
+const bottom = outer[bottomIdx];
+if (bottom.p0[0] <= bottom.p3[0]) {
+  throw new Error("gen-mark: the hood's cut edge is walked left to right, not right to left");
+}
+
+const openingSegs = truncateAbove(face, CUT_Y);
+detours.push(excursion(openingSegs, bottomEdge(openingSegs, CUT_Y)));
+detours.sort((p, q) => q.start[0] - p.start[0]);
+
+const spliced = [];
+let cur = bottom.p0;
+for (const d of detours) {
+  if (d.start[0] > cur[0] + 1e-9 || d.end[0] > d.start[0] + 1e-9) {
+    throw new Error(`gen-mark: detours along y=${CUT_Y} overlap or run backwards`);
+  }
+  if (Math.abs(d.start[0] - cur[0]) > 1e-9) spliced.push({ t: "L", p0: cur, p3: d.start });
+  spliced.push(...d.segs);
+  cur = d.end;
+}
+if (cur[0] < bottom.p3[0] - 1e-9) {
+  throw new Error(`gen-mark: a detour ran past the end of the cut edge`);
+}
+if (Math.abs(cur[0] - bottom.p3[0]) > 1e-9) spliced.push({ t: "L", p0: cur, p3: bottom.p3 });
+
+const figure = [...outer.slice(0, bottomIdx), ...spliced, ...outer.slice(bottomIdx + 1)];
+const FIGURE_D = toPath(figure) + pieces.join("");
 
 const banner = `// SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -324,17 +421,18 @@ const banner = `// SPDX-License-Identifier: AGPL-3.0-or-later
 await writeFile(
   OUT,
   `${banner}
-/** The hood above the cut, with the cowl opening as a hole. Needs \`fill-rule="evenodd"\`. */
-export const DISSOLVE_FIGURE_HEAD_D =
-  "${HEAD_D}";
-
-/** Everything below the cut, as one path. Needs the DEFAULT \`nonzero\` fill rule: blocks
- *  deliberately overlap so no renderer can seam the joins, and evenodd would hole the overlaps. */
-export const DISSOLVE_FIGURE_BLOCKS_D =
-  "${BLOCKS_D}";
+/** The whole figure as one shape, for the DEFAULT \`nonzero\` fill rule.
+ *
+ *  The silhouette -- hood, cowl opening, and the two blocks that carry it past the cut -- is a
+ *  single closed contour, so nothing in it shares an edge with anything else. The remaining
+ *  blocks follow as their own contours and only ever OVERLAP what is already drawn, which
+ *  nonzero unions and evenodd would turn into holes. Do not add a fill rule: an edge shared
+ *  between two outlines is what a rasterizer seams, and there is no longer one to seam. */
+export const DISSOLVE_FIGURE_D =
+  "${FIGURE_D}";
 `,
 );
 
 console.log("  src/brand/dissolve.generated.ts");
 notes.forEach((l) => console.log(l));
-console.log(`\n  head ${HEAD_D.length} chars, blocks ${BLOCKS_D.length} chars`);
+console.log(`\n  figure ${FIGURE_D.length} chars, ${pieces.length} loose blocks`);

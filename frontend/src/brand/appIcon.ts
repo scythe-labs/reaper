@@ -26,7 +26,7 @@ import {
   DISSOLVE_INK,
   DISSOLVE_VIEWBOX,
 } from "./dissolve";
-import { DISSOLVE_FIGURE_BLOCKS_D, DISSOLVE_FIGURE_HEAD_D } from "./dissolve.generated";
+import { DISSOLVE_FIGURE_D } from "./dissolve.generated";
 
 export interface AppIconOptions {
   /** Corner radius on the 64 grid. 14 is the rounded badge (browser tab, in-app); 0 is a
@@ -52,8 +52,7 @@ export function appIconSvg(accent: string, opts: AppIconOptions = {}): string {
     `<clipPath id="r"><rect width="64" height="64" rx="${r}"/></clipPath>` +
     shell +
     `<g clip-path="url(#r)">` +
-    `<path d="${DISSOLVE_FIGURE_HEAD_D}" fill="${DISSOLVE_BONE}" fill-rule="evenodd"/>` +
-    `<path d="${DISSOLVE_FIGURE_BLOCKS_D}" fill="${DISSOLVE_BONE}"/>` +
+    `<path d="${DISSOLVE_FIGURE_D}" fill="${DISSOLVE_BONE}"/>` +
     `<path d="${DISSOLVE_EYE_LEFT_D}" fill="${accent}"/>` +
     `<path d="${DISSOLVE_EYE_RIGHT_D}" fill="${accent}"/>` +
     `</g>` +

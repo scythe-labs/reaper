@@ -7,11 +7,12 @@
 // a mask rasterizes at layout size, so the figure blurred under zoom while the eyes stayed
 // sharp. Edit ./dissolve.ts and re-run the generator; `appIcon.test.ts` fails if these drift.
 
-/** The hood above the cut, with the cowl opening as a hole. Needs `fill-rule="evenodd"`. */
-export const DISSOLVE_FIGURE_HEAD_D =
-  "M32 6C43 6 47 19 46 32C49.094 33.547 51.74 36.291 53.82 40L10.18 40C12.26 36.291 14.906 33.547 18 32C17 19 21 6 32 6ZM32 14C40 14 43 23 42 33C41.719 35.531 41.279 37.746 40.793 40L23.207 40C22.721 37.746 22.281 35.531 22 33C21 23 24 14 32 14Z";
-
-/** Everything below the cut, as one path. Needs the DEFAULT `nonzero` fill rule: blocks
- *  deliberately overlap so no renderer can seam the joins, and evenodd would hole the overlaps. */
-export const DISSOLVE_FIGURE_BLOCKS_D =
-  "M19 40L23.207 40C23.679 42.188 24.195 44.413 24.654 47L19 47ZM19 46L24.471 46C24.907 48.308 25.306 50.889 25.587 54L19 54ZM45 40H51V46H45ZM40 45H47V52H40ZM33 55H39V61H33ZM21 56H26V61H21ZM46 53H51V58H46ZM12 49H17V54H12ZM40 62H44V66H40ZM52 46H56V50H52ZM27 63H31V67H27ZM53 58H56V61H53Z";
+/** The whole figure as one shape, for the DEFAULT `nonzero` fill rule.
+ *
+ *  The silhouette -- hood, cowl opening, and the two blocks that carry it past the cut -- is a
+ *  single closed contour, so nothing in it shares an edge with anything else. The remaining
+ *  blocks follow as their own contours and only ever OVERLAP what is already drawn, which
+ *  nonzero unions and evenodd would turn into holes. Do not add a fill rule: an edge shared
+ *  between two outlines is what a rasterizer seams, and there is no longer one to seam. */
+export const DISSOLVE_FIGURE_D =
+  "M32 6C43 6 47 19 46 32C49.094 33.547 51.74 36.291 53.82 40L51 40L51 46L45 46L45 40L40.793 40C41.279 37.746 41.719 35.531 42 33C43 23 40 14 32 14C24 14 21 23 22 33C22.281 35.531 22.721 37.746 23.207 40C23.679 42.188 24.195 44.413 24.654 47L19 47L19 40L10.18 40C12.26 36.291 14.906 33.547 18 32C17 19 21 6 32 6ZM19 46L24.471 46C24.907 48.308 25.306 50.889 25.587 54L19 54ZM40 45H47V52H40ZM33 55H39V61H33ZM21 56H26V61H21ZM46 53H51V58H46ZM12 49H17V54H12ZM40 62H44V66H40ZM52 46H56V50H52ZM27 63H31V67H27ZM53 58H56V61H53Z";

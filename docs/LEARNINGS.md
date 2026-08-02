@@ -2672,6 +2672,37 @@ decides anything; and one initializer is dead because every branch that reads it
 first. Each is classified in the test docstring that owns it (rule 118), because a survivor
 list with no classification reads as work left undone, and the next person re-derives it.
 
+## A shared edge is the seam, and four rasterizers disagree about which kind (2026-08-01)
+
+The brand mark shipped as three shapes that touched: a hood whose cowl opening was an evenodd
+hole with its bottom edge lying exactly on the hood's own, and a second path of blocks abutting
+that same edge from below. Both joins seamed on a phone, in opposite directions — a faint LIGHT
+line across an opening that is empty, and a DARK line under the shoulders — and both only at
+some zoom levels.
+
+**Only at some zoom levels is the whole finding.** A seam appears when the shared edge falls
+*between* two device pixels; land it on a boundary and every renderer is clean. So the variable
+to sweep is the edge's sub-pixel phase, and **sweeping the render scale does not sweep it**. The
+first two sweeps here stepped scale by a constant, which steps the cut's position by a constant
+too: 900 renders reached five distinct phases and reported the mark spotless. Sweeping a
+fractional offset at a fixed scale found the seam in 20 of 96 combinations.
+
+**Reproduction is per-rasterizer, and the four available locally do not agree.** The abutment
+seam (two paths, source-over, ~25% dip) reproduces in resvg/tiny-skia, in CoreGraphics driven
+directly, and in WebKit rendering a page offscreen — but *not* in Skia through Chrome's canvas.
+The coincident-edge light line reproduces in none of them, at any size or phase tried, while
+being plainly present in a screenshot from the device. Measuring the device capture is what
+settled it: anchor on the accent eyes, whose box is exact geometry, because anchoring on the
+figure's own edges bakes the artifact into the coordinates you are measuring it with.
+
+**So "I could not reproduce it locally" is not evidence about a mark.** The fix is not to chase
+the renderer but to remove what renderers are entitled to disagree about: the figure is now one
+closed contour, with the cowl opening spliced into the hood's bottom edge as a notch and the two
+blocks that meet the cut spliced in as detours. That needs no boolean — everything meeting the
+cut meets it on one straight horizontal edge, so ordering by x unions them exactly — and it
+needs no fill rule. The regression test renders and samples rather than reading the path string,
+since the path text looked reasonable the whole time it was wrong.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
