@@ -12,8 +12,8 @@ logic that decides a removal is pinned by tests that fail the moment a verdict c
 
 ## TV seasons, judged like a viewer would
 
-Most tools treat a show as one thing. Reaper decides **per season**, and never removes a whole
-series in one action: a show you reap fans out into its seasons.
+Reaper decides **per season**, and never removes a whole series in one action: a show you reap
+fans out into its seasons.
 
 <Callout tone="tip">
   **It follows where each person actually is.** Someone part-way through a season keeps that
@@ -34,12 +34,12 @@ of where they are"** and Reaper holds that many more in front of every viewer, s
 season 1 with a cushion of 2 keeps seasons 1, 2 and 3.
 
 <Callout tone="note">
-  **This starts at 0**, which means no cushion. Raise it if your users binge faster than
-  you scan, so Reaper is never deleting the season someone reaches tomorrow.
+  **The cushion starts at 0.** Raise it if your users binge faster than you scan, so Reaper is
+  never deleting the season someone reaches tomorrow.
 </Callout>
 
-The hold lasts 180 days from that person's last play of the show. Set it to `0` to hold
-indefinitely.
+The partway-through hold lasts 180 days from that person's last play of the show. Set that
+window to `0` to hold indefinitely.
 
 | Rule | Default |
 | --- | --- |
@@ -51,15 +51,15 @@ indefinitely.
 | Never remove a season with episodes missing | on, so a removal never races a download |
 | Ask me first when a removal looks unusual | on |
 
-The last one is worth spelling out. If the keep rule would remove a season **more people
-watched** than one it is keeping, Reaper stops and asks rather than deleting. A currently
-airing show's newest season is protected outright, with no switch to turn that off.
+"Ask me first" earns its row. If the keep rule would remove a season **more people watched**
+than one it is keeping, Reaper stops and asks you. A currently airing show's newest season is
+protected outright, with no switch to turn that off.
 
 <Callout tone="caution">
   **A short watch history holds everything.** Where your history does not reach as far back as
   your library, Reaper cannot tell who is partway through, so it holds every prunable season.
-  Automatic TV pruning stays inert until the history catches up. Working as intended, and
-  surprising if you are waiting for it to do something.
+  Automatic TV pruning stays inert until the history catches up. That is intended, and it
+  surprises people who are waiting for TV pruning to start.
 </Callout>
 
 ## It explains the keeps
@@ -84,7 +84,7 @@ These are always on, with no setting to get wrong:
   be the test item.
 - **The scheduler never deletes.** Scans are automatic; removals are not.
 
-## Protections worth knowing about
+## What protects a title
 
 - **Curated lists.** The IMDb Top 250 ships as a protected list, refreshed before every scan.
 - **Keep tags.** Tag `reaper-keep` in Sonarr or Radarr, or curate a Plex collection named

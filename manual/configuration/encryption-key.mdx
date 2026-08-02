@@ -42,11 +42,17 @@ Reaper then encrypts under the new key while still decrypting whatever the old o
 nothing is bricked halfway through. Drop the old value once every credential has been saved
 again.
 
-## What it defends against
+## What encryption at rest buys you
 
-The ordinary way these leak: a database copied into a backup, an issue report, or a support
-thread. In each of those the file travels and the key stays behind.
+A database that leaks without its key. `reaper.db` on its own hands over no working
+credential, because the key is a separate file. Treat it as sensitive anyway: it carries your
+titles, your decisions and your audit trail, and one careless copy of the data folder undoes
+the separation.
 
-An honest limit, worth stating plainly. A key file sitting next to the database it protects is
-within reach of anyone who already has your filesystem. For real separation, supply the key
-from a secret manager.
+## Where it stops
+
+Both files sit in the same folder, so anyone who can read your filesystem can read both.
+Supply the key from a secret manager when you need them genuinely apart.
+
+A backup is more sensitive than the database alone: it carries the key and the salt
+deliberately, so that it restores. See [Back this up](/operating/backups).

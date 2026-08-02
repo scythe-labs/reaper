@@ -30,10 +30,10 @@ Both land in the same place. Follow [First run](/getting-started/first-run) afte
   created owned by root just works.
 </Callout>
 
-Set `PUID` and `PGID` to choose that user. The default is `1000`. The app process itself never
-runs as root.
+Set `PUID` and `PGID` to choose that user. At the default of `1000` the app runs as that user,
+not as root.
 
-To keep it off root entirely, pin `user: "1000:1000"` and create the folder owned by 1000
+To skip the root phase entirely, pin `user: "1000:1000"` and create the folder owned by 1000
 yourself.
 
 ## What to back up

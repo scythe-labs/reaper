@@ -62,7 +62,7 @@ When a title is first condemned, a countdown starts, 14 days by default. Turn on
 
 </Callout>
 
-## Things worth knowing {#edges}
+## Sharp edges {#edges}
 
 - **A scripted deploy can start armed.** The password gate covers the switch in the app. Setting `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true` in the environment turns deletion on at first boot with no password. That is meant for infrastructure-as-code installs.
 - **That environment setting is the default until you use the switch.** The moment you turn deletion on or off in the app, the app's switch wins for good. To return a running install to read-only, use Policy, Deletion.
