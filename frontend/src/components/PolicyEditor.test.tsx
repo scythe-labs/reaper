@@ -1664,3 +1664,30 @@ describe("putting a ramp back the way Reaper ships it", () => {
     expect(screen.queryByText(/Put back Reaper's/)).toBeNull();
   });
 });
+
+// Rule 40 splits the two number controls on whether the unit can change, and the dormancy
+// gate two controls up already offers days/weeks/months/years for the same quantity. A bound
+// spelled "1825 days" beside a gate spelling the same span "5 years" was the app disagreeing
+// with itself about one unit.
+describe("which number control a bound gets", () => {
+  it("gives a day bound the unit picker, and draws it in the friendliest one", async () => {
+    const body_ = body();
+    body_.signals = body_.signals.map((s) =>
+      s.signal === "unwatched" ? { ...s, floor: 365, saturate_at: 1825 } : s,
+    );
+    renderEditor({ body: body_ });
+
+    const far = await screen.findByLabelText('Where "How long it\'s gone unwatched" pays in full');
+    // 1825 days is stored; "5 years" is drawn. The policy body never sees the unit.
+    expect(far).toHaveValue(5);
+    expect(within(far.closest(".qty") as HTMLElement).getByRole("combobox")).toHaveValue("years");
+  });
+
+  it("leaves a rating on the fixed suffix, which has no larger unit to offer", async () => {
+    renderEditor({ body: body() });
+
+    const box = await screen.findByLabelText('Where "How low it\'s rated" stops paying');
+    // A suffix, not a picker: there is no unit above IMDb to switch to.
+    expect(within(box.closest(".qty") as HTMLElement).queryByRole("combobox")).toBeNull();
+  });
+});

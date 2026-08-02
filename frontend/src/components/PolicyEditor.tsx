@@ -786,6 +786,11 @@ function SignalRamp({
   const strip = rampStrip(signal.signal, signal.floor, signal.saturate_at);
   if (!units) return null;
 
+  // Two controls, split on rule 40's line: a changeable unit gets the picker, a fixed one
+  // gets the suffix box. `QuantityInput` stores and returns the BASE value -- days, bytes --
+  // which is what the policy body holds, so nothing is converted on the way through; it just
+  // draws 1825 as "5 years" and hands 1825 back.
+  //
   // `max` is spread rather than passed, because `exactOptionalPropertyTypes` treats an
   // explicit `undefined` as a value and refuses it.
   const box = (
@@ -793,29 +798,41 @@ function SignalRamp({
     ariaLabel: string,
     onNext: (stored: number) => void,
     bounds: { min?: number; max?: number } = {},
-  ) => (
-    <FixedQuantity
-      // Formatted to the step's own precision, so a tenths box reads "6.0" and not "6".
-      // `FixedQuantity` renders `String(value)`, which drops a trailing zero and makes a
-      // decimal control look like a whole-number one.
-      value={units.step < 1 ? units.fromStored(value).toFixed(1) : units.fromStored(value)}
-      suffix={units.unit}
-      step={units.step}
-      // The standard width, not `narrow`. Narrow is 3.6rem, and a dormancy far end is four
-      // digits plus the browser's spinner: "1825" came out clipped to "182". No new size
-      // either way (rule 40) -- this is the other one that already exists.
-      min={bounds.min ?? 0}
-      {...(bounds.max === undefined ? {} : { max: bounds.max })}
-      ariaLabel={ariaLabel}
-      onChange={(next) => onNext(units.toStored(next))}
-    />
-  );
+  ) =>
+    units.unitKind !== "fixed" ? (
+      <QuantityInput
+        value={value}
+        units={units.unitKind === "time" ? TIME_UNITS : SIZE_UNITS}
+        min={bounds.min ?? 0}
+        ariaLabel={ariaLabel}
+        onChange={onNext}
+      />
+    ) : (
+      <FixedQuantity
+        // Formatted to the step's own precision, so a tenths box reads "6.0" and not "6".
+        // `FixedQuantity` renders `String(value)`, which drops a trailing zero and makes a
+        // decimal control look like a whole-number one.
+        value={units.step < 1 ? units.fromStored(value).toFixed(1) : units.fromStored(value)}
+        suffix={units.unit}
+        step={units.step}
+        // The standard width, not `narrow`. Narrow is 3.6rem, and a dormancy far end is four
+        // digits plus the browser's spinner: "1825" came out clipped to "182". No new size
+        // either way (rule 40) -- this is the other one that already exists.
+        min={bounds.min ?? 0}
+        {...(bounds.max === undefined ? {} : { max: bounds.max })}
+        ariaLabel={ariaLabel}
+        onChange={(next) => onNext(units.toStored(next))}
+      />
+    );
 
   return (
     <>
       <div className="rule-control rule-ramp">
         {units.shape === "shortfall" ? (
-          <label className="ramp-field" style={rampBoxWidth(units.widest)}>
+          <label
+            className="ramp-field"
+            style={units.unitKind === "fixed" ? rampBoxWidth(units.widest) : undefined}
+          >
             <span>{units.nearLabel}</span>
             {box(signal.saturate_at - signal.floor, `Where "${label}" stops paying`, (stored) =>
               // Floor back to zero with it: the pair carries one degree of freedom, and
@@ -826,7 +843,10 @@ function SignalRamp({
           </label>
         ) : (
           <>
-            <label className="ramp-field" style={rampBoxWidth(units.widest)}>
+            <label
+              className="ramp-field"
+              style={units.unitKind === "fixed" ? rampBoxWidth(units.widest) : undefined}
+            >
               <span>{units.nearLabel}</span>
               {box(
                 signal.floor,
@@ -839,7 +859,10 @@ function SignalRamp({
                 { max: units.fromStored(signal.saturate_at - 1) },
               )}
             </label>
-            <label className="ramp-field" style={rampBoxWidth(units.widest)}>
+            <label
+              className="ramp-field"
+              style={units.unitKind === "fixed" ? rampBoxWidth(units.widest) : undefined}
+            >
               <span>{units.farLabel}</span>
               {box(
                 signal.saturate_at,

@@ -56,6 +56,18 @@ interface RampUnits {
   /** The suffix its box wears, and the step that box moves in (rule 40). */
   unit: string;
   step: number;
+  /** Whether this bound's unit is one the operator can change, and which family it is from.
+   *
+   *  Rule 40 splits the two number controls on exactly this line: a CHANGEABLE unit is
+   *  `QuantityInput` with a picker, a FIXED one is `FixedQuantity` with a suffix. Days are
+   *  changeable and the dormancy gate two controls up already offers days/weeks/months/years
+   *  for the same quantity, so a bound spelled "1825 days" beside a gate spelling the same
+   *  span "5 years" was the app disagreeing with itself about one unit.
+   *
+   *  A rating, a head count and a season's place have no larger unit to offer, so they stay
+   *  fixed. Naming the FAMILY rather than importing the unit list keeps this module free of
+   *  the component it feeds. */
+  unitKind: "time" | "size" | "fixed";
   /** How this signal names the thing being previewed: "A title rated", "A title untouched
    *  for". Worded per signal because "a title rated 2 people" is not a sentence, and one
    *  generic lead across five different facts is how a page ends up reading like a form. */
@@ -112,6 +124,7 @@ const WHOLE = { step: 1, toStored: Math.round, fromStored: (v: number) => v };
  *  states its own range in the rule editor and is not described by this module. */
 const RAMPS: Record<string, RampUnits> = {
   unwatched: {
+    unitKind: "time",
     nearLabel: "Left alone until",
     farLabel: "Full points at",
     scaleFrom: "today",
@@ -126,6 +139,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   season_rank: {
+    unitKind: "fixed",
     nearLabel: "Left alone until",
     farLabel: "Full points at",
     scaleFrom: "newest",
@@ -140,6 +154,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   few_watchers: {
+    unitKind: "fixed",
     nearLabel: "Enough watchers to leave it alone",
     scaleFrom: "nobody",
     scaleTo: "25 watchers",
@@ -152,6 +167,7 @@ const RAMPS: Record<string, RampUnits> = {
     ...WHOLE,
   },
   low_rating: {
+    unitKind: "fixed",
     nearLabel: "Good enough to leave alone",
     scaleFrom: "IMDb 0.0",
     scaleTo: "10.0",
@@ -168,6 +184,7 @@ const RAMPS: Record<string, RampUnits> = {
     fromStored: (stored) => stored / 10,
   },
   size: {
+    unitKind: "size",
     nearLabel: "Left alone until",
     farLabel: "Full points at",
     scaleFrom: "empty",
