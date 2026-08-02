@@ -96,24 +96,34 @@ jobs:
       version: ${{ needs.cut.outputs.version }}
     secrets: inherit
 
-  # The versioned image. ci.yml keeps proving buildability on every commit; this is
-  # the one place :latest and the version tag are pushed, with the release identity
-  # baked so the About page and the update check tell the truth. It waits for the
-  # binaries: :latest moving while a lane fails would put operators on a version
-  # whose release never published, the same half-published state the concurrency
-  # group guards against from the cancellation side.
+  # The versioned image, one native build per architecture. ci.yml keeps proving
+  # buildability on every commit; this is the one place :latest and the version tag
+  # are pushed, with the release identity baked so the About page and the update
+  # check tell the truth. It waits for the binaries: :latest moving while a lane
+  # fails would put operators on a version whose release never published, the same
+  # half-published state the concurrency group guards against from the cancellation
+  # side.
   docker:
+    name: Build the release image (${{ matrix.arch }})
     needs: [cut, binaries]
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build and push the release image
+      - name: Build and push this architecture
         env:
           VERSION: ${{ needs.cut.outputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           image="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
@@ -123,15 +133,36 @@ jobs:
             --build-arg "REAPER_RELEASE=1" \
             --build-arg "REAPER_VERSION=${VERSION}" \
             --build-arg "REAPER_UPDATE_REPO=${GITHUB_REPOSITORY}" \
-            -t "${image}:${VERSION}" -t "${image}:latest" .
+            -t "${image}:${VERSION}-${ARCH}" .
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
-          docker push "${image}:${VERSION}"
-          docker push "${image}:latest"
+          docker push "${image}:${VERSION}-${ARCH}"
+
+  # One manifest from the two architecture images; :latest is the same list under
+  # its second name, so the two tags cannot disagree.
+  docker-manifest:
+    name: Assemble the multi-arch image
+    needs: [cut, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Stitch and tag
+        env:
+          VERSION: ${{ needs.cut.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker buildx imagetools create -t "${image}:${VERSION}" \
+            "${image}:${VERSION}-amd64" "${image}:${VERSION}-arm64"
+          docker buildx imagetools create -t "${image}:latest" "${image}:${VERSION}"
 
   publish:
     name: Attach artifacts and publish
-    needs: [cut, binaries, docker]
+    needs: [cut, binaries, docker-manifest]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -45,6 +45,7 @@ dependencies = [
 # uv.lock so the bundler is as pinned as everything it bundles (rule 15).
 package = [
     "pyinstaller>=6.16.0",
+    "pillow>=11.0.0",   # lets PyInstaller cut .ico/.icns from the one committed PNG
 ]
 dev = [
     "ruff>=0.15.22",

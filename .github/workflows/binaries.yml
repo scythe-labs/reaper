@@ -203,6 +203,19 @@ jobs:
           done
           kill "${pid}" 2>/dev/null || true
           if [ "${ok}" != "true" ]; then cat server.log; exit 1; fi
+          # The .app is a second build of the same tree, so it gets its own boot.
+          appdata="$(mktemp -d)"
+          REAPER_DATA_DIR="${appdata}" REAPER_LAUNCH_BROWSER=false \
+            REAPER_HOST=127.0.0.1 REAPER_PORT=8462 \
+            "./build/pyinstaller/dist/Reaper.app/Contents/MacOS/Reaper" > app.log 2>&1 &
+          apppid=$!
+          ok=false
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8462/api/health > /dev/null; then ok=true; break; fi
+            sleep 1
+          done
+          kill "${apppid}" 2>/dev/null || true
+          if [ "${ok}" != "true" ]; then cat app.log; exit 1; fi
 
       - name: Boot the binary and probe it (Windows)
         if: runner.os == 'Windows'
@@ -235,6 +248,21 @@ jobs:
           # ditto keeps the executable bits and symlinks a plain zip tool drops.
           ditto -c -k --keepParent build/pyinstaller/dist/reaper \
             "artifacts/Reaper-${VERSION}-macos-arm64.zip"
+          # The app in a drag-to-Applications window: create-dmg lays the .app beside
+          # an Applications link and bakes the positions into the volume, so opening
+          # the DMG shows the one gesture that installs it.
+          brew install --quiet create-dmg
+          mkdir dmg-root
+          cp -R "build/pyinstaller/dist/Reaper.app" dmg-root/
+          create-dmg \
+            --volname "Reaper" \
+            --window-pos 200 120 \
+            --window-size 540 380 \
+            --icon-size 128 \
+            --icon "Reaper.app" 140 185 \
+            --app-drop-link 400 185 \
+            "artifacts/Reaper-${VERSION}-macos-arm64.dmg" \
+            dmg-root
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -338,6 +366,51 @@ jobs:
         with:
           snap: ${{ steps.build.outputs.snap }}
           release: edge
+
+  # The arm64 dev image, nightly rather than per push: the per-push lane stays
+  # fast and amd64-only, and ci.yml re-stitches :dev on every push so the manifest
+  # never loses this image once it exists. Built natively on the arm runner, so
+  # "takes a while under emulation" stopped being the cost it was.
+  docker-arm64:
+    name: Build the arm64 dev image
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - name: Build, push, and fold into :dev
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          short_sha="$(git rev-parse --short HEAD)"
+          docker build \
+            --build-arg "REAPER_GIT_SHA=${short_sha}" \
+            --build-arg "REAPER_UPDATE_REPO=${GITHUB_REPOSITORY}" \
+            -t "${image}:dev-arm64" .
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker push "${image}:dev-arm64"
+          # Fold it in beside whatever amd64 image :dev holds right now. The amd64
+          # half is resolved to a digest first: :dev may be a single image or an
+          # earlier list, and naming the tag as a source would drag the previous
+          # night's arm64 entry along with it.
+          if ! docker buildx imagetools inspect "${image}:dev" > /dev/null 2>&1; then
+            echo "no ${image}:dev yet; ci.yml will stitch on its next dev push"
+            exit 0
+          fi
+          amd64="$(docker buildx imagetools inspect "${image}:dev" \
+            --format '{{range .Manifest.Manifests}}{{if eq .Platform.Architecture "amd64"}}{{.Digest}}{{end}}{{end}}')"
+          if [ -z "${amd64}" ]; then
+            amd64="$(docker buildx imagetools inspect "${image}:dev" --format '{{.Manifest.Digest}}')"
+          fi
+          docker buildx imagetools create -t "${image}:dev" \
+            "${image}@${amd64}" "${image}:dev-arm64"
 
   # The rolling `dev-build` prerelease: recreated, not appended to, so it always
   # holds exactly one night's artifacts and points at the commit they were built

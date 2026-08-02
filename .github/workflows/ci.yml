@@ -330,6 +330,23 @@ jobs:
             docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
           docker push --all-tags "${IMAGE}"
 
+      # :dev stays multi-arch across amd64 pushes. The nightly (binaries.yml) builds
+      # the arm64 image as :dev-arm64; the bare push above just replaced the :dev
+      # manifest with an amd64-only one, which would break every arm64 pull until the
+      # next nightly. Re-stitching from the amd64 image this run pushed and the newest
+      # arm64 keeps both halves live: amd64 fresh per push, arm64 fresh per night.
+      # Before the first nightly there is no :dev-arm64 and :dev stays amd64-only.
+      - name: Keep :dev multi-arch
+        if: github.event_name == 'push' && github.ref_name == 'dev'
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "${IMAGE}:dev-arm64" > /dev/null 2>&1; then
+            docker buildx imagetools create -t "${IMAGE}:dev" \
+              "${IMAGE}:${SHORT_SHA}" "${IMAGE}:dev-arm64"
+          else
+            echo "no ${IMAGE}:dev-arm64 yet; :dev stays amd64-only"
+          fi
+
   # The one job that reports on every commit, whichever lane ran, and therefore the one
   # worth naming as a required status check in branch protection.
   #

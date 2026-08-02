@@ -8,14 +8,16 @@ map, plus the pieces that need a human once.
 | Artifact | Built by | Published |
 | --- | --- | --- |
 | `Reaper-<v>-windows-x64-setup.exe` (Inno Setup) + portable `.zip` | `binaries.yml` | GitHub release assets |
-| `Reaper-<v>-macos-arm64.zip` (macOS 14+, Apple Silicon) | `binaries.yml` | GitHub release assets |
+| `Reaper-<v>-macos-arm64.dmg` (drag-to-Applications app) + portable `.zip` (macOS 14+, Apple Silicon) | `binaries.yml` | GitHub release assets |
 | `scythe-labs-reaper_<v>_{amd64,arm64}.snap` | `binaries.yml` | GitHub release assets, Snap Store |
-| `ghcr.io/…/reaper:<v>` and `:latest` | `release.yml` | GHCR |
+| `ghcr.io/…/reaper:<v>` and `:latest` (amd64 + arm64) | `release.yml` | GHCR |
 
 Releases are CalVer (`vYYYY.M.N`), cut automatically by `release.yml` on every push to
 `main`. Dev builds are the rolling `dev-build` prerelease, refreshed nightly by
 `binaries.yml` whenever `dev` has moved; the `:dev` container tag keeps coming from
-`ci.yml`. Every artifact carries a `buildinfo.json` (version, commit, channel, home
+`ci.yml`. The nightly also builds the arm64 image (`:dev-arm64`) and folds it into
+`:dev` as a multi-arch manifest; every later amd64 push re-stitches the manifest, so
+`:dev` serves both architectures with amd64 fresh per push and arm64 fresh per night. Every artifact carries a `buildinfo.json` (version, commit, channel, home
 repository) written by `scripts/write_buildinfo.py`; `reaper.launcher` exports it into
 the environment at boot, and the in-app update check reads it to know what to compare
 against.
