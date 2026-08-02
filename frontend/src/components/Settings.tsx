@@ -2102,7 +2102,7 @@ export function isDiscordWebhook(raw: string): boolean {
   return okHost && url.pathname.startsWith("/api/webhooks/");
 }
 
-/** The Discord webhook is the only channel that actually warns the household before a title
+/** The Discord webhook is the only channel that actually warns your users before a title
  *  is deleted -- the Plex "Leaving Soon" label only reaches people who pinned the library. It
  *  is a write-only secret: the URL is sent once, encrypted on arrival, and never comes back,
  *  so the field is always blank and we report only *whether* a webhook is connected. Same
@@ -2201,10 +2201,10 @@ export function NotificationsPanel({
     <div className="panel">
       <h2>Notifications</h2>
       <p className="blurb">
-        A Discord webhook is how Reaper warns your household before anything is deleted: while a
-        title is in its grace period it posts a "leaving soon" heads-up here, so someone can watch
-        it or spare it in time. It's optional, but it's the one warning that reaches people who
-        don't watch the Plex "Leaving Soon" shelf.
+        A Discord webhook is how Reaper warns your users before anything is deleted: while a title
+        is in its grace period it posts a "leaving soon" heads-up here, so someone can watch it or
+        spare it in time. It's optional, but it's the one warning that reaches people who don't
+        watch the Plex "Leaving Soon" shelf.
       </p>
 
       {/* Whether the warning channel exists is only worth stating once it has been read:

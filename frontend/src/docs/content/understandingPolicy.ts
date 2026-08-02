@@ -9,15 +9,14 @@ export const understandingPolicy: Doc = {
   id: "understanding-policy",
   group: "Policy",
   title: "Understanding policy",
-  summary:
-    "Your policy is the rulebook Reaper follows when it decides what to remove. Here is how it thinks, and how to set it up safely the first time.",
+  summary: "Your policy is the rulebook Reaper follows when it decides what to remove.",
   body: [
     p(
       'A policy is how you tell Reaper what "nobody watches this" means for your server. It gathers reasons a title looks expendable, adds them into a single score, and flags anything that crosses your line. A whole separate set of protections can keep a title no matter how it scored.',
     ),
     callout(
       "tip",
-      "**Start cautious, then tighten one nudge at a time.** You can always remove more later, and it is reversible up to the moment of deletion. A deletion is not. This one habit is what the whole page is built around.",
+      "**Start cautious, then tighten one nudge at a time.** You can always remove more later, and it is reversible up to the moment of deletion.",
     ),
 
     h2("The mental model", "mental-model"),
@@ -31,10 +30,10 @@ export const understandingPolicy: Doc = {
       "**Protections are hard lines that always win.** They sit in their own lane and can only ever keep a file, never remove one. If any single protection fires, the title stays, whatever it scored.",
     ),
     p(
-      "**Caps stop a run; grace is the heads-up.** Caps limit how much any one run, and any rolling 30 days, can remove, and they stop the whole run rather than trimming it. Grace shows every flagged title as leaving for a set number of days. It is a notice, not a hold: watching a title or sparing it keeps it, and nothing goes until you run a reap yourself.",
+      "**Caps stop a run; grace is the heads-up.** Caps limit how much any one run, and any rolling 30 days, can remove, and a cap stops the whole run when it is crossed. Grace shows every flagged title as leaving for a set number of days. Watching a title or sparing it keeps it, and nothing goes until you run a reap yourself.",
     ),
     p(
-      "**Missing information can only protect, never delete.** The score is pressure that adds up from zero. Anything Reaper cannot read, an outage, a stale ratings file, a title it cannot match, simply adds no pressure. The worst a failure can do is make Reaper more cautious.",
+      "**Missing information can only protect, never delete.** The score is pressure that adds up from zero. Anything Reaper cannot read, an outage, a stale ratings file, a title it cannot match, adds no pressure.",
     ),
 
     h2("The recommended workflow", "workflow"),
@@ -54,7 +53,7 @@ export const understandingPolicy: Doc = {
       },
       {
         title: "Leave every protection on.",
-        text: "Above all, leave the time-to-be-rewatched line at its 3-year default. This is the single most important line in the whole tool, and it is a hard line so nothing can outvote it.",
+        text: "Above all, leave the time-to-be-rewatched line at its 3-year default. It is a hard line, so nothing can outvote it.",
       },
       {
         title: "Run a scan and let it finish.",
@@ -64,15 +63,15 @@ export const understandingPolicy: Doc = {
       },
       {
         title: 'Read a few "why" panels before touching anything.',
-        text: "Open several flagged titles and read why each was flagged, and which protections were checked and did not fire. Notice how much of the pressure is just dormancy.",
+        text: "Open several flagged titles and read why each was flagged, and which protections were checked and did not fire. Notice how much of the pressure is just time unwatched.",
       },
       {
         title: "Tune with the simulator, one nudge at a time.",
-        text: "Move the line down a step and watch the count, the space reclaimed, and the named titles change live. Change one control, look at the number, repeat. Tighten gradually over several scans.",
+        text: "Move the line down a step and watch the count, the space reclaimed, and the named titles change live. Tighten gradually over several scans.",
       },
       {
         title: "Set pace and grace, then arm deletion last.",
-        text: 'Confirm your caps and grace, and turn on the Leaving Soon shelf so your household can rescue anything about to go. To see the shelf before you arm anything, also turn on "Update while read-only" in Settings, Plex. Only then arm deletion, which is password-gated and separate from all tuning.',
+        text: 'Confirm your caps and grace, and turn on the Leaving Soon shelf so your users can rescue anything about to go. To see the shelf before you arm anything, also turn on "Update while read-only" in Settings, Plex. Only then arm deletion, which is password-gated and separate from all tuning.',
       },
     ]),
 
@@ -104,7 +103,7 @@ export const understandingPolicy: Doc = {
 
     h3("The flag threshold", "threshold"),
     p(
-      'The threshold is a confidence line, not a "disk is full" gauge and not a "delete everything older than N" rule. A title is flagged only when its score reaches your line. Higher means Reaper flags fewer titles and has to be more sure; lower means it flags more. Move it down one step at a time in the simulator and watch what appears, rather than jumping. Because the score counts only what Reaper could actually read, a title cannot climb near your line on fragments of evidence.',
+      "The threshold is a confidence line. A title is flagged only when its score reaches it, so a higher line means Reaper flags fewer titles and has to be more sure. Move it down one step at a time in the simulator and watch what appears.",
     ),
 
     h3("Signals: soft pressure", "signals"),
@@ -191,16 +190,21 @@ export const understandingPolicy: Doc = {
         ["Most titles per 30 days", "Titles over any rolling 30 days", "100", "the run cap"],
         ["Most disk freed per 30 days", "Space over any rolling 30 days", "2 TB", "the run cap"],
         ["Grace period", "Days a flagged title shows as leaving", "14 days", "7 days"],
-        ["Unknown-size items per run", "No-size titles a run may remove", "0 (held back)", "0"],
+        [
+          "Unknown-size items per run",
+          "Titles whose size Reaper cannot read",
+          "0 (held back)",
+          "0",
+        ],
       ],
     ),
     p(
-      'Caps stop the whole run when crossed, never removing just the part that fits, and the rolling 30-day limits count every run in the window, not just this one. Turning off "Limit how much each run removes" drops those four, the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
+      'Caps stop the whole run when crossed, and the rolling 30-day limits count every run in the window. Turning off "Limit how much each run removes" drops the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
     ),
 
     h3("Movies and TV are tuned separately", "movies-tv"),
     p(
-      'They are two policies behind one toggle, each with its own line, signals, and rating bars, plus TV’s season rules: keep the 2 newest seasons and the first season, hold an in-progress viewer’s place for 180 days, keep specials, and flag an unusual removal as "Needs a look." Switching the toggle with unsaved edits warns before it discards them.',
+      'They are two policies behind one toggle, each with its own line, signals, and rating bars, plus TV’s season rules: keep the 2 newest seasons and the first season, hold an in-progress viewer’s place for 180 days (and optionally some seasons ahead of it, which starts at none), keep specials, and flag an unusual removal as "Needs a look." Switching the toggle with unsaved edits warns before it discards them.',
     ),
 
     h2("Using the simulator", "simulator"),
@@ -208,43 +212,43 @@ export const understandingPolicy: Doc = {
       'The right-hand "What this would do" panel re-decides your last scan under your draft, with zero calls to Sonarr, Radarr, or your history source. It shows how many titles would be removed, how much space that frees, every title’s score against your line, example titles newly flagged, and how this draft differs from the policy you already saved.',
     ),
     p(
-      "**The loop:** nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.",
+      "Nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.",
     ),
     p(
-      '**Live for the numbers, not the plumbing.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection\'s switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. An upgrade that retires a protection can say it too, without you having touched anything. This is on purpose: a wrong number that looks live is worse than a blank one.',
+      '**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection\'s switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. An upgrade that retires a protection can say it too, without you having touched anything. A wrong number that looks live is worse than a blank one.',
     ),
     callout(
       "caution",
-      'You have gone too far when the examples include titles you would keep, the count climbs steeply for a small threshold drop, or you want to switch off a protection to "find more." Turning off a protection is the most effective way to remove more, and it looks like simplification. That is the warning sign, not the fix. If a one-step drop nearly doubles the count, stop there.',
+      'You have gone too far when the examples include titles you would keep, or you want to switch off a protection to "find more." Turning off a protection is the most effective way to remove more, and it looks like simplification. That is the warning sign. If a one-step drop nearly doubles the count, stop there.',
     ),
 
     h2("Recipes", "recipes"),
-    p("Starting points for common goals. All of them are grounded in the shipped defaults."),
+    p("Starting points for common goals."),
     h3("Reclaim space without risk"),
     p(
       "Use the Balanced defaults: line 70, the 3-year age line, keep well-rated (IMDb 7.5 with 1,000 votes), keep anything 3 or more people watched in the last year, caps on, 14-day grace. Turn on Leaving Soon. Do not add size to the score. At review time, sort by size and approve the big ones first.",
     ),
-    h3("Very cautious household"),
+    h3("Very cautious setup"),
     p(
       "Use Cautious: line 82, 5 titles or 250 GB per run, 50 or 1 TB per 30 days, 30-day grace. Leave every protection on and the unknown-size allowance at 0. Consider raising the age line above 3 years, and live through a couple of grace cycles before loosening anything.",
     ),
     h3("Big backlog of never-played requests"),
     p(
-      "Keep the defaults, especially the 3-year age line and keep well-rated. Old, never-watched, mediocre requests are exactly what Balanced already flags. Because per-run caps stop rather than trim, for one supervised first cleanup you can raise the per-run cap for that run only, leave the 30-day cap in place, then turn it back down.",
+      "Keep the defaults, especially the 3-year age line and keep well-rated. Old, never-watched, mediocre requests are exactly what Balanced already flags. For one supervised first cleanup you can raise the per-run cap for that run only, leave the 30-day cap in place, then turn it back down.",
     ),
     h3("Movies only, or TV only"),
     p(
-      "The two are separate policies. Tune and scan the one you care about, leave the other on its defaults, and simply do not approve its items. TV’s season rules already keep the 2 newest seasons and the first, hold an in-progress viewer’s place for 180 days, and keep specials.",
+      "The two are separate policies. Tune and scan the one you care about, leave the other on its defaults, and do not approve its items. TV’s season rules already keep the 2 newest seasons and the first, hold an in-progress viewer’s place for 180 days, and keep specials.",
     ),
 
     h2("Common mistakes", "mistakes"),
     ul([
-      "**The points don't total 100, so Save is dead.** Lowering one signal strands its points and blocks the whole save. Safe habit: give the freed points to another signal or removal rule before saving.",
-      "**Forgetting that saving starts a fresh scan.** A policy change only takes effect after a scan, which begins by itself when you save. Safe habit: expect the rescan, and know that pace and grace apply immediately while policy changes wait for it.",
+      "**The points don't total 100, so the policy won't save.** Lowering one signal strands its points and holds the policy half back. Pace and grace still save. Safe habit: give the freed points to another signal or removal rule before saving.",
+      "**Forgetting that saving starts a fresh scan.** A policy change only takes effect after a scan, which begins by itself when you save. Safe habit: expect the rescan. Pace and grace apply immediately while policy changes wait for it.",
       "**Treating arming like tuning.** Editing a policy changes nothing about whether Reaper can delete. Safe habit: set caps, grace, and Leaving Soon first, then arm, then keep the first run supervised.",
-      "**Going aggressive on the first pass.** Removing more is one nudge away and reversible until deletion. A deletion is not. Safe habit: start on Cautious and loosen only as far as each supervised cycle proves safe.",
-      "**Switching off a protection to find more to delete.** This raises every remaining score and aims the tool at borderline titles. Safe habit: to remove more, lower the line in the simulator and watch the number.",
-      "**Setting a rating bar with no vote floor.** A high score from a few hundred votes is noise and would protect titles forever. Safe habit: keep a vote floor on any source that counts votes (the default is 1,000).",
+      "**Going aggressive on the first pass.** Removing more is one nudge away and reversible until deletion. Safe habit: start on Cautious and loosen only as far as each supervised cycle proves safe.",
+      "**Switching off a protection to find more to delete.** This exposes titles the protection was keeping, whatever their score. Safe habit: to remove more, lower the line in the simulator and watch the number.",
+      "**Setting a rating bar with no vote floor.** A high rating from a few hundred votes is unreliable and would protect titles forever. Safe habit: keep a vote floor on any source that counts votes (the default is 1,000).",
     ]),
 
     h2("Glossary", "glossary"),
@@ -271,7 +275,7 @@ export const understandingPolicy: Doc = {
       },
       {
         term: "Cap",
-        text: 'A limit on how much one run, or a rolling 30 days, may remove, while "Limit how much each run removes" is on. It stops the run rather than trimming it.',
+        text: 'A limit on how much one run, or a rolling 30 days, may remove, while "Limit how much each run removes" is on. Crossing it stops the run.',
       },
     ]),
 

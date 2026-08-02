@@ -544,7 +544,7 @@ def _sample_embed() -> Embed:
     return Embed(
         title="Reaper is connected",
         description=(
-            "This is a test message. If you can see it, the household will get a heads-up "
+            "This is a test message. If you can see it, your users will get a heads-up "
             "here before any title is removed."
         ),
     )

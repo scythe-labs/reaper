@@ -2,8 +2,8 @@
 """The "Leaving Soon" shelf.
 
 While an item is in its grace window, Reaper can show it on a **"Leaving Soon"
-collection** in Plex -- a real shelf on the library's Recommended page, visible to the
-household -- and put the matching label on it for anyone who builds smart collections or
+collection** in Plex -- a real shelf on the library's Recommended page, visible to your
+users -- and put the matching label on it for anyone who builds smart collections or
 overlay tooling on top. The shelf tracks the grace set: an item entering grace appears,
 an item that leaves grace (spared, rescued, or re-judged) is taken off. That reconcile
 is the whole feature, run per enabled library: movies in movie libraries, seasons in TV
@@ -405,7 +405,7 @@ def _pass_lock() -> asyncio.Lock:
     whole-library Plex reconcile and a Discord post in between -- minutes of network I/O
     across which nothing else was held back. Two passes overlap easily: the operator presses
     "Update now" while a scheduled scan is landing, and its after-scan hook fires. Both read
-    the same "already announced", both decide the same title is new, and the household gets
+    the same "already announced", both decide the same title is new, and your users get
     the same heads-up twice. Worse, the later writer persists a set derived from ITS pre-I/O
     read, dropping whatever the first pass recorded -- so that title is announced a third
     time on the next pass. Rule 8 wants the announcement idempotent on the durable set; the

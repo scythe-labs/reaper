@@ -92,8 +92,8 @@ class Regret:
 # from there -- and nothing calls this module either. So a backtest run from a test or a
 # REPL is measured against these figures unless the caller passes its own.
 # They are what one real library happened to show, and a different library will have a
-# different curve: a household of three has nothing in common with a server used by a
-# hundred people.
+# different curve: audience size and viewing habits shape it, so a three-viewer library
+# and a hundred-user server land in different places.
 #
 # They are retained so the engine has a shape to reason about in tests and in the
 # absence of history, and NOT because they are meaningful anywhere else.

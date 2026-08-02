@@ -63,7 +63,7 @@ class TestLeavingSoon:
         assert ok is True
         body = route.calls.last.request.content.decode()
         assert "3 titles are leaving soon" in body
-        # The countdown reaches the household as a notice, never as a deadline or a
+        # The countdown reaches your users as a notice, never as a deadline or a
         # reprieve: nothing on the deletion path reads the grace window (see the module
         # docstring on services/grace.py), so the owner may reap on day one. The rescue is
         # therefore stated unconditioned on the clock, and the days describe only how long
@@ -76,7 +76,7 @@ class TestLeavingSoon:
         # The shelf is not an unwatched set. A hand reap overrules a fired min_dormancy and
         # lands the item here, so the most ordinary way onto this list is the owner watching
         # something and reaping it the next day to reclaim the space. The blanket
-        # "Unwatched" this once opened with announced that to the whole household as a fact
+        # "Unwatched" this once opened with announced that to every user as a fact
         # about a film one of them had just played.
         assert "Unwatched" not in body
         assert "unwatched" not in body

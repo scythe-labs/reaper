@@ -135,8 +135,8 @@ lift = (age_matched_expected_regret − actual_regret) / age_matched_expected_re
 - **lift > 0.05** — the scorer picks better than age alone. This is the code's own bar
   (`backtest.beats_random`): at or below it the backtest prints "not beating age alone,
   do not arm this policy," so a merely positive lift does not earn its keep.
-- **lift ≈ 0** — the signal is dormancy in a trenchcoat.
-- **lift < 0** — the signal is *worse than nothing*; it displaces dormancy.
+- **lift ≈ 0** — the signal adds nothing dormancy was not already carrying.
+- **lift < 0** — the signal displaces dormancy, and the scorer does worse than age alone.
 
 **Before believing any of it, check the population.** If the baseline is computed over
 a different set of items than the scorer judges, the number is not merely imprecise —
@@ -144,8 +144,9 @@ it can have the wrong sign.
 
 ## Your library is not this library
 
-The rewatch curve is a property of **an audience**, not of physics. A household of three
-has nothing in common with a server used by a hundred people.
+The rewatch curve varies with **the audience that produced it**: how many people watch, and
+how often they return. Every curve in this file was measured on one library, so its shape
+carries that library's viewing habits.
 
 **Today every prior in use is the one above.** `engine/calibration.derive` can fit a curve
 from the owner's own Tautulli history, and is tested, but it has **no caller anywhere in

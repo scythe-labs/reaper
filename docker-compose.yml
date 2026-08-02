@@ -61,8 +61,10 @@ services:
 
       # Encrypts the API keys stored in the database. Leave it unset and Reaper generates
       # one on first boot at /data/secret.key (mode 0600) and reuses it. Back that file up
-      # WITH the database: losing it means re-entering every credential. Set it here to
-      # manage the key yourself, and Reaper writes no key file at all. Generate one with:
+      # WITH the database, and /data/secret.salt beside it: the key is stretched with the
+      # salt, so either one alone decrypts nothing. Losing them means re-entering every
+      # credential. Set it here to manage the key yourself, and Reaper writes no key file
+      # at all (the salt is still written). Generate one with:
       #   python -c "import secrets; print(secrets.token_urlsafe(32))"
       # REAPER_SECRET_KEY: "..."
 

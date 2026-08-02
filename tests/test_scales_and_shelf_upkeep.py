@@ -340,7 +340,7 @@ class _Rendezvous:
 class TestOverlappingPassesAnnounceOnce:
     """Two entry points, nothing serializing them: "Update now" from the Reap page and the
     after-scan hook, which fires at the end of every scan. Both read the same announced set,
-    both decide the same title is new, and the household is told twice -- then the later
+    both decide the same title is new, and your users are told twice -- then the later
     writer persists a set built from ITS pre-I/O read and drops what the first recorded, so
     the title is announced a third time next pass (B2-20)."""
 
@@ -373,7 +373,7 @@ class TestOverlappingPassesAnnounceOnce:
             leaving_soon.after_scan(factory, settings, box),
         )
 
-    async def test_the_household_is_told_once(
+    async def test_the_users_are_told_once(
         self,
         factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,

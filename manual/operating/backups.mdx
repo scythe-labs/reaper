@@ -1,26 +1,42 @@
 ---
 id: backups
 title: Back this up
-description: Two files in the data volume cannot be regenerated. A third is disposable by design.
+description: Three files in the data volume cannot be regenerated. A fourth is disposable by design.
 sidebar_position: 1
 ---
 
 # Back this up
 
-The `/data` volume holds two things you cannot regenerate.
+The `/data` volume holds three things you cannot regenerate.
 
 | File | Why it matters |
 | --- | --- |
 | `reaper.db` | Your policies, decisions, whitelist and audit trail. |
-| `secret.key` | The **only** thing that can decrypt your stored API keys. |
+| `secret.key` | The master key for every stored credential. |
+| `secret.salt` | Minted per install, and paired with that key. Both are needed to decrypt. |
 
 <Callout tone="caution">
-  **Treat `reaper.db` as sensitive.** It holds the credentials for every service Reaper talks
-  to, including a Plex token that grants full control of your Plex account. Encrypted at rest is
-  not the same as safe in a public issue report.
+  **`secret.key` on its own is not enough.** The key is stretched with `secret.salt` before
+  anything is decrypted, so a backup carrying one without the other reads exactly like a backup
+  carrying neither. Take all three files, every time.
 </Callout>
 
-## What you do not need to back up
+## Let Reaper do it
+
+Settings, Backup produces one archive with all three in it, which removes the chance of taking
+two files out of three by hand.
+
+Restoring that archive asks for your admin password. Downloading it asks only that you are
+signed in, so treat the file the way you would treat the database.
+
+<Callout tone="caution">
+  **Treat the archive and `reaper.db` as sensitive.** They hold the credentials for every
+  service Reaper talks to, including a Plex token that grants full control of your Plex account.
+  Encryption at rest guards the file on disk. Keep it out of public issue reports and support
+  threads all the same.
+</Callout>
+
+## The one you can throw away
 
 `cache.db` sits next to them and is disposable by design. It is other people's data mirrored
 locally, meaning watch history and the IMDb dataset, and Reaper rebuilds it.
@@ -29,8 +45,14 @@ Separating them states the invariant out loud: nothing in `cache.db` is a source
 
 ## Restoring
 
-Put both files back in the data volume and start the container. Migrations run before the app
-accepts a connection, so a database from an older version is brought forward on the way up.
+Put all three files back in the data volume and start the container. Migrations run before the
+app accepts a connection, so a database from an older version is brought forward on the way up.
 
-If you restore `reaper.db` without its matching `secret.key`, every stored credential is
-unreadable and must be entered again. The policies, decisions and audit trail survive.
+Restore `reaper.db` without its matching key and salt and every stored credential is unreadable
+and must be entered again. The policies, decisions and audit trail survive.
+
+<Callout tone="caution">
+  **Re-entering a credential against the wrong key destroys the good one.** If services come
+  back unreadable, put the right key and salt in place first. Saving over an unreadable
+  credential writes new ciphertext under the wrong key, and the original is then gone.
+</Callout>

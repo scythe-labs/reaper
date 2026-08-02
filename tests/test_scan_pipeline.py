@@ -904,8 +904,8 @@ class TestAStaleMirrorDegradesTheSnapshot:
     climbs for every item on the server at the rate of the outage.
 
     The clock that decides this is *when the ingest last ran*, never *when somebody last
-    watched something*: those two are identical for a stalled ingest and for a household
-    that went away for a weekend, so reading the newest play calls a quiet library broken
+    watched something*: those two are identical for a stalled ingest and for users
+    who went away for a weekend, so reading the newest play calls a quiet library broken
     and blocks every deletion until somebody watches something.
     """
 
@@ -968,7 +968,7 @@ class TestAStaleMirrorDegradesTheSnapshot:
     ) -> None:
         """Nobody has watched anything for 2000 days, and the ingest ran an hour ago.
 
-        A single-household server, or an operator away for a long weekend, looks exactly
+        A single-user server, or an operator away for a long weekend, looks exactly
         like this. It has the most to reclaim, so it must scan.
         """
         await _seed_play(cache_engine, row_id=1, rating_key=99)
@@ -1677,7 +1677,7 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
 
 
 class TestKeepHistoryCoverage:
-    """A household member with Tautulli's per-user Keep History off is invisible in the
+    """A user with Tautulli's per-user Keep History off is invisible in the
     history table: everything only they watch looks never-played. The scan must degrade
     while that is true -- and while it cannot even check."""
 

@@ -33,8 +33,8 @@ REAPER_SONARR_4K_API_KEY=...
 ```
 
 Each one is imported and encrypted the first time Reaper sees it, and Reaper then logs that the
-variable can be removed. The import runs on *every* start, not only the first, so you can add a
-service to the environment later and it is picked up on the next restart.
+variable can be removed. The import runs on *every* start, so a service added to the environment
+later is picked up on the next restart.
 
 <Callout tone="note">
   **The database is the source of truth regardless.** An instance that already exists is never
@@ -42,8 +42,8 @@ service to the environment later and it is picked up on the next restart.
   a stale `.env`.
 </Callout>
 
-Plex is not configured here. It is added with **Sign in with Plex** in the setup wizard, which
-discovers your server and its token for you.
+Plex is added with **Sign in with Plex** in the setup wizard, which discovers your server and
+its token for you.
 
 ## Also in this section
 

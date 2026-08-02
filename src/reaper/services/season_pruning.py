@@ -15,9 +15,13 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
 * **Keep the first season.** On by default. The pilot is how anyone starts the show; a
   library that has thrown away season 1 is a library nobody new can begin.
 
-* **Sequential-progression guard.** For every viewer part-way through the show, keep the
-  season they last watched *and the next one* -- the one they are about to watch. Without
-  this, "keep the last 2 seasons" deletes the season a user is mid-binge on. "Last
+* **Sequential-progression guard.** For every viewer part-way through the show, keep where
+  they are: the season they are mid-way through, or, once they have finished it, the next
+  one that has files. One or the other, never both -- both only when the episode counts are
+  unreadable and ``_anchor_positions`` fails closed. This docstring claimed "and the next
+  one" long after the guard became episode-precise, and a manual was nearly written from
+  it: the sentence promised a cushion that only ``season_lookahead`` (default 0) supplies.
+  Without the guard, "keep the last 2 seasons" deletes the season a user is mid-binge on. "Last
   watched" means most recent in TIME, not highest-numbered: anchoring on the number alone
   left every re-watcher and every out-of-order viewer with no protection at all, because
   someone who has finished the show is judged to be waiting on a season that does not

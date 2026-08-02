@@ -17,7 +17,7 @@ const REPO = "reaper";
 
 const config: Config = {
   title: "Reaper",
-  tagline: "Explainable media library pruning for Plex",
+  tagline: "Grave decisions, clearly explained",
   favicon: "img/favicon.svg",
 
   // GitHub Pages for a project repository serves under /<repo>/. Both halves are read by the

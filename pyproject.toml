@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "reaper"
 version = "0.1.0"
-description = "Explainable media library pruning for Plex, Sonarr, Radarr, Seerr and Tautulli"
+description = "Grave decisions, clearly explained. Media library pruning for Plex, Sonarr, Radarr, Seerr and Tautulli"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.13"

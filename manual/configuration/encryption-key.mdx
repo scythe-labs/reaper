@@ -7,13 +7,17 @@ sidebar_position: 2
 
 # The encryption key
 
-You do not have to supply one. If `REAPER_SECRET_KEY` is unset, Reaper generates a key on first
+Supplying one is optional. If `REAPER_SECRET_KEY` is unset, Reaper generates a key on first
 boot and saves it to `<data_dir>/secret.key` with mode `0600`, reusing it on every subsequent
 boot.
 
+Beside it sits `<data_dir>/secret.salt`, minted once per install. The key is stretched with the
+salt before anything is encrypted, so the two only work as a pair. Reaper writes a salt even
+when you supply the key yourself.
+
 <Callout tone="caution">
-  **Back that file up alongside your database.** It is the only thing that can decrypt your
-  stored API keys. Lose it and every integration must be entered again.
+  **Back up both files alongside your database.** `secret.key` and `secret.salt` together are
+  what decrypt your stored API keys. Lose either and every integration must be entered again.
 </Callout>
 
 The key is generated *once* and never rotated automatically. A key that changed on restart
@@ -38,10 +42,11 @@ Reaper then encrypts under the new key while still decrypting whatever the old o
 nothing is bricked halfway through. Drop the old value once every credential has been saved
 again.
 
-## What this does and does not protect
+## What it defends against
 
-An honest limitation: a key file next to the database it protects is no defense against an
-attacker who already has your filesystem.
+The ordinary way these leak: a database copied into a backup, an issue report, or a support
+thread. In each of those the file travels and the key stays behind.
 
-It defends against the ordinary way these leak, which is a database copied into a backup, an
-issue report, or a support thread. For real separation, supply the key from a secret manager.
+An honest limit, worth stating plainly. A key file sitting next to the database it protects is
+within reach of anyone who already has your filesystem. For real separation, supply the key
+from a secret manager.

@@ -1,0 +1,35 @@
+---
+title: Unraid
+description: Use the community template, and set PUID 99 / PGID 100.
+sidebar_position: 3
+---
+
+# Unraid
+
+The community template is the supported route. Copy `contrib/unraid/my-Reaper.xml` to:
+
+```
+/boot/config/plugins/dockerMan/templates-user/
+```
+
+Then add the container from the template dropdown in the Docker tab.
+
+## Ownership
+
+Set **`PUID` to `99`** and **`PGID` to `100`**, so the appdata folder stays owned by
+`nobody:users`, which is what the rest of Unraid expects.
+
+<Callout tone="note">
+  The container starts as root only to take ownership of its data folder, then drops to that
+  user before it opens the database. The app process itself never runs as root.
+</Callout>
+
+## Where the data goes
+
+One path, Reaper's own database. The default in the template puts it under your appdata share.
+Reaper needs no access to your media shares, so leave them unmapped.
+
+## Next
+
+[First run](/getting-started/first-run), in order. The first account to sign in claims the
+install, so it matters who does it.

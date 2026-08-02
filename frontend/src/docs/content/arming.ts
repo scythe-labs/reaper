@@ -18,9 +18,8 @@ export const arming: Doc = {
     ),
     h2("When you're ready", "steps"),
     ol([
-      "Set an admin password in Settings, Security. Arming is refused until one exists.",
-      'Set your pace and grace, and turn on the Leaving Soon shelf so your household gets a warning. To see it before you arm anything, also turn on "Update while read-only" in Settings, Plex.',
-      "In Policy, Deletion, turn deletion on. It asks for your admin password. Turning it back off never does.",
+      'Set your pace and grace, and turn on the Leaving Soon shelf so your users get a warning. To see it before you arm anything, also turn on "Update while read-only" in Settings, Plex.',
+      "In Policy, Deletion, turn deletion on. It asks for the admin password you set on your first run. Turning it back off is free.",
       "Keep your first run supervised, and read the exact list before you confirm the phrase.",
     ]),
     p(

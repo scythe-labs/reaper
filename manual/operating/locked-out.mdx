@@ -1,42 +1,49 @@
 ---
 id: locked-out
 title: Not getting locked out
-description: Three ways back in, and why Plex sign-in is never the only key.
+description: Reaper always keeps one working local admin, and three ways back in.
 sidebar_position: 2
 ---
 
 # Not getting locked out
 
-If Plex sign-in were the only way in, then a plex.tv outage, a revoked token, or a rebuilt Plex
-server would lock you out of your own tool. A rebuild changes the `machineIdentifier` the
-ownership check depends on. None of these are hypothetical.
+**Reaper always keeps at least one working local admin.** The last one cannot be deactivated,
+and first run creates it before anything else.
 
-So **Reaper always keeps at least one working local admin.** The last local admin cannot be
-deactivated, and Plex sign-in is additive convenience, never the sole key.
+A plex.tv outage, a revoked token, or a rebuilt Plex server each break Plex sign-in. A rebuild
+changes the `machineIdentifier` the ownership check reads. All three happen.
 
-<Callout tone="caution">
-  **Create a local admin on day one.** Reaper logs a warning on every start until one exists.
-  That warning is the whole of this page, delivered early.
+<Callout tone="tip">
+  **You already have one.** The password you set on first run created your local account. Reaper
+  logs a warning on every start while one is missing.
 </Callout>
 
 ## Three ways back in
 
 <Steps>
   <Step title="The command line.">
-    Works even if the UI is completely broken, because it talks to the database directly rather
-    than through the app. Run `docker compose exec reaper reaper-admin --help` for the full
-    command set. Creating an admin and resetting a password both live here.
+    It talks to the database directly, so it works while the UI is broken. Run
+    `docker compose exec reaper reaper-admin --help` for the full command set. Creating an admin
+    and resetting a password both live here.
   </Step>
   <Step title="Recovery mode.">
     Set `REAPER_RECOVERY=true` and restart. This has no setting in the UI on purpose: it has to
     work when the UI is what has locked you out.
   </Step>
   <Step title="The startup warning.">
-    If no local admin exists at all, Reaper says so on every start, before you need it.
+    Reaper says so on every start while no local admin exists, well before you need it.
   </Step>
 </Steps>
 
+## What recovery mode gives you
+
+A **URL and a separate code**. You open `/recover` and paste the code there. It is single-use
+and expires in 15 minutes.
+
+The split is deliberate: a code baked into the URL would be recorded verbatim in every reverse
+proxy's access log, which is exactly where the key to your admin account should stay out of.
+
 ## Turn recovery back off
 
-Recovery mode is a way in, so it is also a way in for anyone else who can reach the host.
-Unset `REAPER_RECOVERY` and restart once you have a working admin again.
+Recovery mode is a way in, so it is a way in for anyone who can reach the host. Unset
+`REAPER_RECOVERY` and restart once you have a working admin again.
