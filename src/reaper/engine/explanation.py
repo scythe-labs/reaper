@@ -225,7 +225,15 @@ class Explanation(BaseModel):
 
     protections_checked: list[GateOutcomeOut]
     """Protections evaluated that did NOT fire -- **with the actual numbers**:
-    "checked: recently watched -- last play 612d ago, your floor is 730d"."""
+    "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first."
+
+    Every one of these is a whole sentence built by a gate's ABSTAIN branch in
+    ``engine.gates``, and the example above is ``MinDormancyGate``'s, quoted verbatim. It used
+    to be an invented ``"checked: <label> -- <numbers>"`` shape that no gate has ever emitted
+    (#419), in every file that illustrated the feature at once, each author reading a different
+    copy -- so ``test_repo_hygiene.test_the_documented_checked_example_is_one_a_gate_emits``
+    derives the sentence by running the gate and names the files holding a copy, rather than a
+    comment asking the next author to remember (rule 144)."""
 
     protections_unknown: list[GateOutcomeOut]
     """Protections that COULD NOT BE CHECKED. Rendered amber, not green. "We could not

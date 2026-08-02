@@ -9,8 +9,10 @@
 //      not its raw weight. The shares add up to the number beside them, so the receipt
 //      can be checked by adding it up rather than by dividing by a total never shown.
 //   2. The protections that were checked and did NOT fire -- with the real numbers.
-//      "checked: popular here -- 0 watchers in the last 365 days, your floor is 3".
-//      This is the block that makes a verdict auditable rather than merely asserted.
+//      "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first."
+//      Each is a whole sentence from a gate's ABSTAIN branch, rendered verbatim below; the
+//      tick is decoration and there is no label prefix. This is the block that makes a
+//      verdict auditable rather than merely asserted.
 //   3. The protections that could not be checked at all, rendered *differently*.
 //      "We could not look" is not "we looked and it was fine". Every tool that renders
 //      them alike eventually deletes something during an API outage.

@@ -27,10 +27,20 @@ from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.snapshot import _explain, _verdict
 
 CLEAN = Evaluation(
-    results=[GateResult(GateId.RATING_FLOOR, ABSTAIN, detail="checked: not well-rated enough")]
+    results=[
+        GateResult(
+            GateId.RATING_FLOOR,
+            ABSTAIN,
+            detail="5.4 on IMDb from 6,000 votes, below the 7.5 you keep.",
+        )
+    ]
 )
 PROTECTED = Evaluation(
-    results=[GateResult(GateId.RATING_FLOOR, PROTECT, detail="IMDb 8.2 -- above your floor")]
+    results=[
+        GateResult(
+            GateId.RATING_FLOOR, PROTECT, detail="well rated: 8.2 on IMDb from 120,000 votes"
+        )
+    ]
 )
 BLOCKED = Evaluation(
     results=[
@@ -251,7 +261,13 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         ("nothing fired, nothing blocked", [], "condemn"),
         (
             "a cautious protection fired",
-            [GateResult(GateId.RATING_FLOOR, PROTECT, detail="IMDb 8.2 -- above your floor")],
+            [
+                GateResult(
+                    GateId.RATING_FLOOR,
+                    PROTECT,
+                    detail="well rated: 8.2 on IMDb from 120,000 votes",
+                )
+            ],
             "condemn",
         ),
         (
