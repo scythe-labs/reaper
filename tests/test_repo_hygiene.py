@@ -18,6 +18,18 @@ from pathlib import Path
 import pytest
 import yaml
 
+# The one guard here that reads the app rather than the tree: the documented example of a
+# checked protection is derived by running the gate that builds it, never transcribed
+# (rule 119). The hygiene CI lane installs the whole package, so this costs nothing extra.
+from reaper.engine.gates import (
+    Facts,
+    GateConfig,
+    GateId,
+    MinDormancyGate,
+    ServerPopularityGate,
+)
+from reaper.engine.observation import Absent, Known
+
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 SRC = REPO / "src" / "reaper"
@@ -1630,6 +1642,114 @@ def test_every_decisions_section_matches_a_locked_decision_row() -> None:
         "docs/DECISIONS.md sections and the daggered rows of docs/STATUS.md disagree.\n"
         f"  sections with no daggered row: {sorted(sections - rows)}\n"
         f"  daggered rows with no section: {sorted(rows - sections)}"
+    )
+
+
+def _worked_example_facts(*, watchers: int) -> Facts:
+    """The one title every worked example in the repo is written about."""
+    return Facts(
+        title="A Film",
+        days_observed_unwatched=Known(value=2059, source="t"),
+        distinct_watchers=Known(value=watchers, source="t"),
+        distinct_watchers_all_time=Known(value=max(watchers, 1), source="t"),
+        size_bytes=Known(value=5_900_000_000, source="radarr"),
+        imdb_rating_tenths=Known(value=54, source="imdb"),
+        imdb_votes=Known(value=6_000, source="imdb"),
+        season_rank=Absent(source="radarr"),
+        is_streaming_now=Known(value=False, source="t"),
+        is_managed=Known(value=True, source="radarr"),
+        in_curated_list=Absent(source="lists"),
+        is_whitelisted=Known(value=False, source="plex"),
+        history_reach_days=Known(value=3_000, source="t"),
+    )
+
+
+def _checked_examples() -> dict[str, list[Path]]:
+    """Each real "checked, did not fire" sentence, against the files quoting that one.
+
+    Derived by running the gate, never transcribed (rule 119). Two different gates, because
+    the docs do not all illustrate the same lane: the panel's own worked example is the
+    dormancy sentence, and the manual's is the popularity one.
+    """
+    dormancy = MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1_095))
+    popularity = ServerPopularityGate(
+        GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
+    )
+    examples = {
+        dormancy.evaluate(_worked_example_facts(watchers=0)).detail: [
+            REPO / "README.md",
+            DECISIONS_DOC,
+            SRC / "engine" / "explanation.py",
+            FRONTEND_SRC / "components" / "WhyPanel.tsx",
+            TESTS / "test_api.py",
+        ],
+        popularity.evaluate(_worked_example_facts(watchers=2)).detail: [
+            REPO / "manual" / "features.mdx",
+        ],
+    }
+    assert len(examples) == 2, "two gates produced the same sentence; the guard lost a lane"
+    return examples
+
+
+def test_the_documented_checked_example_is_one_a_gate_emits() -> None:
+    """Every file illustrating a checked protection quotes a string the code really builds.
+
+    Rule 144, and the case that prompted its "grep the sibling copies" clause. One fact about
+    what the panel shows was written in six places by authors each reading a different copy,
+    and every one drifted onto an invented ``"checked: <label> -- <numbers>"`` shape no gate has
+    ever emitted (#419) -- including the README bullet naming the differentiator Reaper exists
+    for, and the docstring on the field that carries the strings. The drift ran the direction
+    that rule predicts: the invention was more specific and more reassuring than the real
+    output, so it flattered the feature it documented.
+
+    So the examples are *derived* here by running the gates, and this test names the other files
+    rather than a comment asking the next author to remember. Reword a gate's ABSTAIN branch and
+    this fails with the list of files to correct.
+    """
+
+    # Both sides collapse to single spaces, because a doc wraps its prose and a quoted
+    # sentence lands across two lines as often as not. That bounds the matcher to a
+    # continuation line carrying no prefix of its own (rule 147): a wrapped ``//`` comment
+    # keeps its slashes and reads as a miss, which the message below tells the author to fix
+    # by unwrapping. Only whitespace is normalized, never punctuation -- the em dash and the
+    # trailing period are exactly what drifted.
+    def flat(text: str) -> str:
+        return " ".join(text.split())
+
+    missing = [
+        f"{path.relative_to(REPO)} no longer quotes {detail!r}"
+        for detail, paths in _checked_examples().items()
+        for path in paths
+        if flat(detail) not in flat(path.read_text(encoding="utf-8"))
+    ]
+    assert not missing, (
+        "a gate's wording moved and its documented copies did not follow:\n"
+        + "\n".join(f"  {line}" for line in missing)
+        + "\nQuote the new sentence verbatim in each file listed, in this same change."
+    )
+
+
+def test_no_file_invents_a_floor_the_operator_never_reads() -> None:
+    """``your floor is`` is the tell of the invented example, and no gate says it.
+
+    The positive test above pins the files that already quote the real string; it cannot see a
+    NEW file inventing a new example, which is how the first six got written. This is the cheap
+    half of that population (rule 145): the invented family all reached for "your floor is N"
+    where every real string names the bar in the operator's own words ("past the 3 years it has
+    to sit unwatched first", "below the 7.5 you keep"). A gate that legitimately starts saying
+    this must retire the ban in the same change.
+    """
+    haystacks = [*_source_files_to_scan(), REPO / "README.md", REPO / "manual" / "features.mdx"]
+    offenders = [
+        f"{path.relative_to(REPO)}:{n}"
+        for path in haystacks
+        if path.is_file() and path != SELF
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if "your floor is" in line
+    ]
+    assert not offenders, (
+        "no gate emits 'your floor is'; quote a real detail from src/reaper/engine/gates.py:\n"
+        + "\n".join(offenders)
     )
 
 

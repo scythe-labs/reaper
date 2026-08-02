@@ -98,6 +98,14 @@ def _fixture_policy_hash() -> str:
     return combine_hashes(DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash())
 
 
+# ``MinDormancyGate``'s ABSTAIN branch, verbatim, kept on one line so the guard in
+# ``test_repo_hygiene.test_the_documented_checked_example_is_one_a_gate_emits`` can find it in
+# the source text. It used to be an invented "checked: <label> -- <numbers>" shape no gate has
+# ever emitted (#419), and asserting THAT survived the wire is what made the format read as
+# load-bearing.
+CHECKED_DETAIL = "Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first."
+
+
 def _explanation(score: float) -> str:
     return json.dumps(
         {
@@ -109,17 +117,12 @@ def _explanation(score: float) -> str:
                     "id": "unwatched",
                     "contribution": score,
                     "weight": 70,
-                    "detail": "not watched in 5 years, 8 months",
+                    "detail": "not watched in 5 years, 7 months",
                     "evaluated": True,
                 }
             ],
             "protections_fired": [],
-            "protections_checked": [
-                {
-                    "gate": "server_popularity",
-                    "detail": "checked: popular here -- 0 distinct watchers, your floor is 3",
-                }
-            ],
+            "protections_checked": [{"gate": "min_dormancy", "detail": CHECKED_DETAIL}],
             "protections_unknown": [],
         }
     )
@@ -237,10 +240,14 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     explanation_json=json.dumps(
                         {
                             **json.loads(_explanation(90)),
+                            # ``RatingFloorGate``'s PROTECT branch, verbatim. A fired
+                            # protection is a lowercase fragment with no trailing period,
+                            # where a checked one is a whole sentence (``gates.py``, above
+                            # the PROTECT return); the invented string here had neither shape.
                             "protections_fired": [
                                 {
                                     "gate": "rating_floor",
-                                    "detail": "IMDb 8.0 from 250,000 votes (>= your 7.5 floor)",
+                                    "detail": "well rated: 8.0 on IMDb from 250,000 votes",
                                 }
                             ],
                         }
@@ -932,7 +939,7 @@ class TestTheWhyPanel:
 
         checked = detail["explanation"]["protections_checked"]
         assert checked
-        assert "0 distinct watchers, your floor is 3" in checked[0]["detail"]
+        assert checked[0]["detail"] == CHECKED_DETAIL
 
     def test_a_protected_item_explains_the_keep(self, client: TestClient) -> None:
         """A tool that only explains its deletions cannot be trusted about its keeps.
@@ -946,7 +953,7 @@ class TestTheWhyPanel:
         assert detail["score"] == 90  # the score it is overriding
         fired = detail["explanation"]["protections_fired"]
         assert fired
-        assert "7.5 floor" in fired[0]["detail"]
+        assert "well rated: 8.0 on IMDb from 250,000 votes" in fired[0]["detail"]
 
     def test_the_grace_clock_is_exposed(self, client: TestClient) -> None:
         candidates = client.get("/api/candidates?verdict=condemn").json()
@@ -989,7 +996,7 @@ class TestPanelHeadFields:
         row = client.get("/api/candidates?verdict=condemn").json()[0]
 
         assert row["video_resolution"] == "1080"
-        assert row["dormant_for"] == "5 years, 8 months"
+        assert row["dormant_for"] == "5 years, 7 months"
 
     def test_a_row_without_the_metadata_hides_both(self, client: TestClient) -> None:
         """The abstained fixture predates the capture (no columns, and its dormancy came
@@ -1000,7 +1007,7 @@ class TestPanelHeadFields:
         # Its explanation says "not watched in ..." but with evaluated=True from the
         # shared helper; the unmatched item's dormancy is still the helper's phrasing, so
         # dormant_for emits. The protect row exercises the same path.
-        assert row["dormant_for"] == "5 years, 8 months"
+        assert row["dormant_for"] == "5 years, 7 months"
 
     def test_the_detail_carries_links_ratings_and_the_meta_line(self, client: TestClient) -> None:
         candidates = client.get("/api/candidates?verdict=condemn").json()

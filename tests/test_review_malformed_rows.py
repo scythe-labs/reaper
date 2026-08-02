@@ -37,6 +37,7 @@ from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.main import create_app
 from reaper.services.condemned import reap_override_verdict
+from reaper.services.snapshot import HAND_SPARE_DETAIL
 
 from ._auth import login
 
@@ -100,7 +101,7 @@ HEALTHY = json.dumps(
         "threshold": 70,
         "coverage": 1.0,
         "signals": [],
-        "protections_fired": [{"gate": "whitelisted", "detail": "you spared it by hand"}],
+        "protections_fired": [{"gate": "whitelisted", "detail": HAND_SPARE_DETAIL}],
         "protections_checked": [],
         "protections_unknown": [],
     }
@@ -229,7 +230,7 @@ class TestTheWhyPanelSurvivesABrokenRow:
         body = client.get(f"/api/candidates/{row['id']}").json()
         assert body["explanation_unreadable"] is False
         assert body["explanation"]["threshold"] == 70
-        assert body["explanation"]["protections_fired"][0]["detail"] == "you spared it by hand"
+        assert body["explanation"]["protections_fired"][0]["detail"] == HAND_SPARE_DETAIL
 
 
 class TestThePanelAndTheReapAgreeOnUnreadable:

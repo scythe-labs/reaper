@@ -37,8 +37,8 @@ policy tuning, and the safety model in full.
   carries a cushion in front of it, so someone on season 1 keeps what they are about to reach.
 - **A score that shows its work.** Not just *which* rules matched, but every protection that
   was *checked and didn't fire*, with the actual numbers:
-  `✓ checked: recently watched, last play 612d ago, your floor is 730d`. It explains the
-  **keeps** as well as the deletes.
+  `✓ Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first.` It
+  explains the **keeps** as well as the deletes.
 - **Curated lists as protection.** Never reap anything in the IMDb Top 250.
 - **Keep tags**, in Sonarr and Radarr or as a Plex collection you curate from your phone.
 - **A countdown your users can see**, surfaced as a *Leaving Soon* collection and label in

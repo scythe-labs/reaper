@@ -757,13 +757,13 @@ and the panel says so in as many words, with the numbers that produced the verdi
 Example Movie  (5.9 GB)
 VERDICT: CONDEMN   score 91/100  (threshold 70)
 
-  +70.0/70   unwatched for 2059 days (full pressure at 1825)
-  +20.0/20   0 distinct watchers
+  +70.0/70   not watched in 5 years, 7 months
+  +20.0/20   nobody watched it in the last year
   + 1.0/10   IMDb 5.4
 
-  ✓ checked: dormant long enough -- 2059 days, your floor is 1095
-  ✓ IMDb 5.4 from 6,000 votes -- below your 7.5 floor
-  ✓ checked: popular here -- 0 distinct watchers in the last 365 days, your floor is 3
+  ✓ Untouched for 5 years, 7 months, past the 3 years it has to sit unwatched first.
+  ✓ 5.4 on IMDb from 6,000 votes, below the 7.5 you keep.
+  ✓ Nobody here watched it in the last year.
 ```
 
 A tool that only explains its deletions cannot be trusted about its keeps. So every protection

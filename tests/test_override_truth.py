@@ -92,13 +92,15 @@ CAUTIOUS = stored_explanation(
     ]
 )
 STRUCTURAL = stored_explanation(
-    protections_fired=[{"gate": "streaming_now", "detail": "playing right now"}]
+    protections_fired=[{"gate": "streaming_now", "detail": "someone is watching it right now"}]
 )
 UNMANAGED = stored_explanation(
     protections_fired=[{"gate": "unmanaged", "detail": "no *arr manages this file"}]
 )
 BLOCKED = stored_explanation(
-    protections_unknown=[{"gate": "curated_list", "detail": "could not check the list"}]
+    protections_unknown=[
+        {"gate": "curated_list", "detail": "could not check curated lists: IMDb timed out"}
+    ]
 )
 # The keep-rule conflict: the season guard flags a prunable season watched MORE than one
 # the rule keeps, and hands the call to a human. It rides in `protections_unknown` (blocked,
@@ -188,7 +190,9 @@ class TestReapOverrideVerdict:
         stop, a bad Plex match, an unreadable protections list and an unreadable document all
         still keep the file."""
         row = stored_explanation(
-            protections_unknown=[{"gate": gate, "detail": "could not check the list"}]
+            protections_unknown=[
+                {"gate": gate, "detail": "could not check curated lists: IMDb timed out"}
+            ]
         )
 
         assert reap_override_verdict(row, score=99) == "condemn"
@@ -341,7 +345,9 @@ class TestReapOverrideVerdict:
         itself as the only thing that can refuse the reap."""
         row = stored_explanation(
             match=match,
-            protections_unknown=[{"gate": "curated_list", "detail": "could not check"}],
+            protections_unknown=[
+                {"gate": "curated_list", "detail": "could not check curated lists: IMDb timed out"}
+            ],
         )
 
         assert reap_override_verdict(row, score=99) == "protect"

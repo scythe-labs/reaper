@@ -31,7 +31,13 @@ from reaper.engine.signals import (
 from reaper.services.snapshot import _explain
 
 EVALUATION = Evaluation(
-    results=[GateResult(GateId.RATING_FLOOR, ABSTAIN, detail="checked: not well-rated enough")]
+    results=[
+        GateResult(
+            GateId.RATING_FLOOR,
+            ABSTAIN,
+            detail="5.4 on IMDb from 6,000 votes, below the 7.5 you keep.",
+        )
+    ]
 )
 
 

@@ -151,7 +151,12 @@ MIXED_SIGNALS = [
     },
 ]
 
-BLOCKED_ENTRY = {"gate": "server_popularity", "detail": "could not check who watched it"}
+BLOCKED_ENTRY = {
+    "gate": "server_popularity",
+    "detail": (
+        "could not check who watched it in the last year: your watch history only goes back 90 days"
+    ),
+}
 
 
 class Row(NamedTuple):
@@ -205,7 +210,11 @@ ROWS: tuple[Row, ...] = (
     Row(
         "radarr:1:7",
         "protect",
-        _healthy(protections_fired=[{"gate": "rating_floor", "detail": "well rated"}]),
+        _healthy(
+            protections_fired=[
+                {"gate": "rating_floor", "detail": "well rated: 8.0 on IMDb from 250,000 votes"}
+            ]
+        ),
         "protected",
         "the attribution control: this is the one row the spared-by tally can name",
     ),
@@ -589,7 +598,7 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
                 coverage_bp=10_000,
                 explanation_json=_healthy(
                     protections_fired=[
-                        {"gate": "streaming_now", "detail": "being watched right now"}
+                        {"gate": "streaming_now", "detail": "someone is watching it right now"}
                     ]
                 ),
                 facts_json=json.dumps(

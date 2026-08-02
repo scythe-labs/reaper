@@ -83,7 +83,9 @@ def _refused_explain(*, match: object = None) -> str:
     """
     return _document(
         protections_fired=(
-            [] if match else [{"gate": "streaming_now", "detail": "playing right now"}]
+            []
+            if match
+            else [{"gate": "streaming_now", "detail": "someone is watching it right now"}]
         ),
         **({"match": match} if match else {}),
     )
@@ -412,7 +414,9 @@ async def test_a_hand_reap_past_a_protection_nobody_could_check_is_in_the_net(
         media_key="radarr:1:9",
         verdict="abstain",
         explanation=_document(
-            protections_unknown=[{"gate": "whitelisted", "detail": "could not check"}]
+            protections_unknown=[
+                {"gate": "whitelisted", "detail": "could not check the whitelist: Plex timed out"}
+            ]
         ),
     )
     await whitelist.set_override(
