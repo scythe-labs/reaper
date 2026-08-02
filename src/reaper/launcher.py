@@ -193,11 +193,16 @@ def main() -> None:
 
     import uvicorn
 
+    # The factory is passed as an object, not the usual "reaper.main:create_app"
+    # string: uvicorn's string import fails under a frozen bundle and masks the
+    # underlying error as "could not import module".
+    from reaper.main import create_app
+
     # proxy_headers=False is the same load-bearing choice as the container CMD's
     # --no-proxy-headers: reaper.auth.proxy alone decides peer trust, never a
     # forwarded header rewritten one layer above it. test_launcher pins it.
     uvicorn.run(
-        "reaper.main:create_app",
+        create_app,
         factory=True,
         host=host,
         port=port,

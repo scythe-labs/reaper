@@ -258,3 +258,6 @@ docs/media/review-queue.html
 # Docusaurus's build cache. `website/build` and `website/node_modules` are already covered by
 # the `build/` and `node_modules/` rules above.
 .docusaurus/
+
+# Generated per build by scripts/write_buildinfo.py; never committed.
+packaging/pyinstaller/buildinfo.json

@@ -141,8 +141,10 @@ class TestMain:
     def test_the_serve_call_never_trusts_forwarded_headers(self, serve: dict[str, Any]) -> None:
         """proxy_headers=False is the programmatic --no-proxy-headers: peer trust is
         decided by reaper.auth.proxy alone, never a header rewritten above it."""
+        from reaper.main import create_app
+
         launcher.main()
-        assert serve["args"] == ("reaper.main:create_app",)
+        assert serve["args"] == (create_app,)
         assert serve["kwargs"].get("factory") is True
         assert serve["kwargs"].get("proxy_headers") is False
         assert serve["kwargs"].get("port") == 8420
