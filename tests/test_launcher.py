@@ -11,6 +11,7 @@ captured value is asserted, not just the call).
 from __future__ import annotations
 
 import json
+import socket
 import sys
 from pathlib import Path
 from typing import Any
@@ -113,6 +114,32 @@ class TestPort:
         assert excinfo.value.code == 2
 
 
+class TestLoopbackGuard:
+    def test_a_listening_port_reads_as_occupied(self) -> None:
+        with socket.socket() as held:
+            held.bind(("127.0.0.1", 0))
+            held.listen(1)
+            port = held.getsockname()[1]
+            assert launcher._loopback_occupied(port) is True
+
+    def test_a_free_port_reads_as_free(self) -> None:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        assert launcher._loopback_occupied(port) is False
+
+    def test_the_refusal_is_stderr_only_from_source(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The dialog is for the double-clicked binary that has no readable stderr;
+        a source run must never pop native UI."""
+        calls: list[object] = []
+        monkeypatch.setattr(launcher.subprocess, "run", lambda *a, **k: calls.append(a))
+        launcher._say("a plain refusal", frozen=False)
+        assert "a plain refusal" in capsys.readouterr().err
+        assert calls == []
+
+
 class TestMain:
     @pytest.fixture
     def serve(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
@@ -133,6 +160,10 @@ class TestMain:
         )
         monkeypatch.setenv("REAPER_DATA_DIR", str(tmp_path))
         monkeypatch.setenv("REAPER_LAUNCH_BROWSER", "false")
+        # Pinned free: the real check reads this machine's ports, and the suite must
+        # not fail because a dev server happens to hold 8420 (rule 119). The occupied
+        # branch pins the opposite explicitly.
+        monkeypatch.setattr(launcher, "_loopback_occupied", lambda port: False)
         monkeypatch.delenv("REAPER_HOST", raising=False)
         monkeypatch.delenv("REAPER_PORT", raising=False)
         # main() reads these through export_buildinfo/install_root; a machine that
@@ -165,6 +196,22 @@ class TestMain:
         assert excinfo.value.code == 2
         assert serve["migrated"] is False
         assert "kwargs" not in serve
+
+    def test_an_occupied_loopback_refuses_instead_of_hiding(
+        self, serve: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Another process answering 127.0.0.1 on our port means the browser would
+        open onto the WRONG server (a wildcard bind can still succeed beside it, so
+        uvicorn would come up and nobody would ever see this install). Refusing with
+        a message that names the port is the only honest outcome."""
+        monkeypatch.setattr(launcher, "_loopback_occupied", lambda port: True)
+        said: list[str] = []
+        monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append(m))
+        with pytest.raises(SystemExit) as excinfo:
+            launcher.main()
+        assert excinfo.value.code == 2
+        assert "8420" in said[0]
+        assert "kwargs" not in serve  # uvicorn was never asked to serve
 
     def test_a_failed_preflight_stops_before_migrations_or_serving(
         self, serve: dict[str, Any]

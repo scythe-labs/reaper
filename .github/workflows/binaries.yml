@@ -201,8 +201,12 @@ jobs:
             if curl -sf http://127.0.0.1:8461/api/health > /dev/null; then ok=true; break; fi
             sleep 1
           done
+          # The health probe alone cannot see a bundle that lost the SPA: the API
+          # answers while / serves a JSON 404, which is exactly what a tester hit.
+          spa=false
+          if curl -s http://127.0.0.1:8461/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
           kill "${pid}" 2>/dev/null || true
-          if [ "${ok}" != "true" ]; then cat server.log; exit 1; fi
+          if [ "${ok}" != "true" ] || [ "${spa}" != "true" ]; then cat server.log; exit 1; fi
           # The .app is a second build of the same tree, so it gets its own boot.
           appdata="$(mktemp -d)"
           REAPER_DATA_DIR="${appdata}" REAPER_LAUNCH_BROWSER=false \
@@ -214,8 +218,10 @@ jobs:
             if curl -sf http://127.0.0.1:8462/api/health > /dev/null; then ok=true; break; fi
             sleep 1
           done
+          spa=false
+          if curl -s http://127.0.0.1:8462/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
           kill "${apppid}" 2>/dev/null || true
-          if [ "${ok}" != "true" ]; then cat app.log; exit 1; fi
+          if [ "${ok}" != "true" ] || [ "${spa}" != "true" ]; then cat app.log; exit 1; fi
 
       - name: Boot the binary and probe it (Windows)
         if: runner.os == 'Windows'
@@ -235,8 +241,14 @@ jobs:
             } catch {}
             Start-Sleep -Seconds 1
           }
+          # The health probe alone cannot see a build that lost the SPA.
+          $spa = $false
+          try {
+            $root = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 http://127.0.0.1:8461/
+            if ($root.Content -match '<!doctype html>') { $spa = $true }
+          } catch {}
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          if (-not $ok) { Get-Content server.log, server.err; exit 1 }
+          if (-not $ok -or -not $spa) { Get-Content server.log, server.err; exit 1 }
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
@@ -333,7 +345,13 @@ jobs:
             if curl -sf http://127.0.0.1:8420/api/health > /dev/null; then ok=true; break; fi
             sleep 1
           done
-          if [ "${ok}" != "true" ]; then sudo snap logs scythe-labs-reaper -n 100 || true; exit 1; fi
+          # The health probe alone cannot see a snap that lost the SPA.
+          spa=false
+          if curl -s http://127.0.0.1:8420/ | head -c 200 | grep -qi "<!doctype html>"; then spa=true; fi
+          if [ "${ok}" != "true" ] || [ "${spa}" != "true" ]; then
+            sudo snap logs scythe-labs-reaper -n 100 || true
+            exit 1
+          fi
           sudo snap remove scythe-labs-reaper
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

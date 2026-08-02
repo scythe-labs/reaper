@@ -19,8 +19,11 @@ this launcher keeps the repo-relative ``data/`` every other dev entry point uses
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -134,6 +137,43 @@ def _port(env: MutableMapping[str, str]) -> int:
         raise SystemExit(2) from None
 
 
+def _loopback_occupied(port: int) -> bool:
+    """Whether something already answers on the loopback address the browser will be
+    sent to. Reaper has not started yet, so any answer is another process, commonly
+    another Reaper or the dev server. Starting anyway would hide this install behind
+    it: the OS routes loopback connections to the most specific listener, so our
+    wildcard bind can succeed while 127.0.0.1 stays someone else's, and the browser
+    then opens onto the wrong server (which is exactly how this was found)."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def _say(message: str, *, frozen: bool) -> None:
+    """Put a refusal where this install's operator can see it: stderr always, and a
+    native dialog when frozen, because a double-clicked windowed app has no stderr
+    anyone reads. The dialog is best effort; the refusal itself never depends on it."""
+    sys.stderr.write(message + "\n")
+    if not frozen:
+        return
+    if sys.platform == "darwin":
+        with contextlib.suppress(Exception):
+            # S603/S607: fixed argv, no shell, and osascript resolves from the system
+            # PATH by design -- hardcoding /usr/bin would break nothing and prove less.
+            subprocess.run(  # noqa: S603
+                ["osascript", "-e", f'display alert "Reaper" message {json.dumps(message)}'],  # noqa: S607
+                check=False,
+                timeout=30,
+            )
+    elif sys.platform == "win32":
+        with contextlib.suppress(Exception):
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(None, message, "Reaper", 0x10)
+
+
 def _browser_wanted(env: MutableMapping[str, str], *, frozen: bool) -> bool:
     """Open the operator's browser once the server is up? On for a frozen binary
     (a double-click gives no other signal it worked), off everywhere else; the
@@ -199,6 +239,15 @@ def main() -> None:
 
     host = os.environ.get("REAPER_HOST", "").strip() or "0.0.0.0"
     port = _port(os.environ)
+    if _loopback_occupied(port):
+        _say(
+            f"Reaper didn't start: port {port} is already in use, so this copy could "
+            f"not be reached at http://127.0.0.1:{port}. Quit whatever is using the "
+            "port (another Reaper?) or set REAPER_PORT to a free one, then open "
+            "Reaper again.",
+            frozen=frozen,
+        )
+        raise SystemExit(2)
     if _browser_wanted(os.environ, frozen=frozen):
         _open_browser_when_up(port)
 
