@@ -1635,6 +1635,14 @@ def _explain(
                     # 0 and are otherwise identical on the wire; only the engine branch
                     # that produced the result can tell them apart. See SignalState.
                     "state": r.state.value,
+                    # The line this row was measured against, frozen with everything else
+                    # the scan froze. The panel states the arithmetic from these; it must
+                    # never read them off the live policy, which by the time anyone opens
+                    # the panel need not be the policy this score was computed under.
+                    # Null on a rule with no ramp -- a boolean custom rule matched or did
+                    # not -- and the panel omits the sentence rather than invent a line.
+                    "floor": r.floor,
+                    "saturate_at": r.saturate_at,
                 }
                 # A weight of 0 is a turned-off rule: out of the denominator, worth no
                 # points, and nothing an owner needs to read. Its detail is engine
