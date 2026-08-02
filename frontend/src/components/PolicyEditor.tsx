@@ -1975,7 +1975,7 @@ export function PolicyEditor({
         {/* One key for the section, at its foot. Three strips down a column want one legend,
             not three, which is how the explanation panel does it too. Hidden from a reader
             for the same reason the strips are: it captions a picture, and read on its own it
-            is two colour names with nothing to attach them to. Every bound it describes is
+            is two color names with nothing to attach them to. Every bound it describes is
             already in a labeled box above, spoken. */}
         <p className="ramp-key" aria-hidden="true">
           <span>

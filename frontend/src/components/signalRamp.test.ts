@@ -177,7 +177,7 @@ describe("the strip drawn under a signal's bounds", () => {
 });
 
 // A direct ramp pays its whole weight from the far bound ONWARD, so the picture has a flat
-// top. Running one gradient edge to edge drew that flat top as a colour still deepening, and
+// top. Running one gradient edge to edge drew that flat top as a color still deepening, and
 // the section key underneath asserts the opposite in words ("deepest where it pays in full").
 describe("where the fill reaches full strength", () => {
   it("saturates at the far bound on a direct signal, not at the end of the track", () => {
@@ -194,7 +194,7 @@ describe("where the fill reaches full strength", () => {
 
   it("places the gradient stop inside the fill, so the flat top is drawn flat", () => {
     // The fill box spans 10% -> 100% of the track and saturates at 50%, which is (50-10)/90
-    // = 44.44% of the way into the box. Everything past that stop holds full colour, which
+    // = 44.44% of the way into the box. Everything past that stop holds full color, which
     // is what "pays in full and keeps paying" looks like.
     expect(rampFill(rampStrip("unwatched", 365, 1825)!)).toBe(
       "linear-gradient(to right, color-mix(in srgb, var(--condemn) 6%, transparent), var(--condemn) 44.44%)",
@@ -209,7 +209,7 @@ describe("where the fill reaches full strength", () => {
     );
   });
 
-  it("puts full colour at the far bound wherever the operator moves it", () => {
+  it("puts full color at the far bound wherever the operator moves it", () => {
     // The bound is what decides the stop, so a shorter ramp saturates sooner. 365 -> 730 on
     // the same 3650 track is 20% of the track and (20-10)/90 = 11.11% into the fill.
     expect(rampStrip("unwatched", 365, 730)!.deepAt).toBe(20);

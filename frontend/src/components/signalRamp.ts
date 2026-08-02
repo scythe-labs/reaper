@@ -353,9 +353,9 @@ export function rampStrip(
  *
  *  A direct ramp pays its whole weight from `saturate_at` onward, so the picture has to go
  *  flat-full there and stay flat to the end of the track. Running one gradient edge to edge
- *  drew that flat top as a colour still deepening: on the shipped movie dormancy (365 ->
+ *  drew that flat top as a color still deepening: on the shipped movie dormancy (365 ->
  *  1825, track 3650) full red landed at ten years, and five years, where the signal already
- *  pays all 70, sat at under half strength. A CSS gradient holds its last stop's colour to
+ *  pays all 70, sat at under half strength. A CSS gradient holds its last stop's color to
  *  the end of the box, so placing that stop at `deepAt` is the whole fix. */
 export function rampFill(strip: RampStrip): string {
   const faint = "color-mix(in srgb, var(--condemn) 6%, transparent)";
