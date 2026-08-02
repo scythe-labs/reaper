@@ -24,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, assert_never, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -1792,6 +1792,8 @@ async def probe_policy(payload: PolicyProbeIn) -> PolicyProbeOut:
                 )
             except UnprobableSignalError as exc:
                 raise HTTPException(422, "Reaper can't try values against that rule.") from exc
+        case _ as unreachable:
+            assert_never(unreachable)
     return PolicyProbeOut(points=answer.points, detail=answer.detail)
 
 

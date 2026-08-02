@@ -18,13 +18,20 @@ is far cheaper to type now than to retrofit onto a wire format that shipped with
 
 A dict of kind-to-callable was written here and removed: the kinds take different arguments,
 so nothing could dispatch through it, and a registry nothing reads is scaffolding that
-cannot fire (rule 38/117). ``match`` on the discriminator gives the same extension point and
-lets mypy check the arms are exhaustive.
+cannot fire (rule 38/117). ``match`` on the discriminator gives the same extension point, and
+the route's ``assert_never`` arm is what makes mypy check the arms are exhaustive: a bare
+``match`` does not, and the forgotten arm would have reached the operator as a 500 off an
+unbound name rather than as a refusal.
 
 Only ``signal`` exists today, because a probe ships with the surface that asks it.
 
-**This is a preview of the RULE, not of any item.** Every fact except the one under the
-probe is ``Unknown``, so nothing else can move the answer, and the reach check that guards
+**This is a preview of the RULE, not of any item.** Every fact a signal reads is ``Unknown``
+except the one under the probe, so nothing else can move the answer. The fields only the
+custom-rule vocabulary reads are left at ``Facts``' own default, which is ``Absent`` -- no
+signal reads them, and a keep probe would set its own field ``Known`` before asking. Whoever
+adds that arm sets ``days_since_added`` the way ``history_reach_days`` is set below, or a
+lifetime shortfall hands back the full discount at every value and teaches nothing about the
+ramp. The reach check that guards
 watcher counts is satisfied rather than exercised: a mirror too short for the window
 withholds ``FEW_WATCHERS`` entirely (rule 140), which would report zero at every value and
 teach the operator nothing about the shape of the rule they are setting. That shortfall is
@@ -66,7 +73,8 @@ _REACH_DAYS = 36_500.0
 
 
 def _bare_facts(field: str, value: float) -> Facts:
-    """Every fact Unknown but one, so only the probed value can move the answer."""
+    """Every fact a signal reads is Unknown but one, so only the probed value can move the
+    answer. The rest keep ``Facts``' default; the module docstring says what that costs."""
     observations: dict[str, object] = {
         "title": "preview",
         "days_observed_unwatched": _NOTHING,
@@ -92,8 +100,10 @@ class ProbeResult:
 
     ``points`` is what the rule moves the score by in its own direction -- pressure for a
     signal, and a discount for a keep rule when one is added -- so the editor renders any
-    kind the same way. ``detail`` is the engine's own words, which is what keeps the
-    editor's sentence and the panel's row saying the same thing about the same rule.
+    kind the same way. ``detail`` is the engine's own words for the answer. Nothing renders it
+    today: ``signalRamp.ts`` words both the editor's sentence and the panel's row, so that is
+    where the two are held in step, and a second wording arriving over the wire would be a
+    third copy rather than the thing that reconciles them.
     """
 
     points: float

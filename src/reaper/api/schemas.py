@@ -594,7 +594,9 @@ class SignalProbeIn(SignalSettingIn):
     numbers."""
 
     window_days: int = Field(default=365, ge=1, le=36_500)
-    """The policy's popularity window, which phrases the watcher signal's answer."""
+    """The policy's popularity window. It reaches only ``detail``'s wording, which nothing
+    renders yet, so the editor does not send it and the default stands in. A client that
+    starts rendering ``detail`` sends its policy's own window with it."""
 
 
 #: What ``POST /api/policy/probe`` accepts.
@@ -621,7 +623,8 @@ class PolicyProbeOut(BaseModel):
     signal, and a discount for a keep rule when one is added."""
 
     detail: str
-    """The engine's own words for it, the same sentence the panel's row would carry."""
+    """The engine's own words for it. Carried for a client that wants the engine's phrasing;
+    the editor words its own sentence, so nothing reads this today."""
 
 
 class ConditionIn(BaseModel):
