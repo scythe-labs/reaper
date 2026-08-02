@@ -114,6 +114,31 @@ class TestPort:
         assert excinfo.value.code == 2
 
 
+class TestLauncherConf:
+    def test_values_reach_the_environment_and_real_env_wins(self, tmp_path: Path) -> None:
+        (tmp_path / "launcher.conf").write_text(
+            "# a comment\nREAPER_PORT=8421\nREAPER_HOST = 127.0.0.1\nPATH=/evil\nnot a line\n",
+            encoding="utf-8",
+        )
+        env = {"REAPER_HOST": "10.0.0.5"}
+        launcher.load_launcher_conf(env, tmp_path)
+        assert env["REAPER_PORT"] == "8421"
+        assert env["REAPER_HOST"] == "10.0.0.5"  # the real environment outranks the file
+        assert "PATH" not in env  # only REAPER_ keys are honored
+
+    def test_a_missing_file_is_written_as_a_commented_template(self, tmp_path: Path) -> None:
+        """The operator edits rather than guesses: first run leaves the file with every
+        offered key present but commented, so it changes nothing until touched."""
+        env: dict[str, str] = {}
+        conf = launcher.load_launcher_conf(env, tmp_path / "data")
+        assert conf.exists()
+        assert env == {}
+        assert "REAPER_PORT" in conf.read_text(encoding="utf-8")
+        env2: dict[str, str] = {}
+        launcher.load_launcher_conf(env2, tmp_path / "data")
+        assert env2 == {}  # the shipped template is all comments
+
+
 class TestLoopbackGuard:
     def test_a_listening_port_reads_as_occupied(self) -> None:
         with socket.socket() as held:

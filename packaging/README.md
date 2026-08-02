@@ -44,6 +44,27 @@ uv run pyinstaller packaging/pyinstaller/reaper.spec --noconfirm \
 
 The snap builds with `snapcraft` on a Linux host (CI uses LXD on the runner).
 
+## Running the desktop builds
+
+**Configuration.** A double-clicked app receives no environment variables, so the
+launcher reads `launcher.conf` from the data folder (written as a commented template on
+first run): `~/Library/Application Support/Reaper/` on macOS, `%LOCALAPPDATA%\Reaper` on
+Windows. `REAPER_PORT`, `REAPER_HOST`, `REAPER_LAUNCH_BROWSER`, and `REAPER_UPDATE_CHECK`
+belong there; real environment variables still win.
+
+**Reaching it from other machines.** The server binds all interfaces (the same
+`0.0.0.0` default as the container); `127.0.0.1` is only the URL the local browser
+opens. Other machines connect to `http://<host-ip>:8420`. First launch triggers the OS
+firewall prompt (macOS "accept incoming connections", Windows Defender); until code
+signing lands, macOS may re-ask on each update because the binary's identity changes.
+The snap behaves the same: it binds all interfaces and carries `network-bind`.
+
+**Starting at login.** The desktop builds register nothing: they run while open and
+stop when quit. macOS: add Reaper.app under System Settings, General, Login Items.
+Windows: put a shortcut in the Startup folder (`shell:startup`). The snap is the one
+packaged install that IS a service: snapd starts it at boot and `snap stop/start
+scythe-labs-reaper` controls it.
+
 ## One-time setup that needs a human
 
 **Snap Store.** The registered name is `scythe-labs-reaper` (the bare name was not

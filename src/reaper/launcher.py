@@ -112,6 +112,48 @@ def _resolve_data_dir(env: MutableMapping[str, str], *, frozen: bool) -> None:
         env["REAPER_DATA_DIR"] = str(default_data_dir(sys.platform, env))
 
 
+#: What the template written on first run offers. Only REAPER_ keys are honored on
+#: read, so the file cannot reach PATH or anything else the process inherits.
+_CONF_TEMPLATE = """\
+# Reaper reads this file when it starts. One setting per line; # starts a comment.
+# Remove the leading # to use a line. Real environment variables still win.
+#
+# REAPER_PORT=8421
+# REAPER_HOST=0.0.0.0
+# REAPER_LAUNCH_BROWSER=false
+# REAPER_UPDATE_CHECK=false
+"""
+
+
+def load_launcher_conf(env: MutableMapping[str, str], data_dir: Path) -> Path:
+    """Read ``launcher.conf`` from the data folder into the environment.
+
+    A double-clicked app has no way to receive an environment variable, so this file
+    is how a packaged install is configured at all. Precedence matches the container:
+    a real environment value wins over the file (``setdefault``), and the file wins
+    over the defaults. Only ``REAPER_``-prefixed keys are honored. A missing file is
+    written as a commented template, so the operator edits rather than guesses; a
+    file that cannot be read or written is skipped, never fatal.
+    """
+    conf = data_dir / "launcher.conf"
+    try:
+        if not conf.exists():
+            data_dir.mkdir(parents=True, exist_ok=True)
+            conf.write_text(_CONF_TEMPLATE, encoding="utf-8")
+            return conf
+        for line in conf.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if key.startswith("REAPER_") and value.strip():
+                env.setdefault(key, value.strip())
+    except OSError:
+        pass
+    return conf
+
+
 def _migrate(root: Path) -> None:
     """``alembic upgrade head``, addressed into this install's copy of ``alembic/``.
 
@@ -215,6 +257,9 @@ def main() -> None:
     frozen = _bundle_root() is not None
     export_buildinfo(os.environ, _buildinfo_path())
     _resolve_data_dir(os.environ, frozen=frozen)
+    conf: Path | None = None
+    if frozen:
+        conf = load_launcher_conf(os.environ, Path(os.environ["REAPER_DATA_DIR"]))
 
     # Before anything touches the disk: a plain `pip install reaper` puts this script
     # on PATH with no migrations beside it (site-packages has no alembic/), and
@@ -240,11 +285,15 @@ def main() -> None:
     host = os.environ.get("REAPER_HOST", "").strip() or "0.0.0.0"
     port = _port(os.environ)
     if _loopback_occupied(port):
+        move = (
+            f"add a line like REAPER_PORT=8421 to {conf}"
+            if conf is not None
+            else "set REAPER_PORT to a free one"
+        )
         _say(
             f"Reaper didn't start: port {port} is already in use, so this copy could "
             f"not be reached at http://127.0.0.1:{port}. Quit whatever is using the "
-            "port (another Reaper?) or set REAPER_PORT to a free one, then open "
-            "Reaper again.",
+            f"port (another Reaper?) or {move}, then open Reaper again.",
             frozen=frozen,
         )
         raise SystemExit(2)
