@@ -467,12 +467,10 @@ class TestYearInSearch:
     def test_a_year_alone_asks_for_that_year_and_still_reads_as_text(
         self, client: TestClient
     ) -> None:
-        # Both readings again, and this fixture is built to tell them apart: Echo came out in
-        # 2049 and only the year arm finds it; Delta has 2049 in its NAME and was released in
-        # 2017, so only the text arm does. A bare year that answered with just one of them is
-        # the half-answer this returns both halves to avoid -- it read as a broken search when
-        # it matched titles only, and would lose a title named after a year if it matched the
-        # column only.
+        # Both readings again: Echo came out in 2049 and only the year arm finds it; Delta has
+        # 2049 in its NAME and was released in 2017, so only the text arm does. Answering with
+        # one half read as a broken search when it matched titles only, and would lose a title
+        # named after a year if it matched the column only.
         assert self._found(client, "2049") == {"Example Delta 2049", "Example Echo"}
 
     def test_a_year_alone_narrows_to_that_year(self, client: TestClient) -> None:

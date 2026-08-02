@@ -171,7 +171,7 @@ async def link(
     writing the server row at the end. **The multi-minute wait for the human to sign in
     happens with no transaction open at all.**
 
-    That is not tidiness. SQLite gives a writer the database, and an ``AsyncSession`` held
+    SQLite gives a writer the database, and an ``AsyncSession`` held
     open across ``wait_for_pin`` keeps a connection (and its lock) for up to five minutes
     -- long enough to block every other writer and, on a busy instance, to stall the app
     while someone fishes out their phone. Hold the lock for milliseconds, not minutes.

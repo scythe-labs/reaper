@@ -106,10 +106,8 @@ async def _stored_run(factory: async_sessionmaker[AsyncSession], run_id: int) ->
     """The run row as the DATABASE has it, read through a session nothing in the test wrote.
 
     The point of the second session is its empty identity map: this ``get`` issues a SELECT,
-    so a terminal state the executor only ever set in memory reads as the value on disk
-    instead of as the value it meant to write. Detached on return, with every column already
-    loaded (rule 118: an assertion that cannot fail for the reason it names is worse than
-    none).
+    so a terminal state the executor only ever set in memory reads as the value on disk.
+    Detached on return, with every column already loaded (rule 118).
     """
     async with factory() as fresh:
         stored = await fresh.get(ReapRun, run_id)

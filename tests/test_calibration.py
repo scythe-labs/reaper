@@ -240,13 +240,10 @@ class TestTheSampleFloor:
 
 
 class TestTheBacktestUsesTheDerivedPrior:
-    """This test exists because the wiring silently did NOT happen the first time.
-
-    The `prior` argument was accepted by `run()` and then never passed into the result.
-    mypy was happy -- an unused parameter is perfectly legal -- and the backtest quietly
-    kept using the hardcoded fallback while reporting a lift number that looked fine.
-
-    An unused argument is invisible to the type checker. It needs a test."""
+    """The wiring silently did NOT happen the first time: `run()` accepted the `prior`
+    argument and never passed it into the result. mypy was happy -- an unused parameter
+    is perfectly legal -- and the backtest quietly kept using the hardcoded fallback
+    while reporting a lift number that looked fine. An unused argument needs a test."""
 
     def test_a_derived_prior_reaches_the_result(self) -> None:
         prior = _prior(rate=0.40)

@@ -1189,8 +1189,8 @@ def inspect(
     # world-fact at all. ``gates.ServerPopularityGate.evaluate`` fails closed when the mirror
     # is shorter than the window it is being asked about: a count over three months cannot
     # answer "who watched this in the last year", so the gate blocks. The reach is a property
-    # of the operator's DATA rather than of any one title, so it blocks library-wide, and it
-    # goes on blocking for as long as the shortfall lasts.
+    # of the operator's DATA rather than of any one title, so it blocks library-wide for as
+    # long as the shortfall lasts.
     #
     # Most blocks clear on the next scan (an unreachable Seerr, an unread session list, a
     # missing id), which is why no surface was ever obliged to name a remedy for one. The

@@ -450,18 +450,15 @@ class TestGuardResult:
 
     def test_a_conflict_the_mirror_could_not_settle_is_flagged_as_refused(self) -> None:
         """The third shape. Season 1 was watched before Tautulli was installed, so its count
-        is a lower bound rather than an answer and no comparison against it can be made.
+        is a lower bound and no comparison against it can be made. That is ``Unknown``, not
+        a decision (rule 93), so it joins the unreadable arm rather than the deliberate "you
+        decide" one -- the reading the mid-binge hold takes when the reach cannot establish
+        who is part-way through. Reading only ``kept_watchers is None`` would have grouped
+        it with the settled shape and claimed, on the card, that a comparison had been made.
 
-        That is ``Unknown``, not a decision (rule 93), so it belongs with the unreadable arm
-        and not with the deliberate "you decide" one: Reaper made no comparison here, only a
-        mirror too short to make one -- the same reading the mid-binge hold takes when the
-        reach cannot establish who is part-way through. Reading only ``kept_watchers is
-        None`` would have grouped it with the settled shape and told the operator, on the
-        card, that a comparison had been made.
-
-        The flag no longer changes the verdict: the item still goes to a human, and the human
-        may still say remove it. It changes what they are told, which is the whole reason the
-        two Unknown shapes are kept apart from the settled one."""
+        The flag no longer changes the verdict -- the item still goes to a human, who may
+        still say remove it -- only what they are told, which is why the two Unknown shapes
+        are kept apart from the settled one."""
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],

@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""GuardedTransport and the Tautulli allow-list.
-
-These are the tests that matter most in the whole suite. Everything else is
-correctness; this is the thing standing between a bug and someone's media library.
-"""
+"""GuardedTransport and the Tautulli allow-list: the tests that matter most in the
+suite, the thing standing between a bug and someone's media library."""
 
 from __future__ import annotations
 

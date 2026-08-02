@@ -162,16 +162,13 @@ class TestSavingCreatesTheBackingPolicyRow:
     ) -> None:
         """`Profile.enabled` is written False at creation, and that is ALL this pins (#271).
 
-        It used to claim this was what stopped a starter template deleting a library, which
-        is not true and is the more dangerous half: nothing in `src/` reads the column, so a
-        profile written `enabled=True` would scan and reap identically. A test asserting a
-        safeguard nobody implemented is rule 7/24's failure wearing a green tick.
-
-        What actually keeps a fresh install from acting is the master switch shipping off
-        (`test_app.test_destructive_actions_are_off_by_default`,
+        It used to claim this was what stopped a starter template deleting a library. Nothing
+        in `src/` reads the column, so a profile written `enabled=True` would scan and reap
+        identically, and a test asserting a safeguard nobody implemented is rule 7/24's
+        failure. What actually keeps a fresh install from acting is the master switch shipping
+        off (`test_app.test_destructive_actions_are_off_by_default`,
         `test_settings_api.TestSafety.test_it_starts_read_only`) and the content-bound typed
-        phrase on `api.runs.execute_run`. Those are the tests to look at if this one's
-        subject ever seems to matter.
+        phrase on `api.runs.execute_run`.
 
         Kept rather than deleted because the attribute cannot go: `db.models.Profile.enabled`
         records why `alembic check` blocks that.

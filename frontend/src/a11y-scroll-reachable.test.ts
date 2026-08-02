@@ -14,8 +14,8 @@
 // **This is a test rather than a rule because a rule cannot see a new one arrive.** The
 // population is discovered from the stylesheet, not from a list somebody remembers to extend,
 // so adding an `overflow-y: auto` anywhere fails this file until the author says which of the
-// two states the new box is in. That is the whole point: the decision is cheap while the
-// markup is in front of you and expensive to reconstruct later.
+// two states the new box is in. The decision is cheap while the markup is in front of you
+// and expensive to reconstruct later.
 //
 // **What it can and cannot do** (rule 118 -- a check that cannot discriminate must not read as
 // a proof):

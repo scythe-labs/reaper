@@ -2505,7 +2505,7 @@ class Executor:
         # the ``expected <= 0`` guard in ``_trash_delta_is_ours``.
         #
         # Pruning a show's LAST season may well drop the show, and that purge is declined
-        # too. That is the cost, and it is the right way round: a lingering "unavailable"
+        # too. That is the cost: a lingering "unavailable"
         # entry is cosmetic, and purging someone else's trashed items is not.
         series_path = str(series.get("path") or "")
         deleted = set(file_ids)

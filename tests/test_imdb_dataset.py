@@ -1,15 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The IMDb ratings dataset.
 
-The important property here is the opposite of everywhere else in Reaper.
-
-Every other unknown protects an item. A missing *rating* does not: the rule is
-"keep this if IMDb >= 7.5", so an absent rating means the protection cannot fire
-and a well-rated film becomes deletable. An empty or half-loaded table would
-therefore strip protection from the entire library -- silently, and in the one
-direction that destroys data.
-
-So these tests are mostly about refusing to answer.
+Every other unknown in Reaper protects an item. A missing *rating* does not: the rule
+is "keep this if IMDb >= 7.5", so an absent rating means the protection cannot fire
+and a well-rated film becomes deletable. An empty or half-loaded table would therefore
+strip protection from the entire library -- silently, and in the one direction that
+destroys data. So these tests are mostly about refusing to answer.
 """
 
 from __future__ import annotations
@@ -230,11 +226,9 @@ class TestLookup:
     async def test_the_vote_count_is_what_makes_a_floor_meaningful(
         self, engine: AsyncEngine, archive: Path
     ) -> None:
-        """8.9/10 from 12 votes is noise. Without the vote count, a rating floor
-        would protect it, and the library would fill with well-rated junk.
-
-        Every library holds a handful of these: obscure titles carrying a high score
-        on a tiny number of votes. A bare rating floor would preserve every one."""
+        """8.9/10 from 12 votes is noise: an obscure title carrying a high score on a
+        tiny number of votes, and every library holds a handful. Without the vote count,
+        a rating floor would protect every one and fill the library with well-rated junk."""
         await load(engine, archive)
         found = await ImdbRatings(engine).lookup(["tt9999999"])
 

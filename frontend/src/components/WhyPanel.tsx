@@ -406,23 +406,17 @@ function conflictNote(defersToOwner: boolean | null | undefined): string {
   return "Reaper couldn't settle this one on its own, so it left the call to you. Spare it to keep it, or Reap it to remove it.";
 }
 
-/** Why a hand reap is still held -- and it is now a SHORT list, which is the whole reason
- *  the branch order below matters. Exactly three things refuse a reap: a FIRED structural
- *  stop (playing right now, or a file no app manages), and a row Reaper cannot identify (a
- *  bad Plex match, or a stored explanation it could not read). A protection that merely could
- *  not be CHECKED refuses nothing (`engine/verdict.py`).
+/** Why a hand reap is still held. Exactly three things refuse one: a FIRED structural stop
+ *  (playing right now, or a file no app manages), a bad Plex match, and a stored explanation
+ *  Reaper could not read. A protection that merely could not be CHECKED refuses nothing
+ *  (`engine/verdict.py`).
  *
- *  **The blocked-protections branch used to come first and was wrong every time it fired.**
- *  An item Plex could not match has no rating key, so every Plex-dependent gate blocks --
- *  `protections_unknown` is never empty for exactly the rows the match is holding. Testing it
- *  first therefore shadowed the real cause in 100% of cases, and sent the operator after
- *  their watch-history depth when what they needed was a re-match. It also contradicted the
- *  card chip beside it, which gets this right (`api.routes._chip` tests the match first).
- *
- *  So the match is tested BEFORE the blocked list, and the blocked branch is gone: it can no
- *  longer be the cause of a hold, so there is no shape left for it to describe truthfully.
- *  The order here is load-bearing -- these branches are mutually reachable and
- *  the first true one wins. */
+ *  The match is tested before the blocked-protections list, and the blocked branch is gone.
+ *  It used to come first and was wrong every time it fired: an unmatched item has no rating
+ *  key, so every Plex-dependent gate blocks, and the branch shadowed the real cause, sending
+ *  the operator after watch-history depth when they needed a re-match. The card chip beside
+ *  it tests the match first (`api.routes._chip`). These branches are mutually reachable and
+ *  the first true one wins, so the order is load-bearing. */
 /** The FIRED protection a hand reap cannot overrule, if one fired: `verdict.STRUCTURAL_GATES`,
  *  which is something playing right now and the retired `unmanaged`. Neither is a judgment about
  *  whether the file is wanted, which is the whole test -- deleting mid-stream breaks a session

@@ -1700,13 +1700,11 @@ def _apply_first_flag(
     long ago, then *rescued* (watched, spared, or re-judged as protect) and later condemned
     again a full dormancy period afterwards, must serve a FRESH grace window. Its old
     ``first_flagged_at`` is far in the past, so grace_report would drop it straight into
-    ``ready`` with no countdown and no Leaving Soon warning -- so the household would get no
-    notice at all on the second condemnation. (The window holds nothing back either way, see
-    ``services.grace``; what is lost is the warning.) We detect the return by the gap since
-    it was last seen
-    condemned: when that gap exceeds the grace window (so it genuinely left, not just
-    missed a snapshot to an outage), the clock restarts. ``last_seen_condemned_at`` exists
-    for exactly this reset.
+    ``ready`` with no countdown and no Leaving Soon warning. (The window holds nothing back
+    either way, see ``services.grace``; what is lost is the warning.) We detect the return
+    by the gap since it was last seen condemned: when that gap exceeds the grace window (so
+    it genuinely left, not just missed a snapshot to an outage), the clock restarts.
+    ``last_seen_condemned_at`` exists for exactly this reset.
 
     This is THE decision, applied per key by :func:`record_first_flagged_bulk` (the only
     write path to the grace clock). A key with no row yet is RETURNED as a new row rather
@@ -2479,9 +2477,8 @@ async def protection_sync_degradations(
     sync, so a stale or never-confirmed whitelist degrades too. Each case resolves toward
     keeping files:
 
-    * **No membership to fall back on** (any HARD list). A first scan, or a newly-added
-      keep-list or curated list that has never synced once: the gate reads an empty list and
-      fails to fire, so an executable snapshot would reap titles the list was meant to save.
+    * **No membership to fall back on** (any HARD list): a first scan, or a newly-added
+      keep-list or curated list that has never synced once.
     * **Stored membership older than ``WHITELIST_STALE_AFTER``** (whitelist only). Every hour
       of staleness is an hour a newly keep-tagged title is unprotected, so past the bound the
       snapshot degrades until a sync succeeds. A curated external list churns slowly and keeps
