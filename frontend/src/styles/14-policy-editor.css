@@ -236,13 +236,17 @@
    Drawing it is what makes the DIRECTION legible, which is a thing eyes do and prose does
    badly -- a rating charges leftward and dormancy rightward. */
 .ramp-strip {
-  margin-top: var(--space-lg);
+  margin-top: 0;
 }
+/* The track is the "left alone" half of the picture, so it has to differ from whatever it
+   sits on. It sat on the page and read as `--surface-2`; inside the preview panel that IS
+   `--surface-2`, and the unfilled stretch vanished -- the one region meaning "Reaper does
+   not charge for this" became invisible. The page ground reads as the inset here. */
 .ramp-strip-track {
   position: relative;
   height: 12px;
   border-radius: 6px;
-  background: var(--surface-2);
+  background: var(--bg);
   overflow: hidden;
 }
 .ramp-strip-fill {
@@ -295,8 +299,10 @@
 .ramp-key .earns {
   background: var(--condemn);
 }
+/* Outside the panel, on the page ground, so the swatch matches the track it names and needs
+   its outline to be visible at all against the same color. */
 .ramp-key .alone {
-  background: var(--surface-2);
+  background: var(--bg);
   border: 1px solid var(--border-strong);
 }
 
@@ -307,15 +313,28 @@
   margin: var(--space-md) 0 0;
 }
 
-/* What a title would earn under the range above. An inset well rather than more help text:
-   it is the one line on the card that is an ANSWER rather than a setting, and the quiet
-   surface is what tells them apart at a glance. The same fill the explanation panel gives a
-   signal row's own reasoning, so the two surfaces read as one language. */
-.ramp-said {
-  margin: var(--space-lg) 0 0;
-  padding: var(--space-md) var(--space-lg);
+/* Everything the setting DOES, in one panel: the strip that draws the range and the sentence
+   that says what a title earns under it. Nothing inside is a control, and that is the whole
+   reason it is grouped and tinted -- the card reads settings first and consequences second,
+   rather than as six alternating rows where a picture, a link and a number all look like
+   things to press.
+
+   The same fill the explanation panel gives a signal row's own reasoning, so a preview looks
+   the same on both screens. */
+.ramp-shows {
+  margin-top: var(--space-lg);
+  padding: var(--space-lg);
   background: var(--surface-2);
   border-radius: var(--radius-sm);
+}
+.ramp-shows > :first-child {
+  margin-top: 0;
+}
+
+/* Inside the panel the sentence keeps its bold numbers and loses its own fill: a gray box on
+   a gray box only draws a border nobody asked for. */
+.ramp-said {
+  margin: var(--space-lg) 0 0;
   font-size: var(--text-md);
   color: var(--text);
 }

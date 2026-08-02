@@ -875,30 +875,6 @@ function SignalRamp({
           </>
         )}
       </div>
-      {/* The range, drawn rather than restated. This REPLACES the sentence that used to sit
-          here: it said the same thing the picture says, and two grammars for one fact is the
-          restatement rule 144 is about. What the picture adds is the direction -- a rating
-          charges leftward and dormancy rightward, and no shared sentence carries that without
-          the operator holding both rules in their head. */}
-      {strip && (
-        <div className="ramp-strip" aria-hidden="true">
-          <div className="ramp-strip-track">
-            <div
-              className="ramp-strip-fill"
-              style={{
-                left: `${strip.fillFrom}%`,
-                width: `${strip.fillTo - strip.fillFrom}%`,
-                background: `linear-gradient(to ${strip.deepEnd === "left" ? "right" : "left"}, var(--condemn), color-mix(in srgb, var(--condemn) 6%, transparent))`,
-              }}
-            />
-            <div className="ramp-strip-bar" style={{ left: `${strip.bar}%` }} />
-          </div>
-          <div className="ramp-strip-scale">
-            <span>{strip.scaleFrom}</span>
-            <span>{strip.scaleTo}</span>
-          </div>
-        </div>
-      )}
       {/* The way back. Making these editable made them losable: 1825 is the measured point
           the rewatch curve flattens, not a number anyone remembers, and the presets restore
           weights only. Shown only once the value has actually moved, so it is an undo rather
@@ -923,7 +899,40 @@ function SignalRamp({
             </button>
           </p>
         )}
-      <SignalProbe signal={signal} reachDays={reachDays} />
+      {/* Everything below this line is what the setting DOES, and nothing in it is a
+          control: the strip draws the range, the sentence says what a title earns under it.
+          One lighter panel around the pair, so the card reads as settings first and
+          consequences second rather than as six alternating rows.
+
+          The example keeps its bold numbers but loses its own fill -- inside the panel a
+          second gray box on a gray box just draws a border nobody needs. */}
+      <div className="ramp-shows">
+        {/* The range, drawn rather than restated. This REPLACES the sentence that used to sit
+            here: it said the same thing the picture says, and two grammars for one fact is
+            the restatement rule 144 is about. What the picture adds is the direction -- a
+            rating charges leftward and dormancy rightward, and no shared sentence carries
+            that without the operator holding both rules in their head. */}
+        {strip && (
+          <div className="ramp-strip" aria-hidden="true">
+            <div className="ramp-strip-track">
+              <div
+                className="ramp-strip-fill"
+                style={{
+                  left: `${strip.fillFrom}%`,
+                  width: `${strip.fillTo - strip.fillFrom}%`,
+                  background: `linear-gradient(to ${strip.deepEnd === "left" ? "right" : "left"}, var(--condemn), color-mix(in srgb, var(--condemn) 6%, transparent))`,
+                }}
+              />
+              <div className="ramp-strip-bar" style={{ left: `${strip.bar}%` }} />
+            </div>
+            <div className="ramp-strip-scale">
+              <span>{strip.scaleFrom}</span>
+              <span>{strip.scaleTo}</span>
+            </div>
+          </div>
+        )}
+        <SignalProbe signal={signal} reachDays={reachDays} />
+      </div>
     </>
   );
 }
