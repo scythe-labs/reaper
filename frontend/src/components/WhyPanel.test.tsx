@@ -1219,6 +1219,100 @@ describe("the why panel's accessible name", () => {
   });
 });
 
+// Only one thing can lower coverage -- a reason Reaper could not read -- and those get their own
+// group with their own note. So at full coverage the old clause announced the absence of a group
+// that was already absent, which is what made an owner ask "100% of WHAT evidence" (#410). Neither
+// branch had a test, and every fixture in the suite sits at 10,000, so the whole clause was
+// unexercised in both directions.
+describe("the coverage clause", () => {
+  it("says nothing when every reason was readable", () => {
+    show(detail(WORKED_ROWS, { coverage_bp: 10_000 }));
+
+    expect(screen.getByText(/Reasons to believe nobody will watch it again/)).toBeVisible();
+    expect(screen.queryByText(/of what it scores on/)).toBeNull();
+    expect(screen.queryByText(/100%/)).toBeNull();
+  });
+
+  it("says how much it could read when something was missed", () => {
+    // 76%, not a round number: a fixture equal to the full-coverage constant could not tell
+    // a working branch from a missing one (rule 141).
+    show(detail(WORKED_ROWS, { coverage_bp: 7_550 }));
+
+    expect(screen.getByText(/Reaper could read 76% of what it scores on/)).toBeVisible();
+  });
+});
+
+// A row states the line it was measured against, from the ramp the SCAN froze onto it. The
+// panel must never fill this in from the live policy: the item was scored under the policy as
+// it stood at scan time, and rule 113 refuses a reap across exactly that gap.
+describe("what a signal row was measured against", () => {
+  const RATED = signal({
+    id: "low_rating",
+    contribution: 0,
+    weight: 10,
+    detail: "IMDb 6.4",
+    state: "argues_keep",
+    floor: 0,
+    saturate_at: 60,
+  });
+
+  it("states the ramp and what this row did against it", async () => {
+    const user = userEvent.setup();
+    show(detail([RATED]));
+
+    const row = screen.getByRole("button", { name: /IMDb 6.4/ });
+    expect(row).toHaveAttribute("aria-expanded", "false");
+    await user.click(row);
+
+    expect(
+      screen.getByText(
+        "Pays nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0. " + "This one added 0.",
+      ),
+    ).toBeVisible();
+    expect(row).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("closes again on a second press, which is the whole interaction on a phone", async () => {
+    const user = userEvent.setup();
+    show(detail([RATED]));
+
+    const row = screen.getByRole("button", { name: /IMDb 6.4/ });
+    await user.click(row);
+    await user.click(row);
+
+    expect(row).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("says nothing for a row whose line the scan never recorded", () => {
+    // A row frozen before the ramp shipped, and a yes/no rule of your own, both arrive as
+    // null and both mean the same thing: there is no line to state. Inventing one would put
+    // a ramp on a rule that provably has none.
+    show(detail([signal({ id: "low_rating", detail: "IMDb 6.4", state: "argues_keep" })]));
+
+    expect(screen.queryByRole("button", { name: /IMDb 6.4/ })).toBeNull();
+    expect(screen.queryByText(/Pays nothing/)).toBeNull();
+  });
+
+  it("says nothing for a reason it could not read", () => {
+    // There is a line, but nothing was compared to it. "This one added 0" would describe
+    // arithmetic that never ran, on the one row state that must stay distinct from a zero.
+    show(
+      detail([
+        signal({
+          id: "low_rating",
+          detail: "could not read the IMDb rating",
+          evaluated: false,
+          state: "unreadable",
+          floor: 0,
+          saturate_at: 60,
+        }),
+      ]),
+    );
+
+    expect(screen.queryByRole("button", { name: /could not read/ })).toBeNull();
+  });
+});
+
 // Whether the synopsis needs a "more" is a question about how wide the panel is, and it used to
 // be answered by counting characters -- right at the width that number was picked for, and wrong
 // everywhere else. On a phone two lines hold about 120 characters against a test asking for 150,

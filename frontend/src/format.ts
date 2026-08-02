@@ -56,6 +56,23 @@ export function coverage(bp: number): string {
   return `${Math.round(bp / 100)}%`;
 }
 
+/** "1095 days" said the way a person would: "3 years".
+ *
+ *  Lives here rather than in `PolicyEditor`, which is where it started, because
+ *  `signalRamp` needs it too and the editor imports `signalRamp`. Re-exported there so the
+ *  existing callers keep their import. */
+export function humanDays(days: number): string {
+  if (days >= 365 && days % 365 === 0) {
+    const y = days / 365;
+    return y === 1 ? "1 year" : `${y} years`;
+  }
+  if (days >= 30 && days % 30 === 0) {
+    const m = days / 30;
+    return m === 1 ? "1 month" : `${m} months`;
+  }
+  return `${days} days`;
+}
+
 export function date(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
     year: "numeric",

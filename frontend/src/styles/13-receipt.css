@@ -80,6 +80,48 @@
   color: var(--unknown);
 }
 
+/* A row that can say what it was measured against opens from the row itself, so the row's
+   own boxes sit inside a <button> and have to be spans -- a button may only hold phrasing
+   content, and a <div> in there is invalid markup a browser silently reparents. The classes
+   below are unchanged; these four just restore the box each one used to get for free. */
+.sig-why {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.sig-why:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.sig-track,
+.sig-foot,
+.sig-added {
+  display: block;
+}
+
+/* What the row was measured against, in place rather than floating: inside a full-screen
+   sheet an anchored popover has no room to be pushed back into (rule 138), and a phone is
+   where this is read. --muted clears AA in every theme, the same ink the group notes use. */
+.sig-why-said {
+  margin: 0.35rem 0 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.6rem;
+}
+.sig-why-said[hidden] {
+  display: none;
+}
+
 /* The whole track is the whole score. Each row's footprint is its slice of it. */
 .sig-track {
   height: 6px;

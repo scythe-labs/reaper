@@ -45,6 +45,8 @@ import { useOverrideMutations } from "../useOverrideMutations";
 import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { reapIsNoop } from "./reviewFate";
+import { rowRampSentence } from "./signalRamp";
+import { useMediaQuery } from "../useMediaQuery";
 import { WhyShell } from "./WhyShell";
 import { Notice } from "./Notice";
 
@@ -695,6 +697,62 @@ type Row = {
   added: number;
 };
 
+/** A signal row that can say what it was measured against, opened from the row itself.
+ *
+ *  **A press is the state that survives; hover only previews.** On a phone there is no
+ *  hover at all, so the press IS the whole interaction and the row behaves as a plain
+ *  expander: tap to open, tap to close. It expands in place rather than floating, which also
+ *  keeps it clear of the edge-clipping rule 138 exists for -- inside a full-screen sheet an
+ *  anchored popover has nowhere to be pushed back to.
+ *
+ *  The hover pair is bound only where a real pointer exists, because a touch tap synthesises
+ *  `mouseenter` BEFORE it sends `click`: bound unconditionally the two handlers fight, on
+ *  exactly the device that can use neither. `useMediaQuery` reporting `false` under jsdom is
+ *  the safe way round here -- press-only is the behavior that works everywhere.
+ *
+ *  **There is deliberately no focus handler**, and there was one for a draft. A press
+ *  focuses the button on every platform, so opening on focus too left `previewing` true
+ *  underneath the press: the second tap unpressed a row that stayed open, and the control
+ *  read as dead. Enter and Space already arrive here as a click, so the keyboard is served
+ *  by the press like everything else, and nothing can strand a row open behind a Tab.
+ *
+ *  Not a `title` tooltip, which a phone never shows and a screen reader never reads out.
+ *  This is the panel an owner reads before approving a deletion. */
+function RampWhy({ sentence, children }: { sentence: string; children: ReactNode }) {
+  const [pressed, setPressed] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const canHover = useMediaQuery(HOVER_QUERY);
+  const id = useId();
+  const open = pressed || previewing;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="sig-why"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setPressed((v) => !v)}
+        {...(canHover
+          ? {
+              onMouseEnter: () => setPreviewing(true),
+              onMouseLeave: () => setPreviewing(false),
+            }
+          : {})}
+      >
+        {children}
+      </button>
+      <p className="sig-why-said" id={id} hidden={!open}>
+        {sentence}
+      </p>
+    </>
+  );
+}
+
+/** Where a pointer can hover at all. Read through `useMediaQuery` like every other query
+ *  this app branches on, so there is one way of asking. */
+const HOVER_QUERY = "(hover: hover) and (pointer: fine)";
+
 /** One row: the points it added, what it was about, and its slice of the whole bar.
  *
  *  The bar is measured against the TOTAL, not against the row's own weight. Filling each
@@ -707,10 +765,23 @@ function SignalRow({ row }: { row: Row }) {
   // A yes/no rule of your own either matched or did not, so it cannot land part-way. Flat
   // chrome, no ramp cap, or the bar would imply a sliding scale that does not exist.
   const flat = custom && (signal.contribution === 0 || signal.contribution === signal.weight);
+  // The line this row was measured against, if the scan recorded one. A row that could not
+  // be read gets none: there is a line, but nothing was compared to it, and a sentence
+  // saying what it "added" would describe arithmetic that never ran.
+  const why =
+    state === "unreadable"
+      ? null
+      : rowRampSentence(
+          signal.id,
+          signal.floor,
+          signal.saturate_at,
+          signal.weight,
+          signal.contribution,
+        );
 
-  return (
-    <li className={`sig-row sig-${state}`}>
-      <div className="sig-head">
+  const body = (
+    <>
+      <span className="sig-head">
         {/* A plus sign is a claim that something was added. A row that added nothing shows
             a plain 0, and one that added less than a whole point says so rather than
             rounding its contribution away to "+0". */}
@@ -739,18 +810,28 @@ function SignalRow({ row }: { row: Row }) {
           {signal.detail}
           {custom && <RuleTag />}
         </span>
-      </div>
-      <div className="sig-track">
-        <div
+      </span>
+      <span className="sig-track">
+        <span
           className={flat ? "sig-foot sig-foot-flat" : "sig-foot"}
           style={{ width: `${row.footprint * 100}%` }}
         >
-          <div className="sig-added" style={{ width: `${row.added * 100}%` }} />
-        </div>
-      </div>
+          <span className="sig-added" style={{ width: `${row.added * 100}%` }} />
+        </span>
+      </span>
+    </>
+  );
+
+  return (
+    <li className={`sig-row sig-${state}`}>
+      {why ? <RampWhy sentence={why}>{body}</RampWhy> : body}
     </li>
   );
 }
+
+/** Coverage in basis points when every weighted reason was readable. Stored as bp because
+ *  the policy body is integers-only (see `format.coverage`), so full is 10,000 and not 1. */
+const FULL_COVERAGE_BP = 10_000;
 
 /** How many rows a group shows before the rest fold away. Six because a stock policy
  *  carries three signals for movies and four for TV: a default install never collapses
@@ -867,9 +948,20 @@ function Signals({ item }: { item: CandidateDetail }) {
   return (
     <section className="block">
       <h3>Why it scored {explanation.score}</h3>
+      {/* The coverage clause is silence at full coverage, and it should always have been.
+          The ONLY thing that can lower this number is a reason Reaper could not read
+          (`SignalState.UNREADABLE` is the one state that costs coverage), and those get
+          their own "Couldn't check" group below with their own note. So at 100% the
+          sentence announced the absence of a group that is already absent -- a number with
+          nothing behind it, which is what made an owner ask "100% of WHAT evidence" (#410).
+          Below full it is the one place the panel says how much of the scoring weight went
+          unread, which the group's row count does not answer: one unread reason out of five
+          can be most of the score. */}
       <p className="blurb">
-        Reasons to believe nobody will watch it again. Reaper saw{" "}
-        <strong>{coverage(item.coverage_bp)}</strong> of the evidence.
+        Reasons to believe nobody will watch it again.
+        {item.coverage_bp < FULL_COVERAGE_BP && (
+          <> Reaper could read {coverage(item.coverage_bp)} of what it scores on.</>
+        )}
       </p>
 
       <SignalGroup

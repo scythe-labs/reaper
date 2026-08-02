@@ -41,7 +41,7 @@ import {
 import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
 import { useDocs } from "../docs/DocsContext";
-import { bytes, count } from "../format";
+import { bytes, count, humanDays } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
 import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
@@ -62,18 +62,9 @@ import { Switch } from "./Switch";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
 
-/** "1095 days" said the way a person would: "3 years". */
-export function humanDays(days: number): string {
-  if (days >= 365 && days % 365 === 0) {
-    const y = days / 365;
-    return y === 1 ? "1 year" : `${y} years`;
-  }
-  if (days >= 30 && days % 30 === 0) {
-    const m = days / 30;
-    return m === 1 ? "1 month" : `${m} months`;
-  }
-  return `${days} days`;
-}
+/** Re-exported from `format`, where it moved so `signalRamp` could read it without a cycle
+ *  back through this module. Several sites import it from here. */
+export { humanDays };
 
 // ---------------------------------------------------------------------------
 // Keep-tags: a set of *arr tags that spare a title, with an ANY/ALL switch.

@@ -250,6 +250,16 @@ export interface SignalContribution {
    *  `not_applicable`, never `argues_keep` -- claiming an old row argued for keeping,
    *  when nothing recorded whether it did, overstates the case for keeping. */
   state?: SignalState | null;
+  /** The ramp this row was scored against: no points below `floor`, all of them at
+   *  `saturate_at`. Frozen at scan time, because the live policy need not be the one this
+   *  score was computed under and a panel explaining a score with the wrong line is worse
+   *  than one that stays quiet.
+   *
+   *  `null` in two cases the panel deliberately does not tell apart: a rule with no ramp (a
+   *  yes/no rule of your own either matched or did not), and a row frozen before these
+   *  shipped. Both mean "no line to state", and both render the plain row. */
+  floor?: number | null;
+  saturate_at?: number | null;
 }
 
 export interface GateOutcome {
