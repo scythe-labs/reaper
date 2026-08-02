@@ -21,10 +21,12 @@ import { docToMdx, manualPath } from "./toMdx";
 const MANUAL_ROOT = "../../../manual";
 
 describe("the manual is generated from the in-app docs", () => {
-  it.each(DOCS.map((doc) => [doc.id, doc] as const))(
+  it.each(DOCS.map((doc, i) => [doc.id, doc, i + 1] as const))(
     "writes %s, and fails when it drifts",
-    async (_id, doc) => {
-      await expect(docToMdx(doc)).toMatchFileSnapshot(`${MANUAL_ROOT}/${manualPath(doc)}`);
+    async (_id, doc, position) => {
+      await expect(docToMdx(doc, position)).toMatchFileSnapshot(
+        `${MANUAL_ROOT}/${manualPath(doc)}`,
+      );
     },
   );
 });
@@ -50,6 +52,24 @@ describe("MDX escaping", () => {
     const out = docToMdx(doc);
     expect(out).toContain("`{this}`");
     expect(out).toContain("\\{that\\}");
+  });
+
+  // A quoted phrase in a step title is not hypothetical: understanding-policy ships one, and it
+  // is what the first site build died on. `title="… \"why\" …"` is invalid JSX, because a
+  // quote-delimited attribute has no backslash escape; the expression form is what parses.
+  it("writes a title holding quotes as an expression, not a quoted literal", () => {
+    const doc = {
+      ...(armingDoc as NonNullable<typeof armingDoc>),
+      body: [
+        {
+          kind: "steps" as const,
+          items: [{ title: 'Read a few "why" panels.', text: "Then decide." }],
+        },
+      ],
+    };
+    const out = docToMdx(doc);
+    expect(out).toContain('<Step title={"Read a few \\"why\\" panels."}>');
+    expect(out).not.toContain('title="Read a few');
   });
 
   it("escapes a pipe inside a table cell, which would otherwise end the column", () => {

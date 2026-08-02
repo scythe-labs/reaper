@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Publishes the manual to GitHub Pages.
+#
+# `ci.yml`'s `site` job already builds this tree on every pull request, so by the time anything
+# reaches here it has compiled once. This workflow exists to publish, not to check.
+#
+# It runs from `main` rather than `dev`: the manual describes the release an operator can
+# actually install, and publishing from `dev` would document a container nobody has yet. A doc
+# fix therefore reaches the site when the next release is promoted, which is the same latency
+# every other user-visible change has.
+name: Deploy the manual
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "manual/**"
+      - "website/**"
+      - ".github/workflows/docs-deploy.yml"
+
+# Read-only by default. The deploy job below widens this for itself alone, so the build job
+# never holds a token that can publish.
+permissions:
+  contents: read
+
+# One publish at a time, and never cancel one midway: a half-uploaded artifact would be
+# deployed as if it were the whole site.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `showLastUpdateTime` reads each page's git history, and a shallow clone does not
+          # have it: without this every page reports the same date, or none at all.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
+        with:
+          path: website/build
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

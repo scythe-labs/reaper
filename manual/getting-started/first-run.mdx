@@ -1,0 +1,47 @@
+---
+id: first-run
+title: First run
+description: The order to set Reaper up in, and why the second step matters most.
+sidebar_position: 3
+---
+
+# First run, in order
+
+<Steps>
+  <Step title="Open the web UI and sign in with Plex.">
+    The first account to sign in claims the install and creates its admin in the same step,
+    provided it owns the server. An account that merely has access is refused: Reaper is about
+    to be handed permission to delete media, so it is linked by the owner or not at all.
+  </Step>
+  <Step title="Create a local admin as well, straight away.">
+    Run `docker compose exec reaper reaper-admin create-admin --username <name>`. Reaper logs a
+    warning on every start until one exists.
+  </Step>
+  <Step title="Add your services in the UI.">
+    Sonarr, Radarr, Tautulli, Seerr. Keys are entered there, stored encrypted, and never come
+    back out of the API. The wizard calls you scan-ready once **Tautulli plus at least one of
+    Radarr or Sonarr** exist. A movie-only or TV-only deployment is a real deployment, and Plex
+    is not required to scan.
+  </Step>
+  <Step title="Scan, and just read it.">
+    Deletion is off. Every candidate shows its score and, more usefully, every protection that
+    was checked and did not fire.
+  </Step>
+  <Step title="Turn deletion on only once you trust it.">
+    Under Policy, Deletion, with your admin password. See
+    [the deletion switch](/configuration/deletion-switch).
+  </Step>
+</Steps>
+
+<Callout tone="caution">
+  **Do not skip the local admin.** Plex sign-in is additive convenience, never the only key. A
+  plex.tv outage, a revoked token, or a rebuilt server would otherwise lock you out of your own
+  tool. See [Not getting locked out](/operating/locked-out).
+</Callout>
+
+## Running more than one Plex server
+
+Reaper never guesses which library to point a deletion tool at. It asks.
+
+Pick the server during sign-in, or pass `--server <name>` to `reaper-admin link-plex`. To change
+it later, unlink in Settings.

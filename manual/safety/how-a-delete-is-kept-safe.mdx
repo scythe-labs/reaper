@@ -2,6 +2,7 @@
 id: "how-a-delete-is-kept-safe"
 title: "How a delete is kept safe"
 description: "The path a file takes from candidate to deleted, and the safeties that protect every step of it."
+sidebar_position: 4
 ---
 
 {/* GENERATED FILE. Do not edit.
@@ -10,7 +11,7 @@ description: "The path a file takes from candidate to deleted, and the safeties 
 
 Reaper removes irreplaceable files from a server other people depend on, so the whole design leans one way: every time something is unclear, the file is kept. A person drives every deletion by hand, along a path that gets deliberately harder at each step.
 
-<Callout tone="tip">
+<Callout tone={"tip"}>
 
 **Every file Reaper removes leaves through Sonarr or Radarr, and only through them.** Anything neither one manages stays untouched. A new install is read-only until you arm it with a password.
 
@@ -35,7 +36,7 @@ The two are independent on purpose. A bug that flipped the switch on would still
 
 Everything is gathered and frozen before anything is scored, so no item's fate depends on a source timing out partway through a scan. If a source that could condemn something was unreachable, the scan is marked incomplete. You can look at it, but nothing can be run against it. Acting on half the evidence is how a tool deletes a loved film during an outage, so half the evidence is not allowed to delete at all.
 
-<Callout tone="note">
+<Callout tone={"note"}>
 
 **Not knowing can only ever protect.** A missing rating, a viewer Reaper cannot match, a source that failed, none of them count against a title. "Nobody watched this" can condemn; "we could not find out whether anyone watched this" never can.
 
@@ -55,7 +56,7 @@ Everything above is reversible; the reap is not. So each file runs one last set 
 
 When a title is first condemned, a countdown starts, 14 days by default. Turn on the Leaving Soon shelf and Reaper marks it in Plex, so your household can keep a title they still want by simply watching it. A Discord heads-up can go out too.
 
-<Callout tone="caution">
+<Callout tone={"caution"}>
 
 **The countdown is the time your household has to catch it.** When it ends, the title is simply ready for your next review, and you still start every deletion by hand. To keep a title, watch it or spare it. Both win at the moment of deletion, through the live checks above.
 

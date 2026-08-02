@@ -1,0 +1,47 @@
+---
+id: encryption-key
+title: The encryption key
+description: Where it comes from, why you must back it up, and how to rotate it safely.
+sidebar_position: 2
+---
+
+# The encryption key
+
+You do not have to supply one. If `REAPER_SECRET_KEY` is unset, Reaper generates a key on first
+boot and saves it to `<data_dir>/secret.key` with mode `0600`, reusing it on every subsequent
+boot.
+
+<Callout tone="caution">
+  **Back that file up alongside your database.** It is the only thing that can decrypt your
+  stored API keys. Lose it and every integration must be entered again.
+</Callout>
+
+The key is generated *once* and never rotated automatically. A key that changed on restart
+would silently render every stored credential unreadable, and you would only find out the next
+time a scan tried to reach Sonarr.
+
+Setting `REAPER_SECRET_KEY` explicitly always wins, and Reaper then writes no key file at all,
+so a secret manager stays the single source. An existing generated key file is never
+overwritten, since your database may still be encrypted with it.
+
+## Rotating it deliberately
+
+Supported, and safe to do while running. Put the new key in `REAPER_SECRET_KEY` and the retired
+one in `REAPER_SECRET_KEY_OLD`, comma-separated for a chain of them:
+
+```bash
+REAPER_SECRET_KEY=<new>
+REAPER_SECRET_KEY_OLD=<previous>,<older>
+```
+
+Reaper then encrypts under the new key while still decrypting whatever the old ones wrote, so
+nothing is bricked halfway through. Drop the old value once every credential has been saved
+again.
+
+## What this does and does not protect
+
+An honest limitation: a key file next to the database it protects is no defense against an
+attacker who already has your filesystem.
+
+It defends against the ordinary way these leak, which is a database copied into a backup, an
+issue report, or a support thread. For real separation, supply the key from a secret manager.

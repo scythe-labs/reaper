@@ -2,6 +2,7 @@
 id: "understanding-policy"
 title: "Understanding policy"
 description: "Your policy is the rulebook Reaper follows when it decides what to remove. Here is how it thinks, and how to set it up safely the first time."
+sidebar_position: 2
 ---
 
 {/* GENERATED FILE. Do not edit.
@@ -10,7 +11,7 @@ description: "Your policy is the rulebook Reaper follows when it decides what to
 
 A policy is how you tell Reaper what "nobody watches this" means for your server. It gathers reasons a title looks expendable, adds them into a single score, and flags anything that crosses your line. A whole separate set of protections can keep a title no matter how it scored.
 
-<Callout tone="tip">
+<Callout tone={"tip"}>
 
 **Start cautious, then tighten one nudge at a time.** You can always remove more later, and it is reversible up to the moment of deletion. A deletion is not. This one habit is what the whole page is built around.
 
@@ -34,43 +35,43 @@ Follow it in order the first time.
 
 <Steps>
 
-<Step title="Connect your watch history first.">
+<Step title={"Connect your watch history first."}>
 
 Every score starts from how long a title has sat untouched, and your history source is what tells Reaper when it was last played and how far back it can look. Connect it and let one scan finish against real data before you tune anything.
 
 </Step>
 
-<Step title="Start on the Cautious footing.">
+<Step title={"Start on the Cautious footing."}>
 
 Pick Cautious as your starting point. It sets a high line (82), small runs (5 titles or 250 GB), and a long grace window (30 days). Do not hand-edit the points yet.
 
 </Step>
 
-<Step title="Leave every protection on.">
+<Step title={"Leave every protection on."}>
 
 Above all, leave the time-to-be-rewatched line at its 3-year default. This is the single most important line in the whole tool, and it is a hard line so nothing can outvote it.
 
 </Step>
 
-<Step title="Run a scan and let it finish.">
+<Step title={"Run a scan and let it finish."}>
 
 A scan freezes all the evidence, then scores, so a brief timeout can never flip a title’s fate mid-run. If it comes back "incomplete," a source failed and Reaper marked the run unusable on purpose. Fix the source and scan again.
 
 </Step>
 
-<Step title="Read a few \"why\" panels before touching anything.">
+<Step title={"Read a few \"why\" panels before touching anything."}>
 
 Open several flagged titles and read why each was flagged, and which protections were checked and did not fire. Notice how much of the pressure is just dormancy.
 
 </Step>
 
-<Step title="Tune with the simulator, one nudge at a time.">
+<Step title={"Tune with the simulator, one nudge at a time."}>
 
 Move the line down a step and watch the count, the space reclaimed, and the named titles change live. Change one control, look at the number, repeat. Tighten gradually over several scans.
 
 </Step>
 
-<Step title="Set pace and grace, then arm deletion last.">
+<Step title={"Set pace and grace, then arm deletion last."}>
 
 Confirm your caps and grace, and turn on the Leaving Soon shelf so your household can rescue anything about to go. To see the shelf before you arm anything, also turn on "Update while read-only" in Settings, Plex. Only then arm deletion, which is password-gated and separate from all tuning.
 
@@ -116,7 +117,7 @@ Each signal pushes the score up by up to its number of points. The default mix d
 
 **The points share one fixed budget.** Every signal's points, plus any of your own removal rules, must total exactly 100 before you can save. A point is literally how much that signal can add to the score. So lowering one signal frees points you must hand to another signal or removal rule first. Setting a signal to 0 turns it off and returns its points to the pot.
 
-<Callout tone="note">
+<Callout tone={"note"}>
 
 **Size is off on purpose.** Weighting size aims Reaper at your biggest files, which are usually the 4K titles people chose to keep. Size measures how much space you would reclaim, not whether anyone still wants it. Leave it off, and instead sort the flagged list by size at review time and approve the big ones first.
 
@@ -163,7 +164,7 @@ The right-hand "What this would do" panel re-decides your last scan under your d
 
 **Live for the numbers, not the plumbing.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection's switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. An upgrade that retires a protection can say it too, without you having touched anything. This is on purpose: a wrong number that looks live is worse than a blank one.
 
-<Callout tone="caution">
+<Callout tone={"caution"}>
 
 You have gone too far when the examples include titles you would keep, the count climbs steeply for a small threshold drop, or you want to switch off a protection to "find more." Turning off a protection is the most effective way to remove more, and it looks like simplification. That is the warning sign, not the fix. If a one-step drop nearly doubles the count, stop there.
 
@@ -202,37 +203,37 @@ The two are separate policies. Tune and scan the one you care about, leave the o
 
 <Definitions>
 
-<Def term="Policy">
+<Def term={"Policy"}>
 
 Your rulebook for one media type: the line, the signals, the protections.
 
 </Def>
 
-<Def term="Flag threshold">
+<Def term={"Flag threshold"}>
 
 The score, out of 100, at or above which a title becomes a candidate for removal.
 
 </Def>
 
-<Def term="Signal">
+<Def term={"Signal"}>
 
 One reason to remove, adding up to its number of points to the score.
 
 </Def>
 
-<Def term="Protection">
+<Def term={"Protection"}>
 
 A hard line that keeps a title no matter its score, and can never remove one.
 
 </Def>
 
-<Def term="Grace">
+<Def term={"Grace"}>
 
 The days a flagged title shows as leaving, so someone can watch it or you can spare it. You still start every removal by hand.
 
 </Def>
 
-<Def term="Cap">
+<Def term={"Cap"}>
 
 A limit on how much one run, or a rolling 30 days, may remove, while "Limit how much each run removes" is on. It stops the run rather than trimming it.
 
@@ -240,7 +241,7 @@ A limit on how much one run, or a rolling 30 days, may remove, while "Limit how 
 
 </Definitions>
 
-<Callout tone="tip">
+<Callout tone={"tip"}>
 
 **Start cautious, watch a few real runs, and tighten one nudge at a time.** You can always remove more later. You can never un-delete.
 
