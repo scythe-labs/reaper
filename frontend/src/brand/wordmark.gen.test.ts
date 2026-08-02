@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The README banner: the app's own mark beside the word "reaper".
+// The README banner: the app's own mark beside the app's own word.
 //
 // Generated rather than drawn, so the banner cannot drift from the mark the app actually
 // renders. `gen-icons.mjs` was the obvious home and is the wrong one: its ASSETS list is
@@ -14,13 +14,23 @@
 // Two variants, because GitHub renders a README in whichever theme the reader chose and an
 // `<img>` cannot see it. The README picks between them with `<picture>` and
 // `prefers-color-scheme`.
+//
+// Only the MARK was generated at first, and the word beside it was typed: the banner shipped
+// reading "reaper" at semibold while every surface in the app reads "Reaper" at bold. The
+// generated half is what made that survive review -- it is demonstrably the app's drawing, and
+// it vouched for a word nothing had checked (rule 144). So the word, its weight and its
+// tracking now come from `test/appLockup`, which reads them out of the app.
 
 import { describe, expect, it } from "vitest";
 import { appIconSvg } from "./appIcon";
 import { DEFAULT_ACCENT } from "../accent";
+import { BRAND_WEIGHT, BRAND_WORD, signInCardSpellsTheWord, trackingAt } from "../test/appLockup";
 
 /** Repo-relative, from `frontend/src/brand/`. */
 const MEDIA = "../../../docs/media";
+
+/** The banner's own size, in the 360x96 box below. Everything else is the app's. */
+const SIZE = 58;
 
 /** The wordmark's ink in each theme. Deliberately NOT the accent: the accent is a fill, and
  *  at Reaper's sky blue it fails WCAG AA as text on white (2.03:1). The mark beside it carries
@@ -28,8 +38,10 @@ const MEDIA = "../../../docs/media";
 const INK = { light: "#16181d", dark: "#edeef1" } as const;
 
 /** A system stack, because a README image renders with no webfont available and a `@font-face`
- *  would silently fall back to something unchosen. */
-const FONT = "ui-sans-serif,system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
+ *  would silently fall back to something unchosen. It opens with the app's own three
+ *  (`01-base.css`) so the face a reader gets is the face the app gets, then names two real
+ *  families for viewers that resolve neither generic. */
+const FONT = "system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif";
 
 function banner(theme: keyof typeof INK): string {
   // The mark is a whole SVG document; nest it and give it a box on the banner's grid.
@@ -42,11 +54,12 @@ function banner(theme: keyof typeof INK): string {
     `     Source:     frontend/src/brand/appIcon.ts, via wordmark.gen.test.ts`,
     `     Regenerate: run "npm run gen-wordmark" from frontend/ -->`,
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 96" width="360" height="96"` +
-      ` role="img" aria-label="Reaper">`,
-    `<title>Reaper</title>`,
+      ` role="img" aria-label="${BRAND_WORD}">`,
+    `<title>${BRAND_WORD}</title>`,
     mark,
-    `<text x="100" y="63" font-family="${FONT}" font-size="58" font-weight="600"` +
-      ` letter-spacing="-1.5" fill="${INK[theme]}">reaper</text>`,
+    `<text x="100" y="63" font-family="${FONT}" font-size="${SIZE}" font-weight="${BRAND_WEIGHT}"` +
+      ` letter-spacing="${trackingAt(SIZE)}" fill="${INK[theme]}">` +
+      `${BRAND_WORD}</text>`,
     `</svg>`,
     ``,
   ].join("\n");
@@ -68,6 +81,14 @@ describe("the README banner", () => {
     const doc = new DOMParser().parseFromString(banner(theme), "image/svg+xml");
     expect(doc.querySelector("parsererror")?.textContent ?? null).toBeNull();
     expect(doc.documentElement.tagName).toBe("svg");
+  });
+
+  it("spells the word the way every surface of the app spells it", () => {
+    expect(
+      signInCardSpellsTheWord(),
+      `the sign-in card no longer introduces the app as "${BRAND_WORD}"; this banner reproduces ` +
+        `that card, so the two have to agree`,
+    ).toBe(true);
   });
 
   it("keeps the mark identical to the one the app renders", () => {

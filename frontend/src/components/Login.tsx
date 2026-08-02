@@ -391,7 +391,11 @@ export function Login() {
         <main className="auth-card">
           <BrandBadge className="brand-badge" />
           <h1 className="brand-word">Reaper</h1>
-          <p className="auth-tagline">Explainable pruning for Plex</p>
+          {/* The one tagline: the words the masthead shows once you are in (App.tsx), and the
+              ones the README, the manual's site header and the API's own description carry.
+              This card had wording of its own and was the only surface that did, which is why
+              it drifted alone. `TAGLINE_SITES` in tests/test_repo_hygiene.py is the guard. */}
+          <p className="auth-tagline">Grave decisions, clearly explained</p>
           <p className="auth-note">
             {setup
               ? "Set up Reaper by signing in as the owner of the Plex server."

@@ -40,6 +40,26 @@ const PROTECT = "#5fce97";
  *  real families. resvg takes the first one installed. */
 const SANS = "Helvetica Neue, Helvetica, Arial, sans-serif";
 
+/** The wordmark, spelled and weighted the way the app spells and weights it.
+ *
+ *  This card used to carry a lockup of its own -- `REAPER`, tracked out to 8.5 -- which is an
+ *  ordinary treatment for a share card and was a deliberate choice. It stopped being tenable
+ *  once the README banner was taken off its own typed word (#425): the app said "Reaper", the
+ *  banner had said "reaper", and this said "REAPER", so whichever one you looked at, the other
+ *  two were wrong. Three spellings of a name is not a secondary lockup, it is drift with a
+ *  rationale attached (#426).
+ *
+ *  Literals, because this module is rasterized outside the browser and has no `node:fs`.
+ *  `socialCard.test.ts` reads them back out of the app and fails naming the file, the same
+ *  arrangement `CLEARED_ROWS` has with `gates.py` (rule 144). */
+export const WORDMARK = {
+  word: "Reaper",
+  size: 47,
+  weight: 700,
+  /** The sign-in card's `-0.03em` at `size`, that card being the lockup this reproduces. */
+  tracking: -1.41,
+} as const;
+
 /** Protections that were evaluated and did NOT hold the file, which is the block the app is
  *  built around and the one no comparable tool shows. Rows 1 and 2 are the active-session and
  *  protected-list gates, row 3 the dormancy floor, the only one of the three carrying numbers.
@@ -102,8 +122,9 @@ export function socialCardSvg(accent: string): string {
   // Left column: mark, wordmark, headline, tagline, the services it talks to.
   push(positionedMark(accent, 72, 84, 86));
   push(
-    `<text x="178" y="143" font-family="${SANS}" font-size="47" font-weight="700" ` +
-      `letter-spacing="8.5" fill="${TEXT}">REAPER</text>`,
+    `<text x="178" y="143" font-family="${SANS}" font-size="${WORDMARK.size}" ` +
+      `font-weight="${WORDMARK.weight}" letter-spacing="${WORDMARK.tracking}" ` +
+      `fill="${TEXT}">${escape(WORDMARK.word)}</text>`,
   );
 
   const headline = [

@@ -25,7 +25,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ACCENT } from "../accent";
-import { CLEARED_ROWS, SOCIAL_CARD_HEIGHT, SOCIAL_CARD_WIDTH, socialCardSvg } from "./socialCard";
+import { BRAND_WEIGHT, BRAND_WORD, signInCardSpellsTheWord, trackingAt } from "../test/appLockup";
+import {
+  CLEARED_ROWS,
+  SOCIAL_CARD_HEIGHT,
+  SOCIAL_CARD_WIDTH,
+  WORDMARK,
+  socialCardSvg,
+} from "./socialCard";
 import manifest from "./socialCard.generated.json";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -78,6 +85,21 @@ describe("social preview card", () => {
       // has to reproduce the quoted literal, or the card is showing something else.
       expect(row.lines.join(" ")).toContain(row.source);
     }
+  });
+
+  it("writes the name the way the app writes it", () => {
+    // The card carried its own lockup until #426 -- caps, tracked out -- and was the last
+    // surface spelling the name a third way. These are literals in `socialCard.ts` because a
+    // module the rasterizer loads has no `node:fs`, so the agreement is checked here instead,
+    // against the app itself (rule 144, the same arrangement CLEARED_ROWS has with gates.py).
+    expect(WORDMARK.word, "the masthead's brand word moved; the card copies it").toBe(BRAND_WORD);
+    expect(WORDMARK.weight, "the weight scale moved under the card").toBe(BRAND_WEIGHT);
+    // SVG letter-spacing is a length, so the app's em value is resolved at the card's size.
+    expect(WORDMARK.tracking, "the sign-in card's tracking moved under this card").toBe(
+      trackingAt(WORDMARK.size),
+    );
+    expect(signInCardSpellsTheWord(), "the sign-in card no longer spells it this way").toBe(true);
+    expect(socialCardSvg(DEFAULT_ACCENT)).toContain(`>${WORDMARK.word}</text>`);
   });
 
   it("draws the mark at the size the layout reserves for it", () => {
