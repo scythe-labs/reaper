@@ -50,16 +50,10 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("snapshot_id", "group_key"),
     )
-    op.create_index(
-        op.f("ix_season_prune_evidence_group_key"),
-        "season_prune_evidence",
-        ["group_key"],
-        unique=False,
-    )
+    # No standalone index on `group_key`: the unique constraint above already serves the one
+    # read (`routes._season_bundles`, `WHERE snapshot_id = ?`) on its leading column, and no
+    # query filters a show key across snapshots.
 
 
 def downgrade() -> None:
-    op.drop_index(
-        op.f("ix_season_prune_evidence_group_key"), table_name="season_prune_evidence"
-    )
     op.drop_table("season_prune_evidence")

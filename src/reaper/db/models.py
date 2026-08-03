@@ -645,9 +645,15 @@ class SeasonPruneEvidence(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshot.id", ondelete="CASCADE"))
 
-    group_key: Mapped[str] = mapped_column(String(100), index=True)
+    group_key: Mapped[str] = mapped_column(String(100))
     """The show key, shared by every season of the show and equal to ``Candidate.group_key``
-    for those rows."""
+    for those rows.
+
+    Carries no index of its own: the only read is ``routes._season_bundles``' ``WHERE
+    snapshot_id = ?``, which the unique constraint above already covers on its leading column,
+    and nothing filters a show key across snapshots. A second B-tree here would be written
+    once per show per scan to serve nobody, in the table whose per-row cost the paragraph
+    above is about."""
 
     payload_json: Mapped[str] = mapped_column(Text)
     """``services.season_evidence.to_dict`` of the show's ``SeasonPruneInput``.
