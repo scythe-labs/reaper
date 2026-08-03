@@ -97,7 +97,7 @@ interface RampUnits {
    *  vary, so it varies with what the FIELD can hold rather than with a global guess. */
   widest: string;
   /** The far end of the probe's track, in stored units. Wide enough that the whole ramp
-   *  sits inside it with room past the point where it pays in full, so the flat top is
+   *  sits inside it with room past the point where it adds in full, so the flat top is
    *  visible rather than implied. */
   probeMax: number;
   /** Whether the watch mirror caps what this signal can ever read.
@@ -110,8 +110,8 @@ interface RampUnits {
   boundedByHistory?: boolean;
   /** The lowest value this field can actually take, where that is not zero.
    *
-   *  A ramp whose floor sits BELOW it never pays nothing for any real item, and "pays
-   *  nothing until X" would then be false in the reassuring direction. `season_rank` ships
+   *  A ramp whose floor sits BELOW it adds something to every real item, and "nothing until
+   *  X" would then be false in the reassuring direction. `season_rank` ships
    *  floor 0 against a rank that starts at 1, so the newest season on disk already earns a
    *  sixth of the weight while the help text says older seasons carry more pressure than
    *  the newest -- which reads as though the newest carries none. */
@@ -252,11 +252,15 @@ export function rampEnds(
   return { earnsFrom: units.say(floor), earnsAll: units.say(saturate), shape: "direct" };
 }
 
-/** The whole ramp as one sentence, for the policy card that sets it.
+/** The two ends of the scale, in the operator's words.
  *
- *  Reads as a pair either way round, because the shortfall signals run downward: "pays
- *  nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0". */
-export function rampSentence(
+ *  The SECOND half of a row's line, and never rendered on its own: it says what each end of
+ *  the scale is worth without naming what those points are points of, which is the job of the
+ *  clause `rowRampSentence` puts in front of it.
+ *
+ *  Reads as a pair either way round, because the shortfall signals run downward: "nothing at
+ *  IMDb 6.0 or above, all 10 at IMDb 0.0". */
+export function rampScale(
   id: string,
   floor: number | null | undefined,
   saturate: number | null | undefined,
@@ -265,24 +269,23 @@ export function rampSentence(
   const ends = rampEnds(id, floor, saturate);
   if (!ends) return null;
   const units = RAMPS[id];
-  const points = `all ${weight} points`;
   if (ends.shape === "shortfall") {
-    return `Pays nothing at ${ends.earnsFrom} or above, and ${points} at ${ends.earnsAll}.`;
+    return `Nothing at ${ends.earnsFrom} or above, all ${weight} at ${ends.earnsAll}.`;
   }
   // A floor below the first value the field can take means nothing real ever lands under
-  // it, so "pays nothing until" would be false about every item there is. Say what happens
+  // it, so "nothing until" would be false about every item there is. Say what happens
   // instead of what does not.
   if (units?.first !== undefined && (floor ?? 0) < units.first) {
-    return `Pays something from ${units.say(units.first)} on, and ${points} at ${ends.earnsAll}.`;
+    return `Even ${units.say(units.first)} adds something, all ${weight} at ${ends.earnsAll}.`;
   }
-  return `Pays nothing until ${ends.earnsFrom}, and ${points} at ${ends.earnsAll}.`;
+  return `Nothing until ${ends.earnsFrom}, all ${weight} at ${ends.earnsAll}.`;
 }
 
 /** The strip under a signal's bounds: where it charges, and how hard, drawn to scale.
  *
- *  It REPLACES the sentence that used to state the range, rather than joining it. "Pays
- *  nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0" is exactly what this draws,
- *  and keeping both said one thing twice in two grammars.
+ *  It REPLACES the sentence that used to state the range, rather than joining it. "Nothing at
+ *  IMDb 6.0 or above, all 10 at IMDb 0.0" is exactly what this draws, and keeping both said
+ *  one thing twice in two grammars.
  *
  *  It is what makes the direction visible. Dormancy charges more the further RIGHT a title
  *  sits and a rating charges more the further LEFT, which no shared sentence can carry
@@ -290,7 +293,7 @@ export function rampSentence(
  *  need no holding at all.
  *
  *  Percentages of the track, so the caller only has to place them. `deepAt` is where the
- *  gradient reaches full strength: the point the signal pays its whole weight, which for a
+ *  gradient reaches full strength: the point the signal adds its whole weight, which for a
  *  direct ramp is inside the fill and for a shortfall is at the fill's outer edge. */
 export interface RampStrip {
   fillFrom: number;
@@ -301,7 +304,7 @@ export interface RampStrip {
   deepEnd: "left" | "right";
   /** Where the gradient reaches full strength, as a percentage of the TRACK. A direct ramp
    *  saturates inside its fill and is flat-full from there to the end, so this is the only
-   *  thing that puts "pays in full" where the operator can see it. */
+   *  thing that puts "adds in full" where the operator can see it. */
   deepAt: number;
   scaleFrom: string;
   scaleTo: string;
@@ -328,7 +331,7 @@ export function rampStrip(
       fillTo: bar,
       bar,
       deepEnd: "left",
-      // A shortfall pays most at zero, which IS the fill's outer edge, so the deep point and
+      // A shortfall adds most at zero, which IS the fill's outer edge, so the deep point and
       // the edge coincide and the gradient has no flat region to draw.
       deepAt: 0,
       scaleFrom: units.scaleFrom,
@@ -351,11 +354,11 @@ export function rampStrip(
 /** The fill's `background`, with full strength placed at `deepAt` instead of at whichever
  *  edge the gradient happens to end on.
  *
- *  A direct ramp pays its whole weight from `saturate_at` onward, so the picture has to go
+ *  A direct ramp adds its whole weight from `saturate_at` onward, so the picture has to go
  *  flat-full there and stay flat to the end of the track. Running one gradient edge to edge
  *  drew that flat top as a color still deepening: on the shipped movie dormancy (365 ->
  *  1825, track 3650) full red landed at ten years, and five years, where the signal already
- *  pays all 70, sat at under half strength. A CSS gradient holds its last stop's color to
+ *  adds all 70, sat at under half strength. A CSS gradient holds its last stop's color to
  *  the end of the box, so placing that stop at `deepAt` is the whole fix. */
 export function rampFill(strip: RampStrip): string {
   const faint = "color-mix(in srgb, var(--condemn) 6%, transparent)";
@@ -410,7 +413,17 @@ export function probeSaid(
   };
 }
 
-/** The same sentence with what it did to one title, for the row in the explanation panel.
+/** What this row did, then the scale it did it on, for the explanation panel.
+ *
+ *  The RESULT leads, because it is the question the row was opened to ask. It used to trail
+ *  two clauses of scale, so the reader held "pays nothing at IMDb 6.0 or above" before
+ *  reaching the one number the row is about; and the scale opened on the end where nothing
+ *  happens, which is a negative to carry for no gain.
+ *
+ *  That lead is also the policy card's grammar, said the same way beside the control that
+ *  sets these bounds ("A title rated IMDb 5.5 adds less than 1 of these 10 points",
+ *  `probeSaid`). Rule 144: one rule described on two pages is two copies free to drift, and
+ *  the drift is invisible because each page reads correct alone.
  *
  *  `added` and `weight` both come from the stored explanation. This states them; it does
  *  not check them, because the arithmetic that produced `added` ran in the engine against
@@ -422,7 +435,7 @@ export function rowRampSentence(
   weight: number,
   added: number,
 ): string | null {
-  const ramp = rampSentence(id, floor, saturate, weight);
-  if (!ramp) return null;
-  return `${ramp} This one added ${sayPoints(Math.round(added * 10) / 10)}.`;
+  const scale = rampScale(id, floor, saturate, weight);
+  if (!scale) return null;
+  return `Added ${sayPoints(Math.round(added * 10) / 10)} of ${weight} points. ${scale}`;
 }

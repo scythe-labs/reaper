@@ -680,7 +680,7 @@ function pointsSplit(builtIn: number, yours: number): string {
 
 /** One signal: a plain-English label, its help, a slider, and the flat points it can add.
  *  Removal weights total exactly 100, so the weight IS the number of points, and the row
- *  reads "up to N points" because a signal only pays its full number at the far end of
+ *  reads "up to N points" because a signal only adds its full number at the far end of
  *  its range. */
 function SignalRow({
   signal,
@@ -707,7 +707,7 @@ function SignalRow({
           ) : (
             // Points, not a share, and no second number beside it: removal weights total
             // exactly 100, so the weight IS what it adds. "up to" is not hedging -- a
-            // signal ramps, and pays its full number only at the far end of its range.
+            // signal ramps, and adds its full number only at the far end of its range.
             <>
               <span className="muted">up to </span>
               <strong>{signal.weight}</strong>
@@ -834,11 +834,14 @@ function SignalRamp({
             style={units.unitKind === "fixed" ? rampBoxWidth(units.widest) : undefined}
           >
             <span>{units.nearLabel}</span>
-            {box(signal.saturate_at - signal.floor, `Where "${label}" stops paying`, (stored) =>
-              // Floor back to zero with it: the pair carries one degree of freedom, and
-              // leaving a stale floor behind would keep a second number in the body that
-              // nothing reads and nobody can see.
-              onChange({ ...signal, floor: 0, saturate_at: Math.max(1, stored) }),
+            {box(
+              signal.saturate_at - signal.floor,
+              `Where "${label}" stops adding points`,
+              (stored) =>
+                // Floor back to zero with it: the pair carries one degree of freedom, and
+                // leaving a stale floor behind would keep a second number in the body that
+                // nothing reads and nobody can see.
+                onChange({ ...signal, floor: 0, saturate_at: Math.max(1, stored) }),
             )}
           </label>
         ) : (
@@ -850,7 +853,7 @@ function SignalRamp({
               <span>{units.nearLabel}</span>
               {box(
                 signal.floor,
-                `Where "${label}" starts paying`,
+                `Where "${label}" starts adding points`,
                 // The server refuses `floor >= saturate_at` outright, so the box cannot
                 // offer it: a policy that will not save is not a state to let an operator
                 // type their way into and discover at the save bar.
@@ -866,7 +869,7 @@ function SignalRamp({
               <span>{units.farLabel}</span>
               {box(
                 signal.saturate_at,
-                `Where "${label}" pays in full`,
+                `Where "${label}" adds all its points`,
                 (stored) =>
                   onChange({ ...signal, saturate_at: Math.max(stored, signal.floor + 1) }),
                 { min: units.fromStored(signal.floor + 1) },
@@ -972,7 +975,7 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
   // The dormancy ramp opened at the watch mirror's edge instead, and it was wrong whenever
   // the history was deep. That signal cannot read past the edge, so the edge is the most a
   // title can present -- but a mirror reaching 8 years against a far end of 5 puts it past
-  // the point the signal already pays in full, and the example froze at "70 of these 70
+  // the point the signal already adds in full, and the example froze at "70 of these 70
   // points" no matter what either box said.
   //
   // So the edge is used only where it BINDS, below the far end, which is exactly the case it
@@ -1979,7 +1982,7 @@ export function PolicyEditor({
             already in a labeled box above, spoken. */}
         <p className="ramp-key" aria-hidden="true">
           <span>
-            <i className="earns" aria-hidden="true" /> earns points, deepest where it pays in full
+            <i className="earns" aria-hidden="true" /> adds points, deepest where it adds them all
           </span>
           <span>
             <i className="alone" aria-hidden="true" /> left alone

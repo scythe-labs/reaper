@@ -1440,8 +1440,10 @@ describe("where a signal starts earning", () => {
     // low_rating measures how far BELOW its bound a rating sits, and the engine's fraction
     // works out to depend on the gap alone: (0,70), (10,80) and (30,100) score identically.
     // A "full points at" box here would be a control an operator could move for no effect.
-    expect(await screen.findByLabelText('Where "How low it\'s rated" stops paying')).toBeVisible();
-    expect(screen.queryByLabelText('Where "How low it\'s rated" pays in full')).toBeNull();
+    expect(
+      await screen.findByLabelText('Where "How low it\'s rated" stops adding points'),
+    ).toBeVisible();
+    expect(screen.queryByLabelText('Where "How low it\'s rated" adds all its points')).toBeNull();
     // The range is drawn now rather than restated: the strip charges everything BELOW the
     // bar, so its fill starts at the left edge and stops where the bar sits (7.0 of 10).
     const { fill } = stripFor("How low it's rated");
@@ -1456,22 +1458,22 @@ describe("where a signal starts earning", () => {
     renderEditor({ body: body() });
 
     expect(
-      await screen.findByLabelText('Where "How long it\'s gone unwatched" starts paying'),
+      await screen.findByLabelText('Where "How long it\'s gone unwatched" starts adding points'),
     ).toBeVisible();
     expect(
-      screen.getByLabelText('Where "How long it\'s gone unwatched" pays in full'),
+      screen.getByLabelText('Where "How long it\'s gone unwatched" adds all its points'),
     ).toBeVisible();
   });
 
-  it("colors a direct ramp deepest at the bound it pays in full at", async () => {
+  it("colors a direct ramp deepest at the bound it adds all its points at", async () => {
     renderEditor({ body: body() });
-    await screen.findByLabelText('Where "How long it\'s gone unwatched" pays in full');
+    await screen.findByLabelText('Where "How long it\'s gone unwatched" adds all its points');
 
-    // This fixture pays in full at 365 days on a 3650-day track, so the flat top starts one
+    // This fixture adds in full at 365 days on a 3650-day track, so the flat top starts one
     // tenth along and the fill still runs to the end: past the far bound the signal keeps
-    // paying all of it. Full color therefore belongs at 10%, not at the edge the fill happens
+    // adding all of it. Full color therefore belongs at 10%, not at the edge the fill happens
     // to stop on. Drawing one gradient edge to edge put it at 3650 days, ten times the bound,
-    // while the key underneath says "deepest where it pays in full" -- the picture and the
+    // while the key underneath says "deepest where it adds them all" -- the picture and the
     // words disagreeing about the one fact the picture exists to carry.
     const { fill } = stripFor("How long it's gone unwatched");
     expect(fill.style.background).toBe(
@@ -1483,7 +1485,7 @@ describe("where a signal starts earning", () => {
     const user = userEvent.setup();
     renderEditor({ body: body() });
 
-    const box = await screen.findByLabelText('Where "How low it\'s rated" stops paying');
+    const box = await screen.findByLabelText('Where "How low it\'s rated" stops adding points');
     await user.clear(box);
     await user.type(box, "5.5");
 
@@ -1505,7 +1507,7 @@ describe("where a signal starts earning", () => {
     renderEditor({ body: off });
 
     await screen.findByText("How low it's rated");
-    expect(screen.queryByLabelText('Where "How low it\'s rated" stops paying')).toBeNull();
+    expect(screen.queryByLabelText('Where "How low it\'s rated" stops adding points')).toBeNull();
   });
 });
 
@@ -1570,7 +1572,7 @@ describe("trying a value against a signal's range", () => {
 describe("what the dormancy ramp can actually reach", () => {
   // The example has to MOVE with the setting or it teaches nothing about the control under
   // it. This one opened at the watch mirror's edge, and a mirror deeper than the far end put
-  // it past the point the signal already pays in full: it froze at "70 of these 70 points"
+  // it past the point the signal already adds in full: it froze at "70 of these 70 points"
   // whatever either box said. So the edge is used only where it BINDS.
   it("describes a title the history caps, when the history is the shorter of the two", async () => {
     // 200 days of history against a far end of 365: nothing can present more than 200, so
@@ -1699,7 +1701,9 @@ describe("which number control a bound gets", () => {
     );
     renderEditor({ body: body_ });
 
-    const far = await screen.findByLabelText('Where "How long it\'s gone unwatched" pays in full');
+    const far = await screen.findByLabelText(
+      'Where "How long it\'s gone unwatched" adds all its points',
+    );
     // 1825 days is stored; "5 years" is drawn. The policy body never sees the unit.
     expect(far).toHaveValue(5);
     expect(within(far.closest(".qty") as HTMLElement).getByRole("combobox")).toHaveValue("years");
@@ -1708,7 +1712,7 @@ describe("which number control a bound gets", () => {
   it("leaves a rating on the fixed suffix, which has no larger unit to offer", async () => {
     renderEditor({ body: body() });
 
-    const box = await screen.findByLabelText('Where "How low it\'s rated" stops paying');
+    const box = await screen.findByLabelText('Where "How low it\'s rated" stops adding points');
     // A suffix, not a picker: there is no unit above IMDb to switch to.
     expect(within(box.closest(".qty") as HTMLElement).queryByRole("combobox")).toBeNull();
   });

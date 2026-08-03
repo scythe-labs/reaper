@@ -3210,7 +3210,7 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     144 is about exactly that pair: deriving three copies makes the fourth MORE dangerous, not
     less, because the derived ones are demonstrably right and vouch for a consistency nobody
     checked. It fails in the reassuring direction too, since a reader told a signal is worth
-    10 points and not told it pays none of them above IMDb 6.0 concludes the wrong thing about
+    10 points and not told it adds none of them above IMDb 6.0 concludes the wrong thing about
     their own library.
 
     So the figures are held against the shipped policies here rather than by a comment asking
@@ -3254,6 +3254,6 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
         + "\n".join(missing)
         + "\nThe signal card, the strip and the why-panel row all derive this from the "
         "policy; this table is hand-written, so it is the copy that drifts (rule 144). "
-        "Update the 'What it pays' column, and re-read frontend/src/components/signalRamp.ts "
+        "Update the 'What it adds' column, and re-read frontend/src/components/signalRamp.ts "
         "so the manual and the app word the same bound the same way."
     )
