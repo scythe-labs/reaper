@@ -20,6 +20,7 @@ has logged in. Everything here is exempt from the session requirement (see
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -131,6 +132,30 @@ def _refuse_if_waiting(retry: float) -> None:
             "Too many attempts. Please wait and try again.",
             headers={"Retry-After": str(seconds)},
         )
+
+
+def record_password_failure(throttle: Throttle, keys: Sequence[str], *, gate: str) -> None:
+    """Count a wrong password against every key, and say which interlock it was.
+
+    Four routes are gated on the admin password -- arming deletion, changing that
+    password, forgetting the watch record, and confirming a restore -- and each recorded
+    the failure silently. So a hundred attempts to arm deletion from a borrowed session
+    left no trace whatever, while the one that eventually succeeded logged
+    ``safety.destructive_set``. The local login has warned on its lockout crossing all
+    along (``auth.local_locked_out``); this is that same line for its four siblings
+    (rule 72).
+
+    The throttle KEY and the gate, never ``payload.password``: an attempted password is
+    of no use to anyone reading this and is the one thing here that must never be
+    written down (rule 13).
+    """
+    locked_for = 0.0
+    for key in keys:
+        locked_for = max(locked_for, throttle.record_failure(key))
+    if locked_for > 0:
+        log.warning("auth.password_locked_out", gate=gate, retry_after=math.ceil(locked_for))
+    else:
+        log.debug("auth.password_rejected", gate=gate)
 
 
 def _busy_hashing() -> HTTPException:

@@ -46,7 +46,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, cast
 
-from reaper.buildinfo import install_root
+from reaper.buildinfo import frozen_bundle, install_root
 
 if TYPE_CHECKING:
     import uvicorn
@@ -65,8 +65,7 @@ _BUILDINFO_KEYS = {
 
 def _bundle_root() -> Path | None:
     """The unpacked PyInstaller bundle, or ``None`` when running from source."""
-    root = getattr(sys, "_MEIPASS", None)
-    return Path(root) if root else None
+    return frozen_bundle()
 
 
 def _repo_root() -> Path:

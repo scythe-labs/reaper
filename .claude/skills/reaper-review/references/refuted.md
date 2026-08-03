@@ -427,3 +427,57 @@ misleading variant (`few_watchers` reading "all 20 points at 0 watchers" beside 
 recorded") is unreachable: `distinct_watchers` is only ever `Known` or `Unknown`, never `Absent`.
 Pinned at `aba0c95`. The residual was taken: the guard's comment now states its real reason and
 says why `not_applicable` keeps the sentence.
+
+**`clients/base.py:_trace` — `status=None` cannot distinguish a guard refusal from a timeout, so
+a blocked DELETE reads as one that may have landed.** The mechanism is real and the conclusion is
+not. `SafetyViolationError` is a `RuntimeError` (base.py:120) and matches neither `except` in
+`_mutate`, so the `finally` does log `mutation=True status=None`. But the operator is never left
+holding that ambiguity: the only three `_mutate` call sites reach it from inside the executor's
+try at `executor.py:2012`, whose `except SafetyViolationError` records the step FAILED with "the
+transport guard blocked the delete" and logs `reap.item_failed` at WARNING, where a timeout takes
+the `IntegrationError` arm one line up. The disambiguating line is louder than the DEBUG trace,
+not absent. The trigger is also a can't-happen tripwire by construction: the execute route hands
+ONE `RuntimeSafety` snapshot to both the guard and the executor. Do not "fix" this by narrowing
+what escapes `_mutate` — letting it pass both arms is what lets the executor turn it into a clean
+failed item. Pinned at `e4bfa18`. One residual half was real and taken separately: `_send`
+assigns `status` once outside its redirect loop, so a 302 followed by a failing hop traced a
+stale `status=302`; that is cosmetic, unreachable for mutations (`_mutate` refuses redirects),
+and needs three consecutive transport failures behind `@transient_retry` to reach at all.
+
+**`api/auth.py:recover` — the lockout sweep missed the recovery endpoint, leaving the only
+lockout counter in the tree that crosses silently.** The premise is false. `recover_throttle.
+record_failure(ip_key)` is reachable only inside `if not await redeem_recovery_token(...)`, and
+all three of that function's False returns already log at WARNING first: `recovery.rejected` with
+"unknown token", "token already used", and "token expired" (`auth/recovery.py:242/245/248`). A
+token-guessing flood therefore emits a WARNING per attempt before the counter is touched, which
+is louder than the proposed fix, and `/api/auth/recover` also carries a DEBUG `http.request` line
+per attempt. The census behind the candidate was miscounted too: five `record_failure` sites, of
+which four warn. Routing it through `record_password_failure` would emit `auth.password_rejected`
+on a lane that has no password. Pinned at `e4bfa18`. Noted but not raised: `_rate_limited` /
+`RateLimiter` (`ratelimit.py:154`) logs nothing on refusal, which is a closer sibling than
+recovery is if anyone wants to sweep this class properly.
+
+**`services/planner.py:build_plan` — `planner.admitted` is decided against `planned_keys`, which
+predates the step-expansion loop, so an item can be logged admitted and skipped in one run.** The
+divergence is real in the abstract and unreachable in production. Reproducing it needs a
+hand-built Candidate with a three-part `sonarr:{inst}:{series}` media_key, which nothing writes:
+`Candidate` is constructed in one place (`snapshot.py:1463`) from either the movie path
+(`radarr:{inst}:{id}`) or `season_scan.season_media_key`, which always emits four parts. The
+three-part string exists only as a `group_key` and as a display-lookup key, and
+`effective_condemned` only ever returns rows keyed by `media_key`. The `else` branch at
+`planner.py:593` is defensive code for a series-delete path that does not exist. The proposed fix
+was also a no-op: both DEBUG loops are ALREADY below the step-expansion loop. Recomputing
+`planned_keys` after it is NOT a safe local edit — the same set feeds `admitted`/`omitted`, the
+abort-not-truncate refusal, and `held_back_unknown_size`, all decided before the ReapRun row is
+created. Pinned at `e4bfa18`.
+
+**`tests/test_override_truth.py:_overrides` — the `since(0)` length baseline is defeated by ring
+saturation, so the negative test passes while the forbidden line was emitted.** Refuted AS
+STATED: the stated repro does not reproduce. With the no-op DELETE made to log anyway, the test
+went red running alone, running the candidate's own saturation recipe, and under a full
+`-n auto` suite (1 failed, 3432 passed). The DELETE moves the window by exactly one line, so the
+baseline is only defeated when an override line occupies the window's single oldest slot as it is
+sampled — swept at pad=0/1/5/60/300/495/498 (caught) versus pad=499 (missed), one offset in the
+sweep. Pinned at `e4bfa18`. The narrower real defect was taken: the helper now takes a
+`last_seq()` cursor, since a one-line race that can allow a forbidden line is still worth closing
+and the three positive tests carried it as a false failure.

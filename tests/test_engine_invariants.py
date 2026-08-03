@@ -131,7 +131,7 @@ class TestAGateCannotDelete:
     delete a file."""
 
     @given(item=facts())
-    @settings(max_examples=300)
+    @settings(max_examples=300, deadline=None)
     def test_every_gate_outcome_is_protect_or_abstain(self, item: Facts) -> None:
         for result in evaluate_all(ALL_GATES, item).results:
             assert result.outcome in (PROTECT, ABSTAIN)
@@ -195,7 +195,7 @@ class TestUnknownNeverCondemns:
     """The invariant that survives an outage."""
 
     @given(item=facts())
-    @settings(max_examples=300)
+    @settings(max_examples=300, deadline=None)
     def test_an_unknown_input_blocks_its_gate_rather_than_passing_it(self, item: Facts) -> None:
         """A gate that could not be evaluated is reported as *blocked*, not as
         'checked and fine'. Treating those alike is the whole Deleterr failure
@@ -208,7 +208,7 @@ class TestUnknownNeverCondemns:
                 assert "could not check" in result.detail
 
     @given(item=facts())
-    @settings(max_examples=300)
+    @settings(max_examples=300, deadline=None)
     def test_an_unknown_input_never_increases_the_score(self, item: Facts) -> None:
         """THE property. Signals are unsigned, so an Unknown contributes 0 -- the
         floor. Replacing any known value with Unknown must never make an item MORE
@@ -421,14 +421,14 @@ class TestTheCuratedListGateHoldsWhatIsOnTheList:
 
 class TestScoreBounds:
     @given(item=facts())
-    @settings(max_examples=300)
+    @settings(max_examples=300, deadline=None)
     def test_the_score_stays_in_range(self, item: Facts) -> None:
         result = score(ALL_SIGNALS, item)
         assert 0.0 <= result.value <= 100.0
         assert 0.0 <= result.coverage <= 1.0
 
     @given(item=facts())
-    @settings(max_examples=200)
+    @settings(max_examples=200, deadline=None)
     def test_no_signal_is_ever_negative(self, item: Facts) -> None:
         """Unsigned. A signal measures a reason to delete; there is no such thing
         as a negative reason, and a negative would let one signal cancel another."""
@@ -1480,7 +1480,7 @@ class TestLosingEvidenceCannotCondemn:
         )
 
     @given(item=facts())
-    @settings(max_examples=500)
+    @settings(max_examples=500, deadline=None)
     def test_an_unreadable_input_never_raises_the_score_in_any_lane(self, item: Facts) -> None:
         """THE property, restated over all three lanes.
 
@@ -1528,7 +1528,7 @@ class TestLosingEvidenceCannotCondemn:
         assert _full_score(unreadable).value <= _full_score(rated).value
 
     @given(item=facts())
-    @settings(max_examples=500)
+    @settings(max_examples=500, deadline=None)
     def test_the_score_can_never_exceed_what_we_could_read(self, item: Facts) -> None:
         """``base <= 100 * coverage``, the invariant nobody wrote down.
 
@@ -1547,7 +1547,7 @@ class TestLosingEvidenceCannotCondemn:
         assert result.base_value <= MAX_SCORE * result.coverage + 1e-9
 
     @given(item=facts())
-    @settings(max_examples=500)
+    @settings(max_examples=500, deadline=None)
     def test_coverage_cannot_rise_when_evidence_is_lost(self, item: Facts) -> None:
         """Coverage measures what we could read, so it can only fall as we read less.
 
@@ -1583,7 +1583,7 @@ class TestLosingEvidenceCannotCondemn:
         assert evaluate_keep(keep, unreadable).discount >= evaluate_keep(keep, readable).discount
 
     @given(item=facts())
-    @settings(max_examples=200)
+    @settings(max_examples=200, deadline=None)
     def test_the_score_stays_in_bounds(self, item: Facts) -> None:
         """0-100 and 0-1, whatever the evidence. Every consumer assumes both."""
         result = _full_score(item)

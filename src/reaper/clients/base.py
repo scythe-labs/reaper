@@ -22,6 +22,7 @@ Two things it deliberately does *not* rely on:
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar, Self
 
@@ -277,6 +278,47 @@ class BaseClient:
         """
         return await self._client.request(method, path, params=params, json=json, headers=headers)
 
+    def _trace(
+        self, method: str, path: str, status: int | None, started: float, *, mutation: bool = False
+    ) -> None:
+        """One line per `BaseClient` call: which service, what was asked, what came back.
+
+        Nothing else records that one of these calls happened. The HTTP libraries would, but
+        they are pinned to WARNING on purpose (``logging._NOISY_LOGGERS``) because they log
+        the URL verbatim and the structlog scrubber never sees a stdlib record, so this is
+        the only trace there can be. ``client.retry`` says a blip happened; this says the
+        call happened, how long it took, and how it ended -- which is what "the scan sat
+        there for four minutes" needs.
+
+        **Two outbound surfaces are NOT traced, and reading the *arr half as the whole
+        picture is the mistake this paragraph exists to prevent.** `PlexClient` is not a
+        `BaseClient`: it rides plexapi through `GuardedSession`, so every Plex read, and the
+        `refresh_path` and `empty_trash` calls on the deletion path, produce no line here.
+        `PublicClient.stream_to` streams past `_send`, so the ratings dataset -- the longest
+        single outbound operation in the app -- produces none either. Extending the trace to
+        `GuardedSession` means logging ``urlsplit(url).path`` and never the URL, since
+        plexapi puts ``X-Plex-Token`` in the query string (rule 13), and weighing the volume:
+        the GUID sweep pages through hundreds of calls into a 2000-line ring.
+
+        **``path`` is the argument, never the post-redirect target and never
+        ``response.request.url``**: a Location header carries its own query string, and
+        Tautulli and MDBList both put their key in one (rule 13). ``params`` and ``headers``
+        are never logged for the same reason. The scrubber would catch the known key names,
+        but not logging a credential is a stronger guarantee than redacting one.
+
+        ``status=None`` is a call that never got an answer -- a timeout or an unreachable
+        host -- which is the shape a scan stuck on one service takes.
+        """
+        log.debug(
+            "client.call",
+            service=self.service,
+            method=method.upper(),
+            path=path,
+            status=status,
+            duration_ms=round((time.monotonic() - started) * 1000),
+            mutation=mutation,
+        )
+
     async def _send(
         self,
         method: str,
@@ -303,53 +345,61 @@ class BaseClient:
         ``headers`` are per-request extras (e.g. plex.tv's ``X-Plex-Token``, which differs
         per call and so cannot live on the client's default headers).
         """
-        target = path
-        send_params = params
-        for _ in range(4):  # the request itself, plus at most three same-origin redirects
-            try:
-                response = await self._request(
-                    method, target, params=send_params, json=json, headers=headers
-                )
-            except httpx2.TimeoutException as exc:
-                # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s)
-                # or PoolTimeout (5s) is not the read timeout, and reporting a fixed
-                # "30s" would misdirect an operator diagnosing a connectivity problem.
-                raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
-            except httpx2.TransportError as exc:
-                raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+        started = time.monotonic()
+        status: int | None = None
+        try:
+            target = path
+            send_params = params
+            for _ in range(4):  # the request itself, plus at most three same-origin redirects
+                try:
+                    response = await self._request(
+                        method, target, params=send_params, json=json, headers=headers
+                    )
+                except httpx2.TimeoutException as exc:
+                    # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s)
+                    # or PoolTimeout (5s) is not the read timeout, and reporting a fixed
+                    # "30s" would misdirect an operator diagnosing a connectivity problem.
+                    raise IntegrationError(
+                        self.service, f"timed out ({type(exc).__name__})"
+                    ) from exc
+                except httpx2.TransportError as exc:
+                    raise IntegrationError(self.service, f"unreachable ({exc})") from exc
 
-            if response.status_code not in _REDIRECTS:
-                break
-            location = response.headers.get("location")
-            if method.upper() not in ("GET", "HEAD") or not location:
+                status = response.status_code
+                if response.status_code not in _REDIRECTS:
+                    break
+                location = response.headers.get("location")
+                if method.upper() not in ("GET", "HEAD") or not location:
+                    raise IntegrationError(
+                        self.service,
+                        f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+                        status=response.status_code,
+                    )
+                next_url = response.request.url.join(location)
+                if not self._allow_cross_origin_redirects and _origin(next_url) != _origin(
+                    httpx2.URL(self.base_url)
+                ):
+                    raise IntegrationError(
+                        self.service,
+                        f"refused cross-origin redirect for {method} {path}: the credential "
+                        f"headers must never leave {httpx2.URL(self.base_url).host!r}",
+                        status=response.status_code,
+                    )
+                target = str(next_url)
+                send_params = None  # the Location URL already carries its query string
+            else:
+                raise IntegrationError(self.service, f"too many redirects for {method} {path}")
+
+            if response.status_code >= 400:
                 raise IntegrationError(
                     self.service,
-                    f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+                    f"HTTP {response.status_code} for {method} {path}",
                     status=response.status_code,
+                    retry_after=_retry_after_seconds(response),
                 )
-            next_url = response.request.url.join(location)
-            if not self._allow_cross_origin_redirects and _origin(next_url) != _origin(
-                httpx2.URL(self.base_url)
-            ):
-                raise IntegrationError(
-                    self.service,
-                    f"refused cross-origin redirect for {method} {path}: the credential "
-                    f"headers must never leave {httpx2.URL(self.base_url).host!r}",
-                    status=response.status_code,
-                )
-            target = str(next_url)
-            send_params = None  # the Location URL already carries its query string
-        else:
-            raise IntegrationError(self.service, f"too many redirects for {method} {path}")
-
-        if response.status_code >= 400:
-            raise IntegrationError(
-                self.service,
-                f"HTTP {response.status_code} for {method} {path}",
-                status=response.status_code,
-                retry_after=_retry_after_seconds(response),
-            )
-        return response
+            return response
+        finally:
+            self._trace(method, path, status, started)
 
     async def get_json(
         self,
@@ -393,36 +443,42 @@ class BaseClient:
         Callers are the typed mutation methods on the *arr clients; nothing else sets the
         extension, so a stray write from some other path is refused, not waved through.
         """
+        started = time.monotonic()
+        status: int | None = None
         try:
-            response = await self._client.request(
-                method,
-                path,
-                params=params,
-                json=json,
-                extensions={"reaper_mutation_approved": True},
-            )
-        except httpx2.TimeoutException as exc:
-            # Report the actual timeout kind (connect/write/pool/read), not a fixed "30s":
-            # for a mutation especially, "could not connect" and "the server was slow to
-            # answer" call for different operator responses.
-            raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
-        except httpx2.TransportError as exc:
-            raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+            try:
+                response = await self._client.request(
+                    method,
+                    path,
+                    params=params,
+                    json=json,
+                    extensions={"reaper_mutation_approved": True},
+                )
+            except httpx2.TimeoutException as exc:
+                # Report the actual timeout kind (connect/write/pool/read), not a fixed "30s":
+                # for a mutation especially, "could not connect" and "the server was slow to
+                # answer" call for different operator responses.
+                raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
+            except httpx2.TransportError as exc:
+                raise IntegrationError(self.service, f"unreachable ({exc})") from exc
 
-        if response.status_code in _REDIRECTS:
-            # A redirected mutation is refused, never replayed: auto-following would
-            # re-issue the approved call -- credential headers, mutation approval and
-            # all -- at whatever URL the (possibly compromised) upstream chose.
-            raise IntegrationError(
-                self.service,
-                f"refused redirect (HTTP {response.status_code}) for {method} {path}",
-                status=response.status_code,
-            )
-        if response.status_code >= 400:
-            raise IntegrationError(
-                self.service,
-                f"HTTP {response.status_code} for {method} {path}",
-                status=response.status_code,
-                retry_after=_retry_after_seconds(response),
-            )
-        return response
+            status = response.status_code
+            if response.status_code in _REDIRECTS:
+                # A redirected mutation is refused, never replayed: auto-following would
+                # re-issue the approved call -- credential headers, mutation approval and
+                # all -- at whatever URL the (possibly compromised) upstream chose.
+                raise IntegrationError(
+                    self.service,
+                    f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+                    status=response.status_code,
+                )
+            if response.status_code >= 400:
+                raise IntegrationError(
+                    self.service,
+                    f"HTTP {response.status_code} for {method} {path}",
+                    status=response.status_code,
+                    retry_after=_retry_after_seconds(response),
+                )
+            return response
+        finally:
+            self._trace(method, path, status, started, mutation=True)

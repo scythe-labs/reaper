@@ -488,9 +488,14 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     # synchronous refusal below, before the task is ever created.
     status = _reap_status(app)
     if status.running:
-        raise HTTPException(
-            409, "A reap is already running. Wait for it to finish, or stop it, first."
-        )
+        # Logged HERE rather than through the handler below, which is the one refusal that
+        # cannot pass through it: this request has not claimed the slot, and the handler
+        # releases it. Routing the loser through that path would clear the WINNING run's
+        # ``running`` flag while its task keeps deleting, opening the slot for a third
+        # request to start a second reap over the one shared status.
+        detail = "A reap is already running. Wait for it to finish, or stop it, first."
+        log.info("reap.refused", run_id=run_id, status=409, detail=detail)
+        raise HTTPException(409, detail)
     status.running = True
     status.run_id = run_id
     status.stopping = False
@@ -538,7 +543,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 for client in closers:
                     await closing.enter_async_context(client)
             raise HTTPException(409, preflight)
-    except Exception:
+    except Exception as exc:
         # ANY synchronous failure before the task is created releases the slot -- not only an
         # HTTPException refusal, but a crypto/DB error out of build_reap_gateway or a session
         # read. Catching only HTTPException here would leave ``running`` stuck True with no
@@ -547,6 +552,21 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         status.running = False
         status.phase = "idle"
         status.run_id = None
+        # Every synchronous refusal raised after the slot was claimed. The slot-claim 409
+        # above is the one that cannot reach here, and it logs itself. This route is the only
+        # one that deletes, and its first line was `reap.started` -- emitted after every
+        # interlock has already passed, so "I typed the phrase, pressed Reap, and nothing
+        # happened" left no record anywhere: the browser showed a message the operator has
+        # since dismissed and the server kept none of it. The status and detail together name
+        # which interlock refused, because they are exactly what the operator was shown.
+        #
+        # INFO rather than DEBUG: nobody gets to reproduce this one with the level turned up,
+        # because the state that refused it -- a plan built under a policy since edited, a
+        # phrase that no longer matches the content -- has moved on by the time they try.
+        if isinstance(exc, HTTPException):
+            log.info("reap.refused", run_id=run_id, status=exc.status_code, detail=exc.detail)
+        else:
+            log.warning("reap.refused", run_id=run_id, error=str(exc))
         raise
 
     async def _armed_now() -> bool:
@@ -682,7 +702,13 @@ async def stop_run(request: Request, run_id: int) -> ReapStatus:
     no-op with 409 if this run is not the one running."""
     status = _reap_status(request.app)
     if not status.running or status.run_id != run_id:
-        raise HTTPException(409, "That run is not currently running.")
+        # The sibling of the execute route's slot-claim refusal (rule 72): the success path
+        # logs and the refusal did not, so "I pressed Stop and it kept going" left the same
+        # nothing. Usually a Stop aimed at a run that already finished, which is exactly the
+        # state that has moved on by the time anyone looks.
+        detail = "That run is not currently running."
+        log.info("reap.stop_refused", run_id=run_id, status=409, detail=detail)
+        raise HTTPException(409, detail)
     status.stopping = True
     log.info("reap.stop_requested", run_id=run_id)
     return status
