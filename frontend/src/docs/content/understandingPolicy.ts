@@ -110,15 +110,15 @@ export const understandingPolicy: Doc = {
     p(
       "Each signal pushes the score up by up to its number of points. The default mix differs for movies and TV.",
     ),
-    // The "What it pays" column is the fourth copy of a sentence the app now states three
+    // The "What it adds" column is the fourth copy of a sentence the app now states three
     // other ways: the two bound boxes on the signal card, the strip drawn under them, and the
     // why-panel row that reports what a title scored. Generating those three and leaving this
     // one is exactly the trap rule 144 describes, and it fails in the reassuring direction: a
-    // reader is told a signal is worth 10 points with nothing saying it pays none of them
+    // reader is told a signal is worth 10 points with nothing saying it adds none of them
     // above IMDb 6.0. `tests/test_repo_hygiene.py` holds these figures against the shipped
     // policies by name, because a comment asking the next author to remember does nothing.
     table(
-      ["Signal", "What it means", "What it pays", "Movie points", "TV points"],
+      ["Signal", "What it means", "What it adds", "Movie points", "TV points"],
       [
         // Not "time since anyone last played it": `engine/dormancy.py` measures from the
         // last play, or from the day the file arrived when there has never been one, or

@@ -1287,9 +1287,7 @@ describe("what a signal row was measured against", () => {
     await user.click(row);
 
     expect(
-      screen.getByText(
-        "Pays nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0. " + "This one added 0.",
-      ),
+      screen.getByText("Added 0 of 10 points. Nothing at IMDb 6.0 or above, all 10 at IMDb 0.0."),
     ).toBeVisible();
     expect(row).toHaveAttribute("aria-expanded", "true");
   });
@@ -1312,11 +1310,11 @@ describe("what a signal row was measured against", () => {
     show(detail([signal({ id: "low_rating", detail: "IMDb 6.4", state: "argues_keep" })]));
 
     expect(screen.queryByRole("button", { name: /IMDb 6.4/ })).toBeNull();
-    expect(screen.queryByText(/Pays nothing/)).toBeNull();
+    expect(screen.queryByText(/Nothing at IMDb/)).toBeNull();
   });
 
   it("says nothing for a reason it could not read", () => {
-    // There is a line, but nothing was compared to it. "This one added 0" would describe
+    // There is a line, but nothing was compared to it. "Added 0 of 10 points" would describe
     // arithmetic that never ran, on the one row state that must stay distinct from a zero.
     show(
       detail([
