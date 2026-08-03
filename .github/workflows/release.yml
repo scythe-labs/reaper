@@ -120,9 +120,15 @@ jobs:
             -q '[.[] | select(.base.ref == "main" and .merged_at != null)][0].head.sha // empty' \
             || true)"
           if [ -n "${target}" ]; then
-            if ! git cat-file -e "${target}^{commit}" 2>/dev/null ||
-               [ "$(git rev-parse "${target}^{tree}")" != "$(git rev-parse "${GITHUB_SHA}^{tree}")" ]; then
-              echo "promotion head ${target} is unknown here or holds a different tree; tagging the pushed sha instead" >&2
+            # The promotion branch auto-deletes at merge, so this commit is normally
+            # absent from the checkout (the first cut fell back over exactly that).
+            # The PR ref keeps it alive server-side, the tree is read from the API,
+            # and `gh release create --target` is a server-side write that needs no
+            # local object.
+            target_tree="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${target}" \
+              -q .tree.sha 2>/dev/null || true)"
+            if [ "${target_tree}" != "$(git rev-parse "${GITHUB_SHA}^{tree}")" ]; then
+              echo "promotion head ${target} holds a different tree; tagging the pushed sha instead" >&2
               target=""
             fi
           fi

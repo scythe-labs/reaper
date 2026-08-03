@@ -869,7 +869,10 @@ prerelease is replaced nightly and never enters winget or the snap stable channe
 The notes are GitHub's own generation, sectioned by label through `.github/release.yml`, over
 the pull requests between the previous tag and this one. That range only exists on `dev`: the
 promotion squash is one commit for a whole release, so the tag points at the promotion PR's
-head commit rather than the squash it became. The two carry the same tree, which the workflow
-verifies rather than assumes, and the artifacts still build from the pushed sha. The first cut
-ships `.github/first-release-notes.md`: a generated list spanning the whole history is not
-release notes.
+head commit rather than the squash it became — a commit the promotion recipe in `CLAUDE.md`
+keeps connected to `dev`'s line. The two carry the same tree, which the workflow verifies
+through the API rather than assumes (the promotion branch deletes itself at merge, so the
+commit is not in the release checkout; the first cut fell back over exactly that and was
+retargeted by hand). The artifacts still build from the pushed sha. The first cut ships
+`.github/first-release-notes.md`: a generated list spanning the whole history is not release
+notes.

@@ -232,10 +232,27 @@ written to reassure, so it fails toward telling the operator the app is safer th
   survives: **a squash-merge lands a sha CI never tested**, since the change is replayed onto
   whatever `dev` is now, so landing several PRs back to back ends with the gates re-run on the
   merged `dev` rather than three green per-branch runs.
-- **`main` is release-only.** Never push to `main` directly. Promote `dev` with a pull request
-  from `dev` → `main`, **squash-merged**, so `main` reads as a sequence of releases while the
-  granular history lives on `dev`: `gh pr create --base main --head dev`, then `gh pr merge
-  --squash <n>`, and delete any temporary feature branch after.
+- **`main` is release-only.** Never push to `main` directly. Promote `dev` with a
+  **squash-merged** pull request from a promotion branch, so `main` reads as a sequence of
+  releases while the granular history lives on `dev`. A bare `dev` → `main` PR worked exactly
+  once: squash promotions never connect the two histories, so from the second promotion on,
+  every file changed since the last release reads as an add/add conflict against the
+  repository baseline. The promotion branch carries `main`'s tip without touching the tree,
+  which moves the PR's merge base to `main` and shrinks the diff to what actually landed:
+
+  ```
+  git fetch origin
+  git checkout -b promote-<version> origin/dev
+  git merge -s ours origin/main -m "Merge main back so the promotion diffs against the last release"
+  git push -u origin promote-<version>
+  gh pr create --base main --head promote-<version>
+  ```
+
+  Then `gh pr merge --squash <n>`. The ours-strategy merge keeps `dev`'s tree bit for bit
+  (release.yml verifies that before tagging) and never conflicts, whatever the histories look
+  like. The head branch deletes itself at merge; the release tag keeps its head commit alive,
+  and that commit's first parent is `dev`'s line, which is what scopes the next release's
+  generated notes to the PRs that landed since this one.
 
 ## Verification gates
 
