@@ -34,8 +34,12 @@ Backup/real data goes in `data/` (needs `reaper.db`, `cache.db`, **`secret.key` 
 together, or stored secrets won't decrypt). Confirm schema first:
 
 ```
-uv run alembic current   # must equal `uv run alembic heads`
+uv run python -m reaper.preflight   # applies a staged restore; run BEFORE migrations
+uv run alembic current              # must equal `uv run alembic heads`
 ```
+
+Preflight is what applies a restore staged in the UI. A boot that skips it does not fail, it
+just never finishes the restore, and the banner keeps asking for a restart (#381).
 
 Start both servers (background), wait for readiness in their logs:
 
