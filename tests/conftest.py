@@ -24,12 +24,19 @@ the real delay for a client retry or a poll loop only burns wall clock for no si
 
 import asyncio
 import logging
+import sys
 from collections.abc import Iterator
 
 import pytest
 import structlog
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
+
+# Private, because structlog exposes no public name for the proxy ``get_logger`` returns
+# and no public way to un-freeze one. ``tests/test_capturable_loggers.py`` drives the real
+# freezing path, so an upgrade that renames or re-implements this fails there rather than
+# turning the guard below into a silent no-op.
+from structlog._config import BoundLoggerLazyProxy
 
 import reaper.auth.passwords as _passwords
 from reaper import logbuffer
@@ -107,6 +114,27 @@ async def _no_catch_up(*_args: object, **_kwargs: object) -> None:
     return None
 
 
+def uncache_module_loggers() -> None:
+    """Thaw every module logger frozen by an earlier test. See :func:`_capturable_logs`.
+
+    structlog freezes by assigning ``finalized_bind`` onto the proxy as an INSTANCE
+    attribute, shadowing the class ``bind`` that would otherwise re-read the current
+    configuration. Deleting that attribute is the whole thaw: the next call falls back to
+    the class method and sees whatever ``capture_logs`` has installed.
+
+    Every logger in ``src/`` is a module-level ``log = structlog.get_logger(__name__)``,
+    so walking the loaded ``reaper`` modules reaches all of them --
+    ``tests/test_capturable_loggers.py`` pins that against the source tree, because a
+    logger built any other way would drop out of this walk without a word.
+    """
+    for name, module in list(sys.modules.items()):
+        if module is None or (name != "reaper" and not name.startswith("reaper.")):
+            continue
+        for value in vars(module).values():
+            if isinstance(value, BoundLoggerLazyProxy):
+                value.__dict__.pop("bind", None)
+
+
 @pytest.fixture(autouse=True)
 def _capturable_logs() -> None:
     """Keep ``structlog.testing.capture_logs`` working across the whole suite.
@@ -114,15 +142,23 @@ def _capturable_logs() -> None:
     ``configure_logging`` (called by ``test_foundations`` and by every ``create_app``
     boot) sets ``cache_logger_on_first_use=True``. The first time a module logger is used
     while that flag is live, structlog PERMANENTLY replaces that logger proxy's ``bind``
-    with a closure holding the then-current processors -- after which ``capture_logs``
-    can never intercept it, and even ``reset_defaults`` will not undo it. Left alone, the
-    flag persists across tests, so a scan logger materialized after one of those tests is
-    deaf to every later ``capture_logs`` assertion (an ordering-dependent failure in the
-    full suite that a single-file run never shows). Clearing the flag before each test
-    keeps capturable loggers from ever caching. Tests that assert on ``configure_logging``
+    with a closure holding the configuration of that moment -- after which
+    ``reset_defaults`` will not undo it. Clearing the flag before each test keeps
+    capturable loggers from ever freezing. Tests that assert on ``configure_logging``
     itself call it inside their own body, so this starting state does not affect them.
+
+    Clearing the flag is only half of it, and the missing half was a test failing for a
+    reason having nothing to do with what it tested (#481). A test that boots an app sets
+    the flag INSIDE its own body and then logs, so a logger freezes while this fixture is
+    not looking, and no later clearing of the flag thaws it. It stays capturable for a
+    while, because ``capture_logs`` mutates the configured processor list in place; the
+    frozen logger goes deaf only once a LATER boot installs a fresh list, which the next
+    ``create_app`` does. Which tests share a worker is decided by timing under ``-n auto``,
+    so whether a later ``capture_logs`` assertion saw its events came down to scheduling.
+    So thaw as well as prevent: afterwards this guard holds whatever an earlier test did.
     """
     structlog.configure(cache_logger_on_first_use=False)
+    uncache_module_loggers()
 
 
 @pytest.fixture(autouse=True)
