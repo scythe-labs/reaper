@@ -23,7 +23,7 @@ import pytest
 
 from reaper import preflight
 from reaper.config import DataDirError, Settings
-from reaper.services import restore
+from reaper.services import backup, restore
 
 
 def _settings(data_dir: Path) -> Settings:
@@ -138,6 +138,25 @@ def test_preflight_clears_a_staged_restore_nobody_confirmed(
     assert "never confirmed" in capsys.readouterr().err
 
 
+def test_preflight_says_when_it_cleared_crash_leftovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The twin of the line above, swept for the same reason (rule 72): both sweeps report
+    what they took, and neither message had a test."""
+    settings = _settings(tmp_path)
+    settings.ensure_data_dir()
+    (tmp_path / ".restore-tmp-abandoned").mkdir()
+    (tmp_path / ".backup-tmp-abandoned").mkdir()
+
+    monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+    assert preflight.main() == 0
+
+    assert not (tmp_path / ".restore-tmp-abandoned").exists()
+    assert "cleared 2 leftover" in capsys.readouterr().err
+
+
 def test_preflight_leaves_an_armed_restore_for_the_swap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -160,6 +179,62 @@ def test_preflight_leaves_an_armed_restore_for_the_swap(
     err = capsys.readouterr().err
     assert "never confirmed" not in err  # the sweep did not take it
     assert "unreadable" in err  # the swap did, and kept the live data
+
+
+class TestBootSurvivesHousekeeping:
+    """Preflight runs before the app, so what it refuses, nobody can start.
+
+    Its three legs are deliberately not alike: the two housekeeping sweeps say what went
+    wrong and boot anyway, because a directory Reaper could not tidy is not a reason to
+    lock the operator out of their own install, while the restore swap is fatal, because a
+    half-swapped database must never be served. All three are pinned here, since the
+    difference between them is the whole contract and none of it is visible from a diff.
+    """
+
+    @staticmethod
+    def _raise(*_a: object, **_k: object) -> object:
+        raise OSError(errno.EACCES, "Permission denied")
+
+    def test_a_failed_restore_sweep_does_not_stop_boot(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+        monkeypatch.setattr(restore, "clear_unarmed_staging", self._raise)
+
+        assert preflight.main() == 0
+        assert "could not clear the unconfirmed restore" in capsys.readouterr().err
+
+    def test_a_failed_temp_sweep_does_not_stop_boot(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # The sibling of the one above, and the reason it is here: the two handlers are the
+        # same shape, so a change that narrows one is a change that should have swept both
+        # (rule 72). This one had no test either.
+        monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+        monkeypatch.setattr(backup, "sweep_stale_temp", self._raise)
+
+        assert preflight.main() == 0
+        assert "could not sweep leftover temp entries" in capsys.readouterr().err
+
+    def test_a_failed_restore_swap_stops_boot_instead(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # The one that must not be tidied into the pattern above. Serving an uncertain
+        # database is the failure the prime directive exists to refuse.
+        monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+        monkeypatch.setattr(restore, "apply_pending_restore", self._raise)
+
+        assert preflight.main() == 1
+        assert "the restore could not be completed" in capsys.readouterr().err
 
 
 def test_preflight_prints_message_and_returns_one(
