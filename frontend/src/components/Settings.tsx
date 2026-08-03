@@ -1570,7 +1570,7 @@ function UpdateCell({
     return (
       <span className="muted">
         Update checks are off, so Reaper never asks GitHub for versions. Remove REAPER_UPDATE_CHECK
-        from your environment to turn them back on.
+        from launcher.conf in Reaper's data folder, or from your environment, to turn them back on.
       </span>
     );
   if (data.update_available === null)

@@ -163,6 +163,10 @@ describe("the About update row", () => {
     apiMock.update.mockResolvedValue({ ...DEFAULT_UPDATE, enabled: false });
     renderAbout();
     expect(await screen.findByText(/Update checks are off/)).toBeInTheDocument();
+    // The way back on names launcher.conf first: a double-clicked app exposes no
+    // environment the operator can edit, and the conf template is where the manual
+    // and the first-run file both put this line.
+    expect(screen.getByText(/launcher\.conf in Reaper's data folder/)).toBeInTheDocument();
   });
 
   it("reports the newest release as already taken", async () => {
