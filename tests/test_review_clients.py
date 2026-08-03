@@ -10,20 +10,22 @@ must not be relayed same-origin.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import httpx
 import httpx2
 import pytest
 import respx
-from structlog.testing import capture_logs
 
+from reaper import logbuffer
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
 from reaper.clients.plextv import PlexTvClient
 from reaper.clients.seerr import SeerrClient
 from reaper.clients.tautulli import ALLOWED_IMAGE_TYPES, TautulliClient
 from reaper.config import RuntimeSafety
+from reaper.logging import configure_logging
 from reaper.services.plex_link import (
     PlexLinkError,
     PlexLinkRetryableError,
@@ -427,6 +429,30 @@ class TestReachableProbeIsRetryable:
             await reachable_connection(resource, "tok")
 
 
+@pytest.fixture
+def call_lines(_restore_logging: None) -> Iterator[Callable[[], list[str]]]:
+    """Drive the real logging pipeline at DEBUG; the callable reads the ring on demand.
+
+    Not ``capture_logs``: ``configure_logging`` sets ``cache_logger_on_first_use``, and
+    the first use of a module logger under that flag permanently replaces its ``bind``
+    with a closure holding the then-current processors -- so once any earlier test in the
+    worker has booted an app, ``reaper.clients.base``'s logger can never be intercepted
+    again (``conftest._capturable_logs``, from the other end). Reading the ring is the
+    stronger assertion for a leak test anyway: it is the rendered line the operator
+    downloads, after the scrubber, rather than the dict before it.
+    """
+    logbuffer.RING = logbuffer.LogRing()
+    configure_logging(level="DEBUG")
+
+    def read() -> list[str]:
+        return [
+            line.text for line in logbuffer.RING.since(0) if line.text.startswith("client.call")
+        ]
+
+    yield read
+    logbuffer.RING = logbuffer.LogRing()
+
+
 class TestEveryOutboundCallIsTraced:
     """One DEBUG line per call, and it never carries a credential.
 
@@ -436,70 +462,65 @@ class TestEveryOutboundCallIsTraced:
     the reason this line must not grow a URL, a query string, or a header.
     """
 
-    @staticmethod
-    def _calls(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [entry for entry in logs if entry["event"] == "client.call"]
-
-    async def test_a_read_reports_service_status_and_shape(self, httpx2_mock: respx.Router) -> None:
+    async def test_a_read_reports_service_status_and_shape(
+        self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]]
+    ) -> None:
         httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
             return_value=httpx.Response(200, json={"version": "6.0.0"})
         )
-        with capture_logs() as logs:
-            async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
-                await client.system_status()
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            await client.system_status()
 
-        (call,) = self._calls(logs)
-        assert call["log_level"] == "debug"
-        assert call["service"] == "radarr"
-        assert call["method"] == "GET"
-        assert call["path"] == "/api/v3/system/status"
-        assert call["status"] == 200
-        assert call["mutation"] is False
-        assert isinstance(call["duration_ms"], int)
+        (call,) = call_lines()
+        assert "service=radarr" in call
+        assert "method=GET" in call
+        assert "path=/api/v3/system/status" in call
+        assert "status=200" in call
+        assert "mutation=False" in call
+        assert "duration_ms=" in call
 
     async def test_a_call_that_never_answered_reports_no_status(
-        self, httpx2_mock: respx.Router
+        self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]]
     ) -> None:
         """The shape a scan stuck on one service takes: an ask with no answer beside it."""
         httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
             side_effect=httpx2.ConnectTimeout("nope")
         )
-        with capture_logs() as logs:
-            async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
-                with pytest.raises(IntegrationError):
-                    await client.system_status()
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError):
+                await client.system_status()
 
-        assert self._calls(logs)[-1]["status"] is None
+        assert "status=None" in call_lines()[-1]
 
-    async def test_a_mutation_is_marked_as_one(self, httpx2_mock: respx.Router) -> None:
+    async def test_a_mutation_is_marked_as_one(
+        self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]]
+    ) -> None:
         httpx2_mock.delete(host="radarr.test", path="/api/v3/movie/5").mock(
             return_value=httpx.Response(200, json={})
         )
-        with capture_logs() as logs:
-            async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
-                await client.delete_movie(5, delete_files=True, add_exclusion=True)
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            await client.delete_movie(5, delete_files=True, add_exclusion=True)
 
-        assert self._calls(logs)[-1]["mutation"] is True
+        assert "mutation=True" in call_lines()[-1]
 
     async def test_the_trace_never_carries_a_query_string_or_a_header(
-        self, httpx2_mock: respx.Router
+        self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]]
     ) -> None:
         """Tautulli takes its key as a query parameter, so a trace that logged params --
         or the resolved URL rather than the path argument -- would write the credential
-        into the ring and the 0600 file in the clear (rule 13). The scrubber would catch
-        this particular spelling; not logging it is the stronger guarantee, so the
-        assertion is on the whole rendered line and not on the key alone.
+        into the ring and the 0600 file (rule 13). The scrubber would catch this
+        particular spelling, which is why the assertion is on the whole rendered line:
+        not logging a credential is a stronger guarantee than redacting one.
         """
         httpx2_mock.get(host="tautulli.test", path="/api/v2").mock(
             return_value=httpx.Response(200, json={"response": {"result": "success", "data": []}})
         )
-        with capture_logs() as logs:
-            async with TautulliClient(
-                "https://tautulli.test", "SUPERSECRET", safety=READ_ONLY
-            ) as client:
-                await client.users()
+        async with TautulliClient(
+            "https://tautulli.test", "SUPERSECRET", safety=READ_ONLY
+        ) as client:
+            await client.users()
 
-        (call,) = self._calls(logs)
-        assert "SUPERSECRET" not in repr(call)
-        assert "apikey" not in repr(call)
-        assert call["path"] == "/api/v2"
+        (call,) = call_lines()
+        assert "SUPERSECRET" not in call
+        assert "apikey" not in call
+        assert "path=/api/v2" in call
