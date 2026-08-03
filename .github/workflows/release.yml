@@ -156,6 +156,14 @@ jobs:
 
   binaries:
     needs: cut
+    # The ceiling for every job inside the called workflow, validated at startup
+    # against each nested job's own declaration BEFORE any `if:` can skip it: the
+    # first cut startup-failed because publish-dev asks contents:write and
+    # docker-arm64 asks packages:write, jobs a release call never runs. The jobs
+    # that do run declare contents:read for themselves.
+    permissions:
+      contents: write
+      packages: write
     uses: ./.github/workflows/binaries.yml
     with:
       version: ${{ needs.cut.outputs.version }}
