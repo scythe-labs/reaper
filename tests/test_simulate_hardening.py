@@ -681,6 +681,63 @@ class TestTheFrozenFactsReplay:
         assert result["abstained"] == 0
 
 
+class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
+    """The edit an operator makes most often on this page, answered off the last scan.
+
+    Toggling a protection used to fall to the refusal: the whole ``gates`` list sat in the
+    evidence hash, so unticking a box blanked every number and asked for a scan, while the
+    rating *bar* inside that same box previewed instantly. The frozen Facts were always good
+    enough for both -- a gate reads them, it does not decide what gets gathered.
+    """
+
+    @staticmethod
+    def _draft_with_dormancy_off() -> dict[str, Any]:
+        gates = [dict(g) for g in REPLAY_GATES]
+        for gate in gates:
+            if gate["gate"] == "min_dormancy":
+                gate["enabled"] = False
+        payload = REPLAY_PAYLOAD.model_copy(
+            update={"gates": [GateSettingIn.model_validate(g) for g in gates]}
+        )
+        return payload.model_dump()  # type: ignore[no-any-return]
+
+    def test_the_panel_answers_instead_of_asking_for_a_scan(
+        self, replay_client: TestClient
+    ) -> None:
+        response = replay_client.post("/api/policy/simulate", json=self._draft_with_dormancy_off())
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["exact"] is True, body.get("stale_reason")
+        # An answer, not the refusal's all-zero shape.
+        assert sum(int(n) for n in body["histogram"]) == 4
+
+    def test_the_draft_still_needs_a_scan_when_it_moves_the_popularity_window(
+        self, replay_client: TestClient
+    ) -> None:
+        """The exclusion that survives, from the route rather than from the hash alone.
+
+        The watcher counts on those rows were counted over one span; a draft asking about a
+        different one gets the honest blank, because no arithmetic over the frozen numbers
+        can answer it.
+        """
+        gates = [
+            *(dict(g) for g in REPLAY_GATES),
+            {"gate": "server_popularity", "threshold": 3, "window_days": 30},
+        ]
+        payload = REPLAY_PAYLOAD.model_copy(
+            update={"gates": [GateSettingIn.model_validate(g) for g in gates]}
+        )
+
+        response = replay_client.post("/api/policy/simulate", json=payload.model_dump())
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["exact"] is False
+        assert body["condemned"] == 0
+        assert "scan" in body["stale_reason"].lower()
+
+
 class TestTheWireRoundTripPreservesBothHashes:
     """A body that survives ``PolicyBody -> PolicyIn -> _to_body`` keeps both simulator hashes.
 

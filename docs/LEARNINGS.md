@@ -145,11 +145,39 @@ covers weights, rating bars, custom condemn rules, graded keeps and protect cond
 `PolicyBody._EVIDENCE_REPLAYABLE_FIELDS` is the authority, not this sentence; and only then
 the refusal.
 
-⇒ The refusal is now scoped to edits that change what a scan would *gather* — a watch
-window, a keep tag, a season rule, any gate — where the frozen evidence really is stale.
-The replayable set is an **allow-list**, so a field nobody classified falls into the
-refusal rather than into a plausible wrong preview. The lesson survives its own fix: the
-rule was never "only thresholds are safe," it was "never show a number you cannot derive."
+⇒ The refusal is now scoped to edits that change what a scan would *gather* — a keep tag,
+a season rule, the popularity window — where the frozen evidence really is stale. The
+replayable set is an **allow-list**, so a field nobody classified falls into the refusal
+rather than into a plausible wrong preview. The lesson survives its own fix: the rule was
+never "only thresholds are safe," it was "never show a number you cannot derive."
+
+**And the allow-list cost a year of previews by being coarse.** "Any gate" was the first
+scoping, on the strength of one true sentence: the popularity gate's window is the span the
+frozen watcher counts were taken over. That is one scalar on one gate, and it excluded the
+entire `gates` list, so the rating *bar* previewed while the switch above it blanked the
+panel — one card, two answers. Every fact a gate reads is gathered whether or not the gate
+is on (no fact builder branches on the list, and `evaluate_all` reads nothing but `Facts`),
+so a toggle was always exactly replayable. Measured rather than argued: two full scans whose
+policies differ only in a gate freeze byte-identical `facts_json` while their verdicts
+differ (`test_scan_pipeline.py`). ⇒ `evidence_hash` folds in `popularity_window_days()`
+instead of the list, and a drift guard fails on a gate field nobody classified. **The
+conservative default was right and its granularity was not**, which is the failure a
+fail-closed choice hides best: nothing breaks, the feature is just quietly useless for the
+edit people make most.
+
+Measured on a live library's movie lane, the three toggles behaving three different ways:
+switching the rating bars off roughly **doubles** what the panel flags (×2.2 on the count,
+×2.4 on the bytes); dropping the mid-dormancy floor moves about a sixth of the spared set
+into "not judged" while the headline count does not move at all; and the keep-list gate
+moves nothing whatsoever. The last two are #488's complaint, and the useful part is that all
+three are now *answerable* rather than blank — an operator can see that a protection is
+carrying nothing, which is a fact about their library and not a broken preview.
+
+**Re-scoping this hash costs every stored snapshot one scan**, since a snapshot carries the
+hash its own scan computed. On that install `policy_hash` and `scoring_hash` both still
+matched while the evidence hash could not, so until the next scan even a weight edit refuses
+where it used to replay. It heals on that scan, which is exactly what `schema_version` could
+not do — and that difference is the one to check before re-scoping either hash again.
 
 ### 9. Rounding the score after deciding the verdict — **two answers to one question**
 

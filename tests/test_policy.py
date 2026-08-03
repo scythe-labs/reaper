@@ -200,6 +200,75 @@ class TestEvidenceHash:
         )
         assert a.evidence_hash() != b.evidence_hash()
 
+    def test_switching_a_protection_off_keeps_the_evidence_hash(self) -> None:
+        """A gate decides what to make of an item; it does not decide what gets gathered.
+
+        Every fact a gate reads is frozen whether or not the gate is switched on -- no fact
+        builder branches on the gate list -- so the replay answers a toggle exactly. This is
+        the edit an operator makes most often on this page, and it used to blank the panel.
+        """
+        a = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),))
+        b = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095, enabled=False),))
+        assert a.scoring_hash() != b.scoring_hash()  # it changes the answer
+        assert a.evidence_hash() == b.evidence_hash()  # ...off the same frozen bytes
+
+    def test_moving_a_protection_threshold_keeps_the_evidence_hash(self) -> None:
+        # Dormancy is measured from the item's own dates, never from the floor it is
+        # compared against, so moving the floor re-reads nothing.
+        a = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),))
+        b = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=30),))
+        assert a.scoring_hash() != b.scoring_hash()
+        assert a.evidence_hash() == b.evidence_hash()
+
+    def test_switching_the_popularity_gate_off_keeps_the_evidence_hash(self) -> None:
+        """The one gate whose settings reach the gather phase, in the direction that is
+        still exact: a disabled popularity gate leaves the window at the 365-day default, so
+        the watcher counts already frozen were counted over exactly that span."""
+        a = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365),)
+        )
+        b = _policy(
+            gates=(
+                GateSetting(
+                    gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365, enabled=False
+                ),
+            )
+        )
+        assert a.evidence_hash() == b.evidence_hash()
+
+    def test_switching_the_popularity_gate_on_at_a_new_window_changes_it(self) -> None:
+        """And the direction that is not. A gate disabled at scan time was counted over the
+        365-day fallback; enabling it at 90 asks a question of a count nobody took, so this
+        has to fall through to the refusal however cheap a replay would be."""
+        off = _policy(
+            gates=(
+                GateSetting(
+                    gate=GateId.SERVER_POPULARITY, threshold=3, window_days=90, enabled=False
+                ),
+            )
+        )
+        on = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=90),)
+        )
+        assert off.evidence_hash() != on.evidence_hash()
+
+    def test_every_gate_field_is_classified_as_gathering_or_judging(self) -> None:
+        """Rule 103's drift guard, and the reason the split is written out by name.
+
+        A gate field added later would otherwise fall silently into the judging half and be
+        replayed off frozen bytes that never covered it -- a confident wrong preview, which
+        is worse than the blank panel this change removes. Classify the new field into one
+        of the two sets, and if it is a gathering one, fold it into ``_gathering_evidence``.
+        """
+        declared = PolicyBody._GATHERING_GATE_FIELDS | PolicyBody._JUDGING_GATE_FIELDS
+        actual = set(GateSetting.model_fields)
+
+        assert actual == declared, (
+            f"GateSetting fields changed: {actual ^ declared}. Classify each into "
+            "PolicyBody._GATHERING_GATE_FIELDS or _JUDGING_GATE_FIELDS, and fold any "
+            "gathering one into PolicyBody._gathering_evidence()."
+        )
+
     def test_changing_keep_tags_changes_the_evidence_hash(self) -> None:
         # The whitelist is re-synced from the *arr at scan time, so a new keep-tag needs a scan.
         a = _policy(keep_tags=("reaper-keep",))

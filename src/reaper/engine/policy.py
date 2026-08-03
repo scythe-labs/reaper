@@ -723,8 +723,10 @@ class PolicyBody(Frozen):
     #: frozen Facts. Everything ELSE is folded into the evidence hash, deliberately -- an
     #: allow-list, not a deny-list, so a field nobody remembered to classify defaults to
     #: "needs a fresh scan" (safe) rather than a stale replay (a plausible wrong preview).
-    #: Notably ``gates`` is NOT here: the popularity gate's window changes the frozen
-    #: watcher counts, so any gate edit re-scans -- a conservative, correct choice.
+    #: ``gates`` is here, but only ever through ``_gathering_evidence`` below: a gate decides
+    #: what to make of an item, and every fact it reads is gathered whether or not it is
+    #: enabled. The one exception is the popularity window, which is the span
+    #: ``distinct_watchers`` is counted over, so it is folded back in as its own key.
     #: ``scorer_version`` belongs here for the same reason the weights do: a replay runs the
     #: CURRENT ``score``/``evaluate_all``/``decide_verdict`` over the frozen Facts, so a new
     #: scorer's answer is reproduced exactly. It stays in ``scoring_hash``, which is what
@@ -740,8 +742,38 @@ class PolicyBody(Frozen):
             "keep_rating_rules",
             "keep_rating_match",
             "protect_conditions",
+            "gates",
         }
     )
+
+    #: Every field of a gate row, split by whether a scan can read it BEFORE it freezes an
+    #: item's Facts. ``window_days`` is the one that can: it is the span
+    #: ``snapshot._watch_stats`` counts ``distinct_watchers`` over. The others reach the scan
+    #: only through ``scan_runner.build_gates``, which the replay calls itself, over facts
+    #: that were gathered whether or not the gate asking for them was switched on.
+    #:
+    #: ``enabled`` is in the judging half and also feeds ``popularity_window_days``, which is
+    #: not a contradiction: what it selects there is a *window*, and the window is the only
+    #: thing the gather phase ever learns from this list.
+    #:
+    #: Split by name rather than by hashing the row, so a gate field added later lands in
+    #: neither set and ``test_policy.py``'s drift guard fails until someone classifies it. A
+    #: new gathering field defaulting quietly into the judging half would put a confident
+    #: wrong preview in front of an operator, which is the failure the three tiers exist to
+    #: prevent (rule 103).
+    _GATHERING_GATE_FIELDS: ClassVar[frozenset[str]] = frozenset({"window_days"})
+    _JUDGING_GATE_FIELDS: ClassVar[frozenset[str]] = frozenset({"gate", "enabled", "threshold"})
+
+    def _gathering_evidence(self) -> dict[str, object]:
+        """What ``gates`` tells a scan before it freezes anything.
+
+        One number, and it already carries the enabled flag it depends on: a disabled
+        popularity gate falls back to the 365-day default, so switching that gate off counts
+        the same watchers over the same span and the replay stays exact. Switching it ON at
+        any other window moves this number, which is the whole point -- the frozen count was
+        taken over a span the edited policy no longer asks for.
+        """
+        return {"popularity_window_days": self.popularity_window_days()}
 
     def evidence_hash(self) -> str:
         """Identifies what a scan under this policy would GATHER and FREEZE per item.
@@ -760,12 +792,32 @@ class PolicyBody(Frozen):
         The allow-list is the right default and it has one sharp edge: a field that is pure
         bookkeeping falls in here too and forces a rescan that can never help. That is what
         ``schema_version`` did, permanently (see ``_NON_BEHAVIORAL_FIELDS``). Classify a new
-        field into one of the three sets when you add it."""
+        field into one of the three sets when you add it.
+
+        **Turning a protection on or off is a judging edit, not a gathering one.** The fact
+        every gate reads is gathered unconditionally -- no fact builder branches on a gate's
+        enabled flag -- so the scan freezes the same bytes either way and the replay answers
+        exactly. Folding the whole ``gates`` list in here spent that exactness on nothing:
+        the rating bars were already replayable while the switch above them was not, so
+        moving the bar previewed instantly and unticking the box it sat in blanked the panel
+        and asked for a scan. Only ``_gathering_evidence`` survives from the list now.
+
+        **Changing what this hash covers costs every stored snapshot one scan.** A snapshot
+        records the hash its own scan computed (``services.snapshot``), so one written by an
+        earlier build cannot match this formula whatever the operator does, and until the next
+        scan a weight or bar edit refuses where it used to replay. It heals on that scan and
+        the notice's "run a scan, then this becomes exact again" is true throughout, which is
+        the whole difference from ``schema_version``: that one could never be scanned away,
+        because each scan wrote the stale value back. Verified on a live install before
+        landing: a stored snapshot whose ``policy_hash`` and ``scoring_hash`` both still
+        matched, and whose evidence hash could not. Weigh that one-scan window against the
+        edit being bought whenever this set moves again."""
         payload = {
             k: v
             for k, v in self.model_dump(mode="json").items()
             if k not in self._EVIDENCE_REPLAYABLE_FIELDS and k not in self._NON_BEHAVIORAL_FIELDS
         }
+        payload |= self._gathering_evidence()
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(canonical.encode("ascii")).hexdigest()
 

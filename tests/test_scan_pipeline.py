@@ -37,6 +37,7 @@ from reaper.db.models import (
     WhitelistEntry,
 )
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
+from reaper.engine.gates import GateId
 from reaper.engine.observation import Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
 from reaper.services import (
@@ -2051,3 +2052,159 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
         assert rows["radarr:1:1"].verdict == "condemn"
         assert rows["sonarr:1:42:2"].verdict == "condemn"
         assert snapshot.watch_blind_items == 0
+
+
+class TestAProtectionSwitchDoesNotMoveTheEvidence:
+    """The claim the policy simulator's replay tier rests on, driven through a real scan.
+
+    ``PolicyBody.evidence_hash`` lets a gate edit replay off the frozen Facts instead of
+    demanding a scan, and that is only honest if a scan under the edited policy would have
+    frozen the same bytes. Argued from the code it is nearly obvious -- no fact builder
+    branches on the gate list, and ``evaluate_all`` reads nothing but ``Facts`` -- but the
+    hash is what stands between an operator and a confident wrong preview, so it is
+    measured here rather than reasoned about. A gather-phase read of a gate setting added
+    later fails this without anyone having to remember why it matters.
+    """
+
+    #: Nothing depends on the instant, only on both scans using the same one: the frozen
+    #: Facts carry ages in days, and a suite straddling midnight UTC would otherwise
+    #: produce two honest answers that differ.
+    FROZEN = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("reaper.services.snapshot.utcnow", lambda: self.FROZEN)
+
+    async def _scan_under(
+        self, session: AsyncSession, cache_engine: AsyncEngine, movie_policy: Any
+    ) -> dict[str, Candidate]:
+        tautulli = _FakeTautulli(
+            movies=_movie_spine(), shows=_show_spine(), children=_show_children()
+        )
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[
+                season_scan.SonarrSource(
+                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                )
+            ],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            movie_policy=movie_policy,
+            movie_gates=build_gates(movie_policy),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+        await session.commit()
+        return {c.media_key: c for c in await candidates(session, snapshot.id)}
+
+    async def test_a_scan_freezes_the_same_facts_whether_a_protection_is_on_or_off(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (8.5, 50_000), "tt0000042": (8.5, 50_000)})
+
+        on = DEFAULT_MOVIE_POLICY
+        off = DEFAULT_MOVIE_POLICY.model_copy(
+            update={
+                "gates": tuple(
+                    g.model_copy(update={"enabled": False}) if g.gate is GateId.RATING_FLOOR else g
+                    for g in DEFAULT_MOVIE_POLICY.gates
+                )
+            }
+        )
+        # The switch has to matter, or identical evidence proves nothing: a well-rated movie
+        # is kept by the bar while it is on, and judged on its score once it is off.
+        assert on.scoring_hash() != off.scoring_hash()
+
+        with_gate = await self._scan_under(session, cache_engine, on)
+        without_gate = await self._scan_under(session, cache_engine, off)
+
+        assert with_gate.keys() == without_gate.keys()
+        for key, before in with_gate.items():
+            assert before.facts_json == without_gate[key].facts_json, (
+                f"{key} froze different evidence under a gate toggle, so the simulator's "
+                "replay of that edit is not exact"
+            )
+
+        # ...and the toggle really did reach a verdict, so the evidence held still across a
+        # change that moved the answer rather than across no change at all.
+        assert any(
+            before.verdict != without_gate[key].verdict for key, before in with_gate.items()
+        ), "the gate toggle changed no verdict, so this proves nothing"
+
+    async def test_a_scan_freezes_the_same_facts_when_a_protection_threshold_moves(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The same claim for the other tunable an operator drags. Dormancy is measured
+        from the item's own dates, never from the floor it is compared against."""
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+
+        def _at(days: int) -> Any:
+            return DEFAULT_MOVIE_POLICY.model_copy(
+                update={
+                    "gates": tuple(
+                        g.model_copy(update={"threshold": days})
+                        if g.gate is GateId.MIN_DORMANCY
+                        else g
+                        for g in DEFAULT_MOVIE_POLICY.gates
+                    )
+                }
+            )
+
+        low, high = _at(30), _at(100_000)
+
+        lenient = await self._scan_under(session, cache_engine, low)
+        strict = await self._scan_under(session, cache_engine, high)
+
+        for key, before in lenient.items():
+            assert before.facts_json == strict[key].facts_json, (
+                f"{key} froze different evidence when only a dormancy floor moved"
+            )
+        # A floor nothing can clear keeps everything, which is what makes the pair a test.
+        assert any(before.verdict != strict[key].verdict for key, before in lenient.items())
+
+    async def test_the_popularity_window_does_move_the_frozen_evidence(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The negative control, and the reason the window is the one gate setting
+        ``evidence_hash`` still folds in.
+
+        Without this the pair above would pass just as happily if ``facts_json`` were
+        constant, or if the comparison could not see a difference at all. It also pins the
+        exclusion itself: the frozen watcher count IS the window, so an operator who
+        shortens it gets the refusal rather than a count taken over a span they no longer
+        asked about.
+        """
+        # Rating key 11 is the one a candidate actually carries, and the play lands 2000
+        # days back: inside the wide window, outside the narrow one. Seeded against a key
+        # no candidate holds, this test passes while comparing nothing, which is how the
+        # first draft of it read.
+        await _seed_play(cache_engine, row_id=1, rating_key=11)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+
+        def _window(days: int) -> Any:
+            return DEFAULT_MOVIE_POLICY.model_copy(
+                update={
+                    "gates": tuple(
+                        g.model_copy(update={"window_days": days})
+                        if g.gate is GateId.SERVER_POPULARITY
+                        else g
+                        for g in DEFAULT_MOVIE_POLICY.gates
+                    )
+                }
+            )
+
+        wide, narrow = _window(3650), _window(1)
+        assert wide.evidence_hash() != narrow.evidence_hash()
+
+        long_view = await self._scan_under(session, cache_engine, wide)
+        short_view = await self._scan_under(session, cache_engine, narrow)
+
+        assert any(
+            before.facts_json != short_view[key].facts_json for key, before in long_view.items()
+        ), "the window changed no frozen evidence, so the tests above compare nothing"

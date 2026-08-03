@@ -2097,10 +2097,11 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
        ``score``/``evaluate_all``/``decide_verdict`` over ``Candidate.facts_json`` under the
        edited policy (``_replay_simulation``). Exact for every field in
        ``PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``: a weight, a rating bar, a custom condemn
-       rule, a graded keep, or a protect condition. Still zero API calls.
-    3. Otherwise the edit changed what a scan would *gather* (a watch window, a keep tag, a
-       season rule, any gate) -- the frozen evidence is stale, so it **returns nothing but
-       the reason**. A plausible wrong answer is worse than a blank: the owner acts on it.
+       rule, a graded keep, a protect condition, or a protection switched on or off. Still
+       zero API calls.
+    3. Otherwise the edit changed what a scan would *gather* (a keep tag, a season rule, the
+       popularity window) -- the frozen evidence is stale, so it **returns nothing but the
+       reason**. A plausible wrong answer is worse than a blank: the owner acts on it.
 
     Tier 2 needs a snapshot that actually froze its evidence: a pre-facts-freeze snapshot
     has a null ``evidence_hash`` or rows with no ``facts_json``, and falls to tier 3.
@@ -2197,8 +2198,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 # "you changed" can be false. Kept in step with the frontend's own copy in
                 # ``PolicySimulator.tsx``, which is what the operator actually reads.
                 stale_reason=(
-                    "This policy doesn't match the last scan: a protection, a watch window, a "
-                    f"keep tag, or a season rule reads differently from your {kind} policy now. "
+                    "This policy doesn't match the last scan: a keep tag, a season rule, or how "
+                    f"far back watching counts reads differently from your {kind} policy now. "
                     "Run a scan to apply it, then this becomes exact again."
                 ),
                 condemned=0,
