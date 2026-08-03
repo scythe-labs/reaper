@@ -212,6 +212,29 @@ class TestDesktopHelpers:
             "REAPER_DOCK_ICON=true",
         ]
 
+    def test_a_torn_write_cannot_empty_the_operator_conf(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The writer lands through a sibling and os.replace (rule 118): the reader
+        accepts a truncated conf as valid, so an in-place truncate that dies mid-save
+        would silently revert every operator line — REAPER_HOST's default is the
+        wildcard bind."""
+        original = "# a note the operator wrote\nREAPER_HOST=127.0.0.1\n"
+        (tmp_path / "launcher.conf").write_text(original, encoding="utf-8")
+
+        def torn_replace(src: object, dst: object) -> None:
+            raise OSError("disk went away")
+
+        monkeypatch.setattr("reaper.launcher.os.replace", torn_replace)
+        with pytest.raises(OSError):
+            launcher.write_conf_values(tmp_path, {"REAPER_TRAY": "false"})
+        assert (tmp_path / "launcher.conf").read_text(encoding="utf-8") == original
+
+    def test_a_successful_write_leaves_no_sibling_behind(self, tmp_path: Path) -> None:
+        (tmp_path / "launcher.conf").write_text("REAPER_TRAY=true\n", encoding="utf-8")
+        launcher.write_conf_values(tmp_path, {"REAPER_TRAY": "false"})
+        assert [p.name for p in tmp_path.iterdir()] == ["launcher.conf"]
+
     def test_writing_into_nothing_starts_from_the_template(self, tmp_path: Path) -> None:
         """A first save must leave the same self-describing file a first launch
         writes, with the new value active at the end of it."""

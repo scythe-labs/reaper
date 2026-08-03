@@ -138,6 +138,20 @@ _CONF_TEMPLATE = """\
 """
 
 
+def _write_text_atomic(path: Path, text: str) -> None:
+    """Write through a same-directory sibling and ``os.replace``, atomic on macOS,
+    Linux, and NTFS. ``write_text`` truncates before the new bytes land, and the
+    conf reader treats a truncated file as valid, so a crash mid-save would
+    silently revert every operator line to the defaults — REAPER_HOST's default
+    being the wildcard bind."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
 def load_launcher_conf(env: MutableMapping[str, str], data_dir: Path) -> Path:
     """Read ``launcher.conf`` from the data folder into the environment.
 
@@ -152,7 +166,7 @@ def load_launcher_conf(env: MutableMapping[str, str], data_dir: Path) -> Path:
     try:
         if not conf.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
-            conf.write_text(_CONF_TEMPLATE, encoding="utf-8")
+            _write_text_atomic(conf, _CONF_TEMPLATE)
             return conf
         for line in conf.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -218,7 +232,7 @@ def write_conf_values(data_dir: Path, values: MutableMapping[str, str]) -> None:
             lines[index] = f"{key}={remaining.pop(key)}"
     lines.extend(f"{key}={value}" for key, value in remaining.items())
     data_dir.mkdir(parents=True, exist_ok=True)
-    conf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _write_text_atomic(conf, "\n".join(lines) + "\n")
 
 
 def _migrate(root: Path) -> None:
