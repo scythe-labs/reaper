@@ -273,6 +273,67 @@ class TestArchiveSafety:
         assert summary.key_in_backup is False
 
 
+# --- the staging nobody can reach --------------------------------------------
+
+
+class TestAbandonedStaging:
+    """A staging is named by the token minted for it, and that token only ever lives in the
+    browser that uploaded it. So one that outlives its page can never be armed and never be
+    canceled, while holding a whole database and the key material that decrypts it, and
+    nothing used to reclaim it (#388). The refusal path is where it was reachable: the card
+    drops the first token before it sends the second file."""
+
+    def test_a_refused_second_upload_leaves_no_staging_behind(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path)
+        pending = settings.data_dir / restore.PENDING_DIR
+        restore.stage_upload(settings, _make_archive(tmp_path / "first.reaper"))
+        assert (pending / restore.TOKEN_MARKER).is_file()
+
+        junk = tmp_path / "second.reaper"
+        junk.write_bytes(b"this is not a gzip tar")
+        with pytest.raises(RestoreError):
+            restore.stage_upload(settings, junk)
+
+        # Not merely un-armable: gone. The key material is the reason this is not cosmetic --
+        # a copy of it nobody owns is a copy nobody rotates.
+        assert not pending.exists()
+
+    def test_an_armed_staging_survives_a_refused_upload(self, tmp_path: Path) -> None:
+        # The other direction, and the one that matters more: an armed restore is one the
+        # operator confirmed with their password, so a later bad file must not cancel it.
+        settings = _settings(tmp_path)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "first.reaper"))
+        restore.arm(settings, summary.token)
+        assert restore.is_armed(settings) is True
+
+        junk = tmp_path / "second.reaper"
+        junk.write_bytes(b"this is not a gzip tar")
+        with pytest.raises(RestoreError):
+            restore.stage_upload(settings, junk)
+
+        assert restore.is_armed(settings) is True
+
+    def test_boot_clears_an_unconfirmed_staging(self, tmp_path: Path) -> None:
+        # The half the client can never cover: a closed tab or a crashed browser strands the
+        # staging the same way, with the token gone from memory rather than overwritten.
+        settings = _settings(tmp_path)
+        restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+
+        assert restore.clear_unarmed_staging(settings) is True
+        assert not (settings.data_dir / restore.PENDING_DIR).exists()
+        assert restore.clear_unarmed_staging(settings) is False  # nothing left to report
+
+    def test_boot_leaves_an_armed_staging_for_the_swap(self, tmp_path: Path) -> None:
+        # This runs on the same boot as `apply_pending_restore`, so clearing an armed staging
+        # here would eat the restore the operator restarted for.
+        settings = _settings(tmp_path)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        restore.arm(settings, summary.token)
+
+        assert restore.clear_unarmed_staging(settings) is False
+        assert restore.is_armed(settings) is True
+
+
 # --- arm / cancel ------------------------------------------------------------
 
 

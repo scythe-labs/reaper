@@ -381,17 +381,48 @@ def _replace_dir(target: Path, source: Path) -> None:
     source.replace(target)
 
 
+def clear_unarmed_staging(settings: Settings) -> bool:
+    """Remove a staged-but-unarmed restore, and report whether one was there.
+
+    A staging is reachable only through the token :func:`stage_upload` mints and hands back to
+    the browser, which holds it in memory and never writes it down. So a staging that outlives
+    the page that made it is already unreachable: :func:`arm` needs ``_token_matches`` and
+    :func:`clear_pending` needs the same token, and nothing else reclaims it either -- the boot
+    swap returns early without ``READY``, and ``backup.sweep_stale_temp`` matches only the
+    dotted temp prefixes. What sits there is a whole ``reaper.db`` and, when the backup carried
+    one, the ``secret.key`` and ``secret.salt`` that decrypt it: an unowned second copy of
+    at-rest key material, kept until some later upload happens to land on top of it (#388).
+    Inert, because nobody can arm it, and permanent, which is the half that matters.
+
+    An ARMED staging is never touched. That one the operator confirmed with their password, and
+    the restart it is waiting for is the same restart that runs this.
+    """
+    pending = settings.data_dir / PENDING_DIR
+    if not pending.is_dir() or (pending / READY_MARKER).is_file():
+        return False
+    shutil.rmtree(pending, ignore_errors=True)
+    log.info("restore.unarmed_staging_cleared")
+    return True
+
+
 def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
     """Validate an uploaded archive and stage it, un-armed, for a later confirm.
 
     Extraction and validation happen in a private temp directory; only a fully
-    accepted backup replaces the staging directory. On any refusal the temp directory
-    is removed and no staging is touched, so a rejected upload leaves the prior state
-    (and any live data) exactly as it was. The staged copy carries no ``READY`` marker
-    -- it cannot be swapped in until :func:`arm` writes one.
+    accepted backup replaces the staging directory, so a refusal never touches live data
+    and leaves the operator's own file on their disk untouched. The staged copy carries no
+    ``READY`` marker -- it cannot be swapped in until :func:`arm` writes one.
+
+    Any UNARMED staging from an earlier upload is cleared before this one is read, because
+    choosing a second file abandons the first: the card drops the first token before it sends,
+    so on a refusal that staging used to survive with nobody able to name it
+    (:func:`clear_unarmed_staging`). This used to read as deliberate -- a rejected upload
+    "leaves the prior state exactly as it was" -- which is true of live data and was never
+    true of the staging, the one thing here that is not live (#388).
     """
     settings.ensure_data_dir()
     data_dir = settings.data_dir
+    clear_unarmed_staging(settings)
     tmp = Path(tempfile.mkdtemp(prefix=RESTORE_TMP_PREFIX, dir=data_dir))
     staged = False
     try:

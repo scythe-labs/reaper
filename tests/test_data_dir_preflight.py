@@ -23,6 +23,7 @@ import pytest
 
 from reaper import preflight
 from reaper.config import DataDirError, Settings
+from reaper.services import restore
 
 
 def _settings(data_dir: Path) -> Settings:
@@ -113,6 +114,52 @@ def test_preflight_ok_returns_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
     assert preflight.main() == 0
     assert tmp_path.is_dir()
+
+
+def test_preflight_clears_a_staged_restore_nobody_confirmed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Boot is the one place that can reclaim a staging whose token died with the browser
+    that held it, so the wiring is pinned here and not only the sweep itself (#388)."""
+    settings = _settings(tmp_path)
+    settings.ensure_data_dir()
+    pending = tmp_path / restore.PENDING_DIR
+    pending.mkdir()
+    (pending / "reaper.db").write_bytes(b"SQLite format 3\x00")
+    (pending / "secret.key").write_text("key material nobody owns")
+    (pending / restore.TOKEN_MARKER).write_text("deadbeef\n")
+
+    monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+    assert preflight.main() == 0
+
+    assert not pending.exists()
+    assert "never confirmed" in capsys.readouterr().err
+
+
+def test_preflight_leaves_an_armed_restore_for_the_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The same boot applies an armed restore, so the sweep above must not reach one.
+
+    Both legs consume the staging directory, so its absence afterwards proves nothing about
+    which one took it. What discriminates is who says so: the swap reports on it, and the
+    sweep must stay silent."""
+    settings = _settings(tmp_path)
+    settings.ensure_data_dir()
+    pending = tmp_path / restore.PENDING_DIR
+    pending.mkdir()
+    (pending / restore.READY_MARKER).write_text("")
+
+    monkeypatch.setattr(preflight, "get_settings", lambda: _settings(tmp_path))
+    assert preflight.main() == 0
+
+    err = capsys.readouterr().err
+    assert "never confirmed" not in err  # the sweep did not take it
+    assert "unreadable" in err  # the swap did, and kept the live data
 
 
 def test_preflight_prints_message_and_returns_one(
