@@ -120,14 +120,18 @@ export function StaleNotice({
         </>
       ) : (
         <>
-          {/* States the condition, never who caused it. An upgrade that retires a gate moves
-              scoring_hash and evidence_hash the same way an edit does (engine/policy.py's
-              RETIRED_GATES), so this used to open "You changed what the scan reads" at an
-              operator who had changed nothing, on a page where a protection row had just
-              silently disappeared. True for a real edit and for an upgrade alike. */}
+          {/* States the condition, never who caused it. This used to open "You changed what
+              the scan reads" at operators who had changed nothing: any upgrade adding a field
+              to the hashed body leaves the recorded hash unmatchable until the next scan.
+              True for a real edit and for an upgrade alike.
+
+              The list no longer opens on "a protection", because switching one on or off is
+              previewed now (engine/policy.py's evidence_hash). What is left is the three
+              edits that really do change what a scan reads, and the backend says the same
+              three in the same order (api/routes.py's stale_reason, rule 144). */}
           <p>
-            This policy doesn't match the last scan: a protection, a watch window, a keep tag, or a
-            season rule reads differently now. Scan to apply it.
+            This policy doesn't match the last scan: a keep tag, a season rule, or how far back
+            watching counts reads differently now. Scan to apply it.
           </p>
           <button
             className="primary sm"

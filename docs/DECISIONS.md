@@ -722,9 +722,16 @@ store a gate no scan could build. `POLICY_AUTHORABLE_GATES` (in `engine/gates.py
 against `GATE_TYPES`) is what the boundary now checks, and a wire-schema refusal reaches the
 operator without pydantic's `Value error,` prefix.
 
-Retiring a gate moves `scoring_hash` and `evidence_hash` as well as `policy_hash`, so the first
-Policy page after an upgrade shows the simulator's "needs a fresh scan" state with no numbers;
-that notice states the condition instead of telling the operator they changed something.
+Retiring a gate moves `scoring_hash` and `policy_hash`. It no longer moves `evidence_hash`,
+which now folds in `popularity_window_days()` rather than the whole `gates` list, so the first
+Policy page after an upgrade replays the last scan's frozen evidence without the retired gate
+and shows real numbers. That is exact: the gate stopped being built, and every fact the rest of
+them read was frozen either way. Retiring `SERVER_POPULARITY` specifically would still refuse,
+because the window it carries is the span the frozen watcher counts were taken over.
+
+The simulator's stale notice can still appear at an operator who changed nothing — any upgrade
+that adds a field to the hashed body leaves the recorded hash unmatchable until the next scan —
+so it goes on stating the condition rather than telling them they changed something.
 
 `GateId.UNMANAGED` and the four surfaces that decode a stored explanation stay
 (`STRUCTURAL_GATES`, the chip phrase, the why-panel line, and `WhyPanel.tsx`'s `CHECK_COPY`
