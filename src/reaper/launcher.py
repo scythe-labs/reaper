@@ -466,16 +466,11 @@ def main() -> None:
         )
         raise SystemExit(2)
 
-    # Imported after the environment is settled: get_settings() caches on first call,
-    # and that first call must see the data dir chosen above.
-    from reaper.preflight import main as preflight
-
-    code = preflight()
-    if code:
-        raise SystemExit(code)
-
-    _migrate(root)
-
+    # Refuse the occupied port before preflight touches the disk: preflight applies a
+    # staged restore by renaming the live database files aside, and on macOS/Linux those
+    # renames succeed under a running server's open handles — a doubled launch (the exact
+    # event this refusal exists for) would swap the data out from under the copy that
+    # keeps serving. A launch that will not serve must mutate nothing.
     host = os.environ.get("REAPER_HOST", "").strip() or "0.0.0.0"
     port = _port(os.environ)
     if _loopback_occupied(port):
@@ -491,6 +486,16 @@ def main() -> None:
             frozen=frozen,
         )
         raise SystemExit(2)
+
+    # Imported after the environment is settled: get_settings() caches on first call,
+    # and that first call must see the data dir chosen above.
+    from reaper.preflight import main as preflight
+
+    code = preflight()
+    if code:
+        raise SystemExit(code)
+
+    _migrate(root)
     if _browser_wanted(os.environ, frozen=frozen):
         _open_browser_when_up(port)
 

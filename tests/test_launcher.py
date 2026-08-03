@@ -394,16 +394,20 @@ class TestMain:
     @pytest.fixture
     def serve(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
         """Stub every boundary main() crosses and record what reaches the serve call."""
-        captured: dict[str, Any] = {"migrated": False, "preflight_code": 0}
+        captured: dict[str, Any] = {"migrated": False, "preflight_code": 0, "preflighted": False}
 
         def fake_run(*args: Any, **kwargs: Any) -> None:
             captured["args"] = args
             captured["kwargs"] = kwargs
 
+        def fake_preflight() -> int:
+            captured["preflighted"] = True
+            return int(captured["preflight_code"])
+
         import uvicorn
 
         monkeypatch.setattr(uvicorn, "run", fake_run)
-        monkeypatch.setattr("reaper.preflight.main", lambda: int(captured["preflight_code"]))
+        monkeypatch.setattr("reaper.preflight.main", fake_preflight)
         monkeypatch.setattr(
             "reaper.launcher._migrate",
             lambda root: captured.__setitem__("migrated", True),
@@ -453,7 +457,10 @@ class TestMain:
         """Another process answering 127.0.0.1 on our port means the browser would
         open onto the WRONG server (a wildcard bind can still succeed beside it, so
         uvicorn would come up and nobody would ever see this install). Refusing with
-        a message that names the port is the only honest outcome."""
+        a message that names the port is the only honest outcome — and the refusal
+        lands before preflight or migrations, because preflight applies a staged
+        restore by renaming the live database files aside, which on macOS/Linux
+        succeeds under the running copy's open handles."""
         monkeypatch.setattr(launcher, "_loopback_occupied", lambda port: True)
         said: list[str] = []
         monkeypatch.setattr(launcher, "_say", lambda m, *, frozen: said.append(m))
@@ -461,6 +468,8 @@ class TestMain:
             launcher.main()
         assert excinfo.value.code == 2
         assert "8420" in said[0]
+        assert serve["preflighted"] is False  # nothing on disk was touched
+        assert serve["migrated"] is False
         assert "kwargs" not in serve  # uvicorn was never asked to serve
 
     def test_a_failed_preflight_stops_before_migrations_or_serving(
