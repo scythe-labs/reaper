@@ -1714,6 +1714,28 @@ def _judge_series(
             else None
         )
     show_watch_unreadable = any(reason is not None for reason in blind_by_season.values())
+    # The same gap through a third door, and the one `blind_by_season` structurally cannot see:
+    # `went_blind` compares a reading against a mark, and a season with no rating key has no
+    # reading to compare, so it records `None` -- "reads honestly" -- about a season nobody
+    # asked about. Its plays are under a key this scan never learned, so they are not in
+    # `all_season_keys`, not in `stats`, and its viewer is absent from `_progress_by_user`
+    # entirely.
+    #
+    # Scoped to a show that DID bind to Plex, because that is the population where the gap can
+    # cost a file: some seasons resolved and some did not, so the resolved ones carry fully
+    # readable facts and condemn at full confidence on a viewer the missing ones hid. Where the
+    # SHOW never bound, every season takes Unknown from its own branch (`_NO_KEY_REASONS`) and
+    # abstains, so there is no readable sibling to endanger -- that case still reports the
+    # mid-binge check as passed when it never ran, which is a panel-honesty defect with no file
+    # behind it, filed rather than widened into here.
+    #
+    # Content-bearing only: an announced season with no files is one nobody can be part way
+    # through, and counting it would hold every show with a season Sonarr has listed and not
+    # yet downloaded.
+    show_seasons_unmatched = item.show_rating_key is not None and any(
+        season.has_content and season.season_number not in item.seasons_in_plex
+        for season in item.seasons
+    )
     # Expire abandoned viewers before the guard sees them: a place in the show is held
     # only while its viewer stayed active within the policy's hold window. The helper
     # keeps every viewer whose last-watched time cannot be read, and 0 disables expiry.
@@ -1790,6 +1812,12 @@ def _judge_series(
         # are missing, and there is nobody to keep -- the exact sentence
         # `gates.progress_is_establishable` uses about a short mirror (rule 140).
         progress_unreadable=show_watch_unreadable,
+        # And the third: a season Plex never resolved for us. `resolve_season_keys` returning an
+        # empty map on a failed read is fail-closed for that show's OWN seasons, which all
+        # abstain on Unknown facts; it says nothing about the assertion the show then makes
+        # about viewer progress, and a PARTIAL resolution leaves readable siblings to condemn on
+        # it (#472).
+        progress_seasons_unmatched=show_seasons_unmatched,
         keep_specials=keep_specials,
         protect_incomplete=protect_incomplete_seasons,
         flag_keep_conflicts=flag_keep_conflicts,

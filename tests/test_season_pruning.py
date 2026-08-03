@@ -9,6 +9,7 @@ toward keeping a season; the ones that prune are the ones where every guard agre
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from inspect import signature
 
 import pytest
 
@@ -23,6 +24,7 @@ from reaper.engine.policy import (
 )
 from reaper.engine.signals import SignalId
 from reaper.services.season_pruning import (
+    UNANSWERABLE_REASONS,
     _because,
     active_progress,
     plan_series_prune,
@@ -1100,6 +1102,137 @@ class TestTheMirrorMustSpanTheHold:
         # Seasons 1 and 2 are the blanket hold, and 5/6 are the keep-last floor.
         assert flags[1] is True
         assert flags[2] is True
+
+
+class TestASeasonWithNoPlexKeyHidesItsViewer:
+    """``progress_seasons_unmatched``: the third route to an unanswerable mid-binge guard.
+
+    The mirror can span the hold perfectly and every play still be readable, and the guard
+    still have no answer -- because a season with no Plex rating key was never *asked* about.
+    Its plays sit under a key the scan never learned, so its viewer is absent from
+    ``progress_by_user`` the same way a viewer beyond the horizon is, and for the same reason
+    the absence must not read as "nobody is part-way through" (rules 93, 140).
+    """
+
+    def test_an_unmatched_season_holds_the_seasons_that_did_resolve(self) -> None:
+        """The counterfactual pair, at this module's own interface. A viewer finished Season 3
+        and is about to start Season 4; with Season 3 resolved the guard names Season 4, and
+        with it unresolved the viewer is invisible and Season 4 is offered for reaping."""
+        common = {
+            "series_title": "Show",
+            "seasons": [_season(n) for n in range(1, 7)],
+            "keep_last": 2,
+            "keep_first_season": False,
+            "season_final_episode": {3: 10},
+        }
+        seen = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            progress_by_user={"alice": {3: 10}},
+        )
+        assert _reasons(seen)[4] == "a viewer is part-way through the show"
+        assert seen.prunable == [1, 2, 3]
+
+        hidden = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            progress_by_user={},  # her plays are under a key this scan never learned
+            progress_seasons_unmatched=True,
+        )
+        assert hidden.prunable == []
+        assert (
+            _reasons(hidden)[4]
+            == "a season of this show is not matched in Plex, so who is part-way through is "
+            "unknown"
+        )
+
+    def test_the_hold_is_marked_unanswerable_and_a_visible_viewer_is_not(self) -> None:
+        """Rule 93's encoding: a check that could not be ANSWERED is blocked, and a
+        protection that fired stays a definite keep. Pinned on a plan carrying both."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 7)],
+            keep_last=2,
+            keep_first_season=False,
+            progress_by_user={"alice": {3: 10}},
+            season_final_episode={3: 10},
+            progress_seasons_unmatched=True,
+        )
+        flags = {p.season_number: p.unestablishable for p in plan.protected}
+        assert flags[4] is False  # a viewer we can see: definite
+        assert flags[1] is True and flags[2] is True  # the blanket hold
+
+    def test_the_guards_off_switch_also_silences_it(self) -> None:
+        """The same off-switch its two siblings honor: an operator who turned the mid-binge
+        guard off is making no claim for an unmatched season to undermine."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 7)],
+            keep_last=2,
+            keep_first_season=False,
+            keep_in_progress=False,
+            progress_seasons_unmatched=True,
+        )
+        assert plan.prunable == [1, 2, 3, 4]
+
+    def test_the_wider_failures_are_named_first(self) -> None:
+        """All three unanswerable causes at once. The reason shown is the widest, because its
+        remedy is the one that fixes the others as a side effect -- and copy naming the
+        narrowest would send the operator to inspect one season when their whole mirror is
+        too short."""
+        common = {
+            "series_title": "Show",
+            "seasons": [_season(n) for n in range(1, 7)],
+            "keep_last": 2,
+            "keep_first_season": False,
+        }
+        all_three = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            progress_established=False,
+            progress_unreadable=True,
+            progress_seasons_unmatched=True,
+        )
+        assert _reasons(all_three)[1] == (
+            "your watch history is too short to tell who is part-way through"
+        )
+        both_readable_ones = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            progress_unreadable=True,
+            progress_seasons_unmatched=True,
+        )
+        assert _reasons(both_readable_ones)[1] == (
+            "some plays are no longer readable, so who is part-way through is unknown"
+        )
+
+    def test_every_unanswerable_cause_produces_a_reason_the_flag_set_names(self) -> None:
+        """``UNANSWERABLE_REASONS`` is what turns a hold into a *blocked* one, so a cause whose
+        reason the set does not name is a hold that renders green -- "checked and passed" for a
+        check that never ran (rules 93, 142).
+
+        The causes are discovered from ``plan_series_prune``'s own signature rather than
+        listed, so a fourth is covered the moment it is added: a hand-written list can only
+        pin the members somebody remembered (rule 145). Each is driven by inverting its
+        default, since ``progress_established`` reads the opposite way from the other two.
+        """
+        causes = {
+            name: param.default
+            for name, param in signature(plan_series_prune).parameters.items()
+            if name.startswith("progress_") and isinstance(param.default, bool)
+        }
+        # Reconciled by hand against the module: established, unreadable, seasons_unmatched.
+        assert len(causes) == 3, f"the walk collected {sorted(causes)}"
+        for name, default in causes.items():
+            plan = plan_series_prune(
+                series_title="Show",
+                seasons=[_season(n) for n in range(1, 7)],
+                keep_last=2,
+                keep_first_season=False,
+                **{name: not default},
+            )
+            assert plan.prunable == [], f"{name} did not hold the seasons"
+            held = _reasons(plan)[1]
+            assert held in UNANSWERABLE_REASONS, (
+                f"{name} holds seasons with {held!r}, which UNANSWERABLE_REASONS does not "
+                "name, so season_scan.guard_result renders that hold as a definite keep"
+            )
 
 
 class TestInProgressToggle:

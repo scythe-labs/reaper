@@ -24,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog.testing import capture_logs
 
+from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexError, PlexSeasonRow
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import utcnow
@@ -1160,6 +1161,42 @@ def _degrade_sink() -> tuple[list[str], Any]:
     return reasons, reasons.append
 
 
+async def _seed_ratings(engine: AsyncEngine, ratings: dict[str, tuple[float, int]]) -> None:
+    """A fresh, non-stale IMDb dataset holding exactly ``{imdb id: (score, votes)}``.
+
+    Without it ``gather`` degrades the snapshot on the ratings read, and a degraded scan
+    abstains on everything -- which would let a test asserting "not condemned" pass for a
+    reason it never meant to check (rule 118)."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS imdb_rating "
+                "(tconst TEXT PRIMARY KEY, average_rating REAL, num_votes INTEGER)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS imdb_dataset_sync (id INTEGER PRIMARY KEY, "
+                "synced_at INTEGER NOT NULL, row_count INTEGER NOT NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT OR REPLACE INTO imdb_dataset_sync (id, synced_at, row_count) "
+                "VALUES (1, :ts, :n)"
+            ),
+            {"ts": int(utcnow().timestamp()), "n": 1_000_000},
+        )
+        for tconst, (score, votes) in ratings.items():
+            await conn.execute(
+                text(
+                    "INSERT OR REPLACE INTO imdb_rating (tconst, average_rating, num_votes) "
+                    "VALUES (:t, :s, :v)"
+                ),
+                {"t": tconst, "s": score, "v": votes},
+            )
+
+
 def _source(client: Any) -> season_scan.SonarrSource:
     return season_scan.SonarrSource(client=client, instance_id=1, name="hd")
 
@@ -1532,32 +1569,7 @@ class TestGatherEndToEnd:
         by tvdb and Plex carries the imdb id. The rating comes through on the Plex id, and
         the card poster uses the show's key -- so neither the rating nor the poster is lost
         to a Sonarr/TVDB metadata gap."""
-        async with cache_engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS imdb_rating "
-                    "(tconst TEXT PRIMARY KEY, average_rating REAL, num_votes INTEGER)"
-                )
-            )
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS imdb_dataset_sync (id INTEGER PRIMARY KEY, "
-                    "synced_at INTEGER NOT NULL, row_count INTEGER NOT NULL)"
-                )
-            )
-            await conn.execute(
-                text(
-                    "INSERT OR REPLACE INTO imdb_dataset_sync (id, synced_at, row_count) "
-                    "VALUES (1, :ts, :n)"
-                ),
-                {"ts": int(utcnow().timestamp()), "n": 1_000_000},
-            )
-            await conn.execute(
-                text(
-                    "INSERT OR REPLACE INTO imdb_rating (tconst, average_rating, num_votes) "
-                    "VALUES ('tt7777', 7.1, 38)"
-                )
-            )
+        await _seed_ratings(cache_engine, {"tt7777": (7.1, 38)})
         series = [
             {
                 "id": 55,
@@ -1939,6 +1951,234 @@ class TestGatherEndToEnd:
         # no unanswered question to hold anything on.
         assert not any(j.guard_result.blocked for j in deep)
 
+    async def test_a_season_plex_never_resolved_holds_the_one_its_viewer_is_up_to(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """#472, end to end and against the real default policy.
+
+        A viewer finished Season 3 yesterday, so the mid-binge guard should hold Season 4 --
+        the season they are about to watch. Season 3's plays are filed under its own Plex key,
+        so the guard can only see them if that key was resolved. The two runs differ by one
+        thing: a second "Season 3" item in the Plex sweep, which ``seasons_from_rows`` drops
+        as ambiguous (a split or mis-scanned library emits these).
+
+        Season 3 itself is safe either way -- with no key its own facts are Unknown and it
+        abstains. Its SIBLINGS are the loss: they resolved, they carry fully readable facts,
+        and they condemn at full confidence on a viewer nothing can see. Before the fix
+        Season 4 came out condemned with the guard reporting "checked: prunable", which is
+        rule 93's failure -- a panel asserting a check that never ran.
+        """
+        await _seed_ratings(cache_engine, {"tt0472": (5.5, 400)})
+        # Five completed episodes of Season 3: she has finished it and is up to Season 4.
+        for episode in range(1, 6):
+            await _episode(cache_engine, season_key=903, user_id=7, episode=episode, days_ago=1)
+        series = [
+            {
+                "id": 42,
+                "title": "Long Show",
+                "year": 2005,
+                "status": "ended",
+                "ended": True,
+                "imdbId": "tt0472",
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        episodes = {
+            42: [
+                {"seasonNumber": n, "episodeNumber": e, "hasFile": True}
+                for n in range(1, 6)
+                for e in range(1, 6)
+            ]
+        }
+        plex_items = {
+            900: identity.PlexItem(
+                rating_key=900,
+                title="Long Show",
+                year=2005,
+                added_at=None,
+                ids=identity.ExternalIds.of(imdb="tt0472"),
+            )
+        }
+        # Arrived 2000 days ago: past the 1095-day dormancy floor, so an unwatched season here
+        # really is condemnable, and inside the 4000-day reach, so no watcher count is a lower
+        # bound and the keep-rule conflict detector stays out of the way. Both halves matter --
+        # either one left these seasons abstaining for a reason the test does not mean to check.
+        arrived = str(int((utcnow() - timedelta(days=2000)).timestamp()))
+        clean = {
+            900: [
+                {"media_index": n, "rating_key": 900 + n, "added_at": arrived} for n in range(1, 6)
+            ]
+        }
+        # The same list, plus a second "Season 3" -- so season 3 alone loses its key.
+        split = {900: [*clean[900], {"media_index": 3, "rating_key": 9903, "added_at": arrived}]}
+
+        async def _run(sweep: dict[int, list[dict[str, Any]]]) -> dict[str, Any]:
+            _reasons, degrade = _degrade_sink()
+            judgments = await season_scan.gather(
+                cache_engine,
+                sonarrs=[_source(_FakeSonarr(series, episodes))],
+                tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                    shows=[
+                        {
+                            "rating_key": 900,
+                            "title": "Long Show",
+                            "year": 2005,
+                            "added_at": "1000000",
+                        }
+                    ],
+                    children={},
+                ),
+                plex=_FakePlexGuids(plex_items, seasons=_season_rows(sweep)),  # type: ignore[arg-type]
+                horizon=utcnow() - timedelta(days=4000),
+                reach_days=4000,
+                active_rating_keys=set(),
+                activity_degraded=False,
+                keep_last_seasons=0,  # nothing shields season 4 but the mid-binge guard
+                keep_first_season=False,
+                window_days=365,
+                whitelisted=set(),
+                degrade=degrade,
+                watch_marks={},
+            )
+            assert not _reasons, f"the scan degraded, so no verdict here means anything: {_reasons}"
+            return {j.media_key: j for j in judgments}
+
+        control = await _run(clean)
+        season_4 = control["sonarr:1:42:4"]
+        assert season_4.guard_result.outcome is PROTECT
+        assert season_4.guard_result.detail == "a viewer is part-way through the show"
+        assert _judge(season_4.facts, season_4.guard_result) == "protect"
+        # ...and the siblings ARE condemnable evidence-wise, so the run below is not passing
+        # on some unrelated abstain (rule 141).
+        # ...and the siblings really are condemnable on their own evidence, so "not condemned"
+        # below is a statement about the fix rather than about some unrelated abstain the
+        # fixture happened to produce (rule 141).
+        assert _judge(control["sonarr:1:42:1"].facts, control["sonarr:1:42:1"].guard_result) == (
+            "condemn"
+        )
+
+        broken = await _run(split)
+        assert broken["sonarr:1:42:3"].plex_rating_key is None  # the ambiguous one
+        for n in (1, 2, 4, 5):
+            judgment = broken[f"sonarr:1:42:{n}"]
+            assert _judge(judgment.facts, judgment.guard_result) != "condemn"
+            assert judgment.guard_result.detail == (
+                "a season of this show is not matched in Plex, so who is part-way through "
+                "is unknown"
+            )
+            # Blocked, not a plain keep: the guard could not be ANSWERED (rule 93), so the
+            # panel says "couldn't check" rather than green, and a hand reap still overrules.
+            assert judgment.guard_result.blocked is True
+
+    async def test_a_failed_season_read_stops_the_show_asserting_nobody_is_watching(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """#472's own reproduction: ``resolve_season_keys`` raising, for a show that DID bind
+        to Plex. Returning an empty map is fail-closed for that show's own seasons -- they all
+        abstain on Unknown facts -- but it said nothing about the assertion the show then made
+        about viewer progress, and the mid-binge guard reported as checked and passed."""
+        await _seed_ratings(cache_engine, {"tt0472": (5.5, 400)})
+        series = [
+            {
+                "id": 42,
+                "title": "Long Show",
+                "year": 2005,
+                "status": "ended",
+                "ended": True,
+                "imdbId": "tt0472",
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+
+        class _DeadChildren(_FakeTautulli):
+            async def children_metadata(self, rating_key: int) -> list[dict[str, Any]]:
+                raise IntegrationError("tautulli", "connection refused")
+
+        plex_items = {
+            900: identity.PlexItem(
+                rating_key=900,
+                title="Long Show",
+                year=2005,
+                added_at=None,
+                ids=identity.ExternalIds.of(imdb="tt0472"),
+            )
+        }
+        _reasons, degrade = _degrade_sink()
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(_FakeSonarr(series))],
+            tautulli=_DeadChildren(  # type: ignore[arg-type]
+                shows=[
+                    {"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}
+                ],
+                children={},
+            ),
+            # The show binds to Plex; only its season list is unreadable, so the sweep is empty
+            # and every season falls to the per-show read that raises.
+            plex=_FakePlexGuids(plex_items, seasons={}),  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=0,
+            keep_first_season=False,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+        )
+
+        by_key = {j.media_key: j for j in judgments}
+        assert len(by_key) == 5
+        for judgment in by_key.values():
+            assert judgment.plex_rating_key is None
+            assert judgment.guard_result.detail == (
+                "a season of this show is not matched in Plex, so who is part-way through "
+                "is unknown"
+            )
+            assert judgment.guard_result.blocked is True
+
+    async def test_a_show_plex_never_matched_at_all_is_left_alone(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The deliberate boundary on #472's fix, pinned because it is the half a later author
+        would most reasonably widen.
+
+        The hold fires only where the SHOW bound to Plex and some of its seasons did not,
+        because that is the mix where a readable sibling exists to condemn on the hidden
+        viewer. Where nothing about the show resolved, every season already takes Unknown from
+        its own branch and abstains, so widening the hold to cover it would move a whole
+        population of unmatched shows out of the review queue and protect nothing further.
+        """
+        series = [
+            {
+                "id": 77,
+                "title": "Never Matched",
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        _reasons, degrade = _degrade_sink()
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(_FakeSonarr(series))],
+            tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=2,
+            keep_first_season=True,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            watch_marks={},
+        )
+        by_key = {j.media_key: j for j in judgments}
+        assert by_key["sonarr:1:77:2"].plex_rating_key is None
+        assert by_key["sonarr:1:77:2"].guard_result.outcome is ABSTAIN
+
     async def test_a_show_without_files_logs_no_content(self, cache_engine: AsyncEngine) -> None:
         """A show Sonarr has no downloaded episodes for is dropped as no_content, and its
         decision line says so with the zero file counts, so it is not mistaken for a bug."""
@@ -1978,8 +2218,6 @@ class TestGatherEndToEnd:
     async def test_an_unreachable_sonarr_degrades_the_snapshot(
         self, cache_engine: AsyncEngine
     ) -> None:
-        from reaper.clients.base import IntegrationError
-
         class _DeadSonarr:
             async def series(self) -> list[dict[str, Any]]:
                 raise IntegrationError("sonarr", "connection refused")
@@ -2022,6 +2260,61 @@ class TestUserSeasonProgress:
         stats = await season_scan.season_watch_stats(cache_engine, {707}, window_days=365)
         assert 707 in stats.user_season_keys[1]
         assert 707 not in stats.user_season_progress.get(1, {})
+
+    @pytest.mark.parametrize(
+        ("plays", "why"),
+        [
+            # Nothing completed at all: `max_ep is None`, so there is no position to name.
+            ([(2, None)], "no completed episode"),
+            # Completed ep 1, then plays of ep 4 Tautulli never reported the completion of.
+            # They may be further on than the position says, so it is dropped rather than
+            # trusted low -- being wrong in that direction unprotects the season they are
+            # about to watch next.
+            ([(1, 1.0), (4, None)], "a later play whose completion is unknown"),
+        ],
+    )
+    async def test_a_dropped_position_holds_the_season_rather_than_clearing_it(
+        self, cache_engine: AsyncEngine, plays: list[tuple[int, float | None]], why: str
+    ) -> None:
+        """#470. ``season_watch_stats`` drops a progress row down two branches, and both are
+        locally keep-safe by intent. What makes them keep-safe *downstream* is an invariant
+        that lives in a different query and nothing pinned: the ``pairs`` read that fills
+        ``user_season_keys`` carries no ``media_index`` filter, so it is a strict superset of
+        the ``progress`` read. A viewer whose position was dropped is therefore still present
+        as a *touch*, ``_progress_by_user`` records them as ``None`` -- position unknown, not
+        absent -- and ``_anchor_positions`` fails closed on that and holds the season plus the
+        one after it (rule 93).
+
+        Narrowing ``pairs`` to match ``progress``'s filters would make the viewer vanish
+        instead, and the mid-binge guard would then read a dropped position as "nobody is
+        part-way through". That change looks like a tidy-up and is a protection loss, which is
+        why the chain is asserted end to end here rather than at the query.
+        """
+        for episode, status in plays:
+            await _episode(cache_engine, season_key=903, user_id=7, episode=episode, status=status)
+        stats = await season_scan.season_watch_stats(cache_engine, {901, 902, 903}, window_days=365)
+        assert stats.user_season_progress.get(7, {}).get(903) is None, f"{why} left a position"
+
+        key_to_number = {901: 1, 902: 2, 903: 3}
+        progress = season_scan._progress_by_user(stats, key_to_number)
+        # Present, and Unknown -- the distinction the whole chain turns on.
+        assert progress == {"7": {3: None}}
+
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in (1, 2, 3, 4)],
+            keep_last=0,
+            keep_first_season=False,
+            progress_by_user=progress,
+            last_play_by_user=season_scan._last_play_by_user_season(stats, key_to_number),
+            season_final_episode={1: 5, 2: 5, 3: 5, 4: 5},
+        )
+        # Season 3 because she may still be on it, season 4 because she may have finished it:
+        # with the position unknown, `_anchor_positions` cannot tell and holds both.
+        assert plan.prunable == [1, 2]
+        held = {p.season_number: p.reason for p in plan.protected}
+        assert held[3] == "a viewer is part-way through the show"
+        assert held[4] == "a viewer is part-way through the show"
 
 
 class TestFinalEpisodes:

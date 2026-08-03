@@ -144,7 +144,19 @@ row above: both are overrulable now, so the encoding decides what the panel says
 may do (rule 143). Only the blanket hold carries the flag; a season an actually-visible viewer
 holds stays a definite keep. `season_scan.gather`'s own `in_progress_hold_days` default moved 0 →
 180 to match the policy's, since 0 is a value no shipped policy has and every test omitting it was
-exercising that unbounded claim (rule 141). Below that the count is a *lower bound*, so an outcome
+exercising that unbounded claim (rule 141). **There are three causes now, not one**, and they
+share the encoding above because they are one question with three answers missing: the reach
+(`progress_established`), a season whose plays stopped being readable (`progress_unreadable`,
+`watch_evidence`), and a season with no Plex rating key at all this scan
+(`progress_seasons_unmatched`, **#472 closed**). Each names its own remedy, since one sentence
+for three would send the operator to the wrong place — more history, repair at the source, fix
+the match. The third is **scoped to a show that did bind to Plex**, and that boundary is the part
+to preserve: the harm needs a *mix*, where the seasons that resolved carry fully readable facts
+and condemn at full confidence on a viewer the missing ones hid, so one duplicate "Season 3" in
+Plex put the season a viewer had just finished season 3 for onto the reap list. Where the show
+itself never bound, every season already takes Unknown from its own branch and abstains, so
+widening the hold there moves a whole population of unmatched shows out of the review queue and
+protects nothing further. Below that the count is a *lower bound*, so an outcome
 a deeper mirror could overturn reports "could not check" instead: the gate and a protect rule
 block, the signal withholds its pressure and lets coverage fall, a keep takes its full discount.
 An outcome the bound already earns still fires — a count that clears "at least N" stays clear

@@ -85,6 +85,9 @@ _NO_PANEL_ROUTE = {
         "already plain: it answers 'why kept', not 'what could not be checked'"
     ),
     "season_pruning.PROGRESS_UNREADABLE_REASON": ("its twin above, same surface and same shape"),
+    "season_pruning.PROGRESS_UNMATCHED_REASON": (
+        "the third of the same set, same surface and same shape (#472)"
+    ),
     "preview.NOT_PROBED_REASON": (
         "the facts a policy probe leaves out. probe_signal answers one route with a number "
         "and a detail string and builds no candidate, stores no Explanation and touches no "
