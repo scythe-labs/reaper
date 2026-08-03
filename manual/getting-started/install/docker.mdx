@@ -89,6 +89,25 @@ drops to an unprivileged user before it opens the database. Set `PUID` and `PGID
 user. To skip the root phase entirely, pin `user: "1000:1000"` and create the folder owned by
 1000 yourself.
 
+## Windows
+
+Docker on Windows runs Linux containers inside a small VM, through
+[Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) on the
+[WSL 2 backend](https://docs.docker.com/desktop/features/wsl/). Microsoft's
+[WSL install guide](https://learn.microsoft.com/en-us/windows/wsl/install) covers turning
+WSL on.
+
+<Callout tone="caution">
+  **Keep the named volume on Windows.** The VM reaches Windows folders over a file share,
+  and that share cannot lock files. A media mount can live with that; a database cannot, so
+  a `/data` bind mount on a Windows folder will eventually corrupt Reaper's database, which
+  shows up as slow behavior and then crashes. The same goes for any container holding a
+  SQLite database, Sonarr and Radarr included. A named volume, like `reaper-data` in the
+  examples above, lives inside the VM, where locking works. If you want the files visible in
+  a normal folder, skip Docker and use [the Windows app](/getting-started/install/windows)
+  instead.
+</Callout>
+
 ## Common settings
 
 | Variable | Default | What it does |
