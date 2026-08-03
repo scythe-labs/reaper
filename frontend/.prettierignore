@@ -4,6 +4,12 @@
 dist
 public/vendor
 
+# `npm run test:coverage` writes an html report here, and prettier reformats every page of
+# it. In CI the format step runs before the test step, so it would never have noticed; a
+# contributor who ran coverage first would get 105 files of style complaints about a
+# gitignored artifact they did not write.
+coverage
+
 # The two below are ownership boundaries, not fixes for a current misformat: checked with
 # --ignore-path /dev/null, prettier leaves both byte-identical as they stand. They are listed
 # so that stays a coincidence nobody has to rely on.

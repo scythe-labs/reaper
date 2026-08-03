@@ -179,8 +179,35 @@ jobs:
 
       # The full suite includes tests/test_repo_hygiene.py, which is why `hygiene` below
       # runs only for the prose lane: a commit touching code has already proved it here.
+      #
+      # Two coverage reports off one run: the terminal one is what a human reads in this
+      # log, and the xml is what the upload below sends.
       - name: Test
-        run: uv run pytest -n auto --cov --cov-report=term-missing
+        run: uv run pytest -n auto --cov --cov-report=term-missing --cov-report=xml
+
+      # Coverage is a report, never a gate. `fail_ci_if_error` stays at its default of
+      # false so a Codecov outage cannot fail a build whose tests passed, and both statuses
+      # are informational in .github/codecov.yml. The cost is that a broken upload is quiet,
+      # so a badge that has stopped moving is the symptom to look for.
+      #
+      # `flags` keeps the two halves of the tree apart, so a frontend-only pull request is
+      # not read as a backend coverage drop. The carryforward that makes that work -- the
+      # other half's last known report standing in for the one this run did not produce --
+      # is declared in codecov.yml beside the flag.
+      #
+      # `disable_search` with an explicit file: the upload sends the report this job made,
+      # never whatever else the workspace happens to hold.
+      #
+      # The token is named although nothing sets it. This repository is public and the
+      # Codecov app is installed, so uploads from Actions are accepted without one; naming
+      # it means adding the secret later is a settings change and not a workflow edit.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: coverage.xml
+          disable_search: true
+          flags: backend
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       # A model change without a migration is the classic way to ship a schema
       # that only exists on the developer's laptop.
@@ -226,8 +253,23 @@ jobs:
 
       # Component tests (vitest + Testing Library), led by the reap confirmation's
       # client-side execute gate -- the one UI surface in front of a deletion.
+      #
+      # `test:coverage` is `npm run test` plus an lcov report; the tests, the environment
+      # and the verdict are the same, so the documented gate stays `npm run test` and a
+      # contributor does not have to install a reporter to run what CI runs.
       - name: Test
-        run: npm run test
+        run: npm run test:coverage
+
+      # See the note on the same step in `check`. One thing is particular to this job:
+      # `defaults.run.working-directory` above governs `run` steps only and never reaches a
+      # `uses` step, so this path is relative to the workspace and not to frontend/.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: frontend/coverage/lcov.info
+          disable_search: true
+          flags: frontend
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       # `npm run build` runs tsc --noEmit first, so a type error fails the build rather
       # than shipping a bundle that throws in the browser.

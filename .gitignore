@@ -233,6 +233,9 @@ secret.key
 node_modules/
 frontend/dist/
 frontend/public/vendor/
+# `npm run test:coverage` writes lcov here for CI to upload. The Python half's equivalents
+# (coverage.xml, htmlcov/) are covered by the coverage block further up.
+frontend/coverage/
 
 # Agent worktrees. `git worktree add` inside the repo leaves a directory git will
 # happily stage as a gitlink (mode 160000) with no .gitmodules to describe it, and
