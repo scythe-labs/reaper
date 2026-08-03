@@ -1,12 +1,12 @@
 ---
 title: Docker
-description: Compose or the CLI. CI publishes an image on every push, so there is nothing to build.
+description: Compose or the CLI. Every release publishes the image, so there is nothing to build.
 sidebar_position: 2
 ---
 
 # Docker
 
-CI publishes an image on every push, so there is nothing to build. The package is public, so
+Every release publishes the image, so there is nothing to build. The package is public, so
 the pull needs no login.
 
 <Callout tone="tip">
@@ -23,7 +23,7 @@ the pull needs no login.
 ```yaml
 services:
   reaper:
-    image: ghcr.io/scythe-labs/reaper:dev
+    image: ghcr.io/scythe-labs/reaper:latest
     container_name: reaper
     restart: unless-stopped
     ports:
@@ -58,7 +58,7 @@ docker run -d \
   -v reaper-data:/data \
   -e REAPER_DESTRUCTIVE_ACTIONS_ENABLED=false \
   -e REAPER_LOG_LEVEL=INFO \
-  ghcr.io/scythe-labs/reaper:dev
+  ghcr.io/scythe-labs/reaper:latest
 ```
 
 Reaper then serves on `http://localhost:8420`.
@@ -89,6 +89,25 @@ drops to an unprivileged user before it opens the database. Set `PUID` and `PGID
 user. To skip the root phase entirely, pin `user: "1000:1000"` and create the folder owned by
 1000 yourself.
 
+## Windows
+
+Docker on Windows runs Linux containers inside a small VM, through
+[Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) on the
+[WSL 2 backend](https://docs.docker.com/desktop/features/wsl/). Microsoft's
+[WSL install guide](https://learn.microsoft.com/en-us/windows/wsl/install) covers turning
+WSL on.
+
+<Callout tone="caution">
+  **Keep the named volume on Windows.** The VM reaches Windows folders over a file share,
+  and that share cannot lock files. A media mount can live with that; a database cannot, so
+  a `/data` bind mount on a Windows folder will eventually corrupt Reaper's database, which
+  shows up as slow behavior and then crashes. The same goes for any container holding a
+  SQLite database, Sonarr and Radarr included. A named volume, like `reaper-data` in the
+  examples above, lives inside the VM, where locking works. If you want the files visible in
+  a normal folder, skip Docker and use [the Windows app](/getting-started/install/windows)
+  instead.
+</Callout>
+
 ## Common settings
 
 | Variable | Default | What it does |
@@ -110,10 +129,13 @@ The full list is in [Configuration](/configuration).
 
 | Tag | Follows |
 | --- | --- |
-| `:dev` | the `dev` branch, where the work lands. **Use this for now.** |
-| `:latest` | `main`, once a release is cut. |
+| `:latest` | the newest release. **Use this.** |
+| `:dev` | the `dev` branch, refreshed on every change, for testing what is coming. |
 
 These two are the only tags to put in a compose file.
+
+To run the dev channel, put `ghcr.io/scythe-labs/reaper:dev` in the compose file instead. Dev
+builds change often. Releases are the steadier channel.
 
 ## Updating
 
@@ -131,7 +153,7 @@ docker compose up -d
 ```bash
 docker stop reaper
 docker rm reaper
-docker pull ghcr.io/scythe-labs/reaper:dev
+docker pull ghcr.io/scythe-labs/reaper:latest
 # then run the same command you installed with
 ```
 
