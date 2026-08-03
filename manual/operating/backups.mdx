@@ -15,6 +15,7 @@ Reaper's data folder holds what you cannot regenerate.
 | `reaper.db` | Your policies, decisions, whitelist and audit trail. |
 | `secret.key` | The master key, when Reaper generated one. Absent if you supply `REAPER_SECRET_KEY`. |
 | `secret.salt` | Minted per install, and paired with that key. Both are needed to decrypt. |
+| `launcher.conf` | Windows, macOS and the snap only. The port and bind address live here and nowhere else. |
 
 <Callout tone="caution">
   **The key and the salt only work as a pair.** The key is stretched with `secret.salt` before
@@ -24,9 +25,12 @@ Reaper's data folder holds what you cannot regenerate.
 
 ## Let Reaper do it
 
-Settings, Backup produces one archive, which removes the chance of taking two files out of
-three by hand. It leaves out `secret.key` when the key comes from `REAPER_SECRET_KEY`, because
+Settings, Backup produces one archive, which removes the chance of taking three files out of
+four by hand. It leaves out `secret.key` when the key comes from `REAPER_SECRET_KEY`, because
 there is no file to take: restoring that archive needs the same variable set.
+
+`launcher.conf` travels whenever your install has one, so rebuilding on the same kind of
+install keeps the port and bind address you set. Restoring turns recovery mode off inside it.
 
 Restoring that archive asks for your admin password. Downloading it asks only that you are
 signed in.

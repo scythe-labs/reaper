@@ -13,6 +13,7 @@ import {
   DEFAULT_GENERAL,
   DEFAULT_UPDATE,
   DEFAULT_WATCH_EVIDENCE,
+  SIGNED_IN_USER,
   seedSettings,
 } from "../test/apiFixtures";
 import { fill } from "../test/forms";
@@ -50,6 +51,9 @@ const { apiMock } = vi.hoisted(() => ({
     clearWebhook: vi.fn(),
     // Security and Backup hold drafts inside a child component, so both trees mount here too.
     setAdminPassword: vi.fn(),
+    // Security's password form reads ["me"] for the recovery mark that excuses the current
+    // password. Rule 135: answer it, or the form renders its strict branch off a failed read.
+    me: vi.fn(),
     backupInfo: vi.fn(),
     restorePrepare: vi.fn(),
     restoreConfirm: vi.fn(),
@@ -126,6 +130,7 @@ beforeEach(() => {
   });
   apiMock.notifications.mockResolvedValue({ has_webhook: false });
   apiMock.setAdminPassword.mockResolvedValue({ ok: true });
+  apiMock.me.mockResolvedValue(SIGNED_IN_USER);
   apiMock.backupInfo.mockResolvedValue({
     reaper_db_bytes: 1024,
     last_backup_at: null,

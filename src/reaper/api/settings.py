@@ -38,7 +38,11 @@ from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin
 from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
-from reaper.auth.sessions import resolve_session_from_cookies
+from reaper.auth.sessions import (
+    resolve_session_from_cookies,
+    session_via_recovery,
+    spend_recovery_mark,
+)
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.plextv import PlexConnection, PlexTvClient, connection_identity
@@ -432,6 +436,11 @@ class SafetyOut(BaseModel):
     """Whether Reaper may delete right now."""
     has_password: bool
     """Whether an admin password has been set. Turning deletion on requires one."""
+    recovery_mode: bool = False
+    """Whether REAPER_RECOVERY is armed on this process. It holds ``destructive_enabled``
+    false however the stored switch is set, and the banner says so in its own tone: an
+    operator told only "read-only" would go to Policy, Deletion and find a switch that
+    refuses (rule 53, for a state rather than a limit)."""
     note: str | None = None
 
 
@@ -446,8 +455,9 @@ class SafetyIn(BaseModel):
 class AdminPasswordIn(BaseModel):
     password: str = Field(max_length=128)
     current_password: str | None = Field(default=None, max_length=128)
-    """Required when a password already exists. A borrowed signed-in session must not
-    be able to swap the arming credential without knowing it."""
+    """Required when a password already exists, unless a recovery code opened this session.
+    A borrowed signed-in session must not be able to swap the arming credential without
+    knowing it; a recovery session is the one that already proved host access instead."""
 
 
 class NotificationsOut(BaseModel):
@@ -1535,6 +1545,7 @@ async def _safety_out(session: AsyncSession, safety: RuntimeSafety) -> SafetyOut
     return SafetyOut(
         destructive_enabled=safety.destructive_allowed,
         has_password=await admin_password.has_password(session),
+        recovery_mode=safety.recovery_mode,
         note=safety.why_blocked(),
     )
 
@@ -1562,6 +1573,16 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     keys = (f"ip:{_client_ip(request)}", "account:safety-arm")
     async with _factory(request)() as session:
         if payload.enabled:
+            # Refused before the password is even looked at, because no password makes this
+            # allowed: `RuntimeSafety.destructive_allowed` holds deletion off for the whole
+            # life of a recovery-mode process, so accepting the flip would write a stored
+            # `true` the app then ignores and the banner contradicts. Answering here is what
+            # keeps the switch and the state one thing.
+            if _settings(request).recovery:
+                raise HTTPException(
+                    409,
+                    "Recovery mode is on, so deletion stays off. Turn it off and restart first.",
+                )
             if not await admin_password.has_password(session):
                 raise HTTPException(
                     400,
@@ -1592,6 +1613,15 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
     signed-in session; changing an existing one also requires the current password, so a
     borrowed session or an unattended tab cannot quietly swap the arming credential.
     Verify and hash both run behind the login's lockout and Argon2 concurrency gate.
+
+    **One session is excused from the current password: one opened with a recovery code.**
+    A forgotten password is what recovery mode is for, so demanding it here left the
+    operator signed in and still locked out of the only credential that arms deletion,
+    with no way forward on a desktop build (#433). The excusal grants nothing new: minting
+    that code took host access, and anyone holding host access can rewrite the hash in
+    ``reaper.db`` directly. It is spent immediately -- ``spend_recovery_mark`` runs in the
+    same transaction as the new hash, so a second change from that session asks for the
+    password like any other, and the mark cannot outlive the reset it was for.
     """
     keys = (f"ip:{_client_ip(request)}", "account:admin-password")
     async with _factory(request)() as session:
@@ -1601,7 +1631,8 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
         # stale cookie under the other name would be the one spared here while the live
         # session was revoked, signing the operator out of the very tab they were in.
         _, keep = await resolve_session_from_cookies(session, request.cookies)
-        if await admin_password.has_password(session):
+        via_recovery = await session_via_recovery(session, keep)
+        if await admin_password.has_password(session) and not via_recovery:
             _throttled(password_throttle, *keys)
             ok = await _verify_admin_password(session, payload.current_password or "")
             if not ok:
@@ -1621,8 +1652,13 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
             raise HTTPException(422, str(exc)) from exc
         finally:
             argon2_gate.release()
+        # After set_password, so a refused password (too short) leaves the mark intact and
+        # the operator can try again -- rule 125's shape, for the permission rather than
+        # the code. set_password already revoked every OTHER session for this admin.
+        if via_recovery:
+            await spend_recovery_mark(session, keep)
         await session.commit()
-    log.info("safety.admin_password_set", username=username)
+    log.info("safety.admin_password_set", username=username, via_recovery=via_recovery)
     return {"ok": True}
 
 

@@ -212,6 +212,17 @@ class AuthSession(Base):
     last_seen_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     user_agent: Mapped[str | None] = mapped_column(String(300), default=None)
 
+    # This session was opened by redeeming a recovery code, so its holder proved host
+    # access but not knowledge of the admin password. It is what lets Settings -> Security
+    # set a new password without the current one: an operator who has forgotten it has
+    # nothing to type there, and recovery exists for exactly that. Spent on first use --
+    # ``api.settings.set_admin_password`` clears the mark in the same transaction that
+    # writes the new hash, so the elevated permission never outlives the reset it was for.
+    # server_default so the additive migration can ADD this NOT NULL column to an existing
+    # populated table (SQLite requires a default), and every session predating it backfills
+    # to "false", which is the fail-closed reading: still needs the current password.
+    via_recovery: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+
     user: Mapped[AppUser] = relationship(back_populates="sessions")
 
 

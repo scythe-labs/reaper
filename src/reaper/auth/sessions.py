@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.auth.cookie import read_session_tokens
@@ -40,12 +40,21 @@ _LAST_SEEN_THROTTLE = timedelta(minutes=5)
 
 
 async def open_session(
-    session: AsyncSession, user: AppUser, *, user_agent: str | None = None
+    session: AsyncSession,
+    user: AppUser,
+    *,
+    user_agent: str | None = None,
+    via_recovery: bool = False,
 ) -> str:
     """Mint a session for ``user`` and return the plaintext token.
 
     The token is returned exactly once, to be written into a cookie; only its hash
     is persisted. The caller commits.
+
+    ``via_recovery`` records that a recovery code opened this one, which is what lets it
+    set a new admin password without the current one (:func:`session_via_recovery`, read by
+    ``api.settings.set_admin_password``). It defaults to false so every other login has to
+    ask for it: a caller that forgets gets the strict behavior, not the lenient one.
     """
     token = generate_token()
     now = utcnow()
@@ -58,11 +67,66 @@ async def open_session(
             last_seen_at=now,
             # Trim the UA: it is a courtesy field for "your devices", not evidence.
             user_agent=(user_agent or None) and user_agent[:300],
+            via_recovery=via_recovery,
         )
     )
     user.last_login_at = now
     await session.flush()
     return token
+
+
+async def session_via_recovery(session: AsyncSession, token: str | None) -> bool:
+    """Whether ``token``'s session was opened by redeeming a recovery code.
+
+    False for an absent or unknown token, so an unreadable answer lands on the strict side:
+    the caller then demands the current password, which is what every ordinary session gets.
+    Expiry is not re-checked here because every caller has already resolved the session
+    through :func:`resolve_session_from_cookies`, which deletes an expired row on sight.
+    """
+    if not token:
+        return False
+    row = (
+        await session.execute(
+            select(AuthSession).where(AuthSession.token_hash == hash_token(token))
+        )
+    ).scalar_one_or_none()
+    return bool(row is not None and row.via_recovery)
+
+
+async def spend_recovery_mark(session: AsyncSession, token: str | None) -> None:
+    """Turn a recovery session back into an ordinary one. Idempotent. Caller commits.
+
+    Called the moment the reset it authorized succeeds, so the permission to change the
+    password without knowing it is single-use, like the code that granted it. Leaving the
+    mark would keep that permission alive for the session's whole 30-day window.
+    """
+    if not token:
+        return
+    await session.execute(
+        update(AuthSession)
+        .where(AuthSession.token_hash == hash_token(token))
+        .values(via_recovery=False)
+    )
+
+
+async def clear_recovery_marks(session: AsyncSession) -> int:
+    """Demote every recovery session to an ordinary one. Returns how many. Caller commits.
+
+    Run at every boot (``main.lifespan``), so the elevated permission cannot outlive the
+    uptime that granted it. :func:`spend_recovery_mark` only fires when the operator
+    actually resets the password; one who signs in with a code, changes nothing, and
+    restarts would otherwise keep a session that can rewrite the arming credential without
+    knowing it -- for thirty days, past the restart the manual gives as the last step, and
+    with nothing on screen saying so.
+
+    Demoted rather than revoked: the operator stays signed in and simply has to prove the
+    old password like anyone else, which is the ordinary state. Revoking would sign someone
+    out mid-repair for the crime of restarting.
+    """
+    result = await session.execute(
+        update(AuthSession).where(AuthSession.via_recovery.is_(True)).values(via_recovery=False)
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def resolve_session(session: AsyncSession, token: str | None) -> AppUser | None:

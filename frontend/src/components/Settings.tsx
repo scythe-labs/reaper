@@ -2575,10 +2575,25 @@ function AdminPasswordForm({
   const [pw, setPw] = useState("");
   const [confirm, setConfirm] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+
+  // Did a recovery code open this session? That is the one case the server takes a new
+  // password without the current one, because a forgotten password is what recovery mode is
+  // FOR -- demanding it here left the operator signed in and still locked out (#433).
+  //
+  // Rule 17/36 wants the unknown and failed states answered explicitly, and they are: `?? false`
+  // is the strict answer, not a placeholder. A session this form cannot read is treated exactly
+  // like an ordinary one, so the current-password box stays live and required. It reads the same
+  // ["me"] entry `App` resolved before anything under it could mount, so in practice there is no
+  // pending state to pass through. And the server re-reads the session's own mark on the request
+  // either way: this can only relax what the FORM asks for, never what the API allows.
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me, retry: false });
+  const viaRecovery = me?.via_recovery ?? false;
+  const skipCurrent = needed || viaRecovery;
+
   const save = useMutation({
     // Only the new password is sent: the confirm field exists so a typo can't lock the
     // operator out of the key that arms deletion, and it never leaves the browser.
-    mutationFn: () => api.setAdminPassword(pw, needed ? undefined : current),
+    mutationFn: () => api.setAdminPassword(pw, skipCurrent ? undefined : current),
     onSuccess: () => {
       setCurrent("");
       setPw("");
@@ -2590,15 +2605,29 @@ function AdminPasswordForm({
       // hear -- the one asymmetry the comment below is careful about, reached another way.
       announce("Password saved.");
       void queryClient.invalidateQueries({ queryKey: ["safety"] });
+      // The server spends the recovery mark in the same transaction as the new hash, so this
+      // session is an ordinary one from here on. Re-read it, or the current-password box would
+      // stay grayed out over a session that no longer excuses it and the next change would fail
+      // at the API instead of at the form.
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
     },
-    // No onError: a failure renders from `save.error` as an error notice, never in `msg`.
-    // This password is what confirms turning deletion on, so "saved" and "wrong password"
-    // must not look alike here.
+    onError: () => {
+      // Deliberately NOT the mirror of onSuccess: nothing is written to `msg`, because a
+      // failure renders from `save.error` as an error notice and this password is what
+      // confirms turning deletion on -- "saved" and "wrong password" must never look alike.
+      //
+      // The re-read is the whole point. A second tab mounted before the mark was spent holds
+      // `via_recovery: true` in a cache that nothing refetches (`main.tsx` sets
+      // `refetchOnWindowFocus: false`), so its box stays parked and empty while the server
+      // refuses every submit: a form with no way out but a reload. Re-reading here turns the
+      // refusal into the state that explains it, with the current-password box live again.
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 
   const tooShort = pw.length > 0 && pw.length < MIN_ADMIN_PASSWORD;
   const mismatch = confirm.length > 0 && confirm !== pw;
-  const needCurrent = !needed && current.length === 0;
+  const needCurrent = !skipCurrent && current.length === 0;
   const valid =
     pw.length >= MIN_ADMIN_PASSWORD && confirm.length > 0 && confirm === pw && !needCurrent;
 
@@ -2675,7 +2704,9 @@ function AdminPasswordForm({
         <p className="help">
           {needed
             ? "Choose something long, and keep it somewhere safe."
-            : "Changing it needs the current password first."}
+            : viaRecovery
+              ? "You can set a new one without the old password."
+              : "Changing it needs the current password first."}
         </p>
       </div>
       <div className="pw-col">
@@ -2688,19 +2719,29 @@ function AdminPasswordForm({
           }}
         >
           {/* The current password proves who you are; a divider sets it apart from the new
-              one below. First-time setup has no current password, so neither is shown. */}
+              one below. First-time setup has no current password, so neither is shown.
+
+              A recovery session keeps the box on screen but parks it: disabled and dimmed,
+              the way an option behind a switch reads (`.set-row.dim`, rule 18). Hiding it
+              instead would leave an operator who has used this form before wondering which
+              form they were looking at, and the one line under it is the answer to the
+              question the empty box asks. */}
           {!needed && (
             <>
-              <label className="field-sm">
+              <label className={viaRecovery ? "field-sm dim" : "field-sm"}>
                 <span className="field-label">Current password</span>
                 <input
                   type="password"
-                  value={current}
+                  value={viaRecovery ? "" : current}
                   onChange={onEdit(setCurrent)}
+                  disabled={viaRecovery}
                   autoComplete="current-password"
                   maxLength={128}
                   aria-describedby={errorOwner === "current" ? PASSWORD_ERROR_ID : undefined}
                 />
+                {viaRecovery && (
+                  <span className="help">Not needed. A recovery code signed you in.</span>
+                )}
               </label>
               <hr className="pw-sep" />
             </>

@@ -181,10 +181,11 @@ class Settings(BaseSettings):
     allow_unarmed_leaving_soon: bool = False
 
     # --- Anti-lockout ---------------------------------------------------------
-    # Set REAPER_RECOVERY=true and restart: Reaper prints a single-use, 15-minute
-    # login link to the container log. Requires the ability to set an env var and
-    # read the logs -- i.e. host access -- so it grants nothing an attacker who
-    # already has the host doesn't have.
+    # Set REAPER_RECOVERY=true and restart: Reaper mints a single-use, 15-minute sign-in
+    # code, prints it to the console, and writes it to recovery.txt in the data folder
+    # (auth.recovery). Two channels because the console is not one on a windowed desktop
+    # build. Requires the ability to set an env var and read either -- i.e. host access --
+    # so it grants nothing an attacker who already has the host doesn't have.
     recovery: bool = False
 
     @field_validator("data_dir")
@@ -337,11 +338,23 @@ class RuntimeSafety(BaseModel):
     ``REAPER_DESTRUCTIVE_ACTIONS_ENABLED`` only seeds the first-run default; after that the
     database is the source of truth, so a declarative deployment can still ship armed while
     the UI stays the live control.
+
+    ``recovery_mode`` overrides it downward and can never raise it. Recovery mode is a door
+    that opens for anyone who can reach the host, so a boot with it armed is the last moment
+    Reaper should also be able to delete media. It is not a second switch to forget: the flag
+    is read from the environment on every boot, so turning it off restores whatever the
+    database said -- and the boot with it ON has already forced the stored switch off
+    (``main.lifespan``), so getting back in never silently re-arms anything.
     """
 
     destructive_enabled: bool = Field(
         default=False,
         description="May Reaper delete right now? Turned on in the UI, password-gated.",
+    )
+
+    recovery_mode: bool = Field(
+        default=False,
+        description="REAPER_RECOVERY is armed, which holds deletion off however it is set.",
     )
 
     # Permit the benign "Leaving Soon" shelf write (collection + label) while deletion is
@@ -356,7 +369,9 @@ class RuntimeSafety(BaseModel):
 
     @property
     def destructive_allowed(self) -> bool:
-        return self.destructive_enabled
+        # One place, so every consumer inherits the hold: the transport guard, the executor's
+        # interlocks, the planner, and the banner all read this rather than the raw switch.
+        return self.destructive_enabled and not self.recovery_mode
 
     @property
     def leaving_soon_write_allowed(self) -> bool:
@@ -368,6 +383,13 @@ class RuntimeSafety(BaseModel):
         return self.destructive_allowed or self.allow_leaving_soon_unarmed
 
     def why_blocked(self) -> str | None:
+        # Recovery first: it is the reason that the operator cannot clear from the UI, so
+        # naming the other one would send them to a switch that will not help.
+        if self.recovery_mode:
+            return (
+                "Recovery mode is on, so Reaper can look but can't remove anything. "
+                "Turn it off and restart."
+            )
         if not self.destructive_enabled:
             return (
                 "Deletion is turned off, so Reaper can look but can't remove anything. "

@@ -184,10 +184,16 @@ async def set_destructive_enabled(session: AsyncSession, *, enabled: bool) -> No
 
 async def runtime_safety(session: AsyncSession, settings: Settings) -> RuntimeSafety:
     """The current deletion permission. The one place that assembles it, so every caller
-    agrees on whether Reaper may delete right now."""
+    agrees on whether Reaper may delete right now.
+
+    ``recovery_mode`` comes straight from the environment rather than the database, because
+    it is the one input here that must answer for THIS process: recovery is armed by a
+    restart, so the boot that armed it is exactly the boot that must hold deletion off.
+    """
     return RuntimeSafety(
         destructive_enabled=await destructive_enabled(session, settings),
         allow_leaving_soon_unarmed=await leaving_soon_unarmed(session, settings),
+        recovery_mode=settings.recovery,
     )
 
 

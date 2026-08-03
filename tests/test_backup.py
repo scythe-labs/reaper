@@ -89,11 +89,32 @@ class TestDownload:
             "reaper_db": True,
             "secret_key": False,
             "secret_salt": True,
+            "launcher_conf": False,  # this fixture's data folder has no launcher.conf
             "cache_db": False,
         }
         # A model-built test DB has no alembic_version row; production always does. Either
         # way the field is present so the restore side can decide.
         assert "alembic_revision" in manifest
+
+    def test_launcher_conf_travels_when_the_install_has_one(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """On Windows, macOS and the snap this file IS the settings: the port, the bind
+        address and the icons live nowhere else, and the database carries none of them. A
+        backup without it rebuilds an install that has forgotten all of them."""
+        (tmp_path / "launcher.conf").write_text("REAPER_PORT=8421\n", encoding="utf-8")
+
+        members = _members(client.get("/api/settings/backup/download").content)
+        assert members["launcher.conf"] == b"REAPER_PORT=8421\n"
+        manifest = json.loads(members["manifest.json"])
+        assert manifest["contents"]["launcher_conf"] is True
+
+    def test_an_install_without_one_carries_no_empty_member(self, client: TestClient) -> None:
+        """A container has no launcher.conf and never reads one, so its backup must not
+        gain a member -- an empty file restored onto a desktop install would replace the
+        real settings with nothing."""
+        members = _members(client.get("/api/settings/backup/download").content)
+        assert "launcher.conf" not in members
 
     def test_a_stale_key_file_is_not_bundled_when_the_env_key_wins(
         self, client: TestClient, tmp_path: Path

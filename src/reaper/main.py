@@ -47,7 +47,8 @@ from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
-from reaper.auth.recovery import mint_recovery_token, recovery_base_url
+from reaper.auth.recovery import clear_recovery_file, mint_recovery_token, recovery_base_url
+from reaper.auth.sessions import clear_recovery_marks
 from reaper.buildinfo import build_version, install_root
 from reaper.config import (
     Settings,
@@ -130,10 +131,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # and never exported to the process environment.
         await seed_instances(session, parse_instance_seeds(load_raw_env(settings)), box)
 
+        # Before the mint, and on every boot whichever way the flag is set: a recovery
+        # session's elevated permission lasts one uptime and no longer. `spend_recovery_mark`
+        # only fires when the operator actually resets the password, so one who signs in with
+        # a code and changes nothing would otherwise keep it for the session's full 30 days,
+        # past the restart the manual gives as the last step of getting back in.
+        demoted = await clear_recovery_marks(session)
+        if demoted:
+            log.info("auth.recovery_marks_cleared", sessions=demoted)
+
         if settings.recovery:
             await mint_recovery_token(
-                session, base_url=recovery_base_url(settings.host, settings.port)
+                session,
+                base_url=recovery_base_url(settings.host, settings.port),
+                data_dir=settings.data_dir,
             )
+            # Recovery mode is a door that opens for anyone who can reach the host, so this
+            # is the last boot on which Reaper should also be able to delete media.
+            # `RuntimeSafety.destructive_allowed` already holds it off for the life of this
+            # process; writing the stored switch off as well is what makes the state survive
+            # the restart that turns recovery back off. Otherwise an install that was armed
+            # before the lockout would come back armed the moment the operator "finished",
+            # with the change they never made. Re-arming is one password away, deliberately.
+            # Restore does the same thing for the same reason (`restore._force_destructive_off`).
+            await app_settings.set_destructive_enabled(session, enabled=False)
+        else:
+            # Recovery is off, so any recovery.txt left in the data folder is a spent or
+            # expired code. Sweeping it here is what makes "set REAPER_RECOVERY=false and
+            # restart" actually tidy up, rather than leaving a stale secret beside the
+            # database for whoever looks next.
+            clear_recovery_file(settings.data_dir)
 
         # Warn loudly if Plex OAuth is the only way in: a plex.tv outage, a
         # revoked token, or a rebuilt server would then lock the owner out of
@@ -141,9 +168,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if await count_local_admins(session) == 0:
             log.warning(
                 "auth.no_local_admin",
+                # Settings first, because it is the only one of the two that exists on
+                # every install: the desktop bundles ship no ``reaper-admin`` (rule 25).
                 detail=(
                     "No local admin exists. If Plex sign-in fails you will be locked out. "
-                    "Create a fallback with: reaper-admin create-admin --username admin"
+                    "Set an admin password in Settings, Security, or on Docker and snap "
+                    "run: reaper-admin create-admin --username admin"
                 ),
             )
 

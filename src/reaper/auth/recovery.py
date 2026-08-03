@@ -1,22 +1,38 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Recovery mode -- the last resort when you cannot log in at all.
 
-Set ``REAPER_RECOVERY=true`` and restart. Reaper mints one single-use link,
-valid for 15 minutes, and prints it to the container log:
+Set ``REAPER_RECOVERY=true`` and restart. Reaper mints one single-use code, valid
+for 15 minutes, and delivers it two ways, because no single one reaches every
+install:
 
-    docker compose logs reaper | grep -A2 RECOVERY
+* **The console.** ``docker compose logs reaper | grep -A2 RECOVERY`` on the
+  container, ``snap logs scythe-labs-reaper`` on the snap.
+* **A file in the data folder**, ``recovery.txt``, beside ``launcher.conf``.
 
-Redeeming it grants a normal admin session, bypassing both Plex OAuth and the
-local password. Then turn the flag back off.
+The file exists because the console does not. A windowed Windows build and a
+Finder-launched macOS ``.app`` are handed no console at all, so PyInstaller leaves
+``sys.stdout`` as ``None`` and ``packaging/pyinstaller/entry.py`` stands devnull in
+for it: the banner below went nowhere an operator could look, and the in-app Logs
+tab cannot substitute, because it sits behind the sign-in they have lost (#433).
 
-Why this is safe: obtaining the link requires setting an environment variable
-*and* reading the container's logs. Anyone who can do both already has host
-access, and could simply open the SQLite file and rewrite the password hash.
-Recovery mode adds no new capability -- it only makes the legitimate path
-convenient instead of requiring surgery on the database.
+Redeeming the code grants a normal admin session, bypassing both Plex OAuth and the
+local password. That session is marked ``via_recovery`` (see
+:func:`auth.sessions.open_session`), which is what lets Settings -> Security set a
+new admin password without the current one -- an operator who has forgotten it has
+nothing to type there, and forgetting it is why recovery was used. Then turn the
+flag back off.
 
-Why it is still bounded: single-use, 15 minutes, minted only at boot with the
-flag set, and every redemption is written to the audit trail.
+Why this is safe: obtaining the code requires setting an environment variable *and*
+reading either the console or a 0600 file in the folder that already holds
+``secret.key``. Anyone who can do both already has host access, and could simply open
+the SQLite file and rewrite the password hash. Recovery mode adds no new capability
+-- it only makes the legitimate path convenient instead of requiring surgery on the
+database.
+
+Why it is still bounded: single-use, 15 minutes, minted only at boot with the flag
+set, and every redemption is written to the audit trail. The file is owner-only from
+creation, replaced on every mint, deleted by ``api.auth.recover`` the moment the code
+is redeemed, and swept at the next boot with the flag off (``main.lifespan``).
 
 The token is delivered as a **code to paste**, not embedded in the link's query
 string: the banner prints a bare ``/recover`` URL plus the code on its own line, and
@@ -30,6 +46,9 @@ see there for why.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +58,10 @@ from reaper.clock import expiry, utcnow
 from reaper.db.models import RecoveryToken
 
 log = structlog.get_logger(__name__)
+
+#: The code's second delivery channel, in the data folder beside ``launcher.conf``. One
+#: name on every install shape, so the manual gives one instruction rather than five.
+RECOVERY_FILE_NAME = "recovery.txt"
 
 #: Bind addresses that are not somewhere a browser can go. ``0.0.0.0`` (the default) and
 #: ``::`` mean "every interface" to the socket layer and nothing at all to a person.
@@ -62,13 +85,106 @@ def recovery_base_url(host: str, port: int) -> str:
     return f"http://{shown}:{port}"
 
 
-async def mint_recovery_token(session: AsyncSession, *, base_url: str) -> str:
-    """Create a single-use recovery token and print it to the CONSOLE.
+def recovery_file_path(data_dir: Path) -> Path:
+    """Where the code is written for an operator with no console to read."""
+    return data_dir / RECOVERY_FILE_NAME
+
+
+def _write_owner_only(path: Path, text: str) -> None:
+    """Create ``path`` owner-only from creation, replacing whatever was there.
+
+    Written through a same-directory sibling opened ``O_EXCL`` at 0600 and moved into
+    place: the bytes are never on disk under a wider mode for even an instant, which is
+    what rule 14/83 forbids buying with a later ``chmod``. The move also means a crash
+    mid-write leaves the previous file intact rather than a truncated one, so a half-written
+    code can never be presented as the whole code.
+
+    On Windows the mode bits are largely inert; the file inherits the ACL of the per-user
+    data folder, which is the same protection ``secret.key`` beside it already relies on.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.replace(path)
+
+
+def clear_recovery_file(data_dir: Path) -> None:
+    """Delete the recovery file if one is there. Never fatal, never noisy.
+
+    Called on a successful redemption (``api.auth.recover``), at every boot
+    (``main.lifespan``), and by :func:`_write_recovery_file` before it writes, so a spent or
+    stale code does not sit in the data folder after it has stopped being the way in.
+
+    The half-written sibling goes too. A kill between ``os.open`` and the rename strands a
+    ``.tmp`` holding a live code, which neither the redemption sweep nor the boot sweep would
+    have looked at -- a file nothing ever deletes is the one shape this whole channel must
+    not have.
+    """
+    path = recovery_file_path(data_dir)
+    for target in (path, path.with_name(path.name + ".tmp")):
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("recovery.file_not_removed", detail=str(exc))
+
+
+def _write_recovery_file(
+    data_dir: Path, *, recover_url: str, code: str, minutes: int
+) -> Path | None:
+    """Put the code where a desktop operator can read it. Returns the path, or ``None``.
+
+    A failure here is never fatal: the console banner is still a live channel on the
+    container and the snap, and the token is already in the database.
+
+    **The old file is deleted before the new one is written**, so a failure leaves NOTHING
+    rather than the previous code. Minting has already invalidated that code by the time this
+    runs, so leaving it in place would hand the operator a file that reads exactly like a
+    working one and cannot possibly sign them in -- on the builds where this file is the only
+    channel there is, and where the warning below reaches only the in-app Logs tab they
+    cannot get to. An empty folder at least matches what the manual says to expect.
+    """
+    clear_recovery_file(data_dir)
+    path = recovery_file_path(data_dir)
+    body = (
+        "Reaper recovery code\n"
+        "\n"
+        f"Open:  {recover_url}\n"
+        f"Code:  {code}\n"
+        "\n"
+        f"Paste the code on that page. It works once and expires {minutes} minutes after\n"
+        "Reaper started. Reaper deletes this file the moment the code is used.\n"
+        "\n"
+        "Signing in with it lets you set a new password without the old one, in\n"
+        "Settings, Security. Then set REAPER_RECOVERY=false and restart.\n"
+    )
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        _write_owner_only(path, body)
+    except OSError as exc:
+        log.warning("recovery.file_not_written", path=str(path), detail=str(exc))
+        return None
+    return path
+
+
+async def mint_recovery_token(session: AsyncSession, *, base_url: str, data_dir: Path) -> str:
+    """Create a single-use recovery token, print it to the CONSOLE, and write it to a file.
 
     Not "to the log": the banner below goes out through ``print``, deliberately (see the
     comment on it), so it never reaches structlog, the in-app Logs tab, or the rotating
-    files the Logs tab downloads. ``docker logs`` is where the operator finds it, and the
-    recovery screen's copy has to say so (U-11).
+    files the Logs tab downloads. ``docker logs`` is where a container operator finds it,
+    and the recovery screen's copy has to say so (U-11).
+
+    The file (:func:`_write_recovery_file`) is the channel for the builds that have no
+    console to print to at all -- see the module docstring. It carries the same code, is
+    owner-only from creation, and is removed on redemption by ``api.auth.recover``.
     """
     # Invalidate any earlier unredeemed tokens: only one may be live at a time.
     stale = (
@@ -92,18 +208,24 @@ async def mint_recovery_token(session: AsyncSession, *, base_url: str) -> str:
 
     recover_url = f"{base_url.rstrip('/')}/recover"
     minutes = int(RECOVERY_TTL.total_seconds() // 60)
+    written = _write_recovery_file(
+        data_dir, recover_url=recover_url, code=plaintext, minutes=minutes
+    )
 
     # Deliberately not a structlog event: the token must not be shipped to a log
     # aggregator as a structured, searchable field. It goes to the console only.
     # The code is printed on its own line rather than baked into the URL, so it is
     # never carried in a request line that a reverse proxy would log.
+    also = f"  Also in: {written}\n" if written is not None else ""
     banner = (
         "\n"
         "  ============================ RECOVERY ============================\n"
         f"  Open:  {recover_url}\n"
         f"  Code:  {plaintext}\n"
+        f"{also}"
         f"  Paste the code on that page. Single use, expires in {minutes} minutes.\n"
         "  The code is not in the URL, so a reverse proxy's access log never sees it.\n"
+        "  Signing in with it lets you set a new password without the old one.\n"
         "  Set REAPER_RECOVERY=false and restart once you are back in.\n"
         "  =================================================================\n"
     )
