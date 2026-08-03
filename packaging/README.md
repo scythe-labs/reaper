@@ -23,8 +23,10 @@ the environment at boot, and the in-app update check reads it to know what to co
 against.
 
 Every binary and snap is booted once in CI against its own health probe before it may
-ship. A packaging change can be proven on a pull request by adding the
-`CI/Build-Binaries` label.
+ship. PRs and dev pushes build only the amd64 docker gate in `ci.yml`; to prove a
+packaging change before merge, run the workflow against the branch by hand:
+`gh workflow run binaries.yml --ref <branch>` (artifacts land on the run, and the
+dev-build prerelease is only refreshed when `publish` is set).
 
 The macOS build runs on the `macos-14` runner **because the build image sets the
 binary's minimum macOS**. Moving to a newer image silently raises that floor; don't,

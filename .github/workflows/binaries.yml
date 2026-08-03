@@ -4,15 +4,18 @@ name: Binaries
 # Packaged installs: the Windows and macOS one-folder builds (PyInstaller) and the
 # snap, each booted once against its own health probe before it may ship.
 #
-# Four ways in:
+# Three ways in:
 #   schedule           nightly dev build of the dev tip, skipped when dev has not
 #                      moved since the last one; refreshes the rolling `dev-build`
 #                      prerelease so dev users have something to download.
 #   workflow_dispatch  the same, on demand; refreshing the prerelease is opt-in.
+#                      Run it against a branch to prove a packaging change before
+#                      merge: `gh workflow run binaries.yml --ref <branch>`.
 #   workflow_call      release.yml passes the CalVer. Artifacts are uploaded for the
 #                      caller to attach; nothing publishes from here.
-#   pull_request       proof the packaging still builds, gated on the
-#                      CI/Build-Binaries label so ordinary PRs pay nothing.
+#
+# Deliberately NOT on pull_request or push: the per-commit lanes pay for the amd64
+# docker gate in ci.yml and nothing else; everything here is nightly or hand-run.
 #
 # macOS builds on macos-14 (arm64) because the build image sets the binary's minimum
 # macOS: building on a newer image silently raises the floor for every operator.
@@ -36,36 +39,27 @@ on:
         description: "Release version (CalVer, no leading v)"
         type: string
         required: true
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
 
-# Opening a PR with several labels fires one pull_request event per label, and the
-# first run of this workflow arrived four times over. One group per event kind and
-# ref folds those into one running build; only PR builds may be cancelled, since a
-# superseded PR build is answering a question nobody is still asking, while a
-# half-cancelled publish is the failure release.yml's own group exists to prevent.
 # Schedule and dispatch share ONE group: both can recreate the dev-build prerelease,
 # and two of those interleaving delete/create against the same release is a race no
-# ordering inside either run can fix.
+# ordering inside either run can fix. Nothing here may be cancelled mid-flight: a
+# half-cancelled publish is the failure release.yml's own group exists to prevent.
 concurrency:
   group: >-
     ${{ github.workflow }}-${{
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
       && 'dev-publish'
       || format('{0}-{1}', github.event_name, github.ref) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   # One decision, read by every job: what to build, what to call it, whether the
   # rolling dev prerelease gets refreshed afterward.
   plan:
     name: Plan the build
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'CI/Build-Binaries')
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.decide.outputs.build }}
