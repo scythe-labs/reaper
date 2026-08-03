@@ -1564,13 +1564,11 @@ function UpdateCell({
 }) {
   const { data, isPending } = status;
   // The two no-answer shapes read the same (see above), so the sentence is written once:
-  // one operator claim in two places is two chances to drift (rule 144). "Reaper will try
-  // again later" was the same background-poll promise #464 is about -- the failure TTL only
-  // shortens the wait before the NEXT ask, and nobody asks on a server nobody opens.
+  // one operator claim in two places is two chances to drift (rule 144). "Later" is the
+  // scheduled check (Settings, Jobs), which is what makes the promise real -- before it
+  // existed nothing retried on a server nobody opened (#464).
   const noAnswer = (
-    <span className="muted">
-      Couldn't check for updates. Reaper tries again next time you open it.
-    </span>
+    <span className="muted">Couldn't check for updates. Reaper will try again later.</span>
   );
   if (isPending) return <span className="muted">Checking for updates…</span>;
   if (!data) return noAnswer;
@@ -1610,14 +1608,13 @@ function UpdateCell({
         See what changed
       </button>
       <br />
-      {/* What the check actually is: one ask when the UI loads (the account chip holds
-          the same query, so any page starts it), at most a few times a day because the
-          server holds an answer for hours. Nothing polls -- this said "Reaper checks a
-          few times a day", which reads as a background poll finding the operator on a
-          server nobody has open (#464, rule 25). */}
+      {/* Points at the schedule rather than naming one: the operator can change the cron
+          or turn the job off, so a sentence saying "daily" is wrong the moment they do
+          (rule 86). This used to say "Reaper checks a few times a day" while nothing
+          checked on its own at all (#464, rule 25). */}
       <span className="muted">
-        Reaper checks when you open it, at most a few times a day, and never sends anything about
-        your library.
+        Reaper checks on a schedule you can change in Jobs, and never sends anything about your
+        library.
       </span>
     </>
   );
@@ -1700,6 +1697,12 @@ function ChangesModal({
 
 const SCAN_ID = "scheduled_scan";
 
+/** The one upkeep job whose result a DIFFERENT query already renders: the About row, the
+ *  version pill and the account chip's light all read `["update"]`. Named here so the row can
+ *  refresh that query when the job finishes. The job LIST is still the server's (rule 66);
+ *  this is a behavior hook on one id, like `SCAN_ID` above. */
+const UPDATE_CHECK_ID = "check_for_updates";
+
 interface JobMeta {
   title: string;
   desc: string;
@@ -1734,6 +1737,12 @@ const JOB_META: Record<string, JobMeta> = {
     desc: 'Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught before "never watched" turns wrong.',
     offWarning:
       "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught, so \"never watched\" can drift out of date.",
+  },
+  check_for_updates: {
+    title: "Check for updates",
+    desc: "Asks GitHub whether a newer Reaper is out. Only version numbers travel, nothing about your library.",
+    offWarning:
+      "With this off, Reaper only checks when you open it. A server you don't sign in to for weeks won't tell you a new version is out.",
   },
 };
 
@@ -1991,6 +2000,20 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
     job.running,
     job.last_result !== null ? { ok: job.last_ok !== false, text: job.last_result } : null,
   );
+
+  // A finished update check has replaced the answer `["update"]` holds, and that query is
+  // half an hour stale-free (updateStatus.ts) with nothing else to invalidate it -- so the
+  // row would flash "Reaper 2026.9.2 is out" while the version pill, the About row and the
+  // chip light all went on asserting the answer it just replaced (rule 79). Keyed on the same
+  // running -> done edge the flash watches, so it fires when the ANSWER changed rather than
+  // when the button was pressed.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !job.running && job.id === UPDATE_CHECK_ID) {
+      void queryClient.invalidateQueries({ queryKey: ["update"] });
+    }
+    wasRunning.current = job.running;
+  }, [job.running, job.id, queryClient]);
 
   return (
     <div className="jobrow">

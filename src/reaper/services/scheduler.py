@@ -12,6 +12,9 @@ So this scheduler exists to do the unglamorous upkeep:
   missing**. The startup catch-up is what makes a fresh install work: without it the
   first scan (and every scan until a day boundary happened to pass) would degrade.
 * **Refresh the curated lists** (the IMDb Top 250) daily, independent of scans.
+* **Check whether a newer Reaper exists**, daily. Not upkeep for the scan like the two
+  above: it is here because a check that only ran when someone opened the UI never ran at
+  all on the servers most likely to need it (#464).
 
 **This scheduler never deletes media.** Deletion runs happen through the executor, under
 the destructive-action guard, and are not scheduled here -- automated deletion is an M8
@@ -55,6 +58,7 @@ from reaper.services import (
     scan_runner,
 )
 from reaper.services.imdb_dataset import ImdbRatings
+from reaper.services.update_check import UpdateChecker
 
 log = structlog.get_logger(__name__)
 
@@ -70,6 +74,7 @@ DEFAULT_MAINTENANCE_CRONS: dict[str, str] = {
     "refresh_ratings": "30 3 * * *",
     "refresh_curated_lists": "45 3 * * *",
     "full_history_sweep": "0 4 * * *",
+    "check_for_updates": "15 4 * * *",
 }
 
 #: The upkeep jobs, in display order. The scan is scheduled separately (its own key).
@@ -274,6 +279,77 @@ async def full_history_sweep(
         )
 
 
+async def check_for_updates(
+    update_checker: UpdateChecker,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
+    """Ask GitHub whether a newer Reaper exists, on a schedule rather than on a page load.
+
+    This is the job that makes the About panel's promise true. The check used to run only
+    when the UI asked for it, so an install nobody signs in to for weeks never checked at
+    all and sat on an old build with nothing to say so (#464).
+
+    Read-only, and the lightest job here: one anonymous GET, no credentials, nothing about
+    the library in it. It takes :meth:`UpdateChecker.refresh` rather than ``status`` so a
+    firing (or a Run now) genuinely asks instead of repeating a cached answer, and it fills
+    the same cache the About route reads, so the answer is already there when someone does
+    open Reaper.
+
+    ``REAPER_UPDATE_CHECK=false`` governs this path as it governs the route (rule 55): the
+    checker returns the disabled answer without sending anything, and the run is recorded
+    saying so rather than reading as a check that happened.
+
+    The result strings are the Jobs page's own copy for these states; the About row
+    (`frontend/src/components/Settings.tsx`, ``UpdateCell``) says the same six things in
+    its own words, and the two are edited together (rule 144).
+    """
+    try:
+        status = await update_checker.refresh()
+        if not status.enabled:
+            await _record_run(
+                session_factory, "check_for_updates", ok=True, result="Update checks are off"
+            )
+            return
+        if status.update_available is None:
+            # Not a crash: an unreachable GitHub, a rate limit, or a version pair that
+            # cannot be ordered all land here, and the checker has already logged why.
+            # Recorded as a failed run so the Jobs page shows it rather than a green tick
+            # over a check that answered nothing.
+            await _record_run(
+                session_factory,
+                "check_for_updates",
+                ok=False,
+                result="Couldn't check for updates",
+            )
+            return
+        dev = status.channel == "dev"
+        if status.update_available:
+            # INFO, not DEBUG: on a headless install the log is the only place this can
+            # land between one sign-in and the next.
+            log.info(
+                "scheduler.update_available",
+                channel=status.channel,
+                latest=status.latest,
+                behind=len(status.changes),
+            )
+            result = (
+                "The dev branch has moved since this build"
+                if dev
+                else f"Reaper {status.latest} is out"
+            )
+        else:
+            result = "This build matches the dev branch" if dev else "You are on the newest release"
+        await _record_run(session_factory, "check_for_updates", ok=True, result=result)
+    except Exception as exc:
+        # The checker maps its own network failures to "unknown" above, so reaching here
+        # means something unexpected -- and an unexpected failure in the least important
+        # job on the scheduler must not stop the ones that keep scans working.
+        log.warning("scheduler.update_check_failed", error=str(exc))
+        await _record_run(
+            session_factory, "check_for_updates", ok=False, result="Couldn't check for updates"
+        )
+
+
 async def sweep_expired_sessions(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -428,13 +504,20 @@ def _maintenance_specs(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    update_checker: UpdateChecker,
 ) -> dict[str, tuple[object, list[object]]]:
     """The (callable, args) each upkeep job is added with. One place, so wiring a job at
-    build time and re-wiring it on a schedule change can never drift apart."""
+    build time and re-wiring it on a schedule change can never drift apart.
+
+    ``update_checker`` is the app's own instance, not a fresh one: the job and the About
+    route share one cache, so a scheduled check leaves the answer ready for the next page
+    load instead of the two asking GitHub separately.
+    """
     return {
         "refresh_ratings": (refresh_ratings, [cache_engine, data_dir, session_factory]),
         "refresh_curated_lists": (refresh_curated_lists, [cache_engine, session_factory]),
         "full_history_sweep": (full_history_sweep, [session_factory, cache_engine, secret_box]),
+        "check_for_updates": (check_for_updates, [update_checker, session_factory]),
     }
 
 
@@ -455,6 +538,7 @@ def apply_maintenance_schedule(
     data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    update_checker: UpdateChecker,
     timezone: tzinfo,
 ) -> None:
     """Reconcile one upkeep job to a cron string, or remove it when ``cron`` is ``None``.
@@ -465,7 +549,11 @@ def apply_maintenance_schedule(
     cron raises ``ValueError`` (surfaced as a 422) rather than being silently dropped.
     """
     specs = _maintenance_specs(
-        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
+        cache_engine,
+        data_dir,
+        session_factory=session_factory,
+        secret_box=secret_box,
+        update_checker=update_checker,
     )
     if job_id not in specs:
         raise KeyError(job_id)
@@ -488,6 +576,7 @@ def run_maintenance_now(
     data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    update_checker: UpdateChecker,
 ) -> None:
     """Fire an upkeep job immediately, whether or not it is on a schedule.
 
@@ -496,7 +585,11 @@ def run_maintenance_now(
     so "run now" never quietly turns the schedule back on.
     """
     specs = _maintenance_specs(
-        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
+        cache_engine,
+        data_dir,
+        session_factory=session_factory,
+        secret_box=secret_box,
+        update_checker=update_checker,
     )
     if job_id not in specs:
         raise KeyError(job_id)
@@ -545,6 +638,7 @@ def build_scheduler(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    update_checker: UpdateChecker,
     timezone: tzinfo,
     reap_running: Callable[[], bool],
 ) -> AsyncIOScheduler:
@@ -562,7 +656,11 @@ def build_scheduler(
     )
 
     specs = _maintenance_specs(
-        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
+        cache_engine,
+        data_dir,
+        session_factory=session_factory,
+        secret_box=secret_box,
+        update_checker=update_checker,
     )
     for job_id, cron in DEFAULT_MAINTENANCE_CRONS.items():
         func, args = specs[job_id]
@@ -602,6 +700,7 @@ def reschedule_timezone(
     session_factory: async_sessionmaker[AsyncSession],
     cache_engine: AsyncEngine,
     secret_box: SecretBox,
+    update_checker: UpdateChecker,
     data_dir: Path,
     scan_cron: str | None,
     maintenance: dict[str, str | None],
@@ -642,6 +741,7 @@ def reschedule_timezone(
                 data_dir=data_dir,
                 session_factory=session_factory,
                 secret_box=secret_box,
+                update_checker=update_checker,
                 timezone=timezone,
             )
         except (ValueError, KeyError):

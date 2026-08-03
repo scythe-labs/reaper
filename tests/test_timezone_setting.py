@@ -32,6 +32,7 @@ from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
 from reaper.services import app_settings, scheduler
+from reaper.services.update_check import UpdateChecker
 from tests._auth import login
 
 
@@ -125,6 +126,7 @@ class TestReschedulingMovesEveryJob:
             tmp_path,
             session_factory=factory,
             secret_box=box,
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -138,6 +140,7 @@ class TestReschedulingMovesEveryJob:
                 session_factory=factory,
                 cache_engine=engine,
                 secret_box=box,
+                update_checker=UpdateChecker(),
                 data_dir=tmp_path,
                 scan_cron="0 2 * * *",
                 maintenance={},
@@ -174,6 +177,7 @@ class TestReschedulingMovesEveryJob:
             tmp_path,
             session_factory=factory,
             secret_box=box,
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -189,6 +193,7 @@ class TestReschedulingMovesEveryJob:
                 session_factory=factory,
                 cache_engine=engine,
                 secret_box=box,
+                update_checker=UpdateChecker(),
                 data_dir=tmp_path,
                 scan_cron="not a cron",
                 maintenance={bad_job: "also not a cron"},
