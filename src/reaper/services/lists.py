@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
@@ -108,6 +108,27 @@ class ListItem:
     imdb_id: str | None = None
     tmdb_id: int | None = None
     tvdb_id: int | None = None
+    plex_rating_key: int | None = None
+    """The Plex object's own key, where the source IS Plex. None everywhere else.
+
+    A "Never Reap" collection can hold a title no agent ever matched -- a home video, a
+    personal-media item, one whose guids stopped parsing -- and such an entry has no
+    external id to be stored under, so it was dropped and protected by nothing. Plex's
+    own key is the identity Plex is sure of, and it is the key the scan's Plex index is
+    built on, so it binds the entry to the item the operator put on the list.
+
+    **This is not stable identity, and it is not used as any.** A rating key moves when a
+    file leaves and comes back, and it is server-scoped, so the same integer names a
+    different title on a different server -- which is why `db.models` keys durable state
+    on ``media_key`` and says so. What makes it safe here is that this is an *additive*
+    join, rewritten from the live collection by every sync: it can only ever ADD a
+    membership hit, never withdraw one an id already made, so an entry that has ids is
+    unaffected either way. Both ways it can be wrong are survivable and both self-heal on
+    the next sync. A key that moved matches nothing, leaving the entry exactly as
+    unprotected as it was before this column existed, and :func:`_rows_to_store` keeps
+    carrying its row by title in the meantime. A key that collides with another server's
+    grants a keep nobody asked for, the direction this codebase fails in on purpose.
+    """
     title: str = ""
     rank: int | None = None
     """1 = top of the list, WHERE THE SOURCE PROVIDES ONE.
@@ -124,17 +145,19 @@ class ListItem:
     def is_protectable(self) -> bool:
         """Can this entry be stored as a row a membership lookup will actually find?
 
-        Two ways it cannot. Without an id there is nothing to match on. With a kind
-        outside :data:`PROTECTABLE_MEDIA_TYPES` -- a Plex collection can hold objects
-        that are neither a movie nor a show -- the ids belong to an id space no lookup
-        asks for, and filing them under "movie" anyway would hand a film that happens to
-        share the number a keep the owner never asked for (rule 52).
+        Two ways it cannot. With no key of any kind -- no external id and no Plex key --
+        there is nothing to match on. With a kind outside
+        :data:`PROTECTABLE_MEDIA_TYPES` -- a Plex collection can hold objects that are
+        neither a movie nor a show -- the keys belong to a space no lookup asks for, and
+        filing them under "movie" anyway would hand a film that happens to share the
+        number a keep the owner never asked for (rule 52).
 
         An entry that fails this stays in the fetch rather than disappearing from it, so
         ``sync`` still sees a populated container and still holds whatever the last good
         sync stored for that title.
         """
-        return self.has_any_id and self.media_type in PROTECTABLE_MEDIA_TYPES
+        keyed = self.has_any_id or self.plex_rating_key is not None
+        return keyed and self.media_type in PROTECTABLE_MEDIA_TYPES
 
 
 class ListProvider(Protocol):
@@ -449,12 +472,18 @@ class PlexCollection:
             legacy = getattr(item, "guid", None)
             ids = identity.parse_guids(guid_ids, str(legacy) if legacy else None)
             plex_type = str(getattr(item, "type", "") or "")
+            # Plex's own key for the object, kept whether or not the guids parsed. It is
+            # what protects an entry no agent ever matched, and the ids above stay the
+            # join for everything else: a key means nothing on another server, and an
+            # item re-added to the library comes back under a new one.
+            raw_key = str(getattr(item, "ratingKey", "") or "")
             items.append(
                 ListItem(
                     media_type=_PLEX_MEDIA_TYPES.get(plex_type, plex_type),
                     imdb_id=ids.imdb,
                     tmdb_id=ids.tmdb,
                     tvdb_id=ids.tvdb,
+                    plex_rating_key=int(raw_key) if raw_key.isdigit() else None,
                     title=str(item.title),
                 )
             )
@@ -483,14 +512,28 @@ CREATE TABLE IF NOT EXISTS protection_list_item (
     imdb_id    TEXT,
     tmdb_id    INTEGER,
     tvdb_id    INTEGER,
+    plex_rating_key INTEGER,
     title      TEXT,
     rank       INTEGER,
     PRIMARY KEY (slug, media_type, imdb_id, tmdb_id, tvdb_id)
 );
+"""
+
+#: Created after :data:`SCHEMA`, and after the widening below, because an index over a
+#: column a stored database has not been given yet cannot be created.
+INDEXES = """
 CREATE INDEX IF NOT EXISTS ix_pli_imdb ON protection_list_item (imdb_id);
 CREATE INDEX IF NOT EXISTS ix_pli_tmdb ON protection_list_item (tmdb_id);
 CREATE INDEX IF NOT EXISTS ix_pli_tvdb ON protection_list_item (tvdb_id);
+CREATE INDEX IF NOT EXISTS ix_pli_plex ON protection_list_item (plex_rating_key);
 """
+
+#: Columns added to ``protection_list_item`` after it first shipped. ``CREATE TABLE IF NOT
+#: EXISTS`` leaves a table that already exists exactly as it is, so a stored ``cache.db``
+#: never sees a new column from :data:`SCHEMA` alone -- and this table is not Alembic's
+#: (``alembic/env.py`` excludes it), so nothing else would add it either. Additive only:
+#: every one is nullable, and the next sync fills it in.
+_ADDED_COLUMNS = {"plex_rating_key": "INTEGER"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -513,8 +556,28 @@ class Membership:
 
 
 async def ensure_schema(engine: AsyncEngine) -> None:
+    """Create the two tables, widen a stored one, then index it -- in that order.
+
+    The widening is what lets a ``cache.db`` written by an older version keep its
+    membership. Dropping and recreating the table instead would empty every keep list
+    until the next sync refilled it, and a scan in that window would reap titles the
+    operator's list protects.
+    """
     async with engine.begin() as conn:
         for statement in SCHEMA.strip().split(";"):
+            if statement.strip():
+                await conn.execute(text(statement))
+        stored = {
+            str(row.name)
+            for row in (await conn.execute(text("PRAGMA table_info(protection_list_item)"))).all()
+        }
+        for column, kind in _ADDED_COLUMNS.items():
+            if column not in stored:
+                # No ADD COLUMN IF NOT EXISTS in SQLite, so the PRAGMA above is the guard.
+                await conn.execute(
+                    text(f"ALTER TABLE protection_list_item ADD COLUMN {column} {kind}")
+                )
+        for statement in INDEXES.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
 
@@ -548,58 +611,144 @@ async def _record_sync_error(
         )
 
 
-async def _held_over(
-    conn: AsyncConnection, slug: str, unusable: Sequence[ListItem]
-) -> list[ListItem]:
-    """The stored rows for entries this fetch returned but could not identify.
+def _row_key(item: ListItem) -> tuple[object, ...]:
+    """What makes two entries the same stored row.
 
-    ``sync`` refuses the swap outright when a populated container loses the ids of
-    *every* entry. When it loses only some of them, the entries that still parse look
-    like a complete fetch, and the swap would drop the rest: the operator's keep tag is
-    still on the title, the sync reports a healthy count, and nothing protects the title
-    any more. Same failure as the all-or-nothing case, at a smaller scale (rule 27), and
-    the one the read side cannot recover from -- a lookup finds rows by id, so a row
-    deleted for want of one is simply gone.
+    The external ids where the entry has any, because those are what the table's primary
+    key is built from and what every lookup joins on: one film listed twice under one
+    TMDb id is one row, whichever Plex objects it came from. The Plex key alone where it
+    has none, because then that key is the only thing telling two entries apart, and
+    folding them together would drop one of the operator's titles.
 
-    So an entry the container still returns keeps whatever the last good sync stored for
-    it, matched on kind and title with both sides case-folded (rule 88). Deliberately
-    narrow in three ways: the entry must still BE on the list, so a title the operator
-    genuinely removed is still removed; a title that was never stored gains nothing, since
-    there is no id to protect it by; and an entry with no title matches nothing rather than
-    matching every untitled row. A title that changed spelling in the same sync its ids
-    stopped parsing is not recoverable here and reads as a removal.
-
-    Held rather than refused, because refusing is not free: a failed ``sync`` is what
-    ``snapshot.protection_sync_degradations`` reads, and past ``WHITELIST_STALE_AFTER``
-    it makes every scan un-executable. One home video in a "Never Reap" collection,
-    which no agent will ever give an id, would eventually stop the operator reaping
-    anything at all -- and it never protected a title in the first place, so refusing
-    would trade a real protection for an imaginary one.
+    Only ever asked about an entry that is :attr:`ListItem.is_protectable`, or a stored
+    row that was one when it was written, so "no ids and no Plex key" -- which would key
+    every such entry alike -- cannot reach here.
     """
-    wanted = {(i.media_type, _name_key(i.title)) for i in unusable if i.title.strip()}
-    if not wanted:
-        return []
+    if item.has_any_id:
+        return (item.media_type, item.imdb_id, item.tmdb_id, item.tvdb_id)
+    return (item.media_type, item.plex_rating_key)
+
+
+def _row_values(slug: str, item: ListItem) -> dict[str, object]:
+    return {
+        "slug": slug,
+        "media_type": item.media_type,
+        "imdb_id": item.imdb_id,
+        "tmdb_id": item.tmdb_id,
+        "tvdb_id": item.tvdb_id,
+        "plex_rating_key": item.plex_rating_key,
+        "title": item.title,
+        "rank": item.rank,
+    }
+
+
+async def _stored_by_title(
+    conn: AsyncConnection, slug: str
+) -> dict[tuple[str, str], list[ListItem]]:
+    """This list's stored rows, grouped by the kind and title they were stored under.
+
+    Both sides of the title are case-folded (rule 88), or a title Plex re-cased on a
+    re-match matches nothing and the protection lapses on exactly the sync that renamed
+    it. A row with no title is left out: an empty title would match every other untitled
+    row, which is worse than matching none.
+    """
     rows = (
         await conn.execute(
             text(
-                "SELECT media_type, imdb_id, tmdb_id, tvdb_id, title, rank "
+                "SELECT media_type, imdb_id, tmdb_id, tvdb_id, plex_rating_key, title, rank "
                 "FROM protection_list_item WHERE slug = :slug"
             ),
             {"slug": slug},
         )
     ).all()
-    return [
-        ListItem(
-            media_type=str(row.media_type),
-            imdb_id=str(row.imdb_id) if row.imdb_id else None,
-            tmdb_id=int(row.tmdb_id) if row.tmdb_id is not None else None,
-            tvdb_id=int(row.tvdb_id) if row.tvdb_id is not None else None,
-            title=str(row.title or ""),
-            rank=int(row.rank) if row.rank is not None else None,
+    out: dict[tuple[str, str], list[ListItem]] = {}
+    for row in rows:
+        title = str(row.title or "")
+        if not title.strip():
+            continue
+        out.setdefault((str(row.media_type), _name_key(title)), []).append(
+            ListItem(
+                media_type=str(row.media_type),
+                imdb_id=str(row.imdb_id) if row.imdb_id else None,
+                tmdb_id=int(row.tmdb_id) if row.tmdb_id is not None else None,
+                tvdb_id=int(row.tvdb_id) if row.tvdb_id is not None else None,
+                plex_rating_key=(
+                    int(row.plex_rating_key) if row.plex_rating_key is not None else None
+                ),
+                title=title,
+                rank=int(row.rank) if row.rank is not None else None,
+            )
         )
-        for row in rows
-        if (str(row.media_type), _name_key(str(row.title or ""))) in wanted
-    ]
+    return out
+
+
+def _keep_keys(item: ListItem, stored: Sequence[ListItem]) -> ListItem:
+    """``item``, given back the external ids the row it replaces was stored under.
+
+    A fetch that comes back having lost the ids of an entry is the failure this exists
+    for: the entry is still on the list, so the swap must not file it under fewer keys
+    than before. Losing them is the ordinary shape of a Plex agent change, and the ids
+    matter beyond Plex -- the movie lane looks a keep list up by RADARR's imdb and tmdb
+    ids, which a Plex-side identity failure does not touch, so a row reduced to a Plex
+    key alone stops protecting the moment the scan cannot bind the item to Plex.
+
+    Bounded on purpose. Only an entry that came back with NO ids inherits any, because a
+    source that identified the entry at all is the better authority on which title it is:
+    an operator who corrects a mis-match in Plex would otherwise have the old title's ids
+    welded back on at every sync. And only from a single stored row, because two rows
+    under one title cannot say which ids are this entry's (rule 6).
+    """
+    if item.has_any_id or len(stored) != 1:
+        return item
+    was = stored[0]
+    if not was.has_any_id:
+        return item
+    return replace(item, imdb_id=was.imdb_id, tmdb_id=was.tmdb_id, tvdb_id=was.tvdb_id)
+
+
+async def _rows_to_store(
+    conn: AsyncConnection, slug: str, fetched: Sequence[ListItem]
+) -> tuple[list[ListItem], int, int]:
+    """Every row this sync should leave behind, with what it recovered and what it held.
+
+    ``sync`` refuses the swap outright when a populated container loses *every* entry.
+    When it loses only some of them, the ones that survive look like a complete fetch,
+    and the swap would drop the rest: the operator's keep tag is still on the title, the
+    sync reports a healthy count, and nothing protects the title any more. Same failure
+    as the all-or-nothing case, at a smaller scale (rule 27), and the one the read side
+    cannot recover from -- a lookup finds rows by key, so a row deleted for want of one
+    is simply gone.
+
+    Two repairs, both keyed on the entry still BEING on the list, so a title the operator
+    genuinely removed is still removed and a title that was never stored gains nothing:
+
+    * an entry still identifiable, but no longer by id, is stored with the ids its row
+      had (:func:`_keep_keys`);
+    * an entry no longer identifiable at all keeps its stored row untouched.
+
+    Held rather than refused, because refusing is not free: a failed ``sync`` is what
+    ``snapshot.protection_sync_degradations`` reads, and past ``WHITELIST_STALE_AFTER``
+    it makes every scan un-executable. One home video in a "Never Reap" collection, which
+    no agent will ever give an id, would eventually stop the operator reaping anything at
+    all -- and it never protected a title in the first place, so refusing would trade a
+    real protection for an imaginary one.
+
+    A title that changed spelling in the same sync it lost its keys is recoverable by
+    neither, and reads as a removal.
+    """
+    stored = await _stored_by_title(conn, slug)
+    out: list[ListItem] = []
+    recovered = held = 0
+    for item in fetched:
+        was = stored.get((item.media_type, _name_key(item.title)), []) if item.title.strip() else []
+        if not item.is_protectable:
+            out.extend(was)
+            held += len(was)
+            continue
+        kept = _keep_keys(item, was)
+        recovered += kept is not item
+        out.append(kept)
+    return out, recovered, held
 
 
 async def sync(
@@ -619,23 +768,21 @@ async def sync(
     stored, for exactly that reason; it counts as genuinely empty only when there was
     never anything to protect.
 
-    A **populated** container whose every item lost its ids is the same failure wearing
-    a different coat, and it is treated the same way (rule 27). A Plex agent change can
-    leave a real, full "Never Reap" collection returning items whose guids no longer
-    parse; the id filter below then collapses a non-empty fetch to zero, and the swap
-    would wipe the stored membership and unprotect every title on it. Only a container
+    A **populated** container whose every entry became unusable is the same failure
+    wearing a different coat, and it is treated the same way (rule 27). Only a container
     that genuinely came back empty may empty the list.
 
-    When only SOME entries lose their ids, the swap still runs -- but over the fetch plus
-    whatever :func:`_held_over` still holds for the ones it could not read, so the
-    membership never shrinks by a title the container still lists. Anything left over is
-    on the list and unprotectable, and is logged as such.
+    Short of that, the swap runs over what :func:`_rows_to_store` makes of the fetch,
+    which never files a title the container still lists under fewer keys than the row it
+    replaces. Whatever is left unidentifiable is on the list and protected by nothing,
+    and is logged as such.
     """
     await ensure_schema(engine)
 
+    fetched: list[ListItem] = []
     unusable: list[ListItem] = []
     try:
-        fetched = await provider.fetch()
+        fetched = list(await provider.fetch())
         items = [i for i in fetched if i.is_protectable]
         unusable = [i for i in fetched if not i.is_protectable]
         if fetched and not items:
@@ -662,7 +809,7 @@ async def sync(
             raise
         # Nothing stored and no container to read: the owner has not created it yet.
         # A genuinely empty first sync, not a failure.
-        items = []
+        fetched = []
     except Exception as exc:
         await _record_sync_error(
             engine, provider, mode=mode, kind=kind, weight=weight, error=str(exc)
@@ -671,37 +818,26 @@ async def sync(
         raise
 
     async with engine.begin() as conn:
-        # Read what is being held inside the write transaction (rule 58): the rows held
-        # over are decided from the ones this DELETE is about to remove, not from an
+        # Read the stored rows inside the write transaction (rule 58): what is carried
+        # over is decided from the very rows this DELETE is about to remove, not from an
         # earlier snapshot of them.
-        held = await _held_over(conn, provider.slug, unusable)
+        keeping, recovered, held = await _rows_to_store(conn, provider.slug, fetched)
         await conn.execute(
             text("DELETE FROM protection_list_item WHERE slug = :slug"),
             {"slug": provider.slug},
         )
-        # Keyed by the row's primary key, so an entry the container lists twice -- or one
-        # held over under ids the fetch also carries -- is stored once and counted once.
-        # SQLite counts NULLs in a primary key as distinct, so INSERT OR REPLACE alone
-        # would leave two rows for a film known only by its TMDb id, and every lookup for
-        # it would report the same list protecting it twice.
-        rows = {
-            (i.media_type, i.imdb_id, i.tmdb_id, i.tvdb_id): {
-                "slug": provider.slug,
-                "media_type": i.media_type,
-                "imdb_id": i.imdb_id,
-                "tmdb_id": i.tmdb_id,
-                "tvdb_id": i.tvdb_id,
-                "title": i.title,
-                "rank": i.rank,
-            }
-            for i in [*items, *held]
-        }
+        # Deduplicated here, because SQLite will not do it: it counts NULLs in a primary
+        # key as distinct, and every one of these rows has a NULL somewhere in that key,
+        # so INSERT OR REPLACE leaves an entry the container lists twice sitting in the
+        # table twice and every lookup reports the same list protecting it twice.
+        rows = {_row_key(i): _row_values(provider.slug, i) for i in keeping}
         if rows:
             await conn.execute(
                 text(
                     "INSERT OR REPLACE INTO protection_list_item "
-                    "(slug, media_type, imdb_id, tmdb_id, tvdb_id, title, rank) "
-                    "VALUES (:slug, :media_type, :imdb_id, :tmdb_id, :tvdb_id, :title, :rank)"
+                    "(slug, media_type, imdb_id, tmdb_id, tvdb_id, plex_rating_key, title, rank) "
+                    "VALUES (:slug, :media_type, :imdb_id, :tmdb_id, :tvdb_id, :plex_rating_key, "
+                    ":title, :rank)"
                 ),
                 list(rows.values()),
             )
@@ -733,16 +869,16 @@ async def sync(
     if unusable:
         # Named, because a count alone leaves the operator nothing to go and look at, and
         # the titles are the operator's own (``scan.plex_unmatched`` logs them the same
-        # way). Capped: a whole list losing its ids raises above instead of landing here,
+        # way). Capped: a whole list going unusable raises above instead of landing here,
         # but a large one could still fill a line.
         log.warning(
             "lists.unidentified",
             slug=provider.slug,
             unidentified=len(unusable),
-            held=len(held),
+            held=held,
             titles=sorted({i.title for i in unusable if i.title.strip()})[:20],
         )
-    log.info("lists.synced", slug=provider.slug, items=len(rows), held=len(held))
+    log.info("lists.synced", slug=provider.slug, items=len(rows), recovered=recovered, held=held)
     return len(rows)
 
 
@@ -817,12 +953,17 @@ class MembershipIndex:
     show #1399 are unrelated titles), so without this a show whose TMDb id coincides with
     a Top 250 film would be reported "on the IMDb Top 250" -- a keep the owner never
     asked for and a why-panel that lies. IMDb ids are globally unique, but the filter is
-    applied to every id kind so the join key is always (media_type, id).
+    applied to every key kind so the join key is always (media_type, key).
+
+    Four maps, not three: a keep-collection entry Plex never matched to an agent is
+    stored under :attr:`ListItem.plex_rating_key` alone, and is reachable only through
+    that map.
     """
 
     _by_imdb: Mapping[str, tuple[tuple[int, str, Membership], ...]]
     _by_tmdb: Mapping[int, tuple[tuple[int, str, Membership], ...]]
     _by_tvdb: Mapping[int, tuple[tuple[int, str, Membership], ...]]
+    _by_plex_key: Mapping[int, tuple[tuple[int, str, Membership], ...]]
 
     def lookup(
         self,
@@ -831,13 +972,19 @@ class MembershipIndex:
         imdb_id: str | None = None,
         tmdb_id: int | None = None,
         tvdb_id: int | None = None,
+        plex_rating_keys: Collection[int] = (),
     ) -> list[Membership]:
         """Which protected lists contain this item? Same answer as :func:`memberships`.
 
         ``media_type`` ("movie" | "tv") is the item's own type; only rows of that type
         can match, so a movie id space and a show id space never cross.
+
+        Every key the item carries is passed together, never the first one that is set
+        (rule 29): a "Never Reap" entry no agent matched is stored under its Plex key
+        alone, and an item bound to a merged group of byte-identical twins carries one
+        key per listing, any of which the operator may have put on the list.
         """
-        if not (imdb_id or tmdb_id or tvdb_id):
+        if not (imdb_id or tmdb_id or tvdb_id or plex_rating_keys):
             return []
         entries: list[tuple[int, str, Membership]] = []
         if imdb_id is not None:
@@ -846,6 +993,8 @@ class MembershipIndex:
             entries += self._by_tmdb.get(tmdb_id, ())
         if tvdb_id is not None:
             entries += self._by_tvdb.get(tvdb_id, ())
+        for key in plex_rating_keys:
+            entries += self._by_plex_key.get(key, ())
         seen: set[int] = set()
         out: list[Membership] = []
         for seq, row_media_type, membership in sorted(entries, key=lambda entry: entry[0]):
@@ -871,7 +1020,7 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
         rows = (
             await conn.execute(
                 text(
-                    "SELECT i.imdb_id, i.tmdb_id, i.tvdb_id, i.media_type, "
+                    "SELECT i.imdb_id, i.tmdb_id, i.tvdb_id, i.plex_rating_key, i.media_type, "
                     "       l.slug, l.display_name, l.mode, l.kind, i.rank "
                     "FROM protection_list_item i "
                     "JOIN protection_list l ON l.slug = i.slug "
@@ -883,6 +1032,7 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
     by_imdb: dict[str, list[tuple[int, str, Membership]]] = {}
     by_tmdb: dict[int, list[tuple[int, str, Membership]]] = {}
     by_tvdb: dict[int, list[tuple[int, str, Membership]]] = {}
+    by_plex_key: dict[int, list[tuple[int, str, Membership]]] = {}
     for seq, row in enumerate(rows):
         membership = Membership(
             slug=str(row.slug),
@@ -898,11 +1048,16 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
             by_tmdb.setdefault(int(row.tmdb_id), []).append((seq, media_type, membership))
         if row.tvdb_id is not None:
             by_tvdb.setdefault(int(row.tvdb_id), []).append((seq, media_type, membership))
+        if row.plex_rating_key is not None:
+            by_plex_key.setdefault(int(row.plex_rating_key), []).append(
+                (seq, media_type, membership)
+            )
 
     return MembershipIndex(
         _by_imdb={k: tuple(v) for k, v in by_imdb.items()},
         _by_tmdb={k: tuple(v) for k, v in by_tmdb.items()},
         _by_tvdb={k: tuple(v) for k, v in by_tvdb.items()},
+        _by_plex_key={k: tuple(v) for k, v in by_plex_key.items()},
     )
 
 
@@ -913,6 +1068,7 @@ async def memberships(
     imdb_id: str | None = None,
     tmdb_id: int | None = None,
     tvdb_id: int | None = None,
+    plex_rating_keys: Collection[int] = (),
 ) -> list[Membership]:
     """Which protected lists contain this item?
 
@@ -929,7 +1085,13 @@ async def memberships(
     loading the (small) list tables per call is fine.
     """
     index = await load_membership_index(engine)
-    return index.lookup(media_type=media_type, imdb_id=imdb_id, tmdb_id=tmdb_id, tvdb_id=tvdb_id)
+    return index.lookup(
+        media_type=media_type,
+        imdb_id=imdb_id,
+        tmdb_id=tmdb_id,
+        tvdb_id=tvdb_id,
+        plex_rating_keys=plex_rating_keys,
+    )
 
 
 async def configured(engine: AsyncEngine) -> Sequence[dict[str, object]]:

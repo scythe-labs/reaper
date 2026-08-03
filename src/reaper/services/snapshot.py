@@ -404,10 +404,17 @@ def build_facts(
     # A keep-list row stored under imdb alone -- what a legacy-agent Plex library yields for
     # a "Never Reap" collection -- must still protect it. Matching on one id kind alone fails
     # open on the deletion path.
+    #
+    # Every listing of a merged bind, or the single key of a normal one -- derived once
+    # here and read again by the streaming veto below (rule 104). A "Never Reap" entry no
+    # agent ever matched is stored under its Plex key alone, so without this the operator
+    # can put a title on the list and watch Reaper condemn it.
+    plex_keys = item.merged_rating_keys or ((rating_key,) if rating_key else ())
     memberships = membership_index.lookup(
         media_type="movie",
         imdb_id=item.imdb_id or item.plex_imdb_id,
         tmdb_id=item.tmdb_id,
+        plex_rating_keys=plex_keys,
     )
     hard = [m for m in memberships if m.mode is lists.ListMode.HARD]
 
@@ -433,7 +440,7 @@ def build_facts(
     else:
         # A merged bind covers several listings of one file; someone streaming ANY of
         # them is streaming this very file, so the veto checks every key in the group.
-        watch_keys = item.merged_rating_keys or ((rating_key,) if rating_key else ())
+        watch_keys = plex_keys
         if not watch_keys:
             # No key to match a session against, so this was never checked. It used to land
             # as a definite Known(False) -- "nobody is watching this" -- on the very items
