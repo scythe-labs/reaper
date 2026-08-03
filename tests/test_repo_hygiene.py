@@ -1455,6 +1455,95 @@ def test_the_manual_sites_typescript_deferral_still_has_a_reason() -> None:
     )
 
 
+#: The advisory-fixed versions the manual site pins by hand. ``serialize-javascript`` 7.0.5
+#: clears GHSA-5c6j-r48x-rmvq (code injection through a spoofed ``RegExp.flags`` or
+#: ``Date.prototype.toISOString``) and GHSA-qj8w-gfj5-8c6v (CPU exhaustion on an array-like);
+#: ``uuid`` 11.1.1 clears GHSA-w5hq-g745-h8pq.
+_WEBSITE_OVERRIDES = {"serialize-javascript": "7.0.7", "uuid": "11.1.1"}
+
+#: Why the pin has to be written by hand: each dependent declares a range that excludes its own
+#: fix, so no semver-compatible upgrade exists and Dependabot raises an alert it cannot propose
+#: a pull request for. Read as ``(dependent, dependency): declared range``, from the lockfile
+#: rather than from upstream's repository, because node_modules is not committed and the
+#: declaration is the only handle the suite has on somebody else's package.
+#:
+#: Each entry dies a different way. The two webpack plugins are the majors Docusaurus 3.10.2
+#: pins; ``copy-webpack-plugin`` 14 and ``css-minimizer-webpack-plugin`` 8 already take
+#: ``^7.0.3``, so a Docusaurus release that moves to them ends those two. ``sockjs`` 0.3.24 is
+#: the newest there is and still wants ``uuid@^8``, so that one ends when
+#: ``webpack-dev-server`` 6 arrives, having dropped ``sockjs`` for ``ws`` outright.
+_WEBSITE_OVERRIDE_CAUSES = {
+    ("copy-webpack-plugin", "serialize-javascript"): "^6.0.0",
+    ("css-minimizer-webpack-plugin", "serialize-javascript"): "^6.0.1",
+    ("sockjs", "uuid"): "^8.3.2",
+}
+
+
+def test_the_manual_sites_advisory_pins_still_have_a_reason() -> None:
+    """An override that outlives its cause is a version nobody updates any more.
+
+    ``website/package.json`` pins two transitive packages past the range their dependents ask
+    for, because the fixed release sits in a major those dependents exclude. That is a fact
+    about somebody else's package, it stops being true without anyone here doing anything, and
+    ``package.json`` has no comment syntax to say so. This is what notices.
+
+    Neither advisory is reachable in this tree, so the pins are hygiene rather than a fix:
+    ``copy-webpack-plugin`` reaches ``serialize-javascript`` only for a pattern carrying
+    ``transform`` or ``transformAll`` and the site's static-directory copy carries neither,
+    ``css-minimizer-webpack-plugin`` serializes build configuration whose one file-derived
+    member is a string that cannot reach the vulnerable branch, and ``sockjs`` calls
+    ``uuid.v4()`` with no ``buf`` while the advisory needs ``buf`` on v3, v5 or v6. They are
+    held anyway, because an open alert nobody can action is one everybody learns to scroll
+    past, and the next reader cannot tell it apart from one that matters.
+
+    When it fails, re-read the dependent named in the message. If its new range admits the
+    fixed major, drop that package from ``overrides`` in ``website/package.json`` and let the
+    ordinary resolution take it. If it does not, move the constant above to the range you just
+    read and leave the pin alone.
+    """
+    manifest = json.loads((REPO / "website" / "package.json").read_text(encoding="utf-8"))
+    assert manifest.get("overrides") == _WEBSITE_OVERRIDES, (
+        f"website/package.json overrides are now {manifest.get('overrides')!r},\n"
+        f"expected {_WEBSITE_OVERRIDES!r}. These pin advisory fixes that no dependent's range\n"
+        "admits; if you moved one, move this constant with it, and if you dropped one, the\n"
+        "test below tells you whether its cause is actually gone."
+    )
+
+    lock = json.loads(WEBSITE_LOCK.read_text(encoding="utf-8"))
+    packages = lock.get("packages", {})
+
+    for name, pinned in _WEBSITE_OVERRIDES.items():
+        entries = [meta for path, meta in packages.items() if path.endswith(f"node_modules/{name}")]
+        assert len(entries) == 1, (
+            f"expected exactly one locked {name}, found {len(entries)}. An override resolves a\n"
+            "tree to a single copy, so a second one means the pin stopped applying to part of\n"
+            "it; fix this walk before trusting the assertion below."
+        )
+        assert entries[0].get("version") == pinned, (
+            f"website/package-lock.json resolves {name} to {entries[0].get('version')!r},\n"
+            f"but package.json pins {pinned!r}. The override was edited without reinstalling:\n"
+            "run `npm install` in website/ and commit the lockfile it writes."
+        )
+
+    for (dependent, dependency), declared in _WEBSITE_OVERRIDE_CAUSES.items():
+        entries = [
+            meta for path, meta in packages.items() if path.endswith(f"node_modules/{dependent}")
+        ]
+        assert len(entries) == 1, (
+            f"expected exactly one locked {dependent}, found {len(entries)}. The lockfile's\n"
+            "shape changed; fix this walk before trusting the assertion below."
+        )
+        current = (entries[0].get("dependencies") or {}).get(dependency)
+        assert current == declared, (
+            f"{dependent} now asks for {dependency} {current!r}, was {declared!r} when the\n"
+            f"{dependency} override was written.\n\n"
+            f"If the new range admits {_WEBSITE_OVERRIDES[dependency]!r}, the block is gone:\n"
+            f"drop {dependency!r} from `overrides` in website/package.json, reinstall, and\n"
+            "commit the lockfile. If it still excludes the fix, update the constant above and\n"
+            "leave the pin alone."
+        )
+
+
 def _accepted_title_types() -> set[str]:
     """The Conventional Commit types ``pr-validation.yml`` lets a pull request title carry."""
     workflow = yaml.safe_load(PR_TITLE_WORKFLOW.read_text(encoding="utf-8"))
