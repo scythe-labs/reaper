@@ -46,7 +46,13 @@ from reaper.clock import expiry, utcnow
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import AppUser, AuthProvider, PendingPlexLogin, PlexServer
-from reaper.services.plex_link import PlexLinkError, client_identifier, complete_link
+from reaper.services.plex_link import (
+    PlexLinkError,
+    PlexLinkRetryableError,
+    PlexServerChoiceNeededError,
+    client_identifier,
+    complete_link,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -107,9 +113,16 @@ def _view(user: AppUser) -> UserView:
 
 
 async def start_plex_login(
-    session_factory: async_sessionmaker[AsyncSession], *, safety: RuntimeSafety
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    safety: RuntimeSafety,
+    forward_url: str | None = None,
 ) -> PlexLoginStart:
-    """Create a PIN and return the URL to open. Records the pending login."""
+    """Create a PIN and return the URL to open. Records the pending login.
+
+    ``forward_url`` is where plex.tv sends the sign-in window when the operator is done,
+    which is how that window gets closed (``schemas.PLEX_FORWARD_PATH``).
+    """
     async with session_factory() as session:
         cid = await client_identifier(session)
         # Opportunistically drop stale pendings so the table cannot grow without
@@ -134,7 +147,7 @@ async def start_plex_login(
         )
         await session.commit()
 
-    return PlexLoginStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid))
+    return PlexLoginStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid, forward_url))
 
 
 async def poll_plex_login(
@@ -144,6 +157,7 @@ async def poll_plex_login(
     pin_id: int,
     safety: RuntimeSafety,
     user_agent: str | None = None,
+    choice: str | None = None,
 ) -> LoginResult | None:
     """Check a pending Plex login once.
 
@@ -151,6 +165,12 @@ async def poll_plex_login(
     polling), a :class:`LoginResult` once they have and the checks pass, and
     raises :class:`LoginError` on any refusal. A refused attempt consumes its
     pending row, so a rejected token cannot be replayed.
+
+    First-run setup only: an owner of several servers raises
+    :class:`PlexServerChoiceNeededError`, and a server that is briefly unreachable raises
+    :class:`PlexLinkRetryableError` -- neither is a refusal, so the pending row survives
+    in both cases and the frontend re-polls the same PIN (carrying the picked server, or
+    simply waiting for the server to come back).
     """
     async with session_factory() as session:
         pending = await session.scalar(
@@ -201,10 +221,26 @@ async def poll_plex_login(
                 "Reaper. Sign in as the server owner, or use a local account."
             )
     else:
-        # SETUP: the first owner claims the server. complete_link refuses a
-        # non-owner or a multi-server account, and persists the link.
+        # SETUP: the first owner claims the server. complete_link refuses a non-owner,
+        # asks for a choice on a multi-server account, and persists the link.
         try:
-            await complete_link(session_factory, box, token=token, account=account, owned=owned)
+            await complete_link(
+                session_factory, box, token=token, account=account, owned=owned, choice=choice
+            )
+        except PlexServerChoiceNeededError:
+            # Not a refusal: the sign-in succeeded and the owner just has to pick a
+            # server. Leave the pending row intact so the same PIN can finish the job
+            # once the frontend re-polls with the choice.
+            raise
+        except PlexLinkRetryableError:
+            # Also not a refusal: the sign-in succeeded, and the server simply did not
+            # answer this instant -- it may be restarting. Leave the pending row intact
+            # and let it bubble, so the browser keeps polling the still-valid sign-in
+            # instead of being sent back through the whole approval round trip. Must sit
+            # ABOVE the PlexLinkError arm below, which is its parent class and would
+            # otherwise consume the pending row (B2-14, in the setup twin of the link
+            # poll).
+            raise
         except PlexLinkError as exc:
             await _consume_pending(session_factory, pin_id)
             raise LoginError(str(exc)) from exc

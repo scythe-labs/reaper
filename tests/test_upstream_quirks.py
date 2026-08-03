@@ -4,7 +4,7 @@
 Every case here was found by probing live Sonarr, Radarr, Tautulli and Seerr instances
 read-only, and every one of them contradicts a reasonable assumption. A fixture written
 from an OpenAPI spec would have encoded the assumption instead of the truth -- which is
-the whole reason this file exists. Each test names the wrong belief it protects against.
+why this file exists. Each test names the wrong belief it protects against.
 """
 
 from __future__ import annotations
@@ -13,9 +13,43 @@ from typing import ClassVar
 
 import pytest
 
+from reaper.clients.base import IntegrationError
+from reaper.clients.seerr import SeerrClient
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clock import from_epoch, from_iso
+from reaper.config import RuntimeSafety
 from reaper.ratings import Rating, RatingSource, from_plex, from_radarr, pick
+
+
+class TestSeerrPaginationEnvelope:
+    """``pageInfo.results`` is the only signal that more pages exist. Rows present with
+    the total missing is an envelope-shape change; reading it as total=0 would stop
+    after one page and silently undercount every requester."""
+
+    async def test_rows_without_a_total_refuse_rather_than_truncate(self) -> None:
+        client = SeerrClient("http://seerr.local", "key", safety=RuntimeSafety())
+
+        async def fake_get_json(path: str, **kwargs: object) -> object:
+            return {
+                "pageInfo": {},
+                "results": [
+                    {
+                        "id": i,
+                        "type": "movie",
+                        "createdAt": "2024-01-01T00:00:00.000Z",
+                        "media": {},
+                        "requestedBy": {},
+                    }
+                    for i in range(3)
+                ],
+            }
+
+        client.get_json = fake_get_json  # type: ignore[method-assign]
+        try:
+            with pytest.raises(IntegrationError, match="pageInfo"):
+                await client.all_requests()
+        finally:
+            await client.aclose()
 
 
 class TestEpisodeCountIsNotWhatItLooksLike:
@@ -64,6 +98,45 @@ class TestEpisodeCountIsNotWhatItLooksLike:
         assert season is not None
         assert season.has_content is True
         assert season.size_on_disk == 40_000_000_000
+
+    def test_files_on_disk_with_no_reported_size_is_unknown_not_empty(self) -> None:
+        """The partial-payload case, and the one that decides a keep.
+
+        Sonarr says 22 files are on disk but reports no size for them. As ``0`` that
+        becomes an affirmative measurement: maximum pressure on a size signal, and any
+        "keep large files" rule silently stops holding the season. It must read as "we
+        could not tell", while ``has_content`` still says the files are there -- the two
+        questions are answered by different fields for exactly this reason.
+        """
+        season = parse_season_stats(
+            {
+                "seasonNumber": 3,
+                "monitored": False,
+                "statistics": {
+                    "episodeCount": 0,
+                    "totalEpisodeCount": 22,
+                    "episodeFileCount": 22,  # the files are there...
+                    "sizeOnDisk": 0,  # ...but their size was not reported
+                },
+            }
+        )
+        assert season is not None
+        assert season.has_content is True
+        assert season.size_on_disk is None
+
+    def test_a_genuinely_empty_season_also_reads_as_no_size(self) -> None:
+        """Nothing on disk and no size. Same None, and harmless: `has_content` is False,
+        so the season is never a deletion candidate in the first place."""
+        season = parse_season_stats(
+            {
+                "seasonNumber": 4,
+                "monitored": True,
+                "statistics": {"episodeCount": 0, "totalEpisodeCount": 0, "episodeFileCount": 0},
+            }
+        )
+        assert season is not None
+        assert season.has_content is False
+        assert season.size_on_disk is None
 
     def test_incomplete_season_is_detected(self) -> None:
         """A long-running show mid-download: Sonarr wants more than it has."""
@@ -139,6 +212,18 @@ class TestSeasonRanking:
         keep = {n for n, rank in ranks.items() if rank <= 2}
         assert keep == {4, 5}
 
+    def test_a_fileless_season_does_not_consume_a_rank_slot(self) -> None:
+        """An announced-but-undownloaded next season must not take rank 1: 'keep the
+        last 2' would then protect the empty shell plus one real season and leave the
+        season the rule meant to keep prunable -- the same slot-shift bug the specials
+        exclusion closes, re-entering through empty seasons."""
+        seasons = [self._season(n) for n in (1, 2, 3, 4, 5)] + [self._season(6, files=0)]
+        ranks = rank_seasons(seasons)
+
+        assert 6 not in ranks
+        assert ranks[5] == 1
+        assert ranks[4] == 2
+
 
 class TestRatingProvenance:
     """The published guidance says Plex's ``audienceRating`` is Rotten Tomatoes.
@@ -158,11 +243,52 @@ class TestRatingProvenance:
     def test_the_same_field_read_as_rotten_tomatoes_when_the_image_says_so(self) -> None:
         """Same field, different library, different meaning. This is why we read
         provenance instead of trusting the field name."""
-        rating = from_plex("96", "rottentomatoes://image.rating.ripe")
+        rating = from_plex("9.6", "rottentomatoes://image.rating.ripe")
 
         assert rating is not None
         assert rating.source is RatingSource.ROTTEN_TOMATOES_CRITIC
-        assert rating.value == 9.6  # normalised from a 0-100 percentage
+        assert rating.value == 9.6
+
+    def test_plex_rotten_tomatoes_is_already_on_ten_and_is_not_divided_again(self) -> None:
+        """Plex serves every rating slot on 0-10 whatever the source (measured): an
+        84% audience score arrives as "8.4". Dividing it as Radarr's raw
+        percentages need turned it into 0.84 -- displayed as 8%."""
+        audience = from_plex("8.4", "rottentomatoes://image.rating.upright", audience=True)
+
+        assert audience is not None
+        assert audience.value == 8.4
+
+    def test_a_percentage_shaped_plex_value_is_still_read_as_a_percentage(self) -> None:
+        """Defensive: a percentage source above 10 can only be a raw percentage from
+        an agent that skipped Plex's 0-10 normalization. The value proves the scale."""
+        rating = from_plex("96", "rottentomatoes://image.rating.ripe")
+
+        assert rating is not None
+        assert rating.value == 9.6
+
+    def test_a_value_outside_every_known_scale_is_dropped(self) -> None:
+        """11 cannot be a 0-10 average, and 250 cannot be a percentage. A number we
+        cannot interpret must not protect, condemn, or be displayed."""
+        assert from_plex("11", "imdb://image.rating") is None
+        assert from_plex("-1", "imdb://image.rating") is None
+        assert from_plex("250", "rottentomatoes://image.rating.ripe") is None
+
+    def test_the_audience_slot_routes_a_rotten_tomatoes_image_to_the_audience_score(
+        self,
+    ) -> None:
+        """Both RT populations arrive as ``rottentomatoes://`` images; only the slot
+        tells them apart. Without the flag, the audience score silently became the
+        Tomatometer -- and the panel would have shown two 'critic' numbers."""
+        audience = from_plex("8.4", "rottentomatoes://image.rating.upright", audience=True)
+        assert audience is not None
+        assert audience.source is RatingSource.ROTTEN_TOMATOES_AUDIENCE
+        assert audience.value == 8.4
+
+        # An IMDb image in the audience slot is still just IMDb (the probed-server
+        # shape in this module's docstring) -- the flag only disambiguates RT.
+        imdb = from_plex("7.0", "imdb://image.rating", audience=True)
+        assert imdb is not None
+        assert imdb.source is RatingSource.IMDB
 
     def test_a_rating_with_no_provenance_is_dropped_not_guessed(self) -> None:
         """An uninterpretable number must not justify a deletion."""
@@ -174,6 +300,34 @@ class TestRatingProvenance:
         would read as 'terrible film, delete it'."""
         assert from_plex("", "imdb://image.rating") is None
         assert from_plex(None, "imdb://image.rating") is None
+
+    def test_both_ends_of_the_scale_are_inside_it(self) -> None:
+        """``0.0 <= number <= 10.0`` is inclusive at both ends, and the test above only
+        drove the outside (11, -1, 250). Dropping either edge turns a rating we read
+        perfectly well into "no rating", which the why-panel prints as a source that was
+        never checked -- and takes the protection with it."""
+        top = from_plex("10", "imdb://image.rating")
+        assert top is not None
+        assert top.value == 10.0
+
+        bottom = from_plex("0", "imdb://image.rating")
+        assert bottom is not None
+        assert bottom.value == 0.0
+
+    def test_a_percentage_source_at_exactly_ten_is_a_score_not_a_percentage(self) -> None:
+        """The raw-percentage rescale triggers ABOVE 10, never at it. A Tomatometer of 10
+        on Plex's 0-10 scale is a perfect 100%; rescaling it would file the
+        best-reviewed title in the library as 10% and let the bar miss it."""
+        on_the_scale = from_plex("10", "rottentomatoes://image.rating.ripe")
+        assert on_the_scale is not None
+        assert on_the_scale.value == 10.0
+
+        # 100 is the raw-percentage shape the rescale exists for, and it lands on the
+        # same 10.0 -- so the two readings agree at the top of the scale and only the
+        # boundary itself decides which one a value of 10 gets.
+        raw_percentage = from_plex("100", "rottentomatoes://image.rating.ripe")
+        assert raw_percentage is not None
+        assert raw_percentage.value == 10.0
 
 
 class TestRadarrRatings:
@@ -202,10 +356,16 @@ class TestRadarrRatings:
             RatingSource.TRAKT,
         }
 
-    def test_percentages_are_normalised_to_ten(self) -> None:
+    def test_percentages_are_normalized_to_ten(self) -> None:
         rt = pick(from_radarr(self.SAMPLE), RatingSource.ROTTEN_TOMATOES_CRITIC)
         assert rt is not None
         assert rt.value == 9.6  # 96% -> 9.6/10
+
+    def test_a_value_outside_every_known_scale_is_dropped(self) -> None:
+        """An IMDb average of 96 is not a rating we know how to read; guessing a
+        scale for it could protect or condemn on a fiction."""
+        assert from_radarr({"imdb": {"votes": 1_000, "value": 96, "type": "user"}}) == []
+        assert from_radarr({"rottenTomatoes": {"votes": 0, "value": 250, "type": "user"}}) == []
 
     def test_votes_zero_on_a_percentage_source_means_no_vote_concept(self) -> None:
         """Radarr reports votes: 0 for Rotten Tomatoes. Read literally, a vote
@@ -241,6 +401,107 @@ class TestRadarrRatings:
         assert "imdb" in described
         assert "400,000 votes" in described
         assert "radarr" in described
+
+    def test_both_ends_of_the_scale_are_inside_it(self) -> None:
+        """``0.0 <= value_on_ten <= 10.0`` is inclusive at both ends, and the drop test
+        above only drove the outside (96 as an average, 250 as a percentage). A 100%
+        Tomatometer and a 10.0 average are the best ratings a title can carry, so
+        dropping them withdraws the protection from exactly what it exists to keep."""
+        perfect_percentage = pick(
+            from_radarr({"rottenTomatoes": {"value": 100, "type": "user"}}),
+            RatingSource.ROTTEN_TOMATOES_CRITIC,
+        )
+        assert perfect_percentage is not None
+        assert perfect_percentage.value == 10.0
+
+        perfect_average = pick(from_radarr({"tmdb": {"value": 10}}), RatingSource.TMDB)
+        assert perfect_average is not None
+        assert perfect_average.value == 10.0
+
+        # The bottom edge matters for the panel rather than for a protection: a 0 that is
+        # dropped reads as "no Rotten Tomatoes rating" when there is one, and it is zero.
+        floor = pick(
+            from_radarr({"rottenTomatoes": {"value": 0}}), RatingSource.ROTTEN_TOMATOES_CRITIC
+        )
+        assert floor is not None
+        assert floor.value == 0.0
+
+    def test_a_percentage_source_never_carries_a_vote_count(self) -> None:
+        """The sample reports ``votes: 0`` for Rotten Tomatoes, so the test above cannot
+        tell dropping the count from reading a zero. A payload carrying a real count
+        distinguishes them: a percentage source has no vote concept, and storing one would
+        print "from 500 votes" beside a number no votes produced -- and hand a vote floor
+        a count to reject it on."""
+        rt = pick(
+            from_radarr({"rottenTomatoes": {"value": 96, "votes": 500}}),
+            RatingSource.ROTTEN_TOMATOES_CRITIC,
+        )
+        assert rt is not None
+        assert rt.votes is None
+        assert rt.has_meaningful_vote_count is False
+        assert rt.meets(9.0, min_votes=1000) is True
+
+    @pytest.mark.parametrize("unreadable", ["3,000", [1], {"count": 1}, "many"])
+    def test_an_unreadable_vote_count_costs_that_one_rating_and_nothing_else(
+        self, unreadable: object
+    ) -> None:
+        """Rule 32: a fork or a future schema serializing votes as "3,000" must not raise
+        out of the fact build. It costs that rating its count -- and specifically NOT the
+        previous source's, which is still in the loop variable when the conversion raises,
+        so a recovery that forgets to clear it attributes IMDb's 1,200 votes to TMDb.
+        """
+        out = from_radarr(
+            {
+                "imdb": {"value": 8.2, "votes": 1_200},
+                "tmdb": {"value": 7.9, "votes": unreadable},
+            }
+        )
+
+        imdb = pick(out, RatingSource.IMDB)
+        assert imdb is not None
+        assert imdb.votes == 1_200
+
+        tmdb = pick(out, RatingSource.TMDB)
+        assert tmdb is not None
+        assert tmdb.value == 7.9
+        assert tmdb.votes is None
+
+
+class TestWhereTheRatingBarTurns:
+    """``Rating.meets`` decides whether one rating bar cleared, and a bar that stops
+    clearing does not refuse a save -- it withdraws a protection ``RatingFloorGate`` was
+    carrying and hands the file to the reap list.
+
+    Its three comparisons are all inclusive. The value floor (``value >= floor``) was
+    already defended; the two governing the VOTE floor were not, because every case above
+    drove a four-figure count or a dozen, never the numbers the comparisons turn on.
+    """
+
+    @staticmethod
+    def imdb(value: float, votes: int | None) -> Rating:
+        return Rating(source=RatingSource.IMDB, value=value, votes=votes, provider="radarr")
+
+    def test_a_rating_with_no_vote_count_clears_a_bar_that_asked_for_no_vote_floor(self) -> None:
+        """``min_votes > 0`` is the whole of what makes a vote floor optional, and
+        ``from_plex`` returns ``votes=None`` for every rating it reads. Applying the vote
+        check at ``min_votes=0`` therefore drops the protection off every Plex-sourced
+        rating in the library at once."""
+        assert self.imdb(8.0, None).meets(7.5) is True
+        assert self.imdb(8.0, 0).meets(7.5) is True
+
+    def test_a_vote_floor_of_one_still_applies(self) -> None:
+        """The other end of the same comparison: 1 is a legal vote floor an operator can
+        set, and it has to bite. A 9.5 from a single vote is noise, and protecting on it
+        keeps junk -- so it clears at one vote and not at none."""
+        assert self.imdb(9.5, 1).meets(7.5, min_votes=1) is True
+        assert self.imdb(9.5, 0).meets(7.5, min_votes=1) is False
+        assert self.imdb(9.5, None).meets(7.5, min_votes=1) is False
+
+    def test_a_count_exactly_at_the_vote_floor_is_trusted(self) -> None:
+        """``votes < min_votes`` refuses, so the floor is inclusive: an operator asking for
+        1,000 votes is asking for a title with exactly 1,000 to count."""
+        assert self.imdb(8.0, 1_000).meets(7.5, min_votes=1_000) is True
+        assert self.imdb(8.0, 999).meets(7.5, min_votes=1_000) is False
 
 
 class TestUpstreamTimestampShapes:

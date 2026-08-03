@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512" role="img" aria-label="Reaper">
+  <defs>
+    <clipPath id="tile"><rect width="64" height="64" rx="14"/></clipPath>
+
+    <!-- core bloom: blurred copy doubled, crisp eyes merged back on top -->
+    <filter id="bloom" x="-200%" y="-200%" width="500%" height="500%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="1.0" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- wide ambient halo that lights the inside of the hood -->
+    <filter id="halo" x="-200%" y="-200%" width="500%" height="500%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="#14161C"/>
+
+  <g clip-path="url(#tile)">
+    <path d="M32 6c11 0 15 13 14 26 8 4 13 16 13 32H5c0-16 5-28 13-32C17 19 21 6 32 6Z" fill="#EDE7DA"/>
+
+    <!-- lower body cut away, then stepped back in on the 6 unit grid -->
+    <rect x="0" y="40" width="64" height="24" fill="#14161C"/>
+    <rect x="19" y="40" width="7" height="7" fill="#EDE7DA"/>
+    <rect x="31" y="40" width="7" height="7" fill="#EDE7DA"/>
+    <rect x="25" y="47" width="7" height="7" fill="#EDE7DA"/>
+    <rect x="39" y="47" width="6" height="6" fill="#EDE7DA"/>
+    <rect x="19" y="48" width="6" height="6" fill="#EDE7DA"/>
+    <rect x="45" y="40" width="6" height="6" fill="#EDE7DA"/>
+
+    <path d="M32 14c8 0 11 9 10 19-1 9-4 14-4 31H26c0-17-3-22-4-31-1-10 2-19 10-19Z" fill="#14161C"/>
+
+    <g filter="url(#halo)" opacity="0.32">
+      <path d="M23.5 27.5 30 31.5v6.5l-6.5-4Z" fill="#E5A00D"/>
+      <path d="M40.5 27.5 34 31.5v6.5l6.5-4Z" fill="#E5A00D"/>
+    </g>
+    <g filter="url(#bloom)">
+      <path d="M23.5 27.5 30 31.5v6.5l-6.5-4Z" fill="#E5A00D"/>
+      <path d="M40.5 27.5 34 31.5v6.5l6.5-4Z" fill="#E5A00D"/>
+    </g>
+
+    <!-- fragments falling away -->
+    <rect x="33" y="55" width="6" height="6" fill="#EDE7DA"/>
+    <rect x="21" y="56" width="5" height="5" fill="#EDE7DA"/>
+    <rect x="46" y="53" width="5" height="5" fill="#EDE7DA"/>
+    <rect x="12" y="49" width="5" height="5" fill="#EDE7DA"/>
+    <rect x="40" y="62" width="4" height="4" fill="#EDE7DA"/>
+    <rect x="52" y="46" width="4" height="4" fill="#EDE7DA"/>
+    <rect x="27" y="63" width="4" height="4" fill="#EDE7DA"/>
+    <rect x="53" y="58" width="3" height="3" fill="#EDE7DA"/>
+  </g>
+</svg>

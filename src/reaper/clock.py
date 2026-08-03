@@ -89,18 +89,23 @@ def humanize_days(days: float) -> str:
     the extra precision is noise in a decision measured in years, and it reads worse.
 
     Approximate by construction (a month is 30 days, a year 365): these are the phrases the
-    why-panel shows next to a dormancy floor, not accounting. Sub-day rounds to ``"today"``.
+    why-panel shows next to a dormancy floor, not accounting.
+
+    Sub-day is ``"less than a day"``, not ``"today"``: every caller drops this into a slot
+    that wants a *length* ("not watched in ...", "untouched for ...", "released ... ago"),
+    and a date reads as broken English in all of them.
     """
     whole = round(days)
     if whole <= 0:
-        return "today"
+        return "less than a day"
 
     years, remainder = divmod(whole, 365)
     months, day = divmod(remainder, 30)
     units = [(years, "year"), (months, "month"), (day, "day")]
+    # ``whole >= 1`` past the early return, so at least one unit is always non-zero
+    # and ``present`` is never empty. No second sub-day branch here: a dead one would
+    # be a second place to keep the wording in step with.
     present = [(n, name) for n, name in units if n]
-    if not present:
-        return "today"
     return ", ".join(f"{n} {name}" if n == 1 else f"{n} {name}s" for n, name in present[:2])
 
 

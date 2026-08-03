@@ -1,9 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""GuardedTransport and the Tautulli allow-list.
-
-These are the tests that matter most in the whole suite. Everything else is
-correctness; this is the thing standing between a bug and someone's media library.
-"""
+"""GuardedTransport and the Tautulli allow-list: the tests that matter most in the
+suite, the thing standing between a bug and someone's media library."""
 
 from __future__ import annotations
 
@@ -11,13 +8,20 @@ import json
 from typing import Any
 
 import httpx
+import httpx2
 import pytest
 import respx
 
 from reaper.clients.arr import RadarrClient, SonarrClient
-from reaper.clients.base import IntegrationError, SafetyViolationError
+from reaper.clients.base import GuardedTransport, IntegrationError, SafetyViolationError
 from reaper.clients.tautulli import READ_COMMANDS, TautulliClient
 from reaper.config import RuntimeSafety
+
+# The migrated clients speak httpx2; respx cannot intercept an httpx2 client, so the mocks
+# ride the ``httpx2_mock`` fixture (a respx.Router retargeted at httpcore2). ``assert_all_called``
+# is off to match the old ``@respx.mock`` default: some tests register a route a refusal
+# path never reaches.
+pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 READ_ONLY = RuntimeSafety(destructive_enabled=False)
 ARMED = RuntimeSafety(destructive_enabled=True)
@@ -43,10 +47,9 @@ class TestMutationsAreBlocked:
             with pytest.raises(SafetyViolationError, match="not declared to the action journal"):
                 await client._send("DELETE", "/api/v3/movie/1")
 
-    @respx.mock
-    async def test_a_declared_mutation_passes_when_armed(self) -> None:
+    async def test_a_declared_mutation_passes_when_armed(self, httpx2_mock: respx.Router) -> None:
         """The one path that is allowed to delete."""
-        route = respx.delete("https://radarr.test/api/v3/movie/1").mock(
+        route = httpx2_mock.delete("https://radarr.test/api/v3/movie/1").mock(
             return_value=httpx.Response(200, json={})
         )
         async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
@@ -59,13 +62,87 @@ class TestMutationsAreBlocked:
         assert response.status_code == 200
         assert route.called
 
-    @respx.mock
-    async def test_reads_are_never_blocked(self) -> None:
-        respx.get("https://radarr.test/api/v3/system/status").mock(
+    async def test_reads_are_never_blocked(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
             return_value=httpx.Response(200, json={"version": "6.3.0"})
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
             assert (await client.system_status())["version"] == "6.3.0"
+
+
+class TestTlsVerificationReachesTheTransport:
+    """The per-instance "check the server's certificate" switch is only real if the flag
+    survives all the way to the httpx2 transport. Pin both directions, and pin the
+    default: nothing may quietly construct an unverified client."""
+
+    @staticmethod
+    def _spy_on_transport(monkeypatch: pytest.MonkeyPatch, seen: list[object]) -> None:
+        real = httpx2.AsyncHTTPTransport
+
+        def spy(*args: Any, **kwargs: Any) -> httpx2.AsyncHTTPTransport:
+            seen.append(kwargs.get("verify"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr("reaper.clients.base.httpx2.AsyncHTTPTransport", spy)
+
+    @pytest.mark.parametrize("verify", [True, False])
+    async def test_the_verify_flag_lands_on_the_httpx_transport(
+        self, monkeypatch: pytest.MonkeyPatch, verify: bool
+    ) -> None:
+        seen: list[object] = []
+        self._spy_on_transport(monkeypatch, seen)
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY, verify=verify):
+            pass
+        assert seen == [verify]
+
+    async def test_verification_is_on_when_no_one_says_otherwise(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[object] = []
+        self._spy_on_transport(monkeypatch, seen)
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY):
+            pass
+        assert seen == [True]
+
+
+class TestClosingAClientReleasesItsSockets:
+    """Rule 34 says someone owns the close. ``scan_runner`` enters or push-callbacks every
+    Radarr, Sonarr, Tautulli and Seerr client it builds -- and every one of those closes
+    released nothing, because ``AsyncClient.aclose()`` closes exactly one thing (its
+    transport), that transport was the guard, and ``AsyncBaseTransport.aclose`` is a no-op
+    the guard inherited. The real connection pool was never told."""
+
+    async def test_the_wrapped_transport_is_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        closed: list[bool] = []
+        real = httpx2.AsyncHTTPTransport
+
+        class WatchedTransport(real):  # type: ignore[misc,valid-type]
+            async def aclose(self) -> None:
+                closed.append(True)
+                await super().aclose()
+
+        monkeypatch.setattr("reaper.clients.base.httpx2.AsyncHTTPTransport", WatchedTransport)
+
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY):
+            pass
+
+        assert closed == [True]
+
+    async def test_the_guard_delegates_rather_than_inheriting_the_no_op(self) -> None:
+        """Pinned on the guard directly too. The client-level test above would still pass if
+        someone gave ``BaseClient`` its own second close path, and the defect would be back
+        for anyone constructing a ``GuardedTransport`` some other way."""
+        closed: list[bool] = []
+
+        class WatchedTransport(httpx2.AsyncHTTPTransport):
+            async def aclose(self) -> None:
+                closed.append(True)
+                await super().aclose()
+
+        inner = WatchedTransport()
+        await GuardedTransport(inner, READ_ONLY).aclose()
+
+        assert closed == [True]
 
 
 class TestTypedMutationMethods:
@@ -74,9 +151,10 @@ class TestTypedMutationMethods:
     deletion is enabled on the host. The parameters differ per *arr, and getting them
     wrong deletes without excluding (Radarr) or fails to prune (Sonarr)."""
 
-    @respx.mock
-    async def test_radarr_delete_movie_sends_the_right_params_when_armed(self) -> None:
-        route = respx.delete("https://radarr.test/api/v3/movie/42").mock(
+    async def test_radarr_delete_movie_sends_the_right_params_when_armed(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.delete("https://radarr.test/api/v3/movie/42").mock(
             return_value=httpx.Response(200, json={})
         )
         async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
@@ -94,9 +172,10 @@ class TestTypedMutationMethods:
             with pytest.raises(SafetyViolationError, match="Blocked"):
                 await client.delete_movie(42)
 
-    @respx.mock
-    async def test_sonarr_unmonitor_targets_the_season_and_is_guarded(self) -> None:
-        route = respx.post("https://sonarr.test/api/v3/seasonpass").mock(
+    async def test_sonarr_unmonitor_targets_the_season_and_is_guarded(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.post("https://sonarr.test/api/v3/seasonpass").mock(
             return_value=httpx.Response(200, json={})
         )
         async with SonarrClient("https://sonarr.test", "k", safety=ARMED) as client:
@@ -107,9 +186,10 @@ class TestTypedMutationMethods:
         assert body["series"][0]["id"] == 7
         assert body["series"][0]["seasons"][0] == {"seasonNumber": 3, "monitored": False}
 
-    @respx.mock
-    async def test_sonarr_delete_episode_files_sends_the_id_list(self) -> None:
-        route = respx.delete("https://sonarr.test/api/v3/episodefile/bulk").mock(
+    async def test_sonarr_delete_episode_files_sends_the_id_list(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.delete("https://sonarr.test/api/v3/episodefile/bulk").mock(
             return_value=httpx.Response(200, json={})
         )
         async with SonarrClient("https://sonarr.test", "k", safety=ARMED) as client:
@@ -118,9 +198,8 @@ class TestTypedMutationMethods:
         assert route.called
         assert json_body(route)["episodeFileIds"] == [11, 22, 33]
 
-    @respx.mock
-    async def test_deleting_an_empty_id_list_sends_nothing(self) -> None:
-        route = respx.delete("https://sonarr.test/api/v3/episodefile/bulk")
+    async def test_deleting_an_empty_id_list_sends_nothing(self, httpx2_mock: respx.Router) -> None:
+        route = httpx2_mock.delete("https://sonarr.test/api/v3/episodefile/bulk")
         async with SonarrClient("https://sonarr.test", "k", safety=ARMED) as client:
             await client.delete_episode_files([])
         assert not route.called
@@ -153,9 +232,10 @@ class TestTautulliAllowList:
             "delete_media_info_cache",
         ],
     )
-    @respx.mock
-    async def test_destructive_commands_are_refused(self, cmd: str) -> None:
-        route = respx.get("https://tautulli.test/api/v2")
+    async def test_destructive_commands_are_refused(
+        self, cmd: str, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.get("https://tautulli.test/api/v2")
 
         async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY) as client:
             with pytest.raises(SafetyViolationError, match="read-only allow-list"):
@@ -164,13 +244,12 @@ class TestTautulliAllowList:
         # The decisive assertion: the request was never even constructed.
         assert not route.called
 
-    @respx.mock
     async def test_destructive_commands_are_refused_even_when_deletion_is_enabled(
-        self,
+        self, httpx2_mock: respx.Router
     ) -> None:
         """Arming Reaper to delete *media* must not arm it to delete a user's
         Tautulli history. Reaper never writes to Tautulli, in any mode."""
-        route = respx.get("https://tautulli.test/api/v2")
+        route = httpx2_mock.get("https://tautulli.test/api/v2")
 
         async with TautulliClient("https://tautulli.test", "k", safety=ARMED) as client:
             with pytest.raises(SafetyViolationError):
@@ -178,9 +257,8 @@ class TestTautulliAllowList:
 
         assert not route.called
 
-    @respx.mock
-    async def test_allowed_read_commands_pass(self) -> None:
-        respx.get("https://tautulli.test/api/v2").mock(
+    async def test_allowed_read_commands_pass(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get("https://tautulli.test/api/v2").mock(
             return_value=httpx.Response(
                 200, json={"response": {"result": "success", "data": {"stream_count": 0}}}
             )
@@ -194,11 +272,10 @@ class TestTautulliAllowList:
         for cmd in READ_COMMANDS:
             assert not cmd.startswith(forbidden), f"{cmd!r} looks destructive"
 
-    @respx.mock
-    async def test_an_error_envelope_becomes_an_exception(self) -> None:
+    async def test_an_error_envelope_becomes_an_exception(self, httpx2_mock: respx.Router) -> None:
         """Tautulli returns HTTP 200 with result='error'. Read naively, a failed
         history query would look like an empty history -- i.e. 'never watched'."""
-        respx.get("https://tautulli.test/api/v2").mock(
+        httpx2_mock.get("https://tautulli.test/api/v2").mock(
             return_value=httpx.Response(
                 200, json={"response": {"result": "error", "message": "Invalid apikey"}}
             )
@@ -229,12 +306,11 @@ class TestErrorClassification:
     credentials on a transient 500 would have the owner re-entering keys during
     every blip."""
 
-    @respx.mock
     @pytest.mark.parametrize(("status", "is_auth"), [(401, True), (403, True), (500, False)])
     async def test_auth_failures_are_distinguished_from_outages(
-        self, status: int, is_auth: bool
+        self, status: int, is_auth: bool, httpx2_mock: respx.Router
     ) -> None:
-        respx.get("https://radarr.test/api/v3/system/status").mock(
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
             return_value=httpx.Response(status)
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:

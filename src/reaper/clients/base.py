@@ -22,12 +22,13 @@ Two things it deliberately does *not* rely on:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar, Self
 
-import httpx
+import httpx2
 import structlog
 from tenacity import (
+    RetryCallState,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -41,7 +42,78 @@ log = structlog.get_logger(__name__)
 # Methods that cannot change remote state.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
+DEFAULT_TIMEOUT = httpx2.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
+
+#: Redirect statuses handled by hand -- see ``BaseClient._send`` and ``_mutate``.
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
+
+
+def _origin(url: httpx2.URL) -> tuple[str, str, int | None]:
+    """(scheme, host, port) with the scheme's default port filled in, so
+    ``http://a.local`` and ``http://a.local:80`` compare as the same origin."""
+    port = url.port
+    if port is None:
+        port = {"http": 80, "https": 443}.get(url.scheme)
+    return (url.scheme, url.host or "", port)
+
+
+def _log_retry(retry_state: RetryCallState) -> None:
+    """Trace a transient transport retry at DEBUG.
+
+    Without this, tenacity retries in silence: an exhausted three-attempt failure reads
+    exactly like a first-try one, and "did this time out three times or die instantly?"
+    has no answer in the log. Fires between attempts, so the two intermediate retries of a
+    failing read become visible only when someone turns Debug on. Logs the service and the
+    attempt number only -- never the path or params, which carry credentials (Tautulli and
+    MDBList put their api key in the query string).
+    """
+    service = getattr(retry_state.args[0], "service", "http") if retry_state.args else "http"
+    sleep = getattr(retry_state.next_action, "sleep", None)
+    exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
+    log.debug(
+        "client.retry",
+        service=service,
+        attempt=retry_state.attempt_number,
+        wait=round(sleep, 2) if sleep is not None else None,
+        error=type(exc).__name__ if exc is not None else None,
+    )
+
+
+def transient_retry[**P, T](fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+    """The one retry policy for a transient transport failure: three attempts, backing off.
+
+    Named and shared rather than repeated, so every read this codebase issues -- a JSON call
+    through :meth:`BaseClient._request`, a streamed dataset download through
+    :meth:`PublicClient.stream_to` -- survives a blip on the same terms. A second copy would
+    be a second set of numbers to keep in step.
+
+    **The decorated body must let raw ``httpx2`` transport errors escape.** The predicate
+    matches those, so a body that maps them to ``IntegrationError`` first never matches, and
+    the backoff below it becomes dead code -- which is exactly why the mapping lives one
+    layer out in every caller here.
+    """
+    return retry(
+        retry=retry_if_exception_type((httpx2.TransportError, httpx2.TimeoutException)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, max=4),
+        before_sleep=_log_retry,
+        reraise=True,
+    )(fn)
+
+
+def _retry_after_seconds(response: httpx2.Response) -> float | None:
+    """The Retry-After header as seconds, when the server sent a numeric one.
+
+    The HTTP-date form is legal but rare on these APIs; it reads as None rather than
+    guessed at, and callers fall back to their own pacing.
+    """
+    raw = response.headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return None
 
 
 class SafetyViolationError(RuntimeError):
@@ -55,10 +127,19 @@ class SafetyViolationError(RuntimeError):
 class IntegrationError(RuntimeError):
     """An integration could not be reached, or returned an error."""
 
-    def __init__(self, service: str, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self,
+        service: str,
+        message: str,
+        *,
+        status: int | None = None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(f"{service}: {message}")
         self.service = service
         self.status = status
+        self.retry_after = retry_after
+        """Seconds the server asked us to wait (a numeric Retry-After), or None."""
 
     @property
     def is_auth_failure(self) -> bool:
@@ -71,7 +152,7 @@ class IntegrationError(RuntimeError):
         return self.status in (401, 403)
 
 
-class GuardedTransport(httpx.AsyncBaseTransport):
+class GuardedTransport(httpx2.AsyncBaseTransport):
     """Refuses mutating requests unless deletion is enabled and intended.
 
     ``non_media_mutations`` is a narrow, explicit allow-list of paths that may be
@@ -81,12 +162,12 @@ class GuardedTransport(httpx.AsyncBaseTransport):
 
     It is an allow-list of exact paths rather than a per-client opt-out, so the
     exemption is auditable in one place and a new client cannot quietly acquire a
-    licence to write.
+    license to write.
     """
 
     def __init__(
         self,
-        inner: httpx.AsyncBaseTransport,
+        inner: httpx2.AsyncBaseTransport,
         safety: RuntimeSafety,
         *,
         non_media_mutations: frozenset[str] = frozenset(),
@@ -95,7 +176,20 @@ class GuardedTransport(httpx.AsyncBaseTransport):
         self._safety = safety
         self._non_media_mutations = non_media_mutations
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def aclose(self) -> None:
+        """Close the transport this one wraps.
+
+        ``AsyncBaseTransport.aclose`` is a no-op, and inheriting it made every
+        ``BaseClient.aclose()`` a no-op too: the call reached ``AsyncClient.aclose()``, which
+        closes exactly one thing -- its transport -- which was this guard. The real
+        ``AsyncHTTPTransport`` and its connection pool were never told, so nothing but GC
+        reclaimed the sockets, and the ownership discipline rule 34 exists for released
+        nothing however carefully ``scan_runner`` entered each client. ``PlexClient.aclose``
+        is the twin that already did this, and names the same hazard.
+        """
+        await self._inner.aclose()
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         if request.method.upper() not in SAFE_METHODS:
             path = request.url.path
 
@@ -119,7 +213,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
 
 
 class BaseClient:
-    """Shared HTTP behaviour: auth headers, retries, error mapping, redaction."""
+    """Shared HTTP behavior: auth headers, retries, error mapping, redaction."""
 
     service: ClassVar[str] = "http"
 
@@ -130,21 +224,28 @@ class BaseClient:
         safety: RuntimeSafety,
         headers: Mapping[str, str] | None = None,
         verify: bool = True,
-        timeout: httpx.Timeout | None = None,
+        timeout: httpx2.Timeout | None = None,
         non_media_mutations: frozenset[str] = frozenset(),
+        allow_cross_origin_redirects: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._safety = safety
-        self._client = httpx.AsyncClient(
+        # Only the credential-less public fetchers may set this (see clients.public):
+        # with an API key on the default headers, a cross-origin redirect is exfiltration.
+        self._allow_cross_origin_redirects = allow_cross_origin_redirects
+        self._client = httpx2.AsyncClient(
             base_url=self.base_url,
             headers=dict(headers or {}),
             timeout=timeout or DEFAULT_TIMEOUT,
             transport=GuardedTransport(
-                httpx.AsyncHTTPTransport(verify=verify, retries=0),
+                httpx2.AsyncHTTPTransport(verify=verify, retries=0),
                 safety,
                 non_media_mutations=non_media_mutations,
             ),
-            follow_redirects=True,
+            # Never auto-follow: httpx2 would re-send the credential headers (X-Api-Key
+            # and kin) wherever Location points. Redirect policy lives in _send (a few
+            # same-origin hops for reads) and _mutate (refused outright).
+            follow_redirects=False,
         )
 
     async def __aenter__(self) -> Self:
@@ -156,12 +257,7 @@ class BaseClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    @retry(
-        retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.5, max=4),
-        reraise=True,
-    )
+    @transient_retry
     async def _request(
         self,
         method: str,
@@ -170,15 +266,14 @@ class BaseClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         headers: Mapping[str, str] | None = None,
-    ) -> httpx.Response:
-        """Issue one request and let raw httpx transport errors escape, so tenacity retries.
+    ) -> httpx2.Response:
+        """Issue one request and let raw httpx2 transport errors escape, so tenacity retries.
 
-        The retry predicate above matches ``httpx.TransportError``/``TimeoutException``, so
-        those must reach the decorator *unmapped*. That is exactly why the error mapping
-        lives one layer out in :meth:`_send` and not here: an earlier version mapped a
-        transient timeout to ``IntegrationError`` inside the retried body, the predicate
-        never matched, and the exponential backoff was dead code -- every momentary blip
-        aborted the whole scan on the first attempt with zero retries.
+        The error mapping lives one layer out in :meth:`_send` and not here for the reason
+        :func:`transient_retry` spells out: an earlier version mapped a transient timeout to
+        ``IntegrationError`` inside the retried body, the predicate never matched, and the
+        exponential backoff was dead code -- every momentary blip aborted the whole scan on
+        the first attempt with zero retries.
         """
         return await self._client.request(method, path, params=params, json=json, headers=headers)
 
@@ -190,7 +285,7 @@ class BaseClient:
         params: Mapping[str, Any] | None = None,
         json: Any = None,
         headers: Mapping[str, str] | None = None,
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         """Issue a read -- retried on transient transport errors -- and map failures.
 
         The retries happen in :meth:`_request`; by the time a transport error surfaces here
@@ -198,24 +293,61 @@ class BaseClient:
         ``IntegrationError``. A 4xx/5xx is a definite answer from the service rather than a
         transport failure, so it is never retried, only mapped.
 
+        Redirects are followed HERE, never by httpx2 (``follow_redirects=False`` on the
+        client): auto-following would re-send the credential headers wherever Location
+        points. A read may follow a few SAME-ORIGIN hops (a reverse proxy adding a
+        trailing slash, say); a cross-origin redirect is refused outright, because the
+        API key must never leave the configured origin. A redirected mutation is refused
+        in :meth:`_mutate`.
+
         ``headers`` are per-request extras (e.g. plex.tv's ``X-Plex-Token``, which differs
         per call and so cannot live on the client's default headers).
         """
-        try:
-            response = await self._request(method, path, params=params, json=json, headers=headers)
-        except httpx.TimeoutException as exc:
-            # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s) or
-            # PoolTimeout (5s) is not the read timeout, and reporting a fixed "30s" would
-            # misdirect an operator diagnosing a connectivity problem.
-            raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
-        except httpx.TransportError as exc:
-            raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+        target = path
+        send_params = params
+        for _ in range(4):  # the request itself, plus at most three same-origin redirects
+            try:
+                response = await self._request(
+                    method, target, params=send_params, json=json, headers=headers
+                )
+            except httpx2.TimeoutException as exc:
+                # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s)
+                # or PoolTimeout (5s) is not the read timeout, and reporting a fixed
+                # "30s" would misdirect an operator diagnosing a connectivity problem.
+                raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
+            except httpx2.TransportError as exc:
+                raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+
+            if response.status_code not in _REDIRECTS:
+                break
+            location = response.headers.get("location")
+            if method.upper() not in ("GET", "HEAD") or not location:
+                raise IntegrationError(
+                    self.service,
+                    f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+                    status=response.status_code,
+                )
+            next_url = response.request.url.join(location)
+            if not self._allow_cross_origin_redirects and _origin(next_url) != _origin(
+                httpx2.URL(self.base_url)
+            ):
+                raise IntegrationError(
+                    self.service,
+                    f"refused cross-origin redirect for {method} {path}: the credential "
+                    f"headers must never leave {httpx2.URL(self.base_url).host!r}",
+                    status=response.status_code,
+                )
+            target = str(next_url)
+            send_params = None  # the Location URL already carries its query string
+        else:
+            raise IntegrationError(self.service, f"too many redirects for {method} {path}")
 
         if response.status_code >= 400:
             raise IntegrationError(
                 self.service,
                 f"HTTP {response.status_code} for {method} {path}",
                 status=response.status_code,
+                retry_after=_retry_after_seconds(response),
             )
         return response
 
@@ -242,7 +374,7 @@ class BaseClient:
         *,
         params: Mapping[str, Any] | None = None,
         json: Any = None,
-    ) -> httpx.Response:
+    ) -> httpx2.Response:
         """Issue ONE mutating request, declared to the transport guard.
 
         Two deliberate differences from :meth:`_send`, both because this changes remote
@@ -269,18 +401,28 @@ class BaseClient:
                 json=json,
                 extensions={"reaper_mutation_approved": True},
             )
-        except httpx.TimeoutException as exc:
+        except httpx2.TimeoutException as exc:
             # Report the actual timeout kind (connect/write/pool/read), not a fixed "30s":
             # for a mutation especially, "could not connect" and "the server was slow to
             # answer" call for different operator responses.
             raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
-        except httpx.TransportError as exc:
+        except httpx2.TransportError as exc:
             raise IntegrationError(self.service, f"unreachable ({exc})") from exc
 
+        if response.status_code in _REDIRECTS:
+            # A redirected mutation is refused, never replayed: auto-following would
+            # re-issue the approved call -- credential headers, mutation approval and
+            # all -- at whatever URL the (possibly compromised) upstream chose.
+            raise IntegrationError(
+                self.service,
+                f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+                status=response.status_code,
+            )
         if response.status_code >= 400:
             raise IntegrationError(
                 self.service,
                 f"HTTP {response.status_code} for {method} {path}",
                 status=response.status_code,
+                retry_after=_retry_after_seconds(response),
             )
         return response

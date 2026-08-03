@@ -1,0 +1,411 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: CI
+
+# One workflow, two lanes, one list of paths.
+#
+# The expensive lane (uv install, mypy, pytest, a node build, an image build) costs ~3.5
+# minutes and cannot be changed by prose: .dockerignore drops `docs/` and `*.md`, the single
+# exception being README.md, which is copied only because pyproject declares it as the
+# package readme and hatchling's metadata build fails without it. No runtime code reads it.
+# 22% of the last 117 commits touched nothing but prose, so that lane skips for them.
+#
+# The cheap lane is tests/test_repo_hygiene.py, ~1 second of asserts, and it exists because
+# "it's only docs" is false in this repo: that test reads CLAUDE.md, docs/ and .claude/, and
+# a prose-only commit is precisely when it has something to say.
+#
+# This used to be two workflow files whose `paths` and `paths-ignore` lists had to stay exact
+# complements of each other, with a comment in each saying "edit one and you must edit the
+# other". Two consequences retired that arrangement:
+#
+#   1. A path-filtered workflow that skips reports NO check run at all, so naming any of
+#      these jobs as a required check would leave the other lane's pull requests pending
+#      forever. Branch protection needs one check that always reports, which is `CI gate`
+#      below.
+#   2. One fact written in two places drifts. The list now exists once, in `changes`, and
+#      both lanes read it from there.
+#
+# `changes` and `CI gate` each cost a runner start (~10s a side). The lane that skips still
+# skips, so the saving that motivated the split is intact.
+#
+# One visible consequence survives: a prose-only commit builds no image, so `:dev` keeps
+# pointing at the last commit that could actually change it. The tag is behind the branch by
+# design, because the image really was built from that code.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+# A second push to a branch makes the first one's verdict irrelevant: the only sha anyone
+# acts on is the tip. Grouping by ref and cancelling the older run means a burst of pushes
+# to dev costs one run instead of one per commit, and hands the runner to the push that
+# superseded it rather than finishing a verdict about history. main is exempt because it is
+# release-only, and cancelling a release build partway through `docker push` is how
+# `:latest` ends up half-published.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # The single source of truth for which lane a change belongs to. Everything downstream
+  # reads these two outputs; nothing else in the repository restates the path list.
+  changes:
+    name: Decide what to run
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+      prose: ${{ steps.decide.outputs.prose }}
+      site: ${{ steps.decide.outputs.site }}
+    steps:
+      # Actions are pinned to commit SHAs (the tag in the comment is what the SHA was
+      # resolved from): a mutable tag on a third-party action is a supply-chain door
+      # into the job that builds and publishes the deletion-capable image.
+      #
+      # The comment names the exact release, not the major. `astral-sh/setup-uv` stopped
+      # publishing major and minor tags at v8 for that same supply-chain reason, so `# v9`
+      # would name a tag that does not exist. `.github/dependabot.yml` is what moves these
+      # now, and it rewrites the sha and the comment together.
+      #
+      # Full history, because this job's whole purpose is to diff against a base commit
+      # that a shallow clone would not contain.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Classify the changed files
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "${EVENT}" = "pull_request" ]; then
+            base="${PR_BASE}"; head="${PR_HEAD}"
+          else
+            base="${PUSH_BEFORE}"; head="${PUSH_HEAD}"
+          fi
+
+          # Every path that leads here means "we cannot tell what changed", and the safe
+          # answer to that is to run everything rather than to skip a gate. A new branch
+          # reports an all-zero `before`, and a force-push can leave a base commit that no
+          # longer exists in this clone.
+          run_everything() {
+            echo "cannot determine the diff ($1); running both lanes"
+            echo "code=true"  >> "$GITHUB_OUTPUT"
+            echo "prose=true" >> "$GITHUB_OUTPUT"
+            echo "site=true"  >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          case "${base}" in
+            ""|0000000000000000000000000000000000000000) run_everything "no base commit" ;;
+          esac
+          git cat-file -e "${base}^{commit}" 2>/dev/null || run_everything "base commit missing"
+          git cat-file -e "${head}^{commit}" 2>/dev/null || run_everything "head commit missing"
+
+          merge_base="$(git merge-base "${base}" "${head}" 2>/dev/null || echo "${base}")"
+          files="$(git diff --name-only "${merge_base}" "${head}")"
+          [ -n "${files}" ] || run_everything "empty diff"
+
+          echo "changed files:"
+          echo "${files}" | sed 's/^/  /'
+
+          code=false
+          prose=false
+          site=false
+          while IFS= read -r f; do
+            [ -n "${f}" ] || continue
+            case "${f}" in
+              docs/*|.claude/*|*.md)   prose=true ;;
+              # The manual's words and the site that renders them. Neither ships in the
+              # image, so a docs-only commit does not need the backend, frontend or
+              # docker lanes -- but it DOES need a lane of its own, or an .mdx that fails
+              # to compile lands with nothing having tried to build it. Note `*.md` above
+              # does not match `.mdx`, which is why these are listed rather than assumed.
+              manual/*|website/*)      site=true  ;;
+              *)                       code=true  ;;
+            esac
+          done <<< "${files}"
+
+          echo "code=${code}"   >> "$GITHUB_OUTPUT"
+          echo "prose=${prose}" >> "$GITHUB_OUTPUT"
+          echo "site=${site}"   >> "$GITHUB_OUTPUT"
+          echo "verdict: code=${code} prose=${prose} site=${site}"
+
+  check:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Caching depends on job containers being able to reach the runner's cache server.
+      # It only works while the runner shares a network with them (container.network on
+      # the runner, rather than the per-job network it creates by default) -- otherwise
+      # Docker isolates the two, every restore and save times out, and a cache that always
+      # misses is far from free: it once cost this job ~40s and `frontend` ~9m per run, to
+      # fetch nothing. If those timeouts reappear, suspect the runner's network, not this.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # Fail if uv.lock has drifted from pyproject.toml. Without this, a dependency bump
+      # that never made it into the lock would still pass CI while the image installs the
+      # stale locked versions -- exactly the reproducibility gap we install --frozen to close.
+      - name: Assert lockfile is current
+        run: uv lock --check
+
+      # Install from the committed lockfile into a project-local venv. `uv sync` creates
+      # the venv automatically; subsequent steps use `uv run` so the venv is always on
+      # PATH without needing --system (which PEP 668 externally-managed distros reject).
+      - name: Install
+        run: uv sync --frozen --extra dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Typecheck
+        run: uv run mypy src/reaper
+
+      # The full suite includes tests/test_repo_hygiene.py, which is why `hygiene` below
+      # runs only for the prose lane: a commit touching code has already proved it here.
+      - name: Test
+        run: uv run pytest -n auto --cov --cov-report=term-missing
+
+      # A model change without a migration is the classic way to ship a schema
+      # that only exists on the developer's laptop.
+      - name: Assert no un-migrated model changes
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+
+  frontend:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # See the note on caching in `check`.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `ci`, not `install`: it installs exactly the locked tree and fails if
+      # package.json and the lockfile disagree, rather than quietly resolving something
+      # new. This is the same command the Dockerfile runs.
+      - name: Install
+        run: npm ci
+
+      # The two classic react-hooks rules run as errors: a conditional hook or a stale
+      # dependency in the execute-gating components is a correctness bug, not style.
+      - name: Lint
+        run: npm run lint
+
+      # The counterpart to `ruff format --check` in the check job above -- the whole point
+      # of adopting prettier was that one half of the tree had a formatting gate and the
+      # other half was argued by hand. printWidth matches ruff's line-length; see
+      # frontend/prettier.config.mjs for why, and for why nothing else is configured.
+      - name: Format
+        run: npm run format:check
+
+      # Component tests (vitest + Testing Library), led by the reap confirmation's
+      # client-side execute gate -- the one UI surface in front of a deletion.
+      - name: Test
+        run: npm run test
+
+      # `npm run build` runs tsc --noEmit first, so a type error fails the build rather
+      # than shipping a bundle that throws in the browser.
+      - name: Typecheck and build
+        run: npm run build
+
+  # ~1 second of asserts, for the lane where the rest of the suite would be about code this
+  # commit did not touch. A commit that changes both prose and code runs this and the full
+  # pytest in `check`, which is redundant and deliberate: the alternative is a conditional
+  # that can silently fail to run.
+  hygiene:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.prose == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # The same locked install as `check`, not a lighter ad-hoc one. The hygiene test needs
+      # only pytest and the stdlib, but tests/conftest.py imports the app and is loaded on
+      # every collection, and an unlocked `--with pytest` install to dodge that would be the
+      # one place in the repo resolving dependencies fresh at run time.
+      - name: Install
+        run: uv sync --frozen --extra dev
+
+      - name: Docs hygiene
+        run: uv run pytest tests/test_repo_hygiene.py
+
+  # The shipped artifact is the container, so its buildability must be a checked gate --
+  # otherwise a broken COPY order, a stale lock, or a bad base image reaches main green.
+  # needs: ensures the image is never built from code that failed lint, type, or test.
+  docker:
+    runs-on: ubuntu-latest
+    needs: [changes, check, frontend]
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The image path is derived from the run context, never hardcoded, so this
+      # workflow is correct for anyone who forks Reaper. The registry is the one
+      # thing that cannot be derived: GITHUB_SERVER_URL is github.com, which is
+      # not a registry, so ghcr.io is named outright. Docker requires a lowercase
+      # image path, but repo owners are commonly capitalized, so the repository
+      # slug is lowercased here. A branch name may contain "/", which is not a
+      # legal tag character, so it is folded to "-".
+      #
+      # A pull request publishes as "pr-<number>" so it can be pulled and tested. That
+      # cannot collide with a branch tag, and it says plainly what the image is. The tag
+      # is not taken from REF_NAME on a PR: there REF_NAME is the PR *number*, which
+      # would tag the image ":1" and read like a version.
+      - name: Resolve image name
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          echo "IMAGE=ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "TAG=pr-${PR_NUMBER}" >> "$GITHUB_ENV"
+          else
+            echo "TAG=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')" >> "$GITHUB_ENV"
+          fi
+          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      # The short commit and the home repository are baked in as build args, so the
+      # About page can say which build is running and the update check knows whose
+      # dev branch to follow (a fork's images follow the fork). Everything this job
+      # builds is dev provenance, whatever the branch: the RELEASE image -- with the
+      # CalVer baked, tagged :latest and :<version> -- is release.yml's alone, so a
+      # version-labeled image can only exist with the version actually inside it.
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg "REAPER_GIT_SHA=${SHORT_SHA}" \
+            --build-arg "REAPER_UPDATE_REPO=${GITHUB_REPOSITORY}" \
+            -t "${IMAGE}:${TAG}" -t "${IMAGE}:${SHORT_SHA}" .
+
+      # The automatic GITHUB_TOKEN publishes here, given the packages: write
+      # permission declared on this job, so no operator-provided secret is needed
+      # and a fresh fork publishes to its own namespace with no setup.
+      #
+      # Pull requests publish too, so a reviewer can pull and run the exact image,
+      # but only when the PR comes from this repository. On a fork PR the token is
+      # read-only and the push would fail rather than leak, but failing a gate on a
+      # contributor's first PR is its own cost, so the branch is checked here.
+      - name: Push image
+        if: >-
+          github.event_name == 'push' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker push --all-tags "${IMAGE}"
+
+      # :dev stays multi-arch across amd64 pushes. The nightly (binaries.yml) builds
+      # the arm64 image as :dev-arm64; the bare push above just replaced the :dev
+      # manifest with an amd64-only one, which would break every arm64 pull until the
+      # next nightly. Re-stitching from the amd64 image this run pushed and the newest
+      # arm64 keeps both halves live: amd64 fresh per push, arm64 fresh per night.
+      # Before the first nightly there is no :dev-arm64 and :dev stays amd64-only.
+      - name: Keep :dev multi-arch
+        if: github.event_name == 'push' && github.ref_name == 'dev'
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "${IMAGE}:dev-arm64" > /dev/null 2>&1; then
+            docker buildx imagetools create -t "${IMAGE}:dev" \
+              "${IMAGE}:${SHORT_SHA}" "${IMAGE}:dev-arm64"
+          else
+            echo "no ${IMAGE}:dev-arm64 yet; :dev stays amd64-only"
+          fi
+
+  # The one job that reports on every commit, whichever lane ran, and therefore the one
+  # worth naming as a required status check in branch protection.
+  #
+  # The manual site. It ships nothing into the container, so it is gated for its own sake: an
+  # `.mdx` that fails to compile, a link to a page that does not exist, or a component the site
+  # never registered all fail the build here rather than on the published site. `onBrokenLinks`
+  # is `throw` in the config, which is what makes a dead cross-reference a red run.
+  #
+  # This lane does NOT check that the generated pages are current. That is the frontend lane's
+  # `manual.gen.test.ts`, which runs against the app's own blocks; a stale page reaching here
+  # would build perfectly well while saying the wrong thing.
+  site:
+    name: Manual site
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  # `if: always()` is what makes it report at all: without it this job would inherit the
+  # skip of anything it needs, which is the exact failure it exists to prevent. A skipped
+  # lane is a pass here, because a lane skips only when `changes` proved it had nothing to
+  # look at. A cancelled job is a failure, since a cancellation is not a verdict.
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [changes, check, frontend, hygiene, docker, site]
+    steps:
+      - name: Verdict
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+          failed="$(echo "$RESULTS" | jq -r '
+            [ to_entries[]
+              | select(.value.result != "success" and .value.result != "skipped")
+              | .key ] | join(", ")')"
+          if [ -n "${failed}" ]; then
+            echo "CI gate failed. Not successful or skipped: ${failed}"
+            exit 1
+          fi
+          echo "CI gate passed."

@@ -8,10 +8,35 @@ unit tests, because both were failures of *scope* rather than of logic.
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from pathlib import Path
 
+import pytest
+from structlog.testing import capture_logs
+
+from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
+from reaper.crypto import SecretBox
+from reaper.db.base import Base
+from reaper.db.models import Instance, InstanceKind
+from reaper.db.session import create_engine, create_session_factory
+from reaper.engine import identity
+from reaper.services import scan_runner
 from reaper.services.snapshot import RawItem, _raw_items
+
+ADDED = from_epoch("1700000000")
+
+
+def _plex_index(*items: tuple[int, str]) -> identity.PlexIndex:
+    """A Plex movie index from ``(rating_key, title)`` pairs -- no external ids, so the
+    join here exercises the title+year backstop (the multi-instance behavior predates
+    id matching and must survive it unchanged)."""
+    return identity.PlexIndex.build(
+        [
+            identity.PlexItem(rating_key=rk, title=title, year=None, added_at=ADDED)
+            for rk, title in items
+        ]
+    )
 
 
 class TestEveryInstanceIsScanned:
@@ -36,7 +61,7 @@ class TestEveryInstanceIsScanned:
             "imdbId": "tt0000001",
             "tmdbId": 1001,
         }
-        plex = {"example movie": [{"rating_key": 999, "added_at": "1700000000"}]}
+        plex = _plex_index((999, "Example Movie"))
 
         hd = _raw_items([movie], plex, instance_id=1)
         uhd = _raw_items([movie], plex, instance_id=2)
@@ -50,7 +75,7 @@ class TestEveryInstanceIsScanned:
         Keying candidates on one would silently orphan every grace clock the next time
         the owner rebuilt their library."""
         movie = {"id": 42, "title": "Example Movie", "hasFile": True, "sizeOnDisk": 1}
-        plex = {"example movie": [{"rating_key": 999, "added_at": "1700000000"}]}
+        plex = _plex_index((999, "Example Movie"))
 
         item = _raw_items([movie], plex, instance_id=1)[0]
 
@@ -62,19 +87,44 @@ class TestEveryInstanceIsScanned:
         reclaim from a film that was never downloaded."""
         wanted = {"id": 1, "title": "Not Yet Downloaded", "hasFile": False, "sizeOnDisk": 0}
 
-        assert _raw_items([wanted], {}, instance_id=1) == []
+        assert _raw_items([wanted], _plex_index(), instance_id=1) == []
 
     def test_a_movie_plex_has_not_matched_still_appears(self) -> None:
         """It must not vanish. It appears with no rating key, which makes its dormancy
-        Unknown -- and Unknown protects. Dropping it silently would be worse: the owner
-        would never learn that Plex has failed to match it."""
+        Unknown, and an Unknown dormancy blocks both dormancy gates so the item abstains and
+        is kept (a blocked hold, not a PROTECT -- `gates._blocked`). Dropping it silently
+        would be worse: the owner would never learn that Plex has failed to match it."""
         movie = {"id": 7, "title": "Unmatched By Plex", "hasFile": True, "sizeOnDisk": 1}
 
-        items = _raw_items([movie], {}, instance_id=1)
+        items = _raw_items([movie], _plex_index(), instance_id=1)
 
         assert len(items) == 1
         assert items[0].plex_rating_key is None
         assert items[0].added_at is None
+
+    def test_a_movie_plex_has_not_matched_is_warned(self) -> None:
+        """The owner asking "why isn't this in review" must find the answer in the log,
+        not only on the row's why-panel. It appears, but only as kept-to-be-safe, so a
+        warning names it and says Plex could not bind it."""
+        movie = {"id": 7, "title": "Unmatched By Plex", "hasFile": True, "sizeOnDisk": 1}
+
+        with capture_logs() as logs:
+            _raw_items([movie], _plex_index(), instance_id=1)
+
+        warned = [e for e in logs if e["event"] == "scan.plex_unmatched"]
+        assert len(warned) == 1
+        assert warned[0]["log_level"] == "warning"
+        assert warned[0]["media_type"] == "movie"
+        assert warned[0]["match_status"] == "unmatched"
+
+    def test_a_matched_movie_is_not_warned(self) -> None:
+        """A clean bind stays quiet: the warning must fire only on a real match failure."""
+        movie = {"id": 42, "title": "Example Movie", "hasFile": True, "sizeOnDisk": 1}
+
+        with capture_logs() as logs:
+            _raw_items([movie], _plex_index((999, "Example Movie")), instance_id=1)
+
+        assert [e for e in logs if e["event"] == "scan.plex_unmatched"] == []
 
 
 class TestCachesLiveInTheirOwnDatabase:
@@ -121,7 +171,7 @@ class TestRawItemShape:
             "imdbId": "tt0000002",
             "tmdbId": 1002,
         }
-        plex = {"another movie": [{"rating_key": 5, "added_at": "1700000000"}]}
+        plex = _plex_index((5, "Another Movie"))
 
         item: RawItem = _raw_items([movie], plex, instance_id=3)[0]
 
@@ -131,3 +181,70 @@ class TestRawItemShape:
         assert item.plex_rating_key == 5
         assert item.added_at is not None
         assert item.added_at.tzinfo is not None  # aware, always
+
+
+class TestScanClientsCarryTheTlsChoice:
+    """``build_sources`` hands every client its own instance's ``verify_tls``. A dropped
+    flag here would quietly ignore the operator's per-service certificate choice for a
+    whole scan: either failing against the self-signed server they explicitly allowed,
+    or, in the other direction, skipping verification somewhere they never asked."""
+
+    async def test_build_sources_passes_each_rows_own_choice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = create_session_factory(engine)
+        box = SecretBox("test-key")
+
+        def row(kind: InstanceKind, name: str, url: str, verify: bool) -> Instance:
+            return Instance(
+                kind=kind,
+                name=name,
+                base_url=url,
+                api_key_enc=box.encrypt("k"),
+                enabled=True,
+                verify_tls=verify,
+                created_at=utcnow(),
+            )
+
+        async with factory() as session:
+            session.add_all(
+                [
+                    row(InstanceKind.RADARR, "HD", "https://movies.local", False),
+                    row(InstanceKind.SONARR, "HD", "https://tv.local", True),
+                    row(InstanceKind.TAUTULLI, "Main", "https://history.local", True),
+                    row(InstanceKind.SEERR, "Main", "https://requests.local", False),
+                ]
+            )
+            await session.commit()
+
+        seen: dict[str, object] = {}
+
+        class FakeClient:
+            def __init__(self, base_url: str, *args: object, **kwargs: object) -> None:
+                seen[base_url] = kwargs.get("verify")
+
+            async def __aenter__(self) -> object:
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+        for name in ("RadarrClient", "SonarrClient", "TautulliClient", "SeerrClient"):
+            monkeypatch.setattr(scan_runner, name, FakeClient)
+
+        try:
+            async with AsyncExitStack() as stack:
+                await scan_runner.build_sources(factory, settings, box, stack=stack)
+        finally:
+            await engine.dispose()
+
+        assert seen == {
+            "https://movies.local": False,
+            "https://tv.local": True,
+            "https://history.local": True,
+            "https://requests.local": False,
+        }

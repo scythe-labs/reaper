@@ -13,10 +13,13 @@ So this scheduler exists to do the unglamorous upkeep:
   first scan (and every scan until a day boundary happened to pass) would degrade.
 * **Refresh the curated lists** (the IMDb Top 250) daily, independent of scans.
 
-**This scheduler never deletes anything.** It only downloads and caches. Deletion runs
-happen through the executor, under the destructive-action guard, and are not scheduled
-here -- automated deletion is an M8 concern gated behind an earned autonomy grant, and
-wiring it to a timer before that machinery exists would be exactly the wrong shortcut.
+**This scheduler never deletes media.** Deletion runs happen through the executor, under
+the destructive-action guard, and are not scheduled here -- automated deletion is an M8
+concern gated behind an earned autonomy grant, and wiring it to a timer before that
+machinery exists would be exactly the wrong shortcut. It does delete Reaper's *own*
+bookkeeping, which is a different thing entirely and needs no arming: expired auth
+sessions, and scans older than the retention window (``services.retention``). Neither
+touches a file, an *arr, or Plex.
 
 APScheduler 3.x (4.x is still alpha). ``AsyncIOScheduler`` shares the app's event loop,
 and ``coalesce=True`` + ``max_instances=1`` mean a job that overruns its interval -- a
@@ -25,19 +28,32 @@ first ratings load can take a while -- never stacks a second copy on top of itse
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import timedelta, tzinfo
 from pathlib import Path
 
 import structlog
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_SUBMITTED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from reaper.auth import sessions
 from reaper.clients.tautulli import TautulliClient
+from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
-from reaper.services import history_sync, imdb_dataset, lists, scan_runner
+from reaper.services import (
+    app_settings,
+    history_sync,
+    imdb_dataset,
+    lists,
+    retention,
+    scan_runner,
+)
 from reaper.services.imdb_dataset import ImdbRatings
 
 log = structlog.get_logger(__name__)
@@ -46,26 +62,163 @@ log = structlog.get_logger(__name__)
 #: owner changes the schedule -- never stacked.
 SCAN_JOB_ID = "scheduled_scan"
 
+#: The background upkeep jobs and the cron they run on out of the box. Every one is
+#: read-only (refresh/sweep), staggered off peak hours, and now operator-editable: a
+#: stored override (see ``app_settings.get_maintenance_schedules``) wins over these, and
+#: an owner may turn any of them off entirely. Absence of a stored value falls back here.
+DEFAULT_MAINTENANCE_CRONS: dict[str, str] = {
+    "refresh_ratings": "30 3 * * *",
+    "refresh_curated_lists": "45 3 * * *",
+    "full_history_sweep": "0 4 * * *",
+}
 
-async def refresh_ratings(cache_engine: AsyncEngine, data_dir: Path) -> None:
-    """Download and load the IMDb ratings dataset. Idempotent; safe to run any time."""
+#: The upkeep jobs, in display order. The scan is scheduled separately (its own key).
+MAINTENANCE_JOB_IDS: tuple[str, ...] = tuple(DEFAULT_MAINTENANCE_CRONS)
+
+#: Every job whose schedule the owner may edit, scan first. Drives the Jobs settings list.
+SCHEDULABLE_JOB_IDS: tuple[str, ...] = (SCAN_JOB_ID, *MAINTENANCE_JOB_IDS)
+
+#: Housekeeping that deliberately does NOT appear in that list. Deleting sessions whose
+#: 30-day window has already closed is not a choice an operator should have to make, and
+#: an off switch on it would only ever let the table grow (PR-13). It is on an interval
+#: rather than a cron for the same reason it has no switch: there is no hour of the day
+#: this belongs at, so it never has to be re-based when the server time zone changes.
+SESSION_SWEEP_JOB_ID = "sweep_expired_sessions"
+SESSION_SWEEP_INTERVAL_S = 12 * 60 * 60
+
+#: Trimming the scan history is housekeeping for the same reason, and stays off the
+#: schedulable list on the same argument: an off switch here could only ever let the
+#: database grow, which is the state that made it grow without limit in the first place
+#: (#315). Nothing reads a scan older than the newest one, so there is no window an
+#: operator would want to widen and nothing they lose by this running. Twelve-hourly on
+#: an interval rather than a cron, again like the session sweep -- there is no hour of the
+#: day this belongs at, so a time-zone change never has to re-base it.
+SNAPSHOT_SWEEP_JOB_ID = "sweep_old_snapshots"
+SNAPSHOT_SWEEP_INTERVAL_S = 12 * 60 * 60
+
+#: The floor on how long after boot the first sweep runs; ``SNAPSHOT_SWEEP_JITTER_S`` adds
+#: up to half an hour on top. An ``IntervalTrigger`` given no start date
+#: first fires a whole interval in, which for the session sweep is fine -- an expired
+#: session authorizes nothing whether or not its row is still there, so the table sitting
+#: there another twelve hours costs nothing. This one is different in exactly the case it
+#: was written for: an install upgrading with months of scans behind it has a database
+#: that is mostly dead weight *now*, and making the operator wait half a day to see any of
+#: it come back is the wrong answer. Minutes, not seconds, so the first sweep and its
+#: possible vacuum stay out of the way of the startup ratings catch-up.
+SNAPSHOT_SWEEP_STARTUP_DELAY_S = 5 * 60
+
+#: Spread on every firing, so the sweep never settles at a fixed time of day. Without it an
+#: ``IntervalTrigger`` fires at the same second forever: twelve hours is an exact multiple of
+#: an hour, and a firing that runs late does not shift the phase, because the next one is
+#: computed from the scheduled time and not the actual one. A scan on a cron whose period
+#: divides twelve hours therefore either misses every firing or collides with all of them.
+#: That was harmless until the compaction was gated on a live scan or reap (#325): now a
+#: collision skips ``retention.compact_if_fragmented`` at *every* firing, so an upgraded
+#: install's freed pages stay on disk for the life of the process and the gate's own promise
+#: that the next firing reattempts is false. APScheduler adds ``uniform(0, jitter)`` to the
+#: previous *jittered* time, so the phase walks forward instead of settling anywhere new.
+#: The session sweep shares the interval and needs none of this: it has no skip branch, so
+#: it runs whatever it collides with, and a fixed phase costs it nothing (rule 72).
+SNAPSHOT_SWEEP_JITTER_S = 30 * 60
+
+
+#: Skip a scheduled ratings refresh when the dataset was synced this recently. IMDb
+#: publishes the ratings dataset once a day, so a re-download inside a day fetches identical
+#: bytes: this is what makes an aggressive schedule (the shared presets go down to hourly)
+#: harmless -- roughly one download a day whatever the cron -- rather than 24 full downloads
+#: for no new data. A day-apart schedule is always older than this, so it always runs.
+RATINGS_MIN_REFRESH_INTERVAL = timedelta(hours=20)
+
+
+async def _record_run(
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    job_id: str,
+    *,
+    ok: bool,
+    result: str,
+) -> None:
+    """Persist an upkeep job's last completion so the Jobs page can show its last-run line.
+
+    A no-op when ``session_factory`` is ``None`` -- the startup catch-up calls the job
+    callables directly, without one, and a catch-up refresh is not an on-schedule/by-hand run.
+    Never lets this bookkeeping break the job it records: a failed write is logged and
+    swallowed, exactly like each job's own error handling.
+    """
+    if session_factory is None:
+        return
     try:
-        rows = await imdb_dataset.refresh(cache_engine, data_dir)
-        log.info("scheduler.ratings_refreshed", rows=rows)
+        async with session_factory() as session:
+            await app_settings.set_job_last_run(
+                session, job_id, at=utcnow().isoformat(), ok=ok, result=result
+            )
+            await session.commit()
+    except Exception as exc:
+        log.warning("scheduler.record_run_failed", job=job_id, error=str(exc))
+
+
+async def refresh_ratings(
+    cache_engine: AsyncEngine,
+    data_dir: Path,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
+    """Download and load the IMDb ratings dataset. Idempotent; safe to run any time.
+
+    Short-circuits when the dataset was refreshed within ``RATINGS_MIN_REFRESH_INTERVAL``, so
+    an aggressive schedule cannot re-pull the same daily-published data on repeat. The startup
+    catch-up gates on the 14-day staleness itself, so a genuinely stale dataset (which is far
+    older than the window) still refreshes there.
+    """
+    try:
+        state = await ImdbRatings(cache_engine).state()
+        if (
+            state.synced_at is not None
+            and utcnow() - state.synced_at < RATINGS_MIN_REFRESH_INTERVAL
+        ):
+            log.info("scheduler.ratings_fresh_skip", synced_at=state.synced_at.isoformat())
+            await _record_run(
+                session_factory, "refresh_ratings", ok=True, result="Already up to date"
+            )
+            return
+        loaded = await imdb_dataset.refresh(cache_engine, data_dir)
+        log.info("scheduler.ratings_refreshed", rows=loaded.rows, skipped=loaded.skipped)
+        # A load that dropped an unusual share of rows still "succeeded", and the rows it
+        # kept are good -- but the ratings it lost are protections that stop keeping
+        # titles, so the operator is told rather than left with a green tick.
+        result = (
+            "Ratings refreshed, but a lot of the file could not be read. Fewer titles "
+            "now have a rating to protect them."
+            if loaded.drifted
+            else "Ratings refreshed"
+        )
+        await _record_run(session_factory, "refresh_ratings", ok=True, result=result)
     except Exception as exc:
         # Leaves the previous dataset in place (load swaps atomically). A stale dataset
         # is caught by the snapshot's own degradation check; a crashed scheduler would
-        # silently stop all upkeep, which is worse.
+        # silently stop all upkeep, which is worse. The state read is inside this try too,
+        # so a broken cache (locked/corrupt cache.db) is recorded as a failed run instead of
+        # escaping unrecorded.
         log.warning("scheduler.ratings_refresh_failed", error=str(exc))
+        await _record_run(
+            session_factory, "refresh_ratings", ok=False, result="Couldn't refresh ratings"
+        )
 
 
-async def refresh_curated_lists(cache_engine: AsyncEngine) -> None:
+async def refresh_curated_lists(
+    cache_engine: AsyncEngine,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
     """Refresh the curated protection lists that need no per-scan client (the Top 250)."""
     try:
         count = await lists.sync(cache_engine, lists.ImdbTop250(), mode=lists.ListMode.HARD)
         log.info("scheduler.lists_refreshed", **{lists.ImdbTop250().slug: count})
+        await _record_run(
+            session_factory, "refresh_curated_lists", ok=True, result="Lists refreshed"
+        )
     except Exception as exc:
         log.warning("scheduler.lists_refresh_failed", error=str(exc))
+        await _record_run(
+            session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
+        )
 
 
 async def full_history_sweep(
@@ -82,33 +235,122 @@ async def full_history_sweep(
 
     Read-only. If no Tautulli is configured, there is nothing to sweep.
     """
-    async with session_factory() as session:
-        row = (
-            (
-                await session.execute(
-                    select(Instance).where(
-                        Instance.kind == InstanceKind.TAUTULLI, Instance.enabled.is_(True)
+    try:
+        async with session_factory() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(Instance).where(
+                            Instance.kind == InstanceKind.TAUTULLI, Instance.enabled.is_(True)
+                        )
                     )
                 )
+                .scalars()
+                .first()
             )
-            .scalars()
-            .first()
+
+        if row is None:
+            await _record_run(
+                session_factory, "full_history_sweep", ok=True, result="No history source"
+            )
+            return
+
+        client = TautulliClient(
+            row.base_url,
+            secret_box.decrypt(row.api_key_enc),
+            safety=RuntimeSafety(destructive_enabled=False),
+            verify=row.verify_tls,
         )
-
-    if row is None:
-        return
-
-    client = TautulliClient(
-        row.base_url,
-        secret_box.decrypt(row.api_key_enc),
-        safety=RuntimeSafety(destructive_enabled=False),
-    )
-    try:
         async with client:
             state = await history_sync.sync(cache_engine, client, full=True)
         log.info("scheduler.history_swept", rows=state.rows)
+        await _record_run(session_factory, "full_history_sweep", ok=True, result="History updated")
     except Exception as exc:
+        # The instance lookup and client construction are inside this try too, so a broken
+        # DB read or a bad decrypt is recorded as a failed run instead of escaping unrecorded.
         log.warning("scheduler.history_sweep_failed", error=str(exc))
+        await _record_run(
+            session_factory, "full_history_sweep", ok=False, result="Couldn't update history"
+        )
+
+
+async def sweep_expired_sessions(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Delete auth sessions whose window has closed. Not operator-schedulable (see the id).
+
+    Swallows its own failures like every other job here: a locked database must not stop
+    the scheduler, and nothing depends on this having run -- an expired session is refused
+    on sight whether or not its row is still there.
+    """
+    try:
+        async with session_factory() as session:
+            removed = await sessions.sweep_expired(session)
+            await session.commit()
+        if removed:
+            log.info("scheduler.sessions_swept", removed=removed)
+    except Exception as exc:
+        log.warning("scheduler.session_sweep_failed", error=str(exc))
+
+
+async def sweep_old_snapshots(
+    session_factory: async_sessionmaker[AsyncSession],
+    data_dir: Path,
+    reap_running: Callable[[], bool],
+) -> None:
+    """Trim the scan history to the retention window. Not operator-schedulable (see the id).
+
+    Swallows its own failures like every other job here: nothing downstream depends on
+    this having run, and a database busy with a scan must not stop the scheduler. The
+    worst case of a skipped firing is that the next one has one more scan to drop.
+
+    Compaction is attempted on every firing, not only one that swept something, and it
+    declines unless the freed share is large enough to be worth an exclusive lock
+    (``retention.compact_if_fragmented``). In the steady state it declines, at the cost of
+    three pragmas; on the first firing after an install upgrades with months of scans
+    behind it, that is the run that hands the disk space back.
+
+    **Gating it on this firing's sweep would make that run the only one.** The upgrade
+    drains the whole backlog at once, so every later firing removes nothing -- and a
+    compaction lost to a full disk, a locked database or a canceled shutdown would never
+    be reattempted until a new scan pushed the count past the window again, which on an
+    install whose auto-scan is off is never.
+
+    **It is gated on a live scan or reap, though, and that is a different argument.** The
+    ``VACUUM`` rewrites the whole file under the write lock, and every app connection waits
+    only 5s for it (``db.session``). Measured on local NVMe with the app's own pragmas, a
+    2.4 GB database vacuums for 8s and the concurrent write fails -- and 2.4 GB is inside the
+    range ``retention.KEEP_SNAPSHOTS`` documents as the steady state, so this needs no unusual
+    storage to bite (#325). A scan loses every source read it made, since it commits once at
+    the end; a reap loses a journal step and wedges (#327). Both outrank housekeeping, so the
+    housekeeping yields. This skips the compaction, never the sweep, whose batches are short
+    writes that take the lock no longer than the app's own.
+
+    **What makes the next firing a real reattempt is the jitter, not the interval.** A bare
+    twelve-hour interval fires at the same second of the same two hours forever, so a scan on
+    a cron whose period divides twelve hours would collide with every firing or none -- and a
+    collision would mean the compaction never ran again, not that it ran twelve hours later.
+    ``SNAPSHOT_SWEEP_JITTER_S`` is what keeps that from being a permanent skip; the reasoning
+    is on the constant.
+    """
+    try:
+        removed = await retention.sweep_old_snapshots(session_factory)
+        if removed:
+            log.info("scheduler.snapshots_swept", removed=removed)
+        # Checked here rather than at the top of the job: the sweep runs first and, on the
+        # upgrade drain this feature exists for, it runs for a while. A check made before it
+        # would be answering about a moment that has passed.
+        busy = "a scan is running" if scan_runner.scan_running() else None
+        if busy is None and reap_running():
+            busy = "a reap is running"
+        if busy is not None:
+            log.info("scheduler.compaction_skipped", reason=busy)
+        elif await retention.compact_if_fragmented(data_dir):
+            log.info("scheduler.database_compacted")
+    except Exception as exc:
+        # The sweep commits per batch, so a failure part-way through keeps whatever it
+        # already dropped and the next firing continues from there.
+        log.warning("scheduler.snapshot_sweep_failed", error=str(exc))
 
 
 async def scheduled_scan(
@@ -131,10 +373,19 @@ async def scheduled_scan(
             box=secret_box,
         )
         log.info("scheduler.scan_complete", snapshot=snapshot.id, items=snapshot.item_count)
+    except scan_runner.ScanInProgressError:
+        # A scan started from the browser is still running; landing a second one on top
+        # would double-read every source and race the grace clock. Skip this firing --
+        # the next scheduled one runs normally.
+        log.info("scheduler.scan_skipped", reason="a scan is already running")
     except scan_runner.ScanConfigError as exc:
         log.info("scheduler.scan_skipped", reason=str(exc))
     except Exception as exc:
+        # A genuine crash (unlike the two quiet skips above) writes no snapshot, so the
+        # Jobs page would otherwise keep showing whatever the last snapshot said forever.
+        # Recorded here so ScanRow can prefer this over a stale snapshot (see get_schedule).
         log.warning("scheduler.scan_failed", error=str(exc))
+        await _record_run(session_factory, SCAN_JOB_ID, ok=False, result="Scan failed")
 
 
 def apply_scan_schedule(
@@ -145,19 +396,22 @@ def apply_scan_schedule(
     session_factory: async_sessionmaker[AsyncSession],
     cache_engine: AsyncEngine,
     secret_box: SecretBox,
+    timezone: tzinfo,
 ) -> None:
     """Reconcile the automatic-scan job to a cron string (or remove it if ``None``).
 
-    ``cron`` is a standard 5-field crontab expression. A malformed one raises
-    ``ValueError`` (surfaced to the caller as a 422) rather than being silently dropped --
-    an owner who thinks they scheduled a nightly scan should not find nothing ran.
+    ``cron`` is a standard 5-field crontab expression, read in ``timezone`` -- the server
+    zone from ``app_settings.get_timezone`` -- so "0 2 * * *" fires at 2 AM there, not in
+    the container's own zone. A malformed cron raises ``ValueError`` (surfaced to the caller
+    as a 422) rather than being silently dropped -- an owner who thinks they scheduled a
+    nightly scan should not find nothing ran.
     """
     if cron is None:
         if scheduler.get_job(SCAN_JOB_ID) is not None:
             scheduler.remove_job(SCAN_JOB_ID)
         return
 
-    trigger = CronTrigger.from_crontab(cron)  # ValueError on a bad expression
+    trigger = CronTrigger.from_crontab(cron, timezone=timezone)  # ValueError on a bad expression
     scheduler.add_job(
         scheduled_scan,
         trigger,
@@ -166,6 +420,110 @@ def apply_scan_schedule(
         replace_existing=True,
     )
     log.info("scheduler.scan_scheduled", cron=cron)
+
+
+def _maintenance_specs(
+    cache_engine: AsyncEngine,
+    data_dir: Path,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    secret_box: SecretBox,
+) -> dict[str, tuple[object, list[object]]]:
+    """The (callable, args) each upkeep job is added with. One place, so wiring a job at
+    build time and re-wiring it on a schedule change can never drift apart."""
+    return {
+        "refresh_ratings": (refresh_ratings, [cache_engine, data_dir, session_factory]),
+        "refresh_curated_lists": (refresh_curated_lists, [cache_engine, session_factory]),
+        "full_history_sweep": (full_history_sweep, [session_factory, cache_engine, secret_box]),
+    }
+
+
+def effective_maintenance_cron(job_id: str, stored: dict[str, str | None]) -> str | None:
+    """The cron a job actually runs on: a stored override (which may be ``None`` for off)
+    wins; an absent job falls back to its built-in default."""
+    if job_id in stored:
+        return stored[job_id]
+    return DEFAULT_MAINTENANCE_CRONS.get(job_id)
+
+
+def apply_maintenance_schedule(
+    scheduler: AsyncIOScheduler,
+    job_id: str,
+    cron: str | None,
+    *,
+    cache_engine: AsyncEngine,
+    data_dir: Path,
+    session_factory: async_sessionmaker[AsyncSession],
+    secret_box: SecretBox,
+    timezone: tzinfo,
+) -> None:
+    """Reconcile one upkeep job to a cron string, or remove it when ``cron`` is ``None``.
+
+    ``cron`` is read in ``timezone`` (the server zone), so every timed job shares one clock
+    with the scan. ``None`` means the owner turned the job off; the job is dropped from the
+    scheduler but can still be run once by hand (see :func:`run_maintenance_now`). A malformed
+    cron raises ``ValueError`` (surfaced as a 422) rather than being silently dropped.
+    """
+    specs = _maintenance_specs(
+        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
+    )
+    if job_id not in specs:
+        raise KeyError(job_id)
+    func, args = specs[job_id]
+    if cron is None:
+        if scheduler.get_job(job_id) is not None:
+            scheduler.remove_job(job_id)
+        log.info("scheduler.maintenance_off", job=job_id)
+        return
+    trigger = CronTrigger.from_crontab(cron, timezone=timezone)  # ValueError on a bad expression
+    scheduler.add_job(func, trigger, args=args, id=job_id, replace_existing=True)
+    log.info("scheduler.maintenance_scheduled", job=job_id, cron=cron)
+
+
+def run_maintenance_now(
+    scheduler: AsyncIOScheduler,
+    job_id: str,
+    *,
+    cache_engine: AsyncEngine,
+    data_dir: Path,
+    session_factory: async_sessionmaker[AsyncSession],
+    secret_box: SecretBox,
+) -> None:
+    """Fire an upkeep job immediately, whether or not it is on a schedule.
+
+    A scheduled job is nudged in place (its cron is untouched, so the next regular run still
+    happens). A job the owner turned off is run as a one-shot that removes itself afterward,
+    so "run now" never quietly turns the schedule back on.
+    """
+    specs = _maintenance_specs(
+        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
+    )
+    if job_id not in specs:
+        raise KeyError(job_id)
+    func, args = specs[job_id]
+    job = scheduler.get_job(job_id)
+    if job is not None:
+        job.modify(next_run_time=utcnow())
+    else:
+        scheduler.add_job(
+            func, "date", run_date=utcnow(), args=args, id=job_id, replace_existing=True
+        )
+
+
+def track_running_jobs(scheduler: AsyncIOScheduler) -> set[str]:
+    """Return a live set of the job ids currently executing.
+
+    APScheduler emits ``SUBMITTED`` when a job hands off to the executor and
+    ``EXECUTED``/``ERROR`` when it finishes; mirroring those into a set gives the Jobs page an
+    honest "running now" signal for each job without inventing a status store. Register this
+    before the scheduler starts so the very first firing is seen.
+    """
+    running: set[str] = set()
+    scheduler.add_listener(lambda e: running.add(e.job_id), EVENT_JOB_SUBMITTED)
+    scheduler.add_listener(
+        lambda e: running.discard(e.job_id), EVENT_JOB_EXECUTED | EVENT_JOB_ERROR
+    )
+    return running
 
 
 async def catch_up_on_startup(cache_engine: AsyncEngine, data_dir: Path) -> None:
@@ -187,36 +545,104 @@ def build_scheduler(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    timezone: tzinfo,
+    reap_running: Callable[[], bool],
 ) -> AsyncIOScheduler:
     """Wire the nightly jobs. The caller starts it and holds it on app state.
 
-    Times are staggered and in UTC. IMDb publishes the dataset once a day; there is no
-    value in hammering it, and 03:30 keeps the heavy download off peak viewing hours. The
-    history sweep runs a little later still, since it is a full re-walk of Tautulli.
+    Times are staggered and run in ``timezone`` -- the server zone from
+    ``app_settings.get_timezone`` -- so 03:30 means 03:30 there, the same clock the scan
+    uses. IMDb publishes the dataset once a day; there is no value in hammering it, and 03:30
+    keeps the heavy download off peak viewing hours. The history sweep runs a little later
+    still, since it is a full re-walk of Tautulli.
     """
     scheduler = AsyncIOScheduler(
-        job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600}
+        timezone=timezone,
+        job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
     )
 
+    specs = _maintenance_specs(
+        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
+    )
+    for job_id, cron in DEFAULT_MAINTENANCE_CRONS.items():
+        func, args = specs[job_id]
+        scheduler.add_job(
+            func,
+            CronTrigger.from_crontab(cron, timezone=timezone),
+            args=args,
+            id=job_id,
+            replace_existing=True,
+        )
     scheduler.add_job(
-        refresh_ratings,
-        CronTrigger(hour=3, minute=30),
-        args=[cache_engine, data_dir],
-        id="refresh_ratings",
+        sweep_expired_sessions,
+        IntervalTrigger(seconds=SESSION_SWEEP_INTERVAL_S),
+        args=[session_factory],
+        id=SESSION_SWEEP_JOB_ID,
         replace_existing=True,
     )
     scheduler.add_job(
-        refresh_curated_lists,
-        CronTrigger(hour=3, minute=45),
-        args=[cache_engine],
-        id="refresh_curated_lists",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        full_history_sweep,
-        CronTrigger(hour=4, minute=0),
-        args=[session_factory, cache_engine, secret_box],
-        id="full_history_sweep",
+        sweep_old_snapshots,
+        IntervalTrigger(
+            seconds=SNAPSHOT_SWEEP_INTERVAL_S,
+            start_date=utcnow() + timedelta(seconds=SNAPSHOT_SWEEP_STARTUP_DELAY_S),
+            jitter=SNAPSHOT_SWEEP_JITTER_S,
+        ),
+        args=[session_factory, data_dir, reap_running],
+        id=SNAPSHOT_SWEEP_JOB_ID,
         replace_existing=True,
     )
     return scheduler
+
+
+def reschedule_timezone(
+    scheduler: AsyncIOScheduler,
+    timezone: tzinfo,
+    *,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    cache_engine: AsyncEngine,
+    secret_box: SecretBox,
+    data_dir: Path,
+    scan_cron: str | None,
+    maintenance: dict[str, str | None],
+) -> None:
+    """Re-apply every timed job under a new server time zone, in place.
+
+    Each cron trigger carries its own zone, so moving the clock means rebuilding every
+    trigger -- the scan and all upkeep jobs -- with the new one. The stored crons decide what
+    to rebuild: a job the owner turned off stays off, an overridden one keeps its override,
+    and an untouched one falls back to its default. Called when the time zone changes in the
+    UI so every "next run" recomputes immediately; startup wires the same jobs directly.
+
+    Each ``apply_*`` is wrapped in the same ``ValueError`` guard startup uses (rule 87): a
+    stored-but-malformed cron (hand-edited, or a future parser tightening) is logged and
+    skipped, so one bad cron can never 500 the timezone save or half-apply the zone -- moving
+    some jobs and leaving the rest -- which is exactly what boot already survives.
+    """
+    try:
+        apply_scan_schedule(
+            scheduler,
+            scan_cron,
+            settings=settings,
+            session_factory=session_factory,
+            cache_engine=cache_engine,
+            secret_box=secret_box,
+            timezone=timezone,
+        )
+    except ValueError:
+        log.warning("scheduler.bad_scan_cron", cron=scan_cron)
+    for job_id in MAINTENANCE_JOB_IDS:
+        cron = effective_maintenance_cron(job_id, maintenance)
+        try:
+            apply_maintenance_schedule(
+                scheduler,
+                job_id,
+                cron,
+                cache_engine=cache_engine,
+                data_dir=data_dir,
+                session_factory=session_factory,
+                secret_box=secret_box,
+                timezone=timezone,
+            )
+        except (ValueError, KeyError):
+            log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)

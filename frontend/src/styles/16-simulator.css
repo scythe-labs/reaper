@@ -1,0 +1,219 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The live simulator. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* ---- simulator ----------------------------------------------------------- */
+
+.editor-sim {
+  position: sticky;
+  top: 1rem;
+}
+
+.sim {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-3xl);
+}
+
+/* The refusal. It must not look like a result. */
+/* "Needs a scan" is INFORMATION, not a warning: neutral surface, solid border, no alarm
+   color. You didn't do anything wrong; the numbers just need refreshing. */
+.sim-info {
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+}
+.sim-info h3 {
+  margin-top: 0;
+}
+.sim-info p {
+  font-size: var(--text-md);
+}
+.sim-info .primary.sm {
+  margin-top: var(--space-lg);
+}
+
+/* Severity-typed inline notices, so an error never wears a warning's clothes and vice
+   versa. Error (red): can't be saved. Warning (amber): legal, but probably not meant. */
+.notice {
+  font-size: var(--text-md);
+  padding: var(--space-md) var(--space-xl);
+  border-radius: var(--radius-sm);
+  margin: var(--space-md) 0;
+  border: 1px solid;
+  line-height: 1.45;
+}
+.notice-error {
+  background: var(--condemn-soft);
+  border-color: var(--condemn);
+  color: var(--text);
+}
+.notice-warn {
+  background: var(--unknown-soft);
+  border-color: var(--unknown);
+  color: var(--text);
+}
+/* A notice living inside the rule it describes, right under the control that fixes it. */
+.notice-inline {
+  margin: 0.55rem 0 0;
+}
+
+/* The acknowledgement inside the Plex-trash warning (PlexTrashNotice). It sits INSIDE the
+   notice on purpose: the consent is bound to the warning that motivates it, the way help
+   text binds to the one control it explains. Its rule is drawn from the notice's own
+   border color, so it reads as part of the warning rather than a separate control. */
+.trash-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin-top: 0.55rem;
+  padding-top: var(--space-md);
+  border-top: 1px solid color-mix(in srgb, var(--unknown) 35%, transparent);
+  cursor: pointer;
+}
+.trash-ack input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 1rem;
+  height: 1rem;
+  margin: 0.12rem 0 0;
+  flex: none;
+  cursor: pointer;
+}
+.trash-ack input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.trash-ack span {
+  font-weight: var(--weight-semi);
+}
+
+.rule-strength strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.sim-headline {
+  display: flex;
+  gap: var(--space-6xl);
+  margin-bottom: var(--space-3xl);
+}
+.sim-number {
+  display: block;
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-semi);
+  font-variant-numeric: tabular-nums;
+}
+.sim-unit {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.histogram {
+  position: relative; /* the threshold marker is positioned against it */
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 90px;
+  margin: 1.1rem 0 0.4rem;
+}
+/* The threshold, drawn where it actually falls on the 0-100 axis, with its number above.
+   This is what turns the histogram from a picture into a decision aid. */
+.hist-thresh {
+  position: absolute;
+  top: -4px;
+  bottom: 14px; /* stop above the bucket labels */
+  width: 2px;
+  background: var(--text);
+  opacity: 0.55;
+  border-radius: 1px;
+  pointer-events: none;
+}
+.hist-thresh b {
+  position: absolute;
+  top: -0.85rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  color: var(--muted);
+}
+.hist-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  height: 100%;
+}
+.hist-bar {
+  width: 100%;
+  background: var(--border-strong);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+}
+.hist-condemn {
+  background: var(--condemn);
+}
+.hist-label {
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.sim-compare {
+  margin: var(--space-sm) 0 0;
+  font-size: var(--text-md);
+}
+/* "New on the list": the titles a draft would newly flag, score on the right in the
+   condemn color -- the same verdict language as everywhere else. */
+.sim-examples {
+  list-style: none;
+  margin: 0.4rem 0 0.9rem;
+  padding: 0;
+  font-size: var(--text-md);
+}
+.sim-examples li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  padding: 0.22rem 0;
+  border-bottom: 1px solid var(--border);
+  /* The title is a media title from the server (rule 139); the score beside it is app text
+     short enough that inheriting this changes nothing about it. */
+  overflow-wrap: anywhere;
+}
+.sim-examples li:last-child {
+  border-bottom: none;
+}
+.sim-example-score {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semi);
+  color: var(--condemn);
+}
+
+.sim-delta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md) var(--space-3xl);
+  margin: 0 0 0.75rem;
+}
+.sim-delta div {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2rem;
+}
+.sim-delta dt {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.sim-delta dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semi);
+  font-size: var(--text-md);
+}
+.sim-delta dd.danger {
+  color: var(--condemn);
+}

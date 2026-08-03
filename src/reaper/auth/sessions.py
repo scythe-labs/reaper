@@ -13,19 +13,29 @@ out no live sessions.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from reaper.auth.cookie import read_session_tokens
 from reaper.auth.tokens import SESSION_TTL, generate_token, hash_token
 from reaper.clock import expiry, utcnow
 from reaper.db.models import AppUser, AuthSession
 
-# The cookie is refreshed on the client every request, but rewriting the DB row's
-# ``last_seen`` on *every* authenticated request is a needless write per page load.
-# Bump it at most this often -- fresh enough to answer "when was this device last
-# used?", cheap enough not to be a write amplifier under WAL.
+# A session is a FIXED 30-day window from login, not a sliding one: the cookie is set at
+# login (and at a Plex poll or a recovery redemption, which are logins too) and never
+# re-set afterwards, so using the app does not extend it. Deliberate -- a stolen cookie
+# that is being used should still expire on schedule -- and stated here because the
+# comment that used to sit in this spot described a per-request refresh that no code does
+# (I-3), which would have made the throttle below look like a write-amplification guard
+# rather than what it is.
+#
+# What IS written per request is the row's ``last_seen``, and rewriting that on every
+# authenticated request would be a needless write per page load. Bump it at most this
+# often: fresh enough to answer "when was this device last used?", cheap enough not to be
+# a write amplifier under WAL.
 _LAST_SEEN_THROTTLE = timedelta(minutes=5)
 
 
@@ -93,11 +103,47 @@ async def resolve_session(session: AsyncSession, token: str | None) -> AppUser |
     return user
 
 
+async def resolve_session_from_cookies(
+    session: AsyncSession, cookies: Mapping[str, str]
+) -> tuple[AppUser | None, str | None]:
+    """The active user behind a request's cookies, plus the token that carried them.
+
+    Two cookie names are in play (:mod:`reaper.auth.cookie`), and a jar can hold both.
+    Try each in turn and keep the first that really resolves, rather than the first that
+    merely exists: a stale cookie under one name must not shadow a live session under the
+    other. That shadowing locked operators out of sign-in, spared the wrong session on a
+    password change, and let logout revoke a dead row while the live one stayed open.
+
+    Returning the winning token matters as much as returning the user. Callers that
+    revoke or preserve "this session" must act on the token that is actually authorizing
+    the request, not on whichever name happened to sort first.
+
+    The caller commits, exactly as with :func:`resolve_session`.
+    """
+    for token in read_session_tokens(cookies):
+        user = await resolve_session(session, token)
+        if user is not None:
+            return user, token
+    return None, None
+
+
 async def close_session(session: AsyncSession, token: str | None) -> None:
     """Revoke a single session (logout). Idempotent. The caller commits."""
     if not token:
         return
     await session.execute(delete(AuthSession).where(AuthSession.token_hash == hash_token(token)))
+
+
+async def sweep_expired(session: AsyncSession) -> int:
+    """Delete every session whose window has closed. Returns how many went. Caller commits.
+
+    :func:`resolve_session` already drops an expired row the moment its cookie is presented
+    again, but a device that is never opened again presents nothing -- so its row sat there
+    forever, and the table only grew on an install that had been used for a while (PR-13).
+    An expired row authorizes nothing either way; this is housekeeping, not a control.
+    """
+    result = await session.execute(delete(AuthSession).where(AuthSession.expires_at <= utcnow()))
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def close_all_for_user(

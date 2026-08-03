@@ -47,8 +47,8 @@ READ_COMMANDS: Final[frozenset[str]] = frozenset(
         "get_children_metadata",
         "get_item_watch_time_stats",
         "get_item_user_stats",
-        "get_users",  # includes keep_history, which we must know about
         "get_user",
+        "get_users",  # includes keep_history, which the scan must know about
         "get_server_info",
         "get_server_identity",
         "pms_image_proxy",  # fetch Plex artwork through Tautulli (read-only)
@@ -115,10 +115,11 @@ class TautulliClient(BaseClient):
     async def users(self) -> list[dict[str, Any]]:
         """Users, including ``keep_history``.
 
-        A user with history recording disabled is *invisible* in the history table
-        and looks exactly like someone who never watches anything. Any rule that
-        reasons about "nobody watched this" must therefore abstain -- and protect --
-        when such a user is active, or it will condemn media that is being watched.
+        A user with history recording disabled is *invisible* in the history table and
+        looks exactly like someone who never watches anything -- so everything only they
+        watch reads never-played. The scan consults this
+        (``scan_runner._keep_history_degradations``) and degrades the snapshot while any
+        active user has it off, because "nobody watched it" cannot be trusted then.
         """
         data = await self.call("get_users")
         return list(data) if isinstance(data, list) else []
@@ -145,9 +146,8 @@ class TautulliClient(BaseClient):
         database on every call, so ``refresh=true`` is *not* needed for fresh watch
         data (it only re-pulls the item list and file sizes from Plex).
 
-        Note the invariant: ``section_type`` must never be sent without a
-        ``rating_key`` -- doing so corrupts the user's own Tautulli Media Info page.
-        This client never sends it.
+        ``section_type`` must never be sent without a ``rating_key`` -- doing so
+        corrupts the user's own Tautulli Media Info page. This client never sends it.
         """
         data = await self.call(
             "get_library_media_info",
@@ -175,7 +175,7 @@ class TautulliClient(BaseClient):
     ) -> dict[str, Any]:
         """Watch history.
 
-        Note the key names: it is ``order_column``, not ``order_by``. And for TV,
+        The key name is ``order_column``, not ``order_by``. And for TV,
         query by ``grandparent_rating_key`` -- Seerr stores the *show* rating key,
         but history rows are per-episode, so filtering on ``rating_key`` would find
         nothing and report a watched show as never played.
@@ -198,8 +198,9 @@ class TautulliClient(BaseClient):
 
         Season pruning needs the Plex rating key of each *season*, and there is no sweep
         endpoint that lists seasons -- ``get_library_media_info`` returns show-level rows
-        only. So we resolve a show's seasons one show at a time, and only for shows that
-        actually have a prunable season, to keep the call count bounded.
+        only. So we resolve seasons with one call per show -- several shows in flight at
+        once under a small bound, and only for shows that actually have a prunable
+        season, to keep the call count bounded.
 
         Each child carries ``rating_key`` and ``media_index`` (the season number). The
         envelope nests them under ``children_list``; an item with no children returns an
@@ -222,7 +223,10 @@ class TautulliClient(BaseClient):
         params = {"apikey": self._api_key, "cmd": "pms_image_proxy", **query}
         try:
             response = await self._send("GET", "/api/v2", params=params)
-        except IntegrationError:
+        except IntegrationError as exc:
+            # Logged: a placeholder in the queue is otherwise indistinguishable from an
+            # item that simply has no art.
+            log.warning("artwork.fetch_failed", error=str(exc))
             return None
         content = response.content
         ctype = response.headers.get("content-type", "image/jpeg")
@@ -231,6 +235,7 @@ class TautulliClient(BaseClient):
         # (script-bearing) through to be relayed same-origin.
         media_type = ctype.split(";", 1)[0].strip().lower()
         if not content or media_type not in ALLOWED_IMAGE_TYPES:
+            log.warning("artwork.not_an_image", media_type=media_type, bytes=len(content))
             return None
         return content, media_type
 

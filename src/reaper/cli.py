@@ -37,9 +37,9 @@ from reaper.config import RuntimeSafety, get_settings
 from reaper.crypto import SecretBox
 from reaper.db.models import AppUser
 from reaper.db.session import create_engine, create_session_factory
-from reaper.secrets import resolve_old_keys, resolve_secret_key
+from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import plex_link
-from reaper.services.plex_link import PlexLinkError
+from reaper.services.plex_link import PlexLinkError, PlexServerChoiceNeededError
 
 
 def _out(message: str = "") -> None:
@@ -87,7 +87,7 @@ async def _cmd_list() -> int:
             if locals_ == 0:
                 _out(
                     "WARNING: none. If Plex OAuth fails you will be locked out.\n"
-                    "         Run: reaper-admin create-admin --username <name>"
+                    "         Run: reaper-admin create-admin --username admin"
                 )
         return 0
     finally:
@@ -145,17 +145,24 @@ async def _cmd_deactivate(username: str) -> int:
         await engine.dispose()
 
 
-async def _cmd_link_plex() -> int:
+async def _cmd_link_plex(server: str | None) -> int:
     """Link the Plex server by signing in on plex.tv.
 
     Headless-friendly: it prints a URL, you open it anywhere, and the *backend* polls
     for the token. Nothing is ever pasted, and the browser never handles a credential.
+
+    ``server`` picks one server by exact name or machine identifier when the account
+    owns several; without it, a multi-server account gets the list and instructions.
     """
     settings = get_settings()
     engine = create_engine(settings)
     factory = create_session_factory(engine)
     try:
-        box = SecretBox(resolve_secret_key(settings), *resolve_old_keys(settings))
+        box = SecretBox(
+            resolve_secret_key(settings),
+            *resolve_old_keys(settings),
+            salt=resolve_kdf_salt(settings),
+        )
         safety = RuntimeSafety(destructive_enabled=settings.destructive_actions_enabled)
 
         def prompt(url: str) -> None:
@@ -167,7 +174,19 @@ async def _cmd_link_plex() -> int:
             _out("  Waiting...")
 
         try:
-            linked = await plex_link.link(factory, box, safety=safety, on_prompt=prompt)
+            linked = await plex_link.link(
+                factory, box, safety=safety, on_prompt=prompt, choice=server
+            )
+        except PlexServerChoiceNeededError as exc:
+            _out()
+            _out("  This account owns more than one Plex server:")
+            _out()
+            for candidate in exc.candidates:
+                _out(f"    {candidate.name}  ({candidate.machine_identifier})")
+            _out()
+            _out("  Run this again with --server and one of those names or identifiers,")
+            _out("  so Reaper is pointed at exactly the library you mean.")
+            return 1
         except PlexLinkError as exc:
             _out(f"error: {exc}")
             return 1
@@ -221,9 +240,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     deact.add_argument("--username", required=True)
 
-    sub.add_parser(
+    link = sub.add_parser(
         "link-plex",
         help="Link the Plex server by signing in on plex.tv. Prints a URL; nothing is pasted.",
+    )
+    link.add_argument(
+        "--server",
+        help=(
+            "If the account owns several servers: the exact name or machine identifier "
+            "of the one Reaper should manage. Omit it to be shown the list."
+        ),
     )
 
     return parser
@@ -242,7 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         case "deactivate":
             return asyncio.run(_cmd_deactivate(args.username))
         case "link-plex":
-            return asyncio.run(_cmd_link_plex())
+            return asyncio.run(_cmd_link_plex(args.server))
         case _:  # pragma: no cover -- argparse enforces this
             return 2
 

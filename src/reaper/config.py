@@ -21,9 +21,11 @@ the database is the source of truth thereafter.
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import secrets
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -55,6 +57,40 @@ class InstanceSeed(BaseModel):
         return v.strip().rstrip("/")
 
 
+class DataDirError(RuntimeError):
+    """The data directory is missing or not writable, so Reaper cannot start.
+
+    SQLite reports this as ``unable to open database file`` -- an error that names
+    neither the path nor the cause. The usual trigger is a bind-mounted data folder
+    owned by a different user than the one Reaper runs as (uid mismatch). This carries
+    a plain, actionable message so the operator sees the fix, not a driver traceback.
+    """
+
+    def __init__(self, data_dir: Path, cause: OSError) -> None:
+        self.data_dir = data_dir
+        self.cause = cause
+        super().__init__(_data_dir_error_message(data_dir, cause))
+
+
+def _data_dir_error_message(data_dir: Path, cause: OSError) -> str:
+    lead = f"Reaper can't write to its data folder ({data_dir})."
+    # EACCES/EPERM is the ownership case -- give the chown fix. Anything else (a full
+    # disk, a read-only mount) gets the plain lead plus the original error, since the
+    # ownership advice would be wrong there.
+    if cause.errno in (errno.EACCES, errno.EPERM):
+        uid = os.getuid()
+        gid = os.getgid()
+        return (
+            f"{lead}\n"
+            "It keeps its database there, so it can't start. The folder is owned by a\n"
+            f"different user than the one Reaper runs as (uid {uid}). If you bind-mounted\n"
+            "a host folder, give it to that user and restart:\n\n"
+            f"  chown -R {uid}:{gid} <the host folder you mapped to {data_dir}>\n\n"
+            f"Original error: {cause}"
+        )
+    return f"{lead} It keeps its database there, so it can't start.\n\nOriginal error: {cause}"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(".env", ".env.local"),
@@ -68,8 +104,40 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_json: bool = False
 
+    # First-boot seed for the server time zone the scheduler's timed jobs run on -- the
+    # nightly scan and the upkeep jobs. An IANA name like "America/New_York"; empty means
+    # detect from the host (the standard TZ / /etc/localtime). A cron such as "0 2 * * *"
+    # then fires at 2 AM in THIS zone. Without it APScheduler falls back to the container's
+    # own zone (UTC in most images), so a nightly scan set for 2 AM would silently run at
+    # 2 AM UTC. Only the first-run default; after that the stored value (Settings ->
+    # General) wins, like every other env-seeded setting. See app_settings.get_timezone.
+    timezone: str = ""
+
     host: str = "0.0.0.0"  # noqa: S104 -- a container must bind all interfaces
     port: int = 8420
+
+    # The shipped container is a single service: this process serves the API *and* the
+    # built SPA from frontend/dist on one port. Development is the exception -- Vite
+    # serves the UI live on its own port and proxies /api here, so mounting dist as well
+    # would put a second UI on this port, frozen at whatever the last `npm run build`
+    # produced. It looks identical right up until you edit a component, and then it
+    # silently lags. Turning this off (see .claude/launch.json) leaves exactly one UI in
+    # development. Production must leave it on.
+    serve_spa: bool = True
+
+    # --- Reverse proxy --------------------------------------------------------
+    # First-boot seed for reverse-proxy trust: whether forwarded headers
+    # (X-Forwarded-For) are believed at all, and from which proxy addresses. Both are
+    # OFF/empty by default, so an unconfigured install ignores forwarded headers
+    # entirely -- a header from an untrusted peer is attacker-controlled and would let a
+    # stranger spoof the address the login lockout keys on. These only seed the FIRST-RUN
+    # default; after that the stored value (Settings -> General) wins, exactly like the
+    # deletion switch, so a declarative deployment can ship trust configured while the UI
+    # stays the live control. REAPER_TRUSTED_PROXIES is comma- or space-separated (single
+    # addresses or CIDR ranges); an entry that does not parse is dropped downstream,
+    # trusting nobody extra. See ``app_settings.proxy_trust_enabled`` / ``get_trusted_proxies``.
+    proxy_trust_enabled: bool = False
+    trusted_proxies: str = ""
 
     # --- Secrets --------------------------------------------------------------
     # REAPER_SECRET_KEY decrypts every stored credential, so changing it to a *fresh*
@@ -82,7 +150,7 @@ class Settings(BaseSettings):
 
     # --- Notifications --------------------------------------------------------
     # The Discord webhook is the *real* notification channel -- the "Leaving Soon"
-    # Plex collection only reaches users who have pinned the library, which we cannot
+    # Plex label only reaches users who have pinned the library, which we cannot
     # force. The whole URL is a credential (its token lives in the path), so it is a
     # SecretStr and is redacted from logs.
     #
@@ -101,12 +169,15 @@ class Settings(BaseSettings):
     # setting it true, and everyone else starts read-only until they turn it on.
     destructive_actions_enabled: bool = False
 
-    # Writing the "Leaving Soon" Plex label is a mutation, but a benign one: it is
-    # reversible and touches no files. Its whole purpose is to WARN users during the
-    # grace countdown -- which is precisely when Reaper is unarmed. Gated like a
-    # delete by default (so it writes only when deletion is enabled); set this true
-    # on the host to allow the label to be written while still read-only. Like the
-    # kill switch, it lives at the host boundary: a browser can never enable it.
+    # Writing the "Leaving Soon" shelf (a Plex collection plus label) is a mutation,
+    # but a benign one: reversible, and it touches no files. Its whole purpose is to
+    # WARN users during the grace countdown -- which is precisely when Reaper is
+    # unarmed. Gated like a delete by default (so it writes only when deletion is
+    # enabled). This is the FIRST-RUN default only: after first boot the stored value
+    # (Settings -> Plex -> "Update while read-only") is the source of truth, exactly
+    # like the deletion switch above. Exposing it in the UI is safe because the guard
+    # confines it structurally to label and collection edits; it can never widen what
+    # may be deleted.
     allow_unarmed_leaving_soon: bool = False
 
     # --- Anti-lockout ---------------------------------------------------------
@@ -122,8 +193,22 @@ class Settings(BaseSettings):
         return v.expanduser().resolve()
 
     def ensure_data_dir(self) -> Path:
-        """Both the app and Alembic need this before opening the database."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        """Both the app and Alembic need this before opening the database.
+
+        ``mkdir(exist_ok=True)`` succeeds on an already-present mount even when it is
+        not writable, so the failure would otherwise surface much later as SQLite's
+        opaque ``unable to open database file``. Probe write access here -- with a
+        temp file that leaves nothing behind -- and fail with a plain, actionable
+        message (see ``DataDirError``) instead.
+        """
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            # TemporaryFile is unlinked immediately on POSIX, so a crash cannot strand
+            # a probe file, and its unique name cannot collide with a real one.
+            with tempfile.TemporaryFile(dir=self.data_dir):
+                pass
+        except OSError as exc:
+            raise DataDirError(self.data_dir, exc) from exc
         return self.data_dir
 
     @property
@@ -221,6 +306,17 @@ def parse_instance_seeds(env: dict[str, str]) -> list[InstanceSeed]:
     return seeds
 
 
+def parse_trusted_proxies(raw: str) -> list[str]:
+    """Split the ``REAPER_TRUSTED_PROXIES`` seed into individual entries.
+
+    Comma- or whitespace-separated, mirroring how ``REAPER_SECRET_KEY_OLD`` lists a
+    chain. Blank entries are dropped. The entries are NOT validated here -- that is the
+    ``auth.proxy.parse_proxy_networks``, which drops anything malformed (fail closed:
+    an unparseable entry trusts nobody extra).
+    """
+    return [part.strip() for part in re.split(r"[,\s]+", raw) if part.strip()]
+
+
 def generate_secret_key() -> str:
     """A URL-safe 32-byte key, the shape Fernet expects."""
     return secrets.token_urlsafe(32)
@@ -248,12 +344,14 @@ class RuntimeSafety(BaseModel):
         description="May Reaper delete right now? Turned on in the UI, password-gated.",
     )
 
-    # Permit the benign "Leaving Soon" label write while deletion is off. It never widens
-    # what can be *deleted* -- file deletions still require destructive_enabled AND a
-    # journalled declaration. This only lets the reversible, file-touching-nothing label be
-    # written, so the grace-period warning can appear before deletion is turned on.
+    # Permit the benign "Leaving Soon" shelf write (collection + label) while deletion is
+    # off. It never widens what can be *deleted* -- file deletions still require
+    # destructive_enabled AND a journalled declaration. Assembled from the stored setting
+    # (Settings -> Plex), which the environment variable only seeds on first run; see
+    # app_settings.leaving_soon_unarmed.
     allow_leaving_soon_unarmed: bool = Field(
-        default=False, description="REAPER_ALLOW_UNARMED_LEAVING_SOON"
+        default=False,
+        description="Settings -> Plex -> Update while read-only (env-seeded)",
     )
 
     @property
@@ -262,10 +360,10 @@ class RuntimeSafety(BaseModel):
 
     @property
     def leaving_soon_write_allowed(self) -> bool:
-        """May the benign Leaving Soon label be written now?
+        """May the benign Leaving Soon shelf (collection + label) be written now?
 
         When deletion is on, yes (it is at least as safe as a delete). When not, only if
-        the operator opted in on the host.
+        the operator turned on "Update while read-only" in Settings -> Plex.
         """
         return self.destructive_allowed or self.allow_leaving_soon_unarmed
 
@@ -273,6 +371,6 @@ class RuntimeSafety(BaseModel):
         if not self.destructive_enabled:
             return (
                 "Deletion is turned off, so Reaper can look but can't remove anything. "
-                "Turn it on in Settings -> Safety when you're ready."
+                "Turn it on in Policy -> Deletion when you're ready."
             )
         return None

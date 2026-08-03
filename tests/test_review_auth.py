@@ -115,25 +115,29 @@ class TestThrottle:
 
 
 class TestConcurrencyGate:
+    """``acquire`` returns how many slots it took (0 when refused) rather than a bool, so a
+    caller running several hashes can charge the gate for all of them (S-4). Truthiness is
+    unchanged, which is what keeps the single-hash call sites reading the same."""
+
     def test_it_admits_up_to_the_limit_then_refuses(self) -> None:
         gate = ConcurrencyGate(2)
-        assert gate.acquire() is True
-        assert gate.acquire() is True
-        assert gate.acquire() is False  # full
+        assert gate.acquire() == 1
+        assert gate.acquire() == 1
+        assert gate.acquire() == 0  # full
 
     def test_releasing_frees_a_slot(self) -> None:
         gate = ConcurrencyGate(1)
-        assert gate.acquire() is True
-        assert gate.acquire() is False
+        assert gate.acquire() == 1
+        assert not gate.acquire()
         gate.release()
-        assert gate.acquire() is True
+        assert gate.acquire() == 1
 
     def test_release_cannot_underflow_into_over_admission(self) -> None:
         gate = ConcurrencyGate(1)
         gate.release()  # mispaired release before any acquire
         gate.release()
-        assert gate.acquire() is True
-        assert gate.acquire() is False  # still a hard cap of one
+        assert gate.acquire() == 1
+        assert not gate.acquire()  # still a hard cap of one
 
     def test_a_zero_limit_is_clamped_to_one(self) -> None:
         gate = ConcurrencyGate(0)
@@ -203,8 +207,8 @@ class TestLocalLoginThrottle:
     def test_once_locked_even_the_right_password_is_refused(
         self, client: TestClient, settings: Settings
     ) -> None:
-        """The whole point of the lock: past the threshold, the endpoint stops
-        answering credential questions for a while -- correct or not."""
+        """Past the threshold, the endpoint stops answering credential questions
+        for a while -- correct or not."""
         seed_admin(settings)
         for _ in range(6):
             client.post(

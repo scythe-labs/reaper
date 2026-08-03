@@ -29,7 +29,12 @@ from reaper.db.base import Base
 from reaper.db.models import AuthSession
 from reaper.db.session import create_engine, create_session_factory
 from reaper.logging import REDACTED, redact_secrets
-from reaper.secrets import key_file_path, resolve_old_keys, resolve_secret_key
+from reaper.secrets import (
+    SecretMaterialError,
+    key_file_path,
+    resolve_old_keys,
+    resolve_secret_key,
+)
 
 # ---------------------------------------------------------------------------
 # Credential encryption: stretching + backward compatibility + rotation
@@ -92,16 +97,21 @@ class TestKeyFilePermissions:
         mode = stat.S_IMODE(key_file_path(_settings(tmp_path)).stat().st_mode)
         assert mode == 0o600, oct(mode)
 
-    def test_regenerating_over_a_blank_file_stays_owner_only(self, tmp_path: Path) -> None:
+    def test_a_blank_file_is_refused_rather_than_replaced(self, tmp_path: Path) -> None:
+        """This used to mint a replacement key and carry on, which reads as recovery and is
+        the opposite: the file decrypts every stored service credential, so a new one makes
+        all of them unreadable in silence (S-5). Permissions are moot when nothing is
+        written; what matters is that the file is left for the operator to fix.
+        """
         s = _settings(tmp_path)
         s.ensure_data_dir()
         path = key_file_path(s)
-        path.write_text("   \n")  # a blank file the resolver must replace
-        path.chmod(0o644)  # and it was loose
+        path.write_text("   \n")  # a blank file, most likely a crashed write
+        path.chmod(0o644)
 
-        key = resolve_secret_key(s)
-        assert key.strip()
-        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        with pytest.raises(SecretMaterialError, match="empty"):
+            resolve_secret_key(s)
+        assert path.read_text() == "   \n"
 
 
 # ---------------------------------------------------------------------------

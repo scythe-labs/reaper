@@ -4,21 +4,20 @@
 ``EpochDateTime`` stores every timestamp as an **INTEGER unix epoch (UTC seconds)**
 and presents it to Python as a timezone-aware ``datetime``.
 
-Storing epoch rather than a DATETIME column is not a micro-optimisation; it
-removes a bug class rather than guarding against it. SQLite has no native date
+Storing epoch rather than a DATETIME column removes a bug class rather than
+guarding against it. SQLite has no native date
 type and stores no timezone, so ``DateTime(timezone=True)`` is silently a no-op
 there: an aware datetime goes in and a *naive* one comes back. Comparing that
 against ``datetime.now(UTC)`` raises TypeError at best, and at worst -- if both
 sides happen to be naive -- compares a UTC instant against a local one and is
 quietly wrong by the size of the UTC offset.
 
-For Reaper that is not cosmetic. Every deletion decision rests on "when was this
+Every deletion decision rests on "when was this
 last watched", so a timezone slip silently condemns media that was watched
 recently, or spares media that was not.
 
 An integer cannot carry that ambiguity. There is no tzinfo to lose, no dialect
-that can drop it, and no guard that has to stay correct. The instant is the
-value.
+that can drop it, and no guard that has to stay correct.
 
 It also matches our inputs: Tautulli's ``date`` / ``started`` / ``stopped`` /
 ``last_played`` / ``added_at`` and Plex's ``addedAt`` / ``lastViewedAt`` are all
@@ -27,7 +26,7 @@ unix ints already, so this is the format the data arrives in.
 Trade-off, stated plainly: raw SQL is less readable. Use SQLite's own conversion
 when poking at the database by hand::
 
-    SELECT datetime(last_played, 'unixepoch') FROM media_item;
+    SELECT datetime(first_flagged_at, 'unixepoch') FROM first_flagged;
 
 Precision is whole seconds. Nothing in Reaper is sub-second -- watch history is
 recorded in seconds -- and rows that need a stable tiebreak order by their

@@ -10,18 +10,23 @@
 .env.*
 !.env.example
 data/
-*.db
-*.db-wal
-*.db-shm
-*.key
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.key
 
-# Build artefacts. The image builds the frontend itself; copying a local node_modules
+# Build artifacts. The image builds the frontend itself; copying a local node_modules
 # in would both bloat the context and risk shipping host-native binaries.
 frontend/node_modules/
 frontend/dist/
+# The other packaged installs (binaries, snap); nothing in the image reads them.
+packaging/
+snap/
+build/
+buildinfo.json
 .venv/
-__pycache__/
-*.pyc
+**/__pycache__/
+**/*.pyc
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -31,7 +36,7 @@ htmlcov/
 # Repository furniture the runtime has no use for.
 .git/
 .github/
-.gitea/
+.github/
 docs/
 tests/
 *.md

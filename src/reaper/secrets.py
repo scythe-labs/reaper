@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 import os
+import secrets as pysecrets
 import stat
 from collections import Counter
 from pathlib import Path
@@ -40,7 +41,9 @@ from reaper.config import Settings, generate_secret_key
 log = structlog.get_logger(__name__)
 
 KEY_FILENAME = "secret.key"
+SALT_FILENAME = "secret.salt"
 _OWNER_READ_WRITE = 0o600
+_SALT_BYTES = 16
 
 # A floor below which an operator-supplied REAPER_SECRET_KEY is almost certainly a
 # memorable passphrase rather than a generated key. We warn rather than refuse:
@@ -51,8 +54,94 @@ _WEAK_KEY_MIN_LENGTH = 24
 _WEAK_KEY_MIN_ENTROPY_BITS = 80.0
 
 
+class SecretMaterialError(RuntimeError):
+    """Key or salt material is present but unusable, so Reaper refuses to start.
+
+    The alternative -- what this used to do -- is to mint a replacement and carry on
+    (S-5). That reads as recovery and is the opposite: the file is what decrypts every
+    stored Sonarr/Radarr/Plex credential, so replacing it makes all of them permanently
+    unreadable, silently, and the operator finds out on the next scan. A boot that stops
+    with an explanation is recoverable; one that quietly re-keys is not.
+
+    Missing material is a different thing entirely and still generates: an install with
+    no key file yet has nothing to lose.
+    """
+
+
 def key_file_path(settings: Settings) -> Path:
     return settings.data_dir / KEY_FILENAME
+
+
+def env_key_active(settings: Settings) -> bool:
+    """Whether the operator supplies the encryption key from the environment.
+
+    Mirrors :func:`resolve_secret_key`'s precedence exactly: a non-empty
+    ``REAPER_SECRET_KEY`` always wins and is never written to disk, so a lingering
+    ``secret.key`` file is inactive when the env key is set. Anything reporting where the
+    key comes from, or whether a backup is self-sufficient, must read this rather than a
+    bare ``key_file_path(settings).is_file()`` -- provenance follows runtime precedence,
+    not file existence (rule 76).
+    """
+    if settings.secret_key is None:
+        return False
+    return bool(settings.secret_key.get_secret_value().strip())
+
+
+def salt_file_path(settings: Settings) -> Path:
+    return settings.data_dir / SALT_FILENAME
+
+
+def resolve_kdf_salt(settings: Settings) -> bytes:
+    """The per-install KDF salt, generated and persisted on first use.
+
+    A random salt per install means a dictionary attack against one leaked database
+    cannot be precomputed or reused against another install -- each guess must be
+    stretched per target. The salt is not itself a secret (its job is uniqueness, not
+    concealment), but it lives beside ``secret.key`` at 0600 all the same, and it is
+    minted even when ``REAPER_SECRET_KEY`` comes from the environment: the KEY is the
+    operator's to manage, the salt is install state. A salt file that has never existed
+    is survivable -- :class:`~reaper.crypto.SecretBox` keeps the fixed v1 salt registered
+    decrypt-only, so a fresh salt only re-keys what is written next -- but back it up
+    with the key anyway so old and new data share one derivation.
+
+    A salt file that exists and cannot be read is NOT survivable, and raises
+    :class:`SecretMaterialError` rather than being replaced: everything written under the
+    salt it held would stop decrypting, and the fixed-v1 fallback only covers data from
+    before this install had a salt at all (S-5).
+
+    Stored as hex so the file is inspectable and diffable like ``secret.key``.
+    """
+    settings.ensure_data_dir()
+    path = salt_file_path(settings)
+
+    if path.is_file():
+        raw = path.read_text(encoding="utf-8").strip()
+        try:
+            salt = bytes.fromhex(raw)
+        except ValueError:
+            salt = b""
+        if salt:
+            _ensure_owner_only(path)
+            return salt
+        log.error("kdf_salt.unreadable_file", path=str(path))
+        raise SecretMaterialError(
+            f"{path} exists but could not be read as a salt. Reaper will not start, "
+            "because generating a new one would make every credential saved under the "
+            "old one unreadable. Restore this file from a backup, or delete it and "
+            "re-enter your service keys."
+        )
+
+    salt = pysecrets.token_bytes(_SALT_BYTES)
+    _write_key_atomically(path, salt.hex())
+    log.info(
+        "kdf_salt.generated",
+        path=str(path),
+        detail=(
+            "A per-install salt for the credential encryption key was generated and "
+            "saved. Back it up together with secret.key."
+        ),
+    )
+    return salt
 
 
 def resolve_old_keys(settings: Settings) -> list[str]:
@@ -102,7 +191,13 @@ def _warn_if_weak(key: str) -> None:
 
 
 def resolve_secret_key(settings: Settings) -> str:
-    """Return the encryption key, generating and persisting one if needed."""
+    """Return the encryption key, generating and persisting one if needed.
+
+    Raises :class:`SecretMaterialError` when a key file exists but holds nothing. That
+    used to regenerate, which bricks every credential in the database it sits beside
+    (S-5); an empty file is far more likely a crashed write or a truncated volume than an
+    install with nothing to lose, and the operator can still choose to delete it.
+    """
     # 1. Explicit configuration always wins, and is never written to disk.
     if settings.secret_key is not None:
         value = settings.secret_key.get_secret_value().strip()
@@ -119,7 +214,13 @@ def resolve_secret_key(settings: Settings) -> str:
         if existing:
             _ensure_owner_only(path)
             return existing
-        log.warning("secret_key.empty_file", path=str(path), detail="Regenerating.")
+        log.error("secret_key.empty_file", path=str(path))
+        raise SecretMaterialError(
+            f"{path} exists but is empty. Reaper will not start, because generating a "
+            "new key would make every saved service credential unreadable. Restore this "
+            "file from a backup, set REAPER_SECRET_KEY to the old value, or delete the "
+            "file and re-enter your service keys."
+        )
 
     # 3. First boot: mint one and persist it before anything is encrypted with it.
     key = generate_secret_key()
@@ -148,8 +249,10 @@ def _write_key_atomically(path: Path, key: str) -> None:
     follow a symlink or clobber a pre-existing file, and we clamp the umask so the
     process default cannot loosen the requested mode.
 
-    If the file already exists (e.g. it was created empty, then found blank above and
-    is being regenerated), tighten it *before* writing rather than after.
+    The callers only reach here when there is no readable material to lose, so the
+    already-exists branch is for the odd leftover (a path that exists but is not a
+    regular file, say). It tightens *before* writing rather than after, for the same
+    reason the create path clamps the umask.
     """
     if path.exists():
         _ensure_owner_only(path)

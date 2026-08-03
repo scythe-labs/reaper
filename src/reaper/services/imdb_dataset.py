@@ -19,7 +19,7 @@ means the protection cannot fire, and a well-rated film becomes deletable. An
 empty or half-loaded table would therefore silently strip protection from the
 entire library -- the worst possible failure, arriving quietly.
 
-Two defences:
+Two defenses:
 
 * **The load is atomic.** Rows go into a staging table and are swapped in only
   once every row has landed. A download that dies halfway leaves the previous
@@ -32,18 +32,22 @@ Two defences:
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import islice
 from pathlib import Path
 from typing import IO
+from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
 
 log = structlog.get_logger(__name__)
@@ -86,12 +90,63 @@ class DatasetDegradedError(RuntimeError):
     """
 
 
-def parse_rows(stream: IO[bytes]) -> Iterator[tuple[str, float, int]]:
+def _take_batch(rows: Iterator[tuple[str, float, int]], size: int) -> list[dict[str, object]]:
+    """The next ``size`` parsed rows as insert parameters.
+
+    Called via ``asyncio.to_thread``: the gunzip + TSV parse behind ``rows`` is
+    CPU-bound, and pulling it batch-by-batch in a worker thread keeps the event loop
+    serving requests during the dataset refresh.
+    """
+    return [
+        {"tconst": tconst, "average_rating": rating, "num_votes": votes}
+        for tconst, rating, votes in islice(rows, size)
+    ]
+
+
+#: Above this share of dropped rows, a load is treated as format drift rather than the
+#: ordinary trickle of IMDb nulls. A healthy dataset drops a fraction of a percent; the
+#: shape this catches is an upstream column change that silently halves rating coverage
+#: while still loading millions of rows, so the zero-row tripwire never fires.
+DRIFT_SKIP_FRACTION = 0.05
+
+
+@dataclass(frozen=True, slots=True)
+class LoadResult:
+    """What one dataset load produced: rows kept, and rows dropped as unreadable."""
+
+    rows: int
+    skipped: int
+
+    @property
+    def skip_fraction(self) -> float:
+        seen = self.rows + self.skipped
+        return self.skipped / seen if seen else 0.0
+
+    @property
+    def drifted(self) -> bool:
+        """Whether enough rows were dropped to suspect the format changed."""
+        return self.skip_fraction >= DRIFT_SKIP_FRACTION
+
+
+def parse_rows(
+    stream: IO[bytes], counters: dict[str, int] | None = None
+) -> Iterator[tuple[str, float, int]]:
     """Parse the gzipped TSV without holding it in memory.
 
     Rows with ``\\N`` (IMDb's null) or malformed numbers are skipped rather than
     coerced: a rating of 0.0 would read as "terrible film, delete it".
+
+    ``counters`` (optional) accumulates a ``skipped`` count of the dropped rows. ``load``
+    returns it on :class:`LoadResult` and the nightly job puts it in front of the
+    operator, because a large skip fraction quietly shrinks rating coverage while staying
+    above the zero-row tripwire that would otherwise catch it -- and less rating coverage
+    means fewer well-rated titles protected.
     """
+
+    def _skip() -> None:
+        if counters is not None:
+            counters["skipped"] = counters.get("skipped", 0) + 1
+
     with gzip.open(stream, "rt", encoding="utf-8") as handle:
         header = handle.readline()
         if not header.startswith("tconst"):
@@ -100,13 +155,16 @@ def parse_rows(stream: IO[bytes]) -> Iterator[tuple[str, float, int]]:
         for line in handle:
             parts = line.rstrip("\n").split("\t")
             if len(parts) != 3:
+                _skip()
                 continue
             tconst, rating, votes = parts
             if not tconst.startswith("tt"):
+                _skip()
                 continue
             try:
                 yield tconst, float(rating), int(votes)
             except ValueError:
+                _skip()
                 continue  # \N or junk -- absent, not zero
 
 
@@ -114,14 +172,15 @@ async def download(destination: Path, *, url: str = DATASET_URL) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(".part")
 
-    async with (
-        httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client,
-        client.stream("GET", url) as response,
-    ):
-        response.raise_for_status()
-        with tmp.open("wb") as handle:
-            async for chunk in response.aiter_bytes(_CHUNK):
-                handle.write(chunk)
+    # Through clients/ like every other fetch (rule 33): shared timeouts, error mapping,
+    # and redirect policy. The dataset mirror redirects to a CDN, which PublicClient
+    # (credential-less by construction) is allowed to follow.
+    parts = urlsplit(url)
+    path = parts.path + (f"?{parts.query}" if parts.query else "")
+    async with PublicClient(
+        f"{parts.scheme}://{parts.netloc}", timeout=httpx2.Timeout(60.0)
+    ) as client:
+        await client.stream_to(path, tmp)
 
     # Rename only once the whole file is on disk, so a killed process cannot leave
     # a truncated archive that parses as a short but valid dataset.
@@ -130,7 +189,7 @@ async def download(destination: Path, *, url: str = DATASET_URL) -> Path:
     return destination
 
 
-async def load(engine: AsyncEngine, archive: Path) -> int:
+async def load(engine: AsyncEngine, archive: Path) -> LoadResult:
     """Load the dataset, swapping it in atomically.
 
     The multi-minute parse+insert populates a *staging* table in many short transactions,
@@ -165,20 +224,18 @@ async def load(engine: AsyncEngine, archive: Path) -> int:
 
     # -- populate staging: one short transaction per batch, no lock held across the parse --
     rows = 0
-    batch: list[dict[str, object]] = []
+    counters: dict[str, int] = {"skipped": 0}
     with archive.open("rb") as handle:
-        for tconst, rating, votes in parse_rows(handle):
-            batch.append({"tconst": tconst, "average_rating": rating, "num_votes": votes})
-            if len(batch) >= 10_000:
-                async with engine.begin() as conn:
-                    await conn.execute(insert, batch)
-                rows += len(batch)
-                batch.clear()
-
-    if batch:
-        async with engine.begin() as conn:
-            await conn.execute(insert, batch)
-        rows += len(batch)
+        parsed = parse_rows(handle, counters)
+        while True:
+            # The 1.7M-row gunzip + parse is CPU-bound; producing each batch in a worker
+            # thread keeps the event loop serving requests through the refresh.
+            batch = await asyncio.to_thread(_take_batch, parsed, 10_000)
+            if not batch:
+                break
+            async with engine.begin() as conn:
+                await conn.execute(insert, batch)
+            rows += len(batch)
 
     if rows == 0:
         # Never swap in an empty table: it would look exactly like "nothing is rated",
@@ -212,8 +269,19 @@ async def load(engine: AsyncEngine, archive: Path) -> int:
             {"synced_at": int(utcnow().timestamp()), "row_count": rows},
         )
 
-    log.info("imdb.loaded", rows=rows)
-    return rows
+    # ``skipped`` counts rows dropped as null or malformed. A sudden jump against a steady
+    # ``rows`` is the signature of an upstream format change silently shrinking coverage.
+    skipped = counters["skipped"]
+    result = LoadResult(rows=rows, skipped=skipped)
+    if result.drifted:
+        # Loud, because this is the failure that removes protection: fewer ratings means
+        # fewer well-rated titles kept, and the zero-row tripwire never fires for a load
+        # that is merely half a load. Returned as well as logged -- the caller puts it in
+        # front of the operator (see scheduler.refresh_ratings).
+        log.warning("imdb.load_drift", rows=rows, skipped=skipped, fraction=result.skip_fraction)
+    else:
+        log.info("imdb.loaded", rows=rows, skipped=skipped)
+    return result
 
 
 class ImdbRatings:
@@ -290,7 +358,7 @@ class ImdbRatings:
         return out
 
 
-async def refresh(engine: AsyncEngine, data_dir: Path) -> int:
+async def refresh(engine: AsyncEngine, data_dir: Path) -> LoadResult:
     """Download and load. The nightly job."""
     archive = await download(data_dir / "title.ratings.tsv.gz")
     return await load(engine, archive)

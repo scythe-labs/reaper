@@ -23,23 +23,39 @@ import math
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api import tags as api_tags
+from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
     clear_session_cookie,
     is_secure_request,
-    read_session_token,
+    read_session_tokens,
     set_session_cookie,
 )
-from reaper.auth.ratelimit import Throttle, argon2_gate, login_throttle, recover_throttle
+from reaper.auth.proxy import client_ip
+from reaper.auth.ratelimit import (
+    RateLimiter,
+    Throttle,
+    argon2_gate,
+    login_throttle,
+    plex_poll_limit,
+    plex_start_limit,
+    recover_throttle,
+)
 from reaper.auth.recovery import redeem_recovery_token
-from reaper.auth.sessions import close_session, open_session, resolve_session
+from reaper.auth.sessions import (
+    close_session,
+    open_session,
+    resolve_session_from_cookies,
+)
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import AppUser, AuthProvider, PlexServer
+from reaper.services import admin_password
 from reaper.services.login import (
     LoginError,
     UserView,
@@ -47,10 +63,11 @@ from reaper.services.login import (
     poll_plex_login,
     start_plex_login,
 )
+from reaper.services.plex_link import PlexLinkRetryableError, PlexServerChoiceNeededError
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api/auth")
+router = APIRouter(prefix="/api/auth", tags=[api_tags.SIGN_IN])
 
 
 def _factory(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -75,23 +92,37 @@ def _box(request: Request) -> SecretBox:
 
 
 def _client_ip(request: Request) -> str:
-    # The direct peer address. Deliberately *not* X-Forwarded-For: that header is
-    # attacker-controlled unless a trusted proxy sets it, and trusting it would let
-    # a single host dodge the per-IP lockout by rotating a spoofed value. Behind a
-    # reverse proxy every client collapses to the proxy's address, so the per-IP
-    # lock is coarser there -- which is why the per-username lock (below) runs
-    # alongside it and a successful login always clears both.
-    client = request.client
-    return client.host if client is not None else "unknown"
+    # The peer address, with one deliberate carve-out: when the operator turned on
+    # reverse-proxy trust (Settings -> General) and the peer IS a listed proxy,
+    # X-Forwarded-For is honored -- see auth.proxy.client_ip for the walk. From any
+    # other peer that header is attacker-controlled and ignored, because trusting it
+    # would let a single host dodge the per-IP lockout by rotating a spoofed value.
+    # The per-username lock (below) still runs alongside either way.
+    return client_ip(request)
 
 
 def _throttled(throttle: Throttle, *keys: str) -> None:
     """Raise 429 if any of ``keys`` is currently locked out, else return.
 
     Checked *before* any password work happens, so a locked-out attacker never
-    reaches the expensive Argon2 verify -- the whole point of the throttle.
+    reaches the expensive Argon2 verify -- that is what the throttle is for.
     """
     retry = max((throttle.retry_after(k) for k in keys), default=0.0)
+    _refuse_if_waiting(retry)
+
+
+def _rate_limited(limiter: RateLimiter, key: str) -> None:
+    """Count this call against ``key``'s window and raise 429 once it is over the cap.
+
+    The Plex sign-in pair has no password to get wrong, so :func:`_throttled` above never
+    fires on it -- a flood there is made of calls that all *succeed*. This is the bound
+    that does apply: it counts every call, not just refused ones (S-1).
+    """
+    _refuse_if_waiting(limiter.retry_after(key))
+
+
+def _refuse_if_waiting(retry: float) -> None:
+    """Turn a positive wait into the one 429 both limits answer with."""
     if retry > 0.0:
         seconds = max(1, math.ceil(retry))
         raise HTTPException(
@@ -99,6 +130,30 @@ def _throttled(throttle: Throttle, *keys: str) -> None:
             "Too many attempts. Please wait and try again.",
             headers={"Retry-After": str(seconds)},
         )
+
+
+def _busy_hashing() -> HTTPException:
+    """The one 503 every password-hashing route sheds load with."""
+    return HTTPException(
+        503,
+        "The server is busy checking passwords. Please try again shortly.",
+        headers={"Retry-After": "2"},
+    )
+
+
+async def _verify_admin_password(session: AsyncSession, password: str) -> bool:
+    """Check the admin password, turning a full Argon2 gate into a 503 rather than a
+    "wrong password".
+
+    The distinction matters: a capacity refusal must never reach the lockout counters, or
+    a server under load would lock out the operator who typed the right password. The gate
+    itself is taken inside ``admin_password.verify``, which is the only place that knows
+    how many hashes the call will run (S-4).
+    """
+    try:
+        return await admin_password.verify(session, password)
+    except admin_password.PasswordVerificationBusyError as exc:
+        raise _busy_hashing() from exc
 
 
 # ---------------------------------------------------------------------------
@@ -139,21 +194,37 @@ class PlexStartOut(BaseModel):
 
 class PlexPollIn(BaseModel):
     pin_id: int
+    # First-run setup, multi-server accounts only: the machine identifier of the owned
+    # server the user picked, echoed back from a "choose_server" response.
+    machine_identifier: str | None = None
+
+
+class PlexServerChoiceOut(BaseModel):
+    name: str
+    machine_identifier: str
 
 
 class PlexPollOut(BaseModel):
-    status: str  # "pending" | "ok"
+    status: str  # "pending" | "retrying" | "ok" | "choose_server"
     user: UserOut | None = None
     setup: bool = False
+    # Present only with status "choose_server": the owned servers to pick from.
+    servers: list[PlexServerChoiceOut] | None = None
+    # Present only with status "retrying": why this poll could not finish yet, in the
+    # operator's words. The sign-in is still good and the browser keeps polling.
+    reason: str | None = None
 
 
 class LocalLoginIn(BaseModel):
-    username: str
-    password: str
+    # Bounded, like every field that reaches Argon2 or a lockout key: hashing
+    # unbounded input is a CPU-exhaustion vector, and a megabyte "username" should
+    # be a 422, not a lockout-table entry.
+    username: str = Field(max_length=128)
+    password: str = Field(max_length=128)
 
 
 class RecoverIn(BaseModel):
-    token: str
+    token: str = Field(max_length=256)
 
 
 # ---------------------------------------------------------------------------
@@ -187,9 +258,8 @@ async def context(request: Request) -> AuthContext:
 @router.get("/me")
 async def me(request: Request) -> UserOut:
     """The signed-in admin, or 401. The SPA calls this to decide login vs app."""
-    token = read_session_token(request.cookies)
     async with _factory(request)() as session:
-        user = await resolve_session(session, token)
+        user, _ = await resolve_session_from_cookies(session, request.cookies)
         await session.commit()
         if user is None:
             raise HTTPException(401, "Not authenticated.")
@@ -208,13 +278,26 @@ async def me(request: Request) -> UserOut:
 
 
 @router.post("/plex/start")
-async def plex_start(request: Request) -> PlexStartOut:
-    start = await start_plex_login(_factory(request), safety=_safety(request))
+async def plex_start(request: Request, payload: PlexStartIn = NO_PLEX_FORWARD) -> PlexStartOut:
+    """Begin a Plex sign-in: mint a PIN and hand back the URL to approve it on.
+
+    Rate-limited per address before any work happens. Every call writes a pending row and
+    asks plex.tv for a PIN, so an unthrottled flood both grows the table and pushes the
+    install's egress address into plex.tv's own rate limiting -- which would lock the real
+    operator out of Plex sign-in entirely (S-1).
+    """
+    _rate_limited(plex_start_limit, _client_ip(request))
+    start = await start_plex_login(
+        _factory(request), safety=_safety(request), forward_url=payload.forward_url()
+    )
     return PlexStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 
 
 @router.post("/plex/poll")
 async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -> PlexPollOut:
+    # Far looser than /plex/start: one real sign-in polls every two seconds for up to five
+    # minutes, so the cap has to clear ~150 calls without touching an honest browser.
+    _rate_limited(plex_poll_limit, _client_ip(request))
     try:
         result = await poll_plex_login(
             _factory(request),
@@ -222,7 +305,25 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
             pin_id=payload.pin_id,
             safety=_safety(request),
             user_agent=request.headers.get("user-agent"),
+            choice=payload.machine_identifier,
         )
+    except PlexServerChoiceNeededError as exc:
+        # First-run setup, account owns several servers. The sign-in itself succeeded;
+        # the PIN stays valid, and the browser re-polls with the owner's pick.
+        return PlexPollOut(
+            status="choose_server",
+            servers=[
+                PlexServerChoiceOut(name=c.name, machine_identifier=c.machine_identifier)
+                for c in exc.candidates
+            ],
+        )
+    except PlexLinkRetryableError as exc:
+        # First-run setup: the sign-in was approved but the server did not answer this
+        # instant. ``poll_plex_login`` keeps the pending row for exactly this case, so
+        # answering with an error would strand a sign-in that is still good -- the browser
+        # aborts its poll loop on any thrown status (B2-14). A non-final status instead,
+        # so the loop keeps polling until the server is back or the deadline passes.
+        return PlexPollOut(status="retrying", reason=str(exc))
     except LoginError as exc:
         raise HTTPException(401, str(exc)) from exc
 
@@ -294,11 +395,15 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
 
 @router.post("/logout")
 async def logout(request: Request, response: Response) -> dict[str, bool]:
-    token = read_session_token(request.cookies)
+    # Revoke every session the jar can present, not just the first name carrying a cookie.
+    # With two names in play a stale cookie used to absorb the logout -- its row was
+    # already gone, so the delete was a no-op -- and the genuinely live session under the
+    # other name stayed valid in the database after the operator had asked to sign out.
     async with _factory(request)() as session:
-        await close_session(session, token)
+        for token in read_session_tokens(request.cookies):
+            await close_session(session, token)
         await session.commit()
-    clear_session_cookie(response, secure=is_secure_request(request))
+    clear_session_cookie(response)
     return {"ok": True}
 
 
@@ -326,11 +431,17 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
 
         target = await _recovery_target(session)
         if target is None:
-            await session.commit()
+            # Give the code back. ``redeem_recovery_token`` already stamped ``used_at``,
+            # and committing that here would burn the operator's ONE 15-minute code on a
+            # failure that is nothing to do with the code -- forcing another
+            # REAPER_RECOVERY reboot to mint a fresh one, at the exact moment recovery is
+            # most needed (B-13). Rolling back leaves the token unused, so it still works
+            # once an admin exists.
+            await session.rollback()
             raise HTTPException(
                 409,
                 "The recovery link was valid, but there is no admin account to sign in as. "
-                "Create one with: reaper-admin create-admin --username <name>",
+                "Create one with: reaper-admin create-admin --username admin",
             )
 
         token_str = await open_session(

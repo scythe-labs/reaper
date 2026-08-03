@@ -1,0 +1,463 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// The Scales person panel explains one requester without deciding anything. It opens for
+// every requester -- including one with nothing reclaimable, whose panel is still their whole
+// request story -- and each title row jumps to that item's real card in Review.
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import type { PersonDetail, PersonTitle } from "../api";
+import { expectNoA11yViolations } from "../test/a11y";
+import { ScalesPanel, ScalesPanelFallback } from "./ScalesPanel";
+
+const GB = 1024 ** 3;
+
+/** How far back the watch mirror reaches. Every figure the drawer prints is counted over this
+ *  span, so a zero only means "never watched" back to here. Deliberately a year no other
+ *  fixture date uses, so an assertion on "2018" can only be reading the horizon; and midday
+ *  UTC, so `date()` renders the same month whatever zone the run happens to be in (rule 133).
+ *  The DAY still moves by zone, which is why the assertions below match it loosely. */
+const HORIZON = "2018-01-11T12:00:00+00:00";
+
+function title(over: Partial<PersonTitle> = {}): PersonTitle {
+  return {
+    title: "The Long Shoreline",
+    year: 2021,
+    media_type: "movie",
+    is_4k: false,
+    size_bytes: 6 * GB,
+    requested_at: "2023-11-02T00:00:00+00:00",
+    available_at: "2023-11-03T00:00:00+00:00",
+    watched_by_them: 0,
+    verdict: "condemn",
+    item_id: 101,
+    group_key: null,
+    co_requesters: [],
+    poster_url: null,
+    ...over,
+  };
+}
+
+function detail(over: Partial<PersonDetail> = {}): PersonDetail {
+  return {
+    plex_id: 3,
+    name: "marlow",
+    seerr_total: 88,
+    requests_in_scan: 4,
+    gb_granted_bytes: 100 * GB,
+    played_by_them: 3,
+    reclaimable_items: 1,
+    reclaimable_bytes: 6 * GB,
+    not_in_scan: 0,
+    quota: {
+      seerr_total: 88,
+      movie: { limit: 1, days: 14, at_limit: false },
+      tv: { limit: null, days: null, at_limit: false },
+    },
+    titles: [title()],
+    unmatched: [],
+    horizon_at: HORIZON,
+    profile_url: null,
+    ...over,
+  };
+}
+
+describe("ScalesPanel", () => {
+  // This drawer is read while deciding whose requests to remove, and every figure on it belongs
+  // to a real person. A quota line or title row a reader drops takes part of their story away
+  // before the operator judges it.
+  it("has no accessibility violations", async () => {
+    const { container } = render(
+      <ScalesPanel
+        detail={detail()}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", { name: "marlow" });
+    await expectNoA11yViolations(container);
+  });
+
+  it("names the person and their request count", () => {
+    render(
+      <ScalesPanel
+        detail={detail()}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "marlow" })).toBeInTheDocument();
+    expect(screen.getByText(/4 requests in the last scan/i)).toBeInTheDocument();
+  });
+
+  it("links the name to the requester's portal page when there is one", () => {
+    render(
+      <ScalesPanel
+        detail={detail({ profile_url: "https://seerr.example/users/7" })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    const link = screen.getByRole("link", { name: /marlow/i });
+    expect(link).toHaveAttribute("href", "https://seerr.example/users/7");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("shows the name as plain text, never a dead link, without a profile url", () => {
+    render(
+      <ScalesPanel
+        detail={detail({ profile_url: null })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: /marlow/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "marlow" })).toBeInTheDocument();
+  });
+
+  it("reads request limits in plain words, and flags an at-limit type", () => {
+    render(
+      <ScalesPanel
+        detail={detail({
+          quota: {
+            seerr_total: 88,
+            movie: { limit: 1, days: 14, at_limit: false },
+            tv: { limit: 2, days: 30, at_limit: true },
+          },
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("1 per 14 days")).toBeInTheDocument();
+    expect(screen.getByText(/2 per 30 days, at limit/)).toBeInTheDocument();
+  });
+
+  it("says “per day” for a daily quota, not “per 1 days”", () => {
+    // This file and Fairness already pluralize "person"/"people" and "title"/"titles";
+    // the quota line pluralized nothing (U-19).
+    render(
+      <ScalesPanel
+        detail={detail({
+          quota: {
+            seerr_total: 3,
+            movie: { limit: 1, days: 1, at_limit: false },
+            tv: { limit: null, days: null, at_limit: false },
+          },
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("1 per day")).toBeInTheDocument();
+    expect(screen.queryByText(/per 1 days/)).not.toBeInTheDocument();
+  });
+
+  // Both of these send the LANE alongside the id, and both send one that is not the queue's
+  // default -- a row carrying "condemn" would agree with the tab the queue already opens on, so
+  // it could not tell a lane that travelled from one that was never sent. Two different lanes
+  // across the pair, so a caller passing a constant fails one of them (rule 141).
+  it("opens a movie by its item id, on the lane that movie is in", async () => {
+    const onOpenItem = vi.fn();
+    render(
+      <ScalesPanel
+        detail={detail({ titles: [title({ verdict: "abstain" })] })}
+        onClose={vi.fn()}
+        onOpenItem={onOpenItem}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /The Long Shoreline/i }));
+    // The title rides along as the search term, so the queue behind the opened panel is that
+    // one title rather than the whole lane. Its year goes with it: the queue prints the year
+    // beside the title and the review search understands one.
+    expect(onOpenItem).toHaveBeenCalledWith(101, "abstain", "The Long Shoreline 2021");
+  });
+
+  it("opens a show by its group key, not one season, on the lane the show is in", async () => {
+    const onOpenGroup = vi.fn();
+    render(
+      <ScalesPanel
+        detail={detail({
+          titles: [
+            title({
+              title: "A Show",
+              media_type: "season",
+              item_id: null,
+              group_key: "tv:7",
+              verdict: "protect",
+            }),
+          ],
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={onOpenGroup}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /A Show/i }));
+    expect(onOpenGroup).toHaveBeenCalledWith("tv:7", "protect", "A Show 2021");
+  });
+
+  it("shows a title's fate and whether they watched it", () => {
+    render(
+      <ScalesPanel
+        detail={detail({
+          titles: [
+            title({ verdict: "protect", watched_by_them: 4 }),
+            title({ title: "Nightferry", verdict: "abstain", item_id: 102, size_bytes: null }),
+          ],
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Kept")).toBeInTheDocument();
+    expect(screen.getByText("Left to decide")).toBeInTheDocument();
+    // A movie shows its raw plays.
+    // The word, not the multiplication sign: `×` carried the meaning rather than decorating
+    // it, and a reader at its default symbol level drops the character, leaving "watched 4"
+    // (#177). It sits inside a composed string, so there was no element to hide it on.
+    expect(screen.getByText(/watched 4 times/)).toBeInTheDocument();
+    // A zero is a lower bound against the mirror's span, so it names the span rather than
+    // stating a never that nothing establishes.
+    expect(screen.getByText(/none since/)).toBeInTheDocument();
+    expect(screen.queryByText("not watched")).not.toBeInTheDocument();
+    // A title the arr would not size reads "Size unknown", never a false 0 B.
+    expect(screen.getByText("Size unknown")).toBeInTheDocument();
+  });
+
+  it("says one play as 'time', not 'times'", () => {
+    // The branch the `×` never needed: a glyph is silent about number, a word is not, so
+    // spelling it out introduced a plural this has to get right.
+    render(
+      <ScalesPanel
+        detail={detail({ titles: [title({ verdict: "protect", watched_by_them: 1 })] })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/watched 1 time(?!s)/)).toBeInTheDocument();
+  });
+
+  // The issue this guards: `watched_by_them` is counted over the whole mirror and the mirror
+  // begins at its horizon, so a person whose plays all predate it reads as having watched
+  // nothing. The drawer printed "not watched" and a red 0% as plain fact, on the screen built
+  // to decide who is holding disk they do not use. `ServerPopularityGate` is the model: past
+  // its reach it refuses the negative rather than asserting a zero.
+  it("bounds a zero by the span it was counted over, and names that span", () => {
+    render(
+      <ScalesPanel
+        detail={detail({ played_by_them: 0, titles: [title({ watched_by_them: 0 })] })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/none since Jan \d+, 2018/)).toBeInTheDocument();
+    // The board's line, repeated here because on a phone this panel is a sheet OVER the board
+    // and the board's copy is not on screen to read.
+    expect(screen.getByText(/watch history reaches back to Jan \d+, 2018/i)).toBeInTheDocument();
+  });
+
+  // The mirror has never synced. There is no span to count from, so no figure means anything:
+  // not the percentage, and not a per-title zero either. The board's caveat was gated on a
+  // known span, so this state used to be the one printing a red 0% with no caveat anywhere.
+  it("asserts no watched figure at all when the mirror holds nothing", () => {
+    render(
+      <ScalesPanel
+        detail={detail({
+          played_by_them: 0,
+          horizon_at: null,
+          titles: [title({ watched_by_them: 0 })],
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText(/none since/)).not.toBeInTheDocument();
+    expect(screen.getByText(/no watch history to read yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no watch history has been read yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/can't see their history/i)).toBeInTheDocument();
+  });
+
+  // The board's twin (rule 72). With no Plex account behind the request account there is no
+  // history to read at all: `fairness._roll_up` fills `played_by_them` and each title's
+  // `watched_by_them` only inside `if pid is not None`. The panel drew that as a red 0% tile
+  // and a definite "not watched" on every row, which is a measurement nobody took.
+  it("says the history is unreadable when no Plex account is linked", () => {
+    render(
+      <ScalesPanel
+        detail={detail({
+          plex_id: null,
+          played_by_them: 0,
+          titles: [
+            title({ verdict: "protect", watched_by_them: 0 }),
+            title({ title: "Nightferry", item_id: 102, watched_by_them: 0 }),
+          ],
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText(/not watched/)).not.toBeInTheDocument();
+    expect(screen.getByText(/no plex account, so no history to read/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/can't see their history/i)).toHaveLength(2);
+    // And no span line: the mirror's reach is not what stopped Reaper seeing them, so naming
+    // it here would offer a reason that is not the reason.
+    expect(screen.queryByText(/watch history reaches back to/i)).not.toBeInTheDocument();
+  });
+
+  it("reads a series' watch figure as distinct episodes, not raw plays", () => {
+    render(
+      <ScalesPanel
+        detail={detail({
+          titles: [
+            title({
+              title: "A Show",
+              media_type: "season",
+              group_key: "tv:7",
+              item_id: null,
+              watched_by_them: 62,
+            }),
+            title({ title: "One Season", media_type: "season", item_id: 5, watched_by_them: 1 }),
+          ],
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("62 episodes watched")).toBeInTheDocument();
+    expect(screen.getByText("1 episode watched")).toBeInTheDocument();
+  });
+
+  // The clean case the whole change exists for: nothing reclaimable still opens, and says so.
+  it("says None reclaimable when the scan condemns nothing of theirs", () => {
+    render(
+      <ScalesPanel
+        detail={detail({
+          reclaimable_items: 0,
+          reclaimable_bytes: 0,
+          titles: [title({ verdict: "protect", watched_by_them: 2 })],
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("None")).toBeInTheDocument();
+    expect(screen.getByText(/all still earning their keep/i)).toBeInTheDocument();
+  });
+
+  it("does not print the year twice when the title already carries it", () => {
+    render(
+      <ScalesPanel
+        detail={detail({ titles: [title({ title: "Couples Therapy (2019)", year: 2019 })] })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Couples Therapy \(2019\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/\(2019\) \(2019\)/)).not.toBeInTheDocument();
+  });
+
+  it("lists their not-in-scan requests, grouped by reason", () => {
+    render(
+      <ScalesPanel
+        detail={detail({
+          not_in_scan: 1,
+          unmatched: [
+            {
+              title: "A Missed Film",
+              year: 2021,
+              media_type: "movie",
+              is_4k: false,
+              requested_at: null,
+              available_at: null,
+              reason: "set_aside",
+              requested_by: ["marlow"],
+              request_count: 1,
+            },
+          ],
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: /not in the last scan/i })).toBeInTheDocument();
+    expect(screen.getByText(/skipped by the last scan/i)).toBeInTheDocument();
+    expect(screen.getByText(/A Missed Film/)).toBeInTheDocument();
+  });
+
+  it("closes on Escape and on the close button", async () => {
+    const onClose = vi.fn();
+    render(
+      <ScalesPanel
+        detail={detail()}
+        onClose={onClose}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /close/i }));
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The panel is a full-screen dialog under 900px, so it has to say what it is. Its name comes from
+// its own <h2> rather than a second copy of the title in an aria-label (rule 144). One of these
+// per panel: six surfaces render WhyShell, and the name is the one part of the contract the shell
+// cannot supply for them. The fallbacks are included because they are two of the six -- and the
+// loading branch has no heading at all, so its lead line carries the name instead.
+describe("the Scales panel's accessible name", () => {
+  it("names itself from the person it is about", () => {
+    render(
+      <ScalesPanel
+        detail={detail()}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("complementary", { name: "marlow" })).toBeInTheDocument();
+  });
+
+  it("names its failure branch, which is a panel in its own right", () => {
+    render(<ScalesPanelFallback error onClose={vi.fn()} />);
+    expect(screen.getByRole("complementary", { name: "Something went wrong" })).toBeInTheDocument();
+  });
+
+  it("names its loading branch from the lead, having no heading to point at", () => {
+    render(<ScalesPanelFallback error={false} onClose={vi.fn()} />);
+    expect(
+      screen.getByRole("complementary", { name: "Gathering their requests\u2026" }),
+    ).toBeInTheDocument();
+  });
+
+  // It carried no Escape handler of its own: ScalesPanel had one, its fallback never got the
+  // copy, so a panel stuck loading or failed could not be dismissed from the keyboard at all.
+  it("closes on Escape while it is still loading", async () => {
+    const onClose = vi.fn();
+    render(<ScalesPanelFallback error={false} onClose={onClose} />);
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

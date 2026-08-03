@@ -4,25 +4,53 @@
 The review queue lets you filter to "media someone requested", and each item shows who
 asked. That needs a join from Seerr's requests to the items the scan is judging.
 
-**The join is on external ids (tmdb / tvdb), not on the arr instance id.** It is tempting
-to match Seerr's ``serviceId`` to Reaper's instance id, but they are different numbering
-schemes -- Seerr indexes its own configured services, Reaper its own rows -- so they do
-not line up. The tmdb/tvdb ids do, and they are present on both sides.
+**The join is on external ids (tmdb / tvdb) by default.** Those ids are present on both
+sides and line up; Seerr's ``serviceId`` does not line up with Reaper's instance id on its
+own (different numbering schemes -- Seerr indexes its own configured services, Reaper its own
+rows). The tmdb/tvdb join is a *union*, though: a title kept in two libraries (a main one and
+a restricted one) shares one tmdb, so every copy shows everyone who asked for the title, not
+who asked for that copy.
 
-**This is display-only, and deliberately loose.** "Requested by" is never a gate and
-never condemns anything; the worst a wrong match can do is show the wrong name on a card.
-So a rare cross-edition id collision is acceptable here in a way it never would be on the
-delete path. If Seerr is absent or unreachable, the map is simply empty.
+**The operator's service map makes it per-copy.** When a Seerr portal's serviceId is mapped
+to a Reaper instance (``instance.service_instance_map``, set in Settings), the request's
+``externalServiceId`` -- the *arr's own item id -- rebuilds the exact copy's ``media_key``, and
+the requester lands on that copy alone. Unmapped requests keep the loose union. This resolves
+the multi-Seerr, multi-library case (:func:`build_map`, :class:`SeerrSource`).
+
+**This is display-only, either way.** "Requested by" is never a gate and never condemns
+anything; the worst a wrong match can do is show the wrong name on a card. So a rare
+cross-edition id collision is acceptable here in a way it never would be on the delete path.
+If Seerr is absent or unreachable, the map is simply empty.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+
 import structlog
 
 from reaper.clients.base import IntegrationError
-from reaper.clients.seerr import SeerrClient
+from reaper.clients.seerr import MediaRequest, SeerrClient
+from reaper.engine.observation import Known, Observation, Unknown
 
 log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class SeerrSource:
+    """One Seerr portal plus its operator-set serviceId -> Reaper instance map.
+
+    ``service_instance_map`` is ``{"{kind}:{serviceId}": Reaper instance id}`` (``service_key``);
+    the kind is in the key because Seerr numbers Sonarr and Radarr services separately. Empty when
+    the operator set none, which keeps every request on the loose tmdb/tvdb union (today's).
+    Set, it lets :func:`build_map` bind the exact copy a person asked for when a title lives in
+    more than one library/instance (a main library and a restricted one) -- see the module
+    docstring on why the join is otherwise on ids alone.
+    """
+
+    client: SeerrClient
+    service_instance_map: Mapping[str, int] = field(default_factory=dict)
 
 
 def movie_key(tmdb_id: int | None) -> str | None:
@@ -40,30 +68,115 @@ def season_key(tvdb_id: int | None, season: int) -> str | None:
     return f"tv:tvdb:{tvdb_id}:{season}" if tvdb_id else None
 
 
+def service_key(media_type: str, service_id: object) -> str:
+    """The ``service_instance_map`` key for a request's *arr service: ``"{kind}:{serviceId}"``.
+
+    Seerr numbers its Sonarr and Radarr services in SEPARATE lists (each starting at 0), so a
+    serviceId collides across kinds. A movie request routes through a Radarr service, a tv one
+    through Sonarr, so the map (and the Settings UI) key both by kind + id, not id alone."""
+    kind = "radarr" if media_type == "movie" else "sonarr"
+    return f"{kind}:{service_id}"
+
+
+def movie_instance_key(instance_id: int, arr_id: int | None) -> str | None:
+    """The precise requested-map key for a movie: its Reaper ``media_key``.
+
+    Equal by construction to snapshot's ``radarr:{instance_id}:{movie_id}`` media_key, because a
+    Seerr request's ``externalServiceId`` IS that Radarr movie id. Keyed this way, "requested by"
+    lands on the exact copy a person asked for when a title is duplicated across instances."""
+    return f"radarr:{instance_id}:{arr_id}" if arr_id else None
+
+
+def show_instance_key(instance_id: int, arr_id: int | None) -> str | None:
+    """The precise requested-map key for a whole show: its Reaper ``group_key``
+    (``sonarr:{instance_id}:{series_id}``, where ``series_id`` is Seerr's ``externalServiceId``)."""
+    return f"sonarr:{instance_id}:{arr_id}" if arr_id else None
+
+
+def season_instance_key(instance_id: int, arr_id: int | None, season: int) -> str | None:
+    """The precise requested-map key for one season: its Reaper season ``media_key``
+    (``sonarr:{instance_id}:{series_id}:{season}``)."""
+    return f"sonarr:{instance_id}:{arr_id}:{season}" if arr_id else None
+
+
+def rating_key_key(rating_key: object) -> str | None:
+    """The requested-map key for a Plex rating key: the zero-config middle tier.
+
+    A movie request's Plex ``ratingKey`` -- or a show request's, which Seerr stores at the show
+    level -- equals Reaper's ``plex_rating_key`` for the same item on the same Plex server, so a
+    portal that scans only its own library gives per-copy attribution with no operator setup.
+    It can only mis-point when a portal scans SEVERAL libraries and Overseerr's one non-4K slot
+    kept a different copy; the operator's service map (the precise tier) overrides those. Rating
+    keys are unique per Plex server, not across them, so a portal pointed at a *different* Plex
+    could collide -- which is why :func:`build_map` files this tier only when the portal's
+    ``/settings/plex`` machine id matches Reaper's (or one of the two is unknown, keeping today's
+    behavior); it always sits above only the tmdb/tvdb union, never above the declared map. Takes
+    ``object`` so a Seerr string and a Reaper int normalize to the one text form."""
+    if rating_key is None:
+        return None
+    text = str(rating_key).strip()
+    return f"plex:rk:{text}" if text else None
+
+
 def _name(request_display: str | None, request_user: str | None) -> str:
     return (request_display or request_user or "a user").strip() or "a user"
 
 
-async def build_map(seerr: SeerrClient | None) -> dict[str, str]:
-    """Build ``external-id-key -> requester name`` from every available Seerr request.
+async def _merge_requests(
+    seerrs: list[SeerrClient], *, filter_: str
+) -> tuple[list[MediaRequest], bool]:
+    """Every request from every Seerr, concatenated, plus whether all reads succeeded.
 
-    A movie maps under its tmdb key; a show maps under its show key *and* under a key per
-    requested season, so a season can be matched whether the request named specific
-    seasons or the whole series. When several people requested the same thing, the map
-    keeps a friendly "Name + N others" so the card can say so.
+    Seerr is a genuinely multi-instance kind (two request portals is a supported setup),
+    so a reader must merge them all -- picking the first would hide the second portal's
+    requests entirely. ``all_ok`` is ``False`` if *any* instance could not be read, so a
+    fail-closed caller can degrade rather than trust a partial view (rule 2).
     """
-    if seerr is None:
-        return {}
+    merged: list[MediaRequest] = []
+    all_ok = True
+    for seerr in seerrs:
+        try:
+            merged.extend(await seerr.all_requests(filter_=filter_))
+        except IntegrationError as exc:
+            log.warning("requested_by.seerr_unreachable", error=str(exc))
+            all_ok = False
+    return merged, all_ok
 
-    try:
-        requests = await seerr.all_requests(filter_="available")
-    except IntegrationError as exc:
-        # Soft: a missing "requested by" is a blank tag, never a failed scan.
-        log.warning("requested_by.seerr_unreachable", error=str(exc))
-        return {}
 
+async def build_map(
+    sources: Sequence[SeerrSource], *, reaper_plex_machine_id: str | None = None
+) -> dict[str, str]:
+    """Build ``key -> requester name`` from every available request, across *every* Seerr.
+
+    Each request is filed under up to **three** kinds of key, and callers read them best-first:
+
+    1. A **precise** key -- the item's Reaper ``media_key`` -- whenever the source's
+       ``service_instance_map`` resolves the request's ``serviceId`` to a Reaper instance. This
+       binds the exact copy a person asked for from the *arr the request was routed to, so it is
+       copy-true whatever a portal's Plex sync saw (:func:`movie_instance_key`,
+       :func:`season_instance_key`, :func:`show_instance_key`).
+    2. A **rating-key** key -- the request's Plex ``ratingKey`` (:func:`rating_key_key`). Zero
+       setup, and copy-true whenever a portal scans only its own library; it can mis-point only
+       when a portal scans several libraries (Overseerr's one non-4K slot then kept a different
+       copy), which is exactly what tier 1 overrides. Filed only when the portal is synced to the
+       SAME Plex as Reaper: rating keys are unique per server, so a portal on a different Plex
+       would file keys that numerically collide with Reaper's candidates (I-3). ``reaper_plex_
+       machine_id`` is Reaper's own server id; when it is known, each portal's ``/settings/plex``
+       machine id is read once and the tier is skipped for a portal that disagrees. Unknown on
+       either side keeps the tier (today's behavior); tmdb/tvdb below are server-agnostic and
+       always filed.
+    3. The **loose** key -- tmdb (movie) or tvdb (show/season). Always, as the last fallback, so a
+       request the first two cannot place still names everyone who asked for the title.
+
+    When several people requested the same thing, the map keeps a friendly "Name + N others".
+
+    Soft and best-effort: a missing "requested by" is a blank tag, never a failed scan, so an
+    unreachable Seerr simply contributes nothing and the rest still map. No Seerr at all is an
+    empty map.
+    """
     # key -> ordered list of distinct requester names, so we can render "+ N others".
     names: dict[str, list[str]] = {}
+    request_count = 0
 
     def add(key: str | None, name: str) -> None:
         if key is None:
@@ -72,14 +185,55 @@ async def build_map(seerr: SeerrClient | None) -> dict[str, str]:
         if name not in bucket:
             bucket.append(name)
 
-    for req in requests:
-        name = _name(req.requester.display_name, req.requester.username)
-        if req.media_type == "movie":
-            add(movie_key(req.tmdb_id), name)
-        else:
-            add(show_key(req.tvdb_id), name)
-            for season in req.seasons:
-                add(season_key(req.tvdb_id, season), name)
+    for source in sources:
+        # Per source, so each request is resolved against ITS OWN portal's service map: a
+        # serviceId is numbered locally per Seerr and would collide across portals otherwise.
+        try:
+            requests = await source.client.all_requests(filter_="available")
+        except IntegrationError as exc:
+            log.warning("requested_by.seerr_unreachable", error=str(exc))
+            continue
+        request_count += len(requests)
+        service_map = source.service_instance_map
+        # I-3: file the rating-key tier only when this portal is on the SAME Plex as Reaper. The
+        # portal's machine id is read once (only bothered with when Reaper's own id is known, so
+        # a no-Plex deployment pays nothing); unknown on either side, or a match, files the tier.
+        portal_machine = (
+            await source.client.plex_machine_id() if reaper_plex_machine_id is not None else None
+        )
+        rating_keys_align = (
+            reaper_plex_machine_id is None
+            or portal_machine is None
+            or portal_machine == reaper_plex_machine_id
+        )
+        for req in requests:
+            name = _name(req.requester.display_name, req.requester.username)
+            # Tier 2, zero-config: the request's own Plex rating key. Filed for both media types
+            # (Seerr stores a show's at the show level, which is what season lookups match on),
+            # and only when this portal shares Reaper's Plex server (rating_keys_align, I-3).
+            if rating_keys_align:
+                add(rating_key_key(req.plex_rating_key), name)
+            # The Reaper instance this request's *arr service adds to, if the operator mapped it.
+            # Seerr numbers Sonarr and Radarr services in SEPARATE lists (both start at 0), so the
+            # serviceId is unique only within its kind -- the map is keyed by "{kind}:{serviceId}",
+            # and a movie request reads a radarr service, a tv request a sonarr one.
+            reaper_instance = (
+                service_map.get(service_key(req.media_type, req.arr_instance_id))
+                if req.arr_instance_id is not None
+                else None
+            )
+            if req.media_type == "movie":
+                add(movie_key(req.tmdb_id), name)  # loose union, always
+                if reaper_instance is not None:
+                    add(movie_instance_key(reaper_instance, req.arr_id), name)  # precise copy
+            else:
+                add(show_key(req.tvdb_id), name)
+                for season in req.seasons:
+                    add(season_key(req.tvdb_id, season), name)
+                if reaper_instance is not None:
+                    add(show_instance_key(reaper_instance, req.arr_id), name)
+                    for season in req.seasons:
+                        add(season_instance_key(reaper_instance, req.arr_id, season), name)
 
     result: dict[str, str] = {}
     for key, bucket in names.items():
@@ -88,5 +242,118 @@ async def build_map(seerr: SeerrClient | None) -> dict[str, str]:
         else:
             result[key] = f"{bucket[0]} + {len(bucket) - 1} other{'s' if len(bucket) > 2 else ''}"
 
-    log.info("requested_by.built", keys=len(result), requests=len(requests))
+    log.info("requested_by.built", keys=len(result), requests=request_count)
     return result
+
+
+#: Why a "was this requested?" lookup came back unreadable. Each is a KEY into ``WhyPanel``'s
+#: ``CAUSE_COPY``, which turns it into the sentence the owner reads; a key with no entry
+#: there prints raw, and ``test_review_chips.py::TestTheMatchStatusVocabulary`` fails on one.
+#: Named here rather than typed at each of the six sites below, so that test can see them
+#: (rule 144).
+NO_TMDB_REQUEST_REASON = "no TMDb id to match a request"
+NO_TVDB_REQUEST_REASON = "no TVDb id to match a request"
+REQUESTS_UNREACHABLE_REASON = "could not reach the requests app"
+#: The requests app was never read for this scan at all, which is not the same as reading it
+#: and failing: both lanes fall back to this when no index was built.
+REQUESTS_NOT_LOADED_REASON = "requests not loaded"
+
+
+@dataclass(frozen=True)
+class RequestIndex:
+    """A three-state "was this requested?" view, for the scoring path.
+
+    Unlike :func:`build_map` (a display name, deliberately loose), this answers a *fact*
+    the score can lean on, so it is built from the fail-closed side. ``available`` is
+    ``False`` whenever Seerr could not be fully read; every lookup is then ``Unknown``, so
+    a missing requests app can never make a title look un-requested and add delete
+    pressure. The join is on tmdb/tvdb ids, which a non-admin key does not strip.
+    """
+
+    available: bool
+    movie_keys: frozenset[str]
+    show_keys: frozenset[str]
+    season_keys: frozenset[str]
+
+    def movie_requested(self, tmdb_id: int | None) -> Observation[bool]:
+        if not tmdb_id:
+            return Unknown(reason=NO_TMDB_REQUEST_REASON, source="seerr")
+        if not self.available:
+            return Unknown(reason=REQUESTS_UNREACHABLE_REASON, source="seerr")
+        return Known(value=movie_key(tmdb_id) in self.movie_keys, source="seerr")
+
+    def season_requested(self, tvdb_id: int | None, season: int) -> Observation[bool]:
+        """A season counts as requested if the season itself, or the whole show, was."""
+        if not tvdb_id:
+            return Unknown(reason=NO_TVDB_REQUEST_REASON, source="seerr")
+        if not self.available:
+            return Unknown(reason=REQUESTS_UNREACHABLE_REASON, source="seerr")
+        hit = season_key(tvdb_id, season) in self.season_keys or show_key(tvdb_id) in self.show_keys
+        return Known(value=hit, source="seerr")
+
+    def show_requested(self, tvdb_id: int | None) -> Observation[bool]:
+        """Whether the show as a whole was requested -- the show itself, or any of its seasons."""
+        if not tvdb_id:
+            return Unknown(reason=NO_TVDB_REQUEST_REASON, source="seerr")
+        if not self.available:
+            return Unknown(reason=REQUESTS_UNREACHABLE_REASON, source="seerr")
+        prefix = f"tv:tvdb:{tvdb_id}:"
+        hit = show_key(tvdb_id) in self.show_keys or any(
+            k.startswith(prefix) for k in self.season_keys
+        )
+        return Known(value=hit, source="seerr")
+
+
+_EMPTY_INDEX = RequestIndex(
+    available=False,
+    movie_keys=frozenset(),
+    show_keys=frozenset(),
+    season_keys=frozenset(),
+)
+
+
+async def build_request_index(seerrs: list[SeerrClient]) -> RequestIndex:
+    """Build a three-state requested-or-not index from *every* request in *every* Seerr.
+
+    Reads ``filter_="all"`` (not just available ones), so a title that was requested but
+    is still processing is not mistaken for "never requested".
+
+    Fail-closed to the whole set (rule 2): ``available`` is ``True`` only when there is at
+    least one Seerr *and* every one of them was read in full. With no Seerr configured, or
+    with any one of several unreachable, ``available`` is ``False`` and every lookup returns
+    ``Unknown`` -- because "requested nowhere" can only be asserted once every request store
+    has actually been read. A confident ``Known(value=False)`` off a partial view would add
+    delete pressure to a title that a blinded portal in fact holds a request for.
+    """
+    if not seerrs:
+        return _EMPTY_INDEX
+    requests, all_ok = await _merge_requests(seerrs, filter_="all")
+    if not all_ok:
+        return _EMPTY_INDEX
+
+    movie_keys: set[str] = set()
+    show_keys: set[str] = set()
+    season_keys: set[str] = set()
+    for req in requests:
+        if req.media_type == "movie":
+            if (mk := movie_key(req.tmdb_id)) is not None:
+                movie_keys.add(mk)
+        else:
+            if (sk := show_key(req.tvdb_id)) is not None:
+                show_keys.add(sk)
+            for season in req.seasons:
+                if (nk := season_key(req.tvdb_id, season)) is not None:
+                    season_keys.add(nk)
+
+    log.info(
+        "requested_by.index_built",
+        movies=len(movie_keys),
+        shows=len(show_keys),
+        seasons=len(season_keys),
+    )
+    return RequestIndex(
+        available=True,
+        movie_keys=frozenset(movie_keys),
+        show_keys=frozenset(show_keys),
+        season_keys=frozenset(season_keys),
+    )

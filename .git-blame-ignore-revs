@@ -1,0 +1,13 @@
+# Commits that only moved whitespace. `git blame` skips them and reports the commit that
+# last changed the line's meaning, which is the one you actually want when you are asking
+# why a safeguard is written the way it is.
+#
+# Not automatic in a fresh clone -- enable it once, per clone:
+#
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Only pure-mechanical commits belong here. A commit that changes behavior must never be
+# added, or blame will quietly point past the change that matters.
+
+# style(frontend): adopt prettier and reformat under it
+b082f863c860e937bc533de6f3e179864b104511

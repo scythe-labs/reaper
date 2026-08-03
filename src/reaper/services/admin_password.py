@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.auth.passwords import generate_password, hash_password, verify_password
+from reaper.auth.ratelimit import argon2_gate
 from reaper.auth.sessions import close_all_for_user
 from reaper.auth.tokens import hash_token
 from reaper.clock import utcnow
@@ -34,6 +35,14 @@ _DECOY = hash_password(generate_password())
 
 class PasswordError(RuntimeError):
     """A password could not be set (too short, etc.). The message is safe to show."""
+
+
+class PasswordVerificationBusyError(RuntimeError):
+    """Too much password hashing is already in flight; try again in a moment.
+
+    A capacity refusal, never a credential one -- the caller answers 503 and must not
+    count it against any lockout, or a busy server would lock out the real operator.
+    """
 
 
 async def _local_admins(session: AsyncSession) -> list[AppUser]:
@@ -61,15 +70,31 @@ async def has_password(session: AsyncSession) -> bool:
 
 async def verify(session: AsyncSession, password: str) -> bool:
     """Check ``password`` against every local admin. Runs a constant amount of hashing
-    whether or not one matches, so timing does not leak whether a password is set."""
+    whether or not one matches, so timing does not leak whether a password is set.
+
+    Takes one Argon2 gate slot per hash it is about to run, and raises
+    :class:`PasswordVerificationBusyError` if that many are not free. The gate is the cap on
+    concurrent Argon2 work (rule 11), and this is the one caller whose work is not a
+    single hash: an install with several local admins verifies against each, so charging
+    the gate one slot for the whole call left the real CPU cost unbounded (S-4). The gate
+    is taken here rather than at the route because only this function knows how many
+    hashes there will be.
+    """
     admins = await _local_admins(session)
-    matched = False
-    for user in admins:
-        ok, _ = verify_password(password, user.password_hash or _DECOY)
-        matched = matched or ok
-    if not admins:
-        verify_password(password, _DECOY)  # keep the timing even with no admins
-    return matched
+    # At least one: with no admins we still hash the decoy, to keep the timing.
+    slots = argon2_gate.acquire(max(1, len(admins)))
+    if not slots:
+        raise PasswordVerificationBusyError
+    try:
+        matched = False
+        for user in admins:
+            ok, _ = verify_password(password, user.password_hash or _DECOY)
+            matched = matched or ok
+        if not admins:
+            verify_password(password, _DECOY)  # keep the timing even with no admins
+        return matched
+    finally:
+        argon2_gate.release(slots)
 
 
 async def _unique_username(session: AsyncSession, desired: str) -> str:
@@ -106,7 +131,7 @@ async def set_password(
     if admins:
         admins[0].password_hash = hash_password(password)
         # A password change must invalidate every session the old password could have
-        # authorised -- except, optionally, the one making the change.
+        # authorized -- except, optionally, the one making the change.
         await close_all_for_user(
             session,
             admins[0].id,

@@ -16,29 +16,41 @@ Covers the findings addressed in the scan lane of the code review:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 
-from reaper.clock import utcnow
+from reaper.clients.plex import PlexError
+from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import FirstFlagged
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine import backtest as bt
+from reaper.engine import identity
 from reaper.engine.backtest import BacktestResult, Item, run
 from reaper.engine.calibration import Bucket, RewatchPrior
+from reaper.engine.gates import Facts, GateId
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
-from reaper.services import history_sync
+from reaper.ratings import Rating, RatingSource
+from reaper.services import history_sync, watch_evidence
+from reaper.services.library_index import _RETIRED_DEGRADE_FLOOR, _RETIRED_DEGRADE_SHARE
+from reaper.services.season_scan import build_tv_index
 from reaper.services.snapshot import (
-    _match_plex_movie,
+    _fold_merged_watch_stats,
+    _insert_first_flags,
     _raw_items,
-    _record_first_flagged,
+    _watch_stats,
+    build_movie_index,
     protection_sync_degradations,
+    record_first_flagged_bulk,
 )
 
 # Second precision: the timestamp columns round-trip through SQLite at whole-second
@@ -46,66 +58,670 @@ from reaper.services.snapshot import (
 NOW = utcnow().replace(microsecond=0)
 
 
+class TestMovieDecisionLog:
+    """Every movie Radarr returns emits one greppable decision line, so "why isn't my movie
+    in the queue" is answerable from the log -- the movie twin of season_scan.series_decision."""
+
+    def _index(self) -> identity.PlexIndex:
+        return identity.PlexIndex.build(
+            [identity.PlexItem(rating_key=1, title="A Film", year=2020, added_at=NOW)]
+        )
+
+    def test_a_movie_with_a_file_logs_candidate(self) -> None:
+        movie = {
+            "id": 7,
+            "title": "A Film",
+            "year": 2020,
+            "tmdbId": 500,
+            "hasFile": True,
+            "sizeOnDisk": 1234,
+        }
+        with capture_logs() as logs:
+            _raw_items([movie], self._index(), instance_id=3)
+        decisions = [e for e in logs if e["event"] == "scan.movie_decision"]
+        assert len(decisions) == 1
+        d = decisions[0]
+        assert d["outcome"] == "candidate"
+        assert d["title"] == "A Film"
+        assert d["tmdb_id"] == 500
+        assert d["has_file"] is True
+        assert d["size_bytes"] == 1234
+        assert d["instance_id"] == 3
+
+    def test_a_movie_without_a_file_logs_no_file(self) -> None:
+        movie = {"id": 8, "title": "Not Downloaded", "year": 2021, "hasFile": False}
+        with capture_logs() as logs:
+            items = _raw_items([movie], self._index(), instance_id=3)
+        assert items == []  # dropped: nothing on disk to reap
+        decisions = [e for e in logs if e["event"] == "scan.movie_decision"]
+        assert len(decisions) == 1
+        d = decisions[0]
+        assert d["outcome"] == "no_file"
+        assert d["has_file"] is False
+        assert d["size_bytes"] is None
+
+
 # ---------------------------------------------------------------------------
 # The movie -> Plex join: duplicate titles must fail closed (the high finding).
 # ---------------------------------------------------------------------------
 
 
-class TestTheMovieJoinDisambiguatesByYear:
-    """Two films can share a title (remakes -- "The Mummy" 1999 vs 2017). A plain
-    title map is last-write-wins, so BOTH bind to whichever row was indexed last, read
-    the wrong watch history, and defeat the streaming veto. The join must resolve by
-    year and refuse on any ambiguity, exactly as ``season_scan.match_show`` does."""
+class TestTheMovieJoinAtTheScanLane:
+    """End-to-end proof that ``_raw_items`` threads the shared resolver correctly. Two
+    films can share a title (remakes), and neither of these fixtures carries an external
+    id, so an ambiguous title must leave the candidate unmatched (Unknown facts -> ABSTAIN,
+    executor spares a keyless item) and a year that singles out one Plex row must bind it.
+    The resolver's own tier logic is unit-tested in ``test_identity.py``."""
 
-    def _rows(self) -> dict[str, list[dict[str, object]]]:
-        return {
-            "the mummy": [
-                {"rating_key": 11, "added_at": "1700000000", "year": 1999},
-                {"rating_key": 22, "added_at": "1700000000", "year": 2017},
+    def _index(self) -> identity.PlexIndex:
+        # A remake pair, distinguished only by year; no ids -> the title+year backstop.
+        return identity.PlexIndex.build(
+            [
+                identity.PlexItem(rating_key=11, title="The Mummy", year=1999, added_at=NOW),
+                identity.PlexItem(rating_key=22, title="The Mummy", year=2017, added_at=NOW),
             ]
-        }
-
-    def test_a_matching_year_binds_to_the_right_row(self) -> None:
-        row = _match_plex_movie({"title": "The Mummy", "year": 1999}, self._rows())
-        assert row is not None and row["rating_key"] == 11
-
-        row = _match_plex_movie({"title": "The Mummy", "year": 2017}, self._rows())
-        assert row is not None and row["rating_key"] == 22
-
-    def test_a_duplicate_title_with_no_year_refuses(self) -> None:
-        """No year to disambiguate a collision -> no match, so the item's facts stay
-        Unknown and it abstains. Better a spared duplicate than a wrong-history delete."""
-        assert _match_plex_movie({"title": "The Mummy"}, self._rows()) is None
-
-    def test_a_duplicate_title_with_an_unmatched_year_refuses(self) -> None:
-        assert _match_plex_movie({"title": "The Mummy", "year": 1932}, self._rows()) is None
-
-    def test_a_single_row_with_a_conflicting_year_refuses(self) -> None:
-        """One Plex row, but its year disagrees: it is a different film, and binding to
-        it would read the wrong history."""
-        index = {"solaris": [{"rating_key": 5, "added_at": "1700000000", "year": 2002}]}
-        assert _match_plex_movie({"title": "Solaris", "year": 1972}, index) is None
-
-    def test_a_single_row_binds_when_a_year_is_missing_on_either_side(self) -> None:
-        """The common case -- Plex often omits the year. A lone title match with no
-        conflict is accepted, as safe as the old title-only join was."""
-        index = {"a film": [{"rating_key": 7, "added_at": "1700000000"}]}
-        assert _match_plex_movie({"title": "A Film", "year": 2010}, index)["rating_key"] == 7  # type: ignore[index]
-        assert _match_plex_movie({"title": "A Film"}, index)["rating_key"] == 7  # type: ignore[index]
+        )
 
     def test_raw_items_leaves_an_ambiguous_movie_unmatched(self) -> None:
-        """End to end: an ambiguous title produces a candidate with no rating key, which
-        makes its dormancy Unknown -> ABSTAIN, and the executor spares a keyless item."""
         movie = {"id": 1, "title": "The Mummy", "hasFile": True, "sizeOnDisk": 1}
-        items = _raw_items([movie], self._rows(), instance_id=1)
+        items = _raw_items([movie], self._index(), instance_id=1)
         assert len(items) == 1
         assert items[0].plex_rating_key is None
         assert items[0].added_at is None
 
-    def test_raw_items_binds_a_disambiguated_movie(self) -> None:
+    def test_raw_items_binds_a_disambiguated_movie_by_title(self) -> None:
         movie = {"id": 1, "title": "The Mummy", "year": 2017, "hasFile": True, "sizeOnDisk": 1}
-        items = _raw_items([movie], self._rows(), instance_id=1)
+        items = _raw_items([movie], self._index(), instance_id=1)
         assert items[0].plex_rating_key == 22
+        assert items[0].added_at == NOW
+        assert items[0].matched_by is identity.MatchedBy.TITLE_YEAR
+
+    def test_raw_items_binds_by_tmdb_across_a_title_difference(self) -> None:
+        """A Plex row whose title differs (a regional or renamed title) still binds when
+        the tmdb id agrees. That is what id matching is for."""
+        index = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=42,
+                    title="A Regional Title",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                )
+            ]
+        )
+        movie = {
+            "id": 1,
+            "title": "The Original Title",
+            "year": 2020,
+            "tmdbId": 1001,
+            "hasFile": True,
+            "sizeOnDisk": 1,
+        }
+        items = _raw_items([movie], index, instance_id=1)
+        assert items[0].plex_rating_key == 42
+        assert items[0].matched_by is identity.MatchedBy.TMDB
+
+    def test_raw_items_abstains_when_a_shared_id_names_two_rows(self) -> None:
+        """A duplicate tmdb across two Plex items is ambiguous -> keyless candidate."""
+        index = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=1,
+                    title="A",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                ),
+                identity.PlexItem(
+                    rating_key=2,
+                    title="B",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                ),
+            ]
+        )
+        movie = {
+            "id": 9,
+            "title": "A",
+            "year": 2020,
+            "tmdbId": 1001,
+            "hasFile": True,
+            "sizeOnDisk": 1,
+        }
+        items = _raw_items([movie], index, instance_id=1)
+        assert items[0].plex_rating_key is None
+        assert items[0].matched_by is None
+
+    def test_raw_items_narrows_a_shared_id_by_the_movies_file_name(self) -> None:
+        """The split-library case through the scan path: two Plex rows share the tmdb id
+        (an HD and a 4K section), and the movie's own file name picks its copy."""
+        index = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=1,
+                    title="Example",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                    file_basename="example (2020) 1080p.mkv",
+                    files=(identity.PlexFile("example (2020) 1080p.mkv"),),
+                ),
+                identity.PlexItem(
+                    rating_key=2,
+                    title="Example",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                    file_basename="example (2020) 2160p.mkv",
+                    files=(identity.PlexFile("example (2020) 2160p.mkv"),),
+                ),
+            ]
+        )
+        movie = {
+            "id": 9,
+            "title": "Example",
+            "year": 2020,
+            "tmdbId": 1001,
+            "hasFile": True,
+            "sizeOnDisk": 1,
+            "movieFile": {"relativePath": "Example (2020) 2160p.mkv"},
+        }
+        items = _raw_items([movie], index, instance_id=1)
+        assert items[0].plex_rating_key == 2
+        assert items[0].added_at == NOW
+        assert items[0].matched_by is identity.MatchedBy.ID_AND_BASENAME
+        assert items[0].match_status is identity.MatchStatus.MATCHED
+
+    def test_raw_items_merges_byte_identical_twin_listings(self) -> None:
+        """The curated re-list case through the scan path: two Plex rows share the tmdb
+        id AND the file name, and Radarr's exact byte size proves they are one file
+        listed twice. The item binds to the earliest listing and carries every listing's
+        key, so its watch stats can be read from all of them."""
+        earlier = NOW - timedelta(days=900)
+        index = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=1,
+                    title="Example",
+                    year=2020,
+                    added_at=earlier,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                    file_basename="example (2020).mkv",
+                    files=(identity.PlexFile("example (2020).mkv", 7_000),),
+                ),
+                identity.PlexItem(
+                    rating_key=2,
+                    title="Example",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                    file_basename="example (2020).mkv",
+                    files=(identity.PlexFile("example (2020).mkv", 7_000),),
+                ),
+            ]
+        )
+        movie = {
+            "id": 9,
+            "title": "Example",
+            "year": 2020,
+            "tmdbId": 1001,
+            "hasFile": True,
+            "sizeOnDisk": 7_050,
+            "movieFile": {"relativePath": "Example (2020).mkv", "size": 7_000},
+        }
+        items = _raw_items([movie], index, instance_id=1)
+        assert items[0].plex_rating_key == 1
+        assert items[0].added_at == earlier
+        assert items[0].matched_by is identity.MatchedBy.MERGED_LISTINGS
+        assert items[0].match_status is identity.MatchStatus.MATCHED
+        assert items[0].merged_rating_keys == (1, 2)
+
+
+# ---------------------------------------------------------------------------
+# build_movie_index: Tautulli spine + plexapi enrichment, fail-closed on sweep failure.
+# ---------------------------------------------------------------------------
+
+
+class _FakeTautulli:
+    """The minimum of the Tautulli client the index builders touch."""
+
+    def __init__(self, rows: list[dict[str, object]], section_type: str = "movie") -> None:
+        self._rows = rows
+        self._section_type = section_type
+
+    async def libraries(self) -> list[dict[str, object]]:
+        return [{"section_type": self._section_type, "section_id": 1}]
+
+    async def library_media_info(
+        self, section_id: int, *, start: int = 0, length: int = 1000, **_: object
+    ) -> dict[str, object]:
+        return {"data": self._rows if start == 0 else []}
+
+
+class _SectionedTautulli:
+    """The same client across SEVERAL libraries, keyed by section id.
+
+    ``_FakeTautulli`` reports one section, which is the shape that cannot exercise a
+    per-library bound: with a single bucket the share is the overall share, so a test built
+    on it passes whether the count is bucketed or not.
+    """
+
+    def __init__(self, sections: dict[int, list[dict[str, object]]], section_type: str = "movie"):
+        self._sections = sections
+        self._section_type = section_type
+
+    async def libraries(self) -> list[dict[str, object]]:
+        return [
+            {
+                "section_type": self._section_type,
+                "section_id": sid,
+                "section_name": f"Library {sid}",
+            }
+            for sid in self._sections
+        ]
+
+    async def library_media_info(
+        self, section_id: int, *, start: int = 0, length: int = 1000, **_: object
+    ) -> dict[str, object]:
+        return {"data": self._sections.get(section_id, []) if start == 0 else []}
+
+
+class _FakePlexSweep:
+    def __init__(self, items: dict[int, identity.PlexItem]) -> None:
+        self._items = items
+
+    async def library_guid_index(
+        self, *, section_type: str, allowed_sections: set[int] | None = None
+    ) -> dict[int, identity.PlexItem]:
+        return self._items
+
+
+class _FakePlexBrokenSweep:
+    async def library_guid_index(
+        self, *, section_type: str, allowed_sections: set[int] | None = None
+    ) -> dict[int, object]:
+        raise PlexError("the sweep blew up")
+
+
+_SPINE_ROWS = [{"rating_key": 100, "title": "Example", "year": 2020, "added_at": "1700000000"}]
+
+
+class TestBuildMovieIndex:
+    async def test_ids_and_basename_enrich_the_tautulli_spine(self) -> None:
+        """The plexapi sweep joins onto the spine by rating key, and added_at STILL comes
+        from Tautulli (the dormancy floor must not shift)."""
+        swept = {
+            100: identity.PlexItem(
+                rating_key=100,
+                title="Example",
+                year=2020,
+                added_at=from_epoch("1600000000"),  # differs from the spine on purpose
+                ids=identity.ExternalIds.of(tmdb=1001),
+                file_basename="example (2020).mkv",
+                video_resolution="1080",
+                content_rating="PG-13",
+                runtime_minutes=95,
+                ratings=(
+                    Rating(
+                        source=RatingSource.ROTTEN_TOMATOES_CRITIC,
+                        value=7.7,
+                        votes=None,
+                        provider="plex",
+                    ),
+                ),
+            )
+        }
+        index = await build_movie_index(
+            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=lambda _r: None,
+        )
+        item = index.by_rating_key[100]
+        assert item.added_at == from_epoch("1700000000")  # from the spine, not the sweep
+        assert item.ids.tmdb == 1001
+        assert item.file_basename == "example (2020).mkv"
+        assert index.by_tmdb[1001] == [100]
+        # The display metadata must survive the spine rebuild -- this loop copies
+        # fields one by one, and a field missed here silently never reaches a card.
+        assert item.video_resolution == "1080"
+        assert item.content_rating == "PG-13"
+        assert item.runtime_minutes == 95
+        assert [r.source for r in item.ratings] == [RatingSource.ROTTEN_TOMATOES_CRITIC]
+
+    async def test_an_item_the_tautulli_cache_has_not_listed_still_enters_the_index(self) -> None:
+        """Tautulli's media-info listing is a cache and lags fresh additions. An item the
+        plexapi sweep sees but the spine does not must still enter the index (with Plex's
+        own added-at), or the resolver falsely reports a matched item as unmatched."""
+        fresh = identity.PlexItem(
+            rating_key=200,
+            title="Example Fresh",
+            year=2026,
+            added_at=from_epoch("1700000500"),
+            ids=identity.ExternalIds.of(tmdb=2002),
+            file_basename="example fresh (2026).mkv",
+        )
+        swept = {
+            100: identity.PlexItem(
+                rating_key=100,
+                title="Example",
+                year=2020,
+                added_at=None,
+                ids=identity.ExternalIds.of(tmdb=1001),
+                file_basename="example (2020).mkv",
+            ),
+            200: fresh,
+        }
+        index = await build_movie_index(
+            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=lambda _r: None,
+        )
+        assert index.by_rating_key[200] == fresh  # in the index, Plex's added_at intact
+        res = identity.resolve_movie(
+            ids=identity.ExternalIds.of(tmdb=2002),
+            title="Example Fresh",
+            year=2026,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key == 200
+        assert res.status is identity.MatchStatus.MATCHED
+
+    async def test_a_sweep_failure_degrades_but_still_matches_by_title(self) -> None:
+        """rule #2: a failed GUID sweep degrades the snapshot (un-executable) rather than
+        silently continuing -- but items still fall through to the title+year backstop."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            _FakePlexBrokenSweep(),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert reasons and "GUID sweep failed" in reasons[0]
+        assert index.by_rating_key[100].ids.empty  # nothing enriched
+        res = identity.resolve_movie(
+            ids=identity.ExternalIds(), title="Example", year=2020, file_basename=None, index=index
+        )
+        assert res.rating_key == 100  # the backstop still works
+
+    async def test_no_plex_client_means_no_enrichment_and_no_degrade(self) -> None:
+        """A movie-only deployment with no Plex configured: no ids, no degrade for the
+        sweep (it was already un-executable, since a real reap refuses without Plex)."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            None,
+            degrade=reasons.append,
+        )
+        assert reasons == []
+        assert index.by_rating_key[100].ids.empty
+
+
+class TestRetiredSpineRows:
+    """A rating key the Tautulli cache still lists that Plex no longer has.
+
+    It reaches the index carrying a title and a year and nothing else, which is exactly
+    the shape tier 3 binds on, so it can attach a live file to an item that is gone.
+    """
+
+    #: The phantom: still in Tautulli's listing, absent from the sweep. Its title and year
+    #: are the *arr's, which is what lets it win the title tier.
+    _RETIRED: ClassVar[dict[str, object]] = {
+        "rating_key": 100,
+        "title": "Example",
+        "year": 2020,
+        "added_at": "1500000000",
+    }
+    #: The item Plex actually holds for that file. A different title, so only its file name
+    #: or its ids can reach it.
+    _REAL = identity.PlexItem(
+        rating_key=300,
+        title="Example Alternate Cut",
+        year=1996,
+        added_at=from_epoch("1700000000"),
+        ids=identity.ExternalIds.of(tmdb=3003),
+        file_basename="example (2020).mkv",
+    )
+
+    async def test_a_row_plex_no_longer_has_cannot_bind_a_live_file(self) -> None:
+        """The condemn-side reach. With the *arr's file renamed, nothing reaches the real
+        row, and before this fix title+year bound the file to the retired key -- which
+        reads as MATCHED, so watchers came back Known(0) and dormancy anchored on the
+        phantom's stale added-at. Unmatched is the right answer, and it keeps the file."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            _FakePlexSweep({300: self._REAL}),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert 100 not in index.by_rating_key
+        res = identity.resolve_movie(
+            ids=identity.ExternalIds.of(tmdb=9009),  # names nothing in Plex
+            title="Example",
+            year=2020,
+            file_basename="Example (2020) Bluray-1080p.mkv",  # the *arr renamed it
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is identity.MatchStatus.UNMATCHED
+        assert reasons == []  # one retired row is an ordinary stale cache, not a failure
+
+    async def test_a_row_plex_no_longer_has_cannot_veto_a_good_bind(self) -> None:
+        """The keep-side reach, and the one an operator sees: the file name named the real
+        row, the phantom's title named itself, the two disagreed and the item abstained as
+        'more than one thing in your Plex' over a library holding exactly one copy."""
+        index = await build_movie_index(
+            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            _FakePlexSweep({300: self._REAL}),  # type: ignore[arg-type]
+            degrade=lambda _r: None,
+        )
+        res = identity.resolve_movie(
+            ids=identity.ExternalIds.of(tmdb=9009),
+            title="Example",
+            year=2020,
+            file_basename="example (2020).mkv",  # still names the real row
+            index=index,
+        )
+        assert res.rating_key == 300
+        assert res.status is identity.MatchStatus.MATCHED
+
+    async def test_a_failed_sweep_retires_nothing(self) -> None:
+        """rule 2. A sweep that raised returns the same empty map a genuinely empty library
+        does, and reading it as 'Plex has none of these' would retire the whole library on a
+        read that never happened. The pre-fix behavior stands, and the snapshot degrades."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            _FakePlexBrokenSweep(),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert 100 in index.by_rating_key
+        assert reasons and "GUID sweep failed" in reasons[0]
+
+    async def test_no_plex_configured_retires_nothing(self) -> None:
+        """The other silent-empty: nothing swept because nothing was asked."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            None,
+            degrade=reasons.append,
+        )
+        assert 100 in index.by_rating_key
+        assert reasons == []
+
+    async def test_the_show_index_retires_the_same_rows(self) -> None:
+        """rule 72. ``build_tv_index`` is a thin wrapper over the same builder, so the prune
+        reaches shows for free -- but the resolver above it does not: a show binds on tvdb
+        and a FOLDER name, never a file size, so there is one less corroborator between a
+        phantom and a live series. Both arms, on the show ladder."""
+        retired_show = {
+            "rating_key": 100,
+            "title": "Example Show",
+            "year": 2020,
+            "added_at": "1500000000",
+        }
+        real_show = identity.PlexItem(
+            rating_key=300,
+            title="Example Show Under Another Name",
+            year=2020,
+            added_at=from_epoch("1700000000"),
+            ids=identity.ExternalIds.of(tvdb=7007),
+            file_basename="example show",
+        )
+        index = await build_tv_index(
+            _FakeTautulli([retired_show], section_type="show"),  # type: ignore[arg-type]
+            _FakePlexSweep({300: real_show}),  # type: ignore[arg-type]
+            degrade=lambda _r: None,
+        )
+        assert 100 not in index.by_rating_key
+
+        # The folder still names the real show: it binds, where the phantom's title would
+        # have contradicted it and abstained.
+        bound = identity.resolve_show(
+            ids=identity.ExternalIds.of(tvdb=9009),  # names nothing in Plex
+            title="Example Show",
+            year=2020,
+            file_basename="Example Show",
+            index=index,
+        )
+        assert (bound.rating_key, bound.status) == (300, identity.MatchStatus.MATCHED)
+
+        # Sonarr's folder was renamed, so nothing reaches the real show. Unmatched keeps
+        # every season; binding the phantom would have handed them all a dead rating key.
+        stranded = identity.resolve_show(
+            ids=identity.ExternalIds.of(tvdb=9009),
+            title="Example Show",
+            year=2020,
+            file_basename="Example Show (2020) [tvdb-9009]",
+            index=index,
+        )
+        assert stranded.rating_key is None
+        assert stranded.status is identity.MatchStatus.UNMATCHED
+
+    @pytest.mark.parametrize(
+        ("total", "retired", "degrades"),
+        [
+            (400, 41, True),  # past both bounds: floor 20, share 40
+            (400, 40, False),  # past the floor, exactly AT the share
+            (100, 15, False),  # past the share (10), under the floor
+            (1000, 50, False),  # past the floor, well under the share (100)
+            (400, 400, True),  # a section the sweep never walked
+        ],
+    )
+    async def test_a_large_gap_degrades_and_a_small_one_does_not(
+        self, total: int, retired: int, degrades: bool
+    ) -> None:
+        """A stale cache retires a handful; a library the sweep never walked retires all of
+        it, and every item in it would resolve unmatched with nothing saying why. Both
+        bounds must be passed, so a small library cannot degrade on one retired row."""
+        rows = [
+            {"rating_key": k, "title": f"Example {k}", "year": 2020, "added_at": "1500000000"}
+            for k in range(total)
+        ]
+        swept = {
+            k: identity.PlexItem(
+                rating_key=k,
+                title=f"Example {k}",
+                year=2020,
+                added_at=from_epoch("1700000000"),
+                ids=identity.ExternalIds.of(tmdb=5000 + k),
+            )
+            for k in range(retired, total)
+        }
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli(rows),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert len(index.by_rating_key) == total - retired
+        gap = [r for r in reasons if "no longer in Plex" in r]
+        assert bool(gap) is degrades
+        if degrades:
+            assert str(retired) in gap[0]
+
+    async def test_one_library_vanishing_whole_degrades_beside_a_healthy_one(self) -> None:
+        """The case the share exists for, and the one a single overall share cannot see.
+
+        A small library the sweep cannot reach (a restricted share, a section removed and
+        re-created under a new key) retires whole, while a large healthy one keeps the
+        overall ratio down: 150 of 2,150 is past the floor but under 10% of the total, so
+        one global share reports nothing and every item in that library silently resolves
+        unmatched. Bucketed per section, the vanished library is 100% of its own spine and
+        the scan says so.
+        """
+        healthy = [
+            {"rating_key": k, "title": f"Example {k}", "year": 2020, "added_at": "1500000000"}
+            for k in range(2000)
+        ]
+        vanished = [
+            {"rating_key": k, "title": f"Example {k}", "year": 2020, "added_at": "1500000000"}
+            for k in range(5000, 5150)
+        ]
+        # Only the healthy section's rows come back from the sweep.
+        swept = {
+            k: identity.PlexItem(
+                rating_key=k,
+                title=f"Example {k}",
+                year=2020,
+                added_at=from_epoch("1700000000"),
+                ids=identity.ExternalIds.of(tmdb=5000 + k),
+            )
+            for k in range(2000)
+        }
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _SectionedTautulli({1: healthy, 2: vanished}),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert len(index.by_rating_key) == 2000
+        gap = [r for r in reasons if "no longer in Plex" in r]
+        assert gap, "a library that vanished whole must be announced, not averaged away"
+        assert "150" in gap[0]
+        # The bound it slips past when the share is measured over every section at once.
+        assert _RETIRED_DEGRADE_SHARE * (len(healthy) + len(vanished)) > 150
+
+    async def test_a_stale_row_in_each_of_many_libraries_does_not_degrade(self) -> None:
+        """The other side, so the per-section share cannot pass by degrading on anything.
+
+        A handful of rows lagging in each of several libraries is an ordinary stale cache,
+        not a scope mismatch. Each section is well under its own share, so nothing fires
+        even though the total clears the floor.
+        """
+        sections: dict[int, list[dict[str, object]]] = {}
+        swept: dict[int, identity.PlexItem] = {}
+        for section in range(6):
+            base = section * 1000
+            rows = [
+                {
+                    "rating_key": base + k,
+                    "title": f"Example {base + k}",
+                    "year": 2020,
+                    "added_at": "1500000000",
+                }
+                for k in range(200)
+            ]
+            sections[section + 1] = rows
+            # Five stale rows per section: 5 of 200 is under the 10% share, 30 total is
+            # over the floor of 20.
+            for k in range(5, 200):
+                swept[base + k] = identity.PlexItem(
+                    rating_key=base + k,
+                    title=f"Example {base + k}",
+                    year=2020,
+                    added_at=from_epoch("1700000000"),
+                    ids=identity.ExternalIds.of(tmdb=90000 + base + k),
+                )
+        reasons: list[str] = []
+        await build_movie_index(
+            _SectionedTautulli(sections),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert _RETIRED_DEGRADE_FLOOR < 30, "the total must clear the floor, or this proves nothing"
+        assert [r for r in reasons if "no longer in Plex" in r] == []
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +735,134 @@ async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     await history_sync.ensure_schema(eng)  # the empty watch_event table _plays reads
     yield eng
     await eng.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Merged listings: one file listed twice in Plex, plays split across the rating keys.
+# ---------------------------------------------------------------------------
+
+
+async def _play_event(
+    engine: AsyncEngine, row_id: int, rating_key: int, user_id: int, when: datetime
+) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO watch_event (row_id, rating_key, user_id, watched_at, "
+                "watched_status, percent_complete, media_type) "
+                "VALUES (:id, :rk, :user, :at, 1.0, 100, 'movie')"
+            ),
+            {"id": row_id, "rk": rating_key, "user": user_id, "at": int(when.timestamp())},
+        )
+
+
+class TestMergedWatchStatsFold:
+    """The fold reads a merged group's plays as a UNION onto the canonical key: exact
+    distinct watchers (one person through two listings counts once), the latest play
+    through any listing, and nothing else's stats touched."""
+
+    async def test_the_group_union_lands_on_the_canonical_key(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        old = NOW - timedelta(days=400)  # outside the 365-day window
+        recent = NOW - timedelta(days=10)
+        await _play_event(cache_engine, 1, 100, 1, old)  # user 1, canonical listing
+        await _play_event(cache_engine, 2, 200, 1, recent)  # user 1 again, other listing
+        await _play_event(cache_engine, 3, 200, 2, recent)  # user 2, other listing only
+        await _play_event(cache_engine, 4, 200, 9, old)  # user 9, old, other listing
+        await _play_event(cache_engine, 5, 300, 3, recent)  # an unrelated item
+
+        last_played, window, ever = await _watch_stats(
+            cache_engine, rating_keys={100, 300}, window_days=365
+        )
+        assert ever.get(100) == 1  # before the fold: the canonical key alone
+
+        await _fold_merged_watch_stats(
+            cache_engine,
+            groups={100: (100, 200)},
+            window_days=365,
+            last_played=last_played,
+            watchers_window=window,
+            watchers_all_time=ever,
+        )
+        assert last_played[100] == from_epoch(int(recent.timestamp()))
+        assert window[100] == 2  # users 1 and 2; user 9's play is outside the window
+        assert ever[100] == 3  # user 1 counted once despite playing both listings
+        # The unrelated item's stats are untouched.
+        assert ever.get(300) == 1
+
+    async def test_plays_only_under_the_other_listing_still_count(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Every play sits under the file's OTHER listing; without the fold the canonical
+        key would read 'never watched', the exact under-count that condemns."""
+        recent = NOW - timedelta(days=5)
+        await _play_event(cache_engine, 1, 200, 7, recent)
+
+        last_played, window, ever = await _watch_stats(
+            cache_engine, rating_keys={100}, window_days=365
+        )
+        assert 100 not in last_played
+
+        await _fold_merged_watch_stats(
+            cache_engine,
+            groups={100: (100, 200)},
+            window_days=365,
+            last_played=last_played,
+            watchers_window=window,
+            watchers_all_time=ever,
+        )
+        assert last_played[100] == from_epoch(int(recent.timestamp()))
+        assert window[100] == 1
+        assert ever[100] == 1
+
+    async def test_a_library_sized_group_set_does_not_blow_the_variable_ceiling(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The IN was expanded whole, unlike every sibling that batches at 500.
+
+        Past SQLite's bound-variable ceiling the statement raises OperationalError, which
+        is not an IntegrationError and so is caught nowhere: the whole scan dies rather
+        than one fold being skipped. Enough merged listings to need that many binds is a
+        big library, not an exotic one.
+        """
+        # 36,000 keys: past SQLite's bound-variable ceiling (32,766 on a current build,
+        # 999 on an older one) and past the 500-key chunk many times over.
+        groups = {rk: (rk, rk + 100_000) for rk in range(1_000, 19_000)}
+        await _play_event(cache_engine, 1, 101_000, 4, NOW - timedelta(days=3))
+
+        last_played, window, ever = await _watch_stats(
+            cache_engine, rating_keys=set(groups), window_days=365
+        )
+        await _fold_merged_watch_stats(
+            cache_engine,
+            groups=groups,
+            window_days=365,
+            last_played=last_played,
+            watchers_window=window,
+            watchers_all_time=ever,
+        )
+
+        # And it is not merely "did not raise": the play under the second listing of the
+        # group in the middle of the run still folded onto its canonical key.
+        assert ever[1_000] == 1
+        assert window[1_000] == 1
+
+    async def test_a_group_with_no_plays_changes_nothing(self, cache_engine: AsyncEngine) -> None:
+        last_played, window, ever = await _watch_stats(
+            cache_engine, rating_keys={100}, window_days=365
+        )
+        await _fold_merged_watch_stats(
+            cache_engine,
+            groups={100: (100, 200)},
+            window_days=365,
+            last_played=last_played,
+            watchers_window=window,
+            watchers_all_time=ever,
+        )
+        assert 100 not in last_played
+        assert 100 not in window
+        assert 100 not in ever
 
 
 def _bt_item() -> Item:
@@ -160,7 +904,7 @@ class TestTheBacktestVerdictMatchesProduction:
         self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Production abstains below ``coverage_floor_bp``; the backtest never checked
-        coverage and would over-count deletions. Now it honours the floor."""
+        coverage and would over-count deletions. Now it honors the floor."""
         monkeypatch.setattr(
             bt, "score", lambda *a, **k: Score(value=95.0, coverage=0.40, results=[])
         )
@@ -177,6 +921,188 @@ class TestTheBacktestVerdictMatchesProduction:
             horizon=NOW - timedelta(days=3000),
         )
         assert result.condemned == []  # 4000bp coverage is below the 5000bp floor
+
+    @pytest.mark.parametrize("window", [1, 30, 90, 730, 1095])
+    async def test_the_window_scored_against_is_the_policy_s_own(
+        self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch, window: int
+    ) -> None:
+        """The span the count was taken over is the span its reach is checked against.
+
+        ``facts_as_of`` counts ``distinct_watchers`` over the policy's popularity window,
+        and since rule 140 every reader of that count checks ``Facts.history_reach_days``
+        against the span the count claims to cover. Passing one span to the fact builder
+        and a different one to ``score()`` compares a count to a reach it was never taken
+        over, and it fails OPEN: a 730-day window over a 400-day mirror scored against the
+        365-day default takes full FEW_WATCHERS pressure at coverage 1.0, where production
+        withholds it at coverage 0.0.
+
+        **Both consumers of the span are pinned, not just the one that was broken.** The
+        invariant is "one span, two readers": ``facts_as_of`` BUILDS the count over it and
+        ``score`` VALIDATES the reach against it, and either one drifting to its own 365
+        default reopens the same hole. Spying only on ``score`` would prove the fixed line
+        and nothing about the line four above it -- hardcoding ``popularity_window_days=365``
+        at the ``facts_as_of`` call leaves the whole suite green while withdrawing a PROTECT
+        and adding 20 points of pressure at coverage 1.0.
+
+        **365 is deliberately not in the sweep** (rule 141). It is the default of both
+        callees, so it is the one value that cannot tell a window that was passed from a
+        window that was omitted -- which is exactly why every other backtest fixture, all
+        of which pin 365, left this invisible behind a green suite. The low end is the 1
+        day the field actually allows (``GateSetting`` bounds ``window_days`` ``ge=1``).
+
+        Each spy reads its kwarg with ``.get`` rather than subscripting, so an omission
+        fails on the VALUE that was used. Subscripting would raise ``KeyError`` instead,
+        which passes for the wrong reason: it pins that an argument was passed at all, not
+        that the right span reached the callee.
+        """
+        scored: list[int | None] = []
+        built: list[int | None] = []
+        real_score = bt.score
+        real_facts_as_of = bt.facts_as_of
+
+        def _score_spy(*args: object, **kwargs: object) -> Score:
+            scored.append(kwargs.get("window_days"))  # type: ignore[arg-type]
+            return real_score(*args, **kwargs)  # type: ignore[arg-type]
+
+        def _facts_spy(*args: object, **kwargs: object) -> Facts | None:
+            built.append(kwargs.get("popularity_window_days"))  # type: ignore[arg-type]
+            return real_facts_as_of(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(bt, "score", _score_spy)
+        monkeypatch.setattr(bt, "facts_as_of", _facts_spy)
+        policy = DEFAULT_MOVIE_POLICY.model_copy(
+            update={
+                "gates": [
+                    g.model_copy(update={"window_days": window, "enabled": True})
+                    if g.gate is GateId.SERVER_POPULARITY
+                    else g
+                    for g in DEFAULT_MOVIE_POLICY.gates
+                ]
+            }
+        )
+        assert policy.popularity_window_days() == window
+
+        await run(
+            cache_engine,
+            [_bt_item()],
+            policy,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=3000),
+        )
+
+        # One span, both readers: the builder counted over it and the scorer checked the
+        # reach against it. Equal to each other is not enough -- both must equal the policy.
+        assert built == [window]
+        assert scored == [window]
+
+    async def test_a_window_the_mirror_cannot_cover_withholds_the_signal_in_rehearsal(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The sweep above proves the span travels; this proves it changes the outcome.
+
+        Its fixture deliberately reaches back 3000 days, past every window it sweeps, so
+        ``reach_shortfall`` returns ``None`` in all five cases and the withheld arm is never
+        entered. That is the arm the fix exists to reach, so it gets a case of its own: a
+        730-day window over a mirror that only goes back 500 days.
+        """
+        policy = DEFAULT_MOVIE_POLICY.model_copy(
+            update={
+                "gates": [
+                    g.model_copy(update={"window_days": 730, "enabled": True})
+                    if g.gate is GateId.SERVER_POPULARITY
+                    else g
+                    for g in DEFAULT_MOVIE_POLICY.gates
+                ]
+            }
+        )
+
+        deep = await run(
+            cache_engine,
+            [_bt_item()],
+            policy,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=3000),
+        )
+        short = await run(
+            cache_engine,
+            [_bt_item()],
+            policy,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=500),
+        )
+
+        # Same policy, same item, same cutoff. Only the mirror's depth differs, and the
+        # shallow one cannot establish the 730-day count, so the rehearsal declines to
+        # charge for it and says so by scoring the item lower.
+        assert deep.considered == short.considered == 1
+        assert short.condemned_bytes <= deep.condemned_bytes
+
+
+class TestTheRunCarriesTheBlindnessTheLiveScanWould:
+    """`run` hands each item's blind reason to the fact builder, and counts what it skipped.
+
+    The parameter is the caller's to supply because the high-water marks behind it live in
+    the database of record, which the engine layer does not open. That makes it exactly the
+    shape rule 141 warns about: unsupplied it defaults to None, which is also what a correct
+    pass produces for an unaffected item, so only a test that supplies a *different* value
+    can tell a plumbed argument from an omitted one.
+    """
+
+    async def test_the_blind_reason_reaches_the_fact_builder_for_its_item_alone(
+        self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two items, one blind. Reading the kwarg with ``.get`` means an omission fails on
+        the VALUE that was used rather than raising KeyError, which would pass for the wrong
+        reason (rule 141). The second item pins that the map is consulted per item and not
+        applied to the whole run."""
+        seen: list[str | None] = []
+        real_facts_as_of = bt.facts_as_of
+
+        def _spy(*args: object, **kwargs: object) -> Facts | None:
+            seen.append(kwargs.get("watch_blind_reason"))  # type: ignore[arg-type]
+            return real_facts_as_of(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(bt, "facts_as_of", _spy)
+        other = replace(_bt_item(), rating_key=2, title="Another Film")
+
+        await run(
+            cache_engine,
+            [_bt_item(), other],
+            DEFAULT_MOVIE_POLICY,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=3000),
+            watch_blind_reasons={1: watch_evidence.BLIND_REASON},
+        )
+
+        assert seen == [watch_evidence.BLIND_REASON, None]
+
+    async def test_a_record_with_nothing_to_measure_from_is_not_called_not_yet_added(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Two skips that mean different things (#277). One item arrived after the cutoff;
+        the other has no arrival date and no play at all, so dormancy has no instant to
+        count from. Folding both into ``skipped_not_yet_added`` would report the replay's
+        coverage as bounded by its date when it is really bounded by the evidence."""
+        too_new = replace(_bt_item(), rating_key=1, added_at=NOW - timedelta(days=10))
+        no_date = replace(_bt_item(), rating_key=2, added_at=None)
+
+        result = await run(
+            cache_engine,
+            [too_new, no_date],
+            DEFAULT_MOVIE_POLICY,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=3000),
+        )
+
+        assert result.considered == 0
+        assert result.skipped_not_yet_added == 1
+        assert result.skipped_nothing_to_measure == 1
+        assert "no date to count from 1" in result.summary()
 
 
 # ---------------------------------------------------------------------------
@@ -206,8 +1132,8 @@ class TestExpectedRegretRateDegradesGracefully:
         _ = result.lift  # exercises the whole funnel without crashing
 
     def test_a_calibrated_prior_is_still_used(self) -> None:
-        """When every bucket is thick, the derived prior is honoured -- the fix only
-        changes behaviour for the uncalibrated case."""
+        """When every bucket is thick, the derived prior is honored -- the fix only
+        changes behavior for the uncalibrated case."""
         prior = RewatchPrior(
             buckets=(Bucket(low=1095, high=1825, samples=100, rewatched=40),),
             population=100,
@@ -258,7 +1184,7 @@ class TestTheGraceClockRestartsOnReCondemnation:
         )
         await session.flush()
 
-        await _record_first_flagged(session, "radarr:1:1", NOW, grace_days=14)
+        await record_first_flagged_bulk(session, ["radarr:1:1"], NOW, grace_days=14)
 
         row = await session.get(FirstFlagged, "radarr:1:1")
         assert row is not None
@@ -280,12 +1206,41 @@ class TestTheGraceClockRestartsOnReCondemnation:
         )
         await session.flush()
 
-        await _record_first_flagged(session, "radarr:1:2", NOW, grace_days=14)
+        await record_first_flagged_bulk(session, ["radarr:1:2"], NOW, grace_days=14)
 
         row = await session.get(FirstFlagged, "radarr:1:2")
         assert row is not None
         assert row.first_flagged_at == started  # NOT moved
         assert row.last_seen_condemned_at == NOW  # only the last-seen bumped
+
+
+class TestTheGraceRecorderToleratesACompetingWriter:
+    async def test_an_already_present_key_does_not_abort_the_insert(
+        self, session: AsyncSession
+    ) -> None:
+        """Two writers racing on one key: the loser's insert must do nothing (the winner's
+        row already says "condemned around now"), never raise a primary-key collision out
+        of a scan. Simulated by inserting a row the recorder's read predates."""
+        earlier = NOW - timedelta(hours=1)
+        session.add(
+            FirstFlagged(
+                media_key="radarr:1:9", first_flagged_at=earlier, last_seen_condemned_at=earlier
+            )
+        )
+        await session.flush()
+
+        await _insert_first_flags(
+            session,
+            [
+                FirstFlagged(
+                    media_key="radarr:1:9", first_flagged_at=NOW, last_seen_condemned_at=NOW
+                )
+            ],
+        )
+
+        row = await session.get(FirstFlagged, "radarr:1:9")
+        assert row is not None
+        assert row.first_flagged_at == earlier  # the winner's clock survives
 
 
 # ---------------------------------------------------------------------------
@@ -303,20 +1258,106 @@ class TestProtectionSyncDegradations:
         reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
         assert any("reaper-keep" in r for r in reasons)
 
-    async def test_a_failed_whitelist_that_still_has_members_does_not_degrade(
+    async def test_a_failed_whitelist_with_a_fresh_copy_does_not_degrade(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The atomic swap preserved prior membership, so the keep-list still protects --
-        a transient failure need not stop the scan."""
-        await _seed_list(cache_engine, slug="reaper-keep", kind="whitelist", members=3)
+        """The atomic swap preserved prior membership and the last successful sync is
+        recent, so the keep-list still protects -- a transient failure need not stop the
+        scan."""
+        await _seed_list(
+            cache_engine,
+            slug="reaper-keep",
+            kind="whitelist",
+            members=3,
+            last_synced_at=int(NOW.timestamp()) - 3600,  # an hour ago
+        )
         reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
         assert reasons == []
 
-    async def test_a_failed_curated_list_does_not_degrade(self, cache_engine: AsyncEngine) -> None:
-        """A soft curated list failing only loses a scoring nudge; it never unprotects a
-        kept title, so it does not make the snapshot un-executable."""
+    async def test_a_failed_whitelist_whose_row_is_disabled_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """A retired slug keeps its members, so counting rows alone said it still protects.
+
+        ``lists.retire_absent`` disables a superseded slug with ``enabled = 0`` and leaves
+        its membership rows in place. But the gate reads membership through
+        ``load_membership_index``, which joins ``WHERE l.enabled = 1`` -- so those rows
+        protect nothing. A slug carries the operator's match mode, so flipping keep-tags
+        from "any" to "all" and back retires and revives slugs in normal use; landing a
+        failed sync in that window let a disabled list vouch for it and skip the degrade,
+        which is the fail-open this check exists to prevent (rules 2 and 115).
+        """
+        await _seed_list(
+            cache_engine,
+            slug="reaper-keep",
+            kind="whitelist",
+            members=50,
+            last_synced_at=int(NOW.timestamp()) - 3600,  # fresh, so staleness is not the cause
+            enabled=0,
+        )
+        reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
+        assert any("reaper-keep" in r for r in reasons)
+
+    async def test_a_failed_whitelist_stale_beyond_the_bound_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """P-6: stale-but-populated protects only within the bound. Past it, every title
+        keep-tagged since the last successful sync has been unprotected for days, so the
+        snapshot degrades until a sync succeeds."""
+        await _seed_list(
+            cache_engine,
+            slug="reaper-keep",
+            kind="whitelist",
+            members=3,
+            last_synced_at=int((NOW - timedelta(days=3)).timestamp()),
+        )
+        reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
+        assert any("reaper-keep" in r and "hours old" in r for r in reasons)
+
+    async def test_a_failed_whitelist_with_members_but_no_sync_record_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Members with no last-successful-sync stamp: recency cannot be confirmed, so it
+        is not assumed (fail closed)."""
+        await _seed_list(
+            cache_engine, slug="reaper-keep", kind="whitelist", members=3, last_synced_at=None
+        )
+        reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
+        assert any("reaper-keep" in r for r in reasons)
+
+    async def test_a_failed_curated_hard_list_with_no_members_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """A curated list feeds a HARD gate: its members are PROTECTED outright, so an empty
+        one fails OPEN exactly as an empty whitelist does. The gate protects nothing and a
+        scan could reap the very titles the list exists to save. The first sync of the IMDb
+        Top 250 failing must degrade the snapshot, not pass silently."""
         await _seed_list(cache_engine, slug="imdb-top-250", kind="curated", members=0)
         reasons = await protection_sync_degradations(cache_engine, {"imdb-top-250": "error: 503"})
+        assert any("imdb-top-250" in r for r in reasons)
+
+    async def test_a_failed_curated_hard_list_with_members_does_not_degrade_on_staleness(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Recency is a keep-list concern. A curated external list churns slowly and its
+        stored copy keeps protecting, so a stale-but-populated one does not degrade: only
+        the whitelist applies the staleness bound."""
+        await _seed_list(
+            cache_engine,
+            slug="imdb-top-250",
+            kind="curated",
+            members=250,
+            last_synced_at=int((NOW - timedelta(days=30)).timestamp()),
+        )
+        reasons = await protection_sync_degradations(cache_engine, {"imdb-top-250": "error: 503"})
+        assert reasons == []
+
+    async def test_a_failed_soft_list_does_not_degrade(self, cache_engine: AsyncEngine) -> None:
+        """A SOFT-mode list only feeds a scoring nudge; losing it never unprotects a kept
+        title, so even an empty one does not make the snapshot un-executable. This is the
+        real axis: degrade on mode=hard, never on mode=soft."""
+        await _seed_list(cache_engine, slug="soft-list", kind="curated", mode="soft", members=0)
+        reasons = await protection_sync_degradations(cache_engine, {"soft-list": "error: 503"})
         assert reasons == []
 
     async def test_a_successful_sync_never_degrades(self, cache_engine: AsyncEngine) -> None:
@@ -324,19 +1365,40 @@ class TestProtectionSyncDegradations:
         assert reasons == []
 
 
-async def _seed_list(engine: AsyncEngine, *, slug: str, kind: str, members: int) -> None:
-    """Write a protection_list row (with kind) and ``members`` membership rows."""
+async def _seed_list(
+    engine: AsyncEngine,
+    *,
+    slug: str,
+    kind: str,
+    members: int,
+    mode: str = "hard",
+    last_synced_at: int | None = None,
+    enabled: int = 1,
+) -> None:
+    """Write a protection_list row (with mode + kind) and ``members`` membership rows.
+
+    ``enabled`` defaults to 1, matching the column's own ``NOT NULL DEFAULT 1``. Pass 0 for
+    a slug ``retire_absent`` has superseded: those keep their membership rows on purpose.
+    """
     from reaper.services import lists
 
     await lists.ensure_schema(engine)
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO protection_list (slug, display_name, mode, kind, weight, last_error) "
-                "VALUES (:slug, :slug, 'hard', :kind, 0, 'error: boom') "
-                "ON CONFLICT(slug) DO UPDATE SET kind = :kind"
+                "INSERT INTO protection_list "
+                "(slug, display_name, mode, kind, weight, enabled, last_error, last_synced_at) "
+                "VALUES (:slug, :slug, :mode, :kind, 0, :enabled, 'error: boom', :synced) "
+                "ON CONFLICT(slug) DO UPDATE SET mode = :mode, kind = :kind, "
+                "enabled = :enabled, last_synced_at = :synced"
             ),
-            {"slug": slug, "kind": kind},
+            {
+                "slug": slug,
+                "kind": kind,
+                "mode": mode,
+                "synced": last_synced_at,
+                "enabled": enabled,
+            },
         )
         for i in range(members):
             await conn.execute(

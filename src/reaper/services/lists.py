@@ -6,9 +6,9 @@ tags, collections or their own database -- none of them ingest a *curated list* 
 protection source. "Never reap anything in the IMDb Top 250" is a rule you cannot
 write in any of them.
 
-Four providers, in ascending order of how much configuration they cost you:
+Three providers, in ascending order of how much configuration they cost you:
 
-**Plex collection** -- zero configuration, and the best of the four. You curate a
+**Plex collection** -- zero configuration, and the best of the three. You curate a
 "Never Reap" collection in the Plex app you already use daily; it is editable from
 your phone; there is no new screen to learn. Reaper just reads it.
 
@@ -20,10 +20,6 @@ your phone; there is no new screen to learn. Reaper just reads it.
 non-commercial datasets do *not* contain the ranking -- it uses an unpublished
 weighted formula. Do not try to derive it, and do not scrape it. This mirror is the
 right answer.)
-
-***arr import lists** -- free lunch. If you already subscribe to a "Top Movies" import
-list in Radarr, ``GET /api/v3/importlist/movie`` tells us which items came from it, and
-membership becomes a protection with no new API key and no new configuration at all.
 
 ## Rank, where a source actually has one
 
@@ -41,22 +37,35 @@ Being *on* the list is the signal.
 from __future__ import annotations
 
 import enum
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 
-import httpx
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
+from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
+from reaper.engine import identity
 
 log = structlog.get_logger(__name__)
 
 IMDB_TOP_250_URL = "https://api.radarr.video/v1/list/imdb/top250"
+
+
+class ContainerMissingError(RuntimeError):
+    """A configured keep container (an *arr tag, a Plex collection) does not exist upstream.
+
+    Distinct from "the container exists and is empty", and the distinction is what
+    ``sync`` keys on: a vanished container over a POPULATED stored list keeps the previous
+    membership and records the failure, while a container the owner simply has not created
+    yet syncs as genuinely empty. A missing container must never read as [] -- that is how
+    a renamed keep tag silently unprotects everything it used to cover.
+    """
 
 
 class ListMode(enum.StrEnum):
@@ -79,7 +88,7 @@ class ListKind(enum.StrEnum):
     """The owner said so directly -- an *arr tag, or a Plex collection they curate."""
 
     CURATED = "curated"
-    """Somebody else's list -- the IMDb Top 250, an import list."""
+    """Somebody else's list -- the IMDb Top 250."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +116,7 @@ class ListProvider(Protocol):
     """A source of protected items.
 
     ``slug`` and ``display_name`` are read-only *properties*, not attributes: a
-    provider like ``ArrTag`` derives them from its configuration, and a Protocol
+    provider like ``ArrTagRule`` derives them from its configuration, and a Protocol
     declaring a mutable attribute would not accept that.
     """
 
@@ -145,10 +154,11 @@ class ImdbTop250:
     url: str = IMDB_TOP_250_URL
 
     async def fetch(self) -> list[ListItem]:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.get(self.url)
-            response.raise_for_status()
-            payload = response.json()
+        # Through clients/ like every other fetch (rule 33): the shared retry, timeout,
+        # error-mapping and redirect policy, instead of a bespoke httpx use down here.
+        parts = urlsplit(self.url)
+        async with PublicClient(f"{parts.scheme}://{parts.netloc}") as client:
+            payload = await client.get_json(parts.path)
 
         if not isinstance(payload, list):
             raise IntegrationError(self.slug, "expected a JSON array")
@@ -175,37 +185,130 @@ class ImdbTop250:
         return items
 
 
-@dataclass(frozen=True, slots=True)
-class ArrTag:
-    """A tag in Sonarr or Radarr -- `reaper-keep` by convention.
+def _tag_key(tag: str) -> str:
+    """The comparison form for an *arr tag label.
 
-    Zero new configuration: you apply it in a UI you already use.
+    Sonarr and Radarr lower-case and trim every label on the way in, so the operator's
+    configured spelling and the stored one routinely differ. Every comparison goes
+    through here, on BOTH sides, so a keep tag can never fail to match the label it
+    names -- the ``plex.normalize_label`` of the *arr side.
+    """
+    return tag.strip().casefold()
+
+
+def _name_key(name: str) -> str:
+    """The comparison form for a Plex library or collection title.
+
+    Same rule as :func:`_tag_key` and ``plex.normalize_label`` (rule 88): both sides
+    case-folded, or a library the operator spells "movies" never matches the configured
+    "Movies" and their keep collection reads as a missing library.
+    """
+    return name.strip().casefold()
+
+
+@dataclass(frozen=True, slots=True)
+class ArrTagRule:
+    """One or more *arr tags, combined -- the configurable "keep list".
+
+    A title matches when it carries ANY of the tags (the usual case) or ALL of them, per
+    ``match``. The tag list and the library are each read ONCE for the whole rule -- the
+    library is the expensive call (every movie or series in the instance), and an earlier
+    version re-downloaded it once per configured tag, per scan. Protect-only, like every
+    list source -- the worst a mis-configured rule can do is fail to keep something.
+
+    ``instance_id`` is part of the slug for a reason that is easy to miss: the slug is
+    the stored list's primary key, and each sync atomically REPLACES that slug's
+    membership. With two same-service instances and a service-only slug, each instance's
+    sync erased the other's keep-tagged titles -- whichever synced last won, and titles
+    tagged only on the losing instance silently lost their whitelist protection. A
+    per-instance slug makes each instance its own list, so both protect.
     """
 
     client: SonarrClient | RadarrClient
-    tag_label: str = "reaper-keep"
+    tags: tuple[str, ...]
+    match: Literal["any", "all"] = "any"
+    instance_id: int | None = None
+    instance_name: str | None = None
 
     @property
     def slug(self) -> str:
-        return f"{self.client.service}-tag-{self.tag_label}"
+        instance = f"-{self.instance_id}" if self.instance_id is not None else ""
+        return f"{self.client.service}{instance}-keeptags-{self.match}"
 
     @property
     def display_name(self) -> str:
-        return f"{self.client.service.title()} tag: {self.tag_label}"
+        joiner = " or " if self.match == "any" else " and "
+        where = f" ({self.instance_name})" if self.instance_name else ""
+        return f"{self.client.service.title()}{where} tag: {joiner.join(self.tags)}"
 
     async def fetch(self) -> list[ListItem]:
-        tags = await self.client.tags()
-        tag_id = next(
-            (int(t["id"]) for t in tags if str(t.get("label", "")).lower() == self.tag_label),
-            None,
-        )
-        if tag_id is None:
-            # Not an error. The owner simply has not created the tag yet.
-            log.info("lists.tag_absent", tag=self.tag_label, service=self.client.service)
+        if not self.tags:
             return []
 
+        # First match wins when two tag labels collide after normalizing ('Keep' and
+        # 'keep' can both exist), and a malformed tag row is skipped rather than failing
+        # the whole keep-list over a row that was never the owner's keep tag.
+        by_label: dict[str, int] = {}
+        for row in await self.client.tags():
+            tag_id = row.get("id")
+            if isinstance(tag_id, int):
+                by_label.setdefault(_tag_key(str(row.get("label", ""))), tag_id)
+
+        wanted: set[int] = set()
+        missing: list[str] = []
+        for tag in self.tags:
+            # BOTH sides normalized, or the lookup silently misses. Sonarr and Radarr
+            # lower-case every label at the source, so an operator who configures the
+            # natural capitalization of their own tag ("Reaper-Keep") would look up a
+            # spelling the map cannot hold: the tag reads as MISSING, and on a first sync
+            # that stores an empty membership and reports success -- a keep list that
+            # protects nothing, forever, while the settings screen shows it as healthy.
+            found = by_label.get(_tag_key(tag))
+            if found is None:
+                log.info("lists.tag_absent", tag=tag, service=self.client.service)
+                missing.append(tag)
+            else:
+                wanted.add(found)
+        # A missing tag is a missing CONTAINER, not an empty one: nothing can carry a
+        # tag that does not exist, so returning [] here would be indistinguishable from
+        # "the owner un-tagged everything" and sync() would wipe the stored membership.
+        # EVERY configured tag that will not resolve is a failure (rule 27), because the
+        # absence is indistinguishable from a tag the operator RENAMED upstream -- and a
+        # rename withdraws the protection from every title still carrying it.
+        #
+        # Two failures, because the two land in different places in ``sync``:
+        #
+        # * Nothing resolved at all, or ANY gone under ALL (one absent tag already rules
+        #   every title out): ContainerMissingError, which ``sync`` reads as genuinely
+        #   empty when nothing is stored yet. That is the first-run case -- the default
+        #   'reaper-keep' tag usually does not exist in a fresh *arr, and a brand-new
+        #   install must not be un-scannable because of it.
+        # * Some resolved and some did not, under ANY: a hard failure, whatever is
+        #   stored. Reading THIS as an empty first sync would store the surviving tags'
+        #   members as [] and report the keep-list healthy, so the tags that DO resolve
+        #   would protect nothing (rule 90's shape, one level up). The sync fails, the
+        #   stored membership survives untouched, and the scan degrades.
+        if missing:
+            names = ", ".join(repr(t) for t in missing)
+            if not wanted or self.match == "all":
+                raise ContainerMissingError(
+                    f"keep tag {names} does not exist in {self.client.service}"
+                )
+            raise IntegrationError(
+                self.client.service,
+                f"the keep tag {names} does not exist there, so anything that used to "
+                "carry it is no longer protected. The keep list was left as it was, so "
+                "add the tag back or take it out of your keep tags.",
+            )
+
+        def keeps(media: dict[str, Any]) -> bool:
+            carried = set(media.get("tags") or [])
+            if self.match == "all":
+                return wanted <= carried
+            return not wanted.isdisjoint(carried)
+
         if isinstance(self.client, RadarrClient):
-            media = await self.client.movies()
+            movies = await self.client.movies()
             return [
                 ListItem(
                     media_type="movie",
@@ -213,8 +316,8 @@ class ArrTag:
                     tmdb_id=m.get("tmdbId") or None,
                     title=str(m.get("title") or ""),
                 )
-                for m in media
-                if tag_id in (m.get("tags") or [])
+                for m in movies
+                if keeps(m)
             ]
 
         series = await self.client.series()
@@ -226,51 +329,8 @@ class ArrTag:
                 title=str(s.get("title") or ""),
             )
             for s in series
-            if tag_id in (s.get("tags") or [])
+            if keeps(s)
         ]
-
-
-@dataclass(frozen=True, slots=True)
-class ArrTagRule:
-    """One or more *arr tags, combined -- the configurable "keep list".
-
-    A title matches when it carries ANY of the tags (the usual case) or ALL of them, per
-    ``match``. Each tag is fetched via :class:`ArrTag`; the results are then combined on media
-    identity, so a title carrying a tag twice is not counted twice. Protect-only, like every
-    list source -- the worst a mis-configured rule can do is fail to keep something.
-    """
-
-    client: SonarrClient | RadarrClient
-    tags: tuple[str, ...]
-    match: Literal["any", "all"] = "any"
-
-    @property
-    def slug(self) -> str:
-        return f"{self.client.service}-keeptags-{self.match}"
-
-    @property
-    def display_name(self) -> str:
-        joiner = " or " if self.match == "any" else " and "
-        return f"{self.client.service.title()} tag: {joiner.join(self.tags)}"
-
-    async def fetch(self) -> list[ListItem]:
-        if not self.tags:
-            return []
-
-        def key(item: ListItem) -> tuple[str, str, int, int]:
-            return (item.media_type, item.imdb_id or "", item.tmdb_id or 0, item.tvdb_id or 0)
-
-        by_key: dict[tuple[str, str, int, int], ListItem] = {}
-        tag_count: dict[tuple[str, str, int, int], int] = {}
-        for tag in self.tags:
-            for item in await ArrTag(self.client, tag).fetch():
-                k = key(item)
-                by_key[k] = item
-                tag_count[k] = tag_count.get(k, 0) + 1
-
-        # ANY -> in at least one tag's set; ALL -> in every tag's set.
-        need = len(self.tags) if self.match == "all" else 1
-        return [by_key[k] for k, count in tag_count.items() if count >= need]
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,68 +362,67 @@ class PlexCollection:
 
         return await asyncio.to_thread(self._fetch_sync)
 
-    def _fetch_sync(self) -> list[ListItem]:
+    def _find_collection(self) -> Any:
+        """The keep collection, looked for in **every** library carrying this title.
+
+        ``library.section(title)`` returns whichever of two same-titled libraries plexapi
+        saw first (rule 6/57), so on a server with an HD and a 4K library both called
+        "Movies" the collection could be read from a library that does not hold it. That
+        reads as "the container is gone", which over a populated stored list degrades the
+        scan and, on a first sync, stores an empty keep-list. Asking each matching library
+        in turn removes the ambiguity without asking the operator for a key.
+        """
         from plexapi.exceptions import NotFound
 
-        section = self.server.library.section(self.section_name)  # type: ignore[attr-defined]
-        try:
-            collection = section.collection(self.collection_name)
-        except NotFound:
-            # Not an error. The owner simply has not made the collection yet.
-            log.info("lists.plex_collection_absent", collection=self.collection_name)
-            return []
+        library = self.server.library  # type: ignore[attr-defined]
+        # Case-folded on BOTH sides (rule 88). ``library.section(title)`` -- the call this
+        # replaced -- matched case-insensitively, so an exact-match filter here silently
+        # stopped finding the keep collection of an operator whose library is spelled
+        # "movies": the sync then failed the whole HARD keep-list and every scan with it.
+        wanted = _name_key(self.section_name)
+        sections = [s for s in library.sections() if _name_key(str(s.title)) == wanted]
+        if not sections:
+            # Not a missing container but a missing LIBRARY: a mistyped name, or one the
+            # operator removed. A hard failure, recorded against the slug, exactly as the
+            # raw plexapi NotFound this replaces was.
+            raise IntegrationError("plex", f"there is no library called {self.section_name!r}")
+        for section in sections:
+            try:
+                return section.collection(self.collection_name)
+            except NotFound:
+                continue
+        # The container is not there to ask: deleted, renamed, or simply not yet
+        # created. Which of those it is depends on what is already stored, and
+        # sync() decides -- raising here (rather than returning []) is what lets a
+        # stored membership survive a deleted "Never Reap" collection.
+        log.info("lists.plex_collection_absent", collection=self.collection_name)
+        raise ContainerMissingError(
+            f"Plex collection {self.collection_name!r} does not exist in section "
+            f"{self.section_name!r}"
+        )
+
+    def _fetch_sync(self) -> list[ListItem]:
+        collection = self._find_collection()
 
         items: list[ListItem] = []
         for item in collection.items():
-            # The new Plex agents expose external ids as Guid children; the legacy
-            # agents put a single id in `guid`. Handle both, or a legacy library
-            # silently protects nothing.
-            imdb = tmdb = tvdb = None
-            for guid in getattr(item, "guids", []) or []:
-                value = str(getattr(guid, "id", ""))
-                if value.startswith("imdb://"):
-                    imdb = value.removeprefix("imdb://")
-                elif value.startswith("tmdb://"):
-                    tmdb = int(value.removeprefix("tmdb://"))
-                elif value.startswith("tvdb://"):
-                    tvdb = int(value.removeprefix("tvdb://"))
-
+            # The new Plex agents expose external ids as Guid children; the legacy agents
+            # put a single id in `guid`. identity.parse_guids handles both (and the
+            # ``?lang=`` suffix, and sentinels), so a legacy-agent library is no longer
+            # silently unprotected -- the same one parser the scan's matcher uses.
+            guid_ids = [str(getattr(guid, "id", "")) for guid in getattr(item, "guids", None) or []]
+            legacy = getattr(item, "guid", None)
+            ids = identity.parse_guids(guid_ids, str(legacy) if legacy else None)
             items.append(
                 ListItem(
                     media_type="tv" if item.type == "show" else "movie",
-                    imdb_id=imdb,
-                    tmdb_id=tmdb,
-                    tvdb_id=tvdb,
+                    imdb_id=ids.imdb,
+                    tmdb_id=ids.tmdb,
+                    tvdb_id=ids.tvdb,
                     title=str(item.title),
                 )
             )
         return items
-
-
-@dataclass(frozen=True, slots=True)
-class RadarrImportList:
-    """Movies the owner's own Radarr import lists brought in.
-
-    The free lunch. If they already subscribe to a "Top Movies" import list, membership
-    becomes a protection with no new API key and no new configuration.
-    """
-
-    client: RadarrClient
-    slug: str = "radarr-import-lists"
-    display_name: str = "Radarr import lists"
-
-    async def fetch(self) -> list[ListItem]:
-        movies = await self.client.import_list_movies()
-        return [
-            ListItem(
-                media_type="movie",
-                imdb_id=m.get("imdbId") or None,
-                tmdb_id=m.get("tmdbId") or None,
-                title=str(m.get("title") or ""),
-            )
-            for m in movies
-            if m.get("isExisting")  # already in the library, so it is ours to protect
-        ]
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +483,35 @@ async def ensure_schema(engine: AsyncEngine) -> None:
                 await conn.execute(text(statement))
 
 
+async def _record_sync_error(
+    engine: AsyncEngine,
+    provider: ListProvider,
+    *,
+    mode: ListMode,
+    kind: ListKind,
+    weight: int,
+    error: str,
+) -> None:
+    """Record a failed refresh on the list row, leaving its membership untouched."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO protection_list "
+                "(slug, display_name, mode, kind, weight, last_error) "
+                "VALUES (:slug, :name, :mode, :kind, :weight, :err) "
+                "ON CONFLICT(slug) DO UPDATE SET last_error = :err"
+            ),
+            {
+                "slug": provider.slug,
+                "name": provider.display_name,
+                "mode": mode.value,
+                "kind": kind.value,
+                "weight": weight,
+                "err": error,
+            },
+        )
+
+
 async def sync(
     engine: AsyncEngine,
     provider: ListProvider,
@@ -436,30 +524,52 @@ async def sync(
 
     The swap is atomic per list: a failed fetch leaves the previous membership intact.
     A protection that silently empties itself is worse than one that is out of date --
-    it would stop protecting without saying so.
+    it would stop protecting without saying so. A missing CONTAINER (a renamed keep
+    tag, a deleted "Never Reap" collection) counts as a failure whenever members are
+    stored, for exactly that reason; it counts as genuinely empty only when there was
+    never anything to protect.
+
+    A **populated** container whose every item lost its ids is the same failure wearing
+    a different coat, and it is treated the same way (rule 27). A Plex agent change can
+    leave a real, full "Never Reap" collection returning items whose guids no longer
+    parse; the id filter below then collapses a non-empty fetch to zero, and the swap
+    would wipe the stored membership and unprotect every title on it. Only a container
+    that genuinely came back empty may empty the list.
     """
     await ensure_schema(engine)
 
     try:
-        items = [i for i in await provider.fetch() if i.has_any_id]
-    except Exception as exc:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO protection_list "
-                    "(slug, display_name, mode, kind, weight, last_error) "
-                    "VALUES (:slug, :name, :mode, :kind, :weight, :err) "
-                    "ON CONFLICT(slug) DO UPDATE SET last_error = :err"
-                ),
-                {
-                    "slug": provider.slug,
-                    "name": provider.display_name,
-                    "mode": mode.value,
-                    "kind": kind.value,
-                    "weight": weight,
-                    "err": str(exc),
-                },
+        fetched = await provider.fetch()
+        items = [i for i in fetched if i.has_any_id]
+        if fetched and not items:
+            raise ContainerMissingError(
+                f"None of the {len(fetched)} titles on {provider.display_name} could be "
+                "identified, so the list was not read as empty."
             )
+    except ContainerMissingError as exc:
+        async with engine.connect() as conn:
+            stored = (
+                await conn.execute(
+                    text("SELECT COUNT(*) FROM protection_list_item WHERE slug = :slug"),
+                    {"slug": provider.slug},
+                )
+            ).scalar_one()
+        if stored:
+            # The container vanished from under a populated list. Fail, so the atomic
+            # swap below never runs and the previous membership keeps protecting;
+            # succeeding-with-[] would unprotect every stored title on this very scan.
+            await _record_sync_error(
+                engine, provider, mode=mode, kind=kind, weight=weight, error=str(exc)
+            )
+            log.warning("lists.container_missing", slug=provider.slug, error=str(exc))
+            raise
+        # Nothing stored and no container to read: the owner has not created it yet.
+        # A genuinely empty first sync, not a failure.
+        items = []
+    except Exception as exc:
+        await _record_sync_error(
+            engine, provider, mode=mode, kind=kind, weight=weight, error=str(exc)
+        )
         log.warning("lists.sync_failed", slug=provider.slug, error=str(exc))
         raise
 
@@ -494,9 +604,13 @@ async def sync(
                 "(slug, display_name, mode, kind, weight, enabled, item_count, "
                 " last_synced_at, last_error) "
                 "VALUES (:slug, :name, :mode, :kind, :weight, 1, :count, :now, NULL) "
+                # ``enabled = 1`` on the conflict too, not just on the insert: a slug
+                # ``retire_absent`` switched off is a live list again the moment this
+                # configuration produces it, and a keep-list that syncs while disabled
+                # protects nothing (``load_membership_index`` joins ``WHERE enabled = 1``).
                 "ON CONFLICT(slug) DO UPDATE SET "
                 "  display_name = :name, mode = :mode, kind = :kind, item_count = :count, "
-                "  last_synced_at = :now, last_error = NULL"
+                "  enabled = 1, last_synced_at = :now, last_error = NULL"
             ),
             {
                 "slug": provider.slug,
@@ -513,51 +627,183 @@ async def sync(
     return len(items)
 
 
+#: The two slug families Reaper *derives* from configuration rather than being told, and so
+#: is responsible for retiring. Both change spelling when the configuration behind them
+#: changes -- ``ArrTagRule.slug`` carries the any/all match and the instance id,
+#: ``PlexCollection.slug`` carries the collection name -- so the old row would otherwise sit
+#: there enabled, still protecting from a rule the operator has already replaced.
+KEEP_TAG_SLUGS = "%-keeptags-%"
+PLEX_COLLECTION_SLUGS = "plex-collection-%"
+
+
+async def retire_absent(engine: AsyncEngine, *, family: str, current: Collection[str]) -> list[str]:
+    """Disable every enabled list in ``family`` that this configuration no longer produces.
+
+    A stored list outlives the setting that created it. Flip "Keep tags: match ANY" to
+    "match ALL" and the slug changes, so the sync writes a NEW row while the old one stays
+    enabled: the tightening the operator saved never takes effect, because everything that
+    matched ANY tag is still whitelisted by a list nothing updates. Clearing the keep tags
+    entirely, renaming the "Never Reap" collection, and deleting an *arr instance all land
+    the same way. So each run declares the slugs it is responsible for and this retires the
+    rest of that family.
+
+    Disabled, never deleted: the membership is left in place so the row still explains
+    itself on the settings screen, and ``sync`` re-enables a slug the moment it comes back
+    (flip ALL back to ANY and the old list resumes protecting). Returns what it retired.
+
+    **Only call this for a family whose inputs were actually readable this run.** The
+    caller decides: a Plex that could not be reached produces no collection provider, and
+    retiring on that would unprotect every title on the operator's "Never Reap" collection
+    because of a network blip -- the fail-open this codebase exists to avoid.
+    """
+    await ensure_schema(engine)
+    keep = set(current)
+    async with engine.begin() as conn:
+        # Read and write inside ONE transaction (rule 58): the set being retired is
+        # decided from the rows this statement will update, not from an earlier snapshot.
+        rows = (
+            await conn.execute(
+                text("SELECT slug FROM protection_list WHERE enabled = 1 AND slug LIKE :family"),
+                {"family": family},
+            )
+        ).scalars()
+        stale = sorted({str(slug) for slug in rows} - keep)
+        for slug in stale:
+            await conn.execute(
+                text("UPDATE protection_list SET enabled = 0 WHERE slug = :slug"),
+                {"slug": slug},
+            )
+    for slug in stale:
+        log.info("lists.retired", slug=slug, family=family)
+    return stale
+
+
+@dataclass(frozen=True, slots=True)
+class MembershipIndex:
+    """Every enabled protection-list row, loaded once and looked up in memory.
+
+    A scan asks "which lists contain this item?" once per movie and once per show.
+    Answering each of those with its own SQLite round trip (plus the ensure-schema DDL
+    :func:`memberships` runs first) dominated the judge loop on large libraries, so the
+    scan loads this index once and every per-item lookup becomes a dict hit.
+
+    Parity with :func:`memberships` is the contract: a lookup returns one
+    :class:`Membership` per matching *stored row* -- a row reachable through more than
+    one of its ids still counts once, and two distinct rows of the same list still count
+    twice -- so the two paths cannot disagree about what protects an item. Entries carry
+    their load order so results are deterministic.
+
+    Every entry also carries its row's ``media_type`` and a lookup only matches rows of
+    the *same* type. TMDb numbers movies and shows in separate id spaces (movie #1399 and
+    show #1399 are unrelated titles), so without this a show whose TMDb id coincides with
+    a Top 250 film would be reported "on the IMDb Top 250" -- a keep the owner never
+    asked for and a why-panel that lies. IMDb ids are globally unique, but the filter is
+    applied to every id kind so the join key is always (media_type, id).
+    """
+
+    _by_imdb: Mapping[str, tuple[tuple[int, str, Membership], ...]]
+    _by_tmdb: Mapping[int, tuple[tuple[int, str, Membership], ...]]
+    _by_tvdb: Mapping[int, tuple[tuple[int, str, Membership], ...]]
+
+    def lookup(
+        self,
+        *,
+        media_type: str,
+        imdb_id: str | None = None,
+        tmdb_id: int | None = None,
+        tvdb_id: int | None = None,
+    ) -> list[Membership]:
+        """Which protected lists contain this item? Same answer as :func:`memberships`.
+
+        ``media_type`` ("movie" | "tv") is the item's own type; only rows of that type
+        can match, so a movie id space and a show id space never cross.
+        """
+        if not (imdb_id or tmdb_id or tvdb_id):
+            return []
+        entries: list[tuple[int, str, Membership]] = []
+        if imdb_id is not None:
+            entries += self._by_imdb.get(imdb_id, ())
+        if tmdb_id is not None:
+            entries += self._by_tmdb.get(tmdb_id, ())
+        if tvdb_id is not None:
+            entries += self._by_tvdb.get(tvdb_id, ())
+        seen: set[int] = set()
+        out: list[Membership] = []
+        for seq, row_media_type, membership in sorted(entries, key=lambda entry: entry[0]):
+            if row_media_type != media_type:
+                continue
+            if seq not in seen:
+                seen.add(seq)
+                out.append(membership)
+        return out
+
+
+async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
+    """Materialise the :func:`memberships` join once, for a whole scan's lookups."""
+    await ensure_schema(engine)
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT i.imdb_id, i.tmdb_id, i.tvdb_id, i.media_type, "
+                    "       l.slug, l.display_name, l.mode, l.kind, i.rank "
+                    "FROM protection_list_item i "
+                    "JOIN protection_list l ON l.slug = i.slug "
+                    "WHERE l.enabled = 1"
+                )
+            )
+        ).all()
+
+    by_imdb: dict[str, list[tuple[int, str, Membership]]] = {}
+    by_tmdb: dict[int, list[tuple[int, str, Membership]]] = {}
+    by_tvdb: dict[int, list[tuple[int, str, Membership]]] = {}
+    for seq, row in enumerate(rows):
+        membership = Membership(
+            slug=str(row.slug),
+            display_name=str(row.display_name),
+            mode=ListMode(row.mode),
+            kind=ListKind(row.kind),
+            rank=int(row.rank) if row.rank is not None else None,
+        )
+        media_type = str(row.media_type)
+        if row.imdb_id:
+            by_imdb.setdefault(str(row.imdb_id), []).append((seq, media_type, membership))
+        if row.tmdb_id is not None:
+            by_tmdb.setdefault(int(row.tmdb_id), []).append((seq, media_type, membership))
+        if row.tvdb_id is not None:
+            by_tvdb.setdefault(int(row.tvdb_id), []).append((seq, media_type, membership))
+
+    return MembershipIndex(
+        _by_imdb={k: tuple(v) for k, v in by_imdb.items()},
+        _by_tmdb={k: tuple(v) for k, v in by_tmdb.items()},
+        _by_tvdb={k: tuple(v) for k, v in by_tvdb.items()},
+    )
+
+
 async def memberships(
     engine: AsyncEngine,
     *,
+    media_type: str,
     imdb_id: str | None = None,
     tmdb_id: int | None = None,
     tvdb_id: int | None = None,
 ) -> list[Membership]:
     """Which protected lists contain this item?
 
-    Matched on any external id we hold. A film on the Top 250 is protected whether we
-    know it by IMDb id or TMDb id -- requiring both would silently drop the ones where
-    only one is present.
+    Matched on any external id we hold, within the item's own ``media_type``. A film on
+    the Top 250 is protected whether we know it by IMDb id or TMDb id -- requiring both
+    would silently drop the ones where only one is present -- but a show is never matched
+    against a movie row, so a show whose TMDb id (a separate id space) coincides with a
+    Top 250 film is not falsely protected.
+
+    Implemented AS a one-item view over :func:`load_membership_index`, so there is
+    exactly one place that decides what protects an item -- a second hand-written query
+    here could drift from the one the scan actually uses (rule 3). The scan never calls
+    this per item; it loads the index once. This form exists for one-off callers, where
+    loading the (small) list tables per call is fine.
     """
-    if not (imdb_id or tmdb_id or tvdb_id):
-        return []
-
-    await ensure_schema(engine)
-
-    async with engine.connect() as conn:
-        rows = (
-            await conn.execute(
-                text(
-                    "SELECT l.slug, l.display_name, l.mode, l.kind, i.rank "
-                    "FROM protection_list_item i "
-                    "JOIN protection_list l ON l.slug = i.slug "
-                    "WHERE l.enabled = 1 AND ("
-                    "  (:imdb IS NOT NULL AND i.imdb_id = :imdb) OR "
-                    "  (:tmdb IS NOT NULL AND i.tmdb_id = :tmdb) OR "
-                    "  (:tvdb IS NOT NULL AND i.tvdb_id = :tvdb)"
-                    ")"
-                ),
-                {"imdb": imdb_id, "tmdb": tmdb_id, "tvdb": tvdb_id},
-            )
-        ).all()
-
-    return [
-        Membership(
-            slug=str(r.slug),
-            display_name=str(r.display_name),
-            mode=ListMode(r.mode),
-            kind=ListKind(r.kind),
-            rank=int(r.rank) if r.rank is not None else None,
-        )
-        for r in rows
-    ]
+    index = await load_membership_index(engine)
+    return index.lookup(media_type=media_type, imdb_id=imdb_id, tmdb_id=tmdb_id, tvdb_id=tvdb_id)
 
 
 async def configured(engine: AsyncEngine) -> Sequence[dict[str, object]]:

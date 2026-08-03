@@ -127,7 +127,7 @@ class TestPartition:
 
 class TestExclusions:
     async def test_a_spared_item_leaves_the_countdown(self, session: AsyncSession) -> None:
-        """Cancelling a grace spares the item; it must drop out at once, even though the
+        """Canceling a grace spares the item; it must drop out at once, even though the
         frozen snapshot still says condemn."""
         snap = await _snapshot(session)
         await _condemn(session, snapshot_id=snap, media_key="radarr:1:1", flagged_days_ago=2)
@@ -137,6 +137,21 @@ class TestExclusions:
 
         assert report.in_grace == []
         assert report.total_bytes_in_grace == 0
+
+    async def test_a_spare_on_the_whole_show_covers_its_seasons(
+        self, session: AsyncSession
+    ) -> None:
+        """Sparing a show pulls its condemned seasons out of the countdown too. The
+        planner and executor honor the show-level spare, so a grace view still calling
+        a season "ready" would be a false alarm about a file nothing will touch."""
+        snap = await _snapshot(session)
+        await _condemn(session, snapshot_id=snap, media_key="sonarr:1:5:s2", flagged_days_ago=30)
+        await whitelist.spare(session, media_key="sonarr:1:5", title="Show", note=None)
+
+        report = await grace.grace_report(session, grace_days=14, now=NOW)
+
+        assert report.in_grace == []
+        assert report.ready == []
 
     async def test_only_the_latest_snapshot_counts(self, session: AsyncSession) -> None:
         old = await _snapshot(session)

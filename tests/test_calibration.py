@@ -2,7 +2,7 @@
 """Calibration: deriving the rewatch prior from the owner's OWN history.
 
 The prior is the baseline the scorer must beat. Shipping it as a constant is a bug:
-every library has its own rhythm, and a household of three has nothing in common with
+every library has its own rhythm, and three viewers produce a different curve from
 a server used by a hundred people.
 
 Two ways this goes catastrophically wrong, both of which happened while building
@@ -116,6 +116,85 @@ class TestDerive:
 
         assert prior.population == 0
 
+    async def test_a_film_with_no_arrival_date_is_bucketed_on_its_play(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The baseline must cover exactly the set the scorer judges (#277).
+
+        The live scan measures dormancy from a play alone, so a record Plex reports no
+        arrival date for is judged there. This loop used to drop it before asking
+        `reference_instant`, which is a second thaw rule wearing a filter's clothes -- and
+        here it is mistake 1 from this module's header: the prior would be computed over one
+        population and the lift over another.
+        """
+        keys = set(range(1, 41))
+        added: dict[int, datetime] = {}  # not one of them has an arrival date
+
+        for row, k in enumerate(keys, start=1):
+            await _play(engine, row, k, CUTOFF - timedelta(days=1200))
+
+        prior = await derive(
+            engine, rating_keys=keys, cutoff=CUTOFF, horizon=HORIZON, added_at=added
+        )
+
+        assert prior.population == 40, "a play is an instant to measure from"
+        assert next(b for b in prior.buckets if b.low == 1095).samples == 40
+
+    async def test_a_film_with_neither_a_play_nor_an_arrival_date_is_still_excluded(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The narrowing goes, the honesty stays: nothing to measure from is not a sample,
+        and padding a bucket with it would drag the whole curve toward never-rewatched."""
+        prior = await derive(engine, rating_keys={1}, cutoff=CUTOFF, horizon=HORIZON, added_at={})
+
+        assert prior.population == 0
+
+
+async def _episode_play(engine: AsyncEngine, row_id: int, show_key: int, when: datetime) -> None:
+    """One per-episode play. TV history rows carry the show only as the grandparent."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO watch_event (row_id, rating_key, grandparent_rating_key, "
+                " user_id, watched_at, watched_status, percent_complete, media_type) "
+                "VALUES (:row_id, :rk, :gp, 1, :at, 1, 100, 'episode')"
+            ),
+            {
+                "row_id": row_id,
+                "rk": 100_000 + row_id,
+                "gp": show_key,
+                "at": int(when.timestamp()),
+            },
+        )
+
+
+class TestTvJoinsOnTheGrandparentKey:
+    """TV history rows are per-episode; the population passes SHOW keys. Joining shows
+    on rating_key finds nothing, reads every show as never-rewatched, and the derived
+    prior then claims a near-zero baseline that inverts every lift number."""
+
+    async def test_a_show_population_reads_episode_history(self, engine: AsyncEngine) -> None:
+        keys = set(range(1, 41))
+        added = {k: CUTOFF - timedelta(days=1200) for k in keys}
+        row = 0
+        for k in keys:  # every show watched (as episodes) well before the cutoff
+            row += 1
+            await _episode_play(engine, row, k, CUTOFF - timedelta(days=1200))
+        for k in list(keys)[:10]:  # a quarter rewatched after it
+            row += 1
+            await _episode_play(engine, row, k, CUTOFF + timedelta(days=30))
+
+        prior = await derive(
+            engine,
+            rating_keys=keys,
+            cutoff=CUTOFF,
+            horizon=HORIZON,
+            added_at=added,
+            media_type="tv",
+        )
+
+        assert prior.rate_for(1200) == pytest.approx(0.25)
+
 
 class TestTheSampleFloor:
     """A bucket of nine items yields 0%, 11%, 22%... none of which mean anything."""
@@ -161,13 +240,10 @@ class TestTheSampleFloor:
 
 
 class TestTheBacktestUsesTheDerivedPrior:
-    """This test exists because the wiring silently did NOT happen the first time.
-
-    The `prior` argument was accepted by `run()` and then never passed into the result.
-    mypy was happy -- an unused parameter is perfectly legal -- and the backtest quietly
-    kept using the hardcoded fallback while reporting a lift number that looked fine.
-
-    An unused argument is invisible to the type checker. It needs a test."""
+    """The wiring silently did NOT happen the first time: `run()` accepted the `prior`
+    argument and never passed it into the result. mypy was happy -- an unused parameter
+    is perfectly legal -- and the backtest quietly kept using the hardcoded fallback
+    while reporting a lift number that looked fine. An unused argument needs a test."""
 
     def test_a_derived_prior_reaches_the_result(self) -> None:
         prior = _prior(rate=0.40)
@@ -189,7 +265,7 @@ class TestTheBacktestUsesTheDerivedPrior:
         assert result.prior_is_derived is False
         assert "borrowed from another library" in result.summary()
 
-    def test_a_derived_prior_is_labelled_as_measured_here(self) -> None:
+    def test_a_derived_prior_is_labeled_as_measured_here(self) -> None:
         result = backtest.BacktestResult(cutoff=NOW, condemn_at=60, prior=_prior(rate=0.40))
         result.condemned = [("Film", 80.0, 1)]
         result.condemned_dormancy = [1200.0]

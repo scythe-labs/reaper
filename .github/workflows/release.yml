@@ -1,0 +1,301 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Release
+
+# Cut a CalVer release from main. main is release-only, so every push here IS a
+# release: compute the next vYYYY.M.N, tag it, draft the release, build the
+# binaries and snaps (binaries.yml does that work), push the versioned container
+# image, attach everything, publish, then submit the installer to winget (a job
+# below, because publishing with the workflow's own token fires no other workflow).
+# The notes are GitHub-generated over the PRs since the previous tag, sectioned by
+# label per .github/release.yml; the first cut ships .github/first-release-notes.md.
+#
+# The version is year.month.count -- a date names what operators actually ask
+# ("am I on this month's build?"), and the count separates two cuts in one month.
+# The month is unpadded so the tag and the Python version agree: PEP 440
+# normalizes 2026.08 to 2026.8, and two spellings of one release is how version
+# comparisons quietly break.
+#
+# workflow_dispatch exists to re-run a cut that failed partway, and the whole
+# pipeline is shaped so a failed run leaves nothing half-claimed: no git tag is
+# created until the draft is published (gh mints it at publish time), so a failed
+# run leaves only a draft, a rerun that computes the same number replaces its own
+# leftover draft, and the version count is never consumed by a release that never
+# shipped. The asset upload is idempotent (--clobber) for the same reason.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  # Never cancel a release: killing one mid-publish is how :latest ends up
+  # half-published (the same reason ci.yml exempts main from cancellation).
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    name: Compute the version and draft the release
+    # Dispatch exists to re-run a failed cut, and the UI's ref dropdown defaults to
+    # dev: without this guard one misclick would tag and release the dev tip as
+    # stable. Everything downstream needs this job, so the skip covers the run.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      checks: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      # ci.yml fires on this same push and shares nothing with this workflow, so
+      # without a wait the cut can tag and publish a sha whose tests are still
+      # running, or already red (#429). `CI gate` is the one check that reports on
+      # every commit, counting skipped lanes as passes. A transient API error reads
+      # as "not reported yet" and retries until the deadline; a dispatch re-run of
+      # an already-verdicted sha passes through on the first poll.
+      - name: Wait for CI's verdict on this sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 1800))
+          while :; do
+            verdict="$(gh api -X GET \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+              -f check_name='CI gate' \
+              -q '.check_runs | map(select(.status == "completed")) | first | .conclusion // empty' \
+              || true)"
+            if [ "${verdict}" = "success" ]; then
+              echo "CI gate: success"
+              break
+            fi
+            if [ -n "${verdict}" ]; then
+              echo "CI gate concluded '${verdict}'; not cutting a release from this sha." >&2
+              exit 1
+            fi
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "CI gate did not report within 30 minutes; not cutting." >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+      # Full history: the count is derived from the tags that already exist.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Draft the release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          year="$(date -u +%Y)"
+          month="$(date -u +%-m)"
+          n=1
+          while git rev-parse -q --verify "refs/tags/v${year}.${month}.${n}" > /dev/null; do
+            n=$((n + 1))
+          done
+          version="${year}.${month}.${n}"
+          tag="v${version}"
+          # The newest released line, for the notes range. Pinned rather than left to
+          # GitHub's own pick: the rolling dev-build prerelease tag lives in this same
+          # repo, and every release's notes would otherwise rest on GitHub never
+          # choosing it. Empty on the first cut, which ships the curated file below.
+          prev="$(git for-each-ref --sort=-v:refname --format='%(refname:short)' --count=1 'refs/tags/v*')"
+          # The tag lands on the promotion PR's head commit, over on dev. The
+          # promotion squash is one commit for a whole release, so notes generated
+          # against main's line would list the promotion PR and nothing else; dev's
+          # line holds one squash commit per landed PR, which is the list the notes
+          # are built from. main only ever advances by these squashes, so the two
+          # commits carry the same tree and the builds below keep checking out
+          # GITHUB_SHA; the tree check makes that assumption explicit rather than
+          # trusted.
+          target="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            -q '[.[] | select(.base.ref == "main" and .merged_at != null)][0].head.sha // empty' \
+            || true)"
+          if [ -n "${target}" ]; then
+            if ! git cat-file -e "${target}^{commit}" 2>/dev/null ||
+               [ "$(git rev-parse "${target}^{tree}")" != "$(git rev-parse "${GITHUB_SHA}^{tree}")" ]; then
+              echo "promotion head ${target} is unknown here or holds a different tree; tagging the pushed sha instead" >&2
+              target=""
+            fi
+          fi
+          if [ -z "${target}" ]; then
+            # The release still cuts correctly from the pushed sha; only the next
+            # release's notes range suffers, since its start tag sits off dev's line.
+            target="${GITHUB_SHA}"
+          fi
+          # A leftover DRAFT with this tag is this pipeline's own failed attempt
+          # (drafts hold no git tag, so the count above recomputes the same number):
+          # replace it. A published release never matches isDraft and is never touched.
+          if [ "$(gh release view "${tag}" --json isDraft -q .isDraft 2>/dev/null || echo false)" = "true" ]; then
+            gh release delete "${tag}" --yes
+          fi
+          # Draft until the artifacts are attached, so nobody is told about a release
+          # that cannot be downloaded yet. gh creates the git tag at publish time.
+          args=(--draft --target "${target}" --title "Reaper ${version}")
+          if [ -n "${prev}" ]; then
+            args+=(--generate-notes --notes-start-tag "${prev}")
+          else
+            # The first cut: generated notes over an unbounded range would recite
+            # every PR since the repository began. The curated summary rides the
+            # repo instead; its header says when it may be deleted.
+            args+=(--notes-file .github/first-release-notes.md)
+          fi
+          gh release create "${tag}" "${args[@]}"
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+          } >> "$GITHUB_OUTPUT"
+
+  binaries:
+    needs: cut
+    uses: ./.github/workflows/binaries.yml
+    with:
+      version: ${{ needs.cut.outputs.version }}
+    secrets: inherit
+
+  # The versioned image, one native build per architecture. ci.yml keeps proving
+  # buildability on every commit; this is the one place :latest and the version tag
+  # are pushed, with the release identity baked so the About page and the update
+  # check tell the truth. It waits for the binaries: :latest moving while a lane
+  # fails would put operators on a version whose release never published, the same
+  # half-published state the concurrency group guards against from the cancellation
+  # side.
+  docker:
+    name: Build the release image (${{ matrix.arch }})
+    needs: [cut, binaries]
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and push this architecture
+        env:
+          VERSION: ${{ needs.cut.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          short_sha="$(git rev-parse --short HEAD)"
+          docker build \
+            --build-arg "REAPER_GIT_SHA=${short_sha}" \
+            --build-arg "REAPER_RELEASE=1" \
+            --build-arg "REAPER_VERSION=${VERSION}" \
+            --build-arg "REAPER_UPDATE_REPO=${GITHUB_REPOSITORY}" \
+            -t "${image}:${VERSION}-${ARCH}" .
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker push "${image}:${VERSION}-${ARCH}"
+
+  # One manifest from the two architecture images; :latest is the same list under
+  # its second name, so the two tags cannot disagree.
+  docker-manifest:
+    name: Assemble the multi-arch image
+    needs: [cut, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Stitch and tag
+        env:
+          VERSION: ${{ needs.cut.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker buildx imagetools create -t "${image}:${VERSION}" \
+            "${image}:${VERSION}-amd64" "${image}:${VERSION}-arm64"
+          docker buildx imagetools create -t "${image}:latest" "${image}:${VERSION}"
+
+  publish:
+    name: Attach artifacts and publish
+    needs: [cut, binaries, docker-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: binaries-*
+          merge-multiple: true
+          path: assets
+
+      - name: Upload and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.cut.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # --clobber: a rerun after a partial upload replaces what landed instead of
+          # failing on the first name that already exists.
+          gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber assets/*
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+
+  # The winget submission is a called job, not a `release: published` trigger over
+  # in submit-winget.yml: the publish above runs under this workflow's GITHUB_TOKEN,
+  # and events an action performs with that token never start another workflow.
+  winget:
+    needs: [cut, publish]
+    uses: ./.github/workflows/submit-winget.yml
+    with:
+      version: ${{ needs.cut.outputs.version }}
+    secrets: inherit
+
+  # Stable-channel store publication, once the GitHub release is out. Skipped
+  # without credentials, never red: the store is opt-in infrastructure.
+  snap-stable:
+    name: Release snap ${{ matrix.arch }} to stable
+    needs: [cut, publish]
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: binaries-snap-${{ matrix.arch }}
+          path: snaps
+
+      - name: Check for store credentials
+        id: creds
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -n "${SNAPCRAFT_STORE_CREDENTIALS}" ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "no SNAPCRAFT_STORE_CREDENTIALS secret; skipping store publication"
+          fi
+
+      - name: Find the snap file
+        id: snapfile
+        if: steps.creds.outputs.has == 'true'
+        run: echo "path=$(ls snaps/*.snap)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to stable
+        if: steps.creds.outputs.has == 'true'
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1.2.0
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.snapfile.outputs.path }}
+          release: stable

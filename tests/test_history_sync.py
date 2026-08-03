@@ -108,8 +108,8 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         assert fake.after_calls[0] is None
 
     async def test_the_second_sync_asks_only_for_recent_rows(self, engine: AsyncEngine) -> None:
-        """The whole point: the incremental sync must pass an ``after`` date, so Tautulli
-        returns the delta instead of the full history."""
+        """The incremental sync must pass an ``after`` date, so Tautulli returns the
+        delta instead of the full history."""
         history = [_row(i, days_ago=i) for i in range(1, 11)]
         fake = FakeTautulli(history)
         await sync(engine, fake)  # type: ignore[arg-type]
@@ -142,6 +142,77 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         await sync(engine, fake)  # type: ignore[arg-type]
 
         assert await _count(engine) == 2  # the live session was not recorded
+
+
+class TestThePageLoopFetchesEveryRow:
+    """The mirror's depth is what the horizon gate reads, and a shallow horizon is the
+    single largest mass-deletion vector this codebase has: every item older than the
+    mirror looks never-played. So the paging loop must not truncate on a source that is
+    merely less tidy than expected."""
+
+    async def test_a_source_that_reports_no_total_is_still_paged_to_the_end(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`int(page.get("recordsFiltered") or 0)` made "not told" identical to "none",
+        and 0 ended the loop after page one, silently keeping a single page of history."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
+
+        class _NoTotal(FakeTautulli):
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                page.pop("recordsFiltered")
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 8)]
+        await sync(engine, _NoTotal(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 7
+
+    async def test_a_short_middle_page_does_not_skip_the_rest(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Advancing by the constant walked `start` past rows nobody had fetched."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
+
+        class _ShortSecondPage(FakeTautulli):
+            def __init__(self, rows: list[dict[str, Any]]) -> None:
+                super().__init__(rows)
+                self.pages = 0
+
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                if kwargs.get("length", 100) > 1:
+                    self.pages += 1
+                    if self.pages == 2:
+                        # A page that came back short without being the last one.
+                        page["data"] = page["data"][:1]
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 13)]
+        await sync(engine, _ShortSecondPage(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 12
+
+    async def test_a_source_that_never_ends_is_stopped(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Terminating on an empty page alone would spin forever against a source that
+        ignores `start` and reports no total. Bounded, and the shorter mirror keeps."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
+        monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
+
+        class _Endless(FakeTautulli):
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                if kwargs.get("length", 100) > 1:
+                    page["data"] = self.rows[:2]  # same page, forever
+                    page.pop("recordsFiltered")
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 8)]
+        await sync(engine, _Endless(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 2  # it stopped, and kept what it read
 
 
 class TestRegressionDetection:
@@ -208,6 +279,213 @@ class TestOverlapNeverDropsARow:
         assert await _count(engine) == 2  # the same-day play was not missed
 
 
+class TestTheIngestClockIsSeparateFromTheWatchingClock:
+    """ "Did the ingest run" and "did anybody watch anything" are different questions, and
+    only the first one can tell a stalled sync from a library nobody touched this week."""
+
+    async def test_there_is_no_sync_time_before_the_first_sync(self, engine: AsyncEngine) -> None:
+        assert await history_sync.last_synced_at(engine) is None
+
+    async def test_a_sync_that_returned_nothing_still_moves_the_clock(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Nobody watched anything, so `latest` stays empty. The ingest ran, so the sync
+        clock moves. Degrading a scan on `latest` would call this library broken."""
+        await sync(engine, FakeTautulli([]))  # type: ignore[arg-type]
+
+        assert await history_sync.latest(engine) is None
+        synced = await history_sync.last_synced_at(engine)
+        assert synced is not None
+        assert abs((utcnow() - synced).total_seconds()) < 60
+
+
+class TestAnUnreportedCompletionIsStoredAsUnknown:
+    """``sync`` is the only place a NULL ``watched_status`` is ever written, so this is
+    where the "we were not told" / "did not finish" distinction is won or lost. Tests that
+    insert NULLs with raw SQL prove the queries read one; only these prove one is produced.
+
+    Collapsing the two makes a viewer look further behind than they are, and the season
+    they are part-way through loses its mid-binge protection.
+    """
+
+    async def _status(self, engine: AsyncEngine, row_id: int) -> float | None:
+        async with engine.connect() as conn:
+            value = (
+                await conn.execute(
+                    text("SELECT watched_status FROM watch_event WHERE row_id = :id"),
+                    {"id": row_id},
+                )
+            ).scalar_one()
+        return None if value is None else float(value)
+
+    async def test_a_missing_status_is_stored_as_null(self, engine: AsyncEngine) -> None:
+        row = _row(1, days_ago=1)
+        del row["watched_status"]
+        await sync(engine, FakeTautulli([row]))  # type: ignore[arg-type]
+
+        assert await self._status(engine, 1) is None
+
+    async def test_an_empty_status_is_stored_as_null(self, engine: AsyncEngine) -> None:
+        """Tautulli sends "" rather than omitting the key on some rows."""
+        await sync(engine, FakeTautulli([dict(_row(1, days_ago=1), watched_status="")]))  # type: ignore[arg-type]
+
+        assert await self._status(engine, 1) is None
+
+    async def test_a_reported_zero_round_trips_as_zero(self, engine: AsyncEngine) -> None:
+        """The other direction: a real "started it, did not finish" must not become
+        unknown. Pinning only the NULL side would let `None` swallow both facts."""
+        await sync(engine, FakeTautulli([dict(_row(1, days_ago=1), watched_status=0)]))  # type: ignore[arg-type]
+
+        assert await self._status(engine, 1) == 0.0
+
+    async def test_the_two_are_distinguishable_after_a_sync(self, engine: AsyncEngine) -> None:
+        """Both facts in one history, told apart in storage."""
+        unknown = _row(1, days_ago=1)
+        del unknown["watched_status"]
+        rows = [unknown, dict(_row(2, days_ago=2), watched_status=0)]
+
+        await sync(engine, FakeTautulli(rows))  # type: ignore[arg-type]
+
+        assert await self._status(engine, 1) is None
+        assert await self._status(engine, 2) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),  # key absent from Tautulli's payload
+        ("", None),  # key present but empty
+        ("not a number", None),
+        ({}, None),  # a shape that is valid JSON but not a number
+        (0, 0.0),  # genuinely started, did not finish
+        (0.0, 0.0),
+        ("0", 0.0),
+        ("0.5", 0.5),
+        (1, 1.0),  # completed
+    ],
+)
+def test_float_or_none_keeps_unknown_apart_from_zero(value: object, expected: float | None) -> None:
+    assert history_sync._float_or_none(value) == expected
+
+
 def test_overlap_is_at_least_a_day() -> None:
     # A guard on the constant: any smaller overlap risks losing a same-day play.
     assert timedelta(days=1) <= history_sync.INCREMENTAL_OVERLAP
+
+
+class TestEnsureSchema:
+    """The rebuild path decides DROP/CREATE from the shape read INSIDE the write
+    transaction, not a pre-lock read (B-6). These pin the observable outcomes of that
+    decision: a stale table is rebuilt empty, a current one is untouched."""
+
+    async def _live_columns(self, engine: AsyncEngine) -> tuple[tuple[str, str, int], ...]:
+        async with engine.connect() as conn:
+            cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
+        return tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
+
+    async def test_a_stale_shaped_table_is_rebuilt_empty_to_the_current_shape(
+        self, engine: AsyncEngine
+    ) -> None:
+        # A table missing the newest column, carrying a row from before the shape change.
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS watch_event"))
+            await conn.execute(
+                text(
+                    "CREATE TABLE watch_event ("
+                    "row_id INTEGER PRIMARY KEY, rating_key INTEGER NOT NULL, "
+                    "parent_rating_key INTEGER, grandparent_rating_key INTEGER, "
+                    "user_id INTEGER NOT NULL, watched_at INTEGER NOT NULL, "
+                    "watched_status REAL, percent_complete INTEGER NOT NULL, "
+                    "media_type TEXT NOT NULL)"  # no media_index -> stale
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event (rating_key, user_id, watched_at, "
+                    "percent_complete, media_type) VALUES (1, 1, 1, 100, 'movie')"
+                )
+            )
+
+        await history_sync.ensure_schema(engine)
+
+        # Rebuilt to the current shape, and the untrustworthy pre-change row is gone.
+        assert await self._live_columns(engine) == history_sync._WATCH_EVENT_COLUMNS
+        assert await _count(engine) == 0
+
+    async def _live_indexes(self, engine: AsyncEngine) -> set[str]:
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT name FROM sqlite_master "
+                        "WHERE type = 'index' AND tbl_name = 'watch_event'"
+                    )
+                )
+            ).all()
+        return {str(row[0]) for row in rows}
+
+    async def test_every_declared_index_lands_on_a_fresh_cache(self, engine: AsyncEngine) -> None:
+        await history_sync.ensure_schema(engine)
+        assert set(history_sync.INDEXES) <= await self._live_indexes(engine)
+
+    async def test_a_missing_index_is_added_without_dropping_the_mirror(
+        self, engine: AsyncEngine
+    ) -> None:
+        """An index added after an install synced must reach that install.
+
+        Indexes are not columns, so the shape check cannot see one missing -- an index
+        declared in the table DDL would have looked current forever and simply never been
+        created, leaving every fairness query full-scanning. The only way to force it
+        through the shape check would be to bump the column tuple, which drops the whole
+        mirror and costs a full re-sync from Tautulli just to add an index. So a missing
+        index is noticed by name and created in place instead.
+        """
+        await history_sync.ensure_schema(engine)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event (rating_key, user_id, watched_at, "
+                    "percent_complete, media_type) VALUES (1, 1, 1, 100, 'movie')"
+                )
+            )
+            # An install that synced before this index was declared.
+            await conn.execute(text("DROP INDEX ix_watch_event_parent_key"))
+        assert "ix_watch_event_parent_key" not in await self._live_indexes(engine)
+
+        await history_sync.ensure_schema(engine)
+
+        assert "ix_watch_event_parent_key" in await self._live_indexes(engine)
+        assert await _count(engine) == 1  # and the mirror survived
+
+    async def test_the_parent_key_filter_uses_its_index(self, engine: AsyncEngine) -> None:
+        """The Scales board and the person drawer both filter on ``parent_rating_key``.
+
+        Unindexed, each 500-key chunk was a full scan of a table holding every play the
+        server ever recorded. This asserts the planner picks the index rather than timing
+        the query, so it fails if the index is ever dropped from ``INDEXES``.
+        """
+        await history_sync.ensure_schema(engine)
+        async with engine.connect() as conn:
+            plan = (
+                await conn.execute(
+                    text(
+                        "EXPLAIN QUERY PLAN SELECT row_id FROM watch_event "
+                        "WHERE parent_rating_key IN (1, 2, 3)"
+                    )
+                )
+            ).all()
+        assert "ix_watch_event_parent_key" in " ".join(str(row[3]) for row in plan)
+
+    async def test_a_current_table_is_left_untouched(self, engine: AsyncEngine) -> None:
+        await history_sync.ensure_schema(engine)  # creates it at the current shape
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event (rating_key, user_id, watched_at, "
+                    "percent_complete, media_type) VALUES (1, 1, 1, 100, 'movie')"
+                )
+            )
+
+        await history_sync.ensure_schema(engine)  # no-op: shape already current
+
+        assert await _count(engine) == 1  # the row survived, no rebuild

@@ -48,7 +48,10 @@ def test_destructive_actions_are_off_by_default(client: TestClient) -> None:
     """The master safety switch ships off. If this test ever fails, a default
     changed and Reaper became able to delete media without anyone asking it to."""
     assert Settings.model_fields["destructive_actions_enabled"].default is False
-    assert client.get("/api/health").json()["destructive_actions_enabled"] is False
+    # The open probe deliberately says NOTHING about the armed state: an anonymous
+    # caller must not learn whether deletion is on. The authenticated settings
+    # surface is the readout (see test_settings_api's safety tests).
+    assert "destructive_actions_enabled" not in client.get("/api/health").json()
 
 
 def test_every_route_response_model_resolves(client: TestClient) -> None:

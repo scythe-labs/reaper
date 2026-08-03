@@ -1,9 +1,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Deriving the rewatch prior from *this* server's own history.
 
+**Engine-complete, not yet reachable.** :func:`derive` has no caller anywhere in ``src/``
+-- not even ``engine.backtest``, which imports only :class:`RewatchPrior` and
+:exc:`NotCalibratedError` from here and then falls back to
+``backtest.FALLBACK_REWATCH_PRIOR``. Its only callers are the tests, and nothing routes,
+schedules or CLIs a backtest either. So no number an operator sees today comes from here,
+and no gate threshold is fitted by it -- ``MinDormancyGate`` enforces the operator's own
+stored number. Nothing operator-facing may claim otherwise until :func:`derive` is wired
+(rule 24). This note mirrors the one at the top of ``engine.backtest``: that module carried
+the warning for a while and this one did not, which is how the docs came to promise a
+per-operator prior nothing computes.
+
 The prior -- "how likely is a film dormant for N days to be watched again this year" --
 is the baseline the scorer must beat. It is **not a constant**, and shipping it as one
-is a bug: every library has its own rhythm. A household of three has a different curve
+is a bug: every library has its own rhythm. Three viewers produce a different curve
 from a server with a hundred users.
 
 ## Two ways to get this catastrophically wrong
@@ -37,6 +48,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clock import from_epoch
+from reaper.engine.dormancy import dormancy_days, reference_instant
 
 log = structlog.get_logger(__name__)
 
@@ -177,6 +189,9 @@ async def derive(
     since deleted, whose structural zeroes drag the whole curve down.
 
     It is a required argument, not a default, so it cannot be got wrong by omission.
+
+    ``media_type`` is the POPULATION's type ("movie" or "tv"). For TV the join reads
+    per-episode history through ``grandparent_rating_key`` -- see below.
     """
     if not rating_keys:
         raise NotCalibratedError("No items were supplied, so there is nothing to measure.")
@@ -184,29 +199,39 @@ async def derive(
     cutoff_epoch = int(cutoff.timestamp())
     window_end = int((cutoff + timedelta(days=window_days)).timestamp())
 
+    # TV history rows are PER-EPISODE (media_type='episode', keyed by the episode) while
+    # the population passes SHOW keys, so the join reads the episodes' grandparent key,
+    # exactly like backtest._plays. Joining shows on rating_key would match nothing:
+    # every show would read never-rewatched and the derived prior would claim a near-0%
+    # baseline, inverting every lift number downstream.
+    key_column, history_media_type = (
+        ("grandparent_rating_key", "episode") if media_type == "tv" else ("rating_key", "movie")
+    )
+
     async with engine.connect() as conn:
         before = {
-            int(r.rating_key): from_epoch(r.last)
+            int(r.key): from_epoch(r.last)
             for r in (
                 await conn.execute(
                     text(
-                        "SELECT rating_key, MAX(watched_at) AS last FROM watch_event "
+                        f"SELECT {key_column} AS key, MAX(watched_at) AS last "  # noqa: S608 -- column from a literal two-way map
+                        "FROM watch_event "
                         "WHERE media_type = :mt AND watched_at <= :cut "
-                        "GROUP BY rating_key"
+                        f"GROUP BY {key_column}"
                     ),
-                    {"mt": media_type, "cut": cutoff_epoch},
+                    {"mt": history_media_type, "cut": cutoff_epoch},
                 )
             ).all()
         }
         after = {
-            int(r.rating_key)
+            int(r.key)
             for r in (
                 await conn.execute(
                     text(
-                        "SELECT DISTINCT rating_key FROM watch_event "
+                        f"SELECT DISTINCT {key_column} AS key FROM watch_event "  # noqa: S608 -- column from a literal two-way map
                         "WHERE media_type = :mt AND watched_at > :cut AND watched_at <= :end"
                     ),
-                    {"mt": media_type, "cut": cutoff_epoch, "end": window_end},
+                    {"mt": history_media_type, "cut": cutoff_epoch, "end": window_end},
                 )
             ).all()
         }
@@ -215,14 +240,24 @@ async def derive(
 
     for key in rating_keys:
         arrived = added_at.get(key)
-        if arrived is None or arrived > cutoff:
+        if arrived is not None and arrived > cutoff:
             continue  # It did not exist yet. Judging it would be fiction.
 
-        last = before.get(key)
-        # Never played => measure from whichever is later: when it arrived, or the
-        # start of our evidence. NOT from epoch 0, which reads as ~20,600 days.
-        reference = last or max(arrived, horizon)
-        dormant = (cutoff - reference).days
+        # The one dormancy derivation (engine/dormancy.py), shared with the live scan, the
+        # season scan and the backtest -- so an item cannot bucket by one arithmetic here
+        # and score by another there. The *thaw* is shared too, since #277: this loop used to
+        # drop a record with no arrival date before asking, which is a second thaw rule
+        # wearing a filter's clothes. It matters more here than anywhere, because this
+        # population is the baseline the scorer is measured against and the docstring above
+        # requires it to be exactly the set the scorer judges -- and the live scan judges an
+        # item on a play alone. Dropping those items would compute the prior over one
+        # population and the lift over another, which is mistake 1 in this module's header.
+        reference = reference_instant(
+            last_played=before.get(key), added_at=arrived, horizon=horizon
+        )
+        if reference is None:
+            continue  # Neither a play nor an arrival date: nothing to measure from.
+        dormant = dormancy_days(reference, now=cutoff)
         if dormant < 0:
             continue
 

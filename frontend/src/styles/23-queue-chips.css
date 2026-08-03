@@ -1,0 +1,387 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * The chip family every card wears, and the season strip. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
+ * the load order, and that order is load-bearing (see the ordering notes in this file). */
+/* chips -- one family, one rhythm. Every chip is 1.35rem tall (square chips radius 5px,
+   sentence chips a full pill) with one type scale, so mixed rows sit on a single line
+   and the same-looking pieces measure the same everywhere they appear. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 1.35rem;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  padding: 0 var(--space-md);
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Carries a portal handle, so it wraps rather than holding the chip's line -- see the rule it
+   shares with .lib-chip below, which is where the height and wrapping come from. */
+.chip-requested {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.chip-tv {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.chip-movie {
+  background: var(--media-movie-soft);
+  color: var(--media-movie);
+}
+.chip-reap {
+  background: var(--condemn-soft);
+  color: var(--condemn);
+}
+/* Hand decisions wear SOLID chips: outlined chips are Reaper's verdicts, filled ones
+   are yours. The reap the engine can't honor yet (chip-reap-refused) is dashed red: still
+   in the reap family you chose, but hollow and dashed so it never reads as a done removal,
+   and no longer the amber that means "left for you to decide". The ask is noted, the file
+   is held, and the text says why. */
+.chip-hand-reap {
+  background: var(--condemn);
+  color: var(--condemn-soft);
+}
+.chip-hand-spare {
+  background: var(--protect);
+  color: var(--protect-soft);
+}
+/* A hand spare whose clock has PASSED. Dashed green on the soft fill, the keep-direction twin
+   of .chip-reap-refused: the decision was yours, and its effect is pending a scan. It is
+   deliberately NOT the solid .chip-hand-spare (the spare has run out, and solid means "you
+   chose this and it holds") and deliberately NOT a scan-verdict chip either -- only a scan
+   realizes a spare's expiry, so until then the planner, the ledger and the executor all still
+   read it and the file really is kept. See handFate's "spare-expired". */
+.chip-spare-expired {
+  background: var(--protect-soft);
+  color: var(--protect);
+  border: 1px dashed var(--protect);
+}
+.chip-reap-refused {
+  background: var(--condemn-soft);
+  color: var(--condemn);
+  border: 1px dashed var(--condemn);
+}
+/* "We could not check" -- amber, and dashed so it never reads as a settled answer at a
+ * glance. Same pairing the unchecked protections and .sig-unreadable use, for the same
+ * reason: "we could not look" must not look like "we looked and it was fine". */
+.chip-unchecked {
+  background: var(--unknown-soft);
+  color: var(--unknown);
+  border: 1px dashed color-mix(in srgb, var(--unknown) 55%, transparent);
+}
+
+/* The file's resolution, worn next to the size. Quiet by design: it informs a keep/reap
+   call ("that's our only 4K copy") without competing with the verdict colors. */
+.res-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 1.35rem;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.03em;
+  padding: 0 0.45rem;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.res-badge .res-detail {
+  font-size: var(--text-2xs);
+  opacity: 0.75;
+}
+
+/* The Plex library (section) an item lives in. Quiet, neutral metadata on the facts line --
+   the res-badge family, deliberately not a verdict color: which library a file is in is a
+   fact about where it lives, never an argument for its fate. The leading glyph is sized down
+   to sit inside the chip. */
+.lib-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  height: 1.35rem;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  padding: 0 0.5rem 0 0.42rem;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.lib-chip svg {
+  width: 12px;
+  height: 12px;
+  color: var(--faint);
+}
+
+/* The only two chips holding text from outside the app: a portal handle, and the name the
+ * operator gave a library on their own Plex server. Both were nowrap over a fixed 1.35rem, so a
+ * value too long for its row painted past the card (rule 139).
+ *
+ * The chip family's rhythm is that fixed height -- every chip the same, so mixed rows sit on one
+ * line. Turning it into a FLOOR keeps that exactly: an ordinary value still measures 1.35rem and
+ * nothing about any row changes. Only a value that cannot fit takes a second line, which is the
+ * case where the alternative was painting out of the box entirely.
+ *
+ * One rule for both, deliberately: these two are each other's sibling under rule 72, and the
+ * pair of them being fixed apart is how #219 and #220 came to exist. */
+.chip-requested,
+.lib-chip {
+  height: auto;
+  min-height: 1.35rem;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* How long the item has sat unwatched -- the strongest reason most items are here, so it
+   wears the shared amber "attention" tone and reads at a glance. */
+.dormant-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-start;
+  height: 1.35rem;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  padding: 0 0.55rem 0 0.45rem;
+  border-radius: var(--radius-pill);
+  color: var(--unknown);
+  background: var(--unknown-soft);
+  white-space: nowrap;
+}
+
+/* The one status chip a Sanctuary or Limbo card wears: green "kept because", gray
+   "nothing to act on", amber outline "deliberately left for you to decide". The chip is
+   the deciding fact; the full sentences live in the panel. */
+.status-chip {
+  display: inline-block;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  /* Centered by construction: the line box plus padding is exactly the family's
+     1.35rem, so the text cannot ride high the way a loose line-height let it.
+     inline-block (not flex) so text-overflow keeps working on the single line. */
+  line-height: 1.15rem;
+  padding: 0.1rem 0.6rem;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+.status-kept {
+  color: var(--protect);
+  background: var(--protect-soft);
+}
+.status-quiet {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+.status-look {
+  color: var(--unknown);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 55%, transparent);
+}
+.status-pressure {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+}
+/* Hand decisions read SOLID here too, mirroring the card chips: outlined pills are
+   Reaper's verdicts, filled pills are yours. */
+.status-hand-reap {
+  color: var(--condemn-soft);
+  background: var(--condemn);
+}
+.status-hand-spare {
+  color: var(--protect-soft);
+  background: var(--protect);
+}
+/* The status-chip family's twin of .chip-spare-expired -- same reasoning, same dashed green. */
+.status-spare-expired {
+  color: var(--protect);
+  background: var(--protect-soft);
+  border: 1px dashed var(--protect);
+}
+/* A reap the engine can't honor yet: dashed red, mirroring .chip-reap-refused and the
+   dashed .score-refused / .strip-ov-reap-refused. It is no longer .status-look -- amber now
+   means only "left for you to decide", and a held reap is a decision you made, not one left
+   open. The dashed border reads "provisional" the way .chip-unchecked does. */
+.status-reap-held {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+  border: 1px dashed var(--condemn);
+}
+
+/* The season strip: one square per season of the show, colored by its lane across the
+   WHOLE snapshot -- kept and condemned side by side without expanding anything. A hand
+   override draws a ring in its color. */
+.season-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0.1rem 0;
+}
+/* The one member of the 1.35rem chip rhythm above that is a real button, and the only per-season
+   open target on a phone. At that height it was 21.6px with 6px between squares -- under SC
+   2.5.8 and too tight for the spacing exception -- so it takes --tap-min instead and is
+   deliberately 2.4px taller than the chips it sits among. A chip is a label and reads at rest;
+   this is a thing a finger has to land on. */
+.strip-sq {
+  min-width: 1.65rem;
+  height: var(--tap-min);
+  padding: 0 0.3rem;
+  border: none;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  /* The held-reap scythe (.strip-mark) pins to this square's corner. */
+  position: relative;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+  /* Each square opens its season's reasoning; the ring (transparent until hover/focus)
+     is reserved up front so hovering never nudges the strip's layout. */
+  cursor: pointer;
+  appearance: none;
+  outline: 1.5px solid transparent;
+  outline-offset: 1px;
+  transition: color 0.1s ease;
+}
+/* Hovering a square is how you open one season. macOS Safari has a compositing bug that
+   drops a strip square's FILL to dark on hover inside a card (we moved the spared `opacity`
+   off the strip, but it can still happen), so the hover is built to SURVIVE that rather than
+   fight it: the number switches to the theme's bright text with a `--bg`-colored halo -- which
+   stays readable on the green/red fill AND on a dropped-dark square, in either theme -- under
+   an accent outline for the ring. Only `color`, `text-shadow`, and `outline` change: there is
+   no `background` or `box-shadow` for Safari to drop, and no `transform`/`filter` (their own
+   Safari hazard). `--text` is readable on `--bg` by definition, so the dropped case is covered
+   for free. */
+.strip-sq:hover {
+  color: var(--text);
+  text-shadow:
+    0 0 2px var(--bg),
+    0 0 3px var(--bg),
+    0 1px 2px var(--bg);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The held reap's scythe: a hand ask Reaper can't honor yet, marked so the square still
+   reads as YOURS -- the strip has no resting OverrideMark the way a movie card does. The
+   surface-colored halo lifts it off the dashed-red square and any neighbor. */
+.strip-mark {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--condemn);
+  background: var(--surface);
+  box-shadow: 0 0 0 1.5px var(--surface);
+  pointer-events: none;
+}
+.strip-mark svg {
+  width: 0.52rem;
+  height: 0.52rem;
+}
+/* Keyboard focus matches the hover so tabbing through the strip reads as clearly as a
+   pointer does -- the same bright number + halo, and an accent ring set a touch wider. */
+.strip-sq:focus-visible {
+  color: var(--text);
+  text-shadow:
+    0 0 2px var(--bg),
+    0 0 3px var(--bg),
+    0 1px 2px var(--bg);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.strip-condemn {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--condemn) 35%, transparent);
+}
+.strip-protect {
+  color: var(--protect);
+  background: var(--protect-soft);
+}
+.strip-abstain {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+/* A hand override paints the square SOLID -- "you chose this" reads at a glance next
+   to the outlined scan verdicts. A reap the engine can't honor yet (someone streaming, or a
+   protection that could not be checked) is the exception: not solid, dashed red with a
+   scythe, because the file is held. */
+.strip-ov-spare {
+  color: var(--protect-soft);
+  background: var(--protect);
+  box-shadow: none;
+}
+/* A spare whose clock has passed: still green (the file is still kept -- only a scan realizes
+   the expiry), but hollow and dashed, because the decision keeping it has run out. Declared
+   after the scan-verdict bases (.strip-abstain and friends) so it wins the square's base color,
+   exactly as .strip-ov-reap-refused does. */
+.strip-ov-spare-expired {
+  color: var(--protect);
+  background: var(--protect-soft);
+  border: 1.5px dashed var(--protect);
+  box-shadow: none;
+}
+.strip-ov-reap {
+  color: var(--condemn-soft);
+  background: var(--condemn);
+  box-shadow: none;
+}
+/* A reap the engine can't honor yet is NOT solid -- the file is not going anywhere. It is
+   dashed red (with the scythe corner-mark above): still the reap you chose, but hollow and
+   dashed so it never reads as a done removal, and no longer the amber that means "left for
+   you to decide". Defined after .strip-abstain so it wins over the square's scan-verdict
+   base. */
+.strip-ov-reap-refused {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+  border: 1.5px dashed var(--condemn);
+  box-shadow: none;
+}
+
+/* Windows High Contrast replaces every author color with a system one and forces `box-shadow`
+   to `none`. Every square above is told apart by its FILL, and .strip-condemn's only other cue
+   is an inset shadow -- so in that mode a run of seasons rendered as identical blank squares,
+   and "would be removed" and "kept" looked the same on the surface that decides which files go.
+   A screen-reader operator was never affected: each square carries `aria-label="Open <name>,
+   <lane>"` with the lane in words. This is for the sighted operator who has High Contrast on.
+
+   Border STYLE survives forced colors, so that is the channel. The two hand-override states
+   already wore `dashed` for their own reason and keep it, which leaves the scan verdicts to
+   take solid, dotted and none. `forced-color-adjust: none` is deliberately NOT used: the point
+   is to work WITH the operator's palette, not to reassert ours over it. */
+@media (forced-colors: active) {
+  .strip-sq {
+    border: 2px solid;
+  }
+  /* Heaviest edge on the one that means the file goes. */
+  .strip-condemn,
+  .strip-ov-reap {
+    border-style: solid;
+  }
+  .strip-protect,
+  .strip-ov-spare {
+    border-style: dotted;
+  }
+  .strip-abstain {
+    border-style: none;
+  }
+  /* Held, not settled -- the same "noted, but nothing has happened yet" the dashes carry in
+     color. */
+  .strip-ov-spare-expired,
+  .strip-ov-reap-refused {
+    border-style: dashed;
+  }
+}

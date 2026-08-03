@@ -1,0 +1,37 @@
+---
+id: deletion-switch
+title: The deletion switch
+description: Turning deletion on takes a password. Turning it off takes nothing.
+sidebar_position: 3
+---
+
+# The deletion switch
+
+`REAPER_DESTRUCTIVE_ACTIONS_ENABLED` seeds the **first run only**. On a fresh install, with
+nothing stored yet, it decides whether Reaper comes up armed, so a declarative deployment can
+ship ready to delete.
+
+After that the stored value wins and this variable is ignored, so a setting changed in the UI
+can never be silently clobbered by a stale `.env`.
+
+## The live control is deliberately asymmetric
+
+The switch lives in the web UI, under **Policy, Deletion**.
+
+- **Turning deletion on requires the admin password.** A stray click or a stale tab cannot arm
+  the tool. The password is what stands between a browser and an armed Reaper.
+- **Turning deletion off requires nothing.** Making Reaper safer should never be gated.
+
+<Callout tone="note">
+  **Arming and deleting are separate.** Turning the switch on removes nothing. A real run
+  still needs a typed confirmation matching the exact plan, recomputed on the server.
+</Callout>
+
+One function decides whether deletion is on, and every client and health check reads that one
+answer, so the two can never disagree.
+
+## Before you arm it
+
+[Turning deletion on](/safety/arming) is the full checklist. In short: set your pace and grace,
+turn on the Leaving Soon shelf and "Update while read-only" so your users are warned before you
+arm anything, and keep your first run supervised.

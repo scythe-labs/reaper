@@ -1,0 +1,58 @@
+---
+id: encryption-key
+title: The encryption key
+description: Where it comes from, why you must back it up, and how to rotate it safely.
+sidebar_position: 2
+---
+
+# The encryption key
+
+Supplying one is optional. If `REAPER_SECRET_KEY` is unset, Reaper generates a key on first
+boot and saves it to `<data_dir>/secret.key` with mode `0600`, reusing it on every subsequent
+boot.
+
+Beside it sits `<data_dir>/secret.salt`, minted once per install. The key is stretched with the
+salt before anything is encrypted, so the two only work as a pair. Reaper writes a salt even
+when you supply the key yourself.
+
+<Callout tone="caution">
+  **Back up both files alongside your database.** `secret.key` and `secret.salt` together are
+  what decrypt your stored API keys. Lose either and every integration must be entered again.
+</Callout>
+
+The key is generated *once* and never rotated automatically. A key that changed on restart
+would silently render every stored credential unreadable, and you would only find out the next
+time a scan tried to reach Sonarr.
+
+Setting `REAPER_SECRET_KEY` explicitly always wins, and Reaper then writes no key file at all,
+so a secret manager stays the single source. An existing generated key file is never
+overwritten, since your database may still be encrypted with it.
+
+## Rotating it deliberately
+
+Supported, and safe to do while running. Put the new key in `REAPER_SECRET_KEY` and the retired
+one in `REAPER_SECRET_KEY_OLD`, comma-separated for a chain of them:
+
+```bash
+REAPER_SECRET_KEY=<new>
+REAPER_SECRET_KEY_OLD=<previous>,<older>
+```
+
+Reaper then encrypts under the new key while still decrypting whatever the old ones wrote, so
+nothing is bricked halfway through. Drop the old value once every credential has been saved
+again.
+
+## What encryption at rest buys you
+
+A database that leaks without its key. `reaper.db` on its own hands over no working
+credential, because the key is a separate file. Treat it as sensitive anyway: it carries your
+titles, your decisions and your audit trail, and one careless copy of the data folder undoes
+the separation.
+
+## Where it stops
+
+Both files sit in the same folder, so anyone who can read your filesystem can read both.
+Supply the key from a secret manager when you need them genuinely apart.
+
+A backup is more sensitive than the database alone: it carries the key and the salt
+deliberately, so that it restores. See [Back this up](/operating/backups).

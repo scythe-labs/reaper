@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: AGPL-3.0-or-later
+
+  The Unraid Community Applications repository profile: what the store shows about
+  this repository as a whole. Required at the repo root for CA submission; the
+  per-app templates live in contrib/unraid/.
+
+  The root element is <CommunityApplications> and <Profile> is the description
+  text inside it, per https://ca.unraid.net/submit/help/repository-info-xml. A
+  <Profile> root parses, so the submission scanner rejects it as a missing
+  <Profile> field rather than as malformed XML.
+-->
+<CommunityApplications>
+  <Profile>
+    Reaper finds media nobody watches in your Plex library, explains why it thinks each
+    item is expendable, lets you review and approve, then removes approved items through
+    Sonarr and Radarr and refreshes Plex. Deletion stays off until you turn it on, so you
+    can run it for weeks and just read the results. This repository ships Reaper, which
+    follows releases, and Reaper-Dev, which follows daily development. Questions and bug
+    reports go to GitHub Issues and Discussions at https://github.com/scythe-labs/reaper.
+  </Profile>
+  <Icon>https://raw.githubusercontent.com/scythe-labs/reaper/dev/frontend/public/icon-512.png</Icon>
+  <WebPage>https://github.com/scythe-labs/reaper</WebPage>
+</CommunityApplications>

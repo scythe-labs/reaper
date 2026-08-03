@@ -12,9 +12,21 @@ The lockout risk is real and specific. If Plex OAuth is the only way in, then
 
 None of those are hypothetical, and all of them are outside our control. So:
 
-    **Reaper always keeps at least one working local admin account.**
+    **Reaper keeps at least one working local admin account.**
 
-The last local admin cannot be deleted, and cannot have local login disabled.
+That has two halves, and for a long time only the second one existed. Setup
+*establishes* it: the first-run wizard's opening step cannot be skipped, and the
+password it sets goes through :func:`services.admin_password.set_password`, which
+creates a local admin on an install that has none. :class:`LastAdminError` then
+*maintains* it: the last local admin cannot be deleted, and cannot have local login
+disabled.
+
+Without the first half zero was a reachable state that nothing here ever tripped on,
+because the invariant is enforced downward from one and never upward from zero. An
+owner who claimed the server over Plex OAuth got a Plex-provider user;
+:func:`count_local_admins` counts only ``LOCAL`` ones, so it was zero on an install
+whose sign-in screen told the operator the opposite (#382).
+
 Plex OAuth is *additive* convenience, never the sole key to the door.
 """
 
@@ -108,7 +120,7 @@ async def deactivate(session: AsyncSession, username: str) -> None:
 
     user.is_active = False
     # resolve_session already refuses a deactivated user's cookie lazily, but evict the
-    # rows now too: defence in depth, and the sessions table stops advertising a dead
+    # rows now too: defense in depth, and the sessions table stops advertising a dead
     # account's devices.
     await close_all_for_user(session, user.id)
     await session.flush()

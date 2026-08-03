@@ -13,12 +13,23 @@ import httpx
 import pytest
 import respx
 
-from reaper.clients.plextv import PlexConnection, PlexTvClient, plex_headers
+from reaper.clients.base import IntegrationError
+from reaper.clients.plextv import (
+    PIN_POLL_INTERVAL,
+    PIN_RATE_LIMIT_BACKOFF,
+    PIN_RATE_LIMIT_MAX_BACKOFF,
+    PlexConnection,
+    PlexTvClient,
+    plex_headers,
+)
 from reaper.config import RuntimeSafety
+
+pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 SAFETY = RuntimeSafety(destructive_enabled=False)
 CID = "reaper-uuid-1234"
 OUR_SERVER = "abc123machineid"
+PIN_URL = "https://plex.tv/api/v2/pins/77"
 
 
 def _resource(
@@ -50,9 +61,8 @@ def _resource(
 class TestOwnershipCheck:
     """The authorization boundary."""
 
-    @respx.mock
-    async def test_the_owner_is_admitted(self) -> None:
-        respx.get("https://plex.tv/api/v2/resources").mock(
+    async def test_the_owner_is_admitted(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200, json=[_resource(client_identifier=OUR_SERVER, owned=True)]
             )
@@ -60,21 +70,23 @@ class TestOwnershipCheck:
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("their-token", OUR_SERVER) is True
 
-    @respx.mock
-    async def test_a_stranger_with_a_valid_plex_account_is_refused(self) -> None:
-        """The whole point. They authenticated successfully -- plex.tv gave them a
-        real token -- but they own no server, so they are not our owner."""
-        respx.get("https://plex.tv/api/v2/resources").mock(
+    async def test_a_stranger_with_a_valid_plex_account_is_refused(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """They authenticated successfully -- plex.tv gave them a real token -- but
+        they own no server, so they are not our owner."""
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(200, json=[])
         )
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("stranger-token", OUR_SERVER) is False
 
-    @respx.mock
-    async def test_someone_who_owns_a_different_server_is_refused(self) -> None:
+    async def test_someone_who_owns_a_different_server_is_refused(
+        self, httpx2_mock: respx.Router
+    ) -> None:
         """A Plex user with their own server at home must not get into *our* admin
         console. Checking merely 'do you own any server' would admit them."""
-        respx.get("https://plex.tv/api/v2/resources").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200,
                 json=[_resource(client_identifier="someone-elses-server", owned=True)],
@@ -83,12 +95,11 @@ class TestOwnershipCheck:
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("other-owner-token", OUR_SERVER) is False
 
-    @respx.mock
-    async def test_a_shared_user_of_our_server_is_refused(self) -> None:
+    async def test_a_shared_user_of_our_server_is_refused(self, httpx2_mock: respx.Router) -> None:
         """The most realistic attack: one of the ~100 people you share your Plex
         library with. They can see the server -- it appears in their resources --
         but `owned` is false. Reaper is admin-only."""
-        respx.get("https://plex.tv/api/v2/resources").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200,
                 json=[_resource(client_identifier=OUR_SERVER, owned=False)],
@@ -97,11 +108,12 @@ class TestOwnershipCheck:
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("friend-token", OUR_SERVER) is False
 
-    @respx.mock
-    async def test_a_non_server_resource_does_not_satisfy_the_check(self) -> None:
+    async def test_a_non_server_resource_does_not_satisfy_the_check(
+        self, httpx2_mock: respx.Router
+    ) -> None:
         """A Plex *client* (a phone, a TV) also appears in resources and can be
         `owned`. Only a resource that provides 'server' counts."""
-        respx.get("https://plex.tv/api/v2/resources").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200,
                 json=[
@@ -114,11 +126,10 @@ class TestOwnershipCheck:
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("token", OUR_SERVER) is False
 
-    @respx.mock
-    async def test_provides_is_matched_on_word_boundaries(self) -> None:
+    async def test_provides_is_matched_on_word_boundaries(self, httpx2_mock: respx.Router) -> None:
         """'provides' is comma-separated. A substring check would match
         'pubsub-server' and admit a device that is not a media server."""
-        respx.get("https://plex.tv/api/v2/resources").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200,
                 json=[
@@ -135,19 +146,19 @@ class TestOwnershipCheck:
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("token", "") is False
 
-    @respx.mock
-    async def test_a_plex_tv_outage_is_not_an_open_door(self) -> None:
+    async def test_a_plex_tv_outage_is_not_an_open_door(self, httpx2_mock: respx.Router) -> None:
         """If we cannot verify ownership, we do not grant it. The local admin
         account is the way in when plex.tv is down -- not a degraded check."""
-        respx.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(503))
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(503))
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.owns_server("token", OUR_SERVER) is False
 
 
 class TestServerDiscovery:
-    @respx.mock
-    async def test_only_owned_servers_are_offered_in_the_picker(self) -> None:
-        respx.get("https://plex.tv/api/v2/resources").mock(
+    async def test_only_owned_servers_are_offered_in_the_picker(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200,
                 json=[
@@ -164,9 +175,10 @@ class TestServerDiscovery:
 
         assert [s.name for s in servers] == ["Mine"]
 
-    @respx.mock
-    async def test_the_resource_carries_a_token_so_no_manual_paste_is_needed(self) -> None:
-        respx.get("https://plex.tv/api/v2/resources").mock(
+    async def test_the_resource_carries_a_token_so_no_manual_paste_is_needed(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200, json=[_resource(client_identifier=OUR_SERVER, owned=True)]
             )
@@ -200,12 +212,13 @@ class TestConnectionPreference:
 
 
 class TestPinFlow:
-    @respx.mock
-    async def test_the_auth_url_carries_the_same_client_identifier(self) -> None:
+    async def test_the_auth_url_carries_the_same_client_identifier(
+        self, httpx2_mock: respx.Router
+    ) -> None:
         """It must be byte-identical across PIN creation, the auth URL and the poll.
         If it differs, authToken stays null forever -- and it looks exactly as
         though the user simply never approved."""
-        respx.post("https://plex.tv/api/v2/pins").mock(
+        httpx2_mock.post("https://plex.tv/api/v2/pins").mock(
             return_value=httpx.Response(201, json={"id": 42, "code": "ABCD"})
         )
         async with PlexTvClient(CID, safety=SAFETY) as client:
@@ -217,45 +230,184 @@ class TestPinFlow:
         assert "code=ABCD" in url
         assert "forwardUrl=" in url
 
-    @respx.mock
-    async def test_an_unapproved_pin_yields_no_token(self) -> None:
-        respx.get("https://plex.tv/api/v2/pins/42").mock(
+    async def test_an_unapproved_pin_yields_no_token(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
             return_value=httpx.Response(200, json={"id": 42, "authToken": None})
         )
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.check_pin(42) is None
 
-    @respx.mock
-    async def test_an_approved_pin_yields_the_token(self) -> None:
-        respx.get("https://plex.tv/api/v2/pins/42").mock(
+    async def test_an_approved_pin_yields_the_token(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
             return_value=httpx.Response(200, json={"id": 42, "authToken": "user-token"})
         )
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.check_pin(42) == "user-token"
 
 
+class TestWaitingForAnApprovedPin:
+    """The poll loop itself, which receives a full-power Plex account token.
+
+    ``wait_for_pin`` had no test at all while ``conftest.py`` named "the plex.tv pin-poll
+    loop" among the loops its global ``asyncio.sleep`` patch exists to speed up, implying a
+    coverage that did not exist. The two branches that carry the weight: a ``429`` is
+    back-pressure, not an error -- aborting on one would kill a sign-in the owner has not
+    finished, the failure that broke the very first link attempt -- and the deadline is a
+    real bound, not just a loop condition, so a server asking for a long wait cannot hold the
+    call past its timeout.
+
+    The sleeps are recorded rather than waited out, which is what makes the pacing assertable
+    at all: a honored ``Retry-After`` is invisible if the only observable is that the call
+    eventually returned. The ``slept`` fixture (``conftest.py``) records them and owns the
+    clock they advance, so every window below is counted in the delays the loop asked for
+    rather than in how long the machine took to ask.
+    """
+
+    async def test_a_token_that_arrives_on_a_later_poll_is_returned(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """The ordinary sign-in: the owner takes a few seconds to approve, and the loop
+        keeps asking at its own interval until the token appears."""
+        httpx2_mock.get(PIN_URL).mock(
+            side_effect=[
+                httpx.Response(200, json={"id": 77, "authToken": None}),
+                httpx.Response(200, json={"id": 77, "authToken": None}),
+                httpx.Response(200, json={"id": 77, "authToken": "user-token"}),
+            ]
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=60.0)
+
+        assert token == "user-token"
+        assert slept == [PIN_POLL_INTERVAL, PIN_POLL_INTERVAL]
+
+    async def test_a_rate_limit_waits_the_time_the_server_asked_for_and_carries_on(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """plex.tv named seven seconds, so the loop waits seven -- not its own fixed
+        fallback -- and then keeps polling instead of failing the sign-in."""
+        httpx2_mock.get(PIN_URL).mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "7"}, json={}),
+                httpx.Response(200, json={"id": 77, "authToken": "user-token"}),
+            ]
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=60.0)
+
+        assert token == "user-token"
+        assert slept == [7.0]
+
+    async def test_a_bare_rate_limit_falls_back_to_the_fixed_backoff(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """No ``Retry-After`` to honor, so the client picks its own pace. Polling straight
+        on would earn a second refusal."""
+        httpx2_mock.get(PIN_URL).mock(
+            side_effect=[
+                httpx.Response(429, json={}),
+                httpx.Response(200, json={"id": 77, "authToken": "user-token"}),
+            ]
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=60.0)
+
+        assert token == "user-token"
+        assert slept == [PIN_RATE_LIMIT_BACKOFF]
+
+    async def test_an_extravagant_retry_after_is_capped(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """The server's pacing is honored, not obeyed blindly: an hour would strand the
+        sign-in in a single sleep with the owner watching a code that expires first."""
+        httpx2_mock.get(PIN_URL).mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "3600"}, json={}),
+                httpx.Response(200, json={"id": 77, "authToken": "user-token"}),
+            ]
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=600.0)
+
+        assert token == "user-token"
+        assert slept == [PIN_RATE_LIMIT_MAX_BACKOFF]
+
+    async def test_the_deadline_clips_a_backoff_the_server_chose(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """A twenty-second backoff is honored while the window has room for it, then clipped
+        to the fifteen seconds left, and the sign-in is reported as not completed. It never
+        sits inside a sleep the server chose, past the deadline the caller set.
+
+        The window is spent in sleeps, not in wall clock: ``slept`` advances the clock by
+        each delay, so the two below are what closes it. Asserting against a real 200ms
+        window measured the machine instead, and lost the race under load (#346).
+        """
+        httpx2_mock.get(PIN_URL).mock(
+            return_value=httpx.Response(429, headers={"Retry-After": "20"}, json={})
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=35.0)
+
+        assert token is None
+        assert slept == [20.0, 15.0]
+
+    async def test_an_unapproved_pin_gives_up_at_the_deadline(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """Nobody approved it. The loop polls at its own interval for the whole window, then
+        returns "not completed" rather than raising, so the route above can tell the browser
+        to keep waiting or start over.
+
+        Three intervals of window buys exactly three polls, which is the assertion. Racing a
+        real 50ms window instead left the poll count to the machine (#346).
+        """
+        route = httpx2_mock.get(PIN_URL).mock(
+            return_value=httpx.Response(200, json={"id": 77, "authToken": None})
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=3 * PIN_POLL_INTERVAL)
+
+        assert token is None
+        assert route.call_count == 3
+        assert slept == [PIN_POLL_INTERVAL] * 3
+
+    async def test_a_real_failure_is_not_swallowed_as_back_pressure(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """Only a 429 means "slow down". A 500 is plex.tv being broken, and polling it for
+        five minutes would hide the outage behind a sign-in that never completes."""
+        httpx2_mock.get(PIN_URL).mock(return_value=httpx.Response(500, json={}))
+
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            with pytest.raises(IntegrationError):
+                await client.wait_for_pin(77, timeout=60.0)
+
+
 class TestTheSignInExemptionIsNarrow:
     """Signing in is a POST, so it must be permitted even in read-only mode --
     requiring the owner to enable deletion before they may log in would be absurd.
 
-    But the exemption must be exactly one path, not a licence for the plex.tv
+    But the exemption must be exactly one path, not a license for the plex.tv
     client to write anything. plex.tv has genuinely destructive endpoints
     (DELETE /devices/{id} unregisters a device; /api/v2/users/signout invalidates
     tokens), and none of them are ours to call."""
 
-    @respx.mock
-    async def test_pin_creation_is_allowed_in_read_only_mode(self) -> None:
-        respx.post("https://plex.tv/api/v2/pins").mock(
+    async def test_pin_creation_is_allowed_in_read_only_mode(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.post("https://plex.tv/api/v2/pins").mock(
             return_value=httpx.Response(201, json={"id": 1, "code": "AAAA"})
         )
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert (await client.create_pin()).code == "AAAA"
 
-    @respx.mock
-    async def test_every_other_plex_tv_mutation_is_still_blocked(self) -> None:
+    async def test_every_other_plex_tv_mutation_is_still_blocked(
+        self, httpx2_mock: respx.Router
+    ) -> None:
         from reaper.clients.base import SafetyViolationError
 
-        route = respx.delete("https://plex.tv/devices/999")
+        route = httpx2_mock.delete("https://plex.tv/devices/999")
 
         async with PlexTvClient(CID, safety=SAFETY) as client:
             with pytest.raises(SafetyViolationError, match="Blocked DELETE"):
@@ -263,8 +415,7 @@ class TestTheSignInExemptionIsNarrow:
 
         assert not route.called
 
-    @respx.mock
-    async def test_signout_is_blocked(self) -> None:
+    async def test_signout_is_blocked(self, httpx2_mock: respx.Router) -> None:
         """Nothing in Reaper should ever invalidate the owner's Plex tokens."""
         from reaper.clients.base import SafetyViolationError
 
@@ -292,8 +443,7 @@ class TestHeaders:
 
 
 @pytest.mark.parametrize("status", [401, 403])
-@respx.mock
-async def test_a_revoked_token_is_refused(status: int) -> None:
-    respx.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(status))
+async def test_a_revoked_token_is_refused(status: int, httpx2_mock: respx.Router) -> None:
+    httpx2_mock.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(status))
     async with PlexTvClient(CID, safety=SAFETY) as client:
         assert await client.owns_server("stale-token", OUR_SERVER) is False

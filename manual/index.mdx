@@ -1,0 +1,38 @@
+---
+id: index
+title: Reaper
+description: Grave decisions, clearly explained. Find what nobody watches, see why, remove it safely.
+sidebar_position: 0
+slug: /
+---
+
+# Reaper
+
+Reaper finds the movies and shows nobody watches, explains why it thinks each one is
+expendable, and removes them safely through Sonarr and Radarr.
+
+<Callout tone="tip">
+  **It ships read-only.** A new install can scan, score, and explain, and nothing else, until
+  you arm deletion with a password, or a deploy sets it on at first boot.
+</Callout>
+
+## Start here
+
+- **[What Reaper does](/getting-started/overview)** if you are still deciding.
+- **[Install](/getting-started/install)** to get it running: Docker, Unraid, Windows, macOS,
+  or a snap.
+- **[First run](/getting-started/first-run)** for the order to do things in.
+- **[Understanding policy](/policy/understanding-policy)** once it is scanning and you want to
+  tune it.
+
+## Every verdict shows its work
+
+Reaper explains the keeps as well as the deletes. Every candidate carries the signals that
+counted against it **and** every protection that was checked and did not fire, with the real
+numbers behind each one.
+
+Two independent layers sit under every deletion, and each is checked on its own. The refusal
+lives at the network layer, and a missing rating or an unreachable service can only ever
+protect a file.
+
+[How a delete is kept safe](/safety/how-a-delete-is-kept-safe) walks the whole path through.

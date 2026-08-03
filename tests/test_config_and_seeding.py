@@ -86,6 +86,55 @@ class TestSeeding:
         assert (imported, skipped) == (0, 3)
         assert len((await session.execute(select(Instance))).scalars().all()) == 3
 
+    async def test_a_second_tautulli_seed_is_skipped_not_imported(
+        self, session: AsyncSession
+    ) -> None:
+        """Tautulli is a singleton even from the environment (it mirrors one Plex, and
+        Reaper connects to one Plex), matching the UI. A second declared Tautulli is
+        skipped, never seeded as a row the scan would silently ignore."""
+        box = SecretBox("test-key")
+        env = {
+            "REAPER_TAUTULLI_MAIN_URL": "https://t1.example.net",
+            "REAPER_TAUTULLI_MAIN_API_KEY": "key-1",
+            "REAPER_TAUTULLI_BACKUP_URL": "https://t2.example.net",
+            "REAPER_TAUTULLI_BACKUP_API_KEY": "key-2",
+        }
+        imported, skipped = await seed_instances(session, parse_instance_seeds(env), box)
+
+        assert imported == 1 and skipped == 1
+        tautullis = (
+            (await session.execute(select(Instance).where(Instance.kind == InstanceKind.TAUTULLI)))
+            .scalars()
+            .all()
+        )
+        assert len(tautullis) == 1
+
+    async def test_the_same_instance_declared_twice_is_seeded_once(
+        self, session: AsyncSession
+    ) -> None:
+        """Two seeds naming the same (kind, name) are one instance, not two rows.
+
+        The duplicate check is a query, and nothing is flushed until the batch ends, so
+        both reads used to answer "not there yet" and both rows got added. The singleton
+        path has always had an in-batch set; this is the same guard everywhere else.
+        """
+        box = SecretBox("test-key")
+        env = {
+            "REAPER_SONARR_HD_URL": "https://s1.example.net",
+            "REAPER_SONARR_HD_API_KEY": "key-1",
+        }
+        seeds = parse_instance_seeds(env)
+        # The same instance declared twice inside ONE batch, before anything is flushed.
+        imported, skipped = await seed_instances(session, [*seeds, *seeds], box)
+
+        assert (imported, skipped) == (1, 1)
+        rows = (
+            (await session.execute(select(Instance).where(Instance.kind == InstanceKind.SONARR)))
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+
     async def test_env_never_overwrites_a_key_changed_in_the_ui(
         self, session: AsyncSession
     ) -> None:

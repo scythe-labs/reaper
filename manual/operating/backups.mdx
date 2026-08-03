@@ -1,0 +1,60 @@
+---
+id: backups
+title: Back this up
+description: What in the data folder cannot be regenerated, and the one file that can.
+sidebar_position: 1
+---
+
+# Back this up
+
+Reaper's data folder holds what you cannot regenerate.
+[Where it is](/getting-started/install#where-the-data-lives) depends on the install.
+
+| File | Why it matters |
+| --- | --- |
+| `reaper.db` | Your policies, decisions, whitelist and audit trail. |
+| `secret.key` | The master key, when Reaper generated one. Absent if you supply `REAPER_SECRET_KEY`. |
+| `secret.salt` | Minted per install, and paired with that key. Both are needed to decrypt. |
+
+<Callout tone="caution">
+  **The key and the salt only work as a pair.** The key is stretched with `secret.salt` before
+  anything is decrypted, so a backup carrying one without the other reads exactly like a backup
+  carrying neither. Take them together, every time.
+</Callout>
+
+## Let Reaper do it
+
+Settings, Backup produces one archive, which removes the chance of taking two files out of
+three by hand. It leaves out `secret.key` when the key comes from `REAPER_SECRET_KEY`, because
+there is no file to take: restoring that archive needs the same variable set.
+
+Restoring that archive asks for your admin password. Downloading it asks only that you are
+signed in.
+
+<Callout tone="caution">
+  **Treat the archive and `reaper.db` as sensitive.** They hold the credentials for every
+  service Reaper talks to, including a Plex token that grants full control of your Plex account.
+  Encryption at rest guards the file on disk. Keep it out of public issue reports and support
+  threads all the same.
+</Callout>
+
+## The one you can throw away
+
+`cache.db` sits next to them and is disposable by design. It is other people's data mirrored
+locally, meaning watch history and the IMDb dataset, and Reaper rebuilds it.
+
+Nothing in `cache.db` is a source of truth, which is why it stays out of the backup.
+
+## Restoring
+
+Put the files back in the data folder and start Reaper. Migrations run before the app
+accepts a connection, so a database from an older version is brought forward on the way up.
+
+Restore `reaper.db` without its matching key and salt and every stored credential is
+unreadable and must be entered again. The policies, decisions and audit trail survive.
+
+<Callout tone="caution">
+  **Re-entering a credential against the wrong key destroys the good one.** If services come
+  back unreadable, put the right key and salt in place first. Saving over an unreadable
+  credential writes new ciphertext under the wrong key, and the original is then gone.
+</Callout>

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 # ---- Stage 1: frontend -------------------------------------------------------
-FROM node:22-alpine AS frontend
+# Digest-pinned: the tag documents intent, the digest is what actually builds.
+FROM node:24-alpine@sha256:f70403e87646dc51b45295f4b8b70cdad0b63d2297c4c9899119b03f7af7a6b3 AS frontend
 WORKDIR /app/frontend
 
 # Lockfile first, so a source-only change does not reinstall the dependency tree.
@@ -17,7 +18,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # ---- Stage 2: runtime --------------------------------------------------------
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS runtime
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -50,18 +51,62 @@ RUN uv pip install --system --no-cache --no-deps -e .
 
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
-# Never run as root: this container holds credentials that can delete a media library.
-RUN useradd --system --uid 1000 --create-home reaper \
+# The app must not run as root: this container holds credentials that can delete a
+# media library. But the data folder is a bind mount on most installs, and Docker
+# creates a bind mount owned by root -- which a fixed-uid image cannot write. So the
+# entrypoint starts as root, chowns /data to PUID:PGID (default 1000), and drops to
+# that user with gosu BEFORE anything opens the database. The app process is never
+# root, and /app stays root-owned so a compromised process cannot rewrite what it
+# executes. gosu comes from Debian's signed repo (like the base image's own apt).
+#
+# There is no `USER` line on purpose: PID 1 is root only long enough to fix ownership
+# and drop. If you would rather it never touch root, pin `user: "1000:1000"` in your
+# compose and the entrypoint skips the root branch and runs in place.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && gosu nobody true \
+    && useradd --system --uid 1000 --create-home reaper \
     && mkdir -p /data \
-    && chown -R reaper:reaper /data /app
-USER reaper
+    && chown -R reaper:reaper /data
 
 VOLUME ["/data"]
+# The default port; REAPER_PORT below overrides the actual bind.
 EXPOSE 8420
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8420/api/health', timeout=3).status==200 else 1)"
+    CMD python -c "import os,urllib.request,sys; port=os.environ.get('REAPER_PORT','8420'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health', timeout=3).status==200 else 1)"
+
+# Build provenance, shown on the About page and read by the update check. The
+# container has no .git (it is dockerignored), so CI passes the short commit it
+# already computes; release.yml additionally passes REAPER_RELEASE=1 and the CalVer
+# as REAPER_VERSION, which is what the About page then shows. REAPER_UPDATE_REPO
+# names the repository whose releases and dev branch the update check follows, so a
+# fork's images follow the fork. A local `docker build` with none of these shows
+# "dev" and follows the upstream repository. Kept last so a new commit reuses every
+# layer above; none of these values is a secret.
+ARG REAPER_GIT_SHA=""
+ARG REAPER_RELEASE=""
+ARG REAPER_VERSION=""
+ARG REAPER_UPDATE_REPO=""
+ENV REAPER_GIT_SHA=${REAPER_GIT_SHA} \
+    REAPER_RELEASE=${REAPER_RELEASE} \
+    REAPER_VERSION=${REAPER_VERSION} \
+    REAPER_UPDATE_REPO=${REAPER_UPDATE_REPO}
 
 COPY docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["uvicorn", "reaper.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8420"]
+# REAPER_HOST/REAPER_PORT are honored here (they also shape the recovery link the app
+# prints), so .env.example tells the truth about what they do.
+#
+# --no-proxy-headers is load-bearing, not tidying (rule 101). uvicorn defaults to
+# proxy_headers=True with forwarded_allow_ips=127.0.0.1, so on any install where Reaper
+# sees its caller as 127.0.0.1 -- host networking, a same-host proxy published to
+# 127.0.0.1:8420, another container sharing the netns -- it rewrites scope["client"] and
+# scope["scheme"] from X-Forwarded-For/-Proto BEFORE the app exists. That makes the trust
+# decision one layer upstream, from a default the operator never set: a caller could then
+# rotate a fake address past the per-IP sign-in lockout, and name its own cookie's Secure
+# flag. Turning it off leaves reaper.auth.proxy as the only place peer trust is decided,
+# which is what its docstring promises and what the trusted-proxies setting is for.
+# tests/test_repo_hygiene.py fails if this flag goes missing here or in scripts/dev-local.sh.
+CMD ["sh", "-c", "exec uvicorn reaper.main:create_app --factory --no-proxy-headers --host \"${REAPER_HOST:-0.0.0.0}\" --port \"${REAPER_PORT:-8420}\""]

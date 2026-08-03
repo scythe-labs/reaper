@@ -1,0 +1,52 @@
+---
+id: configuration
+title: Configuration
+description: What lives in .env, what lives in the database, and the rule that decides.
+sidebar_position: 1
+---
+
+# Configuration
+
+Two homes, with a deliberate rule: **`.env` holds only what must exist *before* the database,
+or be changeable *without* the web UI.** Everything else lives in the database, encrypted, and
+is edited in the UI.
+
+| Where | What | Why there |
+| --- | --- | --- |
+| `.env` | `REAPER_SECRET_KEY`, `REAPER_SECRET_KEY_OLD` (both optional) | They decrypt the database's secrets, so they cannot live inside it |
+| `.env` | data dir, host, port, logging | Needed before anything else exists |
+| `.env` | `REAPER_RECOVERY` | Must work when the UI has locked you out, so it has no setting in the UI |
+| `.env` | `REAPER_ALLOW_UNARMED_LEAVING_SOON` | Seeds the first run only. After that the UI owns it, under Settings, Plex, as "Update while read-only" |
+| `.env` | `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` | Seeds the first run only. The UI owns it after that |
+| `.env` | `REAPER_SERVE_SPA` | On by default. Turn it off in development so Vite serves the UI |
+| **Database**, encrypted | Instance URLs and API keys, the Discord webhook, policies, schedules, whitelist | Editable and rotatable without a redeploy |
+
+## Seeding services from the environment
+
+Seed instances from the environment for a declarative deployment:
+
+```bash
+REAPER_SONARR_HD_URL=https://sonarr.example.net
+REAPER_SONARR_HD_API_KEY=...
+REAPER_SONARR_4K_URL=https://sonarr-4k.example.net
+REAPER_SONARR_4K_API_KEY=...
+```
+
+Each one is imported and encrypted the first time Reaper sees it, and Reaper then logs that the
+variable can be removed. The import runs on *every* start, so a service added to the environment
+later is picked up on the next restart.
+
+<Callout tone="note">
+  **The database is the source of truth regardless.** An instance that already exists is never
+  overwritten from the environment, so rotating a key in the UI cannot be silently clobbered by
+  a stale `.env`.
+</Callout>
+
+Plex is added with **Sign in with Plex** in the setup wizard, which discovers your server and
+its token for you.
+
+## Also in this section
+
+- [The encryption key](/configuration/encryption-key), and how to rotate it without bricking
+  your stored credentials.
+- [The deletion switch](/configuration/deletion-switch), which is deliberately asymmetric.

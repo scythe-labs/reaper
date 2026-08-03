@@ -10,6 +10,7 @@ directly, not just the service.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import ActionStep, Candidate, Snapshot
+from reaper.db.models import ActionStep, Candidate, Snapshot, WhitelistEntry
 from reaper.db.session import create_engine, create_session_factory
 from reaper.services import whitelist
 from reaper.services.planner import build_plan
@@ -71,10 +72,10 @@ async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int]]
 
 class TestService:
     async def test_spare_then_read_back(self, session: AsyncSession) -> None:
-        await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note="a favourite")
-        assert await whitelist.spared_keys(session) == {"radarr:1:7"}
+        await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note="a favorite")
+        assert await whitelist.overrides(session) == {"radarr:1:7": "spare"}
         spared = await whitelist.list_spared(session)
-        assert (spared[0].title, spared[0].note) == ("Kept", "a favourite")
+        assert (spared[0].title, spared[0].note) == ("Kept", "a favorite")
 
     async def test_spare_is_idempotent_and_updates_the_note(self, session: AsyncSession) -> None:
         await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note="one")
@@ -87,7 +88,7 @@ class TestService:
         await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note=None)
         assert await whitelist.unspare(session, media_key="radarr:1:7") is True
         assert await whitelist.unspare(session, media_key="radarr:1:7") is False
-        assert await whitelist.spared_keys(session) == set()
+        assert await whitelist.overrides(session) == {}
 
 
 class TestOverrideService:
@@ -98,8 +99,6 @@ class TestOverrideService:
         await whitelist.set_override(
             session, media_key="radarr:1:9", title="Gone", decision="reap", note="done with it"
         )
-        assert await whitelist.spared_keys(session) == {"radarr:1:7"}
-        assert await whitelist.reaped_keys(session) == {"radarr:1:9"}
         assert await whitelist.overrides(session) == {"radarr:1:7": "spare", "radarr:1:9": "reap"}
         assert await whitelist.override_for(session, "radarr:1:9") == "reap"
         assert await whitelist.override_for(session, "radarr:1:404") is None
@@ -109,8 +108,7 @@ class TestOverrideService:
         await whitelist.set_override(
             session, media_key="radarr:1:7", title="Kept", decision="reap", note=None
         )
-        assert await whitelist.spared_keys(session) == set()
-        assert await whitelist.reaped_keys(session) == {"radarr:1:7"}
+        assert await whitelist.overrides(session) == {"radarr:1:7": "reap"}
         # is_spared reflects the decision, not mere presence.
         assert await whitelist.is_spared(session, "radarr:1:7") is False
 
@@ -119,7 +117,220 @@ class TestOverrideService:
             session, media_key="radarr:1:9", title="Gone", decision="reap", note=None
         )
         assert await whitelist.remove_override(session, media_key="radarr:1:9") is True
-        assert await whitelist.reaped_keys(session) == set()
+        assert await whitelist.overrides(session) == {}
+
+
+class TestTimedSpare:
+    async def test_a_forever_spare_stores_no_expiry(self, session: AsyncSession) -> None:
+        # spare_days defaults to 0 -- forever, the original behavior -- so the column stays NULL.
+        entry = await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note=None)
+        assert entry.spare_expires_at is None
+
+    async def test_a_timed_spare_stores_an_expiry_that_many_days_out(
+        self, session: AsyncSession
+    ) -> None:
+        # Timestamps are stored as whole epoch seconds, so anchor the clock at second precision.
+        t0 = utcnow().replace(microsecond=0)
+        entry = await whitelist.spare(
+            session, media_key="radarr:1:7", title="Kept", note=None, spare_days=30, now=t0
+        )
+        assert entry.spare_expires_at == t0 + timedelta(days=30)
+        # It is still an active spare everywhere live -- the clock is realized only at scan.
+        assert await whitelist.overrides(session) == {"radarr:1:7": "spare"}
+        assert await whitelist.spare_expiries(session) == {"radarr:1:7": t0 + timedelta(days=30)}
+
+    async def test_overrides_effective_at_drops_an_expired_spare_but_keeps_a_live_one(
+        self, session: AsyncSession
+    ) -> None:
+        t0 = utcnow()
+        await whitelist.spare(
+            session, media_key="radarr:1:7", title="Short", note=None, spare_days=1, now=t0
+        )
+        await whitelist.spare(
+            session, media_key="radarr:1:8", title="Long", note=None, spare_days=90, now=t0
+        )
+        after = t0 + timedelta(days=2)
+        # Live: both still spared (fail toward keeping). At-scan: the 1-day spare is gone.
+        assert await whitelist.overrides(session) == {
+            "radarr:1:7": "spare",
+            "radarr:1:8": "spare",
+        }
+        assert await whitelist.overrides_effective_at(session, after) == {"radarr:1:8": "spare"}
+
+    async def test_a_forever_spare_never_expires_at_scan(self, session: AsyncSession) -> None:
+        t0 = utcnow()
+        await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note=None, now=t0)
+        far_future = t0 + timedelta(days=10_000)
+        assert await whitelist.overrides_effective_at(session, far_future) == {
+            "radarr:1:7": "spare"
+        }
+
+    async def test_flipping_a_timed_spare_to_reap_clears_the_expiry(
+        self, session: AsyncSession
+    ) -> None:
+        await whitelist.spare(
+            session, media_key="radarr:1:7", title="Kept", note=None, spare_days=30
+        )
+        entry = await whitelist.set_override(
+            session, media_key="radarr:1:7", title="Kept", decision="reap", note=None
+        )
+        # A reap never expires, and must not inherit the spare's stale clock.
+        assert entry.spare_expires_at is None
+        assert await whitelist.spare_expiries(session) == {}
+
+    async def test_spare_expiries_excludes_reaps(self, session: AsyncSession) -> None:
+        await whitelist.set_override(
+            session, media_key="radarr:1:9", title="Gone", decision="reap", note=None
+        )
+        assert await whitelist.spare_expiries(session) == {}
+
+    async def test_effective_spare_expiry_follows_override_precedence(self) -> None:
+        t_show = utcnow() + timedelta(days=10)
+        t_season = utcnow() + timedelta(days=3)
+        decisions = {"sonarr:1:88": "spare", "sonarr:1:88:3": "spare"}
+        expiries = {"sonarr:1:88": t_show, "sonarr:1:88:3": t_season}
+        # A season's own spare wins over its show's, expiry and all.
+        assert whitelist.effective_spare_expiry("sonarr:1:88:3", decisions, expiries) == t_season
+        # A season with no spare of its own inherits the show spare's expiry.
+        assert whitelist.effective_spare_expiry("sonarr:1:88:2", decisions, expiries) == t_show
+
+    async def test_effective_spare_expiry_is_none_for_a_forever_spare(self) -> None:
+        decisions = {"radarr:1:7": "spare"}
+        assert (
+            whitelist.effective_spare_expiry("radarr:1:7", decisions, {"radarr:1:7": None}) is None
+        )
+
+
+class TestCoveringSpareExpiry:
+    """When the item stops being KEPT, which is not the same question as which spare is in
+    force. Precedence picks the row Reaper reads; when that row expires the other one is still
+    on file, so a color or a sentence about the item's fate has to ask this one instead."""
+
+    SHOW = "sonarr:1:88"
+    SEASON = "sonarr:1:88:3"
+
+    def test_a_forever_show_spare_outlasts_a_spent_season_spare(self) -> None:
+        # The case this function exists for: the season's own spare has run out, the show's
+        # never does, so the file is kept forever. Precedence would answer "expired".
+        spent = utcnow() - timedelta(days=2)
+        decisions = {self.SHOW: "spare", self.SEASON: "spare"}
+        expiries: dict[str, datetime | None] = {self.SHOW: None, self.SEASON: spent}
+        assert whitelist.effective_spare_expiry(self.SEASON, decisions, expiries) == spent
+        assert whitelist.covering_spare_expiry(self.SEASON, decisions, expiries) is None
+
+    def test_a_forever_season_spare_wins_over_a_timed_show_spare(self) -> None:
+        # Forever beats every date whichever level holds it.
+        decisions = {self.SHOW: "spare", self.SEASON: "spare"}
+        expiries: dict[str, datetime | None] = {
+            self.SHOW: utcnow() + timedelta(days=10),
+            self.SEASON: None,
+        }
+        assert whitelist.covering_spare_expiry(self.SEASON, decisions, expiries) is None
+
+    def test_it_takes_the_later_of_two_timed_spares_either_way_round(self) -> None:
+        soon = utcnow() + timedelta(days=3)
+        later = utcnow() + timedelta(days=30)
+        decisions = {self.SHOW: "spare", self.SEASON: "spare"}
+        assert (
+            whitelist.covering_spare_expiry(
+                self.SEASON, decisions, {self.SHOW: later, self.SEASON: soon}
+            )
+            == later
+        )
+        # And it is a max, not "prefer the show": the season's own may be the longer one.
+        assert (
+            whitelist.covering_spare_expiry(
+                self.SEASON, decisions, {self.SHOW: soon, self.SEASON: later}
+            )
+            == later
+        )
+
+    def test_a_show_set_to_reap_contributes_no_cover(self) -> None:
+        # The gate that keeps the fix honest. A season spare lapsing under a REAPED show really
+        # does hand the file back, so it must go on reading as expired -- testing the show's
+        # decision, not merely finding an expiry for its key, is what makes that true.
+        spent = utcnow() - timedelta(days=2)
+        decisions = {self.SHOW: "reap", self.SEASON: "spare"}
+        expiries: dict[str, datetime | None] = {self.SHOW: None, self.SEASON: spent}
+        assert whitelist.covering_spare_expiry(self.SEASON, decisions, expiries) == spent
+
+    def test_an_uncovered_key_falls_back_to_the_precedence_answer(self) -> None:
+        # Callers must ask only about spared items. One that slips through must not read
+        # "kept forever" out of a key nothing spares.
+        decisions = {self.SEASON: "reap"}
+        assert whitelist.covering_spare_expiry(self.SEASON, decisions, {}) is None
+        assert whitelist.covering_spare_expiry("radarr:1:7", {}, {}) is None
+
+    def test_a_movie_answers_from_its_own_spare_alone(self) -> None:
+        spent = utcnow() - timedelta(days=1)
+        decisions = {"radarr:1:7": "spare"}
+        expiries: dict[str, datetime | None] = {"radarr:1:7": spent}
+        assert whitelist.covering_spare_expiry("radarr:1:7", decisions, expiries) == spent
+
+
+class TestPurgeExpiredSpares:
+    """The durable half of realizing a timed spare (B-1): the scan drops an expired spare from
+    the map it judges on AND deletes the row, so every live consumer converges."""
+
+    async def test_purges_only_expired_spares_and_returns_their_keys(
+        self, session: AsyncSession
+    ) -> None:
+        t0 = utcnow()
+        await whitelist.spare(
+            session, media_key="radarr:1:7", title="Short", note=None, spare_days=1, now=t0
+        )
+        await whitelist.spare(
+            session, media_key="radarr:1:8", title="Long", note=None, spare_days=90, now=t0
+        )
+        await whitelist.spare(session, media_key="radarr:1:9", title="Forever", note=None, now=t0)
+
+        purged = await whitelist.purge_expired_spares(session, t0 + timedelta(days=2))
+
+        assert purged == ["radarr:1:7"]
+        # overrides() converges the moment the row is gone: the live and forever spares remain.
+        assert await whitelist.overrides(session) == {
+            "radarr:1:8": "spare",
+            "radarr:1:9": "spare",
+        }
+
+    async def test_purges_at_the_exact_expiry_boundary(self, session: AsyncSession) -> None:
+        # `spare_expires_at <= now` matches overrides_effective_at's own boundary, so the two
+        # halves agree on the same tick.
+        t0 = utcnow()
+        entry = await whitelist.spare(
+            session, media_key="radarr:1:7", title="Short", note=None, spare_days=1, now=t0
+        )
+        assert entry.spare_expires_at is not None
+        assert await whitelist.purge_expired_spares(session, entry.spare_expires_at) == [
+            "radarr:1:7"
+        ]
+
+    async def test_purges_nothing_before_expiry(self, session: AsyncSession) -> None:
+        t0 = utcnow()
+        await whitelist.spare(
+            session, media_key="radarr:1:7", title="Short", note=None, spare_days=5, now=t0
+        )
+        assert await whitelist.purge_expired_spares(session, t0 + timedelta(days=1)) == []
+        assert await whitelist.overrides(session) == {"radarr:1:7": "spare"}
+
+    async def test_never_purges_a_reap_even_with_a_stale_expiry(
+        self, session: AsyncSession
+    ) -> None:
+        # A reap should never carry an expiry (set_override nulls it), but guard the predicate
+        # directly: a hand-built reap row with a past expiry must survive the purge.
+        t0 = utcnow()
+        session.add(
+            WhitelistEntry(
+                media_key="radarr:1:9",
+                title="Gone",
+                decision="reap",
+                spare_expires_at=t0 - timedelta(days=1),
+                created_at=t0,
+            )
+        )
+        await session.flush()
+        assert await whitelist.purge_expired_spares(session, t0) == []
+        assert await whitelist.overrides(session) == {"radarr:1:9": "reap"}
 
 
 class TestEffectiveOverride:
@@ -148,9 +359,7 @@ class TestPlannerExcludesSparedItems:
         )
         await whitelist.spare(session, media_key="radarr:1:2", title="Movie 1", note=None)
 
-        await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         planned_keys = {s.media_key for s in (await session.execute(select(ActionStep))).scalars()}
         assert "radarr:1:2" not in planned_keys
@@ -166,12 +375,33 @@ class TestPlannerExcludesSparedItems:
         )
         await whitelist.spare(session, media_key="sonarr:1:88", title="A Show", note=None)
 
-        await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         planned_keys = {s.media_key for s in (await session.execute(select(ActionStep))).scalars()}
         assert planned_keys == {"radarr:1:1"}
+
+    async def test_realizing_an_expired_spare_makes_the_item_plannable_again(
+        self, session: AsyncSession
+    ) -> None:
+        """B-1: once the scan realizes an expired spare (drop from the judged map + purge the
+        row), the item leaves the live override set, so a plan built on the still-condemned
+        snapshot targets it again -- the dead-end this fix exists to prevent."""
+        t0 = utcnow()
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", 1 * GB), ("radarr:1:2", 5 * GB)]
+        )
+        await whitelist.spare(
+            session, media_key="radarr:1:2", title="Movie 1", note=None, spare_days=1, now=t0
+        )
+        # The scan's realization, in the order scan() runs it: same `now` for both halves.
+        after = t0 + timedelta(days=2)
+        await whitelist.overrides_effective_at(session, after)
+        assert await whitelist.purge_expired_spares(session, after) == ["radarr:1:2"]
+
+        await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
+
+        planned_keys = {s.media_key for s in (await session.execute(select(ActionStep))).scalars()}
+        assert planned_keys == {"radarr:1:1", "radarr:1:2"}
 
     async def test_sparing_every_condemned_item_leaves_no_plan(self, session: AsyncSession) -> None:
         """If everything condemned is spared, there is nothing to build -- and that is a
@@ -182,6 +412,4 @@ class TestPlannerExcludesSparedItems:
         await whitelist.spare(session, media_key="radarr:1:1", title="Movie 0", note=None)
 
         with pytest.raises(PlanError):
-            await build_plan(
-                session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-            )
+            await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")

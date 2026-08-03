@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Registry retention
+
+# CI publishes an image on every push, so the registry gains a tagged version
+# per commit, one per pull request, and an untagged digest for every rebuild.
+# The previous forge applied retention as an org-level setting, which did not
+# come with the repository. Without a replacement the registry grows forever.
+#
+# The keep set is computed here rather than expressed as filters on a
+# third-party action. Two reasons, and the second is the load-bearing one:
+#
+#   1. "Keep the image of any pull request that is still open" is a fact about
+#      the tracker, not about the tag, so no tag pattern can express it.
+#   2. The obvious action for this (snok/container-retention-policy) documents
+#      that its `!` and `*` filter operators DO NOT WORK with the automatic
+#      GITHUB_TOKEN -- a temporal token cannot reach the list-packages endpoint
+#      those operators need. An `image-tags: "!dev !latest"` written against it
+#      does not fail; it stops excluding, so the tags it names become deletion
+#      candidates. A guard that reads as protection and silently is not is the
+#      worst shape this repo has a name for.
+#
+# The policy itself is the one docs/LEARNINGS.md documents: the moving tags an
+# operator may be pulling are kept, everything else goes after a week.
+
+on:
+  schedule:
+    # Weekly. The cut-off decides what goes, not the cadence, so a missed week
+    # deletes the same set later rather than a bigger one.
+    - cron: "17 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "List what would be deleted without deleting it"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write      # delete versions of this repository's package
+      pull-requests: read  # which pull requests are still open
+    steps:
+      - name: Apply the retention policy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.repository }}
+          # Scheduled runs are the real thing; a manual run defaults to a
+          # rehearsal. See ARMING below before trusting the first one.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run || 'true' }}
+          CUT_OFF_DAYS: "7"
+          KEEP_N: "10"
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          from datetime import datetime, timedelta, timezone
+
+          owner   = os.environ["OWNER"]
+          repo    = os.environ["REPO"]
+          dry     = os.environ["DRY_RUN"].lower() == "true"
+          cutoff  = datetime.now(timezone.utc) - timedelta(days=int(os.environ["CUT_OFF_DAYS"]))
+          keep_n  = int(os.environ["KEEP_N"])
+
+          def gh(*args):
+              r = subprocess.run(["gh", *args], capture_output=True, text=True)
+              if r.returncode != 0:
+                  sys.exit(f"gh {' '.join(args)} failed:\n{r.stderr}")
+              return r.stdout
+
+          versions = json.loads(gh("api", "--paginate", "--slurp",
+              f"/orgs/{owner}/packages/container/reaper/versions"))
+          versions = [v for page in versions for v in page] if versions and isinstance(versions[0], list) else versions
+
+          open_prs = {int(n) for n in gh("pr", "list", "--repo", repo, "--state", "open",
+                                         "--json", "number", "--jq", ".[].number").split()}
+          # An open pull request's image is the artifact its review exists for.
+          # Deleting it on a timer would mean a review left for a fortnight loses
+          # the thing a reviewer was asked to pull, which is worse than the disk.
+          protected_tags = {"dev", "latest", "main"} | {f"pr-{n}" for n in sorted(open_prs)}
+          print(f"open pull requests: {sorted(open_prs) or 'none'}")
+          print(f"protected tags    : {' '.join(sorted(protected_tags))}")
+
+          def created(v):
+              return datetime.fromisoformat(v["created_at"].replace("Z", "+00:00"))
+
+          versions.sort(key=created, reverse=True)
+          newest = {v["id"] for v in versions[:keep_n]}   # floor that depends on nothing
+
+          doomed = []
+          for v in versions:
+              tags = set(v.get("metadata", {}).get("container", {}).get("tags", []))
+              why = None
+              if tags & protected_tags:      why = None
+              elif v["id"] in newest:        why = None
+              elif created(v) >= cutoff:     why = None
+              else:                          why = "untagged" if not tags else " ".join(sorted(tags))
+              if why:
+                  doomed.append((v["id"], why))
+
+          print(f"\n{len(versions)} versions, {len(doomed)} past the {os.environ['CUT_OFF_DAYS']}-day cut-off")
+          for vid, why in doomed:
+              print(f"  {'would delete' if dry else 'deleting'} {vid}  ({why})")
+
+          if dry:
+              print("\nDRY RUN: nothing deleted.")
+          else:
+              for vid, _ in doomed:
+                  gh("api", "-X", "DELETE",
+                     f"/orgs/{owner}/packages/container/reaper/versions/{vid}")
+              print(f"\ndeleted {len(doomed)} versions")
+          PY
+
+# ARMING THIS JOB
+#
+# It ships as a rehearsal. Run it by hand from the Actions tab, read the list it
+# prints, and confirm three things: `dev` and `latest` are absent from it, every
+# open pull request's `pr-<n>` is absent from it, and the count is plausible.
+# Then change the DRY_RUN default above from 'true' to 'false'.
+#
+# The first run cannot be verified any other way: the filters have no registry to
+# be checked against until one exists, and a first run that deletes the wrong
+# thing is not recoverable from its own output.

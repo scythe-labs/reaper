@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """ORM models.
 
-Conventions that are deliberate, not incidental:
+Conventions that are deliberate:
 
 * Every timestamp is timezone-aware UTC. A naive datetime anywhere in this
   application is a bug -- watch-history comparisons are the whole product, and
@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,7 +45,7 @@ class AuthProvider(enum.StrEnum):
 class Instance(Base):
     """A configured *arr / Tautulli / Seerr instance.
 
-    Modelled one-to-many from day one: a separate 4K Sonarr/Radarr pair alongside
+    Modeled one-to-many from day one: a separate 4K Sonarr/Radarr pair alongside
     the HD pair is the common setup, and retrofitting multi-instance onto a
     single-instance schema means rewriting every foreign key.
     """
@@ -58,12 +59,75 @@ class Instance(Base):
     base_url: Mapped[str] = mapped_column(String(500))
     api_key_enc: Mapped[str] = mapped_column(Text)
 
-    # Discovered from GET /api/v3/system/status, never hardcoded: Sonarr's
-    # v5-develop ships a real /api/v5 with a different SeriesResource shape.
+    # The address the UI's jump links open, when it differs from the one Reaper connects to:
+    # an operator reaches this service in the browser at a public address (a reverse proxy,
+    # a domain) while Reaper talks to it over a LAN IP. Display only -- never used to connect,
+    # never sent a request, so it does not need TLS verification or a key. Nullable and NULL by
+    # default: the additive migration only ADDs a nullable column, and NULL means "no external
+    # address", so links fall back to base_url and nothing changes for an operator who leaves it
+    # blank (services.deep_links via api.routes._deep_links). Plex has its own web_url and is
+    # not an Instance, so it is untouched here.
+    external_url: Mapped[str | None] = mapped_column(String(500), default=None)
+
+    # The API path every request to this instance is built on. Held against the day an
+    # *arr serves a different one -- Sonarr's v5-develop ships a real /api/v5 with a
+    # different SeriesResource shape -- and passed to the client by both the scan and Test
+    # Connection, so the two always probe the same path. Nothing WRITES it: it has only
+    # ever held its default, and there is no UI or probe that derives it (rule 24 -- this
+    # comment used to say it was discovered from system/status, which it is not).
+    #
+    # It is deliberately NOT published to the browser (#274). It was, and an unwritable
+    # field on the wire is rule 25's blocker rather than a placeholder: the SPA typed it,
+    # no component read it, and no route could change it, so the only thing it could ever
+    # tell an operator was a constant. Retiring the column would need a migration and the
+    # baseline is frozen, so the column stays and the wire is what went. Wiring it later
+    # means a writer on `instances.update_instance` (which is where the connection-test
+    # result is cleared, so it joins that trio) AND a per-kind default in the box, because
+    # `clients/arr.py` reads `api_path_prefix or self.default_prefix` -- a stored "/api/v3"
+    # is truthy, so handing it to Seerr would override Seerr's own /api/v1. Tautulli and
+    # Seerr are not passed the stored value today, and that is load-bearing.
     api_path_prefix: Mapped[str] = mapped_column(String(20), default="/api/v3")
     detected_version: Mapped[str | None] = mapped_column(String(50), default=None)
 
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # TLS verification is on unless the operator turned it off for this one instance
+    # (a self-signed server they run themselves). Off is never a silent default.
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # When Reaper deletes through this instance, ask the *arr to add an import (list)
+    # exclusion so a list cannot re-add the title and re-download it. Off by default: the
+    # operator opts in per instance. Wired only for Radarr movie deletes (see
+    # planner._movie_steps and executor._send_movie); a Sonarr prune removes seasons, not a
+    # whole series, so no Sonarr call carries the exclusion and the setting is stored-but-
+    # inert there -- the edit form says so.
+    # server_default so the additive migration can ADD this NOT NULL column to an existing
+    # populated table (SQLite requires a default), and existing rows backfill to "off".
+    add_import_exclusion: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+
+    # HD/4K split-library disambiguation. A JSON object mapping this instance's root folder
+    # paths to the Plex library each one lands in, e.g. {"/tv": "TV", "/tv-4k": "TV 4K"}. When
+    # one id names the same title in two libraries, the copy in the mapped library is the one
+    # bound; nothing here ever expands a match, only narrows an already-ambiguous id
+    # (engine.identity._narrow_among_id_hits). Nullable and NULL by default, so the additive
+    # migration only ADDs a nullable column and every existing instance reads as "no map" --
+    # which keeps today's abstain-and-keep behavior for a duplicated show.
+    plex_library_map: Mapped[str | None] = mapped_column(Text, default=None)
+
+    # Multi-Seerr requester attribution (SEERR rows only). A JSON object mapping this Seerr
+    # portal's own services to the Reaper Sonarr/Radarr instance each one adds media to, keyed
+    # "{kind}:{serviceId}" because Seerr numbers Sonarr and Radarr services separately (both from
+    # 0), e.g. {"sonarr:0": 7, "radarr:0": 8}. A Seerr request carries the *arr's item id
+    # (externalServiceId)
+    # and the portal-local serviceId, so this map resolves serviceId -> Reaper instance, which
+    # lets "requested by" bind the exact copy (main vs restricted library) a person asked for
+    # rather than the loose tmdb/tvdb union across every copy (services.requested_by.build_map).
+    # Display only, never a gate. Nullable and NULL by default, so the additive migration only
+    # ADDs a nullable column and every existing Seerr reads as "no map" -- today's union.
+    service_instance_map: Mapped[str | None] = mapped_column(Text, default=None)
+
     created_at: Mapped[UtcTimestamp]
     last_ok_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)
@@ -91,6 +155,10 @@ class PlexServer(Base):
 
     token_enc: Mapped[str] = mapped_column(Text)
     owner_plex_account_id: Mapped[int] = mapped_column(Integer)
+
+    # Verify the server's TLS certificate (mirrors Instance.verify_tls). Off is a
+    # deliberate operator choice for a self-signed HTTPS server, never a silent default.
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[UtcTimestamp]
     last_ok_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
@@ -168,19 +236,25 @@ class PendingPlexLogin(Base):
 class Policy(Base):
     """An immutable, content-addressed policy body.
 
-    **Append-only. Never UPDATE.** Editing a policy in the UI writes a *new* row
-    with a new hash; the old row survives because approvals, candidates and audit
-    entries point at it and must remain interpretable years later.
+    **Append-only. Never UPDATE.** Editing a policy in the UI writes a *new* row;
+    the old row survives because approvals, candidates and audit entries point at
+    it and must remain interpretable years later.
 
     ``policy_hash`` covers the semantic fields plus the schema and scorer versions,
     and deliberately excludes ``id``, ``name`` and ``created_at`` -- so renaming a
     policy does not void every pending approval, but changing a threshold does.
+    The hash identifies *content*, not a row, and is deliberately not unique here:
+    reverting to an earlier policy appends a fresh row carrying the earlier hash,
+    so the newest row per media type is always the one in force and the table
+    reads as the complete save history. Rows sharing a hash are byte-identical
+    (the hash is over canonical JSON), so anything pointing at a hash stays
+    unambiguous.
     """
 
     __tablename__ = "policy"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    policy_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    policy_hash: Mapped[str] = mapped_column(String(64), index=True)
     body_json: Mapped[str] = mapped_column(Text)
     """The canonical JSON. Integers only -- floats do not canonicalise, and an
     unstable hash means approvals void themselves at random."""
@@ -203,13 +277,22 @@ class Profile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    """Ships disabled. A profile that starts running the moment it is created is
-    how a starter template deletes a library."""
+    """Ships disabled, and nothing in ``src/`` reads it: written at creation, never
+    consulted, so it gates nothing today. What keeps a fresh install from acting is the
+    arming requirement and the typed phrase on ``api.runs.execute_run``, not this flag.
+
+    **The attribute cannot simply be deleted (#271).** The column is ``NOT NULL`` with no
+    server default in the frozen baseline, so dropping it here leaves ``alembic check``
+    -- a CI gate -- reporting a pending ``drop_column`` forever, and a ``DROP COLUMN``
+    revision is not the additive-only migration ``CLAUDE.md`` requires. Retiring it for
+    real means excluding it from autogenerate first. Until then the honest state is this
+    docstring plus ``test_profiles``'s pin, which says what the value is and refuses to
+    call it a safeguard."""
 
     active_policy_id: Mapped[int] = mapped_column(ForeignKey("policy.id"))
 
     settings_json: Mapped[str] = mapped_column(Text)
-    """ProfileSettings: the four caps, grace_days, require_approval."""
+    """ProfileSettings: the four caps, caps_enabled, grace_days, the unknown-size allowance."""
 
     created_at: Mapped[UtcTimestamp]
     updated_at: Mapped[UtcTimestamp]
@@ -227,6 +310,12 @@ class AutonomyGrant(Base):
 
     It is *earned*, not set: it requires a passing backtest and a run of clean
     supervised executions, both recorded here.
+
+    **Not wired yet.** No route or flow creates or consults grants today -- the
+    backtest that must feed ``backtest_passed`` has no route or UI, so the check
+    constraints below mean no row can honestly exist until that ships. The schema is
+    kept (pre-release, single migration baseline) so the earned-autonomy design stays
+    enforced in the database from day one, and docs/STATUS.md tracks the wiring as open work.
     """
 
     __tablename__ = "autonomy_grant"
@@ -252,9 +341,9 @@ class AutonomyGrant(Base):
 class Snapshot(Base):
     """A frozen evidence set.
 
-    Everything is gathered, frozen and hashed *before* anything is scored. That is the
-    whole point: a transient Sonarr timeout halfway through a scan cannot flip an
-    item's fate, because every item in a run is judged against the same evidence.
+    Everything is gathered, frozen and hashed *before* anything is scored, so a
+    transient Sonarr timeout halfway through a scan cannot flip an item's fate:
+    every item in a run is judged against the same evidence.
 
     Maintainerr #3125 is the bug this prevents: "collection items flip in/out when
     Sonarr API lookups fail transiently during rule runs". An item's fate should not
@@ -268,16 +357,24 @@ class Snapshot(Base):
     policy_hash: Mapped[str] = mapped_column(String(64), index=True)
 
     scoring_hash: Mapped[str] = mapped_column(String(64), default="")
-    """The policy's scoring behaviour -- its signals and gates -- with the thresholds
+    """The policy's scoring behavior -- its signals and gates -- with the thresholds
     excluded. See ``PolicyBody.scoring_hash``.
 
     This is what lets the simulator re-decide this snapshot honestly. Moving
     ``condemn_at`` re-compares a *stored* score against a new number, which is exact.
-    Changing a weight or a gate does not: the stored scores and verdicts were produced
-    by the old ones, and the new answer cannot be recovered without re-reading the
-    library. The simulator compares this hash and refuses to report numbers when it
-    differs, rather than reporting confident, stale ones.
+    Changing a weight or a rating bar is exact too, because each Candidate freezes its
+    Facts (``facts_json``); only a change to what the scan *gathered* -- the fields the
+    evidence hash covers -- truly needs a fresh scan.
     """
+
+    evidence_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    """The policy fields that decide what evidence the scan gathers and freezes: the
+    popularity window, the keep-tags, the season-pruning guard, the media type. Two
+    policies sharing this produce the same frozen Facts for every item, so the simulator
+    may replay the real engine over ``Candidate.facts_json`` and get an exact verdict for
+    any change *outside* these fields (weights, rating bars, custom rules). When it
+    differs, the frozen evidence is stale and a fresh scan is required. See
+    ``PolicyBody.evidence_hash``."""
 
     horizon_at: Mapped[UtcTimestamp]
     """The earliest watch history we hold. Persisted, not computed: media older than
@@ -290,6 +387,58 @@ class Snapshot(Base):
     degraded snapshot -- but it may still be *viewed*, so the owner can see why."""
 
     degraded_reason: Mapped[str | None] = mapped_column(Text, default=None)
+
+    watch_blind_items: Mapped[int | None] = mapped_column(Integer, default=None)
+    """How many items this scan found had watch history it could no longer read
+    (``services.watch_evidence``). Counted at scan time and stored, rather than derived
+    later by matching the reason text on each stored explanation, which would be rule 92's
+    coupling: that string is operator copy and will be reworded.
+
+    **What was measured, never what was decided.** Such an item is normally held -- three
+    gates block on the ``Unknown`` this produces -- but the operator can switch each of them
+    off, and nothing here consults the verdict, so copy calling this items held back or kept
+    asserts a protection the number is not computed from (rule 144).
+
+    ``NULL`` means "not recorded", which is every snapshot taken before this column
+    existed -- read it as unknown, never as zero."""
+
+
+class SizeSource(enum.StrEnum):
+    """Which measurement ``Candidate.size_bytes`` holds.
+
+    Load-bearing. The executor's growth interlock compares the frozen size
+    against a live re-read, and without provenance it cannot tell whether the two measure
+    the same thing; a size compared against a different quantity reads a real growth as a
+    shrink. See ``executor._measures``, whose allow-lists are exhaustive and fail closed,
+    which is why the members nothing writes are kept rather than deleted.
+
+    Never exposed on the wire: the UI says "Size unknown", never a source key.
+    """
+
+    SONARR_FILES = "sonarr-files"
+    """Summed episode files for one season, gathered file by file. Never written: Sonarr's
+    season statistic below is already this same sum."""
+
+    SONARR = "sonarr"
+    """One season's episode files, summed by Sonarr. ``statistics.sizeOnDisk`` is a ``SUM``
+    over the ``EpisodeFiles`` table, not a folder walk, so it is the quantity a season
+    delete frees."""
+
+    RADARR = "radarr"
+    """One movie's tracked file rows, summed by Radarr. ``sizeOnDisk`` is likewise a ``SUM``,
+    over ``MovieFiles``. The delete removes the movie folder, which holds bytes no row
+    tracks, so this under-states what a delete frees -- measured, and always in that
+    direction: 221 of 221 sampled folders held more than Radarr reported, by 0.02% at the
+    median and 44% at the worst (#317, learning 14b). Accepted as a close lower bound,
+    which is why ``ProfileSettings``'s caps read as bounds rather than equalities."""
+
+    RADARR_FILE = "radarr-file"
+    """The movie file alone. Never written, and display only if it ever is: it reads one
+    file where ``RADARR`` sums every row, so it can measure less, and a size that
+    under-counts a byte cap stops the cap firing, which deletes more than was allowed."""
+
+    PLEX = "plex"
+    """The matched Plex listing's file. Never written, exactly as ``RADARR_FILE``."""
 
 
 class Candidate(Base):
@@ -311,9 +460,42 @@ class Candidate(Base):
     has not matched has none, and it is a snapshot-time snapshot -- rating keys move across
     library rebuilds, so this is never treated as stable identity (that is media_key)."""
 
+    poster_rating_key: Mapped[int | None] = mapped_column(Integer, default=None)
+    """The Plex rating key to draw the card's poster from. For a season this is the SHOW's
+    key, not the season's -- a show always has a poster, whereas many seasons do not (the
+    proxy 404s and the card falls back to a placeholder). Null for a movie, whose own
+    ``plex_rating_key`` is its poster. Display only; never identity or a gate."""
+
     title: Mapped[str] = mapped_column(String(500))
     media_type: Mapped[str] = mapped_column(String(10))
-    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, default=None)
+    """What deleting this item would free, in bytes. NULL means Reaper could not measure
+    it, which is NOT zero: no file worth deleting is genuinely empty.
+
+    For a season this is exact. For a movie it is a close LOWER bound: Radarr counts the
+    file rows it tracks and the delete takes the whole folder, so untracked extras are
+    freed and not counted here (``SizeSource.RADARR``, #317). Every "would free" string
+    downstream is copied from this line, so read it as the bound it is.
+
+    Nullable rather than a sentinel, because a sentinel is the same bug with a nicer
+    number -- every sum accepts it and quietly produces a wrong total, whereas a NULL
+    makes an unsafe call site raise. The same call the repo already made for
+    ``watch_event.watched_status``.
+
+    ``size_source`` below says which measurement this is, and is NULL exactly when this
+    is. Both scan paths write a NULL when nothing reports a size. What keeps such an item
+    out of a delete is ``planner.build_plan``, which holds it back, and
+    ``executor._may_send_unmeasured``, which refuses it again per item at send time --
+    unless the operator has raised ``ProfileSettings.max_unmeasured_per_run``, which admits
+    a bounded number of them deliberately."""
+
+    size_source: Mapped[str | None] = mapped_column(String(16), default=None)
+    """Which measurement ``size_bytes`` holds, as a ``SizeSource`` value. NULL means no
+    source reported one. Kept as a string column rather than a native enum for the same
+    reason as every other enum here: SQLite has none, and a stored value this build does
+    not recognize must be handled by the reader, not rejected by the driver.
+
+    Read by the executor to compare like with like; never sent to the browser."""
 
     # --- display fields, captured at scan time from data already in hand -----------
     # These come off the *arr payload (and Seerr) during the scan, so the review queue
@@ -329,6 +511,71 @@ class Candidate(Base):
 
     requested_by: Mapped[str | None] = mapped_column(String(200), default=None)
     """Who asked for this via Seerr, if anyone. Never a gate -- see services.requested_by."""
+
+    genres_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """The item's genres at scan time, as a JSON array. Feeds the rule editors' value
+    suggestions (GET /api/vocabulary/values); suggestion only, never a verdict input."""
+
+    quality: Mapped[str | None] = mapped_column(String(100), default=None)
+    """The file's quality name at scan time (e.g. "Bluray-1080p"), same purpose."""
+
+    tmdb_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    """The TMDb id at scan time: the movie's, or the SHOW's for a season row. Radarr's
+    web routes and Seerr's item pages key on it, so it is what "open this in Radarr /
+    Seerr / TMDb" links need -- the internal id in media_key does not resolve there.
+    Display/link only; identity stays media_key."""
+
+    imdb_id: Mapped[str | None] = mapped_column(String(20), default=None)
+    """The IMDb id at scan time (the *arr's, else the Plex-matched one) -- the show's for
+    a season row. What the "open on IMDb" link needs. Display/link only."""
+
+    tvdb_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    """The TVDb id at scan time: the SHOW's, stamped on every season row. NULL for a movie
+    (Radarr is tmdb-native) and for older rows scanned before this column existed. Sonarr is
+    tvdb-native, so this is often the only id a show and its Seerr request reliably share;
+    Scales joins requests to candidates on it (see services.fairness). Display/join, not a
+    verdict input; identity stays media_key."""
+
+    title_slug: Mapped[str | None] = mapped_column(String(200), default=None)
+    """Sonarr's titleSlug for the show, the coordinate its web routes key on. The show's
+    value is stamped on every season row. Display/link only."""
+
+    show_status: Mapped[str | None] = mapped_column(String(12), default=None)
+    """Whether the show is finished, as one of "ended" / "continuing" / "unknown". The
+    show's value is stamped on every season row. Null means the question does not apply
+    (a movie), which is why this is a string and not a nullable bool: a bool has room for
+    two answers and this field must carry four states. "unknown" is its own value because
+    Sonarr reporting no status at all must never render as a definite "still going" --
+    the UI draws it in the "we could not check" treatment. Note "continuing" is only the
+    stored key; the UI label is "Still going", since a show that has not ended may also
+    be one that has not started. Display only, never a verdict input (the custom-rule
+    field reads the frozen Facts, not this column)."""
+
+    video_resolution: Mapped[str | None] = mapped_column(String(10), default=None)
+    """Canonical resolution of the file at scan time ("2160", "1080", ..., "sd"), from
+    Plex's videoResolution first, else parsed from the *arr quality name. Movies only in
+    v1 (show listings carry no media). Display only."""
+
+    content_rating: Mapped[str | None] = mapped_column(String(20), default=None)
+    """Plex's certification (e.g. a TV or film rating board label). Display only."""
+
+    library_title: Mapped[str | None] = mapped_column(String(200), default=None)
+    """The Plex library (section) the item lives in, as the operator named it -- the show's
+    for a season row, stamped on every season in the same scan. Captured at scan time from
+    the section listing already in hand (services.library_index). Display and filter only;
+    never identity or a verdict input. NULL for an item Plex could not place (unmatched, a
+    sweep that did not list it, or a pre-rescan row) -- the UI then shows no library chip."""
+
+    runtime_minutes: Mapped[int | None] = mapped_column(Integer, default=None)
+    """Runtime in minutes from Plex (a show row carries its episode runtime). Display
+    only."""
+
+    ratings_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """The frozen external-ratings row, as canonical JSON of ints: every value stored as
+    round(value_on_0_to_10 * 10) -- IMDb 5.9 -> 59, RT 77% -> 77 -- plus imdb_votes.
+    Keys are reaper.ratings.RatingSource values. The imdb entry is the SAME dataset
+    number the scoring signal froze, so the panel cannot show two IMDb values. Built by
+    services.display_meta.build_ratings_json; display only."""
 
     group_key: Mapped[str | None] = mapped_column(String(100), index=True, default=None)
     """Ties rows that belong together in the queue -- every season of one show shares its
@@ -350,6 +597,13 @@ class Candidate(Base):
     it. One dict, two sinks -- so what the owner was shown and what actually happened
     cannot drift apart."""
 
+    facts_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """The frozen scoring INPUTS for this item -- its full three-state ``Facts`` plus the
+    season-pruning guard result -- serialized by ``engine.facts_codec``. This is what lets
+    the simulator replay the real engine under an edited policy with zero API calls, exact
+    for any change the evidence hash permits. Nullable for snapshots taken before the field
+    existed; the simulator falls back to "needs a fresh scan" when it is absent."""
+
     created_at: Mapped[UtcTimestamp]
 
 
@@ -362,7 +616,7 @@ class FirstFlagged(Base):
     unreachable.
 
     Janitorr #172 is the inverse bug: starting the clock at the item's *age* means the
-    entire back catalogue is already expired on day one.
+    entire back catalog is already expired on day one.
     """
 
     __tablename__ = "first_flagged"
@@ -372,6 +626,47 @@ class FirstFlagged(Base):
     """Set once. Never moved forward while the item stays condemned."""
 
     last_seen_condemned_at: Mapped[UtcTimestamp]
+
+
+class WatchHighWater(Base):
+    """The most watch evidence Reaper has ever measured for an item.
+
+    A Plex rating key is not stable. Let a file go away and come back and Plex issues a
+    NEW one, while Tautulli keeps every earlier play filed under the old one -- verified
+    against Tautulli's source: only ``update_metadata_details``, reached by a human
+    clicking "Fix Metadata", ever moves them, and no scheduled task calls it. Reaper reads
+    the mirror by the key the item carries *now*, so those plays go invisible and the item
+    reads as never watched, which is maximum condemn pressure on a title somebody watched.
+
+    Nothing in the read path can tell that apart from a genuinely unwatched item: both are
+    simply "no rows for this key". So the high-water mark is kept here instead. All-time
+    watch evidence can only grow -- the mirror never deletes, and a Tautulli prune is
+    caught separately by ``history_sync._check_regression`` -- so a count that falls to
+    zero from a positive one is a transition no library can make, and that is the signal.
+    ``services.watch_evidence`` does the comparing.
+
+    Outside the snapshot lifecycle on purpose: comparing against only the previous
+    snapshot would let the FIRST blind scan write zero as the new baseline, after
+    which 0 -> 0 is no longer a fall and the blindness is never noticeable again.
+
+    Keyed by the stable ``media_key``, never the Plex rating key -- which is the thing
+    that moved.
+    """
+
+    __tablename__ = "watch_high_water"
+
+    media_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    watchers_all_time: Mapped[int] = mapped_column(Integer, default=0)
+    """The largest all-time distinct-watcher count ever measured for this item. Only ever
+    raised, so it survives a scan that read the item blind."""
+
+    last_played_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """The latest play ever measured. ``NULL`` means no play has ever been seen, which is
+    the ordinary state of a never-watched item and never fires the check."""
+
+    updated_at: Mapped[UtcTimestamp]
+    """When the mark last moved. Diagnostic only: nothing reads it to make a decision."""
 
 
 class WhitelistEntry(Base):
@@ -385,7 +680,7 @@ class WhitelistEntry(Base):
     decision about a file, not a property of the scan that happened to surface it. Keyed
     by the stable ``media_key`` -- never the Plex rating key, which moves.
 
-    ``title`` is denormalised so the "spared" list reads without joining a snapshot
+    ``title`` is denormalized so the "spared" list reads without joining a snapshot
     (candidates are snapshot-scoped and churn); the media_key is the identity, the title
     is only ever display.
     """
@@ -402,6 +697,19 @@ class WhitelistEntry(Base):
     the score-based protections, because the owner has looked and decided -- but never a hard
     safety gate (something streaming now, or a file no *arr manages), which still wins. For a
     TV show the key can be the show's (``sonarr:i:series``), which applies to all its seasons."""
+
+    spare_expires_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """When a *timed* hand-spare stops protecting. ``NULL`` means kept forever -- the original
+    behavior, and what every pre-existing row carries -- so an omitted expiry is never an early
+    reap. Only meaningful for a ``"spare"`` decision; a ``"reap"`` never expires and clears it.
+
+    The clock is realized in exactly ONE place, the scan, in two coupled steps of one
+    transaction: it drops a spare whose expiry has passed from the map it judges on
+    (``whitelist.overrides_effective_at``) so the item is re-judged from scratch and re-enters
+    the reap flow on a FRESH grace window, and it deletes the expired row
+    (``whitelist.purge_expired_spares``) so every live consumer converges the moment the
+    snapshot commits. Every live consumer keeps the spare in force until that next scan runs --
+    failing toward keeping the file, never toward deleting it early."""
 
     created_at: Mapped[UtcTimestamp]
 
@@ -425,6 +733,34 @@ class RecoveryToken(Base):
     # Set the moment it is redeemed. A used token is never valid again, even
     # if it is still inside its expiry window.
     used_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+
+
+#: Tables holding live proof of a sign-in: something that lets a caller in *now*, rather
+#: than the account it belongs to. A restore replaces the whole database and brings the
+#: backup's password hashes back with it, so everything here must be cleared out of the
+#: staged copy first, or a session or reset link that was valid when the backup was taken
+#: starts working again and defeats a later sign-out-everywhere (rule 75/12).
+#:
+#: Declared here, beside the models, rather than as a literal inside the restore code that
+#: consumes it (``services.restore._purge_auth_state``): a new auth-bearing table added
+#: over there would have been carried silently forward (R-3). ``tests/test_restore.py``
+#: fails when a table that looks auth-bearing is missing from this tuple.
+AUTH_BEARING_TABLES: tuple[str, ...] = (
+    "auth_session",
+    "recovery_token",
+    "pending_plex_login",
+)
+
+#: The exceptions, spelled out so the drift test can tell "considered and excluded" from
+#: "forgotten". Each of these holds a credential, and each is meant to come back:
+#:
+#: * ``app_user`` carries ``password_hash``, but it is the ACCOUNT, not a live session.
+#:   Restoring a backup restores its admins; purging them would lock the operator out of
+#:   the install they just restored.
+#: * ``plex_server`` and ``instance`` carry credentials for OTHER systems (the Plex admin
+#:   token, the *arr keys). Restoring them is the entire point of bundling the encryption
+#:   key with the backup, and none of them lets anyone into Reaper.
+NOT_AUTH_BEARING_TABLES: tuple[str, ...] = ("app_user", "plex_server", "instance")
 
 
 class AppSetting(Base):
@@ -453,12 +789,15 @@ class RunState(enum.StrEnum):
 class StepState(enum.StrEnum):
     """Where one step is in its lifecycle.
 
-    The ordering matters: a step is written as ``PENDING`` **before** the HTTP call, and
-    only moves to ``SENT`` once we know the call was made. A step found still ``SENT`` at
-    startup was in flight when the process died: it is a durable record of precisely what
-    was outstanding, so a reconciler *could* re-probe the *arr to discover whether it
-    actually landed. No such reconciler runs today -- a crashed run is re-planned from a
-    fresh snapshot, not resumed -- so this is an audit trail, not a resume point.
+    The ordering matters: a step is journalled as ``PENDING`` when the plan is built, and
+    is marked ``SENT`` and **committed** immediately before its HTTP call is dispatched --
+    the executor commits every step-state change durably as it happens
+    (``Executor._mark_sent`` / ``_mark_verified``), never inside a run-long transaction.
+    A step found still ``SENT`` at startup was therefore in flight when the process died:
+    a durable record of precisely what was outstanding, so a reconciler *could* re-probe
+    the *arr to discover whether it actually landed. No such reconciler runs today -- a
+    crashed run is re-planned from a fresh snapshot, not resumed -- so this is an audit
+    trail, not a resume point.
     """
 
     PENDING = "pending"  # journalled, not yet sent
@@ -488,7 +827,7 @@ class ReapRun(Base):
         Enum(RunState, native_enum=False), default=RunState.PLANNED
     )
 
-    # The content-bound confirmation the human actually approved, e.g. "REAP 7 ITEMS
+    # The content-bound confirmation the human actually approved, e.g. "REAP 7 SOULS
     # 214 GB". Recomputed from the plan at execution time; a mismatch voids the run, so a
     # stale browser tab cannot replay yesterday's plan against today's library.
     approved_manifest_hash: Mapped[str] = mapped_column(String(64))
@@ -501,6 +840,13 @@ class ReapRun(Base):
     aborted_reason: Mapped[str | None] = mapped_column(Text, default=None)
     """Why the run stopped early. A cap is an ABORT, never a truncation: truncating makes
     what gets deleted depend on sort order, so Reaper stops the whole run instead."""
+
+    held_back_unknown_size: Mapped[int] = mapped_column(Integer, default=0)
+    """How many condemned items this plan left out because nothing would report their
+    size. Stored on the run rather than recomputed, so a finished run can still say what
+    it did not do: a plan smaller than the review queue implied has to be explainable
+    after the fact, not only before it. Zero for a healthy library, and every surface
+    suppresses it at zero."""
 
     steps: Mapped[list[ActionStep]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="ActionStep.id"
@@ -565,5 +911,17 @@ class ActionStep(Base):
     created_at: Mapped[UtcTimestamp]
     sent_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     verified_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+
+    file_removed_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """When Reaper confirmed this step's file was really gone from disk -- recorded
+    separately from ``state`` because the two can disagree.
+
+    A movie deleted through Radarr whose import exclusion never appeared inside the poll
+    window ends FAILED: the verification genuinely did fail, and the state must keep saying
+    so. But the file IS gone and its bytes ARE reclaimed, so the rolling 30-day budget has
+    to charge it or a flaky *arr silently buys the operator unlimited deletions
+    (``Executor._rolling_30d_deletions`` counts VERIFIED **or** this, never both twice).
+    NULL on every row written before this column existed, which reads exactly as it did
+    then: only its VERIFIED state counts it."""
 
     run: Mapped[ReapRun] = relationship(back_populates="steps")

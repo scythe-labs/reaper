@@ -34,6 +34,7 @@ from reaper.engine.policy import ProfileSettings
 from reaper.services import whitelist
 from reaper.services.executor import Executor
 from reaper.services.planner import PlanError, build_plan
+from reaper.services.profiles import live_policy_hash
 
 GB = 1024**3
 
@@ -59,7 +60,7 @@ async def _snapshot(session: AsyncSession, condemned: list[tuple[str, int]]) -> 
     now = utcnow()
     snapshot = Snapshot(
         created_at=now,
-        policy_hash="p" * 64,
+        policy_hash=await live_policy_hash(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(condemned),
@@ -98,7 +99,7 @@ async def _snapshot_show(
     group_key = f"sonarr:{instance}:{series}"
     snapshot = Snapshot(
         created_at=now,
-        policy_hash="p" * 64,
+        policy_hash=await live_policy_hash(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(seasons),
@@ -154,7 +155,6 @@ class TestBulkReapOfAShowGroupKey:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             only_media_keys={group_key},
         )
@@ -178,7 +178,6 @@ class TestBulkReapOfAShowGroupKey:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             only_media_keys={group_key},
         )
@@ -194,7 +193,7 @@ class TestBulkReapOfAShowGroupKey:
         now = utcnow()
         snapshot = Snapshot(
             created_at=now,
-            policy_hash="p" * 64,
+            policy_hash=await live_policy_hash(session),
             scoring_hash="s" * 64,
             horizon_at=now,
             item_count=2,
@@ -236,7 +235,6 @@ class TestBulkReapOfAShowGroupKey:
         run = await build_plan(
             session,
             snapshot_id=snapshot.id,
-            policy_hash="p" * 64,
             approved_by="admin",
             only_media_keys={"sonarr:1:42", "radarr:1:7"},
         )
@@ -257,7 +255,6 @@ class TestAnEmptySelectionFailsClosed:
             await build_plan(
                 session,
                 snapshot_id=snapshot_id,
-                policy_hash="p" * 64,
                 approved_by="admin",
                 only_media_keys=set(),
             )
@@ -271,7 +268,6 @@ class TestAnEmptySelectionFailsClosed:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             only_media_keys=None,
         )
@@ -292,9 +288,7 @@ class TestCapsCountOnlyWhatWillActuallyBeDeleted:
             session,
             [("radarr:1:1", 1 * GB), ("radarr:1:2", 1 * GB), ("radarr:1:3", 1 * GB)],
         )
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
         # Spare one AFTER the plan is built: it stays in the plan but will not be deleted.
         await whitelist.spare(session, media_key="radarr:1:3", title="Kept", note=None)
 
@@ -318,9 +312,7 @@ class TestCapsCountOnlyWhatWillActuallyBeDeleted:
             session,
             [("radarr:1:1", 1 * GB), ("radarr:1:2", 1 * GB), ("radarr:1:3", 1 * GB)],
         )
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
         settings = ProfileSettings(max_items_per_run=2, max_items_per_30d=100)
         report = await Executor(
             session, safety=_read_only(), settings=settings, dry_run=True
@@ -328,4 +320,4 @@ class TestCapsCountOnlyWhatWillActuallyBeDeleted:
 
         assert report.state is RunState.ABORTED
         assert report.aborted_reason is not None
-        assert "aborted, not truncated" in report.aborted_reason.lower()
+        assert "over your per-run cap" in report.aborted_reason.lower()

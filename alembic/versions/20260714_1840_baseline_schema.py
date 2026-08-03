@@ -2,15 +2,16 @@
 
 The whole schema, in one revision.
 
-**Until Reaper's first release this migration is rewritten in place**, not appended
-to: nobody is running the tool yet, so there is no data to preserve and no upgrade
-path to honour. A chain of migrations between schemas that never shipped is pure cost
--- it slows every fresh ``alembic upgrade head`` and each link is somewhere a SQLite
-batch-mode bug can hide. To change the schema: edit the models, delete ``reaper.db``,
-delete this file, regenerate, and upgrade from empty.
+**This baseline is now frozen.** Testers are running Reaper with real data, so the
+schema can no longer be rewritten in place -- doing so would force them to rebuild their
+database. Every schema change from here is its own additive, non-breaking revision (a
+nullable ``ADD COLUMN``, a new table), chained by ``down_revision`` onto this file and
+never an edit to it. See ``add_candidate_library_title`` for the pattern.
 
-**Once a version is tagged, this stops.** From then on the baseline is frozen and every
-schema change is its own additive revision, because someone out there has data.
+(Before the first tester had data this file was rewritten in place -- edit the models,
+delete ``reaper.db``, regenerate -- because there was no data to preserve. That era is
+over: additive revisions only, so ``alembic upgrade head`` on an existing database never
+drops or rewrites what is already there.)
 
 Note what is *not* here: the cache tables (``imdb_rating``, ``watch_event``, ...). They
 live in ``cache.db``, are created by raw DDL, and are never migrated -- they are
@@ -74,6 +75,7 @@ def upgrade() -> None:
     sa.Column('api_path_prefix', sa.String(length=20), nullable=False),
     sa.Column('detected_version', sa.String(length=50), nullable=True),
     sa.Column('enabled', sa.Boolean(), nullable=False),
+    sa.Column('verify_tls', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.Integer(), nullable=False),
     sa.Column('last_ok_at', sa.Integer(), nullable=True),
     sa.Column('last_error', sa.Text(), nullable=True),
@@ -100,6 +102,7 @@ def upgrade() -> None:
     sa.Column('connections_json', sa.Text(), nullable=False),
     sa.Column('token_enc', sa.Text(), nullable=False),
     sa.Column('owner_plex_account_id', sa.Integer(), nullable=False),
+    sa.Column('verify_tls', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.Integer(), nullable=False),
     sa.Column('last_ok_at', sa.Integer(), nullable=True),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_plex_server')),
@@ -115,7 +118,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id', name=op.f('pk_policy'))
     )
     with op.batch_alter_table('policy', schema=None) as batch_op:
-        batch_op.create_index(batch_op.f('ix_policy_policy_hash'), ['policy_hash'], unique=True)
+        batch_op.create_index(batch_op.f('ix_policy_policy_hash'), ['policy_hash'], unique=False)
 
     op.create_table('recovery_token',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -133,6 +136,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.Integer(), nullable=False),
     sa.Column('policy_hash', sa.String(length=64), nullable=False),
     sa.Column('scoring_hash', sa.String(length=64), nullable=False),
+    sa.Column('evidence_hash', sa.String(length=64), nullable=True),
     sa.Column('horizon_at', sa.Integer(), nullable=False),
     sa.Column('item_count', sa.Integer(), nullable=False),
     sa.Column('degraded', sa.Boolean(), nullable=False),
@@ -161,19 +165,32 @@ def upgrade() -> None:
     sa.Column('snapshot_id', sa.Integer(), nullable=False),
     sa.Column('media_key', sa.String(length=100), nullable=False),
     sa.Column('plex_rating_key', sa.Integer(), nullable=True),
+    sa.Column('poster_rating_key', sa.Integer(), nullable=True),
     sa.Column('title', sa.String(length=500), nullable=False),
     sa.Column('media_type', sa.String(length=10), nullable=False),
-    sa.Column('size_bytes', sa.Integer(), nullable=False),
+    sa.Column('size_bytes', sa.Integer(), nullable=True),
+    sa.Column('size_source', sa.String(length=16), nullable=True),
     sa.Column('year', sa.Integer(), nullable=True),
     sa.Column('summary', sa.Text(), nullable=True),
     sa.Column('poster_url', sa.String(length=1000), nullable=True),
     sa.Column('requested_by', sa.String(length=200), nullable=True),
+    sa.Column('genres_json', sa.Text(), nullable=True),
+    sa.Column('quality', sa.String(length=100), nullable=True),
+    sa.Column('tmdb_id', sa.Integer(), nullable=True),
+    sa.Column('imdb_id', sa.String(length=20), nullable=True),
+    sa.Column('title_slug', sa.String(length=200), nullable=True),
+    sa.Column('show_status', sa.String(length=12), nullable=True),
+    sa.Column('video_resolution', sa.String(length=10), nullable=True),
+    sa.Column('content_rating', sa.String(length=20), nullable=True),
+    sa.Column('runtime_minutes', sa.Integer(), nullable=True),
+    sa.Column('ratings_json', sa.Text(), nullable=True),
     sa.Column('group_key', sa.String(length=100), nullable=True),
     sa.Column('group_title', sa.String(length=500), nullable=True),
     sa.Column('verdict', sa.String(length=10), nullable=False),
     sa.Column('score', sa.Integer(), nullable=False),
     sa.Column('coverage_bp', sa.Integer(), nullable=False),
     sa.Column('explanation_json', sa.Text(), nullable=False),
+    sa.Column('facts_json', sa.Text(), nullable=True),
     sa.Column('created_at', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['snapshot_id'], ['snapshot.id'], name=op.f('fk_candidate_snapshot_id_snapshot'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_candidate')),
@@ -206,6 +223,7 @@ def upgrade() -> None:
     sa.Column('started_at', sa.Integer(), nullable=True),
     sa.Column('finished_at', sa.Integer(), nullable=True),
     sa.Column('aborted_reason', sa.Text(), nullable=True),
+    sa.Column('held_back_unknown_size', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['snapshot_id'], ['snapshot.id'], name=op.f('fk_reap_run_snapshot_id_snapshot'), ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_reap_run'))
     )
@@ -256,7 +274,7 @@ def upgrade() -> None:
     sa.Column('media_key', sa.String(length=100), nullable=False),
     sa.Column('title', sa.String(length=500), nullable=False),
     sa.Column('note', sa.Text(), nullable=True),
-    sa.Column('decision', sa.String(length=10), nullable=False, server_default='spare'),
+    sa.Column('decision', sa.String(length=10), nullable=False),
     sa.Column('created_at', sa.Integer(), nullable=False),
     sa.PrimaryKeyConstraint('media_key', name=op.f('pk_whitelist'))
     )

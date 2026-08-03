@@ -1,0 +1,278 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The two faces of the policy workspace's simulator column. `Outcome` is the answer: the
+// counts, the bytes, and the histogram with the threshold drawn across it. `StaleNotice`
+// is what shows instead when the last scan's stored scores can no longer answer honestly,
+// and it carries the one button that fixes that.
+//
+// PolicyEditor.tsx decides which of the two renders, and its header says why that decision
+// is the most important behavior on the page.
+
+import type { RefObject } from "react";
+import type { ProfileSettings, Simulation } from "../api";
+import { useSuccessorFocus } from "../focus";
+import { bytes, count, totalBytes } from "../format";
+import { GATE_META, titleCase } from "./policyMeta";
+import { Notice } from "./Notice";
+
+/** The histogram, with the threshold drawn across it.
+ *
+ *  This is what makes a threshold a decision rather than a guess: you place it against
+ *  the actual shape of the library, and you can see how many items sit just the wrong
+ *  side of it. */
+function Histogram({ buckets, threshold }: { buckets: number[]; threshold: number }) {
+  const peak = Math.max(...buckets, 1);
+
+  return (
+    <div className="histogram" aria-hidden>
+      {buckets.map((n, i) => {
+        const low = i * 10;
+        const condemned = low + 10 > threshold;
+        return (
+          <div className="hist-col" key={low} title={`${low}–${low + 9}: ${count(n)} items`}>
+            <div
+              className={condemned ? "hist-bar hist-condemn" : "hist-bar"}
+              style={{ height: `${(n / peak) * 100}%` }}
+            />
+            <span className="hist-label">{low}</span>
+          </div>
+        );
+      })}
+      <div className="hist-thresh" style={{ left: `${threshold}%` }}>
+        <b>{threshold}</b>
+      </div>
+    </div>
+  );
+}
+
+/** The heading this panel shows while a rescan runs, and the sentence the app says when one
+ *  starts. One string, because a reader lands on that heading in the next breath and two
+ *  copies of one fact drift (rule 144); `PolicyEditor` announces it from here. */
+export const RESCAN_HEADING = "Rescanning to apply your changes";
+
+/** Said and shown instead when the rescan cannot carry the changes yet.
+ *
+ *  This is the one thing about the wait an operator cannot see: the bar in front of them
+ *  belongs to a scan that started BEFORE they saved, so it is scoring the old policy. Saying
+ *  `RESCAN_HEADING` here would be a sentence that is wrong about the very thing it describes,
+ *  which is why the announcement branches rather than settling for one string. */
+export const RESCAN_QUEUED_LEAD =
+  "A scan was already running, so your changes go into a second scan that starts right after it.";
+
+/** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
+ *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
+ *  you the one button that fixes it. A start that fails says so right here, or the button
+ *  would appear to do nothing. */
+export function StaleNotice({
+  scanning,
+  followupQueued,
+  starting,
+  startError,
+  onScan,
+  percent,
+  detail,
+}: {
+  scanning: boolean;
+  /** A scan was already running when the rescan was requested, so a second one starts
+   *  right after it. The copy must say so: the bar the owner is watching belongs to a
+   *  scan that does NOT include their changes yet. */
+  followupQueued: boolean;
+  starting: boolean;
+  startError: string | null;
+  onScan: () => void;
+  percent: number;
+  detail: string;
+}) {
+  // "Scan now" replaces its own branch with the progress bar, and it is `disabled` from the press,
+  // so focus is at `<body>` before the swap. Nothing focusable mounts in its place in ANY state of
+  // this notice, so the target is the heading -- which is the same DOM node either side of the
+  // swap (child 0 of both arms) and whose text becomes the sentence worth hearing (#173). The
+  // pattern `useSavebarFocus` sets: after a completed action, the name of what you are looking at.
+  const afterStart = useSuccessorFocus();
+  return (
+    <div className="sim sim-info">
+      <h3 ref={afterStart.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
+        {scanning ? RESCAN_HEADING : "Needs a fresh scan"}
+      </h3>
+      {scanning ? (
+        <>
+          <p>
+            {followupQueued
+              ? `${RESCAN_QUEUED_LEAD} You can leave this page; the numbers here refresh when everything finishes.`
+              : "Scoring your library under the new policy. You can leave this page; it keeps running, and the numbers here refresh when it finishes."}
+          </p>
+          <p className="muted">
+            {detail || "Working"}, {percent}%
+          </p>
+          {/* Same sweep as ScanBar's and the deletion path's (#177, rule 72). The visible
+              detail line above already says the phase and the percent, so `aria-valuetext`
+              would only repeat it. */}
+          <div
+            className="bar"
+            role="progressbar"
+            aria-label={RESCAN_HEADING}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+          >
+            <div className="bar-fill" style={{ width: `${percent}%` }} />
+          </div>
+        </>
+      ) : (
+        <>
+          {/* States the condition, never who caused it. An upgrade that retires a gate moves
+              scoring_hash and evidence_hash the same way an edit does (engine/policy.py's
+              RETIRED_GATES), so this used to open "You changed what the scan reads" at an
+              operator who had changed nothing, on a page where a protection row had just
+              silently disappeared. True for a real edit and for an upgrade alike. */}
+          <p>
+            This policy doesn't match the last scan: a protection, a watch window, a keep tag, or a
+            season rule reads differently now. Scan to apply it.
+          </p>
+          <button
+            className="primary sm"
+            onClick={() => {
+              afterStart.arriving();
+              onScan();
+            }}
+            disabled={starting}
+          >
+            {starting ? "Starting…" : "Scan now"}
+          </button>
+        </>
+      )}
+      {startError && <Notice tone="error">The scan didn't start: {startError}</Notice>}
+    </div>
+  );
+}
+
+export function Outcome({
+  simulation,
+  threshold,
+  pace,
+}: {
+  simulation: Simulation;
+  threshold: number;
+  pace: ProfileSettings | null;
+}) {
+  // The saved policy's count is derivable: what this draft flags, minus what only this
+  // draft flags, plus what only the saved one flags.
+  const savedFlags =
+    simulation.condemned - simulation.newly_condemned + simulation.no_longer_condemned;
+  const moreExamples = simulation.newly_condemned - simulation.examples_newly_condemned.length;
+
+  return (
+    <div className="sim">
+      <div className="sim-headline">
+        <div>
+          <span className="sim-number">{count(simulation.condemned)}</span>
+          <span className="sim-unit">items would be removed</span>
+        </div>
+        <div>
+          <span className="sim-number">
+            {totalBytes(simulation.reclaimable_bytes, simulation.unknown_size_items)}
+          </span>
+          <span className="sim-unit">reclaimed</span>
+        </div>
+      </div>
+
+      <p className="sim-compare">
+        Your saved policy flags <strong>{count(savedFlags)}</strong>. This draft flags{" "}
+        <strong>{count(simulation.condemned)}</strong>.
+      </p>
+
+      <Histogram buckets={simulation.histogram} threshold={threshold} />
+      <p className="help">
+        Every title's score, 0 to 100. The line is your threshold. Red bars are past it.
+      </p>
+
+      {simulation.examples_newly_condemned.length > 0 && (
+        <>
+          <h3>New on the list</h3>
+          <ul className="sim-examples">
+            {simulation.examples_newly_condemned.map((e) => (
+              <li key={`${e.title}-${e.year ?? ""}`}>
+                <span>
+                  {e.title}
+                  {e.year !== null && <span className="muted"> ({e.year})</span>}
+                </span>
+                <span className="sim-example-score">{e.score}</span>
+              </li>
+            ))}
+            {moreExamples > 0 && (
+              <li className="muted">
+                …and {count(moreExamples)} more that your saved policy left alone
+              </li>
+            )}
+          </ul>
+        </>
+      )}
+
+      {simulation.protected_by.length > 0 && (
+        <>
+          <h3>Why titles were spared</h3>
+          <dl className="sim-delta">
+            {simulation.protected_by.map((g) => (
+              <div key={g.gate}>
+                <dt>{GATE_META[g.gate]?.label ?? titleCase(g.gate)}</dt>
+                <dd>{count(g.count)}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      )}
+
+      <dl className="sim-delta">
+        <div>
+          <dt>Newly condemned</dt>
+          <dd className={simulation.newly_condemned > 0 ? "danger" : ""}>
+            +{count(simulation.newly_condemned)}
+          </dd>
+        </div>
+        <div>
+          <dt>No longer condemned</dt>
+          <dd>−{count(simulation.no_longer_condemned)}</dd>
+        </div>
+        <div>
+          <dt>Spared by a protection</dt>
+          <dd>{count(simulation.protected)}</dd>
+        </div>
+        <div>
+          <dt>Not judged</dt>
+          <dd>{count(simulation.abstained)}</dd>
+        </div>
+      </dl>
+
+      {pace && (
+        <p className="help">
+          {/*
+            Grace is a NOTICE, not a gate: nothing on the deletion path reads the window
+            (services/grace.py), so "nothing is removed until it has waited out the
+            N-day grace period" promised a hold that does not exist. What grace does is
+            show a title as leaving for N days; what keeps it is a spare, a play, or the
+            fact that a person starts every run.
+          */}
+          {pace.caps_enabled ? (
+            <>
+              Your pace: at most {count(pace.max_items_per_run)} titles /{" "}
+              {bytes(pace.max_bytes_per_run)} per run, and a flagged title shows as leaving for{" "}
+              {pace.grace_days} days.
+            </>
+          ) : (
+            // Caps off: the executor skips the per-run and rolling checks, so there is no
+            // size limit to promise here (B-2). The countdown is unaffected by the switch.
+            <>
+              Your pace: no per-run limit until you turn limits back on. A flagged title shows as
+              leaving for {pace.grace_days} days.
+            </>
+          )}
+        </p>
+      )}
+
+      <p className="blurb">
+        The delta is the number that matters before saving: not the total, but what changes relative
+        to the list you have already reviewed.
+      </p>
+    </div>
+  );
+}

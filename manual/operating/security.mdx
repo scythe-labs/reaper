@@ -1,0 +1,108 @@
+---
+id: security
+title: Security
+description: What the API key can and cannot do, how credentials are stored, and the sharp edges.
+sidebar_position: 3
+---
+
+# Security
+
+What Reaper actually enforces, and where the edges are.
+
+## What an API key can do
+
+The instance API key lives in Settings, General. It is deliberately narrow, and narrower on
+writes than on reads.
+
+**It can never:**
+
+- Run a reap. The one route that deletes needs a signed-in browser.
+- Turn deletion on.
+- Read or change a stored credential, a service connection, or the Plex link.
+- Change the schedule, notifications, or any sign-in setting.
+- Download a backup, read the logs, or see who watched what.
+
+**It can:**
+
+- Read most of the app, including the review queue with real titles, sizes and verdicts.
+- Start a scan, build a plan, and dry-run it.
+- Edit the policy, and change the run limits and grace.
+
+<Callout tone="caution">
+  **A key can widen what gets condemned.** Editing the policy and the run caps is a write an API
+  key is allowed to make. It cannot spare a title or add one to the whitelist, so a leaked key
+  can point Reaper at more of your library while being unable to protect any of it. Treat the
+  key as a credential that changes what Reaper would delete, and rotate it in Settings, General
+  if you are unsure.
+</Callout>
+
+## What a reap requires
+
+Every one of these, together:
+
+<Steps>
+  <Step title="A signed-in browser session.">
+    An API key is refused on this route. So is a request without the app's own header, which a
+    page on another site cannot set.
+  </Step>
+  <Step title="Deletion armed on the host.">
+    A property of the machine, set in Policy, Deletion behind your admin password.
+  </Step>
+  <Step title="A phrase you type that matches the plan.">
+    Recomputed on the server against that exact set of files. A plan that changed underneath you
+    stops matching.
+  </Step>
+  <Step title="Every interlock, again, per file.">
+    Manifest re-check, the caps, the test file, the streaming veto, and the played-since-approval
+    check. See [How a delete is kept safe](/safety/how-a-delete-is-kept-safe).
+  </Step>
+</Steps>
+
+Underneath all of it, the connection Reaper's requests travel through refuses any change unless
+deletion is armed **and** the intent was written to a record first. A new feature travels that
+same road, so it inherits the refusal without asking.
+
+## Credentials at rest
+
+Every Sonarr, Radarr, Tautulli and Seerr key, the Plex token, the Discord webhook and Reaper's
+own API key are encrypted before they are stored.
+
+- The encryption key is stretched with scrypt and a per-install salt.
+- Key files are created readable only by their owner, from the instant they exist.
+- Unreadable key material stops the app from starting, rather than being regenerated over your
+  data.
+- The API reports whether a credential is set. It never returns the value.
+- Logs are scrubbed, including secrets hidden in a query string or a webhook URL.
+
+[The encryption key](/configuration/encryption-key) covers backup and rotation.
+
+## Sign-in
+
+- Sessions are random tokens, hashed before they are stored, so a copied database hands out no
+  live sessions.
+- A session lasts 30 days from sign-in. Using the app does not extend it.
+- Signing out revokes it. Changing your password evicts every other session.
+- Repeated failures back off, keyed on both the address and the account name. The same throttle
+  covers arming and a restore.
+
+## The sharp edges
+
+<Callout tone="caution">
+  **Reaper serves plain HTTP and sets no browser security headers.** No TLS, no content security
+  policy, no HSTS. Put it behind a reverse proxy you control.
+</Callout>
+
+- **The session cookie is only marked secure when Reaper can see that the connection is HTTPS.**
+  Terminating TLS at a proxy Reaper has not been told to trust leaves the cookie unmarked. Turn
+  on reverse proxy trust and list the proxy.
+- **Forwarded headers are ignored until you turn on reverse proxy trust.** Until then, every
+  client address in the log is your proxy.
+- **`REAPER_DESTRUCTIVE_ACTIONS_ENABLED=false` is not a permanent lock.** It seeds the first run.
+  Once the switch has been set in the app, the stored value wins.
+- **The backup download needs only a signed-in session.** It carries the database, and the key
+  that decrypts it unless you supply that key from the environment. Restoring one asks for your
+  password; downloading one does not.
+- **The API reference page can send real writes.** Signed in, its try-it-out button acts as you,
+  including rotating the API key and unlinking Plex.
+- **The app drops to an unprivileged user, unless you ask otherwise.** It starts as root only to
+  take ownership of its data folder. Setting `PUID=0` keeps it as root.

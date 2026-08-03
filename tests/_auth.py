@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from reaper.auth.passwords import hash_password
@@ -37,6 +38,24 @@ def seed_admin(settings: Settings) -> None:
             )
         )
         session.commit()
+    engine.dispose()
+
+
+def clear_admin_password(client: TestClient) -> None:
+    """Leave the signed-in session standing, but with no admin password behind it.
+
+    The state a Plex-only install is in: the owner claimed the server over OAuth and never set
+    one. Nulling the hash rather than deleting the row keeps the cookie valid, because resolving
+    a session never touches ``password_hash`` -- so this isolates "no password set" from "not
+    signed in", which are different refusals and only one of them is what these tests are about.
+
+    Shared because three routes refuse on it and each was tested from its own copy of this
+    (rule 119): arming deletion, confirming a restore, and forgetting the watch record.
+    """
+    settings: Settings = client.app.state.settings  # type: ignore[attr-defined]
+    engine = sa_create_engine(settings.sync_database_url)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE app_user SET password_hash = NULL"))
     engine.dispose()
 
 

@@ -5,31 +5,33 @@ build-backend = "hatchling.build"
 [project]
 name = "reaper"
 version = "0.1.0"
-description = "Explainable media library pruning for Plex, Sonarr, Radarr, Seerr and Tautulli"
+description = "Grave decisions, clearly explained. Media library pruning for Plex, Sonarr, Radarr, Seerr and Tautulli"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.13"
 authors = [{ name = "Scythe Labs" }]
 
-# Version floors are the exact releases verified on PyPI on 2026-07-14.
+# Version floors are the exact releases verified on PyPI on 2026-07-23.
 dependencies = [
     # Web
-    "fastapi>=0.139.0",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
+    "fastapi>=0.139.2",          # >=0.138 for app.frontend(), >=0.135 for fastapi.sse
     "starlette>=1.3.1,<2.0.0",   # PIN: 1.0 removed on_startup/on_shutdown; FastAPI declares no upper bound
     "uvicorn[standard]>=0.51.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.1.0",      # imported directly (config.load_raw_env), not only transitively
     # Persistence
-    "sqlalchemy>=2.0.51",        # plain SQLAlchemy, NOT SQLModel (see docs/decisions.md)
+    "sqlalchemy>=2.0.51",        # plain SQLAlchemy, NOT SQLModel (see docs/STATUS.md)
     "alembic>=1.18.5",
     "aiosqlite>=0.22.1",
-    "greenlet>=3.5.3",
+    "greenlet>=3.5.4",
     # Integrations
-    "httpx>=0.28.1",
+    "httpx2>=2.9.0",
     "plexapi>=4.18.2",
     "tenacity>=9.1.4",
     # Scheduling — 3.x, NOT 4.x (still alpha: 4.0.0a6, 14 months stale)
     "apscheduler>=3.11.3,<4.0.0",
+    "tzlocal>=5.0",              # imported directly (app_settings host-zone detection), not only via apscheduler
     # Secrets & auth
     "cryptography>=49.0.0",      # Fernet, for API keys at rest
     "pwdlib[argon2]>=0.3.0",     # NOT passlib (dead since 2020-10-08)
@@ -39,20 +41,34 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only the binary builds (.github/workflows/binaries.yml) install this group; it rides
+# uv.lock so the bundler is as pinned as everything it bundles (rule 15).
+package = [
+    "pyinstaller>=6.16.0",
+    "pillow>=11.0.0",   # lets PyInstaller cut .ico/.icns from the one committed PNG
+    "pystray>=0.19.5",  # the menu-bar/tray icon the desktop builds keep while serving
+]
 dev = [
-    "ruff>=0.15.21",
+    "ruff>=0.15.22",
     "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "respx>=0.23.1",             # httpx mocking
-    "hypothesis>=6.156.6",       # property tests for the scoring invariants
+    "httpx>=0.28.1",             # dev-only: no production import remains; respx speaks httpx only, not httpx2
+    "respx>=0.23.1",             # httpx mocking (respx speaks httpx only, not httpx2)
+    "hypothesis>=6.161.0",       # property tests for the scoring invariants
+    "pytest-xdist>=3.8.0",
+    "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/history/PLAN-narrative.md httpx2 scope)
+    "pyyaml>=6.0.3",             # imported directly (test_repo_hygiene reads the CI config), not only via uvicorn[standard]
 ]
 
 [project.scripts]
 # The out-of-band escape hatch. Run inside the container:
 #   docker exec -it reaper reaper-admin reset-password --username admin
 reaper-admin = "reaper.cli:main"
+# What a packaged install runs: data dir, preflight, migrations, then the server.
+# The PyInstaller binaries and the snap both enter here; see src/reaper/launcher.py.
+reaper-server = "reaper.launcher:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reaper"]
@@ -95,7 +111,11 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S105", "S106", "S107"]   # hardcoded fake secrets in fixtures
+"tests/*" = ["S105", "S106", "S107", "S311"]   # fake secrets in fixtures; seeded rng in generators
+"scripts/*" = ["S311", "T201"]                 # dev tools: seeded rng, console output
+# A console entry point talks to its operator via print, and its bind-all default is
+# the same one the container CMD ships.
+"src/reaper/launcher.py" = ["T201", "S104"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["reaper"]
@@ -112,7 +132,10 @@ disallow_any_explicit = false
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["plexapi.*", "apscheduler.*"]
+# pystray, PIL, and AppKit ship only in the `package` extra (the desktop builds), so
+# the dev environment mypy runs in never has them; the launcher imports all three
+# behind guards.
+module = ["plexapi.*", "apscheduler.*", "pystray.*", "PIL.*", "AppKit"]
 ignore_missing_imports = true
 
 # ----------------------------------------------------------------------------
@@ -121,9 +144,13 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--strict-markers --strict-config"
+addopts = "--strict-markers --strict-config -m 'not live'"
 markers = [
     "live: talks to a real instance; requires .env.local. Deselected by default.",
+    # pytest-httpx2 registers this in its own pytest_configure, but exposes only the
+    # fixture (not the hook) from its package __init__, so under --strict-markers we must
+    # declare it here. Configures the httpx2_mock fixture (assert_all_called, base_url, ...).
+    "httpx2: configure the httpx2_mock fixture (see pytest-httpx2).",
 ]
 
 [tool.coverage.run]
