@@ -29,6 +29,7 @@ from reaper.auth.recovery import (
     recovery_file_path,
     redeem_recovery_token,
 )
+from reaper.auth.sessions import session_via_recovery
 from reaper.auth.tokens import generate_token, hash_token
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -303,6 +304,13 @@ class TestTheRecoveryCodeReachesADesktopOperator:
         assert not path.exists()
         clear_recovery_file(tmp_path)  # nothing there is not an error
         assert not path.exists()
+
+    async def test_no_cookie_reads_as_an_ordinary_session(self, session: AsyncSession) -> None:
+        """The fail-closed default, which every other test reaches past by holding a real
+        token. Flipped to True it would excuse the current password for anyone the server
+        could not identify, and nothing else in the suite would have gone red."""
+        assert await session_via_recovery(session, None) is False
+        assert await session_via_recovery(session, generate_token()) is False
 
     def test_clearing_takes_the_half_written_sibling_too(self, tmp_path: Path) -> None:
         """A kill between the O_EXCL open and the rename strands a `.tmp` holding a live
