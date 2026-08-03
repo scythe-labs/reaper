@@ -35,6 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 
+from reaper import logbuffer
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -825,3 +826,63 @@ class TestOverrideViewsInResponses:
         assert movie["override"] == "spare"
         assert movie["override_own"] == "spare"  # no show to inherit from
         assert movie["show_override"] is None
+
+
+class TestAHandDecisionLeavesARecord:
+    """The operator's own overrides were the one action in the app that logged nothing.
+
+    Setting one at least leaves a `WhitelistEntry` row. **Clearing one deletes that row**
+    and wipes the grace clock in the same call, so after an un-spare nothing anywhere
+    recorded that the spare had ever existed -- and "this was spared and Reaper deleted
+    it" had no answer at all. `prior` is what makes the line a transition rather than a
+    snapshot: without it, a spare flipped to reap reads identically to a fresh reap.
+
+    Read off the real ring rather than ``capture_logs``: ``create_app`` turns structlog's
+    logger caching on, which permanently deafens a route's module logger to any later
+    capture (``conftest._capturable_logs`` explains the mechanism). The ring is also the
+    stronger proof -- it is what the operator downloads.
+    """
+
+    @staticmethod
+    def _overrides() -> list[str]:
+        return [line.text for line in logbuffer.RING.since(0) if "whitelist.override" in line.text]
+
+    def test_setting_one_records_the_decision(self, client: TestClient) -> None:
+        before = len(self._overrides())
+        client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "reap"})
+
+        new = self._overrides()[before:]
+        assert len(new) == 1
+        assert "media_key=radarr:1:22" in new[0]
+        assert "decision=reap" in new[0]
+        assert "prior=None" in new[0]
+
+    def test_clearing_one_records_what_it_used_to_be(self, client: TestClient) -> None:
+        """The row is gone after this, so the log is the only surviving record."""
+        client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
+        before = len(self._overrides())
+        cleared = client.delete("/api/override/radarr:1:22")
+        assert cleared.json() == {"removed": True}, cleared.text
+
+        new = self._overrides()[before:]
+        assert len(new) == 1
+        assert "decision=cleared" in new[0]
+        assert "prior=spare" in new[0]
+
+    def test_flipping_a_spare_to_a_reap_records_both_ends(self, client: TestClient) -> None:
+        client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
+        before = len(self._overrides())
+        client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "reap"})
+
+        new = self._overrides()[before:]
+        assert len(new) == 1
+        assert "prior=spare" in new[0]
+        assert "decision=reap" in new[0]
+
+    def test_clearing_nothing_says_nothing(self, client: TestClient) -> None:
+        """No override to remove is not a decision, and a line for it would read as one."""
+        before = len(self._overrides())
+        response = client.delete("/api/override/radarr:1:99")
+
+        assert response.json() == {"removed": False}
+        assert self._overrides()[before:] == []

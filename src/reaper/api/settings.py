@@ -34,7 +34,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper import launcher
 from reaper.api import tags as api_tags
-from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin_password
+from reaper.api.auth import (
+    _busy_hashing,
+    _client_ip,
+    _throttled,
+    _verify_admin_password,
+    record_password_failure,
+)
 from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
@@ -1282,8 +1288,7 @@ async def reset_watch_evidence(
         _throttled(password_throttle, *keys)
         ok = await _verify_admin_password(session, payload.password or "")
         if not ok:
-            for key in keys:
-                password_throttle.record_failure(key)
+            record_password_failure(password_throttle, keys, gate="forget_watch_record")
             raise HTTPException(403, "That password didn't match. The record was kept.")
         for key in keys:
             password_throttle.record_success(key)
@@ -1591,8 +1596,7 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
             _throttled(password_throttle, *keys)
             ok = await _verify_admin_password(session, payload.password or "")
             if not ok:
-                for key in keys:
-                    password_throttle.record_failure(key)
+                record_password_failure(password_throttle, keys, gate="arm_deletion")
                 raise HTTPException(403, "That password didn't match. Deletion stays off.")
             for key in keys:
                 password_throttle.record_success(key)
@@ -1636,8 +1640,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
             _throttled(password_throttle, *keys)
             ok = await _verify_admin_password(session, payload.current_password or "")
             if not ok:
-                for key in keys:
-                    password_throttle.record_failure(key)
+                record_password_failure(password_throttle, keys, gate="change_password")
                 raise HTTPException(403, "The current password didn't match. Nothing was changed.")
             for key in keys:
                 password_throttle.record_success(key)

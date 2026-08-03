@@ -9,6 +9,13 @@ two sinks, no drift between what the user was shown and what actually happened.
 Credentials must never reach a log. ``redact_secrets`` is a processor rather
 than a convention because MDBList only accepts its key as a *query parameter*,
 so a logged URL is a logged credential.
+
+**A ``log.debug(...)`` call evaluates its arguments even when the level is INFO.**
+The wrapper class passes everything through and `_drop_below_level` decides per event,
+which is what makes the operator's Settings choice apply instantly -- and it means the
+argument list has already been built by the time anything can drop it. Free for a line
+made of locals already in hand, which is nearly all of them. Worth a thought before
+making a debug line's arguments out of a sort, a join, or a walk over the library.
 """
 
 from __future__ import annotations

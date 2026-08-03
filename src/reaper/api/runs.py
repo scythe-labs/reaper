@@ -538,7 +538,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 for client in closers:
                     await closing.enter_async_context(client)
             raise HTTPException(409, preflight)
-    except Exception:
+    except Exception as exc:
         # ANY synchronous failure before the task is created releases the slot -- not only an
         # HTTPException refusal, but a crypto/DB error out of build_reap_gateway or a session
         # read. Catching only HTTPException here would leave ``running`` stuck True with no
@@ -547,6 +547,20 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         status.running = False
         status.phase = "idle"
         status.run_id = None
+        # Every synchronous refusal, in the one place they all pass through. This route is the
+        # only one that deletes, and its first line was `reap.started` -- emitted after every
+        # interlock has already passed, so "I typed the phrase, pressed Reap, and nothing
+        # happened" left no record anywhere: the browser showed a message the operator has
+        # since dismissed and the server kept none of it. The status and detail together name
+        # which interlock refused, because they are exactly what the operator was shown.
+        #
+        # INFO rather than DEBUG: nobody gets to reproduce this one with the level turned up,
+        # because the state that refused it -- a run someone else started, a plan built under
+        # a policy since edited -- has moved on by the time they try.
+        if isinstance(exc, HTTPException):
+            log.info("reap.refused", run_id=run_id, status=exc.status_code, detail=exc.detail)
+        else:
+            log.warning("reap.refused", run_id=run_id, error=str(exc))
         raise
 
     async def _armed_now() -> bool:

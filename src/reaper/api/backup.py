@@ -35,7 +35,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
 from reaper.api import tags as api_tags
-from reaper.api.auth import _client_ip, _throttled, _verify_admin_password
+from reaper.api.auth import (
+    _client_ip,
+    _throttled,
+    _verify_admin_password,
+    record_password_failure,
+)
 from reaper.api.runs import reap_in_flight
 from reaper.auth.ratelimit import password_throttle
 from reaper.buildinfo import build_version
@@ -251,8 +256,7 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[s
         _throttled(password_throttle, *keys)
         ok = await _verify_admin_password(session, payload.password or "")
         if not ok:
-            for key in keys:
-                password_throttle.record_failure(key)
+            record_password_failure(password_throttle, keys, gate="restore")
             raise HTTPException(403, "That password didn't match. Nothing was restored.")
         for key in keys:
             password_throttle.record_success(key)

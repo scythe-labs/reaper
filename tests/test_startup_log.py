@@ -11,6 +11,7 @@ boot claiming it is armed.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import insert
 
+from reaper import buildinfo
+from reaper.buildinfo import install_kind
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -36,6 +39,9 @@ class _RecordingLogger:
     def __init__(self) -> None:
         self.events: list[tuple[str, str, dict[str, object]]] = []
 
+    def debug(self, event: str, **kw: object) -> None:
+        self.events.append(("debug", event, kw))
+
     def info(self, event: str, **kw: object) -> None:
         self.events.append(("info", event, kw))
 
@@ -46,21 +52,27 @@ class _RecordingLogger:
         return [event for _level, event, _kw in self.events]
 
 
-def _make(tmp_path: Path, *, stored_destructive: bool | None) -> Settings:
+def _make(
+    tmp_path: Path, *, stored_destructive: bool | None, stored_log_level: str | None = None
+) -> Settings:
     """A schema-initialized install; optionally with the deletion toggle already stored,
     the way a real install looks after someone armed it in the web UI."""
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    stored: dict[str, object] = {}
     if stored_destructive is not None:
+        stored["destructive_enabled"] = stored_destructive
+    if stored_log_level is not None:
+        stored["log_level"] = stored_log_level
+    if stored:
         with engine.begin() as conn:
-            conn.execute(
-                insert(AppSetting).values(
-                    key="destructive_enabled",
-                    value_json=json.dumps(stored_destructive),
-                    updated_at=utcnow(),
+            for key, value in stored.items():
+                conn.execute(
+                    insert(AppSetting).values(
+                        key=key, value_json=json.dumps(value), updated_at=utcnow()
+                    )
                 )
-            )
     engine.dispose()
     return settings
 
@@ -123,3 +135,111 @@ class TestStartupBanner:
 
         assert "reaper.safe_mode" in recorder.names()
         assert "reaper.armed" not in recorder.names()
+
+
+class TestTheInstallFingerprint:
+    """Which of the four shipped shapes is running.
+
+    Support reads this before anything else, because the four keep their data in four
+    places and take their configuration by four routes. Each branch is driven through
+    the signal only that shape sets, and the source-checkout case is driven with every
+    signal absent -- an unrecognized install must report the shape with the fewest
+    promises attached rather than guess at a fifth (rule 145: every branch, not only
+    the one the default state hands you).
+    """
+
+    def test_a_frozen_bundle_is_a_desktop_build(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+        monkeypatch.setenv("REAPER_HOME", "/snap/reaper/current")  # frozen still wins
+        assert install_kind() == "desktop"
+
+    def test_reaper_home_alone_is_the_snap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+        monkeypatch.setenv("REAPER_HOME", "/snap/reaper/current")
+        assert install_kind() == "snap"
+
+    @pytest.mark.parametrize("marker", ["/.dockerenv", "/run/.containerenv"])
+    def test_either_runtime_marker_is_a_container(
+        self, monkeypatch: pytest.MonkeyPatch, marker: str
+    ) -> None:
+        """Docker plants the first, Podman the second."""
+        monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+        monkeypatch.delenv("REAPER_HOME", raising=False)
+        monkeypatch.setattr(
+            buildinfo.Path, "exists", lambda self: str(self) == marker, raising=False
+        )
+        assert install_kind() == "container"
+
+    def test_no_signal_at_all_is_a_source_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+        monkeypatch.delenv("REAPER_HOME", raising=False)
+        monkeypatch.setattr(buildinfo.Path, "exists", lambda self: False, raising=False)
+        assert install_kind() == "source"
+
+
+class TestTheBootBannerDescribesTheInstall:
+    def test_it_names_the_shape_the_paths_and_where_the_level_came_from(
+        self, tmp_path: Path, recorder: _RecordingLogger
+    ) -> None:
+        """ "It doesn't work on my server" starts here. ``log_level_from`` is the field
+        that unblocks every other session: a stored level silently outranks
+        REAPER_LOG_LEVEL, so "I set DEBUG in compose and restarted" can do nothing at
+        all with no way to tell."""
+        settings = _make(tmp_path, stored_destructive=None)
+
+        with TestClient(create_app(settings)):
+            pass
+
+        install = next(kw for _l, event, kw in recorder.events if event == "reaper.install")
+        assert install["install"] in {"container", "snap", "desktop", "source"}
+        assert install["data_dir"] == str(tmp_path)
+        assert install["log_level_from"] == "environment"
+        assert install["python"] and install["platform"]
+
+        started = next(kw for _l, event, kw in recorder.events if event == "reaper.started")
+        assert started["channel"] in {"release", "dev"}
+
+    def test_a_stored_level_says_it_outranked_the_environment(
+        self, tmp_path: Path, recorder: _RecordingLogger
+    ) -> None:
+        settings = _make(tmp_path, stored_destructive=None, stored_log_level="WARNING")
+
+        with TestClient(create_app(settings)):
+            pass
+
+        install = next(kw for _l, event, kw in recorder.events if event == "reaper.install")
+        assert install["log_level_from"] == "settings"
+        assert install["log_level"] == "WARNING"
+
+    def test_the_database_reports_its_revision_and_journal_mode(
+        self, tmp_path: Path, recorder: _RecordingLogger
+    ) -> None:
+        """WAL is asked for and not always granted: a database on a network share stays
+        on the rollback journal, which is every "database is locked" report."""
+        settings = _make(tmp_path, stored_destructive=None)
+
+        with TestClient(create_app(settings)):
+            pass
+
+        db = next(kw for _l, event, kw in recorder.events if event == "db.ready")
+        assert db["journal_mode"] == "wal"
+        assert db["cache_journal_mode"] == "wal"
+        # Built from the models rather than migrated, so it carries no revision row.
+        assert db["revision"] is None
+
+    def test_every_registered_job_is_named_with_its_next_firing(
+        self, tmp_path: Path, recorder: _RecordingLogger
+    ) -> None:
+        """ "Why did my nightly scan stop" -- a job that was never scheduled and one whose
+        stored cron was skipped as malformed are otherwise indistinguishable."""
+        settings = _make(tmp_path, stored_destructive=None)
+
+        with TestClient(create_app(settings)):
+            pass
+
+        jobs = [kw for _l, event, kw in recorder.events if event == "scheduler.job"]
+        assert jobs, "the built-in upkeep jobs must each announce themselves"
+        assert all(job["job"] and job["trigger"] for job in jobs)
+        assert "scheduler.no_scan_scheduled" in recorder.names()

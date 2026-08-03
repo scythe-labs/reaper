@@ -16,6 +16,7 @@ import httpx
 import httpx2
 import pytest
 import respx
+from structlog.testing import capture_logs
 
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
@@ -424,3 +425,81 @@ class TestReachableProbeIsRetryable:
 
         with pytest.raises(PlexLinkRetryableError):
             await reachable_connection(resource, "tok")
+
+
+class TestEveryOutboundCallIsTraced:
+    """One DEBUG line per call, and it never carries a credential.
+
+    Nothing else records that Reaper made a request: the HTTP libraries are pinned to
+    WARNING because they log the URL verbatim (``logging._NOISY_LOGGERS``), so this is
+    the only trace there can be -- and the reason those libraries are quiet is exactly
+    the reason this line must not grow a URL, a query string, or a header.
+    """
+
+    @staticmethod
+    def _calls(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [entry for entry in logs if entry["event"] == "client.call"]
+
+    async def test_a_read_reports_service_status_and_shape(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
+            return_value=httpx.Response(200, json={"version": "6.0.0"})
+        )
+        with capture_logs() as logs:
+            async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+                await client.system_status()
+
+        (call,) = self._calls(logs)
+        assert call["log_level"] == "debug"
+        assert call["service"] == "radarr"
+        assert call["method"] == "GET"
+        assert call["path"] == "/api/v3/system/status"
+        assert call["status"] == 200
+        assert call["mutation"] is False
+        assert isinstance(call["duration_ms"], int)
+
+    async def test_a_call_that_never_answered_reports_no_status(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The shape a scan stuck on one service takes: an ask with no answer beside it."""
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
+            side_effect=httpx2.ConnectTimeout("nope")
+        )
+        with capture_logs() as logs:
+            async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+                with pytest.raises(IntegrationError):
+                    await client.system_status()
+
+        assert self._calls(logs)[-1]["status"] is None
+
+    async def test_a_mutation_is_marked_as_one(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.delete(host="radarr.test", path="/api/v3/movie/5").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        with capture_logs() as logs:
+            async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+                await client.delete_movie(5, delete_files=True, add_exclusion=True)
+
+        assert self._calls(logs)[-1]["mutation"] is True
+
+    async def test_the_trace_never_carries_a_query_string_or_a_header(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """Tautulli takes its key as a query parameter, so a trace that logged params --
+        or the resolved URL rather than the path argument -- would write the credential
+        into the ring and the 0600 file in the clear (rule 13). The scrubber would catch
+        this particular spelling; not logging it is the stronger guarantee, so the
+        assertion is on the whole rendered line and not on the key alone.
+        """
+        httpx2_mock.get(host="tautulli.test", path="/api/v2").mock(
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": []}})
+        )
+        with capture_logs() as logs:
+            async with TautulliClient(
+                "https://tautulli.test", "SUPERSECRET", safety=READ_ONLY
+            ) as client:
+                await client.users()
+
+        (call,) = self._calls(logs)
+        assert "SUPERSECRET" not in repr(call)
+        assert "apikey" not in repr(call)
+        assert call["path"] == "/api/v2"
