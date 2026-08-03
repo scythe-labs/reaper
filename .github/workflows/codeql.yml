@@ -67,6 +67,12 @@ jobs:
       # Writing the SARIF back is the whole job. It is scoped here rather than at the top of the
       # file so nothing else in this workflow ever holds it.
       security-events: write
+      #
+      # GitHub's generated template also asks for `packages: read` and `actions: read`, and its
+      # own comments say what each is conditional on: fetching private CodeQL packs, and
+      # workflows in private repositories. This repository is public and uses no packs, so
+      # neither condition holds and carrying them would widen the token for nothing. Add the
+      # one that applies if either fact ever changes.
     strategy:
       # One language failing must not cancel the analysis of the others, or a transient error in
       # the smallest extractor takes the coverage of the largest with it.
@@ -97,6 +103,13 @@ jobs:
       - uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           languages: ${{ matrix.language }}
+          # Stated rather than left to the default, because it is only correct while every
+          # language in the matrix is uncompiled. GitHub's template pairs a build-mode with each
+          # language through a matrix `include:` for exactly that reason; one literal is
+          # honest here and cheaper to read, and adding a compiled language fails
+          # `test_the_codeql_analysis_still_covers_every_tree`, which is what sends whoever does
+          # it back to this line.
+          build-mode: none
 
       # `category` keeps each language's results in their own lane. Without it the second upload
       # is read as a replacement for the first, and the tree that finished earliest is the one
