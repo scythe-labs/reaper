@@ -33,7 +33,10 @@ Three further facts, all measured:
   above 10** -- including Rotten Tomatoes values that Plex's own UI displays as
   percentages. Radarr hands the very same score through raw (``96``). The same
   number therefore needs opposite handling depending on who delivered it, so
-  normalization happens per provider, never per field name.
+  normalization happens per provider, never per field name. Re-measured by source
+  on 2026-08-03: that sweep ran ~78% IMDb and ~22% TMDb, with under 0.1% Rotten
+  Tomatoes and no Metacritic at all, so it evidences the 0-10 contract but says
+  little about a *percentage* source specifically (see ``from_plex`` and #244).
 """
 
 from __future__ import annotations
@@ -245,9 +248,10 @@ def from_plex(
     # keeps a display projection with no provenance and no raw value. Until then neither
     # answer is pinned by a test, because a test asserting either would read as a proof that
     # it is correct (rule 118). What IS measured, in docs/LEARNINGS.md: a live sweep of every
-    # movie and show section found thousands of values under imdb://, themoviedb:// and
-    # rottentomatoes:// images with not one above 10 -- so on that server this branch never
-    # fires at all, and the ambiguous band is unreached rather than resolved.
+    # movie and show section found thousands of values with not one above 10 -- but under 0.1%
+    # of them carried a percentage source at all, and none carried Metacritic. So that sweep
+    # leaves this branch unreached rather than unnecessary, and settling it needs a server
+    # running the Rotten Tomatoes or Metacritic agent.
     if number > 10 and source in _PERCENTAGE_SOURCES:
         number /= 10.0
     if not 0.0 <= number <= 10.0:

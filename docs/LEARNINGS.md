@@ -1096,6 +1096,16 @@ that Plex's own UI renders as percentages. Radarr hands the very same Rotten
 Tomatoes / Metacritic scores through as raw percentages (`96`), while its
 IMDb/TMDb/Trakt values are 0-10 averages.
 
+**The Rotten Tomatoes half of that sweep is thin, and #244 turns on exactly it.**
+Re-measured 2026-08-03 with the values tallied by source: the listing slots ran ~78%
+IMDb, ~22% TMDb, **under 0.1% Rotten Tomatoes and zero Metacritic** — a handful of
+readings, not a distribution. So the 0-10 contract is measured; that a *percentage*
+source never exceeds it is not. The same sweep found the `rating` slot all but unused
+(effectively every item carried `audienceRating`, one carried `rating`), which makes the
+Tomatometer the least sampled path of the three. Reading the empty `(10, 15]` band as
+proof the rescale is unnecessary would be reading an absent population as a negative
+result.
+
 ⇒ **Normalize per provider, never per source.** "Divide any Rotten Tomatoes value by
 ten" is exactly right for Radarr and silently turned Plex's 84% into 0.84 — which the
 review view would have displayed as 8%.
