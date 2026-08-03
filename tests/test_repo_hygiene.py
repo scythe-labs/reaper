@@ -1533,6 +1533,24 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
     )
 
 
+def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
+    """A hand dispatch of binaries.yml on a branch may build and boot-probe, never publish.
+
+    The Decide step's publish output feeds three channels at once — the dev-build
+    prerelease, the snap edge channel, and the ghcr :dev arm64 fold — and the workflow's
+    own header recommends dispatching against a branch to prove a packaging change.
+    Without the ref gate, ticking the publish input on that dispatch replaces all three
+    with unmerged branch code described as dev until the next nightly. The gate is one
+    line of shell the header's promise depends on (rule 7/24), so its presence is pinned.
+    """
+    text = (REPO / ".github" / "workflows" / "binaries.yml").read_text(encoding="utf-8")
+    assert '"${GITHUB_REF}" != "refs/heads/dev"' in text, (
+        "binaries.yml's Decide step no longer refuses to publish from a non-dev ref:\n"
+        "a branch dispatch with publish ticked would replace the dev-build prerelease,\n"
+        "the snap edge channel, and the ghcr :dev image with unmerged branch code."
+    )
+
+
 # --- the docs discipline -----------------------------------------------------------------
 #
 # These check the STRUCTURE of docs/, never the truth of a sentence. CI can prove that an

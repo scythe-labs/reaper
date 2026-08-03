@@ -10,7 +10,10 @@ name: Binaries
 #                      prerelease so dev users have something to download.
 #   workflow_dispatch  the same, on demand; refreshing the prerelease is opt-in.
 #                      Run it against a branch to prove a packaging change before
-#                      merge: `gh workflow run binaries.yml --ref <branch>`.
+#                      merge: `gh workflow run binaries.yml --ref <branch>`. A run
+#                      on any ref but dev builds and probes but never publishes:
+#                      the dev-build prerelease, the snap's edge channel, and the
+#                      ghcr :dev image only ever hold dev.
 #   workflow_call      release.yml passes the CalVer. Artifacts are uploaded for the
 #                      caller to attach; nothing publishes from here.
 #
@@ -99,6 +102,13 @@ jobs:
                 build=false; publish=false
                 echo "dev has not moved since the last dev build; nothing to do"
               fi
+            fi
+            if [ "${publish}" = "true" ] && [ "${GITHUB_REF}" != "refs/heads/dev" ]; then
+              # This one gate covers every consumer of the publish output: the
+              # dev-build prerelease, the snap edge channel, and the ghcr :dev
+              # arm64 fold. A branch dispatch still builds and boot-probes.
+              publish=false
+              echo "publish requested from ${GITHUB_REF}; dev-build only ever holds dev, building without publishing"
             fi
           fi
 
