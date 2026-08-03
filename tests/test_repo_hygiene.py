@@ -1220,6 +1220,72 @@ def test_the_unraid_profile_is_shaped_the_way_the_submission_scanner_reads_it() 
     )
 
 
+# The Unraid container template offers its two channels as <Branch> entries, which Community
+# Applications renders as a dropdown and substitutes into <Repository>. Two things about that
+# arrangement break quietly, so both are pinned here.
+_UNRAID_TEMPLATES = REPO / "contrib" / "unraid"
+_RETENTION = REPO / ".github" / "workflows" / "registry-retention.yml"
+# One entry, not one per channel: a second template file is the split this replaced coming back.
+_UNRAID_TEMPLATE_COUNT = 1
+
+
+def test_the_unraid_template_offers_its_channels_without_breaking_the_image_name() -> None:
+    """A tag on ``<Repository>`` survives branch substitution and lands as ``:latest:dev``.
+
+    Community Applications composes the pulled image from ``<Repository>`` plus the selected
+    ``<Branch>``'s ``<Tag>``, and dockerMan appends ``:latest`` itself when a repository carries
+    no tag (``if (!strpos($Repository,":")) $Repository .= ":latest";``). So bare is correct on
+    both install routes, and tagged is wrong on the one nobody tests by hand.
+
+    The branch tags are checked against the registry retention job rather than a literal list
+    here: everything outside its protected set is swept after a week, so offering a tag from
+    outside it hands the operator a channel whose image stops resolving (rule 25).
+    """
+    templates = sorted(_UNRAID_TEMPLATES.glob("*.xml"))
+    assert len(templates) == _UNRAID_TEMPLATE_COUNT, (
+        f"expected {_UNRAID_TEMPLATE_COUNT} Unraid template in contrib/unraid, found "
+        f"{[p.name for p in templates]}. The channels are <Branch> entries in the one "
+        "template, so a second file is a second store listing for the same app."
+    )
+    root = ET.parse(templates[0]).getroot()  # noqa: S314 - a committed file, not input
+    repository = (root.findtext("Repository") or "").strip()
+    assert repository, f"{templates[0].name} needs a <Repository>"
+
+    branches = root.findall("Branch")
+    assert branches, (
+        f"{templates[0].name} declares no <Branch>, so the install page offers no channel "
+        "choice. Either restore them or drop this guard with the feature."
+    )
+    tags = [(b.findtext("Tag") or "").strip() for b in branches]
+    assert all(tags), f"{templates[0].name} has a <Branch> with an empty <Tag>: {tags}"
+    assert len(set(tags)) == len(tags), f"{templates[0].name} declares a tag twice: {tags}"
+    for branch, tag in zip(branches, tags, strict=True):
+        assert (branch.findtext("TagDescription") or "").strip(), (
+            f"the {tag} branch has no <TagDescription>, so its dropdown row is blank"
+        )
+
+    # The image path may hold a registry port (`host:5000/org/app`), so the tag is whatever
+    # follows a colon in the LAST path segment.
+    assert ":" not in repository.rsplit("/", 1)[-1], (
+        f"{templates[0].name} pins a tag in <Repository> ({repository}) while declaring "
+        f"branches {tags}. Community Applications appends the selected branch to it, so the "
+        "pull becomes a two-tag image name that resolves to nothing. Write it bare."
+    )
+
+    protected = _RETENTION.read_text(encoding="utf-8")
+    match = re.search(r"protected_tags\s*=\s*\{([^}]*)\}", protected)
+    assert match, (
+        f"{_RETENTION.name} no longer spells its keep set as `protected_tags = {{...}}`; this "
+        "guard reads that line to know which tags outlive a week."
+    )
+    kept = set(re.findall(r'"([^"]+)"', match.group(1)))
+    assert set(tags) <= kept, (
+        f"the template offers {sorted(set(tags) - kept)}, which {_RETENTION.name} does not "
+        f"protect (it keeps {sorted(kept)}). That tag is deleted a week after it is pushed, so "
+        "the channel breaks on the next pull that finds no cached layers."
+    )
+
+
 @pytest.mark.parametrize("path", INSTRUCTION_FILES, ids=lambda p: p.name)
 def test_scoped_rule_files_declare_their_paths(path: Path) -> None:
     """Every file under ``.claude/rules/`` carries ``paths:`` frontmatter.
