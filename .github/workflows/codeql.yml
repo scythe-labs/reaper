@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# CodeQL, moved out of the web UI and into the repository.
+#
+# This scans exactly what default setup scanned, with exactly the query suite it used. Nothing
+# here changes a finding; the change is where the configuration lives. Every other control in
+# this repository is versioned, reviewed in a diff and held by a test: actions are sha-pinned,
+# base images digest-pinned, `.github/dependabot.yml` says in prose why a pin moves, and
+# `tests/test_repo_hygiene.py` fails when one of those facts drifts. Code scanning was the one
+# exception, configured in a settings page that no pull request passes through.
+#
+# The failure that buys: someone deselects `python` in that page and the backend of an
+# application that deletes an operator's files stops being analyzed. No diff, no red test, no
+# notice, and nothing to review months later when the question is when coverage was lost.
+# Deleting a line here is at least visible. `test_the_codeql_analysis_still_covers_every_tree`
+# is what makes it fail as well.
+#
+# **Default setup must be disabled before this can work.** GitHub rejects a CodeQL SARIF upload
+# while default setup is enabled, so the analyze step below fails until Security → Code scanning
+# → CodeQL analysis → Disable CodeQL is done. The two cannot run side by side, deliberately: the
+# alternative is one finding raised twice by two systems.
+name: CodeQL
+
+on:
+  push:
+    branches: [dev]
+    # `ci.yml`'s `changes` job classifies these same three globs as prose (its `docs/*|.claude/*|
+    # *.md` case), and prose contains nothing any of the three extractors reads. GitHub skips the
+    # workflow only when EVERY changed path matches, so a commit touching one line of code still
+    # runs the full analysis.
+    #
+    # **Safe only while CodeQL is not a required check**, and it is not: the ruleset on `dev`
+    # requires `CI gate` and `Conventional Commit title` alone. A skipped workflow publishes no
+    # check run at all, so making this one required without also deleting these two lists would
+    # strand every prose-only pull request on a check that can never arrive. That is the hazard
+    # `CI gate` exists to absorb for `ci.yml`, reached here by a different route.
+    paths-ignore:
+      - "docs/**"
+      - ".claude/**"
+      - "**/*.md"
+  pull_request:
+    branches: [dev]
+    paths-ignore:
+      - "docs/**"
+      - ".claude/**"
+      - "**/*.md"
+  # A scan of code nobody changed, because the queries move even when the tree does not. Off the
+  # Monday 05:00 slot `.github/dependabot.yml` uses, so a quiet week is not one loud morning.
+  schedule:
+    - cron: "30 4 * * 2"
+
+# Read-only by default. The analyze job widens this for itself alone.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Writing the SARIF back is the whole job. It is scoped here rather than at the top of the
+      # file so nothing else in this workflow ever holds it.
+      security-events: write
+      #
+      # GitHub's generated template also asks for `packages: read` and `actions: read`, and its
+      # own comments say what each is conditional on: fetching private CodeQL packs, and
+      # workflows in private repositories. This repository is public and uses no packs, so
+      # neither condition holds and carrying them would widen the token for nothing. Add the
+      # one that applies if either fact ever changes.
+    strategy:
+      # One language failing must not cancel the analysis of the others, or a transient error in
+      # the smallest extractor takes the coverage of the largest with it.
+      fail-fast: false
+      matrix:
+        # Three analyses cover the five languages the settings page listed. `javascript-typescript`
+        # and `typescript` are aliases of `javascript` in the action's own `src/languages/
+        # builtin.json`, so the UI was naming one extractor three times. Spelled the long way
+        # because the short way reads as though `.ts` were unscanned.
+        #
+        # None of the three is a compiled language, so there is no build step to get wrong.
+        language: [actions, javascript-typescript, python]
+    steps:
+      # Actions are pinned to commit shas (the tag in the comment is what the sha was resolved
+      # from), same doctrine as `ci.yml`: a mutable tag on a third-party action is a supply-chain
+      # door, and this workflow holds `security-events: write`. `.github/dependabot.yml` already
+      # watches `github-actions` in this directory, so these move the way every other pin does —
+      # which is what makes owning the workflow cost less here than it would elsewhere.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No `queries:` line, so this runs the `default` suite, which is what default setup ran.
+      # The extended `security-and-quality` suite was considered and declined: over eleven alerts
+      # this repository fixed seven and dismissed four, and a suite chosen to raise recall would
+      # spend that ratio on a backlog nobody triages. Re-read the ratio before adding it, not the
+      # argument.
+      - uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          languages: ${{ matrix.language }}
+          # Stated rather than left to the default, because it is only correct while every
+          # language in the matrix is uncompiled. GitHub's template pairs a build-mode with each
+          # language through a matrix `include:` for exactly that reason; one literal is
+          # honest here and cheaper to read, and adding a compiled language fails
+          # `test_the_codeql_analysis_still_covers_every_tree`, which is what sends whoever does
+          # it back to this line.
+          build-mode: none
+
+      # `category` keeps each language's results in their own lane. Without it the second upload
+      # is read as a replacement for the first, and the tree that finished earliest is the one
+      # that appears to have no findings.
+      - uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          category: "/language:${{ matrix.language }}"
