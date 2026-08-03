@@ -238,9 +238,14 @@ export function useSavebarFocus() {
       //
       // Suppressing the scroll keeps what the focus move is FOR: a screen reader's cursor
       // follows focus regardless of where the viewport sits, so the findable landing point
-      // (#173) is untouched. A sighted keyboard operator is not stranded either -- their next
-      // Tab moves focus onward and the browser scrolls to that, which is a scroll they asked
-      // for by pressing a key rather than one done to them.
+      // (#173) is untouched.
+      //
+      // The trade, stated rather than dodged (#418): a sighted keyboard operator who scrolled
+      // down the form now holds focus off screen, so no focus ring is visible anywhere until
+      // their next Tab, which lands at the top. Landing them somewhere visible instead needs a
+      // target already IN the viewport when the bar goes, and the bar is `position: sticky` at
+      // the very end of the form -- so a sentinel in its flow position is not one, it is the
+      // bottom of the page. That wants a mockup, not a one-line swap.
       headingRef.current?.focus({ preventScroll: true });
     }
   });
