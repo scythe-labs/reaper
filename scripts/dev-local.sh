@@ -184,6 +184,27 @@ stop_all() {
   # the browser failed against a backend that was gone. The digit class is load-bearing: a bare
   # `--port 6553` is a substring of `--port 65535`.
   pkill -f "uvicorn reaper.main:create_app.*--port $API_PORT([^0-9]|$)" 2>/dev/null || true
+  # TERM is a request, and a wedged reload supervisor declines it: three polite downs
+  # in a row once left the same PID on the port, each printing "stopping" and reading
+  # as success. So the claim is checked against the port, and a survivor is forced.
+  local waited=0
+  while [ "$waited" -lt 6 ]; do
+    local left=""
+    for p in "$API_PORT" "$WEB_PORT"; do left="$left$(port_pids "$p")"; done
+    [ -n "$left" ] || break
+    sleep 0.5; waited=$((waited + 1))
+  done
+  for p in "$API_PORT" "$WEB_PORT"; do
+    local pids; pids="$(port_pids "$p")"
+    if [ -n "$pids" ]; then
+      warn "still holding :$p ($pids); forcing"
+      kill -9 $pids 2>/dev/null || true
+    fi
+  done
+  if pgrep -f "uvicorn reaper.main:create_app.*--port $API_PORT([^0-9]|$)" > /dev/null 2>&1; then
+    warn "the uv run wrapper declined to exit; forcing"
+    pkill -9 -f "uvicorn reaper.main:create_app.*--port $API_PORT([^0-9]|$)" 2>/dev/null || true
+  fi
   [ "$killed" = 1 ] || log "nothing was running"
 }
 

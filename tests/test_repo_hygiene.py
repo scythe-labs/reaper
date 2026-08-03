@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -706,11 +707,11 @@ def _selects_processes_by_pattern(line: str) -> bool:
 #: ``docker-entrypoint.sh``, ``scripts/dev-local.sh``, ``scripts/log-instructions-loaded.sh``,
 #: ``scripts/try-image.sh``.
 _EXPECTED_SHELL_SCRIPTS = 4
-#: The one in ``dev-local.sh``'s ``stop_all``. Pinned separately from the script count because
-#: the walk and the ban cover different populations (rule 147): a script that drops out of the
-#: walk is absent from both, so a single figure would agree with itself while disagreeing with
-#: the tree.
-_EXPECTED_PATTERN_KILLS = 1
+#: Both in ``dev-local.sh``'s ``stop_all``: the TERM sweep, and the KILL for a survivor of it.
+#: Pinned separately from the script count because the walk and the ban cover different
+#: populations (rule 147): a script that drops out of the walk is absent from both, so a single
+#: figure would agree with itself while disagreeing with the tree.
+_EXPECTED_PATTERN_KILLS = 2
 
 
 def test_a_dev_script_kills_only_its_own_ports() -> None:
@@ -1133,6 +1134,34 @@ def test_alembic_baseline_is_frozen() -> None:
     assert digest == _BASELINE_SHA256, (
         f"the Alembic baseline {_BASELINE} was edited (sha256 {digest}).\n"
         "It is frozen: add a new revision chained onto the current head instead."
+    )
+
+
+# The Unraid Community Applications repository profile, as the submission scanner reads it:
+# https://ca.unraid.net/submit/help/repository-info-xml. Root <CommunityApplications>, with the
+# repository description as the text of a <Profile> child.
+_CA_PROFILE = "ca_profile.xml"
+_CA_PROFILE_ROOT = "CommunityApplications"
+
+
+def test_the_unraid_profile_is_shaped_the_way_the_submission_scanner_reads_it() -> None:
+    """A ``<Profile>`` root parses, so no XML check the repo runs can see this one.
+
+    The file shipped with ``<Profile>`` as its root element and the description in a
+    ``<Description>`` child. That is well-formed XML naming every field the spec names, and
+    Community Applications rejected the submission for a missing ``<Profile>`` field, because
+    the field it wants is a child of ``<CommunityApplications>``. Parsing is the whole gate
+    here, and parsing passed.
+    """
+    root = ET.parse(REPO / _CA_PROFILE).getroot()  # noqa: S314 - a committed file, not input
+    assert root.tag == _CA_PROFILE_ROOT, (
+        f"{_CA_PROFILE} has <{root.tag}> as its root element; Community Applications reads "
+        f"<{_CA_PROFILE_ROOT}> and reports anything else as a missing <Profile> field."
+    )
+    profile = root.find("Profile")
+    assert profile is not None and (profile.text or "").strip(), (
+        f"{_CA_PROFILE} needs a non-empty <Profile> child holding the repository description; "
+        "the submission is blocked without one."
     )
 
 
