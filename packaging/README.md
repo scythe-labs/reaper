@@ -44,6 +44,10 @@ uv run pyinstaller packaging/pyinstaller/reaper.spec --noconfirm \
 
 The snap builds with `snapcraft` on a Linux host (CI uses LXD on the runner).
 
+A binary built from a feature branch shows "Newer dev build" from its first boot: the
+dev channel's update check compares the baked commit against the tip of `dev`, and a
+branch commit is never that tip. It clears on a build cut from `dev` itself.
+
 ## Running the desktop builds
 
 **The tray icon is the app's presence.** While the server runs, a menu-bar icon
