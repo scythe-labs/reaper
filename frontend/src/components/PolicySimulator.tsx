@@ -9,7 +9,7 @@
 // is the most important behavior on the page.
 
 import type { RefObject } from "react";
-import type { ProfileSettings, Simulation } from "../api";
+import type { ProfileSettings, SimStale, Simulation } from "../api";
 import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
 import { GATE_META, titleCase } from "./policyMeta";
@@ -59,6 +59,20 @@ export const RESCAN_HEADING = "Rescanning to apply your changes";
 export const RESCAN_QUEUED_LEAD =
   "A scan was already running, so your changes go into a second scan that starts right after it.";
 
+/** The heading for each refusal, keyed by what the server said the refusal was.
+ *
+ *  A heading only. The paragraph under it is the server's own `stale_reason`, so the
+ *  sentence the operator reads and the sentence a reviewer reads are one string
+ *  (`api/routes.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
+ *  was the only one anybody ever saw. An id this build does not know keeps the general
+ *  heading and still renders that sentence, which is rule 66's "fallback handles unknown
+ *  ids only": the server is always able to say what happened, even to an older browser. */
+const STALE_HEADINGS: Record<SimStale, string> = {
+  gathers_differently: "Needs a fresh scan",
+  seasons_not_recorded: "Your season rules need a fresh scan",
+  in_progress_not_read: "Turning that on needs a fresh scan",
+};
+
 /** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
  *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
  *  you the one button that fixes it. A start that fails says so right here, or the button
@@ -71,6 +85,8 @@ export function StaleNotice({
   onScan,
   percent,
   detail,
+  staleKind,
+  staleReason,
 }: {
   scanning: boolean;
   /** A scan was already running when the rescan was requested, so a second one starts
@@ -82,6 +98,11 @@ export function StaleNotice({
   onScan: () => void;
   percent: number;
   detail: string;
+  /** Which refusal this is, from the server. Null on a snapshot answered by an older build
+   *  that did not send one, which lands on the general heading. */
+  staleKind: SimStale | null;
+  /** The server's sentence for that refusal. The only copy of it. */
+  staleReason: string | null;
 }) {
   // "Scan now" replaces its own branch with the progress bar, and it is `disabled` from the press,
   // so focus is at `<body>` before the swap. Nothing focusable mounts in its place in ANY state of
@@ -92,7 +113,9 @@ export function StaleNotice({
   return (
     <div className="sim sim-info">
       <h3 ref={afterStart.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
-        {scanning ? RESCAN_HEADING : "Needs a fresh scan"}
+        {scanning
+          ? RESCAN_HEADING
+          : ((staleKind && STALE_HEADINGS[staleKind]) ?? STALE_HEADINGS.gathers_differently)}
       </h3>
       {scanning ? (
         <>
@@ -120,19 +143,18 @@ export function StaleNotice({
         </>
       ) : (
         <>
-          {/* States the condition, never who caused it. This used to open "You changed what
-              the scan reads" at operators who had changed nothing: any upgrade adding a field
+          {/* The server's sentence, rendered rather than restated. It states the condition
+              and never who caused it: this notice used to open "You changed what the scan
+              reads" at operators who had changed nothing, because any upgrade adding a field
               to the hashed body leaves the recorded hash unmatchable until the next scan.
-              True for a real edit and for an upgrade alike.
 
-              The list no longer opens on "a protection", because switching one on or off is
-              previewed now (engine/policy.py's evidence_hash). What is left is the three
-              edits that really do change what a scan reads, and the backend says the same
-              three in the same order (api/routes.py's stale_reason, rule 144). */}
-          <p>
-            This policy doesn't match the last scan: a keep tag, a season rule, or how far back
-            watching counts reads differently now. Scan to apply it.
-          </p>
+              It used to be a hardcoded paragraph here that named a keep tag, a season rule
+              and the watch span all at once, beside a second copy in api/routes.py that
+              nothing ever rendered. Three refusals now, each with its own remedy, and only
+              one of them is still about a keep tag -- a season rule previews. Keeping that as
+              two hand-synced copies would have meant the reviewed sentence and the read
+              sentence being different strings again (rule 144). */}
+          <p>{staleReason ?? "This policy doesn't match the last scan. Scan to apply it."}</p>
           <button
             className="primary sm"
             onClick={() => {

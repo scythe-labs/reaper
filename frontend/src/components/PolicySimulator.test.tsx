@@ -25,6 +25,8 @@ function renderNotice(props: Partial<Parameters<typeof StaleNotice>[0]> = {}) {
       onScan={() => {}}
       percent={40}
       detail="Scoring"
+      staleKind="gathers_differently"
+      staleReason="This policy doesn't match the last scan. Scan to apply it."
       {...props}
     />,
   );
@@ -69,6 +71,61 @@ describe("the wait the simulator shows while a rescan runs", () => {
 
     expect(screen.queryByText(new RegExp(RESCAN_QUEUED_LEAD.slice(0, 40)))).toBeNull();
     expect(screen.getByText(/scoring your library under the new policy/i)).toBeInTheDocument();
+  });
+});
+
+describe("what the panel says when it will not answer", () => {
+  // Nine season controls, the keep tags and the popularity window used to share one
+  // paragraph naming every cause at once, so the sentence could only be right about one of
+  // them (#495). Each refusal now carries its own remedy, and the operator has to be able to
+  // tell them apart at a glance -- which is the whole reason the server sends a typed kind
+  // rather than only a sentence.
+  const cases = [
+    ["gathers_differently", "Needs a fresh scan"],
+    ["seasons_not_recorded", "Your season rules need a fresh scan"],
+    ["in_progress_not_read", "Turning that on needs a fresh scan"],
+  ] as const;
+
+  it("gives each refusal its own heading", () => {
+    const seen = new Set<string>();
+    for (const [kind, heading] of cases) {
+      const view = renderNotice({ scanning: false, staleKind: kind });
+      expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+      seen.add(heading);
+      view.unmount();
+    }
+    // Three distinct headings, not one string reached three ways: a lookup that fell back
+    // to the general heading for every kind would satisfy the assertions above one at a
+    // time and tell the operator to fix the wrong thing.
+    expect(seen.size).toBe(cases.length);
+  });
+
+  it("renders the server's sentence rather than a copy of its own", () => {
+    // The reason lives in api/routes.py alone. It used to live in both, and the copy the
+    // operator actually read was the one in this file -- so the sentence that was reviewed
+    // and the sentence that shipped were different strings (rule 144).
+    renderNotice({
+      scanning: false,
+      staleKind: "seasons_not_recorded",
+      staleReason: "A sentence only the server could have written.",
+    });
+
+    expect(screen.getByText("A sentence only the server could have written.")).toBeInTheDocument();
+  });
+
+  it("still says something when the server sends a kind this build does not know", () => {
+    // Rule 66: an unknown id falls back, it never guesses. An older browser against a newer
+    // server gets the general heading and the server's own sentence, which is always sent.
+    renderNotice({
+      scanning: false,
+      staleKind: "a_refusal_from_the_future" as never,
+      staleReason: "Something changed that this scan cannot answer for.",
+    });
+
+    expect(screen.getByRole("heading", { name: "Needs a fresh scan" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Something changed that this scan cannot answer for."),
+    ).toBeInTheDocument();
   });
 });
 

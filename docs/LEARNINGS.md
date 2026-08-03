@@ -146,7 +146,7 @@ covers weights, rating bars, custom condemn rules, graded keeps and protect cond
 the refusal.
 
 ⇒ The refusal is now scoped to edits that change what a scan would *gather* — a keep tag,
-a season rule, the popularity window — where the frozen evidence really is stale. The
+the popularity window — where the frozen evidence really is stale. The
 replayable set is an **allow-list**, so a field nobody classified falls into the refusal
 rather than into a plausible wrong preview. The lesson survives its own fix: the rule was
 never "only thresholds are safe," it was "never show a number you cannot derive."
@@ -178,6 +178,42 @@ hash its own scan computed. On that install `policy_hash` and `scoring_hash` bot
 matched while the evidence hash could not, so until the next scan even a weight edit refuses
 where it used to replay. It heals on that scan, which is exactly what `schema_version` could
 not do — and that difference is the one to check before re-scoping either hash again.
+
+**The season card needed the other half: freeze the inputs, not the answer.** The nine season
+rules were the last controls to blank, and no hash change could reach them — `facts_json`
+freezes the season guard's *output*, while `plan_series_prune` decides per show from Sonarr's
+season statistics, who is part-way through, and each season's watcher count with the mirror's
+bound on it. None of that was on `Facts`, so there was nothing to re-decide from. ⇒ The scan
+now freezes the plan's inputs per show (`db.models.SeasonPruneEvidence`, one row per show per
+snapshot) and the replay calls `season_evidence.plan_from_frozen` — the same function the scan
+itself derives its plan through, so the two cannot drift by construction rather than by
+agreement test.
+
+⇒ **Two of the three remaining refusals are not hash questions at all**, which is the part
+worth keeping. A snapshot taken before that table existed has a perfectly matching evidence
+hash and no bundle; a draft turning the mid-binge hold ON over a scan that ran with it off
+gathers identically and has no episode map, because that fan-out is gated on the guard. Both
+are asked of the stored evidence rather than of the policy, and each carries its own typed
+reason, so the panel names one control instead of blanking nine. A hash cannot say *why* it
+mismatched (§13); it also cannot say anything about evidence two identical policies disagree
+about.
+
+⇒ **A perf skip became a correctness hole once the evidence was frozen.** The episode read was
+skipped for a show whose every season was already kept — true reasoning for a scan, since
+mid-binge precision cannot change "keep everything", and exactly wrong for a preview: a show
+fully kept under today's keep-last is *the* show that becomes prunable when the operator lowers
+it. The skip is gone, at one Sonarr `episodes()` call per fully-kept show while the guard is on.
+The general shape: **an optimization justified by "this cannot change the answer" expires the
+moment something else starts asking a different question of the same data.**
+
+The exactness proof is a sweep, not a sample. Each of the nine settings is edited alone, two
+real scans are run, and the replayed guard for every season must equal the second scan's stored
+one; a combined edit was the first draft and it proved three of the nine, because the settings
+mask each other (keep-last already holds the season `protect_incomplete_seasons` would). 22
+mutations were checked against it — one per setting on each of the two roads a `PolicyBody`
+takes to the planner, plus the skip, the three-state and the re-derivation — and all 22 fail
+the suite. **Comparing guard reasons rather than verdict tallies is what made that possible**:
+a setting routinely changes why a season is kept without changing whether it is.
 
 ### 9. Rounding the score after deciding the verdict — **two answers to one question**
 

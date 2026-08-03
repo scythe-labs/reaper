@@ -618,6 +618,45 @@ class Candidate(Base):
     created_at: Mapped[UtcTimestamp]
 
 
+class SeasonPruneEvidence(Base):
+    """What one show's season plan was decided from, frozen with the snapshot.
+
+    ``Candidate.facts_json`` freezes the season guard's *output* -- a ``GateResult`` saying
+    which seasons were kept and why. That is enough to explain the scan and not enough to
+    re-decide it: ``season_pruning.plan_series_prune``'s inputs are per-show (Sonarr's season
+    statistics, who is part-way through, each season's watcher count and the bound on it) and
+    never reached ``Facts``, which carries only ``season_rank``, ``size_bytes`` and the
+    season's own counts. So every season rule blanked the policy simulator, on the densest
+    card in the editor (#491).
+
+    One row per show per snapshot, keyed by the show key every one of its seasons carries
+    (``sonarr:{instance}:{series}``, ``whitelist.show_key`` of any season's media_key). Per
+    show rather than per season deliberately: the bundle IS per show, and copying it onto
+    each season row would multiply the frozen-evidence cost of a TV library by its seasons
+    per show for nothing (``docs/LEARNINGS.md``, "What a frozen snapshot actually costs").
+
+    Swept with its snapshot: ``services.retention`` deletes ``Snapshot`` rows and the FK
+    below cascades, exactly as ``Candidate`` does.
+    """
+
+    __tablename__ = "season_prune_evidence"
+    __table_args__ = (UniqueConstraint("snapshot_id", "group_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshot.id", ondelete="CASCADE"))
+
+    group_key: Mapped[str] = mapped_column(String(100), index=True)
+    """The show key, shared by every season of the show and equal to ``Candidate.group_key``
+    for those rows."""
+
+    payload_json: Mapped[str] = mapped_column(Text)
+    """``services.season_evidence.to_dict`` of the show's ``SeasonPruneInput``.
+
+    A snapshot taken before this table existed simply has no rows, which is the honest
+    "unknown": the simulator refuses the season card for it rather than replaying a partial
+    bundle, and the next scan records one (rule 104's thaw)."""
+
+
 class FirstFlagged(Base):
     """When an item was *first* condemned, ever.
 

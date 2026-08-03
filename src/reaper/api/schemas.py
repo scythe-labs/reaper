@@ -10,6 +10,7 @@ route and forces its response model to resolve.
 
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 from typing import Literal
 from urllib.parse import urlparse
@@ -774,6 +775,33 @@ class GateCountOut(BaseModel):
     count: int
 
 
+class SimStale(enum.StrEnum):
+    """Why the simulator would not answer -- as a value, not as a sentence.
+
+    Three refusals with three different remedies, and until this existed the panel showed
+    one paragraph naming every cause at once, so nine season controls, the keep tags and the
+    popularity window shared a sentence that could only be right about one of them. The
+    operator's copy lives in ``PolicySimulator.tsx`` and branches on this; the ``stale_reason``
+    beside it is the same fact as a sentence, for a reader of the API (rule 66: the frontend
+    handles an id it does not know by falling back to that sentence, never by guessing).
+    """
+
+    GATHERS_DIFFERENTLY = "gathers_differently"
+    """The edit moved what a scan would collect -- a keep tag, or the span watching counts
+    over. The frozen evidence answers a different question, and only a scan fixes it."""
+
+    SEASONS_NOT_RECORDED = "seasons_not_recorded"
+    """This snapshot holds no per-show season-prune evidence, or holds some it cannot read.
+    Every scan taken before ``db.models.SeasonPruneEvidence`` shipped is in this state. The
+    rest of the policy still previews; the season card alone cannot."""
+
+    IN_PROGRESS_NOT_READ = "in_progress_not_read"
+    """The draft turns the part-way-through hold on, over a scan that ran with it off and so
+    never read Sonarr's episode lists. Turning it OFF replays fine -- the guard is
+    short-circuited before the missing map is touched -- which is why this names the one
+    direction that cannot be answered rather than the whole control."""
+
+
 class SimulationOut(BaseModel):
     """Re-deciding the last snapshot under a candidate policy. Zero API calls.
 
@@ -789,10 +817,15 @@ class SimulationOut(BaseModel):
     anything else**: change a signal weight or a gate and the stored scores were
     produced by the old ones, so every count below would be confidently stale.
 
-    When this is false the counts are zeroed and ``stale_reason`` says why. Reaper
-    would rather show nothing than show a number it cannot stand behind -- a plausible
-    wrong answer is worse than a blank, because the owner acts on it.
+    When this is false the counts are zeroed, ``stale_kind`` says which refusal it is and
+    ``stale_reason`` says the same thing in a sentence. Reaper would rather show nothing than
+    show a number it cannot stand behind -- a plausible wrong answer is worse than a blank,
+    because the owner acts on it.
     """
+
+    stale_kind: SimStale | None = None
+    """Which refusal this is, typed, so the panel can name the control at fault. ``None``
+    exactly when ``exact`` is true."""
 
     stale_reason: str | None = None
 

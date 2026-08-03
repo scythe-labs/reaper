@@ -2617,6 +2617,8 @@ export function PolicyEditor({
               onScan={() => startScan.mutate()}
               percent={scanState?.percent ?? 0}
               detail={scanState?.detail ?? ""}
+              staleKind={simulation.stale_kind}
+              staleReason={simulation.stale_reason}
             />
           )
         ) : (
