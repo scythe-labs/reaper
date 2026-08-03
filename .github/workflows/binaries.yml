@@ -64,6 +64,11 @@ jobs:
   plan:
     name: Plan the build
     runs-on: ubuntu-latest
+    # Explicit on every job here that only reads: a caller passes this workflow the
+    # union its publishing jobs declare (release.yml grants contents and packages
+    # write), and a job with no declaration of its own would inherit all of it.
+    permissions:
+      contents: read
     outputs:
       build: ${{ steps.decide.outputs.build }}
       version: ${{ steps.decide.outputs.version }}
@@ -134,6 +139,8 @@ jobs:
           - runner: macos-14
             slug: macos-arm64
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -316,6 +323,8 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
