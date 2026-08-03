@@ -9,7 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { act, type ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
-import type { FairnessReport, RequesterRow } from "../api";
+import { ApiError, type FairnessReport, type RequesterRow } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { Fairness, PersonCard } from "./Fairness";
@@ -250,9 +250,26 @@ describe("Fairness", () => {
   });
 
   it("surfaces a load failure explicitly", async () => {
-    apiMock.fairness.mockRejectedValue(new Error("Seerr unreachable"));
+    // The fallback branch: a failure Reaper did not word (a dropped connection) has no
+    // sentence worth showing, and a raw fetch message is not operator copy (rule 21).
+    apiMock.fairness.mockRejectedValue(new Error("Failed to fetch"));
     renderWithClient(<Fairness />);
     expect(await screen.findByText(/Couldn't load Scales/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Failed to fetch/i)).not.toBeInTheDocument();
+  });
+
+  it("says what Scales needs when the server explained itself", async () => {
+    // An install with Tautulli plus an *arr and no Seerr is scan-ready by the wizard's own
+    // account, and Scales is visible and clickable there, so its 400 is the DEFAULT reading of
+    // this tab. The server names the services to add; the page dropped that on the floor and
+    // said "Couldn't load Scales.", which is a dead tab naming nothing actionable (#412).
+    apiMock.fairness.mockRejectedValue(
+      new ApiError(400, "Scales needs a Seerr and a Tautulli instance. Add them in Settings."),
+    );
+    renderWithClient(<Fairness />);
+
+    expect(await screen.findByText(/needs a Seerr and a Tautulli/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load Scales/i)).not.toBeInTheDocument();
   });
 
   it("tells the operator to scan first when there is no snapshot", async () => {
