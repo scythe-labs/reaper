@@ -1440,7 +1440,9 @@ describe("where a signal starts earning", () => {
     // low_rating measures how far BELOW its bound a rating sits, and the engine's fraction
     // works out to depend on the gap alone: (0,70), (10,80) and (30,100) score identically.
     // A "full points at" box here would be a control an operator could move for no effect.
-    expect(await screen.findByLabelText('Where "How low it\'s rated" stops adding points')).toBeVisible();
+    expect(
+      await screen.findByLabelText('Where "How low it\'s rated" stops adding points'),
+    ).toBeVisible();
     expect(screen.queryByLabelText('Where "How low it\'s rated" adds all its points')).toBeNull();
     // The range is drawn now rather than restated: the strip charges everything BELOW the
     // bar, so its fill starts at the left edge and stops where the bar sits (7.0 of 10).
@@ -1699,7 +1701,9 @@ describe("which number control a bound gets", () => {
     );
     renderEditor({ body: body_ });
 
-    const far = await screen.findByLabelText('Where "How long it\'s gone unwatched" adds all its points');
+    const far = await screen.findByLabelText(
+      'Where "How long it\'s gone unwatched" adds all its points',
+    );
     // 1825 days is stored; "5 years" is drawn. The policy body never sees the unit.
     expect(far).toHaveValue(5);
     expect(within(far.closest(".qty") as HTMLElement).getByRole("combobox")).toHaveValue("years");
