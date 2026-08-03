@@ -788,6 +788,56 @@ class AppSetting(Base):
     updated_at: Mapped[UtcTimestamp]
 
 
+class ListConfig(Base):
+    """A protection list the operator authored, or one Reaper ships with.
+
+    **Definition here, membership in the cache.** ``protection_list`` and
+    ``protection_list_item`` hold what each list currently contains, and they are excluded
+    from Alembic and from backups on purpose: they mirror somebody else's data and the next
+    sync rebuilds them. A list the operator *named and pointed at something* is not
+    rebuildable from anything, so it lives in this database, is migrated, and is backed up.
+    Storing it beside the membership would mean a restore drops every list they configured
+    and the next scan reaps what those lists were protecting.
+
+    **The id is stable across every edit.** A derived list is identified by a slug carrying
+    the settings that produced it, so changing a setting mints a new slug and strands the old
+    row still protecting from a rule the operator already replaced -- which is the whole
+    reason ``lists.retire_absent`` exists. A row here keeps its id, so an edit is an UPDATE
+    and there is nothing to retire.
+    """
+
+    __tablename__ = "list_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    """The operator's own name, and what a policy rule names to use this list.
+
+    Unique, because a rule naming a list has to mean exactly one list. Two rows answering to
+    one name would make a protection point at whichever was written last, which is a
+    protection that silently changes what it covers.
+    """
+
+    source: Mapped[str] = mapped_column(String(32))
+    """Which kind of thing this reads: a Plex collection, an *arr tag rule, a curated list.
+    See ``services.lists.ListSource``."""
+
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    """That source's own settings -- which collection in which library, which tags and
+    whether they match ANY or ALL. JSON because each source needs different keys."""
+
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    """Off keeps the row and its name, so a list switched off comes back with its rules
+    intact. Deleting is a separate verb and is the operator's to choose."""
+
+    built_in: Mapped[bool] = mapped_column(Boolean, default=False)
+    """Ships with Reaper (the IMDb Top 250). Editable and switchable, never deletable: the
+    default policy carries a keep rule naming it, and copy may only reference a mechanism
+    that is wired (rule 25)."""
+
+    created_at: Mapped[UtcTimestamp]
+
+
 class RunState(enum.StrEnum):
     """Where a reap run is in its lifecycle."""
 

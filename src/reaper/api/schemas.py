@@ -11,7 +11,7 @@ route and forces its response model to resolve.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -1257,3 +1257,28 @@ class ProtectionListOut(BaseModel):
 
     error: str | None
     """What the last failed check said, verbatim from the service that refused."""
+
+
+class ListConfigIn(BaseModel):
+    """A list the operator is adding or editing.
+
+    ``config`` is the source's own settings and is validated per source at the service
+    boundary (``services.list_config``), because each source needs different keys and a
+    shape that could never match anything is refused while the operator is looking at the
+    box that is empty.
+    """
+
+    name: str = Field(min_length=1, max_length=100)
+    source: Literal["arr_tag", "plex_collection"]
+    """A curated list ships with Reaper and is not one the operator adds by hand."""
+
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ListConfigPatch(BaseModel):
+    """An edit. Every field optional: omitted means "leave it", which is why none default
+    to a value (rule 1 -- an omitted field and an explicit one are different requests)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    config: dict[str, Any] | None = None
+    enabled: bool | None = None
