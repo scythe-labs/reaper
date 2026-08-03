@@ -948,8 +948,10 @@ def _repo_text_files() -> list[tuple[Path, str]]:
 # carries no ``--factory``.
 _UVICORN_LAUNCH = re.compile(r"uvicorn[\"',\s]+reaper\.main:create_app\b")
 
-#: The shipped ``CMD``, ``scripts/dev-local.sh``, ``README.md``, ``.claude/launch.json`` and
-#: ``.claude/skills/verify/SKILL.md``. Pinned because "every launch carries the flag" is only
+#: The shipped ``CMD``, ``scripts/dev-local.sh``, ``CONTRIBUTING.md``, ``.claude/launch.json``
+#: and ``.claude/skills/verify/SKILL.md``. It said ``README.md`` for the third, which carries no
+#: uvicorn line at all -- the count was right and the file named was not, which is the drift a
+#: pinned count cannot see (#389). Pinned because "every launch carries the flag" is only
 #: worth as much as the walk that finds them: the flag assertion below cannot distinguish a
 #: launch that complies from one this matcher no longer sees, and both read as green (rule 145).
 _EXPECTED_LAUNCHES = 5
@@ -1002,6 +1004,58 @@ def test_every_uvicorn_launch_disables_proxy_headers() -> None:
     assert not missing, (
         "every uvicorn launch must pass --no-proxy-headers, or the forwarded headers it\n"
         "rewrites decide peer trust one layer above reaper.auth.proxy:\n" + "\n".join(missing)
+    )
+
+
+#: Where each uvicorn launch gets its preflight. The Dockerfile's ``CMD`` is exec'd by the
+#: entrypoint, which preflights; every other launch preflights in its own file.
+_PREFLIGHT_SOURCE = {
+    "Dockerfile": "docker-entrypoint.sh",
+    "scripts/dev-local.sh": "scripts/dev-local.sh",
+    "CONTRIBUTING.md": "CONTRIBUTING.md",
+    ".claude/skills/verify/SKILL.md": ".claude/skills/verify/SKILL.md",
+}
+
+#: The one launch that still does not, pinned so the gap cannot grow back quietly. It is a
+#: launcher config that spawns a single executable from ``runtimeArgs``, so adding a step means
+#: changing its shape rather than its arguments, and that is the repository owner's call and not
+#: this test's (#389).
+_PREFLIGHT_GAP = {".claude/launch.json"}
+
+
+def test_every_uvicorn_launch_runs_preflight() -> None:
+    """Rule 127: ``preflight``'s docstring says EVERY way of starting Reaper runs it.
+
+    Nothing enforced that, and three developer recipes did not -- ``CONTRIBUTING.md``,
+    ``.claude/skills/verify/SKILL.md`` and ``.claude/launch.json``. It is the shape that goes
+    wrong quietly, because preflight is what applies a staged restore: a launch that skips it
+    does not fail, it just never finishes the operator's restore, and the banner asks for a
+    restart that cannot complete however many times it is given one (#381, #389).
+
+    Every shipped path was and is fine. This binds the developer ones, and any launch added
+    later by an author who never read the docstring, which is what prose cannot do.
+
+    The membership assertion comes first for rule 145's reason: a "names preflight" check
+    cannot tell a launch that complies from one this walk no longer sees, and both read green.
+    """
+    texts = {str(path.relative_to(REPO)): text for path, text in _repo_text_files()}
+    found = {str(path.relative_to(REPO)) for path, _, _ in _uvicorn_launches()}
+    assert found == set(_PREFLIGHT_SOURCE) | _PREFLIGHT_GAP, (
+        "the set of files launching uvicorn moved:\n"
+        f"  found:    {sorted(found)}\n"
+        f"  expected: {sorted(set(_PREFLIGHT_SOURCE) | _PREFLIGHT_GAP)}\n\n"
+        "If you ADDED a launch, run `python -m reaper.preflight` before it and name its\n"
+        "source in _PREFLIGHT_SOURCE. A launch that skips preflight silently never applies\n"
+        "a staged restore."
+    )
+    missing = [
+        f"{launch} -> preflight expected in {source}"
+        for launch, source in _PREFLIGHT_SOURCE.items()
+        if "reaper.preflight" not in texts.get(source, "")
+    ]
+    assert not missing, (
+        "every uvicorn launch runs `python -m reaper.preflight` first, before migrations,\n"
+        "or a restore staged in the UI is never applied:\n" + "\n".join(missing)
     )
 
 
