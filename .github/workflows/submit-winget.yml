@@ -9,6 +9,12 @@ name: Submit to WinGet
 # https://www.microsoft.com/en-us/wdsi/filesubmission (manual), and code signing
 # (not wired yet; packaging/README.md carries what it would take).
 #
+# Called from release.yml once the release is published. Not a `release: published`
+# trigger: the publish runs under the workflow's own GITHUB_TOKEN, and events an
+# action performs with that token never start another workflow — a trigger here
+# would sit silent on every CI-cut release. The dispatch form re-submits a version
+# by hand.
+#
 # Two prerequisites nothing in this repository can create:
 #   - the ScytheLabs.Reaper manifest must exist in winget-pkgs once (first
 #     submission is a hand-written PR; packaging/README.md walks through it)
@@ -18,8 +24,12 @@ name: Submit to WinGet
 # wingetcreate itself fails and the log names the missing package.
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version to submit (CalVer, no leading v)"
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       version:
@@ -32,16 +42,13 @@ permissions:
 
 jobs:
   winget:
-    # The rolling dev-build prerelease also fires `published`; only real releases
-    # belong in winget.
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: windows-latest
     steps:
       - name: Submit the manifest update
         shell: pwsh
         env:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
-          RAW_VERSION: ${{ inputs.version || github.event.release.tag_name }}
+          RAW_VERSION: ${{ inputs.version }}
         run: |
           if (-not $env:WINGET_TOKEN) {
             Write-Host "No WINGET_TOKEN secret; skipping winget submission."

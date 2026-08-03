@@ -4,7 +4,8 @@ name: Release
 # Cut a CalVer release from main. main is release-only, so every push here IS a
 # release: compute the next vYYYY.M.N, tag it, draft the release, build the
 # binaries and snaps (binaries.yml does that work), push the versioned container
-# image, attach everything, publish. Publishing fires submit-winget.yml.
+# image, attach everything, publish, then submit the installer to winget (a job
+# below, because publishing with the workflow's own token fires no other workflow).
 #
 # The version is year.month.count -- a date names what operators actually ask
 # ("am I on this month's build?"), and the count separates two cuts in one month.
@@ -217,6 +218,16 @@ jobs:
           # failing on the first name that already exists.
           gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber assets/*
           gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+
+  # The winget submission is a called job, not a `release: published` trigger over
+  # in submit-winget.yml: the publish above runs under this workflow's GITHUB_TOKEN,
+  # and events an action performs with that token never start another workflow.
+  winget:
+    needs: [cut, publish]
+    uses: ./.github/workflows/submit-winget.yml
+    with:
+      version: ${{ needs.cut.outputs.version }}
+    secrets: inherit
 
   # Stable-channel store publication, once the GitHub release is out. Skipped
   # without credentials, never red: the store is opt-in infrastructure.
