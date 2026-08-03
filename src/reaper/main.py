@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from platform import python_version
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -17,6 +19,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
 from reaper.api import tags as api_tags
@@ -49,7 +54,7 @@ from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.recovery import clear_recovery_file, mint_recovery_token, recovery_base_url
 from reaper.auth.sessions import clear_recovery_marks
-from reaper.buildinfo import build_version, install_root
+from reaper.buildinfo import build_version, install_kind, install_root, is_release, short_commit
 from reaper.config import (
     Settings,
     get_settings,
@@ -57,7 +62,13 @@ from reaper.config import (
     parse_instance_seeds,
 )
 from reaper.crypto import SecretBox
-from reaper.db.session import create_cache_engine, create_engine, create_session_factory
+from reaper.db.models import Instance, InstanceKind, PlexServer
+from reaper.db.session import (
+    create_cache_engine,
+    create_engine,
+    create_session_factory,
+    journal_mode,
+)
 from reaper.logging import configure_logging
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import app_settings
@@ -97,6 +108,47 @@ def _report_background_failure(task: asyncio.Task[Any]) -> None:
     exc = task.exception()
     if exc is not None:
         log.warning("startup.background_task_failed", task=task.get_name(), error=str(exc))
+
+
+async def _schema_revision(session: AsyncSession) -> str | None:
+    """The Alembic revision this database sits at, for the boot log.
+
+    Nothing else in the app reads it outside backup and restore, so "which schema is
+    this install on, and did the upgrade run" has no answer today -- migrations are
+    applied by a different process (the container entrypoint, or `launcher._migrate`)
+    whose output never reaches the log file the operator downloads. ``None`` is a
+    database built straight from the models, which is what a test carries.
+    """
+    try:
+        result = await session.execute(text("SELECT version_num FROM alembic_version"))
+    except OperationalError:
+        return None
+    row = result.first()
+    return str(row[0]) if row and row[0] else None
+
+
+async def _integration_inventory(
+    session: AsyncSession, box: SecretBox, settings: Settings
+) -> dict[str, int | bool]:
+    """What this install is wired to, as counts and flags.
+
+    Never a base URL, a name, or a key: an instance's address is one of the two places
+    a credential can hide (rule 13), and the count is what answers "why is my second
+    Radarr missing from this scan". Disabled instances are excluded, because the scan
+    excludes them too and a total that disagrees with the scan is worse than no total.
+    """
+    rows = await session.execute(
+        select(Instance.kind, func.count())
+        .where(Instance.enabled.is_(True))
+        .group_by(Instance.kind)
+    )
+    inventory: dict[str, int | bool] = {str(kind.value): count for kind, count in rows.all()}
+    for kind in InstanceKind:
+        inventory.setdefault(str(kind.value), 0)
+    plex = await session.execute(select(func.count()).select_from(PlexServer))
+    inventory["plex_linked"] = plex.scalar_one() > 0
+    inventory["discord"] = await app_settings.has_discord_webhook(session, box, settings)
+    return inventory
 
 
 @asynccontextmanager
@@ -196,18 +248,55 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.api_key_digest = (
             hashlib.sha256(api_key.encode("utf-8")).digest() if api_key else None
         )
-        if await app_settings.proxy_trust_enabled(session, settings):
-            app.state.trusted_proxies = parse_proxy_networks(
-                await app_settings.get_trusted_proxies(session, settings)
-            )
-        else:
-            app.state.trusted_proxies = ()
+        proxy_trust = await app_settings.proxy_trust_enabled(session, settings)
+        offered = await app_settings.get_trusted_proxies(session, settings) if proxy_trust else []
+        app.state.trusted_proxies = parse_proxy_networks(offered) if proxy_trust else ()
+        revision = await _schema_revision(session)
+        integrations = await _integration_inventory(session, box, settings)
         await session.commit()
 
     log.info(
         "reaper.started",
         version=build_version(),
+        channel="release" if is_release() else "dev",
+        commit=short_commit(),
         destructive_actions_enabled=safety.destructive_allowed,
+    )
+    # The install fingerprint, at INFO and not DEBUG: this is the first thing support asks
+    # for, and an operator should not have to turn anything on to already have it in the log
+    # they are about to send. The four shapes keep their data in four places and take their
+    # configuration by four different routes, so "which one is this" comes before every other
+    # question -- and `log_level_from` answers the one that blocks all the others, since a
+    # stored level silently outranks REAPER_LOG_LEVEL and DEBUG is how anything else is chased.
+    log.info(
+        "reaper.install",
+        install=install_kind(),
+        platform=sys.platform,
+        python=python_version(),
+        data_dir=str(settings.data_dir),
+        log_level=logbuffer.level_name(),
+        log_level_from="settings" if stored_level else "environment",
+        host=settings.host,
+        port=settings.port,
+    )
+    # Counts and flags only, never a base URL or a key: those carry credentials (rule 13).
+    log.info("reaper.integrations", **integrations)
+    # Offered against accepted, because `parse_proxy_networks` drops an entry it cannot parse
+    # and carries on. Only the env-seeded path can hold a typo -- the settings route validates
+    # and refuses -- and that is the declarative deployment with no UI to tell. Silently
+    # dropping one is how a reverse-proxied install ends up keying every lockout and rate
+    # limit on the proxy's own address instead of the caller's (rule 101).
+    log.info(
+        "reaper.proxy_trust",
+        enabled=proxy_trust,
+        offered=len(offered),
+        accepted=len(app.state.trusted_proxies),
+    )
+    log.info(
+        "db.ready",
+        revision=revision,
+        journal_mode=await journal_mode(engine),
+        cache_journal_mode=await journal_mode(cache_engine),
     )
     if safety.destructive_allowed:
         # A warning, deliberately: this is the one line an operator whose .env still says
@@ -235,6 +324,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scheduler_tz = ZoneInfo(await app_settings.get_timezone(session, settings))
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance_schedules = await app_settings.get_maintenance_schedules(session)
+    # The zone every timed job resolved to, whichever of the three layers won. A cron set
+    # for 2 AM firing at the wrong hour is the symptom; this is the cause, and a typo'd
+    # REAPER_TIMEZONE otherwise falls through to the host zone with no trace.
+    log.info("scheduler.timezone", timezone=str(scheduler_tz))
 
     scheduler = build_scheduler(
         cache_engine,
@@ -288,6 +381,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
         except (ValueError, KeyError):
             log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)
+
+    # Every registered job with its next firing, after the stored schedules have been
+    # applied so this is the table that will actually run. Without it "why did my nightly
+    # scan stop" has no answer: a job that was never scheduled and one whose stored cron was
+    # skipped as malformed look identical, and the resolved zone is what a cron firing at
+    # the wrong hour turns on. One line per job, about six.
+    for job in scheduler.get_jobs():
+        log.info(
+            "scheduler.job",
+            job=job.id,
+            trigger=str(job.trigger),
+            next_run=job.next_run_time.isoformat() if job.next_run_time else None,
+        )
+    if not scan_cron:
+        log.info(
+            "scheduler.no_scan_scheduled",
+            detail="No automatic scan is scheduled. Reaper only scans when you ask it to.",
+        )
 
     catch_up = asyncio.create_task(catch_up_on_startup(cache_engine, settings.data_dir))
     catch_up.add_done_callback(_report_background_failure)
