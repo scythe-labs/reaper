@@ -1791,6 +1791,9 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
     )
 
 
+BINARIES_WORKFLOW = REPO / ".github" / "workflows" / "binaries.yml"
+
+
 def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
     """A hand dispatch of binaries.yml on a branch may build and boot-probe, never publish.
 
@@ -1801,11 +1804,78 @@ def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
     with unmerged branch code described as dev until the next nightly. The gate is one
     line of shell the header's promise depends on (rule 7/24), so its presence is pinned.
     """
-    text = (REPO / ".github" / "workflows" / "binaries.yml").read_text(encoding="utf-8")
+    text = BINARIES_WORKFLOW.read_text(encoding="utf-8")
     assert '"${GITHUB_REF}" != "refs/heads/dev"' in text, (
         "binaries.yml's Decide step no longer refuses to publish from a non-dev ref:\n"
         "a branch dispatch with publish ticked would replace the dev-build prerelease,\n"
         "the snap edge channel, and the ghcr :dev image with unmerged branch code."
+    )
+
+
+#: ``plan`` and the four jobs it fans out to. Pinned because the reconciliation below is
+#: vacuously true against a walk that stopped finding jobs (rule 145): a publisher renamed
+#: out of the scan is missing from the check and from its own count at the same time.
+_EXPECTED_BINARIES_JOBS = 5
+
+
+def test_every_nightly_publisher_gates_the_release_that_records_the_night() -> None:
+    """The nightly's memory of "this sha is built" is only written when every target shipped.
+
+    ``plan`` skips a whole scheduled run when the ``dev-build`` prerelease already targets
+    dev's tip, and ``publish-dev`` is what moves that target. So the release doubles as the
+    record of a finished night, and every job that publishes for one has to be a ``needs``
+    of it: a target that failed must leave the sha unrecorded, or the next nightly reads the
+    night as done and skips the retry (#457). ``docker-arm64`` was not a ``needs``, so a
+    failed arm64 image was recorded as built and ``:dev`` kept serving an arm64 layer older
+    than its amd64 half until dev moved again.
+
+    A publisher is any job gated on the publish decision, wherever it reads it: ``snap``
+    checks it on the step that pushes to the store, ``docker-arm64`` on the job. The parsed
+    job is searched rather than the file text, so neither placement can hide one (rule 147).
+
+    The second assertion is what makes the first safe. Adding a ``needs`` means ``publish-dev``
+    now skips whenever that job skips, which is harmless only while ``docker-arm64`` cannot
+    skip on its own: its ``if`` also reads ``build``, and that is redundant purely because
+    ``plan`` never clears ``build`` without clearing ``publish`` in the same breath. Split
+    those two assignments and a no-op night would stop refreshing the prerelease.
+    """
+    workflow = yaml.safe_load(BINARIES_WORKFLOW.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    assert len(jobs) == _EXPECTED_BINARIES_JOBS, (
+        f"expected {_EXPECTED_BINARIES_JOBS} jobs in binaries.yml, found {len(jobs)}: "
+        f"{sorted(jobs)}\n\nIf you ADDED one, bump the number so the scan below covers it.\n"
+        "If you did not, a job was renamed and dropped out of the publisher walk."
+    )
+
+    publishers = {
+        name
+        for name, job in jobs.items()
+        if name not in {"plan", "publish-dev"}
+        and "needs.plan.outputs.publish" in yaml.safe_dump(job)
+    }
+    assert publishers, (
+        "no job in binaries.yml reads needs.plan.outputs.publish any more, so this test\n"
+        "proves nothing. Either the publish decision was renamed, or the jobs that act on\n"
+        "it were, and the walk above now returns an empty set that trivially passes."
+    )
+    recorded = set(jobs["publish-dev"]["needs"])
+    assert publishers <= recorded, (
+        f"binaries.yml publishes from {sorted(publishers - recorded)} without publish-dev\n"
+        "depending on it, so a night where that target fails still moves the dev-build\n"
+        "release onto the sha. plan reads the release to decide whether dev has moved, so\n"
+        "the next nightly counts the night as done and never retries the failed target.\n"
+        "Add the job to publish-dev's `needs` (#457)."
+    )
+
+    decide = next(s for s in jobs["plan"]["steps"] if s.get("id") == "decide")
+    clears_build = [line for line in decide["run"].splitlines() if "build=false" in line]
+    assert clears_build and all("publish=false" in line for line in clears_build), (
+        "binaries.yml's Decide step turns off `build` without turning off `publish` in the\n"
+        "same statement:\n" + "\n".join(f"  {line.strip()}" for line in clears_build) + "\n\n"
+        "publish-dev needs docker-arm64, and docker-arm64's `if` also reads `build`. While\n"
+        "those two are cleared together that extra condition is redundant and the two jobs\n"
+        "skip as one. Split them and a build=false night skips docker-arm64 while publish\n"
+        "stays true, which skips publish-dev with it and strands the prerelease."
     )
 
 
