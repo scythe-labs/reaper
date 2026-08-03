@@ -865,3 +865,11 @@ versioned image, and the GitHub release all bake the same string via `buildinfo.
 in-app update check compares against it, so an operator is only ever told about a version whose
 artifacts exist. Dev builds stay sha-named (`dev (abc1234)`): the rolling `dev-build`
 prerelease is replaced nightly and never enters winget or the snap stable channel.
+
+The notes are GitHub's own generation, sectioned by label through `.github/release.yml`, over
+the pull requests between the previous tag and this one. That range only exists on `dev`: the
+promotion squash is one commit for a whole release, so the tag points at the promotion PR's
+head commit rather than the squash it became. The two carry the same tree, which the workflow
+verifies rather than assumes, and the artifacts still build from the pushed sha. The first cut
+ships `.github/first-release-notes.md`: a generated list spanning the whole history is not
+release notes.

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# What GitHub's generated release notes look like: one section per label, in this
+# order, each entry a PR title with its author. workflows/release.yml asks for
+# these notes when it drafts a release, over the range since the previous tag.
+# A PR with two of these labels lands in the first matching section, so the order
+# doubles as precedence; the catch-all keeps an unlabeled PR visible rather than
+# silently dropped. GitHub appends New Contributors and the changelog link itself.
+changelog:
+  categories:
+    - title: 💥 Breaking changes
+      labels: [Compat/Breaking]
+    - title: 🛡️ Security
+      labels: [Kind/Security]
+    - title: 🚀 Features
+      labels: [Kind/Feature, Kind/Enhancement]
+    - title: 🐛 Bug fixes
+      labels: [Kind/Bug]
+    - title: ♿ Accessibility
+      labels: [Kind/Accessibility]
+    - title: 📖 Documentation
+      labels: [Kind/Documentation]
+    - title: 📦 Dependencies
+      labels: [dependencies]
+    - title: ⚙️ Everything else
+      labels: ["*"]
