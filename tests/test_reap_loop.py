@@ -1474,6 +1474,39 @@ class TestTheHeldBackNoticeSurvivesTheAllowance:
         assert {s.media_key for s in await _steps(session, run.id)} == {"sonarr:1:42:1"}
         assert run.held_back_unknown_size == 1
 
+    async def test_the_funnel_line_counts_the_seasons_a_show_click_selected(
+        self, session: AsyncSession
+    ) -> None:
+        """One click on a show sends one group_key and plans its seasons, so the count the
+        caller sent is not the count the plan was narrowed to. Reporting only the first made
+        `planner.built` read `requested=1, planned=3` -- an inverted funnel on the one line
+        that exists to explain "the queue showed 40 and my plan has 12"."""
+        snapshot_id = await _snapshot_many(
+            session,
+            [
+                ("sonarr:1:42:1", 1 * GB, 801),
+                ("sonarr:1:42:2", 2 * GB, 802),
+                ("sonarr:1:42:3", 3 * GB, 803),
+            ],
+            media_type="season",
+            group_key="sonarr:1:42",
+        )
+
+        with capture_logs() as logs:
+            run = await build_plan(
+                session,
+                snapshot_id=snapshot_id,
+                approved_by="admin",
+                only_media_keys={"sonarr:1:42"},
+                max_unmeasured=0,
+            )
+
+        built = next(line for line in logs if line["event"] == "planner.built")
+        assert built["requested"] == 1  # what the click sent
+        assert built["selected"] == 3  # what it expanded to, which is what was narrowed on
+        # `planned` counts items, where a season carries several steps.
+        assert built["planned"] == len({s.media_key for s in await _steps(session, run.id)}) == 3
+
     async def test_a_show_with_no_measurable_season_says_which_show(
         self, session: AsyncSession
     ) -> None:
