@@ -7,7 +7,7 @@ sidebar_position: 6
 # Snap
 
 ```bash
-sudo snap install --edge scythe-labs-reaper
+sudo snap install scythe-labs-reaper
 ```
 
 Reaper then serves on `http://localhost:8420` and runs as a service: snapd starts it at boot
@@ -17,8 +17,11 @@ and keeps it updated. Both amd64 and arm64 are published.
 
 | Channel | Follows |
 | --- | --- |
-| `edge` | the `dev` branch, refreshed nightly. **Use this for now.** |
-| `stable` | releases, once one is cut. |
+| `stable` | releases. **Use this.** |
+| `edge` | the `dev` branch, refreshed nightly, for testing what is coming. |
+
+To run the dev channel, switch to edge: `sudo snap refresh --edge scythe-labs-reaper`. Dev
+builds change often. Releases are the steadier channel.
 
 ## Controlling the service
 

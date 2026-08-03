@@ -2,21 +2,20 @@
 <!--
   SPDX-License-Identifier: AGPL-3.0-or-later
 
-  Unraid container template for the DEV channel. Installed through Community
+  Unraid container template for the stable channel. Installed through Community
   Applications (this repository is submitted there), or by hand: copy to the Unraid
-  server at /boot/config/plugins/dockerMan/templates-user/my-Reaper-Dev.xml and add
+  server at /boot/config/plugins/dockerMan/templates-user/my-Reaper.xml and add
   the container from Docker > Add Container.
 
   The package is public, so the pull needs no login.
 
-  The :dev tag tracks the dev branch, which is where pre-release work lands. The
-  stable "Reaper" template sits beside this one, pointing at :latest; the two run
-  side by side, which is why this one defaults to port 8421 and its own appdata
-  folder.
+  The :latest tag follows releases. The Reaper-Dev template beside this one follows
+  the dev branch for testers; the two run side by side, which is why that one
+  defaults to port 8421 and its own appdata folder.
 -->
 <Container version="2">
-  <Name>Reaper-Dev</Name>
-  <Repository>ghcr.io/scythe-labs/reaper:dev</Repository>
+  <Name>Reaper</Name>
+  <Repository>ghcr.io/scythe-labs/reaper:latest</Repository>
   <Registry>https://ghcr.io/scythe-labs/reaper</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -24,9 +23,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/scythe-labs/reaper/issues</Support>
   <Project>https://github.com/scythe-labs/reaper</Project>
-  <Overview>This is Reaper's dev channel: it follows the dev branch and changes daily. Run it to help test what is coming; the Reaper entry is the steadier choice.
-
-Reaper finds media nobody watches, explains why it thinks each item is expendable, and removes it safely through Sonarr and Radarr. It reads watch history from Tautulli and requests from Seerr, and it refreshes Plex when it is done.
+  <Overview>Reaper finds media nobody watches, explains why it thinks each item is expendable, and removes it safely through Sonarr and Radarr. It reads watch history from Tautulli and requests from Seerr, and it refreshes Plex when it is done.
 
 Deletion is off until you turn it on. Until then Reaper can only scan, score and explain, so you can run it for weeks and just read the results. It never touches your files directly: everything goes through Sonarr and Radarr, so this container needs no access to your media shares.
 
@@ -39,7 +36,7 @@ Back up the data folder. It holds reaper.db and secret.key, and secret.key is th
 Locked out? Open this container's console and run: reaper-admin reset-password --username yourname</Overview>
   <Category>MediaApp:Video Tools:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8420]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/scythe-labs/reaper/dev/contrib/unraid/my-Reaper-Dev.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/scythe-labs/reaper/dev/contrib/unraid/my-Reaper.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/scythe-labs/reaper/dev/frontend/public/icon-512.png</Icon>
   <ExtraParams/>
   <PostArgs/>
@@ -48,8 +45,8 @@ Locked out? Open this container's console and run: reaper-admin reset-password -
   <DonateText/>
   <DonateLink/>
   <Requires/>
-  <Config Name="WebUI port" Target="8420" Default="8421" Mode="tcp" Description="The port you reach this dev build's web interface on. It defaults to 8421 so the stable Reaper entry can keep 8420 beside it." Type="Port" Display="always" Required="true" Mask="false">8421</Config>
-  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/reaper-dev" Mode="rw" Description="Reaper's database, its encryption key, and the cached data it scans. Back this folder up. Its ownership is fixed automatically on start, so you do not need to chown it." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/reaper-dev</Config>
+  <Config Name="WebUI port" Target="8420" Default="8420" Mode="tcp" Description="The port you reach Reaper's web interface on." Type="Port" Display="always" Required="true" Mask="false">8420</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/reaper" Mode="rw" Description="Reaper's database, its encryption key, and the cached data it scans. Back this folder up. Its ownership is fixed automatically on start, so you do not need to chown it." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/reaper</Config>
   <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="The user id Reaper runs as. The container fixes the data folder to this user on start, then drops to it before opening the database. The default 99 is Unraid's nobody, so your appdata stays owned the usual way." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="The group id Reaper runs as, paired with PUID. The default 100 is Unraid's users group." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
   <Config Name="Allow deletion" Target="REAPER_DESTRUCTIVE_ACTIONS_ENABLED" Default="false" Mode="" Description="The starting state for deletion, used on the first run only. Leave it false. After the first run Reaper remembers your choice and this field is ignored: you turn deletion on in the web interface under Policy, which asks for your password. Set it true only if you want a fresh install to come up ready to delete." Type="Variable" Display="always" Required="false" Mask="false">false</Config>
