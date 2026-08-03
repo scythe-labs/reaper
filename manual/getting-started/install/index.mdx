@@ -1,14 +1,14 @@
 ---
 id: install
 title: Install
-description: One container, no access to your media, and one small volume. Pick your route.
+description: Docker, Unraid, Windows, macOS, or a snap. None of them need access to your media.
 sidebar_position: 1
 ---
 
 # Install
 
-Reaper ships as **one container**, and it needs no access to your media. It has no filesystem
-delete path: only Sonarr and Radarr do. The only volume is its own small database.
+Reaper needs no access to your media, whichever install you pick. It has no filesystem
+delete path: only Sonarr and Radarr do. Everything it keeps is one small data folder.
 
 <Callout tone="caution">
   **If you find yourself mounting your library, something is wrong.** Reaper never needs to see
@@ -18,26 +18,25 @@ delete path: only Sonarr and Radarr do. The only volume is its own small databas
 ## Pick your route
 
 - **[Docker](/getting-started/install/docker)**, which is a single `docker compose up -d`.
-- **[Unraid](/getting-started/install/unraid)**, using the community template.
+- **[Unraid](/getting-started/install/unraid)**, from Community Applications.
+- **[Windows](/getting-started/install/windows)**, an installer or a portable zip.
+- **[macOS](/getting-started/install/macos)**, a drag-to-Applications app.
+- **[Snap](/getting-started/install/snap)**, a service on any Linux with snapd.
 
-Both land in the same place. Follow [First run](/getting-started/first-run) afterwards.
+Every route lands in the same place. Follow [First run](/getting-started/first-run) afterwards.
 
-## File ownership
+## Where the data lives
 
-<Callout tone="note">
-  **Ownership is handled for you.** The container starts as root only to take ownership of its
-  data folder, then drops to an unprivileged user before it opens the database. A bind mount
-  created owned by root just works.
-</Callout>
-
-Set `PUID` and `PGID` to choose that user. At the default of `1000` the app runs as that user,
-not as root.
-
-To skip the root phase entirely, pin `user: "1000:1000"` and create the folder owned by 1000
-yourself.
+| Install | Data folder |
+| --- | --- |
+| Docker | the `/data` volume |
+| Unraid | your appdata share |
+| Windows | `%LOCALAPPDATA%\Reaper` |
+| macOS | `~/Library/Application Support/Reaper` |
+| Snap | `/var/snap/scythe-labs-reaper/common` |
 
 ## What to back up
 
-Three files in the data volume, covered in [Back this up](/operating/backups): `reaper.db`,
+Three files in the data folder, covered in [Back this up](/operating/backups): `reaper.db`,
 `secret.key` and `secret.salt`. The key and the salt are useless apart. Set that up before you
 arm anything.

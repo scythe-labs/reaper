@@ -20,6 +20,7 @@ import type { AuthUser, CandidatePage, SetupStatus } from "./api";
 import {
   DEFAULT_GENERAL,
   DEFAULT_PROFILE,
+  DEFAULT_UPDATE,
   DEFAULT_WATCH_EVIDENCE,
   IDLE_SCAN,
 } from "./test/apiFixtures";
@@ -33,6 +34,7 @@ import { App } from "./App";
 // would leave this file asserting on the wrong screen for the wrong reason.
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
+    update: vi.fn(),
     me: vi.fn(),
     setupStatus: vi.fn(),
     safety: vi.fn(),
@@ -124,6 +126,7 @@ const WIZARD_UNREADABLE = /Couldn't check what's set up yet/;
 const WIZARD_WAY_OUT = /Go to the app/;
 
 beforeEach(() => {
+  apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
   vi.stubGlobal("IntersectionObserver", NoopObserver);
   vi.clearAllMocks();
   apiMock.me.mockResolvedValue(USER);

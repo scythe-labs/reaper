@@ -12,7 +12,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { About, Schedule } from "../api";
-import { IDLE_SCAN } from "../test/apiFixtures";
+import { DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { Settings } from "./Settings";
 
@@ -21,6 +21,7 @@ const { apiMock } = vi.hoisted(() => ({
     // Rule 135: the mock answers everything the shell mounts, not only the panel under test.
     // The masthead's safety read and the scan snapshot ride along on every panel.
     about: vi.fn(),
+    update: vi.fn(),
     safety: vi.fn(),
     schedule: vi.fn(),
     latestSnapshot: vi.fn(),
@@ -111,6 +112,7 @@ const SCAN_UNKNOWN = "Couldn't check the schedule.";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     dry_run: true,

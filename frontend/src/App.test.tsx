@@ -10,7 +10,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN } from "./test/apiFixtures";
+import { DEFAULT_GENERAL, DEFAULT_PROFILE, DEFAULT_UPDATE, IDLE_SCAN } from "./test/apiFixtures";
 import { expectNoA11yViolations } from "./test/a11y";
 import { testQueryClient } from "./test/queryClient";
 import { App, ReapBar, ScanFreshness, SectionNav, UserMenu, WhyPanelFallback } from "./App";
@@ -28,6 +28,7 @@ import {
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     logout: vi.fn(),
+    update: vi.fn(),
     safety: vi.fn(),
     me: vi.fn(),
     authContext: vi.fn(),
@@ -52,6 +53,13 @@ vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   api: apiMock,
 }));
+
+// Answered file-wide: UserMenu rides along in every shell mount, and rule 135's gate
+// cannot see a mock fn that exists and returns undefined. Describes that vary the
+// answer set their own value after their reset.
+beforeEach(() => {
+  apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
+});
 
 const snapshot: Snapshot = {
   id: 1,
@@ -149,11 +157,11 @@ const user: AuthUser = {
   thumb_url: null,
 };
 
-function renderMenu() {
+function renderMenu(onGoToAbout: () => void = () => {}) {
   const queryClient = testQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
-      <UserMenu user={user} />
+      <UserMenu user={user} onGoToAbout={onGoToAbout} />
     </QueryClientProvider>,
   );
 }
@@ -161,6 +169,8 @@ function renderMenu() {
 describe("UserMenu", () => {
   beforeEach(() => {
     apiMock.logout.mockReset();
+    apiMock.update.mockReset();
+    apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
   });
 
   it("keeps the panel open so a failed sign-out can be read", async () => {
@@ -190,6 +200,37 @@ describe("UserMenu", () => {
     await person.keyboard("{Escape}");
     await person.click(screen.getByRole("button", { name: /owner/i }));
     expect(screen.queryByText(/couldn't sign you out/i)).not.toBeInTheDocument();
+  });
+
+  it("wears the light and offers the jump to About while an update exists", async () => {
+    apiMock.update.mockResolvedValue({
+      ...DEFAULT_UPDATE,
+      latest: "2026.9.1",
+      update_available: true,
+    });
+    const goToAbout = vi.fn();
+    const person = userEvent.setup();
+    renderMenu(goToAbout);
+
+    // The light itself is aria-hidden decoration; the words ride the chip's
+    // accessible name, which is the one contract a reader and this test share.
+    const chip = await screen.findByRole("button", { name: /update available/i });
+    await person.click(chip);
+    await person.click(screen.getByRole("button", { name: "Update available" }));
+    expect(goToAbout).toHaveBeenCalledTimes(1);
+    // Taking the jump closes the menu behind it.
+    expect(screen.queryByRole("button", { name: /sign out/i })).not.toBeInTheDocument();
+  });
+
+  it("stays plain while there is nothing newer to offer", async () => {
+    const person = userEvent.setup();
+    renderMenu();
+    // Settle the read first: an unanswered check must render exactly nothing, and
+    // asserting absence before the query lands would pass against the pending state.
+    await waitFor(() => expect(apiMock.update).toHaveBeenCalled());
+    await person.click(screen.getByRole("button", { name: /owner/i }));
+    expect(screen.getByRole("button", { name: /sign out/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /update available/i })).not.toBeInTheDocument();
   });
 });
 

@@ -15,6 +15,7 @@ import { applyAccent } from "./accent";
 import { announce, Announcer, useSlowWait } from "./announce";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
+import { useUpdateStatus } from "./updateStatus";
 import { Login } from "./components/Login";
 import { ModalShell } from "./components/ModalShell";
 import { PolicyIcon, ReapIcon, ReviewIcon, ScalesIcon, SettingsIcon } from "./components/navIcons";
@@ -413,11 +414,16 @@ export function ScanFreshness({
  *  role="menu", which promises arrow-key navigation between menu items that was never
  *  implemented, on a panel whose first child is a heading rather than an item. The honest
  *  simpler role is the one whose keyboard contract this actually keeps. */
-export function UserMenu({ user }: { user: AuthUser }) {
+export function UserMenu({ user, onGoToAbout }: { user: AuthUser; onGoToAbout: () => void }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // The light and the menu item render only while an update actually exists; every
+  // could-not-answer state renders neither, so the chip never nags on a guess. The
+  // words ride the chip's accessible name -- the light itself is decoration.
+  const update = useUpdateStatus();
+  const updateAvailable = update.data?.update_available === true;
 
   // A mutation, not a fire-and-forget async onClick: a sign-out that fails must say so.
   // The session would still be live, and a swallowed error leaves the menu open with the
@@ -479,13 +485,20 @@ export function UserMenu({ user }: { user: AuthUser }) {
 
   return (
     <div className="user-menu" ref={ref} onBlur={onBlur} onKeyDown={onKeyDown}>
-      <button className="user-chip" ref={triggerRef} onClick={toggle} aria-expanded={open}>
+      <button
+        className="user-chip"
+        ref={triggerRef}
+        onClick={toggle}
+        aria-expanded={open}
+        aria-label={updateAvailable ? `${user.username}, update available` : undefined}
+      >
         {user.thumb_url ? (
           <img src={user.thumb_url} alt="" className="user-avatar" />
         ) : (
           <span className="user-avatar user-avatar-fallback">{initial}</span>
         )}
         <span className="user-name">{user.username}</span>
+        {updateAvailable && <span className="update-light" aria-hidden="true" />}
         <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" className="chevron">
           <path d="M2 4l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
         </svg>
@@ -498,6 +511,18 @@ export function UserMenu({ user }: { user: AuthUser }) {
               {user.provider === "plex" ? "Plex account" : "Local account"}
             </div>
           </div>
+          {updateAvailable && (
+            <button
+              className="user-dropdown-item user-dropdown-update"
+              onClick={() => {
+                setOpen(false);
+                onGoToAbout();
+              }}
+            >
+              Update available
+              <span className="update-light" aria-hidden="true" />
+            </button>
+          )}
           <button
             className="user-dropdown-item"
             onClick={() => signOut.mutate()}
@@ -899,7 +924,7 @@ function Dashboard({ user }: { user: AuthUser }) {
           }}
         />
 
-        <UserMenu user={user} />
+        <UserMenu user={user} onGoToAbout={() => goToSettingsPanel("about")} />
       </header>
 
       {/* These three speak for the whole app rather than for the view below, and they sat

@@ -1,19 +1,24 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The version string shown to the operator on the About page.
 
-A tagged release shows the real version (``__version__``) unchanged. Every other
-build -- a dev image, a PR image, a local checkout -- shows ``dev`` plus the short
-commit it was built from, so one dev build is told apart from the next.
+A tagged release shows the real version unchanged. Every other build -- a dev image,
+a PR image, a local checkout -- shows ``dev`` plus the short commit it was built
+from, so one dev build is told apart from the next.
 
-The shipped container has no ``.git`` (it is dockerignored), so CI bakes the short
-commit in as ``REAPER_GIT_SHA`` and marks a release with ``REAPER_RELEASE`` at build
-time. In a local checkout both are absent, so the commit is read from ``.git``
-directly, no subprocess. Neither value is a secret.
+The shipped artifacts have no ``.git`` (it is dockerignored, and a binary bundle
+carries none), so the build bakes provenance in as environment values: the short
+commit as ``REAPER_GIT_SHA``, a release flag as ``REAPER_RELEASE``, and on a release
+the CalVer the tag names as ``REAPER_VERSION`` (``__version__`` is the fallback for a
+source install). The container gets them as image env; the binaries carry a
+``buildinfo.json`` that :mod:`reaper.launcher` exports before anything reads them.
+In a local checkout all are absent, so the commit is read from ``.git`` directly, no
+subprocess. None of these values is a secret.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,16 +28,41 @@ _TRUE = {"1", "true", "yes", "on"}
 _SHORT = 7
 
 
+def install_root() -> Path | None:
+    """Where a packaged install keeps the pieces that live beside the code: the built
+    SPA, the migrations, and ``buildinfo.json``. ``REAPER_HOME`` names it outright
+    (the snap sets it to ``$SNAP``); a frozen (PyInstaller) build is its unpacked
+    bundle. A source checkout returns ``None`` and callers fall back to the repo
+    root, so development never needs either value set."""
+    named = os.environ.get("REAPER_HOME", "").strip()
+    if named:
+        return Path(named)
+    bundle = getattr(sys, "_MEIPASS", None)
+    return Path(bundle) if bundle else None
+
+
 def build_version() -> str:
     """What the About page shows after ``Reaper``. A release shows the plain version; a
     dev build shows ``dev (<short commit>)``, or just ``dev`` when the commit is unknown."""
-    if os.environ.get("REAPER_RELEASE", "").strip().lower() in _TRUE:
-        return __version__
-    sha = _short_commit()
+    if is_release():
+        return version_number()
+    sha = short_commit()
     return f"dev ({sha})" if sha else "dev"
 
 
-def _short_commit() -> str | None:
+def is_release() -> bool:
+    """Whether this build was cut from a release, which is also its update channel:
+    a release follows published releases, everything else follows the dev branch."""
+    return os.environ.get("REAPER_RELEASE", "").strip().lower() in _TRUE
+
+
+def version_number() -> str:
+    """The plain version with no channel dressing: what CI baked as ``REAPER_VERSION``,
+    else the package's own. This is the value update checks compare against a tag."""
+    return os.environ.get("REAPER_VERSION", "").strip() or __version__
+
+
+def short_commit() -> str | None:
     """The short commit this build was cut from: the value CI baked in, else the local
     checkout's ``.git``, else ``None`` (the shipped container has neither)."""
     baked = os.environ.get("REAPER_GIT_SHA", "").strip()

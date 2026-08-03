@@ -1,13 +1,14 @@
 ---
 id: backups
 title: Back this up
-description: What in the data volume cannot be regenerated, and the one file that can.
+description: What in the data folder cannot be regenerated, and the one file that can.
 sidebar_position: 1
 ---
 
 # Back this up
 
-The `/data` volume holds what you cannot regenerate.
+Reaper's data folder holds what you cannot regenerate.
+[Where it is](/getting-started/install#where-the-data-lives) depends on the install.
 
 | File | Why it matters |
 | --- | --- |
@@ -46,8 +47,8 @@ Nothing in `cache.db` is a source of truth, which is why it stays out of the bac
 
 ## Restoring
 
-Put the files back in the data volume and start the container. Migrations run before the
-app accepts a connection, so a database from an older version is brought forward on the way up.
+Put the files back in the data folder and start Reaper. Migrations run before the app
+accepts a connection, so a database from an older version is brought forward on the way up.
 
 Restore `reaper.db` without its matching key and salt and every stored credential is
 unreadable and must be entered again. The policies, decisions and audit trail survive.

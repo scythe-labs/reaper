@@ -845,3 +845,23 @@ keeps condemn/abstain/protect in one function, the scoring lane is already hones
 unknown size, and feeding an accounting column back into the decision would make a verdict
 depend on which acquisition rung fired. Whether an item can be safely *acted on* is a different
 question from what the evidence says.
+
+## Versioning
+
+**Choice: CalVer `vYYYY.M.N`, tagged by CI on every push to `main`**
+
+A date answers what operators actually ask ("am I on this month's build?"), and nothing about
+Reaper's surface fits semver's promise: there is no API anyone pins against, and every release
+must be safe to take. `N` counts cuts within the month; the month is unpadded because PEP 440
+normalizes `2026.08` to `2026.8`, and two spellings of one release is how version comparisons
+quietly break.
+
+The tag comes from `release.yml`, not a hand: `main` is release-only, so a push to it *is* the
+release decision, and the workflow derives the next free number from the tags that already
+exist (idempotent, so a failed cut is re-run with `workflow_dispatch`). The cut first waits for
+ci.yml's gate to report green on the same sha: a promotion squash is a sha CI never tested, and
+the two workflows otherwise share nothing (#429). Binaries, the snap, the
+versioned image, and the GitHub release all bake the same string via `buildinfo.json`, and the
+in-app update check compares against it, so an operator is only ever told about a version whose
+artifacts exist. Dev builds stay sha-named (`dev (abc1234)`): the rolling `dev-build`
+prerelease is replaced nightly and never enters winget or the snap stable channel.

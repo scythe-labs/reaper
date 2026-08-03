@@ -9,13 +9,19 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
-import { DEFAULT_GENERAL, DEFAULT_WATCH_EVIDENCE, seedSettings } from "../test/apiFixtures";
+import {
+  DEFAULT_GENERAL,
+  DEFAULT_UPDATE,
+  DEFAULT_WATCH_EVIDENCE,
+  seedSettings,
+} from "../test/apiFixtures";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { PANELS as DECLARED_PANELS, Settings } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
+    update: vi.fn(),
     about: vi.fn(),
     safety: vi.fn(),
     general: vi.fn(),
@@ -90,6 +96,7 @@ function stubMatchMedia(matches: boolean) {
 }
 
 beforeEach(() => {
+  apiMock.update.mockResolvedValue(DEFAULT_UPDATE);
   vi.clearAllMocks();
   apiMock.about.mockResolvedValue({
     version: "0.0.0-test",

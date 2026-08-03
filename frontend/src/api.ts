@@ -907,10 +907,48 @@ export interface About {
   cache_db_bytes: number;
 }
 
+/** One release the operator has not taken yet, for the what-changed modal. `notes` is
+ *  the release's own changelog, GitHub-flavored markdown. */
+export interface ReleaseChange {
+  version: string;
+  url: string | null;
+  notes: string | null;
+}
+
+/** Whether a newer Reaper exists, on this build's channel: a release build follows
+ *  published releases, everything else follows the dev branch. `update_available` is
+ *  three-state -- `null` when the check is off, unreachable, or the versions cannot be
+ *  ordered -- and the surfaces render that as nothing: the check informs, never gates.
+ *  `changes` lists every release newer than the running one, newest first; empty
+ *  unless `update_available` is true, and always empty on the dev channel. */
+export interface Update {
+  channel: "release" | "dev";
+  enabled: boolean;
+  current: string;
+  latest: string | null;
+  update_available: boolean | null;
+  url: string | null;
+  checked_at: string | null;
+  changes: ReleaseChange[];
+}
+
 /** Which screens the review queue opens a show's season list on by default. Mirrors
  *  `app_settings.ExpandSeasonsMode`; "both" is what the on/off switch this replaced meant
  *  when it was on. */
 export type ExpandSeasonsMode = "off" | "desktop" | "both" | "mobile";
+
+/** The desktop build's own knobs, present only when Reaper runs as the Mac or Windows
+ *  app. Backed by launcher.conf in the data folder, which the launcher reads at start,
+ *  so every change applies the next time Reaper opens. */
+export interface DesktopSettings {
+  platform: "macos" | "windows";
+  /** The menu-bar (macOS) / tray (Windows) icon with Open Reaper and Quit. */
+  tray: boolean;
+  /** macOS only: show the Dock icon beside the menu-bar icon. The row never renders
+   *  on Windows and the PUT refuses to set it there; the reported value echoes
+   *  launcher.conf, which nothing on Windows reads. */
+  dock_icon: boolean;
+}
 
 export interface GeneralSettings {
   application_name: string;
@@ -929,6 +967,9 @@ export interface GeneralSettings {
   default_spare_days: number;
   proxy_trust_enabled: boolean;
   trusted_proxies: string[];
+  /** Present only on the Windows and macOS apps; null everywhere else, and the UI
+   *  then shows no Desktop app group. */
+  desktop: DesktopSettings | null;
 }
 
 export interface LogLine {
@@ -1628,6 +1669,7 @@ export const api = {
     put<LeavingSoonSettings>("/api/settings/leaving-soon", body),
 
   about: () => request<About>("/api/about"),
+  update: () => request<Update>("/api/about/update"),
 
   general: () => request<GeneralSettings>("/api/settings/general"),
   saveGeneral: (body: {
@@ -1639,6 +1681,8 @@ export const api = {
     default_spare_days?: number;
     proxy_trust_enabled?: boolean;
     trusted_proxies?: string[];
+    tray?: boolean;
+    dock_icon?: boolean;
   }) => put<GeneralSettings>("/api/settings/general", body),
   /** The stored key, for the Show button. Session-only; 404 when none exists yet. */
   revealApiKey: () => request<{ key: string }>("/api/settings/general/api-key"),

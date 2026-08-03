@@ -639,3 +639,19 @@
     gap: 0.1rem;
   }
 }
+
+/* The About version row's update pill. The accent, not a verdict color: an update is
+   information, and green or amber would read as protected or unknown in this app's
+   language. */
+.update-pill {
+  display: inline-block;
+  vertical-align: 1px;
+  margin-left: var(--space-md);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  padding: var(--space-2xs) var(--space-lg);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-ring);
+}

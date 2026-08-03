@@ -61,6 +61,10 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# PyInstaller's INPUT spec is source, not a build product: the blanket above
+# silently dropped it from every commit while local builds read the untracked
+# copy, and CI then had no spec at all (#427).
+!packaging/pyinstaller/*.spec
 
 # Installer logs
 pip-log.txt
@@ -258,3 +262,6 @@ docs/media/review-queue.html
 # Docusaurus's build cache. `website/build` and `website/node_modules` are already covered by
 # the `build/` and `node_modules/` rules above.
 .docusaurus/
+
+# Generated per build by scripts/write_buildinfo.py; never committed.
+packaging/pyinstaller/buildinfo.json

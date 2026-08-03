@@ -1,0 +1,68 @@
+---
+title: macOS
+description: A drag-to-Applications app for Apple Silicon. It lives in the menu bar.
+sidebar_position: 5
+---
+
+# macOS
+
+Download `Reaper-<version>-macos-arm64.dmg` from
+[the releases page](https://github.com/scythe-labs/reaper/releases), open it, and drag Reaper
+to Applications. Apple Silicon only, macOS 14 or newer. A zip of the same app sits beside it
+for scripted installs.
+
+## Which build
+
+| Download | Follows |
+| --- | --- |
+| `dev-build` | the `dev` branch, refreshed nightly. **Use this for now.** |
+| the newest release | `main`, once a release is cut. |
+
+## First launch
+
+<Callout tone="note">
+  **macOS warns the first time you open it.** The app is not code-signed yet, so Gatekeeper
+  cannot verify it. Open System Settings, Privacy & Security, and choose **Open Anyway**; on
+  macOS 14 you can instead right-click the app and choose **Open**. Each update asks again.
+</Callout>
+
+Reaper then lives in the menu bar: no Dock icon and no window, just an icon offering
+**Open Reaper** and **Quit Reaper**. Your browser opens on `http://127.0.0.1:8420` once the
+server is ready. Closing the tab leaves the server running; Quit is what stops it.
+
+macOS also asks whether Reaper may accept incoming connections. Allow it if other machines
+should reach Reaper. Until the app is code-signed, it may ask again after an update.
+
+## Where the data lives
+
+`~/Library/Application Support/Reaper` holds the database, the encryption keys, and
+`launcher.conf`. Back up `reaper.db`, `secret.key`, and `secret.salt`, covered in
+[Back this up](/operating/backups). Updates leave the folder alone.
+
+## Settings
+
+A double-clicked app receives no environment variables, so Reaper reads `launcher.conf` from
+the data folder instead. The first run writes it as a commented template: the port, the
+listening address, the browser launch, the update check, the menu bar icon, and the Dock icon
+each have a line. The last two also have switches in the app, under Settings, General,
+Desktop app.
+
+## Reaching it from other machines
+
+Reaper listens on every interface, the same as the container. Open `http://<host-ip>:8420`
+from the other machine; `127.0.0.1` is only what your own browser opens.
+
+## Starting at login
+
+Reaper runs while open and stops when you quit it. To start it with your Mac, add Reaper
+under System Settings, General, Login Items.
+
+## Updating
+
+Drag the new app over the old one. The data folder is untouched. Settings, About says when a
+newer build exists.
+
+## Next
+
+[First run](/getting-started/first-run), in order. The first account to sign in claims the
+install, so it matters who does it.

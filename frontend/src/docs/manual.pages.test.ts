@@ -61,8 +61,8 @@ describe("the manual's generated pages", () => {
   // population it selects. These two numbers moving together is the normal case; only one moving
   // means a hand-written page grew a banner, or a generated one lost it.
   it("counts the hand-written pages that sit beside them", () => {
-    expect(allPages()).toHaveLength(17);
-    expect(allPages().length - generatedPages().length).toBe(12);
+    expect(allPages()).toHaveLength(20);
+    expect(allPages().length - generatedPages().length).toBe(15);
   });
 
   it("files each generated doc under its group's directory", () => {

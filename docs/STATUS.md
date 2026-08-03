@@ -12,7 +12,7 @@
 > **Closed work leaves this file.** A shipped fix is not state; its record is the tracker and the
 > code. What stays is something still true, still open, or still constraining what may be built.
 
-Last verified against the code: 2026-07-30.
+Last verified against the code: 2026-08-02.
 
 ## Milestones
 
@@ -32,13 +32,13 @@ Last verified against the code: 2026-07-30.
 | **M4** React SPA — review queue, why-panel, policy editor, live simulator | ✅ done |
 | **M5** The reap loop — journal, planner, executor, canary, caps | ✅ done |
 | **M6** Season pruning | ✅ done |
-| **M7a** Grace lifecycle — the notice countdown (DB-only) | ✅ done |
-| **M7b** Leaving Soon label + Discord | ✅ done |
+| **M7** Grace lifecycle, Leaving Soon label, Discord | ✅ done |
 | **M8** Profiles + scheduler | ✅ done |
 | **Whitelist** — manual "spare this file", scan + planner + grace | ✅ done |
 | **Scales** — per-requester cards over the last scan | ✅ done |
 | **Operator console** — service config, schedule, safety, review | ✅ done |
 | **First start** — four steps, password forced, restore door, resume from the server | ✅ done |
+| **Packaged installs** — Win/macOS binaries + tray, snap, CalVer, update check | 🟡 no cut yet |
 
 ## Open work
 
@@ -95,6 +95,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Setup readiness | **Scanning and reaping are two readinesses, reported apart** † |
 | Adding a service | **Connect, test, then map** — Save waits on a pass and one mapped folder |
 | Plex library list | **Synced when the server is linked**, never left for the operator to press |
+| Versioning | **CalVer `vYYYY.M.N`, tagged by CI on every push to `main`** † |
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |
 | ORM | **Plain SQLAlchemy, not SQLModel** † |

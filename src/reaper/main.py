@@ -48,7 +48,7 @@ from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.recovery import mint_recovery_token, recovery_base_url
-from reaper.buildinfo import build_version
+from reaper.buildinfo import build_version, install_root
 from reaper.config import (
     Settings,
     get_settings,
@@ -68,6 +68,7 @@ from reaper.services.scheduler import (
     track_running_jobs,
 )
 from reaper.services.seeding import seed_instances
+from reaper.services.update_check import UpdateChecker
 
 log = structlog.get_logger(__name__)
 
@@ -360,6 +361,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None,
     )
     app.state.settings = settings
+    # One instance for the app's lifetime, so its hours-long answer cache is shared
+    # across requests. Lazy: it fetches nothing until the About surface first asks.
+    app.state.update_checker = UpdateChecker()
 
     @app.exception_handler(RequestValidationError)
     async def _validation_reason(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -600,7 +604,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # leave a stale second copy of the UI on this one. A missing dist in *production* is
     # a broken image, and should not be papered over by silently serving 404s from a
     # directory that was never built -- so that case still warns rather than passing.
-    dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+    # In a packaged install (frozen bundle, snap) the install root stands in for the
+    # repo root: the built SPA travels inside it, with no src/ level above the package.
+    root = install_root() or Path(__file__).resolve().parent.parent.parent
+    dist = root / "frontend" / "dist"
     if not settings.serve_spa:
         log.info(
             "frontend.not_served",

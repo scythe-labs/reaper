@@ -251,6 +251,10 @@ Public unauthenticated GETs go through `clients/public.py`.
   per-operator secret path the guard's exact-path allow-list cannot express; the URL is
   validated to Discord's hosts at the API edge, and the client only sends outbound
   notifications.
+- *Sanctioned exception:* `launcher.py`'s loopback self-probe (stdlib urllib against this
+  process's own health route, before opening the operator's browser). It asks Reaper
+  itself, carries no credentials, and can mutate nothing; the container HEALTHCHECK is
+  the same probe.
 
 **34. Every constructed client has an owner that closes it.** A client constructed outside an
 exit stack (or without entering one in the same scope) is a leak; add the close path in the same

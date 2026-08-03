@@ -55,7 +55,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 16
+DECISION_SECTIONS = 17
 
 
 def _live_docs() -> list[Path]:
@@ -1511,13 +1511,15 @@ def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None
 #: edit that is not even a change (rule 147).
 _NODE_MAJOR = re.compile(r"""(?:FROM\s+node:|node-version:\s*)["']?(\d+)""")
 
-#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), and docs-deploy.yml. Pinned
-#: because the agreement assertion below is vacuously true on one site, or on none (rule 145).
+#: The Dockerfile, ci.yml twice (the `frontend` and `site` jobs), docs-deploy.yml, and
+#: binaries.yml (the packaged builds bundle the SPA on the same Node the frontend job tested
+#: it on). Pinned because the agreement assertion below is vacuously true on one site, or on
+#: none (rule 145).
 #:
 #: The manual site's two are here for the same reason as the others rather than as bookkeeping:
 #: it builds with `npm ci` against a committed lockfile, so a Node major that drifts from the
 #: one the lockfile was resolved on is a publish that fails on a tree nothing else exercises.
-_EXPECTED_NODE_SITES = 4
+_EXPECTED_NODE_SITES = 5
 
 
 def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> None:
@@ -1557,6 +1559,24 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
         f"Node {major} is an odd major, which Node never promotes to LTS and retires within\n"
         "about eight months. Move to the next EVEN major once it reaches LTS, rather than to\n"
         "the newest one that exists: https://github.com/nodejs/Release#release-schedule"
+    )
+
+
+def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
+    """A hand dispatch of binaries.yml on a branch may build and boot-probe, never publish.
+
+    The Decide step's publish output feeds three channels at once — the dev-build
+    prerelease, the snap edge channel, and the ghcr :dev arm64 fold — and the workflow's
+    own header recommends dispatching against a branch to prove a packaging change.
+    Without the ref gate, ticking the publish input on that dispatch replaces all three
+    with unmerged branch code described as dev until the next nightly. The gate is one
+    line of shell the header's promise depends on (rule 7/24), so its presence is pinned.
+    """
+    text = (REPO / ".github" / "workflows" / "binaries.yml").read_text(encoding="utf-8")
+    assert '"${GITHUB_REF}" != "refs/heads/dev"' in text, (
+        "binaries.yml's Decide step no longer refuses to publish from a non-dev ref:\n"
+        "a branch dispatch with publish ticked would replace the dev-build prerelease,\n"
+        "the snap edge channel, and the ghcr :dev image with unmerged branch code."
     )
 
 
@@ -1965,7 +1985,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # failed -- three states that each used to render as a positive claim about a service or a
 # server nobody reached.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 135
+_EXPECTED_NOTICES = 136
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2063,8 +2083,10 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # Then 34: the policy editor's other three readers of `["validate", debounced]`, which is keyed on
 # the draft and so refires as the operator types -- the same query whose `WarnBlock` notices were
 # already `standing` for that reason, and rule 72 for the two that were not.
+# Then 35: About's dev-build banner, a fact about the install that is true on first paint
+# and unchanged for the process's whole life.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 34
+_EXPECTED_STANDING = 35
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")
@@ -2702,7 +2724,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 47
+_EXPECTED_RENDERING_TEST_FILES = 48
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:

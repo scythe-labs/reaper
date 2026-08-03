@@ -365,3 +365,51 @@
 .reap-checks .check-bad .gate-mark {
   color: var(--condemn);
 }
+
+/* ---- the what-changed modal (About) ------------------------------------------ */
+/* GitHub release notes are arbitrary markdown from outside the app: hold their type
+   to the app's scale, keep every heading below the modal's own h2, and give the long
+   unbroken PR URLs a break opportunity (rule 139). */
+.changes-notes {
+  font-size: var(--text-md);
+  overflow-wrap: anywhere;
+}
+.changes-release {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-xl);
+  margin-top: var(--space-xl);
+}
+.changes-body > .changes-release:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.changes-release h3 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--text-lg);
+}
+.changes-notes h1,
+.changes-notes h2,
+.changes-notes h3,
+.changes-notes h4 {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semi);
+  margin: var(--space-xl) 0 var(--space-sm);
+}
+.changes-notes ul,
+.changes-notes ol {
+  margin: var(--space-sm) 0;
+  padding-left: 1.2rem;
+}
+.changes-notes li {
+  margin: 0.15rem 0;
+}
+.changes-notes code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  padding: var(--space-2xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+.changes-link {
+  margin: var(--space-md) 0 0;
+}

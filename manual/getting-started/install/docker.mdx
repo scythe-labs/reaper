@@ -85,7 +85,9 @@ can see and copy. That is what you want on a NAS, and it makes
 `docker volume`. Reaper's own Settings, Backup works either way.
 
 No `chown` needed either way: the container starts as root, takes ownership of the folder, then
-drops to an unprivileged user before it opens the database.
+drops to an unprivileged user before it opens the database. Set `PUID` and `PGID` to choose that
+user. To skip the root phase entirely, pin `user: "1000:1000"` and create the folder owned by
+1000 yourself.
 
 ## Common settings
 

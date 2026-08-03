@@ -91,8 +91,10 @@ CLIENT_ONLY = {
 # The third new name, `PolicyProbe`, is a type alias rather than an interface and is counted
 # by neither walk -- which is the reason these two numbers are reconciled against the tree
 # separately instead of one being derived from the other.
-EXPECTED_INTERFACES = 84
-EXPECTED_PAIRS = 81
+# Both +1 again for the desktop build's Settings group: `DesktopSettings` pairs with
+# `DesktopSettingsOut` on the suffix rule.
+EXPECTED_INTERFACES = 87
+EXPECTED_PAIRS = 84
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
