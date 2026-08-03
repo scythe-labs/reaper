@@ -50,7 +50,8 @@ policy tuning, and the safety model in full.
 - **Sensible defaults, and deletion logic pinned by tests.** Every shipped default
   errs toward keeping. The scoring and the protections are pinned by tests that fail the moment
   a verdict changes, and the season rules, the caps and the live checks each have their own.
-- **One container**, no access to your media, and one small volume.
+- **Installs as a container, a desktop app, or a snap**, with no access to your media and
+  one small data folder.
 
 [What makes it different](https://scythe-labs.github.io/reaper/features) covers these in full,
 including the ones that ship switched off.

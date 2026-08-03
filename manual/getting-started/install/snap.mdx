@@ -1,0 +1,43 @@
+---
+title: Snap
+description: A service on any Linux with snapd. It starts at boot and updates itself.
+sidebar_position: 6
+---
+
+# Snap
+
+```bash
+sudo snap install --edge scythe-labs-reaper
+```
+
+Reaper then serves on `http://localhost:8420` and runs as a service: snapd starts it at boot
+and keeps it updated. Both amd64 and arm64 are published.
+
+## Which channel
+
+| Channel | Follows |
+| --- | --- |
+| `edge` | the `dev` branch, refreshed nightly. **Use this for now.** |
+| `stable` | releases, once one is cut. |
+
+## Controlling the service
+
+```bash
+sudo snap stop scythe-labs-reaper       # start and restart work the same way
+snap logs scythe-labs-reaper
+```
+
+## Where the data lives
+
+`/var/snap/scythe-labs-reaper/common` holds the database and the encryption key. Back up the
+three files in [Back this up](/operating/backups). Refreshes leave the folder alone.
+
+## Reaching it from other machines
+
+Reaper listens on every interface, the same as the container. Open `http://<host-ip>:8420`
+from the other machine.
+
+## Next
+
+[First run](/getting-started/first-run), in order. The first account to sign in claims the
+install, so it matters who does it.

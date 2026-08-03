@@ -12,6 +12,10 @@ map, plus the pieces that need a human once.
 | `scythe-labs-reaper_<v>_{amd64,arm64}.snap` | `binaries.yml` | GitHub release assets, Snap Store |
 | `ghcr.io/…/reaper:<v>` and `:latest` (amd64 + arm64) | `release.yml` | GHCR |
 
+The Unraid route is the container: Community Applications carries the template (the
+submitted repository is this one, so the listing reads `contrib/unraid/my-Reaper.xml`),
+and it points at the GHCR image above.
+
 Releases are CalVer (`vYYYY.M.N`), cut automatically by `release.yml` on every push to
 `main`. Dev builds are the rolling `dev-build` prerelease, refreshed nightly by
 `binaries.yml` whenever `dev` has moved; the `:dev` container tag keeps coming from
