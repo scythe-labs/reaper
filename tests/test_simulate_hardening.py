@@ -940,3 +940,133 @@ class TestTheReplayKnowsHowFarTheStoredHistoryReached:
         evidence against something the scan did not see, so the row's own value wins."""
         for client in _reach_client(tmp_path, horizon_days=800, frozen_reach=90.0):
             assert self._condemned(client) == 0
+
+
+# ---------------------------------------------------------------------------
+# What spared a hand-spared row
+# ---------------------------------------------------------------------------
+
+
+#: Rows for the attribution fixture: a hand spare over a row that ALSO cleared a protection.
+#: The middle row is the double-count case -- spared by hand and on the keep list, which is
+#: one gate reported twice, once from the stored explanation and once from the hand spare.
+SPARED_ROWS: tuple[tuple[str, str, str], ...] = (
+    (
+        "radarr:9:1",
+        _healthy(
+            protections_fired=[
+                {"gate": "rating_floor", "detail": "well rated: 8.0 on IMDb from 250,000 votes"}
+            ]
+        ),
+        "the rating floor would have kept it on its own, and the owner spared it as well",
+    ),
+    (
+        "radarr:9:2",
+        _healthy(
+            protections_fired=[{"gate": "whitelisted", "detail": "on your keep list, never reaped"}]
+        ),
+        "on the keep list AND spared by hand: one gate, reported by two routes",
+    ),
+)
+
+
+@pytest.fixture
+def spared_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A snapshot whose every row carries a hand spare, on the stored-score tier."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=combine_hashes(
+                DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
+            ),
+            scoring_hash=_fixture_scoring_hash(),
+            horizon_at=now,
+            item_count=len(SPARED_ROWS),
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        for index, (media_key, explanation, _why) in enumerate(SPARED_ROWS, start=1):
+            session.add(
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key=media_key,
+                    title=f"Example Movie {index}",
+                    media_type="movie",
+                    size_bytes=SIZE,
+                    verdict="protect",
+                    score=95,
+                    coverage_bp=10_000,
+                    explanation_json=explanation,
+                    created_at=now,
+                )
+            )
+            session.add(
+                WhitelistEntry(
+                    media_key=media_key,
+                    title=f"Example Movie {index}",
+                    decision="spare",
+                    created_at=now,
+                )
+            )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestAHandSpareIsOneProtectionAmongTheRest:
+    """The spared-by tally credits every protection that fired, not the hand spare alone.
+
+    The stored-score tier used to answer a hand-spared row with ``["whitelisted"]`` and throw
+    the row's other protections away, while the replay tier counts them all -- so making ANY
+    scoring edit, which is what moves the route from the first tier to the second, jumped the
+    "why titles were spared" list by whatever those discarded protections came to, beside a
+    headline count and byte total that correctly did not move at all. An edit appears to
+    change which protections fired, when a graded keep cannot change that: it is subtracted
+    after normalization, and the verdict reads protection before it ever reads the score.
+
+    The two tiers are separate fixtures because they need different stored hashes, so this
+    pins the tier that was wrong against the answer the other one already gave.
+    """
+
+    def _tally(self, client: TestClient) -> dict[str, int]:
+        response = client.post(
+            "/api/policy/simulate",
+            json={
+                "condemn_at": 70,
+                "coverage_floor_bp": 0,
+                "gates": GATES,
+                "signals": SIGNALS,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body: dict[str, Any] = response.json()
+        assert body["exact"] is True, body.get("stale_reason")
+        return {g["gate"]: g["count"] for g in body["protected_by"]}
+
+    def test_the_other_protection_on_a_spared_row_is_still_named(
+        self, spared_client: TestClient
+    ) -> None:
+        """The bug, at its plainest. Both rows are spared by hand, so ``whitelisted`` is owed
+        2; the first row also cleared the rating floor, which used to vanish from the tally
+        entirely because the hand spare was counted in its place."""
+        assert self._tally(spared_client) == {"whitelisted": 2, "rating_floor": 1}
+
+    def test_a_row_spared_by_hand_and_on_the_keep_list_counts_once(
+        self, spared_client: TestClient
+    ) -> None:
+        """A gate spares a row once. The second row reports ``whitelisted`` from its stored
+        explanation and again from the hand spare, and a tally that added both would claim
+        more spared titles than the fixture has rows -- so the fix that restores the other
+        protections must not restore this one twice.
+        """
+        tally = self._tally(spared_client)
+        assert tally["whitelisted"] == len(SPARED_ROWS)
