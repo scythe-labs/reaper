@@ -1007,6 +1007,50 @@ describe("the verdict headline", () => {
     expect(screen.getByText("Limbo")).toBeInTheDocument();
     expect(screen.getByText(/not confident enough to judge/i)).toBeInTheDocument();
   });
+
+  it("does not read a mid-binge check that never ran as a conflict (#486)", () => {
+    // A show Plex never resolved: no season carries a rating key, so the guard answered
+    // "is anyone part-way through this" having asked nobody. Both details are verbatim
+    // producer output -- `season_scan.guard_result`'s unestablishable arm and
+    // `engine.gates._blocked` -- and they carry the SAME cause on purpose, which is what
+    // makes them one box (rule 119).
+    //
+    // Without the typed flag this row satisfied `keepRuleConflict`, and the headline offered
+    // to settle a comparison nobody attempted: "Reaper couldn't check who watched these
+    // seasons, so it left the call to you."
+    const cause = "Plex has not matched this season";
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "abstain",
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_unknown: [
+            {
+              gate: "season_progression",
+              detail: `could not check who is part-way through it: ${cause}`,
+              defers_to_owner: false,
+              unestablishable: true,
+            },
+            {
+              gate: "min_dormancy",
+              detail: `could not check when it was last watched: ${cause}`,
+              defers_to_owner: false,
+              unestablishable: false,
+            },
+          ],
+        },
+      }),
+    );
+    expect(screen.getByText("Limbo")).toBeInTheDocument();
+    expect(screen.queryByText("Needs a look")).not.toBeInTheDocument();
+    expect(screen.queryByText(/left the call to you/i)).not.toBeInTheDocument();
+    // One cause, stated once, with the guard's check joining the list beside the gate that
+    // failed for the same reason.
+    expect(screen.getByText("This season couldn't be found in Plex.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Couldn't check: who's part-way through it and when it was last watched."),
+    ).toBeVisible();
+  });
 });
 
 describe("the season footer's own-vs-show decision", () => {

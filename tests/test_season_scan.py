@@ -1892,23 +1892,58 @@ class TestGatherEndToEnd:
         The reaches straddle the *stated* 200-day hold, not the 180-day default, so a call
         site that hardcoded the default (or dropped the reach altogether) fails here (rule
         141): at reach 190 the default would still read as establishable.
+
+        The show is BOUND in Plex, and every season with it, so the mirror's depth is the
+        only thing that moves. Left unbound, the guard has no rating key to read a place in
+        the show from and blocks for that instead (#486) -- which is a true sentence about a
+        fixture that never meant to say it, and would let a broken reach pass here.
         """
         series = [
             {
                 "id": 11,
                 "title": "Five Seasons",
+                "year": 2005,
                 "status": "ended",
                 "ended": True,
+                "imdbId": "tt0011",
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
+        plex_items = {
+            800: identity.PlexItem(
+                rating_key=800,
+                title="Five Seasons",
+                year=2005,
+                added_at=None,
+                ids=identity.ExternalIds.of(imdb="tt0011"),
+            )
+        }
+        # Inside the SHALLOWER of the two reaches, so no watcher count is a lower bound in
+        # either run and the keep-conflict detector stays out of a test about the hold.
+        arrived = str(int((utcnow() - timedelta(days=100)).timestamp()))
+        sweep = {
+            800: [
+                {"media_index": n, "rating_key": 800 + n, "added_at": arrived} for n in range(1, 6)
+            ]
+        }
 
         async def _run(reach_days: int) -> list[season_scan.SeasonJudgment]:
             _reasons, degrade = _degrade_sink()
             return await season_scan.gather(
                 cache_engine,
                 sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                    shows=[
+                        {
+                            "rating_key": 800,
+                            "title": "Five Seasons",
+                            "year": 2005,
+                            "added_at": arrived,
+                        }
+                    ],
+                    children={},
+                ),
+                plex=_FakePlexGuids(plex_items, seasons=_season_rows(sweep)),  # type: ignore[arg-type]
                 horizon=utcnow() - timedelta(days=reach_days),
                 reach_days=reach_days,
                 active_rating_keys=set(),
@@ -2149,8 +2184,10 @@ class TestGatherEndToEnd:
         viewer. Where nothing about the show resolved, every season already takes Unknown from
         its own branch and abstains, so widening the hold to cover it would move a whole
         population of unmatched shows out of the review queue and protect nothing further.
-        What that leaves standing is the panel half alone -- the guard still reads as checked
-        and passed here -- which is #486 and a decision of its own, not this fix's to make.
+
+        So nothing moves, and the guard says what it did instead of what it found (#486): the
+        check never ran, in the same words the season's four Plex-dependent gates use, so the
+        panel prints the cause once for all five rather than reporting a pass beside them.
         """
         series = [
             {
@@ -2179,7 +2216,22 @@ class TestGatherEndToEnd:
         )
         by_key = {j.media_key: j for j in judgments}
         assert by_key["sonarr:1:77:2"].plex_rating_key is None
-        assert by_key["sonarr:1:77:2"].guard_result.outcome is ABSTAIN
+        guard = by_key["sonarr:1:77:2"].guard_result
+        # ABSTAIN, never PROTECT: the season stays in the review queue's abstain lane, which
+        # is the whole reason the hold was scoped away from here.
+        assert guard.outcome is ABSTAIN
+        # Blocked and unestablishable, so the panel renders it amber under "left for you to
+        # decide" rather than green under "protections it cleared" (rule 93), and the panel's
+        # conflict branch skips it -- nothing was compared, so nothing is being handed over.
+        assert guard.blocked
+        assert guard.unestablishable
+        assert not guard.defers_to_owner
+        # The cause is the one the season's own Unknown facts carry, character for character,
+        # which is what makes `WhyPanel.LeftForYou` group all five under one heading instead
+        # of opening a second box saying the same thing (rule 144).
+        cause = season_scan.no_key_reason(identity.MatchStatus.UNMATCHED)
+        assert guard.detail == f"could not check who is part-way through it: {cause}"
+        assert by_key["sonarr:1:77:2"].facts.days_observed_unwatched.reason == cause
 
     async def test_a_show_without_files_logs_no_content(self, cache_engine: AsyncEngine) -> None:
         """A show Sonarr has no downloaded episodes for is dropped as no_content, and its

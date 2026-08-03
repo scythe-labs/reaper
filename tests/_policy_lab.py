@@ -188,11 +188,13 @@ def guard_result(vector: dict[str, Any]) -> GateResult | None:
 
     ``"unknown"`` models ONE of the blocked shapes ``season_scan.guard_result`` can emit:
     the keep-rule conflict whose comparison was made and lost, which sets
-    ``defers_to_owner``. The refused shapes -- a kept season nobody could read, and a
-    comparison the watch mirror is too short to settle -- have no vector here, because
-    nothing in the policy sweep varies them. They reach the same verdict as this one (no
-    block holds a hand reap) and differ in the chip the operator is shown. Both are pinned
-    directly in ``tests/test_season_scan.py`` and ``tests/test_review_chips.py``.
+    ``defers_to_owner``. Three have no vector here, because nothing in the policy sweep
+    varies what they turn on -- the refused conflicts (a kept season nobody could read, and
+    a comparison the watch mirror is too short to settle) turn on the mirror, and the
+    unestablishable arm on whether the show bound to Plex at all. All three reach the same
+    verdict as this one (no block holds a hand reap) and differ in what the operator is
+    shown. Each is pinned directly in ``tests/test_season_scan.py`` and
+    ``tests/test_review_chips.py``.
     ``tests/test_override_truth.py`` covers the stored-row path and carries only the
     unreadable-kept shape, not the shortfall one -- and cannot tell them apart anyway, since
     both encode as ``defers_to_owner: False`` once frozen (rule 132: this helper must not

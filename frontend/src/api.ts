@@ -277,6 +277,17 @@ export interface GateOutcome {
    *  against a shape the server does not emit -- never the case to branch on, and never the
    *  case to test against. Both read as "names neither shape", never as `false`. */
   defers_to_owner?: boolean | null;
+  /** Whether this block is a check that never ran, as against one that ran and left its
+   *  answer to the owner. Both are blocked and both abstain, so the list they arrive in
+   *  cannot tell them apart, and `keepRuleConflict` needs to: a keep-rule conflict is a
+   *  decision waiting for a person, while the same guard on a show Plex never resolved
+   *  asked nobody and belongs with the four Plex-dependent gates beside it.
+   *
+   *  `null` is a row scanned before the flag shipped, and reads as "not this" -- before it,
+   *  the only season guard result reaching `protections_unknown` on an abstaining item was
+   *  a conflict, so the legacy reading is the correct one. Arrives as `null` rather than
+   *  absent for the reason `defers_to_owner` records above. */
+  unestablishable?: boolean | null;
 }
 
 /** How the item was tied to its Plex library entry. The panel stays quiet on "matched" and
