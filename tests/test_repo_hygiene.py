@@ -1594,6 +1594,92 @@ def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None
     )
 
 
+CODEQL_WORKFLOW = REPO / ".github" / "workflows" / "codeql.yml"
+
+#: Each language CodeQL analyzes, against the tree it is there for. Three cover the five names
+#: the old settings page listed: ``javascript-typescript`` and ``typescript`` are aliases of
+#: ``javascript`` in the action's own ``src/languages/builtin.json``, so the UI was naming one
+#: extractor three times.
+#:
+#: The tree is half the pin and the reason this is not just a spelling check. A language whose
+#: tree moved is analyzing nothing, and an empty analysis is reported as a clean one — the same
+#: shape as a walk that silently collects no members (rule 145).
+_CODEQL_LANGUAGES = {
+    "actions": ".github/workflows",
+    "javascript-typescript": "frontend/src",
+    "python": "src/reaper",
+}
+
+#: What ``codeql.yml`` declines to scan, which is ``ci.yml``'s prose lane written in glob rather
+#: than in a shell ``case``. The two spellings cannot be diffed, so they are pinned instead and
+#: the failure below names the other file (rule 144).
+_CODEQL_PATHS_IGNORE = ["docs/**", ".claude/**", "**/*.md"]
+
+
+def test_the_codeql_analysis_still_covers_every_tree() -> None:
+    """Code scanning is configuration, so it is held like the rest of it.
+
+    This moved out of a settings page precisely because a settings page has no diff: deselecting
+    a language there stops analyzing a tree, and it looks exactly like a quiet week. Here it is
+    a deleted line, and this is what makes it a red test as well.
+
+    Four facts, each of which fails silently rather than loudly if it drifts. The languages and
+    the trees they point at, because an extractor aimed at a moved directory reports no findings
+    the same way a clean tree does. The absence of a ``queries:`` override, because adding the
+    extended suite is a decision about triage load and not a tuning knob to reach for quietly.
+    ``category``, because without it each upload replaces the last and only the language that
+    finished last keeps its results. And ``paths-ignore``, which is safe only while CodeQL is not
+    a required check: a skipped workflow publishes no check run, so requiring one that a
+    prose-only pull request never runs strands it forever.
+    """
+    workflow = yaml.safe_load(CODEQL_WORKFLOW.read_text(encoding="utf-8"))
+
+    matrix = workflow["jobs"]["analyze"]["strategy"]["matrix"]["language"]
+    assert set(matrix) == set(_CODEQL_LANGUAGES), (
+        f"codeql.yml analyzes {sorted(matrix)}, expected {sorted(_CODEQL_LANGUAGES)}.\n"
+        "Dropping one stops analyzing a whole tree and reports it as clean. If a language was\n"
+        "added or genuinely retired, move the mapping above with it."
+    )
+    for language, tree in _CODEQL_LANGUAGES.items():
+        assert (REPO / tree).exists(), (
+            f"codeql.yml analyzes {language!r} for {tree}, which is not in this checkout any\n"
+            "more. An extractor pointed at a directory that moved finds nothing, and nothing\n"
+            "is what a clean tree looks like. Repoint the mapping above at the new path."
+        )
+
+    steps = workflow["jobs"]["analyze"]["steps"]
+    init = [s for s in steps if "codeql-action/init" in (s.get("uses") or "")]
+    analyze = [s for s in steps if "codeql-action/analyze" in (s.get("uses") or "")]
+    assert len(init) == 1 and len(analyze) == 1, (
+        f"expected one init and one analyze step, found {len(init)} and {len(analyze)}.\n"
+        "The workflow's shape changed; fix this walk before trusting the assertions below."
+    )
+
+    assert "queries" not in (init[0].get("with") or {}), (
+        "codeql.yml now sets `queries:`, so it is no longer running the `default` suite that\n"
+        "default setup ran. The extended `security-and-quality` suite was declined against a\n"
+        "measured ratio, not a preference: of eleven alerts this repository fixed seven and\n"
+        "dismissed four. Re-read that ratio in the Security tab and, if it still holds, take\n"
+        "the line back out."
+    )
+
+    assert (analyze[0].get("with") or {}).get("category") == "/language:${{ matrix.language }}", (
+        "codeql.yml's analyze step lost its per-language `category`. Without one, each upload\n"
+        "is read as replacing the last, and every language but the slowest appears to have\n"
+        "found nothing."
+    )
+
+    for trigger in ("push", "pull_request"):
+        declared = workflow[True][trigger]["paths-ignore"]
+        assert declared == _CODEQL_PATHS_IGNORE, (
+            f"codeql.yml's {trigger} paths-ignore is {declared}, expected "
+            f"{_CODEQL_PATHS_IGNORE}.\n"
+            "This is .github/workflows/ci.yml's prose lane (`docs/*|.claude/*|*.md` in its\n"
+            "`changes` job) written as globs. Move both together, and remember the list is\n"
+            "safe only while CodeQL is not a required status check."
+        )
+
+
 #: Both spellings of "which Node major" in this checkout: the image's ``FROM node:24-alpine``
 #: and the workflow's ``node-version: "24"``. The quote is optional on the second because yaml
 #: reads the bare form identically, and a matcher that only accepts quotes goes blind on an
