@@ -3,12 +3,19 @@
 
 A release build compares its version against the newest published release; every
 other build -- the ``:dev`` image, a dev binary, a source checkout -- follows the tip
-of the dev branch. The answer feeds one read-only About surface.
+of the dev branch. The answer feeds read-only UI: the About row, and the account
+chip's light in the header.
 
 The check informs; it never gates. A failure (no network, GitHub down, an API limit)
 resolves to "unknown" and is retried after a short pause, so an air-gapped install
 shows nothing rather than an error. ``REAPER_UPDATE_CHECK=false`` turns it off
 entirely: no request leaves the box, and the surface says checks are off.
+
+Nothing schedules it. The route is the only caller, and the UI asks on load (the
+account chip carries the same query as About), so the TTLs below bound how often a
+*request* becomes a real ask and drive nothing on their own: a server nobody signs in
+to never checks at all. Operator copy says exactly that, and once said the opposite
+(#464).
 
 Which repository to ask is baked at build time as ``REAPER_UPDATE_REPO`` (CI passes
 its own repository, so a fork's builds follow the fork); a source checkout falls back
@@ -16,8 +23,8 @@ to the upstream repository.
 
 Every call narrates itself at DEBUG under ``update_check.*``: which of the three
 things happened (off, cache, ask), what came back, and when the next ask is due. The
-check is demand-driven, so silence in the log has two readings -- nobody opened the
-About surface, or the answer was still cached -- and only ``REAPER_LOG_LEVEL=DEBUG``
+check is demand-driven, so silence in the log has two readings -- nobody had Reaper
+open, or the answer was still cached -- and only ``REAPER_LOG_LEVEL=DEBUG``
 tells them apart. A failure stays at INFO, since that one is worth seeing without
 being asked for.
 """

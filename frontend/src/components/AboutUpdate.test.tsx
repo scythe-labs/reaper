@@ -74,6 +74,13 @@ describe("the About update row", () => {
 
     expect(await screen.findByText("Update available")).toBeInTheDocument(); // the pill
     expect(await screen.findByText(/Reaper 2026\.9\.1 is out/)).toBeInTheDocument();
+    // The sentence beneath names what actually triggers a check -- the UI asking -- because
+    // nothing polls (`UpdateChecker.status()` has one caller, the route). It read "Reaper
+    // checks a few times a day", which an operator takes as a background poll that will find
+    // them on a server they never open (#464, rule 25).
+    expect(
+      screen.getByText(/checks when you open it, at most a few times a day/),
+    ).toBeInTheDocument();
 
     await person.click(screen.getByRole("button", { name: "See what changed" }));
     const dialog = await screen.findByRole("dialog", { name: "What changed" });

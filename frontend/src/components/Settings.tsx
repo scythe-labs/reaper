@@ -1563,9 +1563,17 @@ function UpdateCell({
   onSeeChanges: () => void;
 }) {
   const { data, isPending } = status;
+  // The two no-answer shapes read the same (see above), so the sentence is written once:
+  // one operator claim in two places is two chances to drift (rule 144). "Reaper will try
+  // again later" was the same background-poll promise #464 is about -- the failure TTL only
+  // shortens the wait before the NEXT ask, and nobody asks on a server nobody opens.
+  const noAnswer = (
+    <span className="muted">
+      Couldn't check for updates. Reaper tries again next time you open it.
+    </span>
+  );
   if (isPending) return <span className="muted">Checking for updates…</span>;
-  if (!data)
-    return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
+  if (!data) return noAnswer;
   if (!data.enabled)
     return (
       <span className="muted">
@@ -1573,8 +1581,7 @@ function UpdateCell({
         from launcher.conf in Reaper's data folder, or from your environment, to turn them back on.
       </span>
     );
-  if (data.update_available === null)
-    return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
+  if (data.update_available === null) return noAnswer;
   if (!data.update_available)
     return (
       <span>
@@ -1603,8 +1610,14 @@ function UpdateCell({
         See what changed
       </button>
       <br />
+      {/* What the check actually is: one ask when the UI loads (the account chip holds
+          the same query, so any page starts it), at most a few times a day because the
+          server holds an answer for hours. Nothing polls -- this said "Reaper checks a
+          few times a day", which reads as a background poll finding the operator on a
+          server nobody has open (#464, rule 25). */}
       <span className="muted">
-        Reaper checks a few times a day and never sends anything about your library.
+        Reaper checks when you open it, at most a few times a day, and never sends anything about
+        your library.
       </span>
     </>
   );
