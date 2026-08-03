@@ -17,7 +17,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
-from sqlalchemy import insert
+from sqlalchemy import insert, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from reaper import buildinfo
 from reaper.buildinfo import install_kind
@@ -25,7 +26,9 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import AppSetting
+from reaper.db.session import journal_mode
 from reaper.main import create_app
+from reaper.services import scheduler
 
 
 class _RecordingLogger:
@@ -53,13 +56,26 @@ class _RecordingLogger:
 
 
 def _make(
-    tmp_path: Path, *, stored_destructive: bool | None, stored_log_level: str | None = None
+    tmp_path: Path,
+    *,
+    stored_destructive: bool | None,
+    stored_log_level: str | None = None,
+    revision: str | None = None,
 ) -> Settings:
     """A schema-initialized install; optionally with the deletion toggle already stored,
-    the way a real install looks after someone armed it in the web UI."""
+    the way a real install looks after someone armed it in the web UI.
+
+    ``revision`` writes the ``alembic_version`` row that ``create_all`` never makes, so the
+    banner's revision field can be pinned to a value that is not the default (rule 141)."""
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    if revision is not None:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE alembic_version (version_num TEXT NOT NULL)"))
+            conn.execute(
+                text("INSERT INTO alembic_version (version_num) VALUES (:v)"), {"v": revision}
+            )
     stored: dict[str, object] = {}
     if stored_destructive is not None:
         stored["destructive_enabled"] = stored_destructive
@@ -217,8 +233,12 @@ class TestTheBootBannerDescribesTheInstall:
         self, tmp_path: Path, recorder: _RecordingLogger
     ) -> None:
         """WAL is asked for and not always granted: a database on a network share stays
-        on the rollback journal, which is every "database is locked" report."""
-        settings = _make(tmp_path, stored_destructive=None)
+        on the rollback journal, which is every "database is locked" report.
+
+        The revision is pinned to a stored value rather than to the ``None`` a
+        ``create_all`` database returns anyway, so replacing the read with a constant
+        fails here instead of passing on the fixture's own default (rule 141)."""
+        settings = _make(tmp_path, stored_destructive=None, revision="deadbeef0001")
 
         with TestClient(create_app(settings)):
             pass
@@ -226,20 +246,49 @@ class TestTheBootBannerDescribesTheInstall:
         db = next(kw for _l, event, kw in recorder.events if event == "db.ready")
         assert db["journal_mode"] == "wal"
         assert db["cache_journal_mode"] == "wal"
-        # Built from the models rather than migrated, so it carries no revision row.
-        assert db["revision"] is None
+        assert db["revision"] == "deadbeef0001"
+
+    async def test_journal_mode_reports_the_mode_the_database_settled_on(
+        self, tmp_path: Path
+    ) -> None:
+        """The case the banner exists for, driven directly: a database that did not get WAL.
+
+        It cannot be driven through the boot, because ``create_engine`` attaches
+        ``_configure_sqlite`` per engine and that listener re-asks for WAL on every pooled
+        connection. A plain engine has no listener, so the mode it was put in survives, and
+        a `journal_mode` reduced to ``return "wal"`` fails here (rule 145)."""
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/plain.db")
+        try:
+            async with engine.begin() as conn:
+                await conn.exec_driver_sql("PRAGMA journal_mode=DELETE")
+            assert await journal_mode(engine) == "delete"
+        finally:
+            await engine.dispose()
 
     def test_every_registered_job_is_named_with_its_next_firing(
         self, tmp_path: Path, recorder: _RecordingLogger
     ) -> None:
         """ "Why did my nightly scan stop" -- a job that was never scheduled and one whose
-        stored cron was skipped as malformed are otherwise indistinguishable."""
+        stored cron was skipped as malformed are otherwise indistinguishable.
+
+        The population is pinned rather than walked for a flag, because a flag-shaped
+        assertion cannot tell a job that complies from one that dropped out of the walk
+        (rule 145). This fixture stores no schedules, so the set is exactly the built-in
+        upkeep jobs: a stored cron would add the scan job and a stored null would remove a
+        maintenance one."""
         settings = _make(tmp_path, stored_destructive=None)
 
         with TestClient(create_app(settings)):
             pass
 
         jobs = [kw for _l, event, kw in recorder.events if event == "scheduler.job"]
-        assert jobs, "the built-in upkeep jobs must each announce themselves"
-        assert all(job["job"] and job["trigger"] for job in jobs)
+        assert {job["job"] for job in jobs} == {
+            *scheduler.MAINTENANCE_JOB_IDS,
+            scheduler.SESSION_SWEEP_JOB_ID,
+            scheduler.SNAPSHOT_SWEEP_JOB_ID,
+        }
+        assert all(job["trigger"] for job in jobs)
+        # `.get`, so a dropped field fails as a missing firing time rather than a KeyError
+        # raised somewhere else entirely (rule 141).
+        assert all(job.get("next_run") for job in jobs)
         assert "scheduler.no_scan_scheduled" in recorder.names()
