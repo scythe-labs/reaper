@@ -13,6 +13,13 @@ entirely: no request leaves the box, and the surface says checks are off.
 Which repository to ask is baked at build time as ``REAPER_UPDATE_REPO`` (CI passes
 its own repository, so a fork's builds follow the fork); a source checkout falls back
 to the upstream repository.
+
+Every call narrates itself at DEBUG under ``update_check.*``: which of the three
+things happened (off, cache, ask), what came back, and when the next ask is due. The
+check is demand-driven, so silence in the log has two readings -- nobody opened the
+About surface, or the answer was still cached -- and only ``REAPER_LOG_LEVEL=DEBUG``
+tells them apart. A failure stays at INFO, since that one is worth seeing without
+being asked for.
 """
 
 from __future__ import annotations
@@ -160,19 +167,36 @@ class UpdateChecker:
         own, and the wait is bounded by the client's own retry budget.
         """
         if not _enabled():
+            log.debug("update_check.disabled")
             return UpdateStatus(channel=_channel(), enabled=False, current=build_version())
         async with self._lock:
             if self._cached is not None and self._clock() < self._cache_until:
+                log.debug(
+                    "update_check.cached",
+                    latest=self._cached.latest,
+                    update_available=self._cached.update_available,
+                    held_for=round(self._cache_until - self._clock()),
+                )
                 return self._cached
             status = await self._check()
             ttl = _SUCCESS_TTL if status.checked_at is not None else _FAILURE_TTL
             self._cached = status
             self._cache_until = self._clock() + ttl
+            log.debug(
+                "update_check.answered",
+                latest=status.latest,
+                update_available=status.update_available,
+                behind=len(status.changes),
+                next_ask_in=round(ttl),
+            )
             return status
 
     async def _check(self) -> UpdateStatus:
         channel = _channel()
         current = build_version()
+        # Emitted before the request, not after it: an ask with no matching
+        # ``answered`` is how a hung or slow GitHub call shows up at all.
+        log.debug("update_check.asking", channel=channel, repo=self._repo, current=current)
         try:
             if channel == "release":
                 return await self._check_release(current)
