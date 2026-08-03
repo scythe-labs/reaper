@@ -22,6 +22,7 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from reaper import logbuffer
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -763,6 +764,60 @@ class TestExecuteGates:
         resp = armed_client.post(f"/api/runs/{run['id']}/stop")
         assert resp.status_code == 409
         assert "not currently running" in resp.json()["detail"].lower()
+
+    def test_a_reap_refused_because_one_is_running_says_so_in_the_log(
+        self, armed_client: TestClient
+    ) -> None:
+        """The refusal an operator hits by pressing Reap in a second tab.
+
+        It is raised before the slot is claimed, so it never reaches the handler that logs
+        every other synchronous refusal, and the operator dismisses a toast the server kept
+        no record of. Asserted against the ring, because that is what a downloaded log holds.
+        """
+        from reaper.api.runs import _reap_status
+
+        run = armed_client.post("/api/runs").json()
+        # The production accessor, which creates the status lazily: a hand-built one would
+        # not be the object the route reads (rule 119).
+        status = _reap_status(armed_client.app)  # type: ignore[arg-type]
+        status.running = True
+        status.run_id = run["id"]
+        before = logbuffer.RING.last_seq()
+        try:
+            resp = armed_client.post(
+                f"/api/runs/{run['id']}/execute",
+                json={"confirmation_phrase": run["confirmation_phrase"]},
+            )
+        finally:
+            status.running = False
+            status.run_id = None
+
+        assert resp.status_code == 409
+        refusals = [
+            line
+            for line in logbuffer.RING.since(before, limit=logbuffer.RING_SIZE)
+            if "reap.refused" in line.text
+        ]
+        assert len(refusals) == 1
+        assert "409" in refusals[0].text
+
+    def test_a_stop_refused_because_the_run_ended_says_so_in_the_log(
+        self, armed_client: TestClient
+    ) -> None:
+        """The sibling of the refusal above (rule 72): the success path logged and the
+        refusal did not, so "I pressed Stop and it kept going" left the same nothing."""
+        run = armed_client.post("/api/runs").json()
+        before = logbuffer.RING.last_seq()
+
+        resp = armed_client.post(f"/api/runs/{run['id']}/stop")
+
+        assert resp.status_code == 409
+        refusals = [
+            line
+            for line in logbuffer.RING.since(before, limit=logbuffer.RING_SIZE)
+            if "reap.stop_refused" in line.text
+        ]
+        assert len(refusals) == 1
 
     def test_a_non_http_failure_starting_a_reap_releases_the_slot(
         self, armed_client: TestClient, monkeypatch: pytest.MonkeyPatch
