@@ -165,6 +165,34 @@ class GateResult:
     for, because that message opens with the watcher count.
     """
 
+    unestablishable: bool = False
+    """Only meaningful on a ``blocked`` result: this check never ran, as against one that ran
+    and left its answer to the operator.
+
+    Set by the season guard alone (``services.season_scan.guard_result``), the one producer
+    whose blocked results are not all of a kind, and read by ``WhyPanel.keepRuleConflict``.
+    A keep-rule conflict made the comparison and found the rule fighting the evidence, which
+    is a decision waiting for a person ("Needs a look"). The same guard on a show Plex never
+    resolved asked nobody: with no rating key anywhere there is no place in the show to read,
+    so it is Limbo, and the four Plex-dependent gates beside it already say why. ``blocked``
+    is true of both, so it cannot be what tells them apart.
+
+    It also covers the guard's third shape, a season PROTECTED because the check could not be
+    answered (``season_pruning.ProtectedSeason.unestablishable``). That one rides in
+    ``protections_unknown`` too and was kept out of the panel's conflict branch only by the
+    verdict being ``protect`` with a non-empty fired list -- true today, and nothing
+    structural held it (see that function's own note about a row slipping through).
+
+    ``False`` on every other producer, where nothing reads it: an ordinary gate's blocked
+    result has one shape and needs no discriminator (the same scoping ``defers_to_owner``
+    carries, for the same reason).
+
+    Three-state on the wire, two here (rule 142): ``GateOutcomeOut.unestablishable`` carries
+    ``None`` for a row frozen before the flag, since nothing in such a row says which shape
+    it is. The panel reads that ``None`` as "not this", which is how those rows already
+    render.
+    """
+
     @property
     def fired(self) -> bool:
         return self.outcome == PROTECT

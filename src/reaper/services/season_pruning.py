@@ -35,12 +35,15 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
   the mirror is shallower than that hold -- or the hold is unbounded -- the viewer set is
   *un-establishable* rather than empty and every season on disk is held instead
   (:func:`reaper.engine.gates.progress_is_establishable`). **Depth is not the only way to
-  lose a viewer.** A season whose plays stopped being readable takes its viewer's place in
-  the show with it, on a mirror that spans the hold perfectly, so ``progress_unreadable``
-  holds every season the same way -- and it holds the *siblings*, which is the point: the
-  blind season abstains on its own evidence, while the season a viewer is actually about to
-  watch has fully readable facts of its own and would condemn at full confidence
-  (``services.watch_evidence``).
+  lose a viewer, and there are three ways in all.** A season whose plays stopped being
+  readable takes its viewer's place in the show with it, on a mirror that spans the hold
+  perfectly, so ``progress_unreadable`` holds every season the same way
+  (``services.watch_evidence``); and a season with no Plex rating key at all this scan was
+  never *asked* about, so ``progress_seasons_unmatched`` holds them for that too. All three
+  hold the *siblings*, which is the point: the season nobody could read abstains on its own
+  evidence, while the season a viewer is actually about to watch has fully readable facts of
+  its own and would condemn at full confidence. One duplicate "Season 3" in Plex was enough
+  to put the season a viewer had just finished season 3 for onto the reap list (#472).
 
 * **Never touch a season that is mid-run or short of episodes.** Maintainerr #949: a
   mid-season break longer than the timeout leaves the back half permanently undownloaded.
@@ -93,19 +96,25 @@ SPECIALS_SEASON = 0
 #: (:func:`_protection_reason`) and the flag the caller reads off them cannot drift apart --
 #: rule 142's lesson, kept inside one module.
 #:
-#: The two differ only in WHY the answer is missing, and both are worth their own sentence: the
-#: first is fixed by holding more history, the second by repairing it at the source, and copy
-#: that named one cause for both would send the operator to the wrong place.
+#: The three differ only in WHY the answer is missing, and each is worth its own sentence: the
+#: first is fixed by holding more history, the second by repairing it at the source, the third
+#: by fixing the season's Plex match, and copy that named one cause for three would send the
+#: operator to the wrong place.
 PROGRESS_UNESTABLISHABLE_REASON = "your watch history is too short to tell who is part-way through"
 PROGRESS_UNREADABLE_REASON = (
     "some plays are no longer readable, so who is part-way through is unknown"
 )
+PROGRESS_UNMATCHED_REASON = (
+    "a season of this show is not matched in Plex, so who is part-way through is unknown"
+)
 
 #: Every reason above, for the caller that asks "was this held because we could not answer".
 #: A membership test against the constants in this module, never a prefix test on the wording
-#: across a boundary (rule 142); adding a third reason above means adding it here, and
+#: across a boundary (rule 142); adding a fourth reason above means adding it here, and
 #: ``tests/test_season_pruning.py`` fails on one that is missing.
-UNANSWERABLE_REASONS = frozenset({PROGRESS_UNESTABLISHABLE_REASON, PROGRESS_UNREADABLE_REASON})
+UNANSWERABLE_REASONS = frozenset(
+    {PROGRESS_UNESTABLISHABLE_REASON, PROGRESS_UNREADABLE_REASON, PROGRESS_UNMATCHED_REASON}
+)
 
 
 @dataclass(frozen=True)
@@ -420,6 +429,15 @@ def plan_series_prune(
     # it, because the mirror does span the hold. True holds every season on disk, exactly as a
     # short mirror does, and for the identical reason: the viewer set is unreadable, not empty.
     progress_unreadable: bool = False,
+    # The third route to the same gap, and the one that needs no history to have moved: at
+    # least one content-bearing season of this show has no Plex rating key at all this scan, so
+    # its plays were never queried and a viewer part way through THAT season is invisible. The
+    # season itself abstains on its own Unknown facts; its siblings do not, and one of them is
+    # the season that viewer is about to watch. Neither flag above expresses it -- the mirror
+    # spans the hold and nothing fell, there is simply no address to read (``season_scan``'s
+    # ``_NO_KEY_REASONS``). True holds every season on disk, for the identical reason: the
+    # viewer set is unreadable, not empty.
+    progress_seasons_unmatched: bool = False,
     keep_specials: bool = True,
     protect_incomplete: bool = True,
     flag_keep_conflicts: bool = True,
@@ -486,6 +504,8 @@ def plan_series_prune(
     # Same off-switch, same reasoning: an operator who turned the guard off is making no claim
     # for an unreadable play to undermine.
     progress_plays_unreadable = keep_in_progress and progress_unreadable
+    # And the third, on the same switch for the same reason.
+    progress_season_unmatched = keep_in_progress and progress_seasons_unmatched
     total_ranked = len(ranks)
 
     real_numbers = [s.season_number for s in on_disk if s.season_number != SPECIALS_SEASON]
@@ -510,6 +530,7 @@ def plan_series_prune(
             seq_protected=seq_protected,
             progress_unestablished=progress_unestablished,
             progress_plays_unreadable=progress_plays_unreadable,
+            progress_season_unmatched=progress_season_unmatched,
         )
         if reason is None:
             prunable.append(n)
@@ -556,6 +577,7 @@ def _protection_reason(
     seq_protected: set[int],
     progress_unestablished: bool = False,
     progress_plays_unreadable: bool = False,
+    progress_season_unmatched: bool = False,
 ) -> str | None:
     """Why this season is kept, or ``None`` if it may be pruned.
 
@@ -603,13 +625,16 @@ def _protection_reason(
         return "a viewer is part-way through the show"
     # Last, so a season we can actually name a viewer for gets that sharper reason instead.
     # These are the honest sentences for the rest: the mid-binge guard was asked a question the
-    # watch history cannot answer, and "we could not tell" holds the season. Depth first, since
-    # a mirror too short to span the hold is the wider failure and its remedy is the operator's
-    # own setting; an unreadable play is repaired at the source.
+    # watch history cannot answer, and "we could not tell" holds the season. Widest failure
+    # first, since that is the one whose remedy fixes the others as a side effect: a mirror too
+    # short to span the hold is the operator's own setting, an unreadable play is repaired at
+    # the source, and an unmatched season is the narrowest -- it names one season to go look at.
     if progress_unestablished:
         return PROGRESS_UNESTABLISHABLE_REASON
     if progress_plays_unreadable:
         return PROGRESS_UNREADABLE_REASON
+    if progress_season_unmatched:
+        return PROGRESS_UNMATCHED_REASON
     return None
 
 

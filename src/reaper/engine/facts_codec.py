@@ -117,6 +117,7 @@ def _result_to_dict(r: GateResult) -> dict[str, Any]:
         "detail": r.detail,
         "blocked": r.blocked,
         "defers_to_owner": r.defers_to_owner,
+        "unestablishable": r.unestablishable,
     }
 
 
@@ -138,6 +139,12 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
         # means a change to what counts as a legible flag lands on all three readers at once
         # rather than on the two somebody remembered (#112).
         defers_to_owner=thaw_defers_to_owner(d.get("defers_to_owner")) is True,
+        # Same thaw, deliberately the same function: both are gate flags off the same frozen
+        # row, and one reader of "what counts as a legible flag" is the whole point of routing
+        # either through here (rule 104). A row frozen before this flag reads False, which is
+        # what those rows meant -- the only season guard result reaching the blocked list on an
+        # abstaining item was a keep-rule conflict.
+        unestablishable=thaw_defers_to_owner(d.get("unestablishable")) is True,
     )
 
 

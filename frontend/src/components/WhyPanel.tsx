@@ -413,19 +413,30 @@ export function MatchCandidates({ links }: { links: Links }) {
  *  panel could not, because `GateOutcomeOut` did not serve it. Now it does, and the flag rides
  *  on the outcome for `verdictLook` to branch on.
  *
- *  A `season_progression` row reaches `protections_unknown` two ways, and only the conflict
- *  arm can get here: the other is a season the guard PROTECTS but could not answer
- *  (`ProtectedSeason.unestablishable`), and a fired protection makes the verdict `protect`
- *  with a non-empty `protections_fired`, which the Sanctuary branch above returns on first.
- *  Should a hand-edited row ever slip one through, it carries `defers_to_owner: false` and
- *  reads as "couldn't check who watched these seasons", which is true of it too -- the
- *  failure mode is a vaguer sentence, not a false one.
+ *  A `season_progression` row reaches `protections_unknown` three ways, and `unestablishable`
+ *  is what says which (rule 142). The conflict arm is the one this branch wants. The second is
+ *  a season the guard PROTECTS but could not answer (`ProtectedSeason.unestablishable`); the
+ *  third is the mid-binge check on a show Plex never resolved, which asked nobody and abstains
+ *  beside the four Plex-dependent gates that say why. Both of those carry the flag.
+ *
+ *  The second used to be excluded by nothing structural: a fired protection makes the verdict
+ *  `protect` with a non-empty `protections_fired`, and the Sanctuary branch returns on it
+ *  first. That is still true and is no longer what is relied on. The third has no such cover
+ *  -- it abstains, which is this branch -- and would have read as "Reaper couldn't check who
+ *  watched these seasons, so it left the call to you", offering a decision on a comparison
+ *  that was never attempted.
+ *
+ *  `undefined` and `null` both mean a row scanned before the flag, and both read as a
+ *  conflict, because before the flag that is the only thing an abstaining item's season guard
+ *  put here.
  *
  *  Reachability, so nobody re-derives it: the shortfall arm fires wherever the watch history
  *  is shallower than the library is old, which makes this the DEFAULT rendering for TV on such
  *  a server, not an edge case. */
 function keepRuleConflict(item: CandidateDetail): GateOutcome | undefined {
-  return item.explanation.protections_unknown.find((o) => o.gate === "season_progression");
+  return item.explanation.protections_unknown.find(
+    (o) => o.gate === "season_progression" && o.unestablishable !== true,
+  );
 }
 
 /** What the panel may say about a conflict, given what Reaper could actually establish.
@@ -1106,6 +1117,9 @@ const CHECK_COPY: Record<string, string> = {
   "curated lists": "protected lists",
   "which *arr owns this": "which app manages it",
   "who else watched it": "who else watched it",
+  // The season guard, where it could not run at all. Its other outcomes are whole sentences
+  // that do not parse as `could not check {what}: {cause}` and keep their own row.
+  "who is part-way through it": "who's part-way through it",
 };
 
 const CAUSE_COPY: Record<string, string> = {

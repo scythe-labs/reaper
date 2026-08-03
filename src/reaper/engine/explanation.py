@@ -72,6 +72,12 @@ class GateOutcomeOut(BaseModel):
     off ``protections_unknown``; entries in the other two lists never carry it, so every
     one of them reads ``null`` for a reason that is not the third state.
 
+    ``unestablishable`` is three-state on the same terms and separates a different pair:
+    ``true`` means the check never ran at all, ``false`` that it ran and left its answer to
+    the operator, and ``null`` a row frozen before the flag. The two are read together --
+    a season keep-rule conflict is ``unestablishable: false``, and ``defers_to_owner`` then
+    says whether the comparison behind it was one Reaper made.
+
     Said here rather than on the field because a class docstring is the only one of the
     two that reaches the published document: Pydantic harvests attribute docstrings only
     under ``use_attribute_docstrings``, which this tree does not set, so the contract
@@ -114,9 +120,25 @@ class GateOutcomeOut(BaseModel):
     beside that chip could not, so it went on running the retired wording test and asserted a
     comparison its own reason block denied (#86)."""
 
-    @field_validator("defers_to_owner", mode="before")
+    unestablishable: bool | None = None
+    """Whether this block is a check that never ran, as against one that ran and left its
+    answer to the operator.
+
+    ``GateResult.unestablishable`` carries what sets it and why only the season guard does.
+    What matters at this boundary is the third state: ``None`` is a row frozen before the
+    flag, and nothing in such a row tells the two apart. The panel reads ``None`` as "not
+    this", which is how those rows already render -- before the flag, the only season guard
+    result reaching this list on an abstaining item was a keep-rule conflict, so the legacy
+    reading and the correct one are the same reading.
+
+    Written on every ``protections_unknown`` entry by ``services.snapshot._explain``, never
+    omitted when ``False``, so present-and-``False`` stays distinguishable from absent on
+    disk. Declared here because a wire schema must name every key the UI reads
+    (``WhyPanel.keepRuleConflict``)."""
+
+    @field_validator("defers_to_owner", "unestablishable", mode="before")
     @classmethod
-    def _thaw_defers_to_owner(cls, value: object) -> bool | None:
+    def _thaw_gate_flag(cls, value: object) -> bool | None:
         """Read the stored byte the way ``_chip`` reads it, which is the point (rule 104).
 
         ``mode="before"`` because the whole job is to run INSTEAD of Pydantic's bool coercion,
@@ -125,6 +147,9 @@ class GateOutcomeOut(BaseModel):
         field, it fails the enclosing ``Explanation`` and blanks the operator's whole why
         panel while every other reader of the same row carries on. ``thaw_defers_to_owner``
         holds the reasoning and is the only place this rule is written down (#112).
+
+        Both flags, one validator: they are gate flags off the same row under the same rule,
+        and a second copy of it is how one of them would come to keep pydantic's coercion.
         """
         return thaw_defers_to_owner(value)
 

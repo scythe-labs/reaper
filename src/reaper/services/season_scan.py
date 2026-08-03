@@ -428,16 +428,24 @@ def series_genres(series: Mapping[str, Any]) -> Observation[str]:
     return Known(value=", ".join(genres), source="sonarr") if genres else Absent(source="sonarr")
 
 
-def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
+def guard_result(
+    plan: SeriesPrunePlan, season_number: int, *, progress_unknown_reason: str | None = None
+) -> GateResult:
     """Translate the season-pruning verdict for one season into a gate result.
 
-    Three outcomes, mapped onto the gate vocabulary the why-panel already speaks:
+    Four outcomes, mapped onto the gate vocabulary the why-panel already speaks:
 
     * **Protected by a guard** -> ``PROTECT``. Beats the score, like any gate.
     * **In a keep-rule conflict** (prunable by the rule, but more-watched than a season
       the rule keeps) -> a *blocked* ABSTAIN. ``blocked`` forces the whole item to
       abstain, which is exactly right: the rule is fighting the evidence, so a human must
       look. It renders amber, not green.
+    * **Prunable, on a show that never bound to Plex** (``progress_unknown_reason``) -> a
+      *blocked*, ``unestablishable`` ABSTAIN. Nothing is held on it: with no rating key
+      anywhere every season already abstains on its own Unknown facts, and there is no
+      readable sibling to endanger, which is why #485 scoped the hold away from here. What
+      it corrects is the sentence. The mid-binge check asked nobody, and reporting that as
+      a pass sat one fold above four gates saying the opposite on the same season (#486).
     * **Cleanly prunable** -> ABSTAIN, recorded so the panel shows the guard ran and had
       nothing to protect here.
 
@@ -484,6 +492,11 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
                 # Known/Absent/Unknown distinction is true and the operator is entitled to
                 # see which one this is, which was always the better reason.
                 blocked=protected.unestablishable,
+                # The same fact, carried to the panel rather than left to be inferred from
+                # the verdict. This row reaches `protections_unknown` too, and the panel's
+                # conflict branch skipped it only because a fired protection makes the
+                # verdict `protect` and an earlier branch returns first (rule 142).
+                unestablishable=protected.unestablishable,
             )
 
     # EVERY conflict naming this season, not just the first. ``_detect_conflicts`` raises
@@ -518,6 +531,25 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
             defers_to_owner=refused is None,
         )
 
+    if progress_unknown_reason is not None:
+        # Last, so a real protection and a real conflict both still win: this arm says only
+        # that nobody could be asked, and either of those is something Reaper found. Neither
+        # can co-occur with it in practice -- `_detect_conflicts` skips a season whose watcher
+        # count is None, and every count is None when no season carries a rating key -- but
+        # the order is what makes that safe rather than the coincidence.
+        #
+        # Worded as the `could not check {what}: {cause}` shape `engine.gates._blocked`
+        # produces, on the SAME cause string this season's four Plex-dependent gates carry, so
+        # the panel folds all five into one box naming the cause once instead of opening a
+        # second box that says it again (`WhyPanel.LeftForYou`, rule 144).
+        return GateResult(
+            GateId.SEASON_PROGRESSION,
+            GATE_ABSTAIN,
+            blocked=True,
+            unestablishable=True,
+            detail=f"could not check who is part-way through it: {progress_unknown_reason}",
+        )
+
     return GateResult(
         GateId.SEASON_PROGRESSION,
         GATE_ABSTAIN,
@@ -536,6 +568,19 @@ _NO_KEY_REASONS: dict[identity.MatchStatus | None, str] = {
     identity.MatchStatus.AMBIGUOUS: "more than one Plex item matches this show",
     identity.MatchStatus.CONFLICTED: "Plex and Sonarr describe this show differently",
 }
+
+
+def no_key_reason(show_match_status: identity.MatchStatus | None) -> str:
+    """Why this season has no Plex rating key, in the operator's words.
+
+    One derivation for both readers (rule 104): ``build_season_facts`` stamps it on every
+    Unknown observation, and ``_judge_series`` hands the same string to the mid-binge guard
+    so the panel groups all of them under one cause. Two ``.get`` calls with two fallbacks
+    is how the guard's sentence would come to name a different cause from the four gates
+    printed beside it.
+    """
+    return _NO_KEY_REASONS.get(show_match_status, "Plex has not matched this season")
+
 
 #: The season twin of ``snapshot.NO_ADDED_AT_REASON``, and the same contract: a key into
 #: ``CAUSE_COPY``, named so the drift test covers it (rule 144). Its own wording, for the
@@ -610,11 +655,11 @@ def build_season_facts(
     streaming: Observation[bool]
 
     if plex_rating_key is None:
-        no_key_reason = _NO_KEY_REASONS.get(show_match_status, "Plex has not matched this season")
-        dormancy = Unknown(reason=no_key_reason, source="plex")
-        recent = Unknown(reason=no_key_reason, source="plex")
-        all_time = Unknown(reason=no_key_reason, source="plex")
-        streaming = Unknown(reason=no_key_reason, source="plex")
+        reason = no_key_reason(show_match_status)
+        dormancy = Unknown(reason=reason, source="plex")
+        recent = Unknown(reason=reason, source="plex")
+        all_time = Unknown(reason=reason, source="plex")
+        streaming = Unknown(reason=reason, source="plex")
         if show_match_status is identity.MatchStatus.MATCHED:
             # The show bound to Plex, but this content-bearing season did not: Plex has no
             # matching season (one it has not scanned yet, or a split/duplicate "Season n"
@@ -631,7 +676,7 @@ def build_season_facts(
                 title=title,
                 season=season.season_number,
                 match_status="unmatched",
-                detail=no_key_reason,
+                detail=reason,
             )
     else:
         # Dormancy is measured from THIS SEASON's own arrival date, never the show's -- a
@@ -1714,6 +1759,37 @@ def _judge_series(
             else None
         )
     show_watch_unreadable = any(reason is not None for reason in blind_by_season.values())
+    # The same gap through a third door, and the one `blind_by_season` structurally cannot see:
+    # `went_blind` compares a reading against a mark, and a season with no rating key has no
+    # reading to compare, so it records `None` -- "reads honestly" -- about a season nobody
+    # asked about. Its plays are under a key this scan never learned, so they are not in
+    # `all_season_keys`, not in `stats`, and its viewer is absent from `_progress_by_user`
+    # entirely.
+    #
+    # Scoped to a show that DID bind to Plex, because that is the population where the gap can
+    # cost a file: some seasons resolved and some did not, so the resolved ones carry fully
+    # readable facts and condemn at full confidence on a viewer the missing ones hid. Where the
+    # SHOW never bound, every season takes Unknown from its own branch (`_NO_KEY_REASONS`) and
+    # abstains, so there is no readable sibling to endanger. That case is answered below
+    # instead, by saying so rather than by holding: holding it would move every unmatched show
+    # out of the review queue and protect nothing further (#486).
+    #
+    # Content-bearing only: an announced season with no files is one nobody can be part way
+    # through, and counting it would hold every show with a season Sonarr has listed and not
+    # yet downloaded.
+    show_seasons_unmatched = item.show_rating_key is not None and any(
+        season.has_content and season.season_number not in item.seasons_in_plex
+        for season in item.seasons
+    )
+    # The other side of that scoping, and the whole of what the never-bound show gets: no
+    # rating key anywhere means `key_to_number` is empty, `_progress_by_user` reads no rows,
+    # and the guard below answers "is anyone part way through this" having asked nobody. The
+    # seasons are already held by their own Unknown facts; this is what stops the panel
+    # calling the check passed (rule 93). Same wording the season's other blocked gates carry,
+    # so they group as one cause.
+    progress_unknown_reason = (
+        no_key_reason(item.match_status) if item.show_rating_key is None else None
+    )
     # Expire abandoned viewers before the guard sees them: a place in the show is held
     # only while its viewer stayed active within the policy's hold window. The helper
     # keeps every viewer whose last-watched time cannot be read, and 0 disables expiry.
@@ -1790,6 +1866,12 @@ def _judge_series(
         # are missing, and there is nobody to keep -- the exact sentence
         # `gates.progress_is_establishable` uses about a short mirror (rule 140).
         progress_unreadable=show_watch_unreadable,
+        # And the third: a season Plex never resolved for us. `resolve_season_keys` returning an
+        # empty map on a failed read is fail-closed for that show's OWN seasons, which all
+        # abstain on Unknown facts; it says nothing about the assertion the show then makes
+        # about viewer progress, and a PARTIAL resolution leaves readable siblings to condemn on
+        # it (#472).
+        progress_seasons_unmatched=show_seasons_unmatched,
         keep_specials=keep_specials,
         protect_incomplete=protect_incomplete_seasons,
         flag_keep_conflicts=flag_keep_conflicts,
@@ -1901,7 +1983,7 @@ def _judge_series(
                 size_bytes=season.size_on_disk,
                 size_source=SizeSource.SONARR if season.size_on_disk is not None else None,
                 facts=facts,
-                guard_result=guard_result(plan, n),
+                guard_result=guard_result(plan, n, progress_unknown_reason=progress_unknown_reason),
                 watch_reading=reading,
                 watch_blind_reason=season_blind,
                 year=show_year,

@@ -1685,11 +1685,16 @@ def _explain(
             # It decides nothing about a hand reap. It used to -- and the write is worth
             # keeping for the chip alone, because a legacy row genuinely cannot tell the two
             # shapes apart and must not be made to assert either.
+            # ``unestablishable`` rides beside it on the same terms and for the same reason:
+            # written on every entry so a row frozen by THIS version says which shape it is,
+            # where a row frozen before it says nothing and the panel reads that as the shape
+            # those rows already had (a keep-rule conflict).
             "protections_unknown": [
                 {
                     "gate": r.gate.value,
                     "detail": r.detail,
                     "defers_to_owner": r.defers_to_owner,
+                    "unestablishable": r.unestablishable,
                 }
                 for r in evaluation.could_not_be_checked
             ],

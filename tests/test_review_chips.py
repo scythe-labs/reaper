@@ -58,8 +58,9 @@ from reaper.services.condemned import (
     MATCH_UNREADABLE,
     reap_override_verdict_decoded,
 )
-from reaper.services.season_pruning import PruneConflict
+from reaper.services.season_pruning import PruneConflict, SeriesPrunePlan
 from reaper.services.season_scan import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
+from reaper.services.season_scan import guard_result
 from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
 
@@ -85,6 +86,9 @@ _NO_PANEL_ROUTE = {
         "already plain: it answers 'why kept', not 'what could not be checked'"
     ),
     "season_pruning.PROGRESS_UNREADABLE_REASON": ("its twin above, same surface and same shape"),
+    "season_pruning.PROGRESS_UNMATCHED_REASON": (
+        "the third of the same set, same surface and same shape (#472)"
+    ),
     "preview.NOT_PROBED_REASON": (
         "the facts a policy probe leaves out. probe_signal answers one route with a number "
         "and a detail string and builds no candidate, stores no Explanation and touches no "
@@ -818,6 +822,50 @@ class TestChip:
             assert [o.gate for o in unknown] == ["season_progression"], expected
             assert unknown[0].defers_to_owner is expected
 
+    def test_a_check_that_never_ran_reaches_the_panel_saying_so(self) -> None:
+        """The twin of the test above, for ``unestablishable`` (rule 72), and the seam the
+        two halves of #486 meet at.
+
+        The guard's own output, frozen by the real ``_explain`` and read back through the
+        real ``Explanation``. Two things have to survive that trip and neither is visible
+        from either side alone: the row must leave ``protections_checked``, where it was
+        claiming a pass, and it must arrive carrying the flag ``WhyPanel.keepRuleConflict``
+        reads. A key ``Explanation`` does not declare is dropped silently, and the panel then
+        offers to settle a comparison nobody attempted.
+
+        The pre-flag generation rides on ``defers_to_owner``'s test above: a row frozen
+        before either key reads ``None`` for both.
+        """
+        never_ran = guard_result(
+            SeriesPrunePlan(series_title="Show", prunable=[2]),
+            2,
+            progress_unknown_reason="Plex has not matched this season",
+        )
+        frozen = json.loads(
+            _explain(
+                Evaluation(results=[never_ran]),
+                Score(value=10.0, coverage=0.37, results=[]),
+                DEFAULT_MOVIE_POLICY,
+                match_status=identity.MatchStatus.UNMATCHED,
+            )
+        )
+        assert frozen["protections_checked"] == []
+
+        panel = _explanation_out(
+            Candidate(
+                media_key="sonarr:1:2:3",
+                explanation_json=json.dumps(frozen),
+                score=10,
+                coverage_bp=3_700,
+            )
+        )
+
+        assert not panel.unreadable
+        unknown = panel.body.protections_unknown
+        assert [o.gate for o in unknown] == ["season_progression"]
+        assert unknown[0].unestablishable is True
+        assert unknown[0].detail == never_ran.detail
+
     def test_the_chip_and_the_reap_decision_never_disagree(self) -> None:
         """Rule 92 held end to end: no chip may promise a reap the engine will refuse.
 
@@ -1441,6 +1489,35 @@ class TestTheMatchStatusVocabulary:
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."
+        )
+
+    def test_the_season_guard_names_a_check_the_panel_can_word(self) -> None:
+        """Rule 144 for the other half of the sentence, run off the producer.
+
+        ``CAUSE_COPY`` is walked wholesale above; ``CHECK_COPY`` cannot be, because its keys
+        are composed at the call site rather than named as constants, and the map degrades
+        into the backend's own label. That deferral is fine for a gate's short noun phrase
+        and thin here: this key is the one a season guard writes, it sits in a list beside
+        four gate labels, and a fallback would have the app answering one question in two
+        registers.
+
+        So the phrase is taken from ``guard_result`` itself rather than typed here (rule
+        104). Rewording the producer without the panel fails, and the message says which file
+        to open.
+        """
+        plan = SeriesPrunePlan(series_title="Show", prunable=[2])
+        detail = guard_result(
+            plan, 2, progress_unknown_reason="Plex has not matched this season"
+        ).detail
+        what = detail.removeprefix("could not check ").split(":", 1)[0]
+        panel = (
+            Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "WhyPanel.tsx"
+        ).read_text(encoding="utf-8")
+        check_copy = panel.split("const CHECK_COPY", 1)[1].split("};", 1)[0]
+        assert f'"{what}":' in check_copy, (
+            f"the season guard writes 'could not check {what}: ...', and CHECK_COPY in\n"
+            "frontend/src/components/WhyPanel.tsx has no entry for it, so the panel prints\n"
+            "the backend's own phrase beside four gate labels written for the operator."
         )
 
     def test_every_backend_cause_has_operator_copy_in_the_panel(self) -> None:
