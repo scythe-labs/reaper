@@ -224,9 +224,7 @@ describe("where the fill reaches full strength", () => {
 // nothing on the page said so (#417).
 describe("the size signal's bounds are gigabytes, and its fact is not", () => {
   it("words a stored bound as the gigabytes the engine ramps it as", () => {
-    expect(rampSentence("size", 20, 80, 20)).toBe(
-      "Pays nothing until 20 GB, and all 20 points at 80 GB.",
-    );
+    expect(rampScale("size", 20, 80, 20)).toBe("Nothing until 20 GB, all 20 at 80 GB.");
   });
 
   it("draws the strip against a track in the same unit as the bounds", () => {
