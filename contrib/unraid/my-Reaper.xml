@@ -9,25 +9,30 @@
 
   The package is public, so the pull needs no login.
 
-  One entry, two channels. Each <Branch> is a tag the operator picks from the
-  install page's dropdown, and Community Applications substitutes it into
-  <Repository>, so <Repository> is written WITHOUT a tag: appending one here
-  would leave the selected branch as a second tag. dockerMan appends :latest on
-  its own when a repository carries no tag, so the hand-install route above lands
-  on the release channel too.
+  One entry, two channels. Community Applications reads the <Branch> entries and
+  offers a "Choose A Branch To Install" picker: a Default row that installs
+  <Repository> as written, then one row per <Branch>. The selected tag REPLACES
+  the one on <Repository> rather than appending to it, so the release channel is
+  named once, here, as that element's tag.
+
+  Only the non-default tags get a <Branch>. CA discards a branch whose tag equals
+  the repository's tag (include/exec.php: the `$branch['Tag'] == $masterRepository[1]`
+  arm), so a <Branch> for :latest would be dropped and its <TagDescription> would
+  never reach a screen. The release channel is described by <DefaultTagDescription>
+  instead, which is the field that row reads.
 
   :latest and :dev are the only two tags that outlive a week in the registry
   (.github/workflows/registry-retention.yml sweeps the rest), so they are the
   only two an operator can be offered here.
+
+  <Registry> is a link a person clicks, not something the pull uses, so it points
+  at the package's GitHub page rather than at the registry host.
 -->
 <Container version="2">
   <Name>Reaper</Name>
-  <Repository>ghcr.io/scythe-labs/reaper</Repository>
-  <Registry>https://ghcr.io/scythe-labs/reaper</Registry>
-  <Branch>
-    <Tag>latest</Tag>
-    <TagDescription>Follows releases. Use this one.</TagDescription>
-  </Branch>
+  <Repository>ghcr.io/scythe-labs/reaper:latest</Repository>
+  <Registry>https://github.com/scythe-labs/reaper/pkgs/container/reaper</Registry>
+  <DefaultTagDescription>Follows releases. Use this one.</DefaultTagDescription>
   <Branch>
     <Tag>dev</Tag>
     <TagDescription>Follows daily development, for testing what is coming. Dev builds change often. Releases are the steadier channel.</TagDescription>
@@ -42,7 +47,7 @@
 
 Deletion is off until you turn it on. Until then Reaper can only scan, score and explain, so you can run it for weeks and just read the results. It never touches your files directly: everything goes through Sonarr and Radarr, so this container needs no access to your media shares.
 
-Pick a channel above. Releases are the steadier one. The dev channel follows daily development and changes often.
+Installing asks which channel you want. Releases are the steadier one. The dev channel follows daily development and changes often.
 
 Ownership of the data folder is handled for you. The container fixes it on start and then drops to the user set by PUID and PGID (default 99 and 100, Unraid's nobody:users), so you do not need to chown anything first.
 

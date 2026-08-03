@@ -1229,17 +1229,20 @@ _RETENTION = REPO / ".github" / "workflows" / "registry-retention.yml"
 _UNRAID_TEMPLATE_COUNT = 1
 
 
-def test_the_unraid_template_offers_its_channels_without_breaking_the_image_name() -> None:
-    """A tag on ``<Repository>`` survives branch substitution and lands as ``:latest:dev``.
+def test_the_unraid_template_offers_every_channel_it_declares() -> None:
+    """A ``<Branch>`` repeating the repository's own tag is discarded in silence.
 
-    Community Applications composes the pulled image from ``<Repository>`` plus the selected
-    ``<Branch>``'s ``<Tag>``, and dockerMan appends ``:latest`` itself when a repository carries
-    no tag (``if (!strpos($Repository,":")) $Repository .= ":latest";``). So bare is correct on
-    both install routes, and tagged is wrong on the one nobody tests by hand.
+    Community Applications expands one install row per ``<Branch>``, but skips any branch whose
+    ``<Tag>`` equals the tag on ``<Repository>``, because the Default row already installs that
+    one (``include/exec.php``). The branch's ``<TagDescription>`` then never reaches a screen,
+    and nothing reports it: the template still parses, still installs, and still shows a picker.
+    539 of the 585 branch-using templates in the live app feed carry one of these dead entries.
 
-    The branch tags are checked against the registry retention job rather than a literal list
-    here: everything outside its protected set is swept after a week, so offering a tag from
-    outside it hands the operator a channel whose image stops resolving (rule 25).
+    So the offered channels are the repository's tag plus one branch each for the others, the
+    default channel is described by ``<DefaultTagDescription>`` rather than by a branch, and the
+    tags are checked against the registry retention job rather than a literal list here:
+    everything outside its protected set is swept after a week, so offering a tag from outside
+    it hands the operator a channel whose image stops resolving (rule 25).
     """
     templates = sorted(_UNRAID_TEMPLATES.glob("*.xml"))
     assert len(templates) == _UNRAID_TEMPLATE_COUNT, (
@@ -1264,14 +1267,32 @@ def test_the_unraid_template_offers_its_channels_without_breaking_the_image_name
             f"the {tag} branch has no <TagDescription>, so its dropdown row is blank"
         )
 
-    # The image path may hold a registry port (`host:5000/org/app`), so the tag is whatever
-    # follows a colon in the LAST path segment.
-    assert ":" not in repository.rsplit("/", 1)[-1], (
-        f"{templates[0].name} pins a tag in <Repository> ({repository}) while declaring "
-        f"branches {tags}. Community Applications appends the selected branch to it, so the "
-        "pull becomes a two-tag image name that resolves to nothing. Write it bare."
+    # CA splits the repository on its FIRST colon, so a registry port ("host:5000/org/app")
+    # would be read as the tag and the image name mangled. ghcr.io carries no port; this pins
+    # that, because the failure would otherwise surface as a broken pull.
+    assert repository.count(":") == 1, (
+        f"<Repository> is {repository}, which does not hold exactly one colon. Community "
+        "Applications splits on the first one to separate image from tag, so a registry port "
+        "here is read as the tag."
     )
+    image, default_tag = repository.split(":")
+    assert "/" not in default_tag, (
+        f"the colon in <Repository> ({repository}) sits in the host or path, not before a tag"
+    )
+    assert default_tag not in tags, (
+        f"a <Branch> repeats {default_tag!r}, the tag already on <Repository> ({repository}). "
+        "Community Applications drops that branch and installs it from the Default row instead, "
+        f"so its <TagDescription> is never shown. Describe {default_tag!r} with "
+        "<DefaultTagDescription> and give a <Branch> only to the other channels."
+    )
+    assert (root.findtext("DefaultTagDescription") or "").strip(), (
+        f"{templates[0].name} needs a <DefaultTagDescription>: it is the only copy the picker's "
+        f"Default row can show for {default_tag!r}, and that row is the one most operators take."
+    )
+    assert image, f"<Repository> ({repository}) has no image path before its tag"
 
+    # Every channel the operator can reach: the default plus one per branch.
+    offered = {default_tag, *tags}
     protected = _RETENTION.read_text(encoding="utf-8")
     match = re.search(r"protected_tags\s*=\s*\{([^}]*)\}", protected)
     assert match, (
@@ -1279,8 +1300,8 @@ def test_the_unraid_template_offers_its_channels_without_breaking_the_image_name
         "guard reads that line to know which tags outlive a week."
     )
     kept = set(re.findall(r'"([^"]+)"', match.group(1)))
-    assert set(tags) <= kept, (
-        f"the template offers {sorted(set(tags) - kept)}, which {_RETENTION.name} does not "
+    assert offered <= kept, (
+        f"the template offers {sorted(offered - kept)}, which {_RETENTION.name} does not "
         f"protect (it keeps {sorted(kept)}). That tag is deleted a week after it is pushed, so "
         "the channel breaks on the next pull that finds no cached layers."
     )

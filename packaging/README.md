@@ -14,10 +14,12 @@ map, plus the pieces that need a human once.
 
 The Unraid route is the container: Community Applications carries the template (the
 submitted repository is this one, so the listing reads `contrib/unraid/my-Reaper.xml`),
-and it points at the GHCR image above. **One entry covers both channels.** The template
-declares a `<Branch>` per tag, `latest` and `dev`, which Community Applications renders as
-a dropdown on the install page and substitutes into `<Repository>` — so that element is
-written bare, with no tag on it.
+and it points at the GHCR image above. **One entry covers both channels.** Installing opens
+a picker: a Default row that pulls `<Repository>` as written (`:latest`), then one row per
+`<Branch>`. The selected tag replaces the one on `<Repository>`, so only the non-default
+channels get a `<Branch>` — CA discards a branch repeating the repository's own tag, and its
+description never reaches a screen. `<DefaultTagDescription>` is what the Default row shows.
+`test_the_unraid_template_offers_every_channel_it_declares` holds both halves.
 
 Releases are CalVer (`vYYYY.M.N`), cut automatically by `release.yml` on every push to
 `main`, once ci.yml's gate reports green on that sha. Dev builds are the rolling `dev-build` prerelease, refreshed nightly by
