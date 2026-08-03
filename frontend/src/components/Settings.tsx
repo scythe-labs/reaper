@@ -1717,7 +1717,7 @@ const JOB_META: Record<string, JobMeta> = {
   [SCAN_ID]: {
     title: "Update library and apply policy",
     desc: "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read.",
-    modalDesc: "Reaper can scans on its own to keep the queue fresh.",
+    modalDesc: "Reaper can scan on its own to keep the queue fresh.",
   },
   refresh_ratings: {
     title: "Refresh IMDb ratings",
@@ -1739,7 +1739,7 @@ const JOB_META: Record<string, JobMeta> = {
   },
   check_for_updates: {
     title: "Check for updates",
-    desc: "Asks GitHub whether a newer Reaper is Available.",
+    desc: "Asks GitHub whether a newer Reaper is available.",
     offWarning: "With this off, Reaper only checks when you open it.",
   },
 };
