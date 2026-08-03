@@ -2051,7 +2051,10 @@ async def _replay_simulation(
                 newly_rows.append((row, score_value))
         elif verdict == "protect":
             protected += 1
-            spared_by.update(r.gate.value for r in judged.evaluation.protectors)
+            # A set for the same reason the threshold path's spare branch uses one: a row
+            # both hand-spared and keep-list tagged carries the injected WHITELISTED and
+            # the gate's own, and a gate spares a row once.
+            spared_by.update({r.gate.value for r in judged.evaluation.protectors})
         else:
             abstained += 1
             if was_condemned:
@@ -2236,7 +2239,16 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         if override is not None:
             if override == "spare":
                 protected += 1
-                spared_by.update(["whitelisted"])
+                # Credit every protection that fired, not the hand spare alone. The replay
+                # path counts them all (``_replay_simulation``, which injects the spare
+                # ALONGSIDE the gate results), so crediting one here made the "why titles
+                # were spared" tally jump the moment any scoring edit moved the route to
+                # that path -- one protection per hand-spared row that had also earned it,
+                # appearing as an effect of an edit that cannot change which gates fire,
+                # beside a headline count that correctly held still.
+                # A set because a row both hand-spared and keep-list tagged fires
+                # WHITELISTED twice, and a gate spares a row once.
+                spared_by.update({*_fired_gates(row.explanation_json), "whitelisted"})
             elif reap_is_effective(row):
                 condemned += 1
                 if row.size_bytes is None:
