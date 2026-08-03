@@ -404,3 +404,63 @@ describe("the number the box stores, against the number it shows", () => {
     expect(size()).toHaveValue(0.29);
   });
 });
+
+describe("how the unit is worded beside the number", () => {
+  const unitBox = () => screen.getByLabelText("Minimum dormancy unit") as HTMLSelectElement;
+
+  it("says 'year', not 'years', beside a 1", () => {
+    // `bestUnit` picks the largest unit the value clears, so a value of exactly one whole
+    // unit is what every round policy default looks like: 365, 30, 7. The box read
+    // "1 years" on the page where deletion rules are written (#415).
+    render(
+      <QuantityInput
+        value={365}
+        units={TIME_UNITS}
+        onChange={vi.fn()}
+        ariaLabel="Minimum dormancy"
+      />,
+    );
+
+    expect(unitBox()).toHaveValue("years"); // the stored value never inflects
+    expect(unitBox().selectedOptions[0]!.textContent).toBe("year");
+  });
+
+  it("goes back to the plural for anything that is not one", () => {
+    const { rerender } = render(
+      <QuantityInput
+        value={730}
+        units={TIME_UNITS}
+        onChange={vi.fn()}
+        ariaLabel="Minimum dormancy"
+      />,
+    );
+    expect(unitBox().selectedOptions[0]!.textContent).toBe("years");
+
+    // Including a fraction, which is the case a bare `=== 1` on the rounded number would miss.
+    rerender(
+      <QuantityInput
+        value={400}
+        units={TIME_UNITS}
+        onChange={vi.fn()}
+        ariaLabel="Minimum dormancy"
+      />,
+    );
+    expect(screen.getByLabelText("Minimum dormancy")).toHaveValue(1.1);
+    expect(unitBox().selectedOptions[0]!.textContent).toBe("years");
+  });
+
+  it("leaves the size units alone, because they do not inflect", () => {
+    // "1 GBs" would be the same defect introduced by the fix for it.
+    render(
+      <QuantityInput
+        value={1e9}
+        units={SIZE_UNITS}
+        onChange={vi.fn()}
+        ariaLabel="Minimum dormancy"
+      />,
+    );
+
+    expect(screen.getByLabelText("Minimum dormancy")).toHaveValue(1);
+    expect(unitBox().selectedOptions[0]!.textContent).toBe("GB");
+  });
+});
