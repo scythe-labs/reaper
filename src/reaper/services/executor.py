@@ -1227,9 +1227,19 @@ class Executor:
                 break
             try:
                 await self._session.rollback()
-                await self._revive()
             except Exception as exc:
                 log.error("reap.journal_rollback_failed", what=what, error=str(exc))
+                break
+            try:
+                await self._revive()
+            except Exception as exc:
+                # Its own handler purely so the log names the call that failed. Sharing the
+                # rollback's meant a `_revive` fault was reported as `journal_rollback_failed`,
+                # naming the one call that had just returned -- on the deletion path, where
+                # that line is what someone reads to work out why a run wedged (#343).
+                # Still breaks: the rollback expired every row, and a run that walks on
+                # without them is not a trade to make here.
+                log.error("reap.journal_revive_failed", what=what, error=str(exc))
                 break
         # The write that would have recorded the trouble is itself the write that failed, so
         # the log is the only place this fact can still be put.

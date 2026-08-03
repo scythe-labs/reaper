@@ -28,6 +28,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 
 from reaper.api.runs import _planned_candidates, _run_out
 from reaper.clients.base import IntegrationError
@@ -4737,6 +4738,59 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                 assert stored.state is RunState.ABORTED
                 assert stored.aborted_reason == "the run stopped early"
                 assert stored.finished_at is not None
+        finally:
+            await engine.dispose()
+
+    async def test_a_revive_failure_is_not_reported_as_a_rollback_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """Each call in the recovery pair names itself in the log (#343).
+
+        ``rollback()`` is what makes the session usable again; ``_revive()`` only repopulates
+        the rows that read afterwards. They shared one ``except``, so a ``_revive`` fault was
+        logged as ``reap.journal_rollback_failed`` -- naming the one call that had just
+        returned, on the path whose log is what gets read after a run wedges (#327).
+
+        Driven at ``_commit_journal`` directly: reaching this pair through a real run needs a
+        fault that breaks a SELECT while leaving a rollback working, and none has been shown
+        (WAL readers do not block on a writer). The handler is live either way, and an
+        unreachable branch with no test is one refactor from silently gone (rule 118).
+        """
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as session:
+                executor = Executor(
+                    session, safety=_armed(), settings=ProfileSettings(), dry_run=False
+                )
+
+                rolled_back = False
+                real_rollback = session.rollback
+
+                async def rollback_that_works() -> None:
+                    nonlocal rolled_back
+                    rolled_back = True
+                    await real_rollback()
+
+                async def commit_that_fails() -> None:
+                    raise RuntimeError("the write lock is held")
+
+                async def revive_that_fails() -> None:
+                    raise RuntimeError("the select could not run")
+
+                session.commit = commit_that_fails  # type: ignore[method-assign]
+                session.rollback = rollback_that_works  # type: ignore[method-assign]
+                executor._revive = revive_that_fails  # type: ignore[method-assign]
+
+                with capture_logs() as logs:
+                    wrote = await executor._commit_journal(what="a step", write=[])
+
+                assert wrote is False
+                assert rolled_back, "the rollback must have run and returned for this to be it"
+                events = [entry["event"] for entry in logs]
+                assert "reap.journal_revive_failed" in events
+                assert "reap.journal_rollback_failed" not in events, (
+                    "the rollback worked, so blaming it points the reader at the wrong call"
+                )
         finally:
             await engine.dispose()
 
