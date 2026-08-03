@@ -9,6 +9,7 @@ Maintainerr, Janitorr or Reclaimerr.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -29,6 +30,7 @@ from reaper.services.lists import (
     ListKind,
     ListMode,
     PlexCollection,
+    ensure_schema,
     load_membership_index,
     memberships,
     sync,
@@ -54,55 +56,78 @@ class _FakeSonarr:
         return self._series
 
 
+@dataclass(frozen=True)
+class _Held:
+    """One object in a fake keep collection, where a bare guid string will not do.
+
+    ``guid=None`` is an item whose guids no longer parse, ``type`` is what Plex calls the
+    object (a collection can hold more than movies and shows), ``title`` is what a row
+    carried over from storage is matched on, and ``rating_key`` is Plex's own key for the
+    object.
+
+    A real Plex object always carries a rating key, so a test about what Plex hands back
+    passes one; ``rating_key=None`` models the object Reaper can read nothing at all
+    from, which is what the bare guid-string form gives.
+    """
+
+    guid: str | None
+    title: str = "A title"
+    type: str = "movie"
+    rating_key: int | None = None
+
+
 class _FakePlexServer:
     """A Plex stand-in for the keep-collection tests.
 
-    Built from ``{library: guids or None}``: ``None`` is a library with no such collection
-    (plexapi raises ``NotFound``), a list is one holding a movie per guid, and a guid of
-    ``None`` is an item whose guids no longer parse. Every library reports the SAME title,
-    so several entries model the same-title case the resolver has to survive.
+    Built from ``{library: entries or None}``: ``None`` is a library with no such
+    collection (plexapi raises ``NotFound``), a list is one holding an object per entry,
+    and an entry is either a guid string (a movie carrying that IMDb id, or ``None`` for
+    one whose guids no longer parse) or a :class:`_Held` spelling out title and type.
+    Every library reports the SAME title, so several entries model the same-title case
+    the resolver has to survive.
     """
 
-    def __init__(self, libraries: dict[str, list[str | None] | None]) -> None:
+    def __init__(self, libraries: dict[str, list[str | None | _Held] | None]) -> None:
         self.library = self._Library(libraries)
 
     class _Library:
-        def __init__(self, libraries: dict[str, list[str | None] | None]) -> None:
+        def __init__(self, libraries: dict[str, list[str | None | _Held] | None]) -> None:
             self._libraries = libraries
 
         def sections(self) -> list[_FakePlexServer._Section]:
             return [
-                _FakePlexServer._Section(name.rstrip(" *"), guids)
-                for name, guids in self._libraries.items()
+                _FakePlexServer._Section(name.rstrip(" *"), entries)
+                for name, entries in self._libraries.items()
             ]
 
     class _Section:
-        def __init__(self, title: str, guids: list[str | None] | None) -> None:
+        def __init__(self, title: str, entries: list[str | None | _Held] | None) -> None:
             self.title = title
-            self._guids = guids
+            self._entries = entries
 
         def collection(self, name: str) -> object:
             from plexapi.exceptions import NotFound
 
-            if self._guids is None:
+            if self._entries is None:
                 raise NotFound("no such collection")
-            return _FakePlexServer._Collection(self._guids)
+            return _FakePlexServer._Collection(self._entries)
 
     class _Collection:
-        def __init__(self, guids: list[str | None]) -> None:
-            self._guids = guids
+        def __init__(self, entries: list[str | None | _Held]) -> None:
+            self._entries = [e if isinstance(e, _Held) else _Held(e) for e in entries]
 
         def items(self) -> list[object]:
             from types import SimpleNamespace
 
             return [
                 SimpleNamespace(
-                    type="movie",
-                    title="A title",
-                    guids=[SimpleNamespace(id=f"imdb://{g}")] if g else [],
+                    type=e.type,
+                    title=e.title,
+                    guids=[SimpleNamespace(id=f"imdb://{e.guid}")] if e.guid else [],
                     guid=None,
+                    **({} if e.rating_key is None else {"ratingKey": e.rating_key}),
                 )
-                for g in self._guids
+                for e in self._entries
             ]
 
 
@@ -236,12 +261,13 @@ class TestAVanishedContainerNeverWipesTheList:
         with pytest.raises(IntegrationError):
             await provider.fetch()
 
-    async def test_a_populated_collection_with_no_usable_ids_never_wipes_the_list(
+    async def test_a_populated_collection_with_nothing_readable_never_wipes_the_list(
         self, engine: AsyncEngine
     ) -> None:
-        """A Plex agent change can leave a real, full "Never Reap" collection whose guids no
-        longer parse. Every item then drops out of the id filter, and reading that as an
-        empty list would wipe the stored membership and unprotect every title on it."""
+        """A container that comes back populated and yields not one usable entry is a
+        failure, not an empty list: reading it as empty would wipe the stored membership
+        and unprotect every title on it. The entries here carry no key of any kind, which
+        is what every non-Plex source looks like once its ids stop parsing."""
         good = PlexCollection(
             server=_FakePlexServer({"Movies": ["tt0000001", "tt0000002"]}), section_name="Movies"
         )
@@ -257,11 +283,384 @@ class TestAVanishedContainerNeverWipesTheList:
         assert index.lookup(media_type="movie", imdb_id="tt0000001")
 
 
+class TestATitleTheContainerStillListsIsNeverDropped:
+    """The same loss at a smaller scale: SOME of the entries stop parsing, not all.
+
+    The survivors then look like a complete fetch, so the swap replaces the membership
+    with them and everything else silently stops being protected -- the keep tag is still
+    on the title and nothing says a word. A title the container still lists keeps the keys
+    its row was stored under instead (rule 27).
+    """
+
+    @staticmethod
+    def _collection(*entries: str | None | _Held) -> PlexCollection:
+        return PlexCollection(
+            server=_FakePlexServer({"Movies": list(entries)}), section_name="Movies"
+        )
+
+    async def test_a_title_whose_guids_stopped_parsing_keeps_its_ids(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The real shape of a Plex agent change: the object is still there, still
+        carrying Plex's own key, and only the guids stopped resolving. Storing what came
+        back would file it under that key alone, and the movie lane looks a keep list up
+        by RADARR's ids, which the agent change never touched. So the row keeps both."""
+        good = self._collection(
+            _Held("tt0000001", title="First", rating_key=11),
+            _Held("tt0000002", title="Second", rating_key=22),
+        )
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 2
+
+        partial = self._collection(
+            _Held("tt0000001", title="First", rating_key=11),
+            _Held(None, title="Second", rating_key=22),
+        )
+        assert await sync(engine, partial, kind=ListKind.WHITELIST) == 2
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", imdb_id="tt0000002")
+        assert index.lookup(media_type="movie", plex_rating_keys=(22,))
+
+    async def test_a_title_with_nothing_left_to_read_keeps_its_stored_row(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The floor of the same guarantee, for an entry Reaper can read nothing from --
+        no guids and no key, which is every non-Plex source's shape too."""
+        good = self._collection(
+            _Held("tt0000001", title="First"), _Held("tt0000002", title="Second")
+        )
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 2
+
+        partial = self._collection(_Held("tt0000001", title="First"), _Held(None, title="Second"))
+        assert await sync(engine, partial, kind=ListKind.WHITELIST) == 2
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", imdb_id="tt0000002")
+
+    async def test_the_operators_own_capitalization_still_carries_it(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Both sides case-folded (rule 88), or a title Plex re-cased on a re-match is
+        carried by nothing and the protection lapses on exactly the sync that renamed it."""
+        good = self._collection(
+            _Held("tt0000001", title="First"), _Held("tt0000002", title="Second")
+        )
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 2
+
+        recased = self._collection(_Held("tt0000001", title="First"), _Held(None, title=" SECOND "))
+        assert await sync(engine, recased, kind=ListKind.WHITELIST) == 2
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", imdb_id="tt0000002")
+
+    async def test_two_stored_rows_under_one_title_give_back_no_ids(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Which of them is this entry cannot be answered, so it is not guessed (rule 6).
+        Both rows are still carried, which keeps every protection that existed."""
+        good = self._collection(
+            _Held("tt0000001", title="Twin", rating_key=11),
+            _Held("tt0000002", title="Twin", rating_key=22),
+        )
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 2
+
+        lost = self._collection(
+            _Held(None, title="Twin", rating_key=11), _Held(None, title="Twin", rating_key=22)
+        )
+        assert await sync(engine, lost, kind=ListKind.WHITELIST) == 2
+
+        index = await load_membership_index(engine)
+        # Stored under their keys alone this time: no id was invented for either.
+        assert index.lookup(media_type="movie", plex_rating_keys=(11,))
+        assert not index.lookup(media_type="movie", imdb_id="tt0000001")
+
+    async def test_a_title_the_operator_took_off_the_list_is_still_removed(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The other direction, and the reason this holds over rather than refusing the
+        swap: a removal the operator meant must still take effect, or the keep list can
+        only ever grow."""
+        good = self._collection(
+            _Held("tt0000001", title="First"), _Held("tt0000002", title="Second")
+        )
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 2
+
+        assert await sync(engine, self._collection(_Held("tt0000001", title="First"))) == 1
+
+        index = await load_membership_index(engine)
+        assert not index.lookup(media_type="movie", imdb_id="tt0000002")
+
+    async def test_an_untitled_entry_holds_nothing(self, engine: AsyncEngine) -> None:
+        """An empty title matches every untitled row, which would hold rows at random.
+        It holds none of them instead."""
+        good = self._collection(_Held("tt0000001", title="First"), _Held("tt0000002", title=""))
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 2
+
+        untitled = self._collection(_Held("tt0000001", title="First"), _Held(None, title=""))
+        assert await sync(engine, untitled, kind=ListKind.WHITELIST) == 1
+
+        index = await load_membership_index(engine)
+        assert not index.lookup(media_type="movie", imdb_id="tt0000002")
+
+    async def test_a_title_that_was_never_stored_is_reported_not_invented(
+        self, engine: AsyncEngine
+    ) -> None:
+        """An entry with no key of any kind, never stored before, is on the list and
+        protected by nothing: there is nothing to protect it by, and inventing something
+        is worse. So the sync says so and carries on. Refusing instead would fail this
+        list on every scan from now on, and past the staleness bound that stops the
+        operator reaping anything at all."""
+        stored = await sync(
+            engine,
+            self._collection(_Held("tt0000001", title="First"), _Held(None, title="Unreadable")),
+            kind=ListKind.WHITELIST,
+        )
+
+        assert stored == 1
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", imdb_id="tt0000001")
+
+
+class TestATitlePlexNeverMatchedIsStillProtected:
+    """A "Never Reap" collection can hold a title no agent ever gave an id: a home video,
+    a personal-media item. It has nothing to be stored under but the key Plex itself uses,
+    and without that it is on the operator's keep list and Reaper reaps it anyway."""
+
+    @staticmethod
+    def _collection(*entries: str | None | _Held) -> PlexCollection:
+        return PlexCollection(
+            server=_FakePlexServer({"Movies": list(entries)}), section_name="Movies"
+        )
+
+    async def test_a_home_video_is_protected_by_the_key_plex_uses(
+        self, engine: AsyncEngine
+    ) -> None:
+        stored = await sync(
+            engine,
+            self._collection(_Held(None, title="Home video", rating_key=77)),
+            kind=ListKind.WHITELIST,
+        )
+
+        assert stored == 1
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", plex_rating_keys=(77,))
+
+    async def test_a_collection_that_lost_every_guid_still_protects_every_title(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The whole-collection version of the agent change, which used to be refused
+        outright because nothing on it could be identified. Every object still carries
+        its key, so the list syncs and keeps protecting instead of going stale."""
+        good = self._collection(
+            _Held("tt0000001", title="First", rating_key=11),
+            _Held("tt0000002", title="Second", rating_key=22),
+        )
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 2
+
+        unparseable = self._collection(
+            _Held(None, title="First", rating_key=11), _Held(None, title="Second", rating_key=22)
+        )
+        assert await sync(engine, unparseable, kind=ListKind.WHITELIST) == 2
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", plex_rating_keys=(11,))
+        assert index.lookup(media_type="movie", plex_rating_keys=(22,))
+
+    async def test_any_of_a_merged_binds_listings_finds_it(self, engine: AsyncEngine) -> None:
+        """One file listed twice is bound as a group, and the operator put ONE of those
+        listings on the list. Every key the item carries is passed, so it does not matter
+        which (rule 29)."""
+        await sync(
+            engine,
+            self._collection(_Held(None, title="Home video", rating_key=77)),
+            kind=ListKind.WHITELIST,
+        )
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", plex_rating_keys=(41, 77))
+        assert not index.lookup(media_type="movie", plex_rating_keys=(41, 42))
+
+    async def test_a_key_never_matches_across_kinds(self, engine: AsyncEngine) -> None:
+        """The join key stays (kind, key) for a Plex key exactly as for an id: keys are
+        one integer space per server, so a show could otherwise inherit a film's keep."""
+        await sync(
+            engine,
+            self._collection(_Held(None, title="Home video", rating_key=77)),
+            kind=ListKind.WHITELIST,
+        )
+
+        index = await load_membership_index(engine)
+        assert not index.lookup(media_type="tv", plex_rating_keys=(77,))
+
+    async def test_an_item_carrying_no_keys_at_all_is_still_protected_by_nothing(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The lookup's short circuit: no ids and no keys can never mean "everything"."""
+        await sync(
+            engine,
+            self._collection(_Held("tt0000001", title="First", rating_key=11)),
+            kind=ListKind.WHITELIST,
+        )
+
+        index = await load_membership_index(engine)
+        assert not index.lookup(media_type="movie")
+
+
+class TestARowIsNeverFiledUnderAKindItsIdsDoNotBelongTo:
+    """``media_type`` is half of every lookup's join key, so a row filed under the wrong
+    kind matches nothing while looking healthy in the table -- or matches an unrelated
+    title, since TMDb numbers movies and shows in separate spaces (rule 52)."""
+
+    async def test_a_stored_row_under_the_wrong_kind_protects_nothing(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The consequence, pinned at the read side: this is why no write path may
+        produce one."""
+        await sync(
+            engine,
+            _StaticProvider([ListItem(media_type="tv", imdb_id="tt0000001", title="A film")]),
+        )
+
+        index = await load_membership_index(engine)
+        assert not index.lookup(media_type="movie", imdb_id="tt0000001")
+        assert index.lookup(media_type="tv", imdb_id="tt0000001")
+
+    async def test_a_plex_object_that_is_neither_a_movie_nor_a_show_is_not_stored(
+        self, engine: AsyncEngine
+    ) -> None:
+        """A collection is typed by its library, but the mapping this replaced filed
+        every non-show object as a MOVIE. An episode carries episode ids, so the row
+        landed in the movie id space and could hand its keep to whichever film shared
+        the number."""
+        collection = PlexCollection(
+            server=_FakePlexServer(
+                {
+                    "Movies": [
+                        _Held("tt0000001", title="A film"),
+                        _Held("tt0000002", title="An episode", type="episode"),
+                    ]
+                }
+            ),
+            section_name="Movies",
+        )
+
+        assert await sync(engine, collection, kind=ListKind.WHITELIST) == 1
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", imdb_id="tt0000001")
+        assert not index.lookup(media_type="movie", imdb_id="tt0000002")
+        assert not index.lookup(media_type="tv", imdb_id="tt0000002")
+
+    async def test_a_collection_of_nothing_but_those_never_wipes_the_list(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Unusable for want of a kind is unusable for want of an id: a populated
+        container none of whose entries can be stored is refused, so the stored
+        membership survives it (rule 27)."""
+        good = PlexCollection(
+            server=_FakePlexServer({"Movies": ["tt0000001"]}), section_name="Movies"
+        )
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 1
+
+        episodes = PlexCollection(
+            server=_FakePlexServer(
+                {"Movies": [_Held("tt0000009", title="An episode", type="episode")]}
+            ),
+            section_name="Movies",
+        )
+        with pytest.raises(ContainerMissingError):
+            await sync(engine, episodes, kind=ListKind.WHITELIST)
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", imdb_id="tt0000001")
+
+    async def test_a_show_in_the_collection_is_still_stored_as_one(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The mapping still has to place the two kinds it does know."""
+        collection = PlexCollection(
+            server=_FakePlexServer(
+                {
+                    "Shows": [
+                        _Held("tt0000001", title="A show", type="show"),
+                        _Held("tt0000002", title="A film", type="movie"),
+                    ]
+                }
+            ),
+            section_name="Shows",
+        )
+
+        assert await sync(engine, collection, kind=ListKind.WHITELIST) == 2
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="tv", imdb_id="tt0000001")
+        assert index.lookup(media_type="movie", imdb_id="tt0000002")
+
+
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
     yield eng
     await eng.dispose()
+
+
+#: ``protection_list_item`` as it shipped, before it carried a Plex key. What an operator
+#: who has been running Reaper actually has on disk.
+_SCHEMA_BEFORE_THE_PLEX_KEY = """
+CREATE TABLE protection_list_item (
+    slug       TEXT    NOT NULL,
+    media_type TEXT    NOT NULL,
+    imdb_id    TEXT,
+    tmdb_id    INTEGER,
+    tvdb_id    INTEGER,
+    title      TEXT,
+    rank       INTEGER,
+    PRIMARY KEY (slug, media_type, imdb_id, tmdb_id, tvdb_id)
+)
+"""
+
+
+class TestAStoredCacheIsWidenedNeverRebuilt:
+    """``CREATE TABLE IF NOT EXISTS`` leaves a table that exists exactly as it is, so a
+    cache written before the Plex key would never get the column. Dropping the table to
+    get it would empty every keep list until the next successful sync refilled it, and a
+    scan in that window reaps titles the operator's list protects."""
+
+    async def test_the_column_arrives_and_the_membership_survives(
+        self, engine: AsyncEngine
+    ) -> None:
+        async with engine.begin() as conn:
+            await conn.execute(text(_SCHEMA_BEFORE_THE_PLEX_KEY))
+            await conn.execute(
+                text(
+                    "INSERT INTO protection_list_item (slug, media_type, imdb_id, title) "
+                    "VALUES ('keep', 'movie', 'tt0000001', 'First')"
+                )
+            )
+
+        await ensure_schema(engine)
+
+        async with engine.connect() as conn:
+            columns = {
+                str(row.name)
+                for row in (
+                    await conn.execute(text("PRAGMA table_info(protection_list_item)"))
+                ).all()
+            }
+            rows = (await conn.execute(text("SELECT title FROM protection_list_item"))).all()
+        assert "plex_rating_key" in columns
+        assert [str(r.title) for r in rows] == ["First"]
+
+    async def test_widening_twice_is_the_same_as_widening_once(self, engine: AsyncEngine) -> None:
+        """It runs on every call, several times per scan."""
+        async with engine.begin() as conn:
+            await conn.execute(text(_SCHEMA_BEFORE_THE_PLEX_KEY))
+
+        await ensure_schema(engine)
+        await ensure_schema(engine)
+
+        provider = _StaticProvider([ListItem(media_type="movie", plex_rating_key=5, title="A")])
+        assert await sync(engine, provider) == 1
 
 
 def _top250_payload(count: int = 250) -> list[dict[str, object]]:

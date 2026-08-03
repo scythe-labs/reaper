@@ -1804,8 +1804,14 @@ def _judge_series(
     # Every id the show carries is passed together: a show without an imdbId in Sonarr is
     # common, and a keep tag or "Never Reap" row stored under its tvdb or tmdb id must
     # still protect it. Matching on one id kind alone fails open on the deletion path.
+    # The SHOW's Plex key, not a season's: a collection holds shows, and an entry whose
+    # guids never parsed is stored under that key alone (rule 29).
     curated_by_series = membership_index.lookup(
-        media_type="tv", imdb_id=show_imdb_id, tmdb_id=show_tmdb_id, tvdb_id=tvdb_id
+        media_type="tv",
+        imdb_id=show_imdb_id,
+        tmdb_id=show_tmdb_id,
+        tvdb_id=tvdb_id,
+        plex_rating_keys=(item.show_rating_key,) if item.show_rating_key is not None else (),
     )
     hard = [m for m in curated_by_series if m.mode is lists.ListMode.HARD]
     whitelists = [m for m in hard if m.is_whitelist]

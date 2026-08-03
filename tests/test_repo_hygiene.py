@@ -30,6 +30,7 @@ from reaper.engine.gates import (
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
+from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
 
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -3023,7 +3024,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 49
+_EXPECTED_RENDERING_TEST_FILES = 50
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -3380,4 +3381,62 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
         "policy; this table is hand-written, so it is the copy that drifts (rule 144). "
         "Update the 'What it adds' column, and re-read frontend/src/components/signalRamp.ts "
         "so the manual and the app word the same bound the same way."
+    )
+
+
+_SETTINGS_TSX = FRONTEND_SRC / "components" / "Settings.tsx"
+#: ``JOB_META`` read as the whole declaration up to the ``};`` that closes it, then picked
+#: apart inside, rather than anchored on a delimiter one spelling happens to put there
+#: (rule 147): a key may be a bare identifier or the computed ``[SCAN_ID]``, and both are
+#: ordinary here.
+_JOB_META_BLOCK = re.compile(r"const JOB_META: Record<string, JobMeta> = \{(.*?)\n\};", re.DOTALL)
+_JOB_META_KEY = re.compile(r'^  (?:\[(\w+)\]|"?(\w+)"?):\s*\{', re.MULTILINE)
+_SCAN_ID_CONST = re.compile(r'const SCAN_ID = "([\w]+)";')
+#: Every entry carries exactly one ``title:``, so counting them counts the population the key
+#: matcher is supposed to collect. A flag-shaped assertion cannot tell an entry that complies
+#: from one this parser stopped seeing -- both read green (rule 145/147).
+_JOB_META_TITLE = re.compile(r"^    title:", re.MULTILINE)
+
+
+def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
+    """A job the server schedules renders on the Jobs page with a title a person wrote.
+
+    The list itself is the server's (rule 66): ``JobsPanel`` maps over the response, so a job
+    added in ``scheduler.DEFAULT_MAINTENANCE_CRONS`` appears with no frontend edit at all --
+    and ``jobMeta``'s fallback then prints the raw id as its title, so the operator reads
+    "check_for_updates" where every neighbor reads a sentence, with no description and no
+    off-warning under the switch that turns it off. Nothing failed when the nightly update
+    check was added (#464), which is why this is a test and not a note: the fallback exists
+    for the type checker, not as a shipping state.
+
+    Both directions. A stale entry for a job that no longer exists is dead copy nobody will
+    ever see, and it is the half a hand-maintained map keeps longest.
+    """
+    source = _SETTINGS_TSX.read_text(encoding="utf-8")
+    block_match = _JOB_META_BLOCK.search(source)
+    assert block_match, "parsed no JOB_META declaration out of Settings.tsx -- the matcher is stale"
+    block = block_match.group(1)
+
+    scan_id = _SCAN_ID_CONST.search(source)
+    assert scan_id, "parsed no SCAN_ID constant out of Settings.tsx -- the matcher is stale"
+    constants = {"SCAN_ID": scan_id.group(1)}
+
+    keys = {
+        constants[computed] if computed else literal
+        for computed, literal in _JOB_META_KEY.findall(block)
+    }
+    entries = len(_JOB_META_TITLE.findall(block))
+    assert len(keys) == entries, (
+        f"JOB_META holds {entries} entries but this test collected {len(keys)} keys. "
+        "The key matcher missed a spelling -- fix it before trusting the comparison below, "
+        "which cannot tell an entry that complies from one it never saw (rule 147)."
+    )
+
+    assert keys == set(SCHEDULABLE_JOB_IDS), (
+        "frontend/src/components/Settings.tsx's JOB_META and the jobs the server schedules "
+        "disagree.\n"
+        f"  scheduled with no copy: {sorted(set(SCHEDULABLE_JOB_IDS) - keys) or 'none'}\n"
+        f"  copy for no such job:   {sorted(keys - set(SCHEDULABLE_JOB_IDS)) or 'none'}\n"
+        "Add the title/desc/offWarning to JOB_META, or drop the stale entry. The off-warning "
+        "states what stops happening when the job is off (rule 55)."
     )

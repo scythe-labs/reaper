@@ -1501,6 +1501,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 data_dir=_settings(request).data_dir,
                 session_factory=_factory(request),
                 secret_box=_box(request),
+                update_checker=request.app.state.update_checker,
                 timezone=job_tz,
             )
         except ValueError as exc:
@@ -1523,8 +1524,9 @@ async def run_job(request: Request, job_id: str) -> dict[str, str]:
 
     A scheduled job is nudged to fire immediately; one the owner turned off is run once
     without turning its schedule back on. Either way the schedule is left as it was. These
-    are read-only upkeep jobs (refreshing ratings and lists, sweeping watch history) -- none
-    can delete anything. The library scan is deliberately absent: it runs through
+    are read-only upkeep jobs (refreshing ratings and lists, sweeping watch history, asking
+    GitHub whether a newer Reaper exists) -- none can delete anything. The library scan is
+    deliberately absent: it runs through
     ``/api/scan/start`` as a polled background job so the UI can show progress.
     """
     if job_id not in MAINTENANCE_JOB_IDS:
@@ -1536,6 +1538,7 @@ async def run_job(request: Request, job_id: str) -> dict[str, str]:
         data_dir=_settings(request).data_dir,
         session_factory=_factory(request),
         secret_box=_box(request),
+        update_checker=request.app.state.update_checker,
     )
     log.info("jobs.run_now", job=job_id)
     return {"status": "started", "job": job_id}
@@ -1865,6 +1868,7 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
         session_factory=_factory(request),
         cache_engine=request.app.state.cache_engine,
         secret_box=_box(request),
+        update_checker=request.app.state.update_checker,
         data_dir=_settings(request).data_dir,
         scan_cron=scan_cron,
         maintenance=maintenance,

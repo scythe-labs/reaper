@@ -29,7 +29,7 @@ from reaper.engine.verdict import decide_verdict
 from reaper.services import lists
 from reaper.services.snapshot import RawItem, ScanContext, _reported_size, build_facts
 
-_EMPTY_INDEX = lists.MembershipIndex({}, {}, {})
+_EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
 
 
 def _raw(**overrides: object) -> RawItem:
@@ -140,7 +140,7 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
             kind=lists.ListKind.WHITELIST,
             rank=None,
         )
-        return lists.MembershipIndex({"tt0000042": ((1, "movie", membership),)}, {}, {})
+        return lists.MembershipIndex({"tt0000042": ((1, "movie", membership),)}, {}, {}, {})
 
     def test_a_movie_whose_only_imdb_id_came_from_plex_is_still_protected(self) -> None:
         facts = _facts(

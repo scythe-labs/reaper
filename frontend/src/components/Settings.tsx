@@ -1563,9 +1563,15 @@ function UpdateCell({
   onSeeChanges: () => void;
 }) {
   const { data, isPending } = status;
+  // The two no-answer shapes read the same (see above), so the sentence is written once:
+  // one operator claim in two places is two chances to drift (rule 144). "Later" is the
+  // scheduled check (Settings, Jobs), which is what makes the promise real -- before it
+  // existed nothing retried on a server nobody opened (#464).
+  const noAnswer = (
+    <span className="muted">Couldn't check for updates. Reaper will try again later.</span>
+  );
   if (isPending) return <span className="muted">Checking for updates…</span>;
-  if (!data)
-    return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
+  if (!data) return noAnswer;
   if (!data.enabled)
     return (
       <span className="muted">
@@ -1573,8 +1579,7 @@ function UpdateCell({
         from launcher.conf in Reaper's data folder, or from your environment, to turn them back on.
       </span>
     );
-  if (data.update_available === null)
-    return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
+  if (data.update_available === null) return noAnswer;
   if (!data.update_available)
     return (
       <span>
@@ -1603,8 +1608,13 @@ function UpdateCell({
         See what changed
       </button>
       <br />
+      {/* Points at the schedule rather than naming one: the operator can change the cron
+          or turn the job off, so a sentence saying "daily" is wrong the moment they do
+          (rule 86). This used to say "Reaper checks a few times a day" while nothing
+          checked on its own at all (#464, rule 25). */}
       <span className="muted">
-        Reaper checks a few times a day and never sends anything about your library.
+        Reaper checks on a schedule you can change in Jobs, and never sends anything about your
+        library.
       </span>
     </>
   );
@@ -1687,6 +1697,12 @@ function ChangesModal({
 
 const SCAN_ID = "scheduled_scan";
 
+/** The one upkeep job whose result a DIFFERENT query already renders: the About row, the
+ *  version pill and the account chip's light all read `["update"]`. Named here so the row can
+ *  refresh that query when the job finishes. The job LIST is still the server's (rule 66);
+ *  this is a behavior hook on one id, like `SCAN_ID` above. */
+const UPDATE_CHECK_ID = "check_for_updates";
+
 interface JobMeta {
   title: string;
   desc: string;
@@ -1700,27 +1716,31 @@ interface JobMeta {
 const JOB_META: Record<string, JobMeta> = {
   [SCAN_ID]: {
     title: "Update library and apply policy",
-    desc: "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read. It only reads, and can't remove a thing.",
-    modalDesc:
-      "Reaper can scan on its own to keep the queue fresh. It still only reads. You approve every deletion by hand.",
+    desc: "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read.",
+    modalDesc: "Reaper can scan on its own to keep the queue fresh.",
   },
   refresh_ratings: {
     title: "Refresh IMDb ratings",
     desc: "Downloads the latest IMDb ratings so scores use current numbers.",
     offWarning:
-      "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old, because past that a scan comes back incomplete and can't remove anything until they're refreshed.",
+      "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
   },
   refresh_curated_lists: {
     title: "Refresh curated lists",
     desc: "Re-pulls the protection lists Reaper ships with, like the IMDb Top 250, so nothing on them gets flagged.",
     offWarning:
-      "This only affects the standalone daily refresh. Every scan already re-pulls these lists on its own, and they're only used during a scan, so turning this off changes little for anyone who scans.",
+      "This only affects the standalone daily refresh. Every scan already re-pulls these lists.",
   },
   full_history_sweep: {
     title: "Full watch-history update",
-    desc: 'Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught before "never watched" turns wrong.',
+    desc: "Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught.",
     offWarning:
-      "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught, so \"never watched\" can drift out of date.",
+      "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught.",
+  },
+  check_for_updates: {
+    title: "Check for updates",
+    desc: "Asks GitHub whether a newer Reaper is available.",
+    offWarning: "With this off, Reaper only checks when you open it.",
   },
 };
 
@@ -1978,6 +1998,20 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
     job.running,
     job.last_result !== null ? { ok: job.last_ok !== false, text: job.last_result } : null,
   );
+
+  // A finished update check has replaced the answer `["update"]` holds, and that query is
+  // half an hour stale-free (updateStatus.ts) with nothing else to invalidate it -- so the
+  // row would flash "Reaper 2026.9.2 is out" while the version pill, the About row and the
+  // chip light all went on asserting the answer it just replaced (rule 79). Keyed on the same
+  // running -> done edge the flash watches, so it fires when the ANSWER changed rather than
+  // when the button was pressed.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !job.running && job.id === UPDATE_CHECK_ID) {
+      void queryClient.invalidateQueries({ queryKey: ["update"] });
+    }
+    wasRunning.current = job.running;
+  }, [job.running, job.id, queryClient]);
 
   return (
     <div className="jobrow">

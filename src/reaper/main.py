@@ -351,6 +351,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.data_dir,
         session_factory=factory,
         secret_box=box,
+        # The app's own checker, so the nightly check and the About route share one cache.
+        update_checker=app.state.update_checker,
         timezone=scheduler_tz,
         # A reap's live flag lives on app state, which the scheduler has no handle on. Passed
         # as a predicate rather than read at wiring time so the snapshot sweep asks the
@@ -394,6 +396,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 data_dir=settings.data_dir,
                 session_factory=factory,
                 secret_box=box,
+                update_checker=app.state.update_checker,
                 timezone=scheduler_tz,
             )
         except (ValueError, KeyError):
@@ -519,8 +522,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None,
     )
     app.state.settings = settings
-    # One instance for the app's lifetime, so its hours-long answer cache is shared
-    # across requests. Lazy: it fetches nothing until the About surface first asks.
+    # One instance for the app's lifetime, so its hours-long answer cache is shared across
+    # requests -- and with the nightly `check_for_updates` job, which is handed this same
+    # instance so its ask leaves the answer ready for the next page load. Lazy: nothing is
+    # fetched until the job fires or a surface asks.
     app.state.update_checker = UpdateChecker()
 
     @app.exception_handler(RequestValidationError)
