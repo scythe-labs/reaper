@@ -281,14 +281,24 @@ class BaseClient:
     def _trace(
         self, method: str, path: str, status: int | None, started: float, *, mutation: bool = False
     ) -> None:
-        """One line per outbound call: which service, what was asked, what came back.
+        """One line per `BaseClient` call: which service, what was asked, what came back.
 
-        Nothing else records that Reaper made a request at all. The HTTP libraries would,
-        but they are pinned to WARNING on purpose (``logging._NOISY_LOGGERS``) because they
-        log the URL verbatim and the structlog scrubber never sees a stdlib record, so this
-        is the only trace there can be. ``client.retry`` says a blip happened; this says the
+        Nothing else records that one of these calls happened. The HTTP libraries would, but
+        they are pinned to WARNING on purpose (``logging._NOISY_LOGGERS``) because they log
+        the URL verbatim and the structlog scrubber never sees a stdlib record, so this is
+        the only trace there can be. ``client.retry`` says a blip happened; this says the
         call happened, how long it took, and how it ended -- which is what "the scan sat
         there for four minutes" needs.
+
+        **Two outbound surfaces are NOT traced, and reading the *arr half as the whole
+        picture is the mistake this paragraph exists to prevent.** `PlexClient` is not a
+        `BaseClient`: it rides plexapi through `GuardedSession`, so every Plex read, and the
+        `refresh_path` and `empty_trash` calls on the deletion path, produce no line here.
+        `PublicClient.stream_to` streams past `_send`, so the ratings dataset -- the longest
+        single outbound operation in the app -- produces none either. Extending the trace to
+        `GuardedSession` means logging ``urlsplit(url).path`` and never the URL, since
+        plexapi puts ``X-Plex-Token`` in the query string (rule 13), and weighing the volume:
+        the GUID sweep pages through hundreds of calls into a 2000-line ring.
 
         **``path`` is the argument, never the post-redirect target and never
         ``response.request.url``**: a Location header carries its own query string, and

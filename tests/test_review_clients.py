@@ -453,13 +453,17 @@ def call_lines(_restore_logging: None) -> Iterator[Callable[[], list[str]]]:
     logbuffer.RING = logbuffer.LogRing()
 
 
-class TestEveryOutboundCallIsTraced:
-    """One DEBUG line per call, and it never carries a credential.
+class TestEveryBaseClientCallIsTraced:
+    """One DEBUG line per `BaseClient` call, and it never carries a credential.
 
-    Nothing else records that Reaper made a request: the HTTP libraries are pinned to
-    WARNING because they log the URL verbatim (``logging._NOISY_LOGGERS``), so this is
+    Nothing else records that one of these calls happened: the HTTP libraries are pinned
+    to WARNING because they log the URL verbatim (``logging._NOISY_LOGGERS``), so this is
     the only trace there can be -- and the reason those libraries are quiet is exactly
     the reason this line must not grow a URL, a query string, or a header.
+
+    Named for `BaseClient` and not for every outbound call, because two surfaces are not
+    traced: `PlexClient` rides plexapi rather than this base, and `PublicClient.stream_to`
+    streams past `_send`. `_trace`'s docstring carries what extending it would cost.
     """
 
     async def test_a_read_reports_service_status_and_shape(
