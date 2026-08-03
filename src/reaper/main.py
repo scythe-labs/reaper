@@ -20,7 +20,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
@@ -292,11 +292,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         offered=len(offered),
         accepted=len(app.state.trusted_proxies),
     )
+    # The cache read is caught and reaper.db's is not, deliberately. `cache.db` is disposable
+    # by contract (`create_cache_engine`) and is rebuilt by the next sync, so a cache file that
+    # cannot be opened -- truncated by an unclean shutdown, or owned by another uid after a
+    # container's user changed -- must not stop the app from starting. This line is the first
+    # thing in the boot to open it, so without the catch a diagnostic would be the one thing
+    # standing between the operator and a UI they could have deleted the file from.
+    try:
+        cache_mode = await journal_mode(cache_engine)
+    except SQLAlchemyError:
+        cache_mode = "unreadable"
+        log.warning(
+            "db.cache_unreadable",
+            detail=(
+                "Reaper cannot read its cache database. Nothing is lost: stop Reaper, delete "
+                "cache.db from the data folder, and start it again to rebuild it."
+            ),
+        )
     log.info(
         "db.ready",
         revision=revision,
         journal_mode=await journal_mode(engine),
-        cache_journal_mode=await journal_mode(cache_engine),
+        cache_journal_mode=cache_mode,
     )
     if safety.destructive_allowed:
         # A warning, deliberately: this is the one line an operator whose .env still says

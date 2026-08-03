@@ -265,6 +265,25 @@ class TestTheBootBannerDescribesTheInstall:
         finally:
             await engine.dispose()
 
+    def test_an_unreadable_cache_database_does_not_stop_the_boot(
+        self, tmp_path: Path, recorder: _RecordingLogger
+    ) -> None:
+        """``cache.db`` is disposable by contract, so it must never gate startup.
+
+        The banner's read is the first thing in the boot to open it, and without the catch
+        a truncated file (an unclean shutdown) or one owned by another uid aborts `lifespan`
+        outright: uvicorn exits and the operator gets no UI to fix it from."""
+        settings = _make(tmp_path, stored_destructive=None)
+        (tmp_path / "cache.db").write_bytes(b"this is not a database" * 64)
+
+        with TestClient(create_app(settings)) as client:
+            assert client.get("/api/health").status_code == 200
+
+        db = next(kw for _l, event, kw in recorder.events if event == "db.ready")
+        assert db["cache_journal_mode"] == "unreadable"
+        assert db["journal_mode"] == "wal"
+        assert "db.cache_unreadable" in recorder.names()
+
     def test_every_registered_job_is_named_with_its_next_firing(
         self, tmp_path: Path, recorder: _RecordingLogger
     ) -> None:
