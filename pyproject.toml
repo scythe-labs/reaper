@@ -156,3 +156,18 @@ markers = [
 [tool.coverage.run]
 source = ["src/reaper"]
 branch = true
+# Name every context the tracer has to follow, or it silently stops following one.
+#
+# SQLAlchemy's async bridge runs the body of a session-using coroutine inside a GREENLET,
+# and coverage does not trace greenlets unless they are named here. Unnamed, it recorded
+# the lines carrying an `await` and dropped their neighbours, so a route body read as
+# half-executed in an alternating pattern: 332 lines of this suite reported unreached
+# while a test asserted the exact string they produce. That is worse than a low number.
+# A pessimistic report can be read around; one where an artifact is indistinguishable from
+# a genuinely untested line cannot be, and the patch report is where it lands hardest,
+# because every new line of a session-using route arrives looking untested.
+#
+# `thread` is in the list because naming any concurrency replaces the default rather than
+# adding to it, and dropping it would stop tracing every `asyncio.to_thread` call (the
+# Plex client is entirely behind one). Both, or this trades one blind spot for another.
+concurrency = ["greenlet", "thread"]
