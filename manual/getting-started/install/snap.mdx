@@ -38,11 +38,11 @@ snap logs scythe-labs-reaper
 
 ## Settings
 
-snapd starts Reaper at boot, so there is nowhere to hand it an environment variable. It reads
-`launcher.conf` from the data folder instead, the same as the Windows and macOS apps. The
-first run writes it as a commented template: the port, the listening address, the browser
-launch, the update check, and recovery mode each have a line. Edit it with `sudo`, then
-restart with `sudo snap restart scythe-labs-reaper`.
+Reaper reads `launcher.conf` from the data folder. The first run writes it as a commented
+template: the port, the listening address, the browser launch, the update check, and recovery
+mode each have a line. Edit it with `sudo`, then `sudo snap restart scythe-labs-reaper`.
+Recovery mode is how you get back in if you cannot sign in, covered in
+[Not getting locked out](/operating/locked-out).
 
 ## Reaching it from other machines
 

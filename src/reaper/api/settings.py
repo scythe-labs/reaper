@@ -436,6 +436,11 @@ class SafetyOut(BaseModel):
     """Whether Reaper may delete right now."""
     has_password: bool
     """Whether an admin password has been set. Turning deletion on requires one."""
+    recovery_mode: bool = False
+    """Whether REAPER_RECOVERY is armed on this process. It holds ``destructive_enabled``
+    false however the stored switch is set, and the banner says so in its own tone: an
+    operator told only "read-only" would go to Policy, Deletion and find a switch that
+    refuses (rule 53, for a state rather than a limit)."""
     note: str | None = None
 
 
@@ -1540,6 +1545,7 @@ async def _safety_out(session: AsyncSession, safety: RuntimeSafety) -> SafetyOut
     return SafetyOut(
         destructive_enabled=safety.destructive_allowed,
         has_password=await admin_password.has_password(session),
+        recovery_mode=safety.recovery_mode,
         note=safety.why_blocked(),
     )
 
@@ -1567,6 +1573,16 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     keys = (f"ip:{_client_ip(request)}", "account:safety-arm")
     async with _factory(request)() as session:
         if payload.enabled:
+            # Refused before the password is even looked at, because no password makes this
+            # allowed: `RuntimeSafety.destructive_allowed` holds deletion off for the whole
+            # life of a recovery-mode process, so accepting the flip would write a stored
+            # `true` the app then ignores and the banner contradicts. Answering here is what
+            # keeps the switch and the state one thing.
+            if _settings(request).recovery:
+                raise HTTPException(
+                    409,
+                    "Recovery mode is on, so deletion stays off. Turn it off and restart first.",
+                )
             if not await admin_password.has_password(session):
                 raise HTTPException(
                     400,

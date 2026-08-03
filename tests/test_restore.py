@@ -318,6 +318,50 @@ class TestArm:
         finally:
             con.close()
 
+    def test_arm_disarms_recovery_in_the_restored_launcher_conf(self, tmp_path: Path) -> None:
+        """A backup taken while recovery mode was armed carries REAPER_RECOVERY=true. Left
+        alone, restoring it would arm recovery on the TARGET at its next boot, mint a
+        sign-in code, and write it to recovery.txt -- turning a backup file into a way into
+        the install it was supposed to rebuild. Same obligation as the auth purge above."""
+        settings = _settings(tmp_path)
+        conf = b"REAPER_PORT=8421\nREAPER_RECOVERY=true\nREAPER_TRAY=false\n"
+        summary = restore.stage_upload(
+            settings,
+            _make_archive(tmp_path / "backup.reaper", extra_member=("launcher.conf", conf)),
+        )
+        restore.arm(settings, summary.token)
+
+        staged = (settings.data_dir / restore.PENDING_DIR / "launcher.conf").read_text("utf-8")
+        # Commented, not deleted: the operator can still see it and turn it back on.
+        assert "\nREAPER_RECOVERY=true" not in f"\n{staged}"
+        assert "# REAPER_RECOVERY=true" in staged
+        # ...and every other setting they had is untouched. Disarming must not cost them
+        # the port their reverse proxy is pointed at.
+        assert "REAPER_PORT=8421" in staged
+        assert "REAPER_TRAY=false" in staged
+
+    def test_arm_leaves_a_conf_that_never_armed_recovery_alone(self, tmp_path: Path) -> None:
+        """The branch the fix does not touch, driven so the rewrite cannot start mangling
+        ordinary files unnoticed (rule 145): an already-commented line is not an active one.
+        Byte-for-byte, because a rewritten file that happens to mean the same thing would
+        still be a file the operator did not write."""
+        settings = _settings(tmp_path)
+        conf = b"REAPER_PORT=8421\n# REAPER_RECOVERY=true\n"
+        summary = restore.stage_upload(
+            settings,
+            _make_archive(tmp_path / "backup.reaper", extra_member=("launcher.conf", conf)),
+        )
+        restore.arm(settings, summary.token)
+
+        assert (settings.data_dir / restore.PENDING_DIR / "launcher.conf").read_bytes() == conf
+
+    def test_arm_is_fine_with_no_launcher_conf_at_all(self, tmp_path: Path) -> None:
+        """A container's backup has none, and that must not refuse a restore."""
+        settings = _settings(tmp_path)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        restore.arm(settings, summary.token)
+        assert restore.is_armed(settings) is True
+
     def test_cancel_clears_the_staging(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path)
         summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
@@ -382,6 +426,23 @@ class TestApplyPendingRestore:
             con.close()
         (settings.data_dir / "secret.key").write_text("liveKey\n", encoding="utf-8")
         (settings.data_dir / "secret.salt").write_text("livesalt\n", encoding="utf-8")
+
+    def test_the_swap_puts_the_launcher_settings_back(self, tmp_path: Path) -> None:
+        """The point of carrying it: a desktop or snap install rebuilt from a backup keeps
+        the port and bind address it was reachable on. Nothing in the database holds them."""
+        settings = _settings(tmp_path)
+        self._seed_live(settings, "live")
+        (settings.data_dir / "launcher.conf").write_text("REAPER_PORT=1\n", encoding="utf-8")
+        summary = restore.stage_upload(
+            settings,
+            _make_archive(
+                tmp_path / "backup.reaper", extra_member=("launcher.conf", b"REAPER_PORT=8421\n")
+            ),
+        )
+        restore.arm(settings, summary.token)
+
+        assert restore.apply_pending_restore(settings) is True
+        assert (settings.data_dir / "launcher.conf").read_text("utf-8") == "REAPER_PORT=8421\n"
 
     def test_it_swaps_an_armed_backup_and_keeps_the_old_data(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path)

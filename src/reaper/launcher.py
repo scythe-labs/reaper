@@ -128,6 +128,12 @@ def _resolve_data_dir(env: MutableMapping[str, str], *, frozen: bool) -> None:
         env["REAPER_DATA_DIR"] = str(default_data_dir(sys.platform, env))
 
 
+#: The file an install that cannot receive environment variables is configured through.
+#: Declared here because the launcher owns it, and read from here by the backup (which
+#: carries it) and the restore (which puts it back and disarms recovery inside it), so the
+#: three cannot drift onto different spellings of one filename (rule 104).
+LAUNCHER_CONF_NAME = "launcher.conf"
+
 #: What the template written on first run offers. Only REAPER_ keys are honored on
 #: read, so the file cannot reach PATH or anything else the process inherits.
 #:
@@ -178,7 +184,7 @@ def load_launcher_conf(env: MutableMapping[str, str], data_dir: Path) -> Path:
     written as a commented template, so the operator edits rather than guesses; a
     file that cannot be read or written is skipped, never fatal.
     """
-    conf = data_dir / "launcher.conf"
+    conf = data_dir / LAUNCHER_CONF_NAME
     try:
         if not conf.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -235,7 +241,7 @@ def write_conf_values(data_dir: Path, values: MutableMapping[str, str]) -> None:
     (rule 104: one declaration, here the file itself). Raises ``OSError`` for the
     caller to turn into a plain refusal; a settings save must not half-apply
     silently."""
-    conf = data_dir / "launcher.conf"
+    conf = data_dir / LAUNCHER_CONF_NAME
     text = conf.read_text(encoding="utf-8") if conf.exists() else _CONF_TEMPLATE
     lines = text.splitlines()
     remaining = dict(values)

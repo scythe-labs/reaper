@@ -356,7 +356,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
           in the manual (rule 144). */}
       <p className="auth-note">
         The code is in <code>recovery.txt</code> in Reaper's data folder, and in the console output.
-        Paste it to sign in, then set a new password without the old one. It works once.
+        Paste it to sign in, then set a new password without the old one.
       </p>
       <form onSubmit={submit} className="local-form">
         <label className="field">

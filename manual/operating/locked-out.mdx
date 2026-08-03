@@ -8,14 +8,12 @@ sidebar_position: 2
 # Not getting locked out
 
 **Reaper always keeps at least one working local admin.** The last one cannot be deactivated,
-and first run creates it before anything else.
+and first run creates it.
 
-A plex.tv outage, a revoked token, or a rebuilt Plex server each breaks Plex sign-in. A rebuild
-changes the `machineIdentifier` the ownership check reads. All three happen.
+A plex.tv outage, a revoked token, or a rebuilt Plex server each breaks Plex sign-in.
 
 <Callout tone="tip">
-  **You already have one.** The password you set on first run created your local account. If one
-  ever goes missing, Reaper says so on every start, well before you need it.
+  **You already have one.** The password you set on first run created your local account.
 </Callout>
 
 ## Two ways back in
@@ -36,7 +34,7 @@ changes the `machineIdentifier` the ownership check reads. All three happen.
 ## Recovering an install, step by step
 
 Recovery mode has no setting in the UI on purpose: it has to work when the UI is what has
-locked you out. You turn it on the same way you set anything else on your install.
+locked you out.
 
 <Steps>
   <Step title="Turn recovery mode on.">
@@ -53,41 +51,41 @@ locked you out. You turn it on the same way you set anything else on your instal
   <Step title="Read the code.">
     Reaper mints one code at startup and puts it in two places.
 
-    - **`recovery.txt`, in the data folder**, next to `reaper.db`. Open it in any text
-      editor. Use this one on Windows and macOS: a double-clicked app has no console to
-      print to.
-    - **The console.** `docker compose logs reaper | grep -A2 RECOVERY` on Docker, or
+    - **`recovery.txt`, in the data folder**, next to `reaper.db`. Use this one on Windows
+      and macOS, where there is no console.
+    - **The console.** `docker compose logs reaper | grep -A2 RECOVERY` on Docker,
       `snap logs scythe-labs-reaper` on the snap.
 
     The code lasts 15 minutes. If it expires, restart Reaper for a new one.
   </Step>
   <Step title="Sign in with it.">
-    Open Reaper and go to `/recover`, for example `http://localhost:8420/recover`. Paste the
-    code and sign in. It works once, and Reaper deletes `recovery.txt` as it is used.
+    Go to `/recover`, for example `http://localhost:8420/recover`, and paste the code.
   </Step>
   <Step title="Set a new password.">
-    Go to **Settings, Security**. Reaper does not ask for the current password here: signing
-    in with a recovery code is what stands in for it. Type the new password twice and save.
-
-    This signs out every other device, which is what you want if a borrowed session is why
-    you are here.
+    Go to **Settings, Security**. Type the new password twice and save.
   </Step>
   <Step title="Turn recovery mode back off.">
-    Set `REAPER_RECOVERY` back to `false` and restart. The restart also deletes any recovery
-    file left behind.
+    Set `REAPER_RECOVERY` back to `false` and restart.
   </Step>
 </Steps>
 
 <Callout tone="caution">
-  **Recovery mode is a way in, so it is a way in for anyone who can reach the host.** Leave it
-  on and every restart mints a fresh code. Turn it off once you have a working password again.
+  **Recovery mode is a way in, so it is a way in for anyone who can reach the host.**  Turn it off once
+  you have a working password again.
 </Callout>
+
+## Reaper cannot delete while recovery mode is on
+
+Deletion is held off while the flag is set, whatever your settings say, and turning it on is
+refused until you turn recovery mode off.
+
+An install that was armed before the lockout comes back **read-only**. Turn deletion on again
+in Policy, Deletion when you are ready.
 
 ## Why the code is not in the link
 
 You get a **URL and a separate code**, rather than one link that signs you in. A code baked
-into the URL would be recorded verbatim in every reverse proxy's access log, which is no place
-for the key to your admin account.
+into the URL would be recorded verbatim in every reverse proxy's access log.
 
 ## If there is no admin account at all
 

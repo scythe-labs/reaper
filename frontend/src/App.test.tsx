@@ -235,7 +235,12 @@ describe("UserMenu", () => {
   });
 });
 
-const SAFETY: Safety = { destructive_enabled: false, has_password: true, note: null };
+const SAFETY: Safety = {
+  destructive_enabled: false,
+  has_password: true,
+  recovery_mode: false,
+  note: null,
+};
 
 function renderNav(view: "review" | "reap" = "review") {
   return render(

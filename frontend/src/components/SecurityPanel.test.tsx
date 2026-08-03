@@ -294,6 +294,30 @@ describe("changing the password after signing in with a recovery code", () => {
     expect(screen.queryByText(/a recovery code signed you in/i)).not.toBeInTheDocument();
   });
 
+  it("re-reads the session when the save is refused, so the form is not a dead end", async () => {
+    // A second tab mounted while the mark was still live holds `via_recovery: true` in a
+    // cache nothing refetches (`main.tsx` turns off refetch-on-focus). Once the first tab
+    // spends the mark, this one keeps a parked, empty current-password box and an enabled
+    // Save that the server refuses every time: no way out but a reload. The re-read on
+    // failure is what turns the refusal into the state that explains it.
+    apiMock.safety.mockResolvedValue({ has_password: true });
+    apiMock.me.mockResolvedValueOnce({ ...SIGNED_IN_USER, via_recovery: true });
+    apiMock.me.mockResolvedValue(SIGNED_IN_USER);
+    apiMock.setAdminPassword.mockRejectedValue(new Error("The current password didn't match."));
+    const person = renderPanel();
+
+    const currentBox = await screen.findByLabelText(/current password/i);
+    await waitFor(() => expect(currentBox).toBeDisabled());
+
+    await fill(person, screen.getByLabelText(/^new password$/i), "a-long-enough-password");
+    await fill(person, screen.getByLabelText(/confirm new password/i), "a-long-enough-password");
+    await person.click(screen.getByRole("button", { name: /^save$/i }));
+
+    // The box the operator now has to use is live again, and asks for what the server wants.
+    await waitFor(() => expect(screen.getByLabelText(/current password/i)).toBeEnabled());
+    expect(screen.queryByText(/a recovery code signed you in/i)).not.toBeInTheDocument();
+  });
+
   it("demands the current password when the session cannot be read at all", async () => {
     // Rule 17/36: the unknown state is answered explicitly, and the answer is the strict one.
     // A read that fails must never be the thing that unlocks a credential change -- so the

@@ -59,6 +59,7 @@ import structlog
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.models import AUTH_BEARING_TABLES
+from reaper.launcher import LAUNCHER_CONF_NAME
 from reaper.secrets import KEY_FILENAME, SALT_FILENAME
 from reaper.services.app_settings import DESTRUCTIVE_KEY
 from reaper.services.backup import (
@@ -121,6 +122,7 @@ _MEMBER_CAPS = {
     DB_ARCNAME: MAX_DB_BYTES,
     KEY_FILENAME: 64 * 1024,
     SALT_FILENAME: 64 * 1024,
+    LAUNCHER_CONF_NAME: 64 * 1024,
 }
 
 
@@ -279,10 +281,15 @@ def _copy_capped(source: Any, out_path: Path, cap: int, *, owner_only: bool = Fa
 def _extract(archive_path: Path, dest: Path) -> dict[str, Any]:
     """Unpack the known members of an archive into ``dest`` and return the manifest.
 
-    Only the four expected members are extracted, each to a fixed bare filename under
-    ``dest`` -- a member's own path is never honored, so a crafted archive cannot write
-    outside the staging directory. The manifest and the database are required; the key
-    and salt are optional (absent for an env-supplied key).
+    Only the members named in :data:`_MEMBER_CAPS` are extracted, each to a fixed bare
+    filename under ``dest`` -- a member's own path is never honored, so a crafted archive
+    cannot write outside the staging directory. The manifest and the database are required;
+    the key and salt are optional (absent for an env-supplied key), and so is
+    ``launcher.conf`` (absent from a container's backup, which has no such file).
+
+    Anything else in the archive is skipped rather than refused, which is what lets a newer
+    Reaper's backup restore into an older one: a member it has never heard of costs the
+    settings that member carried, never the restore.
     """
     seen: set[str] = set()
     try:
@@ -431,6 +438,51 @@ def _force_destructive_off(db_path: Path) -> None:
         con.close()
 
 
+def _force_recovery_off(conf_path: Path) -> None:
+    """Comment out any ``REAPER_RECOVERY`` line in the staged ``launcher.conf``.
+
+    The same obligation as :func:`_purge_auth_state`, one file over: a backup taken while
+    recovery mode was armed carries ``REAPER_RECOVERY=true``, and restoring that verbatim
+    would arm recovery on the TARGET at its next boot -- minting a sign-in code and writing
+    it to ``recovery.txt`` for anyone holding the data folder. The backup would then be a
+    way into an install it was only ever supposed to rebuild.
+
+    Commented rather than deleted, so an operator who did want it can see the line and
+    uncomment it, and so the file still reads as one they wrote. A missing or unreadable
+    file is nothing to do: this only ever REMOVES a permission, so failing to find one to
+    remove is the safe outcome and never worth refusing a restore over.
+    """
+    try:
+        text = conf_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+
+    out: list[str] = []
+    disarmed = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        # The reader's own shape (`launcher.load_launcher_conf`): an active line is one that
+        # is not blank, does not start with '#', and carries an '='. Anything else already
+        # sets nothing, so it is passed through untouched.
+        active = bool(stripped) and not stripped.startswith("#") and "=" in stripped
+        if active and stripped.partition("=")[0].strip() == "REAPER_RECOVERY":
+            out.append("# Turned off by a restore. Uncomment only if you are locked out.")
+            out.append(f"# {line.strip()}")
+            disarmed = True
+            continue
+        out.append(line)
+
+    if not disarmed:
+        return
+    try:
+        conf_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    except OSError as exc:
+        # Refuse rather than arm the target: this is the one failure here that would leave
+        # the operator with a live way in they did not ask for (the prime directive).
+        raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
+    log.warning("restore.recovery_disarmed")
+
+
 #: The identifier pattern a purgeable table name must match. The ``DELETE`` below is built
 #: by interpolation because SQLite has no bind parameter for a table name, so the name is
 #: proved to be a bare identifier first rather than trusted for coming from our own module
@@ -505,6 +557,7 @@ def arm(settings: Settings, token: str | None) -> None:
             status=409,
         )
     _force_destructive_off(staged_db)
+    _force_recovery_off(pending / LAUNCHER_CONF_NAME)
     _purge_auth_state(staged_db)
     (pending / READY_MARKER).write_text(
         utcnow().strftime("%Y-%m-%dT%H:%M:%SZ") + "\n", encoding="utf-8"
@@ -566,7 +619,7 @@ def _unique_dir(parent: Path, name: str) -> Path:
 #: over from a DIFFERENT database replays into whatever ``reaper.db`` it finds. That is
 #: why these travel with the database everywhere below, and never on their own.
 _DB_SIDECARS = (f"{DB_ARCNAME}-wal", f"{DB_ARCNAME}-shm")
-_LIVE_FILES = (DB_ARCNAME, *_DB_SIDECARS, KEY_FILENAME, SALT_FILENAME)
+_LIVE_FILES = (DB_ARCNAME, *_DB_SIDECARS, KEY_FILENAME, SALT_FILENAME, LAUNCHER_CONF_NAME)
 
 
 def _move_aside(data_dir: Path, recovery: Path, names: tuple[str, ...]) -> None:
@@ -613,7 +666,7 @@ def _move_staged_in(data_dir: Path, pending: Path) -> None:
     interrupted swap: a file that made it across on the previous attempt stays where it
     is rather than being looked for and missed.
     """
-    for name in (DB_ARCNAME, KEY_FILENAME, SALT_FILENAME):
+    for name in (DB_ARCNAME, KEY_FILENAME, SALT_FILENAME, LAUNCHER_CONF_NAME):
         staged = pending / name
         if staged.exists():
             shutil.move(str(staged), str(data_dir / name))

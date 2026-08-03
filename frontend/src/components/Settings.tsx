@@ -2611,9 +2611,18 @@ function AdminPasswordForm({
       // at the API instead of at the form.
       void queryClient.invalidateQueries({ queryKey: ["me"] });
     },
-    // No onError: a failure renders from `save.error` as an error notice, never in `msg`.
-    // This password is what confirms turning deletion on, so "saved" and "wrong password"
-    // must not look alike here.
+    onError: () => {
+      // Deliberately NOT the mirror of onSuccess: nothing is written to `msg`, because a
+      // failure renders from `save.error` as an error notice and this password is what
+      // confirms turning deletion on -- "saved" and "wrong password" must never look alike.
+      //
+      // The re-read is the whole point. A second tab mounted before the mark was spent holds
+      // `via_recovery: true` in a cache that nothing refetches (`main.tsx` sets
+      // `refetchOnWindowFocus: false`), so its box stays parked and empty while the server
+      // refuses every submit: a form with no way out but a reload. Re-reading here turns the
+      // refusal into the state that explains it, with the current-password box live again.
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 
   const tooShort = pw.length > 0 && pw.length < MIN_ADMIN_PASSWORD;

@@ -109,6 +109,26 @@ async def spend_recovery_mark(session: AsyncSession, token: str | None) -> None:
     )
 
 
+async def clear_recovery_marks(session: AsyncSession) -> int:
+    """Demote every recovery session to an ordinary one. Returns how many. Caller commits.
+
+    Run at every boot (``main.lifespan``), so the elevated permission cannot outlive the
+    uptime that granted it. :func:`spend_recovery_mark` only fires when the operator
+    actually resets the password; one who signs in with a code, changes nothing, and
+    restarts would otherwise keep a session that can rewrite the arming credential without
+    knowing it -- for thirty days, past the restart the manual gives as the last step, and
+    with nothing on screen saying so.
+
+    Demoted rather than revoked: the operator stays signed in and simply has to prove the
+    old password like anyone else, which is the ordinary state. Revoking would sign someone
+    out mid-repair for the crime of restarting.
+    """
+    result = await session.execute(
+        update(AuthSession).where(AuthSession.via_recovery.is_(True)).values(via_recovery=False)
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 async def resolve_session(session: AsyncSession, token: str | None) -> AppUser | None:
     """The active user behind a cookie, or ``None``.
 

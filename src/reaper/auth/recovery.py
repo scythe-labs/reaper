@@ -119,14 +119,21 @@ def _write_owner_only(path: Path, text: str) -> None:
 def clear_recovery_file(data_dir: Path) -> None:
     """Delete the recovery file if one is there. Never fatal, never noisy.
 
-    Called on a successful redemption (``api.auth.recover``) and at every boot that does
-    not mint one (``main.lifespan``), so a spent or stale code does not sit in the data
-    folder after it has stopped being the way in.
+    Called on a successful redemption (``api.auth.recover``), at every boot
+    (``main.lifespan``), and by :func:`_write_recovery_file` before it writes, so a spent or
+    stale code does not sit in the data folder after it has stopped being the way in.
+
+    The half-written sibling goes too. A kill between ``os.open`` and the rename strands a
+    ``.tmp`` holding a live code, which neither the redemption sweep nor the boot sweep would
+    have looked at -- a file nothing ever deletes is the one shape this whole channel must
+    not have.
     """
-    try:
-        recovery_file_path(data_dir).unlink(missing_ok=True)
-    except OSError as exc:
-        log.warning("recovery.file_not_removed", detail=str(exc))
+    path = recovery_file_path(data_dir)
+    for target in (path, path.with_name(path.name + ".tmp")):
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("recovery.file_not_removed", detail=str(exc))
 
 
 def _write_recovery_file(
@@ -135,9 +142,16 @@ def _write_recovery_file(
     """Put the code where a desktop operator can read it. Returns the path, or ``None``.
 
     A failure here is never fatal: the console banner is still a live channel on the
-    container and the snap. It is logged, without the code, so an operator who finds
-    nothing in the data folder can see why.
+    container and the snap, and the token is already in the database.
+
+    **The old file is deleted before the new one is written**, so a failure leaves NOTHING
+    rather than the previous code. Minting has already invalidated that code by the time this
+    runs, so leaving it in place would hand the operator a file that reads exactly like a
+    working one and cannot possibly sign them in -- on the builds where this file is the only
+    channel there is, and where the warning below reaches only the in-app Logs tab they
+    cannot get to. An empty folder at least matches what the manual says to expect.
     """
+    clear_recovery_file(data_dir)
     path = recovery_file_path(data_dir)
     body = (
         "Reaper recovery code\n"
@@ -148,7 +162,8 @@ def _write_recovery_file(
         f"Paste the code on that page. It works once and expires {minutes} minutes after\n"
         "Reaper started. Reaper deletes this file the moment the code is used.\n"
         "\n"
-        "Once you are back in, set REAPER_RECOVERY=false and restart.\n"
+        "Signing in with it lets you set a new password without the old one, in\n"
+        "Settings, Security. Then set REAPER_RECOVERY=false and restart.\n"
     )
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -210,6 +225,7 @@ async def mint_recovery_token(session: AsyncSession, *, base_url: str, data_dir:
         f"{also}"
         f"  Paste the code on that page. Single use, expires in {minutes} minutes.\n"
         "  The code is not in the URL, so a reverse proxy's access log never sees it.\n"
+        "  Signing in with it lets you set a new password without the old one.\n"
         "  Set REAPER_RECOVERY=false and restart once you are back in.\n"
         "  =================================================================\n"
     )

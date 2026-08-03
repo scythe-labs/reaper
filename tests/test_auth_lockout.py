@@ -303,3 +303,38 @@ class TestTheRecoveryCodeReachesADesktopOperator:
         assert not path.exists()
         clear_recovery_file(tmp_path)  # nothing there is not an error
         assert not path.exists()
+
+    def test_clearing_takes_the_half_written_sibling_too(self, tmp_path: Path) -> None:
+        """A kill between the O_EXCL open and the rename strands a `.tmp` holding a live
+        code. Neither the redemption sweep nor the boot sweep would ever have looked at it,
+        so it is the one shape this channel must not leave behind."""
+        stranded = recovery_file_path(tmp_path).with_name("recovery.txt.tmp")
+        stranded.write_text("a live code nobody knows about", encoding="utf-8")
+
+        clear_recovery_file(tmp_path)
+        assert not stranded.exists()
+
+    async def test_a_failed_write_leaves_nothing_rather_than_a_dead_code(
+        self, session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Minting invalidates the previous code before the file is written, so a write that
+        fails must not leave the old file sitting there. It reads exactly like a working one
+        and cannot sign anyone in, on the builds where it is the only channel there is, and
+        the warning about it reaches only the Logs tab the operator cannot get to."""
+        first = await mint_recovery_token(
+            session, base_url="http://localhost:8420", data_dir=tmp_path
+        )
+        assert first in recovery_file_path(tmp_path).read_text(encoding="utf-8")
+
+        def _boom(*args: object, **kwargs: object) -> None:
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr("reaper.auth.recovery._write_owner_only", _boom)
+        second = await mint_recovery_token(
+            session, base_url="http://localhost:8420", data_dir=tmp_path
+        )
+
+        assert not recovery_file_path(tmp_path).exists()
+        # The old code really is dead by then, which is what made leaving it so bad.
+        assert await redeem_recovery_token(session, first) is False
+        assert await redeem_recovery_token(session, second) is True

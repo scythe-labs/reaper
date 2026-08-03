@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Building a portable backup of everything Reaper cannot rebuild.
 
-A backup is one gzip-compressed tar with up to four members:
+A backup is one gzip-compressed tar with up to five members:
 
     manifest.json   what this archive is, and the schema revision it was cut at
     reaper.db       a consistent, compacted snapshot of the precious database
@@ -10,6 +10,11 @@ A backup is one gzip-compressed tar with up to four members:
                     supplies ``REAPER_SECRET_KEY`` from the environment (then it is
                     never written to disk, so there is nothing to bundle)
     secret.salt     the per-install KDF salt paired with that key
+    launcher.conf   the port, bind address and icon settings of an install that has
+                    no other place to keep them (Windows, macOS, the snap). Present
+                    whenever the file exists, so a backup carries everything its own
+                    install shape stored; an install that does not read the file
+                    simply ignores it after a restore
 
 The key and salt travel WITH the database on purpose. Without them a restored
 ``reaper.db`` cannot decrypt a single stored credential (see :mod:`reaper.crypto`
@@ -48,6 +53,7 @@ import structlog
 from reaper.buildinfo import build_version
 from reaper.clock import utcnow
 from reaper.config import Settings
+from reaper.launcher import LAUNCHER_CONF_NAME
 from reaper.secrets import (
     KEY_FILENAME,
     SALT_FILENAME,
@@ -196,6 +202,14 @@ def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArc
     salt_path = salt_file_path(settings)
     key_included = key_path.is_file() and not env_key
     salt_included = salt_path.is_file()
+    # The launcher's settings, on the installs that have them. A Windows, macOS, or snap
+    # operator sets the port, the bind address, and the tray icon HERE and nowhere else, so
+    # a backup without it restores an install that has forgotten every one of them -- the
+    # database carries none of it. Carried whenever the file exists rather than gated on the
+    # install shape, so a backup taken anywhere holds everything that shape stored; a
+    # container that restores it simply never reads the file (`launcher.reads_launcher_conf`).
+    conf_path = settings.data_dir / LAUNCHER_CONF_NAME
+    conf_included = conf_path.is_file()
     revision = _read_revision(snapshot)
 
     manifest: dict[str, Any] = {
@@ -210,6 +224,7 @@ def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArc
             "reaper_db": True,
             "secret_key": key_included,
             "secret_salt": salt_included,
+            "launcher_conf": conf_included,
             "cache_db": False,
         },
     }
@@ -229,6 +244,8 @@ def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArc
             tar.add(key_path, arcname=KEY_FILENAME)
         if salt_included:
             tar.add(salt_path, arcname=SALT_FILENAME)
+        if conf_included:
+            tar.add(conf_path, arcname=LAUNCHER_CONF_NAME)
 
     # The snapshot now lives inside the archive; drop the loose copy so the temp dir
     # holds one file while the (possibly large) archive is streamed out.

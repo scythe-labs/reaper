@@ -1322,6 +1322,11 @@ export interface Schedule {
 export interface Safety {
   destructive_enabled: boolean;
   has_password: boolean;
+  /** REAPER_RECOVERY is armed on the server. It holds `destructive_enabled` false however
+   *  the stored switch is set, and the arm route refuses while it is on, so the banner says
+   *  this rather than plain read-only: the operator is otherwise sent to a switch that
+   *  cannot help them. Only a restart with the flag off clears it. */
+  recovery_mode: boolean;
   note: string | null;
 }
 
