@@ -222,8 +222,10 @@ async def season_shape(request: Request) -> SeasonShapeOut:
 # whatever separator someone typed between it and the title. The queue prints the year in its own
 # span beside the title ("Freaky Tales 2025"), Scales prints it the same way, and the operator
 # reads one string and types it back -- so the year has to be understood, not matched literally
-# against a title column that never held it.
-_TRAILING_YEAR = re.compile(r"[\s,·-]*\(?(?P<year>(?:1[89]|20|21)\d{2})\)?\s*$")
+# against a title column that never held it. The separator run ahead of the year is
+# stripped in code below rather than matched here: a `[\s,·-]*` prefix made the search
+# quadratic on a term that is mostly whitespace (CodeQL alert 11).
+_TRAILING_YEAR = re.compile(r"(?P<year>(?:1[89]|20|21)\d{2})\)?\s*$")
 
 
 def _split_search_year(term: str) -> tuple[str, int | None]:
@@ -236,7 +238,12 @@ def _split_search_year(term: str) -> tuple[str, int | None]:
     match = _TRAILING_YEAR.search(term)
     if match is None:
         return term, None
-    return term[: match.start()].strip(), int(match["year"])
+    stem = term[: match.start()]
+    if stem.endswith("("):
+        stem = stem[:-1]
+    while stem and (stem[-1].isspace() or stem[-1] in ",·-"):
+        stem = stem[:-1]
+    return stem.strip(), int(match["year"])
 
 
 def _like_literal(text_: str) -> str:

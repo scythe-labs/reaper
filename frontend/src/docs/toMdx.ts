@@ -45,9 +45,11 @@ export function manualPath(doc: Doc): string {
  *  place. Code spans are left alone: MDX does not interpolate inside them, and escaping there
  *  would put a backslash on the operator's screen. */
 function escapeText(text: string): string {
+  // The backslash is in the class so a literal one cannot pair with the next character
+  // as an MDX escape; one pass keeps the escaping characters from re-escaping each other.
   return text
     .split(/(`[^`]*`)/g)
-    .map((part) => (part.startsWith("`") ? part : part.replace(/[{}<>]/g, (c) => `\\${c}`)))
+    .map((part) => (part.startsWith("`") ? part : part.replace(/[\\{}<>]/g, (c) => `\\${c}`)))
     .join("");
 }
 
