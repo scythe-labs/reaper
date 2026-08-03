@@ -145,11 +145,11 @@ def _write_text_atomic(path: Path, text: str) -> None:
     silently revert every operator line to the defaults — REAPER_HOST's default
     being the wildcard bind."""
     tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as handle:
+    with tmp.open("w", encoding="utf-8") as handle:
         handle.write(text)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    tmp.replace(path)
 
 
 def load_launcher_conf(env: MutableMapping[str, str], data_dir: Path) -> Path:
