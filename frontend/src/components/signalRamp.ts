@@ -100,6 +100,10 @@ interface RampUnits {
    *  sits inside it with room past the point where it adds in full, so the flat top is
    *  visible rather than implied. */
   probeMax: number;
+  /** Convert a bound-unit value into the unit the probe's FACT is read in, where the two
+   *  differ. Only SIZE differs: its bounds are GB and `evaluate_signal` reads `size_bytes`.
+   *  Absent means the two agree, which is every other signal. */
+  probeValue?: (bound: number) => number;
   /** Whether the watch mirror caps what this signal can ever read.
    *
    *  Only dormancy is capped: a never-played title is measured from the LATER of its
@@ -184,7 +188,14 @@ const RAMPS: Record<string, RampUnits> = {
     fromStored: (stored) => stored / 10,
   },
   size: {
-    unitKind: "size",
+    // GIGABYTES, not bytes, and this is the one entry where the bound's unit differs from
+    // the fact's. `_branch_signal` rescales `size_bytes` to GB before ramping it, so the
+    // stored `floor`/`saturate_at` the engine compares against are GB. This entry read them
+    // as bytes, so a 20 GB floor stored as 20000000000 was compared against a value that
+    // tops out in the thousands: the signal paid 0 at every file size that can exist, while
+    // its weight stayed in the score denominator (#417). `unitKind: "fixed"` follows -- there
+    // is one unit now, so rule 40 puts it in a suffix rather than a picker.
+    unitKind: "fixed",
     nearLabel: "Left alone until",
     farLabel: "Full points at",
     scaleFrom: "empty",
@@ -192,12 +203,16 @@ const RAMPS: Record<string, RampUnits> = {
     widest: "200",
     lead: "A title taking",
     shape: "direct",
-    say: (n) => `${Math.round(n / 1e9)} GB`,
+    say: (n) => `${Math.round(n)} GB`,
     unit: "GB",
-    probeMax: 200e9,
+    probeMax: 200,
     step: 1,
-    toStored: (typed) => Math.round(typed * 1e9),
-    fromStored: (stored) => Math.round(stored / 1e9),
+    toStored: (typed) => Math.round(typed),
+    fromStored: (stored) => Math.round(stored),
+    // The probe sends a title's FACT, and the engine reads that one in bytes (`preview.READS`
+    // maps SIZE to `size_bytes`) before applying the same rescale. So this is the one signal
+    // whose probe value is not in the unit its bounds are.
+    probeValue: (gb) => gb * 1e9,
   },
 };
 

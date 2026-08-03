@@ -995,7 +995,9 @@ function SignalProbe({ signal, reachDays }: { signal: SignalSetting; reachDays: 
             weight: signal.weight,
             saturate_at: signal.saturate_at,
             floor: signal.floor,
-            value,
+            // The bounds go as stored; the value is the title's FACT, which SIZE reads in a
+            // different unit from its bounds. `probeValue` is identity everywhere else.
+            value: units.probeValue ? units.probeValue(value) : value,
           } as const)
         : null,
     [units, signal.signal, signal.weight, signal.saturate_at, signal.floor, value],
