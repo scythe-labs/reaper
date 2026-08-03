@@ -392,13 +392,14 @@ class PolicyBody(Frozen):
         untrustworthy. Degrading on this would make the first scan after an upgrade
         un-plannable for every install, over a protection that was never doing anything.
 
-        It moves all three hashes, not just ``policy_hash``. ``policy_hash`` voids a plan
-        approved before the upgrade and asks for a re-scan (rule 113). ``scoring_hash`` and
-        ``evidence_hash`` move too, because ``gates`` is excluded from neither
-        ``_POST_SCORE_FIELDS`` nor ``_EVIDENCE_REPLAYABLE_FIELDS`` -- so the policy simulator
-        misses both its exact tier and its frozen-facts replay tier and withholds every number
-        until that re-scan. That is the honest outcome: the stored policy really is not the one
-        now in force, even though every verdict it produces is identical.
+        It moves ``policy_hash``, which voids a plan approved before the upgrade and asks for
+        a re-scan (rule 113), and ``scoring_hash``, since ``gates`` is not in
+        ``_POST_SCORE_FIELDS`` -- so the simulator loses its stored-score tier. It does NOT
+        move ``evidence_hash`` any more: ``gates`` reaches that hash only through
+        ``_gathering_evidence``, and no retired gate is the popularity gate, so the window is
+        unchanged and the frozen-facts replay answers. The first Policy page after such an
+        upgrade therefore shows numbers rather than a blank, which is the honest outcome and
+        the reverse of what this paragraph said while the whole list sat in the hash.
 
         What it must NOT do is let a surface blame the operator for it. The simulator's stale
         notice once opened "You changed what the scan reads" at an install that had changed
@@ -731,6 +732,20 @@ class PolicyBody(Frozen):
     #: CURRENT ``score``/``evaluate_all``/``decide_verdict`` over the frozen Facts, so a new
     #: scorer's answer is reproduced exactly. It stays in ``scoring_hash``, which is what
     #: routes a scorer bump to the replay instead of to the stale stored scores.
+    #:
+    #: **The nine season fields are here, and they are the one entry not answered by
+    #: ``facts_json`` alone.** A season's guard result is decided per SHOW, from Sonarr's
+    #: season statistics and who is part-way through it -- inputs that never reached ``Facts``
+    #: -- so freezing the guard's output was enough to explain a scan and never enough to
+    #: re-decide one. The scan now freezes those inputs too
+    #: (``db.models.SeasonPruneEvidence``) and the replay re-derives the plan through the same
+    #: ``season_evidence.plan_from_frozen`` the scan used. What that buys is a hash that no
+    #: longer refuses a season rule; what it does NOT buy is an answer for a snapshot with no
+    #: bundle, or for turning the mid-binge hold on over a scan that never read Sonarr's
+    #: episode lists. Neither is a hash question -- a hash cannot say WHY it mismatched
+    #: (``docs/LEARNINGS.md`` §13) -- so both are asked of the stored evidence itself in
+    #: ``api.routes._season_guard_replay``, which is what lets the panel name the one control at
+    #: fault instead of blanking nine.
     _EVIDENCE_REPLAYABLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "condemn_at",
@@ -743,6 +758,15 @@ class PolicyBody(Frozen):
             "keep_rating_match",
             "protect_conditions",
             "gates",
+            "keep_last_seasons",
+            "keep_first_season",
+            "keep_last_scope",
+            "season_lookahead",
+            "keep_in_progress",
+            "in_progress_hold_days",
+            "keep_specials",
+            "protect_incomplete_seasons",
+            "flag_keep_conflicts",
         }
     )
 
@@ -785,9 +809,23 @@ class PolicyBody(Frozen):
         fields (weights, rating bars, custom rules, protect conditions, thresholds).
 
         When it differs, the edit changed the evidence itself -- the popularity window, a
-        keep-tag, a season-pruning rule, the media type -- so the frozen Facts are stale and
-        a real scan is required. The set of replayable fields is an allow-list, so an
-        unclassified field falls into this hash and forces the safe, honest fresh scan.
+        keep-tag, the media type -- so the frozen Facts are stale and a real scan is required.
+        The set of replayable fields is an allow-list, so an unclassified field falls into
+        this hash and forces the safe, honest fresh scan.
+
+        A season rule used to be on that list and no longer is: the scan freezes its plan's
+        inputs per show now (``db.models.SeasonPruneEvidence``), so the replay re-derives the
+        guard rather than reading a stale one. What a matching hash therefore promises about
+        a TV row is narrower than it looks -- it says the FACTS replay, not that the show's
+        bundle is present, readable, and describes that season.
+        ``api.routes._season_guard_replay`` asks the evidence that second question, because a
+        hash cannot answer it: two policies that gather identically can still disagree about
+        stored evidence, which is a fact about the snapshot and not about the policy.
+
+        Moving those nine fields out of here changed the formula, so this is another instance
+        of the one-scan cost below: no snapshot written by an earlier build can match it, and
+        until the next scan every edit refuses. The season-specific refusals therefore describe
+        the state *after* that scan, never the upgrade.
 
         The allow-list is the right default and it has one sharp edge: a field that is pure
         bookkeeping falls in here too and forces a rescan that can never help. That is what

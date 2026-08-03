@@ -275,11 +275,41 @@ class TestEvidenceHash:
         b = _policy(keep_tags=("keep-this",))
         assert a.evidence_hash() != b.evidence_hash()
 
-    def test_changing_a_season_rule_changes_the_evidence_hash(self) -> None:
-        # keep_last_seasons recomputes the frozen season-pruning guard, so it needs a scan.
-        a = _policy(media_type="tv", keep_last_seasons=2)
-        b = _policy(media_type="tv", keep_last_seasons=4)
-        assert a.evidence_hash() != b.evidence_hash()
+    def test_a_season_rule_keeps_the_evidence_hash(self) -> None:
+        """Every season rule, and every one of them in both directions.
+
+        A season rule recomputes the guard rather than the evidence: the scan freezes what
+        ``plan_series_prune`` reads per show (``db.models.SeasonPruneEvidence``) and the
+        replay re-derives the plan from it, so none of these nine changes what a scan would
+        gather. Swept rather than sampled, because a field left out of
+        ``_EVIDENCE_REPLAYABLE_FIELDS`` fails closed and nothing else here would notice one
+        of the nine still refusing (rule 141: the fixture values are all off the default, so
+        an edit that does nothing cannot pass this).
+        """
+        edits: list[dict[str, object]] = [
+            {"keep_last_seasons": 4},
+            {"keep_first_season": False},
+            {"keep_last_scope": "requested"},
+            {"season_lookahead": 2},
+            {"keep_in_progress": False},
+            {"in_progress_hold_days": 30},
+            {"keep_specials": False},
+            {"protect_incomplete_seasons": False},
+            {"flag_keep_conflicts": False},
+        ]
+        base = _policy(media_type="tv")
+        for edit in edits:
+            edited = _policy(media_type="tv", **edit)
+            field = next(iter(edit))
+            assert edited.evidence_hash() == base.evidence_hash(), (
+                f"{field} still forces a fresh scan. It is replayable off the frozen season "
+                "bundle, so it belongs in PolicyBody._EVIDENCE_REPLAYABLE_FIELDS."
+            )
+            # Still a real edit: it moves the scores, which is what routes it to the replay
+            # rather than to the stored-score tier.
+            assert edited.scoring_hash() != base.scoring_hash(), (
+                f"{field} moved neither hash, so this case proves nothing about either."
+            )
 
 
 class TestSimulatorHashesCoverOnlyBehavior:
@@ -373,30 +403,37 @@ class TestSimulatorHashesCoverOnlyBehavior:
         added so the author has to decide which it is, rather than discovering it on a live
         server the way ``schema_version`` was found. (``name`` is deliberately absent: a
         policy's name lives on the row, not in the hashed body.)
+
+        **Coverage was not enough on its own.** It used to assert only that the sets COVERED
+        the body, which a field listed in two of them satisfies just as well -- and ``gates``
+        was listed twice, so from the moment it became replayable this test would have gone
+        on passing had it been put back. Coverage catches a field nobody classified; only
+        disjointness catches one classified twice, which is the half that matters when a set
+        is being edited rather than extended.
+
+        Disjointness holds over what the simulator does with a field, and only there: a body
+        field either replays off frozen evidence, or needs a fresh scan, or is bookkeeping,
+        and never two of those. ``_POST_SCORE_FIELDS`` is a different question -- which hash
+        a field leaves, not which tier answers it -- so a threshold is legitimately both
+        post-score and replayable, and it takes part in the coverage check alone.
         """
-        known = (
-            PolicyBody._POST_SCORE_FIELDS
-            | PolicyBody._EVIDENCE_REPLAYABLE_FIELDS
-            | PolicyBody._NON_BEHAVIORAL_FIELDS
-        )
-        # Everything else is evidence-bearing: it changes what a scan gathers.
-        evidence_bearing = {
-            "media_type",
-            "keep_last_seasons",
-            "keep_first_season",
-            "keep_last_scope",
-            "season_lookahead",
-            "keep_in_progress",
-            "in_progress_hold_days",
-            "keep_specials",
-            "protect_incomplete_seasons",
-            "flag_keep_conflicts",
-            "gates",
-            "keep_tags",
-            "keep_tags_match",
+        exclusive = {
+            "evidence-replayable": PolicyBody._EVIDENCE_REPLAYABLE_FIELDS,
+            "non-behavioral": PolicyBody._NON_BEHAVIORAL_FIELDS,
+            # Everything else is evidence-bearing: it changes what a scan gathers, so the
+            # frozen evidence cannot answer for it and the simulator refuses.
+            "evidence-bearing": frozenset({"media_type", "keep_tags", "keep_tags_match"}),
         }
+        for left, right in itertools.combinations(exclusive, 2):
+            overlap = exclusive[left] & exclusive[right]
+            assert not overlap, (
+                f"{sorted(overlap)} is classified as both {left} and {right}. A field has "
+                "exactly one of these roles; two makes this test blind to a change of set."
+            )
+
         actual = set(DEFAULT_TV_POLICY.model_dump(mode="json"))
-        assert actual == known | evidence_bearing, (
+        covered = PolicyBody._POST_SCORE_FIELDS.union(*exclusive.values())
+        assert actual == covered, (
             "A PolicyBody field is unclassified. Decide whether it changes an answer "
             "(leave it out of _NON_BEHAVIORAL_FIELDS) or is bookkeeping (add it), then "
             "list it here."

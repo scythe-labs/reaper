@@ -14,16 +14,19 @@ still produces the snapshot a sequential gather would have:
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
+from reaper.api import routes
+from reaper.api.schemas import SimStale, SimulationOut
 from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -31,12 +34,14 @@ from reaper.db.base import Base
 from reaper.db.models import (
     Candidate,
     FirstFlagged,
+    SeasonPruneEvidence,
     SizeSource,
     Snapshot,
     WatchHighWater,
     WhitelistEntry,
 )
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
+from reaper.engine.dormancy import history_reach_days
 from reaper.engine.gates import GateId
 from reaper.engine.observation import Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
@@ -45,6 +50,8 @@ from reaper.services import (
     history_sync,
     lists,
     profiles,
+    requested_by,
+    season_evidence,
     season_pruning,
     season_scan,
     watch_evidence,
@@ -2208,3 +2215,526 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
         assert any(
             before.facts_json != short_view[key].facts_json for key, before in long_view.items()
         ), "the window changed no frozen evidence, so the tests above compare nothing"
+
+
+class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
+    """The claim #491 asks for, driven through two real scans rather than argued.
+
+    A season's guard result is decided per SHOW, from inputs that never reached ``Facts``,
+    so freezing the guard's *output* explained a scan and could not re-decide one, and every
+    season rule blanked the simulator. The scan now freezes the plan's inputs
+    (``db.models.SeasonPruneEvidence``) and the replay re-derives the guard from them.
+
+    The bar is exactness, not plausibility (``docs/LEARNINGS.md`` §8): a replayed answer must
+    equal what a real scan under that policy would produce. So every test here compares
+    against a **second real scan**, never against an expectation typed by hand.
+
+    **It compares the guard per season, not the verdict tally.** The tally was the first
+    draft and it was too coarse to see four of the nine settings: a season already held by
+    keep-last is held whatever ``protect_incomplete_seasons`` says, so the headline sits
+    still while the reason under it changes. Reason-level, every setting is visible, which
+    is what lets the sweep below cover all nine rather than the three a tally could
+    discriminate (rule 145: prove the guard against the population it claims).
+    """
+
+    #: Both scans and the replay share one instant. The frozen bundle carries ages in days
+    #: and the mid-binge expiry compares against a stored clock read, so a suite straddling
+    #: midnight UTC would otherwise produce two honest answers that differ.
+    FROZEN = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+
+    #: The show's tvdb id. Present so ``keep_last_scope`` is answerable at all: without one
+    #: every request lookup is ``Unknown``, the scope stays fail-closed in both directions,
+    #: and a test sweeping it would compare two identical answers.
+    TVDB = 4242
+
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("reaper.services.snapshot.utcnow", lambda: self.FROZEN)
+        monkeypatch.setattr("reaper.services.season_scan.utcnow", lambda: self.FROZEN)
+
+    def _tv(self, **edits: Any) -> Any:
+        return DEFAULT_TV_POLICY.model_copy(update=edits)
+
+    @classmethod
+    def _series(cls) -> list[dict[str, Any]]:
+        """Seasons 0 to 6, with one special and one Sonarr is still filling.
+
+        Shaped so each of the nine settings can *change a reason*. On the file-wide fixture
+        -- five ordinary seasons, all complete, no specials -- ``keep_specials`` and
+        ``protect_incomplete_seasons`` change nothing whatever they are set to, so a replay
+        that ignored either matched the scan exactly and this class reported a proof it did
+        not have. Season 4 wants ten episodes and holds five (``is_incomplete``); it sits
+        outside the default keep-last-2 window so the switch is the only thing holding it.
+        """
+        series = dict(_series_payloads()[0])
+        series["tvdbId"] = cls.TVDB
+        seasons = [_season_payload(n) for n in range(0, 7)]
+        partial = seasons[4]
+        partial["statistics"] = {**partial["statistics"], "episodeCount": 10}
+        series["seasons"] = seasons
+        return [series]
+
+    @staticmethod
+    def _children() -> dict[int, list[dict[str, Any]]]:
+        added = str(int(SEASONS_ADDED.timestamp()))
+        return {
+            900: [{"media_index": n, "rating_key": 900 + n, "added_at": added} for n in range(0, 7)]
+        }
+
+    async def _seed_episodes(self, engine: AsyncEngine) -> None:
+        """Two viewers, so the mid-binge guard and the conflict detector have something to say.
+
+        Viewer 2 is three episodes into season 2 of five, sixty days ago: inside the default
+        180-day hold and outside a 30-day one, which is the only way ``in_progress_hold_days``
+        is observable. Viewer 3 finished season 3 long ago, which gives season 3 a watcher
+        count for the keep-rule conflict to compare against a kept season's.
+        """
+        rows: list[dict[str, Any]] = []
+        for episode in (1, 2, 3):
+            rows.append(
+                {
+                    "row_id": 5000 + episode,
+                    "rating_key": 9020 + episode,
+                    "parent": 902,
+                    "user_id": 2,
+                    "at": int((self.FROZEN - timedelta(days=60)).timestamp()),
+                    "index": episode,
+                }
+            )
+        for episode in range(1, 6):
+            rows.append(
+                {
+                    "row_id": 6000 + episode,
+                    "rating_key": 9030 + episode,
+                    "parent": 903,
+                    "user_id": 3,
+                    "at": int((self.FROZEN - timedelta(days=400)).timestamp()),
+                    "index": episode,
+                }
+            )
+        async with engine.begin() as conn:
+            for row in rows:
+                await conn.execute(
+                    text(
+                        "INSERT INTO watch_event (row_id, rating_key, parent_rating_key, "
+                        " user_id, watched_at, watched_status, percent_complete, media_type, "
+                        " media_index) "
+                        "VALUES (:row_id, :rating_key, :parent, :user_id, :at, 1, 100, "
+                        " 'episode', :index)"
+                    ),
+                    row,
+                )
+
+    async def _seed(self, cache_engine: AsyncEngine) -> None:
+        await _seed_play(cache_engine, row_id=1, rating_key=901)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        await self._seed_episodes(cache_engine)
+
+    async def _scan_under(
+        self, session: AsyncSession, cache_engine: AsyncEngine, tv_policy: Any
+    ) -> tuple[Snapshot, dict[str, Candidate]]:
+        tautulli = _FakeTautulli(
+            movies=_movie_spine(), shows=_show_spine(), children=self._children()
+        )
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[
+                season_scan.SonarrSource(
+                    client=_FakeSonarr(self._series()), instance_id=1, name="tv"
+                )
+            ],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=tv_policy,
+            tv_gates=build_gates(tv_policy),
+            # Available and holding nothing, so the show is KNOWN not to have been requested.
+            # Omitting it leaves every lookup Unknown, under which `keep_last_scope` is
+            # fail-closed both ways and unobservable.
+            request_index=requested_by.RequestIndex(
+                available=True,
+                movie_keys=frozenset(),
+                show_keys=frozenset(),
+                season_keys=frozenset(),
+            ),
+        )
+        await session.commit()
+        rows = {
+            c.media_key: c
+            for c in await candidates(session, snapshot.id)
+            if c.media_type == "season"
+        }
+        return snapshot, rows
+
+    @staticmethod
+    def _frozen_guard(row: Candidate) -> tuple[Any, ...]:
+        """One season's stored guard result, as the tuple of everything it asserts."""
+        from reaper.engine.facts_codec import facts_from_dict
+
+        _, extra = facts_from_dict(json.loads(row.facts_json or "{}"))
+        guard = next(e for e in extra if e.gate is GateId.SEASON_PROGRESSION)
+        return (guard.outcome, guard.detail, guard.blocked, guard.unestablishable)
+
+    def _scanned_guards(self, rows: dict[str, Candidate]) -> dict[str, tuple[Any, ...]]:
+        return {key: self._frozen_guard(row) for key, row in rows.items()}
+
+    async def _replayed_guards(
+        self,
+        session: AsyncSession,
+        snapshot: Snapshot,
+        rows: dict[str, Candidate],
+        tv_policy: Any,
+    ) -> dict[str, tuple[Any, ...]]:
+        """The production replay's guard for each season, through the route's own helper."""
+        from reaper.engine.facts_codec import facts_from_dict
+
+        bundles = await routes._season_bundles(session, snapshot_id=snapshot.id)
+        policy = season_evidence.SeasonPolicy.from_body(tv_policy)
+        # The same per-show memo the production loop keeps, so a plan cached for one season
+        # of a show is the plan its siblings are judged against here too.
+        plans: dict[str, Any] = {}
+        out: dict[str, tuple[Any, ...]] = {}
+        for key, row in rows.items():
+            _, extra = facts_from_dict(json.loads(row.facts_json or "{}"))
+            replayed = routes._season_guard_replay(
+                row, extra, bundles=bundles, policy=policy, plans=plans
+            )
+            guard = next(e for e in replayed if e.gate is GateId.SEASON_PROGRESSION)
+            out[key] = (guard.outcome, guard.detail, guard.blocked, guard.unestablishable)
+        return out
+
+    @staticmethod
+    def _tally(rows: dict[str, Candidate]) -> dict[str, int]:
+        """The panel's own four figures, off a real scan's stored rows."""
+        return {
+            "condemned": sum(1 for r in rows.values() if r.verdict == "condemn"),
+            "protected": sum(1 for r in rows.values() if r.verdict == "protect"),
+            "abstained": sum(1 for r in rows.values() if r.verdict == "abstain"),
+            "reclaimable": sum(r.size_bytes or 0 for r in rows.values() if r.verdict == "condemn"),
+        }
+
+    @staticmethod
+    def _shown(out: SimulationOut) -> dict[str, int]:
+        return {
+            "condemned": out.condemned,
+            "protected": out.protected,
+            "abstained": out.abstained,
+            "reclaimable": out.reclaimable_bytes,
+        }
+
+    #: One edit per season setting, each away from its shipped default and each shaped to
+    #: change a guard reason on the fixture above. Swept individually rather than all at
+    #: once because the settings MASK each other: with keep-last raised to 4 the incomplete
+    #: season is held by rank anyway, so a combined edit hides whichever setting the others
+    #: already cover (rule 145).
+    SETTINGS: ClassVar[list[dict[str, Any]]] = [
+        {"keep_last_seasons": 4},
+        {"keep_first_season": False},
+        {"keep_last_scope": "requested"},
+        {"season_lookahead": 2},
+        {"keep_in_progress": False},
+        {"in_progress_hold_days": 30},
+        {"keep_specials": False},
+        {"protect_incomplete_seasons": False},
+        {"flag_keep_conflicts": False},
+    ]
+
+    @pytest.mark.parametrize("edit", SETTINGS, ids=lambda e: next(iter(e)))
+    async def test_each_season_setting_replays_to_what_a_scan_under_it_decided(
+        self,
+        session: AsyncSession,
+        cache_engine: AsyncEngine,
+        edit: dict[str, Any],
+    ) -> None:
+        """The load-bearing sweep, one setting at a time.
+
+        Two roads carry a ``PolicyBody`` to the planner: ``snapshot.scan`` unpacks it into
+        ``season_scan.gather``, and the simulator builds a ``SeasonPolicy`` off the draft. A
+        value that reaches one road and not the other is invisible until the two answers are
+        compared under a body where it differs from the default (rule 141, rule 144), and
+        invisible per-setting until each is swept alone.
+        """
+        await self._seed(cache_engine)
+        edited = self._tv(**edit)
+        # The edit must be replayable at all, or this measures the refusal path instead.
+        assert self._tv().evidence_hash() == edited.evidence_hash()
+
+        first, before = await self._scan_under(session, cache_engine, self._tv())
+        _, after = await self._scan_under(session, cache_engine, edited)
+
+        assert before.keys() == after.keys()
+        scanned_before = self._scanned_guards(before)
+        scanned_after = self._scanned_guards(after)
+        assert scanned_before != scanned_after, (
+            f"{next(iter(edit))} changed no season's guard on this fixture, so comparing a "
+            "replay against it proves nothing about whether the setting reaches the planner"
+        )
+
+        replayed = await self._replayed_guards(session, first, before, edited)
+        assert replayed == scanned_after, (
+            f"replaying the first scan's frozen bundle under {edit} did not reproduce the "
+            "guard a real scan under that policy actually decided"
+        )
+
+    async def test_the_replay_is_not_answering_the_old_policy(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The control, and the shape #490's own control was added for.
+
+        A replay that ignored the draft and re-derived under the scan's policy would return
+        the first scan's guards, which the sweep above cannot distinguish from a correct
+        answer on its own. So this pins the disagreement directly.
+        """
+        await self._seed(cache_engine)
+        first, before = await self._scan_under(session, cache_engine, self._tv())
+
+        replayed = await self._replayed_guards(
+            session, first, before, self._tv(keep_last_seasons=4)
+        )
+
+        assert replayed != self._scanned_guards(before), (
+            "the replay returned the scan's own guards under a different policy, so it is "
+            "reading the stored one rather than re-deriving it"
+        )
+
+    async def test_the_panel_figures_equal_a_real_scan_under_the_edit(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The same claim at the granularity the operator actually reads.
+
+        The sweep above compares guards, which is sharper; this compares the four numbers on
+        the panel, through the real ``_replay_simulation``, so the thing being promised to
+        the operator is the thing that was measured.
+        """
+        await self._seed(cache_engine)
+        edited = self._tv(keep_last_seasons=4, keep_first_season=False)
+
+        first, before = await self._scan_under(session, cache_engine, self._tv())
+        _, after = await self._scan_under(session, cache_engine, edited)
+        assert self._tally(before) != self._tally(after), (
+            "the edit moved no figure, so comparing the replay against it proves nothing"
+        )
+
+        bundles = await routes._season_bundles(session, snapshot_id=first.id)
+        out = await routes._replay_simulation(
+            list(before.values()),
+            edited,
+            {},
+            reach_days=history_reach_days(first.horizon_at, now=first.created_at),
+            season_bundles=bundles,
+        )
+
+        assert out.exact is True
+        assert self._shown(out) == self._tally(after)
+
+    async def test_a_season_rule_does_not_move_the_frozen_bundle(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The evidence half: a season rule decides, it does not gather.
+
+        Byte-identical payloads, which is what makes replaying one scan's bundle under
+        another policy legitimate rather than merely convenient. ``facts_json`` is
+        deliberately NOT compared: it carries the guard's output, which is exactly what a
+        season rule is supposed to move.
+        """
+        await self._seed(cache_engine)
+        first, _ = await self._scan_under(session, cache_engine, self._tv())
+        second, _ = await self._scan_under(
+            session, cache_engine, self._tv(keep_last_seasons=4, keep_specials=False)
+        )
+
+        one = await self._bundles_json(session, first.id)
+        two = await self._bundles_json(session, second.id)
+        assert one and one.keys() == two.keys()
+        for show, payload in one.items():
+            assert payload == two[show], (
+                f"{show} froze different season evidence under a season-rule edit, so the "
+                "simulator's replay of that edit is not exact"
+            )
+
+    async def _bundles_json(self, session: AsyncSession, snapshot_id: int) -> dict[str, str]:
+        rows = (
+            (
+                await session.execute(
+                    select(SeasonPruneEvidence.group_key, SeasonPruneEvidence.payload_json).where(
+                        SeasonPruneEvidence.snapshot_id == snapshot_id
+                    )
+                )
+            )
+            .tuples()
+            .all()
+        )
+        return dict(rows)
+
+    async def test_turning_the_mid_binge_hold_on_refuses(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The one direction that cannot be answered, and why the bundle is three-state.
+
+        With the guard off the scan skips the Sonarr episode fan-out entirely, so the map the
+        sequential guard reads was never gathered. Replaying anyway would fall back to
+        whole-season protection and show a preview no scan will produce, which is worse than
+        a blank. Turning it OFF is the answerable direction and is covered by the sweep.
+        """
+        await self._seed(cache_engine)
+        first, before = await self._scan_under(
+            session, cache_engine, self._tv(keep_in_progress=False)
+        )
+
+        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+            await self._replayed_guards(session, first, before, self._tv(keep_in_progress=True))
+
+        assert caught.value.kind is SimStale.IN_PROGRESS_NOT_READ
+
+    async def test_a_show_whose_every_season_is_kept_is_still_recorded(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The skip this change removed, as a property rather than as a diff.
+
+        The episodes read used to be spared for a show with no prunable season, which is
+        exactly the show a lowered keep-last makes prunable. Its bundle would then carry no
+        episode map and the whole lane would refuse, on the edit the season card exists for.
+        """
+        await self._seed(cache_engine)
+        held, rows = await self._scan_under(session, cache_engine, self._tv(keep_last_seasons=6))
+        assert rows, "the fixture show produced no season rows"
+
+        bundles = await routes._season_bundles(session, snapshot_id=held.id)
+        assert bundles, "a fully kept show recorded no season evidence at all"
+        for show, bundle in bundles.items():
+            assert bundle.season_final_episode is not None, (
+                f"{show} is fully kept and its episode map was skipped, so lowering "
+                "keep-last cannot be previewed for it"
+            )
+
+    async def test_a_snapshot_with_no_bundle_refuses_rather_than_replaying_empty(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """A bundle that is simply not there, and why no hash can catch it.
+
+        Two policies that gather identically still disagree about whether a snapshot recorded
+        this evidence, so nothing in ``PolicyBody`` can tell the simulator to stand down and
+        the stored evidence has to be asked directly.
+
+        **Constructed with a DELETE, and deliberately not claimed to be the upgrade case.**
+        A snapshot written before this table existed also predates the ``evidence_hash``
+        re-scoping that made the season fields replayable, so it refuses one tier earlier and
+        never reaches here. This pins the mechanism; the population it covers is a bundle lost
+        or never written for some other reason.
+        """
+        await self._seed(cache_engine)
+        first, before = await self._scan_under(session, cache_engine, self._tv())
+        await session.execute(
+            delete(SeasonPruneEvidence).where(SeasonPruneEvidence.snapshot_id == first.id)
+        )
+        await session.commit()
+
+        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+            await self._replayed_guards(session, first, before, self._tv(keep_last_seasons=4))
+
+        assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
+
+    async def test_a_season_row_carrying_no_frozen_guard_refuses(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Driven against the interlock directly, because nothing can reach it from outside.
+
+        Every season row a scan writes carries exactly one ``SEASON_PROGRESSION`` result, so
+        a row without one is corruption rather than a state the pipeline produces -- and an
+        unreachable tripwire with no test is one refactor away from silently gone (rule 118).
+        What it stops is the replay returning the row's other gates unchanged, which drops the
+        season lane while reporting an exact answer.
+        """
+        await self._seed(cache_engine)
+        first, before = await self._scan_under(session, cache_engine, self._tv())
+        bundles = await routes._season_bundles(session, snapshot_id=first.id)
+        row = next(iter(before.values()))
+
+        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+            routes._season_guard_replay(
+                row,
+                # A row whose frozen extras hold no season guard at all.
+                (),
+                bundles=bundles,
+                policy=season_evidence.SeasonPolicy.from_body(self._tv()),
+                plans={},
+            )
+
+        assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
+
+    async def test_a_bundle_that_does_not_describe_the_season_refuses(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Parsing is not describing, and this is the one fail-open the review found.
+
+        ``guard_result`` answers a season the plan never saw with its terminal arm -- a clean
+        ABSTAIN reading "checked: prunable by the keep-last / keep-first season rules" -- so a
+        bundle that decodes but lists no seasons would replay every row of that show with the
+        season-protection lane silently absent, condemnable on score alone, under
+        ``exact: true``. Missing evidence has to produce a refusal, never a preview.
+        """
+        await self._seed(cache_engine)
+        first, before = await self._scan_under(session, cache_engine, self._tv())
+
+        stored = await self._bundles_json(session, first.id)
+        (show,) = stored
+        emptied = json.loads(stored[show])
+        emptied["seasons"] = []
+        await session.execute(
+            update(SeasonPruneEvidence)
+            .where(SeasonPruneEvidence.snapshot_id == first.id)
+            .values(payload_json=json.dumps(emptied))
+        )
+        await session.commit()
+
+        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+            await self._replayed_guards(session, first, before, self._tv())
+
+        assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
+
+    async def test_a_bundle_whose_clock_will_not_parse_refuses_rather_than_raising(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """``from_epoch`` ends in ``datetime.fromtimestamp``, which raises ``OSError`` rather
+        than ``ValueError`` for an out-of-range epoch. Catching only the obvious three turned
+        a corrupt timestamp into a 500 on a route whose contract is to refuse cleanly."""
+        await self._seed(cache_engine)
+        first, _ = await self._scan_under(session, cache_engine, self._tv())
+
+        stored = await self._bundles_json(session, first.id)
+        (show,) = stored
+        broken = json.loads(stored[show])
+        broken["at"] = 10**18
+        await session.execute(
+            update(SeasonPruneEvidence)
+            .where(SeasonPruneEvidence.snapshot_id == first.id)
+            .values(payload_json=json.dumps(broken))
+        )
+        await session.commit()
+
+        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+            await routes._season_bundles(session, snapshot_id=first.id)
+
+        assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
+
+    async def test_an_unreadable_bundle_refuses_rather_than_half_parsing(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Rule 96, on the one decode this path adds: the fallback resolves toward keeping."""
+        await self._seed(cache_engine)
+        first, _ = await self._scan_under(session, cache_engine, self._tv())
+        await session.execute(
+            update(SeasonPruneEvidence)
+            .where(SeasonPruneEvidence.snapshot_id == first.id)
+            .values(payload_json='{"title": "half a bundle"}')
+        )
+        await session.commit()
+
+        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+            await routes._season_bundles(session, snapshot_id=first.id)
+
+        assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED

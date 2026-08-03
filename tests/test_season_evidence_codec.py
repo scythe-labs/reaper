@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""The frozen season bundle survives a round trip through JSON, exactly.
+
+``services.season_evidence`` is what stands between the policy simulator and a confident
+wrong preview of a season rule: the scan freezes ``plan_series_prune``'s inputs and the
+replay thaws them and re-derives the plan. Every one of those inputs is evidence, so a value
+that changes shape on the way through -- an int key arriving as a string, a ``None`` arriving
+as a zero, a three-state collapsing to two -- is a number on the operator's screen that no
+scan will produce.
+
+``test_scan_pipeline.py`` proves the whole path against two real scans, which is the stronger
+claim. This file pins the codec directly, because that test can only see a round-trip loss
+that happens to change a plan on its fixture, and the fields most likely to be lost are the
+ones a fixture is least likely to exercise.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+
+import pytest
+
+from reaper.clients.sonarr_stats import SeasonStats
+from reaper.engine.policy import DEFAULT_TV_POLICY
+from reaper.services import season_evidence
+
+AT = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+
+
+def _seasons() -> tuple[SeasonStats, ...]:
+    return (
+        # Specials, and a season Sonarr reported without a size. `None` is not zero: no
+        # season worth deleting is genuinely empty, and `_reported_size` maps an unreported
+        # size here precisely so nothing downstream reads a measurement nobody took.
+        SeasonStats(
+            season_number=0,
+            monitored=False,
+            episode_file_count=3,
+            size_on_disk=None,
+            total_episode_count=3,
+            wanted_episode_count=0,
+        ),
+        SeasonStats(
+            season_number=1,
+            monitored=True,
+            episode_file_count=5,
+            size_on_disk=1_000_000_000,
+            total_episode_count=10,
+            wanted_episode_count=10,
+        ),
+    )
+
+
+def _bundle(**edits: object) -> season_evidence.SeasonPruneInput:
+    """One show's evidence, with every awkward value a real library produces."""
+    base: dict[str, object] = {
+        "series_title": "A show, with a comma and an accent: é",
+        "seasons": _seasons(),
+        "airing_seasons": (1,),
+        # A viewer part-way through a season, and one whose position in a season is unknown.
+        "progress_by_user": {"7": {1: 3, 0: None}},
+        # A viewer whose last-watched time could not be read keeps their hold, so `None` here
+        # is load-bearing rather than absent data.
+        "last_watched_by_user": {"7": AT, "9": None},
+        "last_play_by_user": {"7": {1: AT, 0: None}},
+        "season_final_episode": {0: 3, 1: None},
+        # `None` is "on disk, but never resolved in Plex" -- not a measured zero (rule 93).
+        "watchers_by_season": {0: None, 1: 2},
+        "shortfall_by_season": {0: None, 1: "the mirror does not reach back that far"},
+        "progress_unreadable": True,
+        "progress_seasons_unmatched": False,
+        "progress_unknown_reason": None,
+        "requested_known_false": True,
+        "reach_days": 2000,
+        "now": AT,
+    }
+    return season_evidence.SeasonPruneInput(**{**base, **edits})  # type: ignore[arg-type]
+
+
+def _round_trip(inp: season_evidence.SeasonPruneInput) -> season_evidence.SeasonPruneInput:
+    """Through real JSON, not just the two dict functions.
+
+    ``to_dict`` is only half the boundary: the payload is stored as text, and a dict with
+    integer keys survives ``from_dict(to_dict(x))`` while `json.dumps` turns those keys into
+    strings. Testing the pair alone would pass over exactly that.
+    """
+    return season_evidence.from_dict(json.loads(json.dumps(season_evidence.to_dict(inp))))
+
+
+class TestTheBundleSurvivesTheFreeze:
+    def test_every_field_comes_back_identical(self) -> None:
+        inp = _bundle()
+        assert _round_trip(inp) == inp
+
+    def test_a_scan_that_never_read_the_episode_lists_stays_three_state(self) -> None:
+        """The one field where two-state would be a preview of an answer nobody gathered.
+
+        ``None`` means the mid-binge fan-out never ran; ``{}`` means it ran and the show has
+        no episodes on disk. The planner reads both as "protect whole seasons", so nothing
+        downstream can tell them apart once they are conflated -- which is why the refusal
+        is decided off this value rather than off the plan it produces.
+        """
+        unread = _round_trip(_bundle(season_final_episode=None))
+        assert unread.season_final_episode is None
+
+        asked_and_empty = _round_trip(_bundle(season_final_episode={}))
+        assert asked_and_empty.season_final_episode == {}
+
+    def test_the_two_are_not_the_same_answer(self) -> None:
+        """And the distinction reaches the decision, not just the dataclass."""
+        policy = season_evidence.SeasonPolicy.from_body(
+            DEFAULT_TV_POLICY.model_copy(update={"keep_in_progress": True})
+        )
+        assert season_evidence.missing_episode_map(
+            _bundle(season_final_episode=None), policy=policy
+        )
+        assert not season_evidence.missing_episode_map(
+            _bundle(season_final_episode={}), policy=policy
+        )
+
+    def test_a_thawed_bundle_plans_the_same_way_as_the_live_one(self) -> None:
+        """The property the simulator actually depends on, stated directly.
+
+        Equality of the dataclass is necessary and not sufficient: what has to hold is that
+        the planner cannot tell the two apart. Season numbers arrive as JSON strings and are
+        coerced back, and a coercion that silently reordered or dropped one would produce a
+        different plan while comparing equal on a field nobody checks.
+        """
+        inp = _bundle()
+        policy = season_evidence.SeasonPolicy.from_body(DEFAULT_TV_POLICY)
+
+        live = season_evidence.plan_from_frozen(inp, policy=policy)
+        thawed = season_evidence.plan_from_frozen(_round_trip(inp), policy=policy)
+
+        assert thawed == live
+        # Not a plan that protects everything by accident, which two identical empty answers
+        # would also satisfy (rule 118).
+        assert live.protected, "the fixture produced no protected season, so this compares little"
+
+    def test_a_payload_missing_a_field_raises_rather_than_defaulting(self) -> None:
+        """No safe default exists here: every member is evidence, so absence is a refusal.
+
+        The route catches this and declines to preview (``_season_bundles``). Defaulting even
+        one member would let a partial bundle produce a confident plan.
+        """
+        payload = season_evidence.to_dict(_bundle())
+        del payload["finals"]
+
+        with pytest.raises(KeyError):
+            season_evidence.from_dict(payload)
+
+    def test_a_payload_with_no_scan_instant_raises(self) -> None:
+        """The mid-binge expiry compares against it, so a bundle without one cannot decide."""
+        payload = season_evidence.to_dict(_bundle())
+        payload["at"] = None
+
+        with pytest.raises(ValueError, match="no scan instant"):
+            season_evidence.from_dict(payload)
