@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/scythe-labs/reaper/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/scythe-labs/reaper/actions/workflows/ci.yml/badge.svg?branch=dev"></a>
+  <a href="https://codecov.io/gh/scythe-labs/reaper"><img alt="Coverage" src="https://codecov.io/gh/scythe-labs/reaper/branch/dev/graph/badge.svg"></a>
   <a href="LICENSE"><img alt="License: AGPL-3.0-or-later" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue"></a>
   <img alt="Python 3.13" src="https://img.shields.io/badge/python-3.13-blue">
   <img alt="React 19" src="https://img.shields.io/badge/react-19-blue">
