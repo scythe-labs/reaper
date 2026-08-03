@@ -32,6 +32,7 @@ from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
 from reaper.services import app_settings, imdb_dataset, retention, scan_runner, scheduler
 from reaper.services.imdb_dataset import ImdbRatings
+from reaper.services.update_check import UpdateChecker, UpdateStatus
 
 
 @pytest.fixture
@@ -173,6 +174,7 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -183,6 +185,7 @@ class TestTheSchedulerIsUpkeepOnly:
             "refresh_ratings",
             "refresh_curated_lists",
             "full_history_sweep",
+            "check_for_updates",
             # Housekeeping, deliberately absent from the operator's Jobs list: deleting
             # sessions whose window has already closed is not a choice to hand over, and an
             # off switch on it could only ever let the table grow (PR-13). Trimming the
@@ -200,7 +203,12 @@ class TestTheSchedulerIsUpkeepOnly:
             assert (
                 "sync" in job.func.__name__
                 or "refresh" in job.func.__name__
-                or ("sweep" in job.func.__name__)
+                or "sweep" in job.func.__name__
+                # The update check reads one anonymous GitHub URL and writes nothing
+                # anywhere -- no credentials, no client that can mutate, no *arr and no
+                # Plex (`scheduler.check_for_updates`). It earns the fourth verb rather
+                # than being renamed to fit one of the three.
+                or job.func.__name__ == "check_for_updates"
             )
         await engine.dispose()
 
@@ -218,6 +226,7 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -251,6 +260,7 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -299,6 +309,7 @@ class TestTheSchedulerIsUpkeepOnly:
             sweep_dir,
             session_factory=factory,
             secret_box=SecretBox(resolve_secret_key(settings)),
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -324,6 +335,7 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: True,
         )
@@ -600,6 +612,160 @@ class TestUpkeepJobsRecordTheirLastRun:
         assert last is not None
         assert last["ok"] is False
         assert last["result"] == "Couldn't update history"
+
+
+class TestTheUpdateCheckJob:
+    """The check runs on a schedule now, which is the whole point of the job: before it,
+    ``UpdateChecker.status()`` had one caller -- the About route -- so an install nobody
+    signed in to never checked at all, under a panel saying Reaper checked a few times a
+    day (#464). These pin what each state writes to the Jobs page's last-run line, and
+    that the job asks rather than repeating a cached answer."""
+
+    async def _last(
+        self, factory: async_sessionmaker[AsyncSession], job_id: str
+    ) -> dict[str, object] | None:
+        async with factory() as session:
+            return (await app_settings.get_job_last_runs(session)).get(job_id)
+
+    @staticmethod
+    def _checker(status: UpdateStatus) -> object:
+        """A checker that answers ``status`` from ``refresh`` and counts both doors, so a
+        job rewired to the cache-serving one fails here rather than reporting a six-hour-old
+        answer as a check that just ran."""
+
+        class _Stub:
+            def __init__(self) -> None:
+                self.refreshed = 0
+                self.statused = 0
+
+            async def refresh(self) -> UpdateStatus:
+                self.refreshed += 1
+                return status
+
+            async def status(self) -> UpdateStatus:
+                self.statused += 1
+                return status
+
+        return _Stub()
+
+    async def test_a_newer_release_is_recorded_and_logged_for_a_headless_install(
+        self, main_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The log line is the only place this lands on a server nobody opens, so it is INFO
+        rather than DEBUG.
+
+        Read off a stub logger rather than ``capture_logs``: a module logger that was
+        materialized while ``cache_logger_on_first_use`` was live is permanently deaf to it
+        (conftest's ``_capturable_logs``), and this module's logger is used by half the suite,
+        so the assertion would pass or fail on which tests shared the worker (rule 119/133)."""
+        said: list[str] = []
+
+        class _Recorder:
+            def info(self, event: str, **_kw: object) -> None:
+                said.append(event)
+
+            def warning(self, event: str, **_kw: object) -> None:
+                said.append(event)
+
+        monkeypatch.setattr(scheduler, "log", _Recorder())
+        checker = self._checker(
+            UpdateStatus(
+                channel="release",
+                enabled=True,
+                current="2026.8.1",
+                latest="2026.9.1",
+                update_available=True,
+            )
+        )
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        assert checker.refreshed == 1  # type: ignore[attr-defined]
+        assert checker.statused == 0  # type: ignore[attr-defined]
+        assert "scheduler.update_available" in said
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "Reaper 2026.9.1 is out"
+
+    async def test_being_current_records_a_plain_success(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        checker = self._checker(
+            UpdateStatus(
+                channel="release",
+                enabled=True,
+                current="2026.8.1",
+                latest="2026.8.1",
+                update_available=False,
+            )
+        )
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "You are on the newest release"
+
+    async def test_a_moved_dev_branch_reads_as_the_dev_branch_not_a_release(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A dev build has no release number to name, so the release sentence would print
+        "Reaper dev (def5678) is out" at an operator who is not on the release channel."""
+        checker = self._checker(
+            UpdateStatus(
+                channel="dev",
+                enabled=True,
+                current="dev (abc1234)",
+                latest="dev (def5678)",
+                update_available=True,
+            )
+        )
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["result"] == "The dev branch has moved since this build"
+
+    async def test_an_unanswerable_check_records_a_failure_not_a_green_tick(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Unreachable, rate-limited, or an unorderable version pair: the checker maps all
+        three to unknown, and unknown is not "you are up to date"."""
+        checker = self._checker(UpdateStatus(channel="release", enabled=True, current="2026.8.1"))
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't check for updates"
+
+    async def test_the_off_switch_is_recorded_as_off_never_as_a_check_that_ran(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Rule 55: ``REAPER_UPDATE_CHECK=false`` governs the scheduled path too. The
+        checker answers disabled without sending anything, and the run says so rather than
+        reading as a check that found nothing."""
+        checker = self._checker(UpdateStatus(channel="release", enabled=False, current="2026.8.1"))
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "Update checks are off"
+
+    async def test_an_unexpected_crash_is_recorded_rather_than_stopping_the_scheduler(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        class _Boom:
+            async def refresh(self) -> UpdateStatus:
+                raise RuntimeError("something nobody mapped")
+
+        await scheduler.check_for_updates(_Boom(), main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't check for updates"
 
 
 class TestScheduledScanRecordsOnlyItsFailure:

@@ -3,12 +3,21 @@
 
 A release build compares its version against the newest published release; every
 other build -- the ``:dev`` image, a dev binary, a source checkout -- follows the tip
-of the dev branch. The answer feeds one read-only About surface.
+of the dev branch. The answer feeds read-only UI: the About row, and the account
+chip's light in the header.
 
 The check informs; it never gates. A failure (no network, GitHub down, an API limit)
 resolves to "unknown" and is retried after a short pause, so an air-gapped install
 shows nothing rather than an error. ``REAPER_UPDATE_CHECK=false`` turns it off
 entirely: no request leaves the box, and the surface says checks are off.
+
+Two callers, and which door they take is the point. The nightly job
+(``scheduler.check_for_updates``) calls :meth:`UpdateChecker.refresh`, so an install
+nobody opens still learns a release exists. The route calls :meth:`UpdateChecker.status`,
+which answers from the cache the job has usually just filled, and the TTLs below bound
+how often a *page load* becomes a real ask. Until that job existed the route was the only
+caller: a server nobody signed in to never checked at all, while the About panel told the
+operator Reaper checked a few times a day (#464).
 
 Which repository to ask is baked at build time as ``REAPER_UPDATE_REPO`` (CI passes
 its own repository, so a fork's builds follow the fork); a source checkout falls back
@@ -16,10 +25,10 @@ to the upstream repository.
 
 Every call narrates itself at DEBUG under ``update_check.*``: which of the three
 things happened (off, cache, ask), what came back, and when the next ask is due. The
-check is demand-driven, so silence in the log has two readings -- nobody opened the
-About surface, or the answer was still cached -- and only ``REAPER_LOG_LEVEL=DEBUG``
-tells them apart. A failure stays at INFO, since that one is worth seeing without
-being asked for.
+route half is demand-driven, so silence between the job's firings has two readings --
+nobody had Reaper open, or the answer was still cached -- and only
+``REAPER_LOG_LEVEL=DEBUG`` tells them apart. A failure stays at INFO, since that one is
+worth seeing without being asked for.
 """
 
 from __future__ import annotations
@@ -166,11 +175,28 @@ class UpdateChecker:
         once-per-TTL refresh wait for one GitHub call instead of each making their
         own, and the wait is bounded by the client's own retry budget.
         """
+        return await self._answer(force=False)
+
+    async def refresh(self) -> UpdateStatus:
+        """Ask now, whatever the cache holds, and keep the answer for the usual TTL.
+
+        The scheduled job (``scheduler.check_for_updates``) and the Jobs page's Run now
+        take this door. A check somebody scheduled or pressed a button for that answered
+        out of a cache is not a check: it would report "ran just now" over an answer up
+        to six hours old, which is the shape of claim #464 was about. The route keeps
+        :meth:`status`, because a page load is not a request to go ask.
+
+        The off switch still governs (rule 55): disabled returns the disabled answer and
+        sends nothing, from this door exactly as from the other.
+        """
+        return await self._answer(force=True)
+
+    async def _answer(self, *, force: bool) -> UpdateStatus:
         if not _enabled():
             log.debug("update_check.disabled")
             return UpdateStatus(channel=_channel(), enabled=False, current=build_version())
         async with self._lock:
-            if self._cached is not None and self._clock() < self._cache_until:
+            if not force and self._cached is not None and self._clock() < self._cache_until:
                 log.debug(
                     "update_check.cached",
                     latest=self._cached.latest,
@@ -188,6 +214,7 @@ class UpdateChecker:
                 update_available=status.update_available,
                 behind=len(status.changes),
                 next_ask_in=round(ttl),
+                forced=force,
             )
             return status
 

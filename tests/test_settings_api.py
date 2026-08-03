@@ -1002,13 +1002,21 @@ class TestSchedule:
     def test_every_schedulable_job_is_listed(self, client: TestClient) -> None:
         schedule = client.get("/api/settings/schedule").json()
         by_id = {j["id"]: j for j in schedule["jobs"]}
-        # The scan and all three upkeep jobs are always listed, off or not.
+        # The scan and every upkeep job are always listed, off or not.
         assert {
             "scheduled_scan",
             "refresh_ratings",
             "refresh_curated_lists",
             "full_history_sweep",
+            "check_for_updates",
         } <= (by_id.keys())
+        # The update check reaches the operator's Jobs page through the same route as the
+        # rest, on its own schedule and armed out of the box: the whole point is that an
+        # install nobody opens still checks (#464), which a listed-but-unscheduled row would
+        # not do. This is the wiring end to end -- a real app boot, a real scheduler holding
+        # the app's own UpdateChecker, and the payload the page renders.
+        assert by_id["check_for_updates"]["cron"] == "15 4 * * *"
+        assert by_id["check_for_updates"]["next_run_at"] is not None
         assert by_id["scheduled_scan"]["cron"] is None  # no automatic scan by default
         # An upkeep job carries its built-in default and runs on it out of the box.
         assert by_id["refresh_ratings"]["default_cron"] == "30 3 * * *"

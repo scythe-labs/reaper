@@ -271,6 +271,49 @@ class TestReleaseChannel:
         assert len(httpx2_mock.calls) == 1
 
     @pytest.mark.usefixtures("_release_build")
+    async def test_refresh_asks_through_a_fresh_cache_and_status_still_holds_it(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The scheduled job and Run now take ``refresh``, which must ask even when the
+        cache is warm: a check somebody scheduled that answered out of a six-hour-old
+        cache would record "ran just now" over a stale answer (#464). The route's
+        ``status`` keeps the TTL, so a page load never turns into a fresh call, and the
+        answer ``refresh`` stores is what that page load then reads."""
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.8.1"}])
+        )
+        clock = [0.0]
+        checker = UpdateChecker(clock=lambda: clock[0])
+
+        await checker.status()
+        assert len(httpx2_mock.calls) == 1
+
+        # Well inside the six-hour hold, where `status` would serve the cache.
+        clock[0] = 60.0
+        await checker.refresh()
+        assert len(httpx2_mock.calls) == 2
+
+        # And the forced answer re-armed the hold rather than leaving it expired.
+        await checker.status()
+        assert len(httpx2_mock.calls) == 2
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_refresh_sends_nothing_while_the_check_is_off(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule 55: the off switch governs every path that runs the job, and the job's
+        path is this one. An off check that still asked from a timer would be the one
+        request an operator explicitly turned off, made on a schedule they never see."""
+        monkeypatch.setenv("REAPER_UPDATE_CHECK", "false")
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.9.1"}])
+        )
+        status = await UpdateChecker().refresh()
+        assert status.enabled is False
+        assert status.update_available is None
+        assert len(httpx2_mock.calls) == 0
+
+    @pytest.mark.usefixtures("_release_build")
     async def test_a_configured_repo_is_asked_and_a_malformed_one_is_not(
         self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
     ) -> None:
