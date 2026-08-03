@@ -392,7 +392,18 @@ class AuthGuard:
 
         Only the path, never the query string: an operator's own routes carry no
         credentials, but this is the one place a future one would leak (rule 13).
+
+        The Logs tab's own poll is not traced. It reads the same bounded ring this
+        writes to, on a 2s timer, so tracing it spends the operator's history on the
+        act of watching it: with Debug on and a reap running, the poll and the 1 Hz
+        status reads together turn the ring over in well under an hour, during exactly
+        the operation Debug was turned on for. The read alone is skipped. Changing the
+        level and downloading the log are operator actions and stay traced.
         """
+        if scope["method"] == "GET" and path == "/api/logs":
+            await self.app(scope, receive, send)
+            return
+
         started = time.monotonic()
         status = 0
 

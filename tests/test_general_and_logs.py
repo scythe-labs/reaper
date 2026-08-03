@@ -1145,6 +1145,49 @@ class TestTheLogRing:
         assert "[redacted]" in lines[0].text
 
 
+class TestTheRequestTraceSpendsNoHistoryOnItself:
+    """The Logs tab polls `/api/logs` every 2s while it is open.
+
+    That read goes into the same bounded ring it is reading, so tracing it spends the
+    operator's visible history on the act of watching it. Every other route stays traced,
+    including the two `/api/logs/*` operator actions, so the skip cannot widen by accident.
+    """
+
+    def test_reading_the_log_writes_no_line_into_it(self, client: TestClient) -> None:
+        try:
+            client.put("/api/logs/level", json={"level": "debug"})
+            before = logbuffer.RING.last_seq()
+
+            client.get("/api/logs")
+
+            traces = [
+                line
+                for line in logbuffer.RING.since(before, limit=logbuffer.RING_SIZE)
+                if "http.request" in line.text
+            ]
+            assert traces == []
+        finally:
+            client.put("/api/logs/level", json={"level": "INFO"})
+
+    def test_every_other_route_is_still_traced(self, client: TestClient) -> None:
+        """The skip is one path and one method, so a route that merely sorts nearby in the
+        tree keeps its trace. Driven per route rather than asserted as a flag over whatever
+        the walk collected (rule 145)."""
+        try:
+            client.put("/api/logs/level", json={"level": "debug"})
+            for path in ("/api/health", "/api/logs/download"):
+                before = logbuffer.RING.last_seq()
+                client.get(path)
+                traces = [
+                    line
+                    for line in logbuffer.RING.since(before, limit=logbuffer.RING_SIZE)
+                    if "http.request" in line.text and path in line.text
+                ]
+                assert traces, f"{path} must still be traced"
+        finally:
+            client.put("/api/logs/level", json={"level": "INFO"})
+
+
 class TestTheLogsRoutes:
     def test_reading_needs_a_session_and_pages_by_cursor(self, client: TestClient) -> None:
         assert _bare(client).get("/api/logs").status_code == 401
