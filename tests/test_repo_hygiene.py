@@ -707,11 +707,11 @@ def _selects_processes_by_pattern(line: str) -> bool:
 #: ``docker-entrypoint.sh``, ``scripts/dev-local.sh``, ``scripts/log-instructions-loaded.sh``,
 #: ``scripts/try-image.sh``.
 _EXPECTED_SHELL_SCRIPTS = 4
-#: The one in ``dev-local.sh``'s ``stop_all``. Pinned separately from the script count because
-#: the walk and the ban cover different populations (rule 147): a script that drops out of the
-#: walk is absent from both, so a single figure would agree with itself while disagreeing with
-#: the tree.
-_EXPECTED_PATTERN_KILLS = 1
+#: Both in ``dev-local.sh``'s ``stop_all``: the TERM sweep, and the KILL for a survivor of it.
+#: Pinned separately from the script count because the walk and the ban cover different
+#: populations (rule 147): a script that drops out of the walk is absent from both, so a single
+#: figure would agree with itself while disagreeing with the tree.
+_EXPECTED_PATTERN_KILLS = 2
 
 
 def test_a_dev_script_kills_only_its_own_ports() -> None:
