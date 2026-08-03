@@ -1258,6 +1258,13 @@ class ProtectionListOut(BaseModel):
     error: str | None
     """What the last failed check said, verbatim from the service that refused."""
 
+    list_id: int | None
+    """Which ``ListConfig`` this membership was synced for, so the screen can render one row
+    per definition and put Edit and Remove on it. Several rows share one id -- a tag list is
+    synced once per *arr instance -- and it is null for the keep tags, which are configured
+    on Policy, and for a row stored before the registry existed. Derived from the slug in
+    ``lists.list_id_of``, beside the spellings, never parsed in the browser (rule 63)."""
+
 
 class ListConfigIn(BaseModel):
     """A list the operator is adding or editing.
@@ -1282,3 +1289,55 @@ class ListConfigPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     config: dict[str, Any] | None = None
     enabled: bool | None = None
+
+
+class ListSyncIn(BaseModel):
+    """Which lists to check now. Both fields omitted means all of them.
+
+    They are alternatives, not a pair: ``list_id`` names one definition, ``keep_tags`` names
+    the policy's keep tags, which have no definition to be named by. Setting both narrows to
+    the keep tags, which is the conservative reading -- a narrowed pass retires nothing, so
+    the worst it can do is check less than was asked.
+    """
+
+    list_id: int | None = Field(default=None, ge=1)
+    keep_tags: bool = False
+
+
+class ListSyncOut(BaseModel):
+    """What one check-now pass did."""
+
+    checked: int
+    """Lists whose check landed. Stored rows, so one tag list across two *arr counts twice."""
+
+    failed: int
+    """Lists whose check failed. Each one's own error is on its row, which the screen
+    refetches; this is only what the button says when it settles."""
+
+    plex_error: str | None
+    """Set when Plex could not be reached, so its collections were not checked at all and no
+    row carries an error explaining why. Null when Plex answered or none is linked."""
+
+
+class ListConfigOut(BaseModel):
+    """A list definition: what the operator named it and where it points.
+
+    The DEFINITION, not the membership. ``ProtectionListOut`` above is the other half --
+    what that definition is currently protecting -- and the two are joined in the browser
+    on ``list_id`` rather than merged here: a definition exists from the moment it is
+    saved, and its membership does not exist until a sync has run.
+    """
+
+    id: int
+    name: str
+    """The operator's own words. Free text, so a surface rendering it wraps (rule 139)."""
+
+    source: Literal["arr_tag", "plex_collection", "curated"]
+    config: dict[str, Any]
+    """The source's own settings, shaped per source by ``list_config._clean_config``."""
+
+    enabled: bool
+    built_in: bool
+    """True for a list Reaper ships with. It can be switched off or pointed elsewhere,
+    never deleted: the default policy carries a keep rule naming it, and a rule naming a
+    list that is gone reads as a live protection covering nothing (rule 25)."""

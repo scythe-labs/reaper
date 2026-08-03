@@ -42,11 +42,11 @@ export const GATE_META: Record<string, GateMeta> = {
   },
   whitelisted: {
     label: "Spare titles you've tagged",
-    help: "A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scores. (A ‘Never Reap’ Plex collection is honored too.)",
+    help: "A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scores. Plex collections are set up on Settings → Lists.",
   },
   curated_list: {
     label: "Honor protected lists",
-    help: "Right now this is the IMDb Top 250. Anything on it is kept.",
+    help: "The IMDb Top 250, unless you renamed it on Settings → Lists. Anything on it is kept.",
   },
   data_horizon: {
     // Was "Don't judge what predates your history", promising an outcome this switch does

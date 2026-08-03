@@ -53,6 +53,7 @@ from reaper.services import (
     app_settings,
     history_sync,
     imdb_dataset,
+    list_config,
     lists,
     retention,
     scan_runner,
@@ -212,10 +213,32 @@ async def refresh_curated_lists(
     cache_engine: AsyncEngine,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> None:
-    """Refresh the curated protection lists that need no per-scan client (the Top 250)."""
+    """Refresh the curated protection lists that need no per-scan client (the Top 250).
+
+    Built from the registry, not from a bare ``ImdbTop250()``: a provider's slug carries the
+    id of the definition it was synced for, so constructing one without the definition would
+    write a SECOND row under a slug no definition owns -- which the next scan's retire sweep
+    would disable, every night, forever. Reading the registry also makes the Protecting switch
+    on the Lists screen mean the same thing here as it does in a scan (rule 72, rule 55).
+
+    ``session_factory`` is optional only because the last-run bookkeeping tolerates its
+    absence; with no way to read the definitions there is nothing to refresh.
+    """
+    if session_factory is None:
+        log.warning("scheduler.lists_refresh_skipped", reason="no session factory")
+        return
     try:
-        count = await lists.sync(cache_engine, lists.ImdbTop250(), mode=lists.ListMode.HARD)
-        log.info("scheduler.lists_refreshed", **{lists.ImdbTop250().slug: count})
+        async with session_factory() as session:
+            definitions = await list_config.definitions(session)
+        refreshed: dict[str, int] = {}
+        for definition in definitions:
+            if definition.source is not lists.ListSource.CURATED or not definition.enabled:
+                continue
+            provider = lists.ImdbTop250(list_id=definition.id, list_name=definition.name)
+            refreshed[provider.slug] = await lists.sync(
+                cache_engine, provider, mode=lists.ListMode.HARD
+            )
+        log.info("scheduler.lists_refreshed", **refreshed)
         await _record_run(
             session_factory, "refresh_curated_lists", ok=True, result="Lists refreshed"
         )

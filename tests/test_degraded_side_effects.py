@@ -82,7 +82,6 @@ class TestAPolicyReaperHadToRepairNeverRetiresAKeepList:
             tv_keep_tags=("keep",),
             tv_keep_match=match,
             keep_tags_trusted=trusted,
-            include_top_250=False,
         )
 
     async def test_the_saved_keep_list_survives_a_fallen_back_scan(

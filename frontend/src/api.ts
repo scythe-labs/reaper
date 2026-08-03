@@ -807,6 +807,61 @@ export interface ProtectionList {
   last_checked_at: string | null;
   /** What the last failed check said, from the service that refused. Null when none did. */
   error: string | null;
+  /** Which `ListConfig` this membership was synced for, so the panel can put Edit and Remove
+   *  on the row without working out from a slug which definition made it. Several rows share
+   *  one id (a tag list is synced once per *arr instance), and it is null for the keep tags,
+   *  which are configured on Policy and have no definition row. Derived on the server, beside
+   *  the slug spellings -- never parsed here (rule 63). */
+  list_id: number | null;
+}
+
+/** The settings one list source needs. A union in practice, kept as one optional-field shape
+ *  because that is what crosses the wire and what `list_config._clean_config` validates: it
+ *  reads only the keys its own source defines and refuses a shape that could never match.
+ *
+ *  A type alias rather than an interface, so it stays out of the wire-type mirror's walk --
+ *  the server side is a bare `dict[str, Any]` for the same reason the validation is per
+ *  source rather than per model. */
+export type ListConfigBody = {
+  /** `plex_collection`: which library to look in, and which collection inside it. */
+  library?: string;
+  collection?: string;
+  /** `arr_tag`: the tag spellings, and whether a title needs any of them or all of them. */
+  tags?: string[];
+  match?: "any" | "all";
+  /** `curated`: which shipped list this is. Not the operator's to retype. */
+  list?: string;
+};
+
+/** One list DEFINITION: what the operator named and where it points.
+ *
+ *  The other half of `ProtectionList`, which is what that definition is currently protecting.
+ *  They are two tables on purpose -- a definition lives in `reaper.db` and is not rebuildable
+ *  from anything, membership is a mirror of somebody else's data in the cache -- and they are
+ *  joined on `ProtectionList.list_id`. A definition exists from the moment it is saved; its
+ *  membership does not exist until a sync has run, so a new list has a row here and none there.
+ */
+export interface ListConfig {
+  id: number;
+  /** The operator's own words, so a surface rendering it wraps (rule 139). */
+  name: string;
+  source: "arr_tag" | "plex_collection" | "curated";
+  config: ListConfigBody;
+  enabled: boolean;
+  /** True for a list Reaper ships with. It can be switched off or pointed elsewhere, never
+   *  deleted: a keep rule in the default policy names it. */
+  built_in: boolean;
+}
+
+/** What one "Check now" did. Each failed list's own error is on its row, which the screen
+ *  refetches, so this is only what the button says when it settles. */
+export interface ListSyncResult {
+  /** Stored rows whose check landed. A tag list across two *arr counts twice. */
+  checked: number;
+  failed: number;
+  /** Set when Plex could not be reached at all, so no collection row carries an error
+   *  explaining why it was not checked. Null when Plex answered or none is linked. */
+  plex_error: string | null;
 }
 
 export interface PlexTrash {
@@ -1880,7 +1935,24 @@ export const api = {
     request<PersonDetail>(`/api/fairness/people/${encodeURIComponent(identity)}`),
   reapBreakdown: () => request<ReapBreakdown>("/api/reap/breakdown"),
   plexTrash: () => request<PlexTrash>("/api/reap/plex-trash"),
+  /** What each list is currently protecting. Membership, from the cache. */
   lists: () => request<ProtectionList[]>("/api/lists"),
+  /** What each list IS. Definitions, from `reaper.db`. Joined to the above on `list_id`. */
+  listConfigs: () => request<ListConfig[]>("/api/lists/configured"),
+  addList: (name: string, source: ListConfig["source"], config: ListConfigBody) =>
+    post<ListConfig>("/api/lists/configured", { name, source, config }),
+  /** An edit. Every field optional and omitted means "leave it", so switching a list off
+   *  sends `enabled` alone and cannot rewrite the body on the way past (rule 1). */
+  editList: (id: number, body: { name?: string; config?: ListConfigBody; enabled?: boolean }) =>
+    request<ListConfig>(`/api/lists/configured/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  removeList: (id: number) => del<void>(`/api/lists/configured/${id}`),
+  /** Check lists now: one definition, the policy's keep tags, or (with neither) all of them.
+   *  The same pass a scan runs. Slow by nature -- it reads every *arr and Plex once. */
+  syncLists: (target: { list_id?: number; keep_tags?: boolean } = {}) =>
+    post<ListSyncResult>("/api/lists/sync", target),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
   // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.

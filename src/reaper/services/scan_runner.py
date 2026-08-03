@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from reaper.aio import gather_reaped
@@ -49,6 +50,7 @@ from reaper.services import (
     history_sync,
     instances,
     leaving_soon,
+    list_config,
     profiles,
     requested_by,
 )
@@ -586,6 +588,9 @@ async def _run_scan_locked(
     scan_started = time.monotonic()
     history_ms = 0
     lists_ms = 0
+    #: Set when the list registry could not be read. Collected here rather than appended
+    #: inside the session block, so it joins `pre_scan_degradations` with the others below.
+    lists_degradation: str | None = None
 
     async with AsyncExitStack() as stack:
         # Sources are constructed INSIDE the stack scope, and build_sources enters each
@@ -606,6 +611,25 @@ async def _run_scan_locked(
             active_profile = await profiles.active_profile(policy_session)
             profile_settings = active_profile.settings
             allowed_sections, scope_degradation = await _allowed_sections(policy_session)
+            # The lists the operator defined on Settings -> Lists. Read here, with the policy,
+            # because both are settings the scan freezes at its start: a list added while a
+            # scan is running belongs to the next one, not to this half-gathered evidence.
+            #
+            # A read FAILURE is not "no lists configured" (rules 65/91). Every keep collection
+            # and every curated list comes from this table, so an empty answer would sync none
+            # of them and retire the lot -- withdrawing every one of those protections because
+            # a query failed. `None` says "unknown", which holds the registry half of the sync
+            # still and retires nothing, and the scan degrades so nothing can be deleted under
+            # protections it could not confirm.
+            list_definitions: list[list_config.ListDefinition] | None
+            try:
+                list_definitions = await list_config.definitions(policy_session)
+            except SQLAlchemyError as exc:
+                list_definitions = None
+                lists_degradation = (
+                    "Your protection lists could not be read, so Reaper cannot tell which "
+                    f"lists should be keeping titles safe: {exc}"
+                )
         movie_gates = build_gates(movie_policy)
         tv_gates = build_gates(tv_policy)
 
@@ -621,6 +645,12 @@ async def _run_scan_locked(
         # so it degrades (see _allowed_sections).
         if scope_degradation:
             pre_scan_degradations.append(scope_degradation)
+
+        # The list registry was unreadable, so none of the lists it defines were refreshed
+        # and none were retired. Whatever they were protecting is unconfirmed, which is the
+        # keep direction for the stored copies and an un-executable scan for this run.
+        if lists_degradation:
+            pre_scan_degradations.append(lists_degradation)
 
         # A stored policy that no longer validated was repaired to load it (profiles
         # .ActivePolicy.repaired). The rescale cannot move a score, so scanning on it is
@@ -726,6 +756,7 @@ async def _run_scan_locked(
         synced, requested, request_index = await gather_reaped(
             snapshot_service.sync_protection_lists(
                 cache_engine,
+                definitions=list_definitions,
                 radarrs=radarrs,
                 sonarrs=sonarrs,
                 movie_keep_tags=movie_policy.keep_tags,

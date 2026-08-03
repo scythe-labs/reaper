@@ -66,6 +66,7 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
+import { TagsEditor } from "./TagsEditor";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
 import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
@@ -75,89 +76,6 @@ import { SwitchConfirm } from "./SwitchConfirm";
 /** Re-exported from `format`, where it moved so `signalRamp` could read it without a cycle
  *  back through this module. Several sites import it from here. */
 export { humanDays };
-
-// ---------------------------------------------------------------------------
-// Keep-tags: a set of *arr tags that spare a title, with an ANY/ALL switch.
-// ---------------------------------------------------------------------------
-
-/** Removable chips plus a free-type box. Lives in its own card in "What's always kept". */
-function KeepTagsEditor({
-  tags,
-  match,
-  onTags,
-  onMatch,
-}: {
-  tags: string[];
-  match: "any" | "all";
-  onTags: (t: string[]) => void;
-  onMatch: (m: "any" | "all") => void;
-}) {
-  const [input, setInput] = useState("");
-  const add = () => {
-    const t = input.trim();
-    if (t && !tags.includes(t)) onTags([...tags, t]);
-    setInput("");
-  };
-  // Removing a chip destroys the button holding focus, so without this the operator lands on
-  // `<body>` and the next Tab restarts above the whole ~1,900-line policy form -- three times
-  // over for three tags (#173). Focus goes to the next chip's ✕, or to the add box once the
-  // last one is gone.
-  const addRef = useRef<HTMLInputElement>(null);
-  const chips = useRemovalFocus(addRef);
-  return (
-    <div className="keep-tags">
-      <div className="tag-chips" ref={chips.ref as RefObject<HTMLDivElement>}>
-        {tags.map((t, i) => (
-          <span key={t} className="tag-chip">
-            {t}
-            <button
-              {...REMOVES_ITS_ROW}
-              onClick={() => {
-                chips.removing(i);
-                onTags(tags.filter((x) => x !== t));
-              }}
-              aria-label={`Remove ${t}`}
-            >
-              ✕
-            </button>
-          </span>
-        ))}
-        <input
-          ref={addRef}
-          // A placeholder is a name of last resort, so this box was announcing itself as the
-          // example text inside it and lost even that the moment anything was typed. Same
-          // defect #136 fixed on the Plex panel's address pair.
-          aria-label="Add a keep tag"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === ",") {
-              e.preventDefault();
-              add();
-            }
-          }}
-          onBlur={add}
-          placeholder="add a tag…"
-        />
-      </div>
-      {tags.length >= 1 && (
-        <div className="tag-match">
-          <span className="muted">Keep a title with</span>
-          <Segmented
-            value={match}
-            onChange={onMatch}
-            label="How many of these tags a title needs"
-            options={[
-              ["any", "any of these tags"],
-              ["all", "all of these tags"],
-            ]}
-          />
-        </div>
-      )}
-      {tags.length === 0 && <p className="help">No tags: this protection keeps nothing.</p>}
-    </div>
-  );
-}
 
 /** The DOM id of the `i`th warning rendered at one anchor. Both ends of the association are
  *  named by this one function, so the control's `aria-describedby` and the notice's `id` cannot
@@ -2070,12 +1988,12 @@ export function PolicyEditor({
                 <span className="rule-name">Spare titles you've tagged</span>
               </label>
               <p className="help rule-help">
-                A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scored. A
-                ‘Never Reap’ Plex collection is honored too.
+                A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scored.
+                Plex collections are set up on Settings → Lists.
               </p>
               {whitelist.enabled && (
                 <>
-                  <KeepTagsEditor
+                  <TagsEditor
                     tags={draft.keep_tags}
                     match={draft.keep_tags_match}
                     onTags={(keep_tags) => update({ keep_tags })}

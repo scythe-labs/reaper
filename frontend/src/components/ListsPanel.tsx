@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Settings -> Lists. Whether each protection list is still protecting anything (#475).
+// Settings -> Lists. Every protection list, whether each is still protecting anything, and
+// the controls to add, edit and remove them (#475).
 //
-// Read-only, and deliberately so for now: a list is still configured where it always was --
-// keep tags on Policy, the IMDb Top 250 by shipping with Reaper -- and this screen is the one
-// place they can all be seen at once. That is the half that was missing. Every column here was
-// written on every sync since lists shipped and reached the operator through nothing but a
-// degraded-scan notice, which fires late and names a slug rather than a cause.
+// **Settings owns what a list IS and where it comes from; Policy owns what it does.** Nothing
+// is configured in two places. The one exception is the keep tags, which stay on Policy with
+// the same switch and boxes they always had -- they are a rule about tags rather than a list
+// somebody named, and moving them would have been a second migration for no gain. They still
+// appear here, as one row, because this screen's job is to show every protection at once.
 //
-// **One row per protection, never one per stored list.** Reaper stores a keep-tag list per *arr
-// instance per match mode, so two Radarrs and two Sonarrs are four rows for the single thing the
-// operator did: tag some titles `reaper-keep`. Every instance added multiplies that, and a page
-// that grows with the server count stops being readable exactly on the installs with the most to
-// lose. So the *arr lists collapse into one row that carries the whole family's worst state and
-// names only the servers that need attention. `source` comes from the server for this; the slug
-// spellings live beside the retire sweep and are not re-derived here.
+// **One row per protection, never one per stored list.** Reaper stores a keep-tag list per
+// *arr instance, so two Radarrs and two Sonarrs are four stored rows for the single thing the
+// operator did. They collapse into one row carrying the family's worst state, which names only
+// the servers that need attention. The join is `ProtectionList.list_id`, derived on the server
+// beside the slug spellings; this component never parses a slug (rule 63).
 //
 // The verdict is the server's (`lists.ListHealth`), not this component's. Two surfaces deciding
 // for themselves what `last_error` plus `last_synced_at` means is how the screen and the scan
@@ -25,9 +24,12 @@
 // answer the same question -- is this thing working, and when did it last run -- so a reader
 // moving between them should not have to learn two layouts (rule 18).
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
-import { api, type ProtectionList } from "../api";
+import { api, type ListConfig, type ProtectionList } from "../api";
+import { ListModal } from "./ListModal";
+import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
 
 /** How long ago, in the app's usual plain phrasing. Null stamps are handled by the caller,
@@ -113,40 +115,14 @@ function describe(
   }
 }
 
-/** One rendered row: the Jobs tab's shape, with the state chip where a job's buttons sit. */
-function ListRow({
-  title,
-  detail,
-  label,
-  tone,
-  meta,
-  error,
-}: {
-  title: string;
-  detail: string;
-  label: string;
-  tone: Tone;
-  meta: string | null;
-  error?: string | null;
-}) {
-  return (
-    <div className="jobrow">
-      <div className="jobrow-main">
-        {/* The name arrives from Plex or an *arr, so it wraps rather than running through the
-            box holding it (rule 139). */}
-        <div className="jobrow-title list-name">{title}</div>
-        <div className="jobrow-desc">{detail}</div>
-        {meta !== null && <div className="jobrow-sched">{meta}</div>}
-        {/* The service's own words, which name the thing to go and fix: a library not called
-            what Reaper asked for, a tag that was renamed. Also from outside the app. */}
-        {error != null && <div className="jobrow-desc list-error">{error}</div>}
-      </div>
-      <div className="jobrow-actions">
-        <span className={`list-state list-state-${tone}`}>{label}</span>
-      </div>
-    </div>
-  );
-}
+/** A list that is switched off. Its own state, because none of the four above fit: the stored
+ *  membership may be perfectly healthy and it is still protecting nothing, and saying "Working"
+ *  about a list the operator switched off is the reassuring direction this must not fail in. */
+const OFF = {
+  label: "Off",
+  tone: "idle" as Tone,
+  detail: "Switched off, so nothing on this list is protected. Edit it to switch it back on.",
+};
 
 /** "Radarr (4k) tag: reaper-keep" -> "Radarr (4k)". The server it belongs to is the useful
  *  half when a collapsed family has to name which member needs attention; the tag names are
@@ -157,8 +133,205 @@ function serverOf(name: string): string {
   return cut === -1 ? name : name.slice(0, cut);
 }
 
+/** One rendered row: the Jobs tab's shape, with the state chip on the title line and real
+ *  actions where a job's buttons sit. */
+function ListRow({
+  title,
+  detail,
+  label,
+  tone,
+  meta,
+  error,
+  checking,
+  onCheck,
+  onEdit,
+  onRemove,
+  checkError,
+}: {
+  title: string;
+  detail: string;
+  label: string;
+  tone: Tone;
+  meta: string | null;
+  error?: string | null;
+  checking: boolean;
+  onCheck: () => void;
+  /** Absent for the keep-tag row, which is configured on Policy and has no definition here. */
+  onEdit?: (() => void) | undefined;
+  /** Absent for the keep tags and for a list Reaper ships with. */
+  onRemove?: (() => void) | undefined;
+  /** Why the last check pressed on THIS row failed. Rendered here rather than in a page-level
+   *  slot, because it is about this list and the button that retries it is on this row
+   *  (rule 42). */
+  checkError?: string | null | undefined;
+}) {
+  return (
+    <div className="jobrow">
+      <div className="jobrow-main">
+        {/* The name arrives from Plex or an *arr, or from the operator's own keyboard, so it
+            wraps rather than running through the box holding it (rule 139). */}
+        <div className="list-head">
+          <span className="jobrow-title list-name">{title}</span>
+          <span className={`list-state list-state-${tone}`}>{label}</span>
+        </div>
+        <div className="jobrow-desc">{detail}</div>
+        {meta !== null && <div className="jobrow-sched">{meta}</div>}
+        {/* The service's own words, which name the thing to go and fix: a library not called
+            what Reaper asked for, a tag that was renamed. Also from outside the app. */}
+        {error != null && <div className="jobrow-desc list-error">{error}</div>}
+        {checkError != null && (
+          <Notice tone="error" inline>
+            The check didn't run: {checkError}
+          </Notice>
+        )}
+      </div>
+      <div className="jobrow-actions">
+        <span className="slot-edit">
+          {onEdit && (
+            <button className="ghost" aria-label={`Edit ${title}`} onClick={onEdit}>
+              Edit
+            </button>
+          )}
+        </span>
+        <span className="slot-act">
+          <button
+            className="primary"
+            // The state is in the accessible name and the visible words lead, so voice
+            // control still reaches the button while it is working (the shape JobRow uses).
+            aria-label={checking ? `Checking…, ${title}` : `Check now, ${title}`}
+            onClick={onCheck}
+            disabled={checking}
+          >
+            {checking ? "Checking…" : "Check now"}
+          </button>
+        </span>
+        <span className="slot-del">
+          {onRemove && (
+            <button className="ghost danger" aria-label={`Remove ${title}`} onClick={onRemove}>
+              Remove
+            </button>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Confirming a removal. A list is a protection, so taking one away says what stops being
+ *  protected, in the same words the modal that made it used. `ModalShell` rather than a
+ *  native `confirm()`, which rule 18 bans and which no screen reader announces as a dialog. */
+function RemoveConfirm({ list, onClose }: { list: ListConfig; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const remove = useMutation({
+    mutationFn: () => api.removeList(list.id),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["lists-configured"] }),
+        queryClient.invalidateQueries({ queryKey: ["lists"] }),
+      ]);
+      onClose();
+    },
+  });
+  return (
+    <ModalShell title={`Remove ${list.name}?`} onClose={onClose} canClose={!remove.isPending}>
+      <div className="service-form">
+        <p>
+          Anything this list was keeping can be deleted by the next scan. Reaper does not delete the
+          collection or the tags themselves, only its own record of them.
+        </p>
+        {remove.error && (
+          <Notice tone="error">The list wasn't removed: {remove.error.message}</Notice>
+        )}
+        <div className="add-actions">
+          <span className="flex-spacer" />
+          <button type="button" className="ghost" onClick={onClose} disabled={remove.isPending}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary danger"
+            onClick={() => remove.mutate()}
+            disabled={remove.isPending}
+          >
+            {remove.isPending ? "Removing…" : "Remove list"}
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+/** Which row a check is running for. `"all"` is the footer's button; a number is one
+ *  definition; `"keep-tags"` is the policy's tags, which have no definition to be named by. */
+type CheckTarget = number | "keep-tags" | "all";
+
 export function ListsPanel() {
-  const lists = useQuery({ queryKey: ["lists"], queryFn: api.lists });
+  const queryClient = useQueryClient();
+  const health = useQuery({ queryKey: ["lists"], queryFn: api.lists });
+  const definitions = useQuery({ queryKey: ["lists-configured"], queryFn: api.listConfigs });
+
+  // `null` is closed, `{ list: null }` is Add, `{ list }` is Edit. One piece of state rather
+  // than an open flag beside a subject, so the two cannot disagree about what is on screen.
+  const [modal, setModal] = useState<{ list: ListConfig | null } | null>(null);
+  const [removing, setRemoving] = useState<ListConfig | null>(null);
+
+  const check = useMutation({
+    mutationFn: (target: CheckTarget) =>
+      api.syncLists(
+        target === "all" ? {} : target === "keep-tags" ? { keep_tags: true } : { list_id: target },
+      ),
+    // Rule 85: the row's chip is the result, and it is only true once the refetch has landed.
+    // Awaiting the invalidation inside the mutation keeps `isPending` true until then, so the
+    // button says "Checking…" for exactly as long as the answer on screen is the old one.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["lists"] }),
+  });
+  const running = check.isPending ? check.variables : null;
+  const failedTarget = check.isError ? check.variables : null;
+
+  // Both reads, explicitly (rules 17/36). This panel's contract is "always visible", so a
+  // failure renders a fallback saying what is unknown rather than an empty screen implying
+  // there is nothing to protect.
+  if (health.isPending || definitions.isPending) {
+    return (
+      <div className="panel">
+        <h2>Lists</h2>
+        <p className="muted">Loading your lists…</p>
+      </div>
+    );
+  }
+  if (health.isError || definitions.isError) {
+    return (
+      <div className="panel">
+        <h2>Lists</h2>
+        {/* An alert, not `standing`: these are fetched when the tab is opened rather than
+            polled, so it mounts once with something the operator has not been told yet. */}
+        <Notice tone="error">
+          Couldn't load your lists, so there is no way to tell here whether they are working.{" "}
+          <button
+            className="ghost sm"
+            onClick={() => {
+              void health.refetch();
+              void definitions.refetch();
+            }}
+          >
+            Try again
+          </button>
+        </Notice>
+      </div>
+    );
+  }
+
+  const rows = health.data;
+  /** Every health row synced for one definition. Several for a tag list: one per *arr. */
+  const forList = (id: number) => rows.filter((r) => r.list_id === id);
+
+  // The keep tags, and anything stored before a definition existed to own it. Both are rows
+  // with no `list_id`: the keep tags because they are configured on Policy, the second because
+  // an upgrade re-homes a list under a new slug on its first successful check. The second kind
+  // is still protecting until that happens, so it is rendered rather than hidden -- a row that
+  // holds titles and is invisible here is the failure this screen exists to fix.
+  const keepTagRows = rows.filter((r) => r.list_id === null && r.source === "arr_tag");
+  const orphans = rows.filter((r) => r.list_id === null && r.source !== "arr_tag");
 
   return (
     <div className="panel">
@@ -169,74 +342,142 @@ export function ListsPanel() {
         anything.
       </p>
 
-      {lists.isPending ? (
-        <p className="muted">Loading your lists…</p>
-      ) : lists.isError ? (
-        // An alert, not `standing`: this query is fetched when the tab is opened rather than
-        // polled, so it mounts once with something the operator has not been told yet.
-        <Notice tone="error">
-          Couldn't load your lists, so there is no way to tell here whether they are working.{" "}
-          <button className="ghost sm" onClick={() => void lists.refetch()}>
-            Try again
-          </button>
-        </Notice>
-      ) : lists.data.length === 0 ? (
-        <p className="muted">
-          No lists yet. Reaper builds them on the first scan, from the tags you set on Policy and
-          the lists it ships with.
-        </p>
-      ) : (
-        <div className="set-rows">
-          {(() => {
-            const tags = lists.data.filter((l) => l.source === "arr_tag");
-            const rest = lists.data.filter((l) => l.source !== "arr_tag");
-            const rows = rest.map((l) => {
-              const d = describe(l.state, l.item_count);
-              return (
-                <ListRow
-                  key={l.slug}
-                  title={l.name}
-                  detail={d.detail}
-                  label={d.label}
-                  tone={d.tone}
-                  meta={l.last_checked_at && `Last checked ${ago(l.last_checked_at)}.`}
-                  error={l.error}
-                />
-              );
-            });
+      <div className="set-rows">
+        {definitions.data.map((definition) => {
+          const mine = forList(definition.id);
+          const state = worst(mine);
+          const items = mine.reduce((n, r) => n + r.item_count, 0);
+          // Only the members in the worst state are named, and only when something is wrong.
+          // Listing all of them would put a tag list back at one line per server, which is
+          // the thing being fixed.
+          const wanted = mine.filter((r) => r.state === state).map((r) => serverOf(r.name));
+          const shown = !definition.enabled
+            ? OFF
+            : mine.length === 0
+              ? describe("never_checked", 0)
+              : describe(state, items, state === "working" ? undefined : wanted);
+          const checked = mine
+            .map((r) => r.last_checked_at)
+            .filter((v): v is string => v !== null)
+            .sort();
+          const errors = [...new Set(mine.map((r) => r.error).filter(Boolean))];
+          const across =
+            definition.source === "arr_tag" && mine.length > 1
+              ? `Across ${mine.length} servers. `
+              : "";
+          return (
+            <ListRow
+              key={definition.id}
+              title={definition.name}
+              detail={shown.detail}
+              label={shown.label}
+              tone={shown.tone}
+              meta={
+                (checked.length ? `Last checked ${ago(checked[0]!)}. ` : "") +
+                across +
+                sourceHint(definition)
+              }
+              error={definition.enabled && errors.length ? errors.join(" ") : null}
+              checking={running === definition.id}
+              onCheck={() => check.mutate(definition.id)}
+              onEdit={() => setModal({ list: definition })}
+              // A list Reaper ships with is never removable: a keep rule in the default
+              // policy names it, and a rule naming a list that is gone reads as a live
+              // protection covering nothing (rule 25). Switching it off is always available.
+              onRemove={definition.built_in ? undefined : () => setRemoving(definition)}
+              checkError={failedTarget === definition.id ? (check.error?.message ?? null) : null}
+            />
+          );
+        })}
 
-            if (tags.length > 0) {
-              const state = worst(tags);
-              // Only the members in the worst state are named. Listing all of them would put
-              // the row back at one line per server, which is the thing being fixed.
-              const wanted = tags.filter((t) => t.state === state).map((t) => serverOf(t.name));
-              const items = tags.reduce((n, t) => n + t.item_count, 0);
-              const d = describe(state, items, state === "working" ? undefined : wanted);
-              const checked = tags
-                .map((t) => t.last_checked_at)
-                .filter((v): v is string => v !== null)
-                .sort();
-              const errors = [...new Set(tags.map((t) => t.error).filter(Boolean))];
-              rows.push(
-                <ListRow
-                  key="arr-tags"
-                  title="Titles you've tagged"
-                  detail={d.detail}
-                  label={d.label}
-                  tone={d.tone}
-                  meta={
-                    (checked.length ? `Last checked ${ago(checked[0]!)}. ` : "") +
-                    `Across ${tags.length} ${tags.length === 1 ? "server" : "servers"}. ` +
-                    "Set the tags on Policy."
-                  }
-                  error={errors.length ? errors.join(" ") : null}
-                />,
-              );
-            }
-            return rows;
+        {keepTagRows.length > 0 &&
+          (() => {
+            const state = worst(keepTagRows);
+            const items = keepTagRows.reduce((n, r) => n + r.item_count, 0);
+            const wanted = keepTagRows
+              .filter((r) => r.state === state)
+              .map((r) => serverOf(r.name));
+            const shown = describe(state, items, state === "working" ? undefined : wanted);
+            const checked = keepTagRows
+              .map((r) => r.last_checked_at)
+              .filter((v): v is string => v !== null)
+              .sort();
+            const errors = [...new Set(keepTagRows.map((r) => r.error).filter(Boolean))];
+            return (
+              <ListRow
+                key="arr-tags"
+                title="Titles you've tagged"
+                detail={shown.detail}
+                label={shown.label}
+                tone={shown.tone}
+                meta={
+                  (checked.length ? `Last checked ${ago(checked[0]!)}. ` : "") +
+                  `Across ${keepTagRows.length} ` +
+                  `${keepTagRows.length === 1 ? "server" : "servers"}. ` +
+                  "Set the tags on Policy."
+                }
+                error={errors.length ? errors.join(" ") : null}
+                checking={running === "keep-tags"}
+                onCheck={() => check.mutate("keep-tags")}
+                checkError={failedTarget === "keep-tags" ? (check.error?.message ?? null) : null}
+              />
+            );
           })()}
-        </div>
-      )}
+
+        {orphans.map((row) => {
+          const shown = describe(row.state, row.item_count);
+          return (
+            <ListRow
+              key={row.slug}
+              title={row.name}
+              detail={shown.detail}
+              label={shown.label}
+              tone={shown.tone}
+              meta={
+                (row.last_checked_at ? `Last checked ${ago(row.last_checked_at)}. ` : "") +
+                "Set up before this screen existed. Your next check moves it onto a list you " +
+                "can edit."
+              }
+              error={row.error}
+              checking={running === "all"}
+              onCheck={() => check.mutate("all")}
+              checkError={failedTarget === "all" ? (check.error?.message ?? null) : null}
+            />
+          );
+        })}
+      </div>
+
+      {check.data?.plex_error && <Notice tone="warn">{check.data.plex_error}</Notice>}
+
+      <div className="list-foot">
+        <button className="ghost" onClick={() => check.mutate("all")} disabled={check.isPending}>
+          {running === "all" ? "Checking…" : "Check all now"}
+        </button>
+        <span className="flex-spacer" />
+        <button className="primary" onClick={() => setModal({ list: null })}>
+          Add a list
+        </button>
+      </div>
+
+      {modal && <ListModal editing={modal.list} onClose={() => setModal(null)} />}
+      {removing && <RemoveConfirm list={removing} onClose={() => setRemoving(null)} />}
     </div>
   );
+}
+
+/** Where a row's list comes from, in one clause, so a reader can tell two lists apart when
+ *  their names do not. The operator named the list; this says what they pointed it at. */
+function sourceHint(definition: ListConfig): string {
+  if (definition.source === "plex_collection") {
+    const { library, collection } = definition.config;
+    return library && collection
+      ? `The "${collection}" collection in ${library}.`
+      : "A Plex collection.";
+  }
+  if (definition.source === "arr_tag") {
+    const tags = definition.config.tags ?? [];
+    const joiner = definition.config.match === "all" ? " and " : " or ";
+    return tags.length ? `Tagged ${tags.join(joiner)} in Sonarr or Radarr.` : "An *arr tag.";
+  }
+  return "Ships with Reaper, and keeps itself up to date.";
 }

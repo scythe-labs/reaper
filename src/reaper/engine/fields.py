@@ -412,7 +412,11 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="on_curated_list",
         label="On a protected list",
-        help_text="Right now the only list Reaper syncs is the IMDb Top 250.",
+        # Only the CURATED lists reach this field: ``snapshot`` splits memberships by kind and
+        # feeds the non-whitelist ones to ``in_curated_list``, so a Plex collection or a tag
+        # list the operator defined is NOT matched here. Naming Settings -> Lists is still
+        # right, because that is where the shipped list's name is now set.
+        help_text="Matches a list Reaper ships with, by the name it has on Settings → Lists.",
         type=FieldType.TEXT,
         lanes=(Lane.PROTECT,),
         ops=TEXT_OPS,

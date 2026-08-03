@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import structlog
 from sqlalchemy import select
@@ -37,6 +38,67 @@ log = structlog.get_logger(__name__)
 
 class ListConfigError(ValueError):
     """A refusal the operator should read, in their words. The API maps it to a 4xx."""
+
+
+@dataclass(frozen=True, slots=True)
+class ListDefinition:
+    """One definition, decoded, for the code that builds providers from it.
+
+    A plain value rather than the ORM row, because the sync runs against ``cache.db`` and has
+    no session on the settings database. Passing the row itself would either hold that session
+    open across every network read the sync makes, or hand the sync a detached instance whose
+    attribute access raises.
+    """
+
+    id: int
+    name: str
+    source: ListSource
+    config: dict[str, Any]
+    enabled: bool
+
+    @property
+    def tags(self) -> tuple[str, ...]:
+        """The *arr tag spellings, for an ``ARR_TAG`` definition. Empty for any other source."""
+        raw = self.config.get("tags")
+        return tuple(str(t) for t in raw) if isinstance(raw, list) else ()
+
+    @property
+    def match(self) -> Literal["any", "all"]:
+        """Whether a title needs all the tags or any of them. Anything unrecognized reads as
+        ANY, matching ``_clean_config``: the two spellings of this default must agree, and ANY
+        is the wider list, which is the keep direction."""
+        return "all" if self.config.get("match") == "all" else "any"
+
+
+async def definitions(session: AsyncSession) -> list[ListDefinition]:
+    """Every definition, decoded, shipped ones included.
+
+    Disabled rows are returned too, and deliberately: the sync builds providers only from the
+    enabled ones, and the retire sweep then disables every stored list this configuration no
+    longer produces. A disabled definition that were simply omitted here would be
+    indistinguishable from one that never existed -- and its stored membership would go on
+    protecting, so the switch on the settings screen would be a switch that does nothing.
+    """
+    out: list[ListDefinition] = []
+    for row in await all_lists(session):
+        try:
+            body = json.loads(row.config_json or "{}")
+        except ValueError:
+            # Unreadable is not empty. A body that will not parse cannot say which library or
+            # which tags, so no provider is built and the stored membership is left alone
+            # rather than replaced by a sync of a guessed configuration (rule 93).
+            log.warning("list_config.unreadable", list_id=row.id)
+            continue
+        out.append(
+            ListDefinition(
+                id=row.id,
+                name=row.name,
+                source=ListSource(row.source),
+                config=body if isinstance(body, dict) else {},
+                enabled=row.enabled,
+            )
+        )
+    return out
 
 
 #: What Reaper ships with, created once on the first read so the screen is never empty on a

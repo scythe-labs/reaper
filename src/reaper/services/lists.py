@@ -198,9 +198,19 @@ class ImdbTop250:
     something this source does not know.
     """
 
-    slug: str = "imdb-top-250"
-    display_name: str = "IMDb Top 250"
     url: str = IMDB_TOP_250_URL
+    #: The definition this was synced for. ``None`` only in a test or a one-off refresh that
+    #: has no registry to read; production always builds it from the shipped definition row.
+    list_id: int | None = None
+    list_name: str | None = None
+
+    @property
+    def slug(self) -> str:
+        return f"{CURATED_PREFIX}{list_suffix(self.list_id)}"
+
+    @property
+    def display_name(self) -> str:
+        return self.list_name or "IMDb Top 250"
 
     async def fetch(self) -> list[ListItem]:
         # Through clients/ like every other fetch (rule 33): the shared retry, timeout,
@@ -278,16 +288,29 @@ class ArrTagRule:
     match: Literal["any", "all"] = "any"
     instance_id: int | None = None
     instance_name: str | None = None
+    #: The definition this was built from, when the operator defined it on Settings -> Lists.
+    #: ``None`` for the policy's keep tags, which keeps their slug spelled as it always was.
+    list_id: int | None = None
+    #: What the operator called it. ``None`` falls back to describing the rule, which is what
+    #: the keep tags -- having no definition to be named by -- always do.
+    list_name: str | None = None
 
     @property
     def slug(self) -> str:
         instance = f"-{self.instance_id}" if self.instance_id is not None else ""
-        return f"{self.client.service}{instance}-keeptags-{self.match}"
+        return (
+            f"{self.client.service}{instance}{KEEP_TAG_INFIX}{self.match}"
+            f"{list_suffix(self.list_id)}"
+        )
 
     @property
     def display_name(self) -> str:
         joiner = " or " if self.match == "any" else " and "
         where = f" ({self.instance_name})" if self.instance_name else ""
+        if self.list_name:
+            # The operator's own name leads, with the server after it: several of these rows
+            # are one list to them (one per *arr instance), and the name is what says so.
+            return f"{self.list_name}{where}"
         return f"{self.client.service.title()}{where} tag: {joiner.join(self.tags)}"
 
     async def fetch(self) -> list[ListItem]:
@@ -407,13 +430,22 @@ class PlexCollection:
     server: object  # plexapi.server.PlexServer, kept loose to avoid a hard import here
     section_name: str
     collection_name: str = "Never Reap"
+    #: The definition this was built from. Two collections of the same name in two libraries
+    #: are two lists, and without the id in the slug each sync would atomically replace the
+    #: other's membership -- the failure ``ArrTagRule`` documents for two same-service *arr
+    #: instances, reached by a different route.
+    list_id: int | None = None
+    list_name: str | None = None
 
     @property
     def slug(self) -> str:
-        return f"plex-collection-{self.collection_name.lower().replace(' ', '-')}"
+        readable = self.collection_name.lower().replace(" ", "-")
+        return f"{PLEX_COLLECTION_PREFIX}{readable}{list_suffix(self.list_id)}"
 
     @property
     def display_name(self) -> str:
+        if self.list_name:
+            return self.list_name
         return f'Plex collection: "{self.collection_name}"'
 
     async def fetch(self) -> list[ListItem]:
@@ -883,19 +915,52 @@ async def sync(
     return len(rows)
 
 
-#: The infix and prefix the two families above are matched on, as the SQL patterns' one
-#: source. The patterns are built from these rather than the other way round, so a family
-#: that is respelled moves the retire sweep and every reader of it together (rule 144).
+#: The infix and prefix the families below are matched on, as the SQL patterns' one source.
+#: The patterns are built from these rather than the other way round, so a family that is
+#: respelled moves the retire sweep and every reader of it together (rule 144).
 KEEP_TAG_INFIX = "-keeptags-"
 PLEX_COLLECTION_PREFIX = "plex-collection-"
+CURATED_PREFIX = "imdb-top-250"
 
-#: The two slug families Reaper *derives* from configuration rather than being told, and so
-#: is responsible for retiring. Both change spelling when the configuration behind them
-#: changes -- ``ArrTagRule.slug`` carries the any/all match and the instance id,
-#: ``PlexCollection.slug`` carries the collection name -- so the old row would otherwise sit
-#: there enabled, still protecting from a rule the operator has already replaced.
+#: The three slug families Reaper *derives* from configuration rather than being told, and so
+#: is responsible for retiring. Each changes spelling when the configuration behind it changes
+#: -- ``ArrTagRule.slug`` carries the any/all match and the instance id, ``PlexCollection.slug``
+#: carries the collection name, and every list the operator defined carries its definition's id
+#: (see :func:`list_suffix`) -- so the old row would otherwise sit there enabled, still
+#: protecting from a definition the operator has already replaced or switched off.
 KEEP_TAG_SLUGS = f"%{KEEP_TAG_INFIX}%"
 PLEX_COLLECTION_SLUGS = f"{PLEX_COLLECTION_PREFIX}%"
+CURATED_SLUGS = f"{CURATED_PREFIX}%"
+
+#: How a slug says which definition it was synced for. Appended, so the readable part of a
+#: slug stays at the front and the existing family patterns above go on matching unchanged.
+_LIST_SUFFIX = "-list"
+
+
+def list_suffix(list_id: int | None) -> str:
+    """The ``-list<id>`` tail every list the operator DEFINED carries.
+
+    The definition's id, not its name: the name is the operator's to change, and a slug that
+    moved when they renamed a list would write a second row and leave the first one enabled
+    and still protecting (the failure :func:`retire_absent` exists to prevent).
+
+    Empty for the keep tags, which are configured on Policy and have no definition row. That
+    is what keeps their stored slugs spelled exactly as they were before the registry existed,
+    so an upgrade does not orphan the membership protecting an operator's tagged titles.
+    """
+    return f"{_LIST_SUFFIX}{list_id}" if list_id is not None else ""
+
+
+def list_id_of(slug: str) -> int | None:
+    """Which definition a stored slug was synced for, or ``None`` for the keep tags.
+
+    The inverse of :func:`list_suffix`, and the join the Lists screen renders one row per
+    definition from. It lives here, beside the spellings, because a surface that parsed a slug
+    for itself would be a second copy of this to keep in step (:class:`ListSource` says the
+    same about grouping).
+    """
+    head, sep, tail = slug.rpartition(_LIST_SUFFIX)
+    return int(tail) if sep and head and tail.isdigit() else None
 
 
 class ListSource(enum.StrEnum):
@@ -1181,6 +1246,16 @@ class ConfiguredList:
         if self.slug.startswith(PLEX_COLLECTION_PREFIX):
             return ListSource.PLEX_COLLECTION
         return ListSource.CURATED
+
+    @property
+    def list_id(self) -> int | None:
+        """Which definition this membership was synced for. See :func:`list_id_of`.
+
+        ``None`` for the keep tags, whose definition is the policy rather than a row on
+        Settings -> Lists -- and for a row stored before the registry existed, which is
+        retired the moment the definition that replaced it syncs.
+        """
+        return list_id_of(self.slug)
 
     @property
     def last_success(self) -> datetime | None:

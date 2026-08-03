@@ -22,13 +22,25 @@ rule from ANY to ALL and back leaves both spellings behind.
 from __future__ import annotations
 
 import json
+from contextlib import AsyncExitStack
 
 from fastapi import APIRouter, HTTPException, Request
 
 from reaper.api import tags as api_tags
-from reaper.api.schemas import ListConfigIn, ListConfigPatch, ProtectionListOut
+from reaper.api.schemas import (
+    ListConfigIn,
+    ListConfigOut,
+    ListConfigPatch,
+    ListSyncIn,
+    ListSyncOut,
+    ProtectionListOut,
+)
+from reaper.clients.plex import PlexError
 from reaper.clock import utcnow
-from reaper.services import list_config, lists
+from reaper.config import Settings
+from reaper.crypto import SecretBox
+from reaper.db.models import ListConfig
+from reaper.services import list_config, lists, profiles, scan_runner, snapshot
 from reaper.services.snapshot import WHITELIST_STALE_AFTER
 
 router = APIRouter(prefix="/api", tags=[api_tags.LISTS])
@@ -46,6 +58,7 @@ async def get_lists(request: Request) -> list[ProtectionListOut]:
             item_count=row.item_count,
             last_checked_at=row.last_success,
             error=row.last_error,
+            list_id=row.list_id,
         )
         for row in await lists.configured(request.app.state.cache_engine)
         if row.enabled
@@ -58,32 +71,45 @@ def _refused(exc: list_config.ListConfigError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
+def _out(row: ListConfig) -> ListConfigOut:
+    """One stored definition, on the wire. A stored body that will not parse reads as an
+    empty one rather than raising a row off the screen (rule 96): the operator can see the
+    list, and Edit rewrites the body through ``_clean_config``, which is the way out."""
+    try:
+        config = json.loads(row.config_json or "{}")
+    except ValueError:
+        config = {}
+    return ListConfigOut(
+        id=row.id,
+        name=row.name,
+        source=row.source,
+        config=config if isinstance(config, dict) else {},
+        enabled=row.enabled,
+        built_in=row.built_in,
+    )
+
+
 @router.get("/lists/configured")
-async def get_configured(request: Request) -> list[dict[str, object]]:
+async def get_configured(request: Request) -> list[ListConfigOut]:
     """The list DEFINITIONS: what the operator named and where each one points.
 
     Separate from ``GET /lists``, which reports what each is currently protecting. One is
     configuration in ``reaper.db`` and the other is membership in the cache, and collapsing
     them would tie a screen that must render before the first sync to a table that does not
-    exist until one has run.
+    exist until one has run. The browser joins them on ``ProtectionListOut.list_id``.
     """
     async with request.app.state.session_factory() as session:
-        rows = await list_config.all_lists(session)
-        return [
-            {
-                "id": row.id,
-                "name": row.name,
-                "source": row.source,
-                "config": json.loads(row.config_json or "{}"),
-                "enabled": row.enabled,
-                "built_in": row.built_in,
-            }
-            for row in rows
-        ]
+        return [_out(row) for row in await list_config.all_lists(session)]
 
 
 @router.post("/lists/configured", status_code=201)
-async def add_list(request: Request, body: ListConfigIn) -> dict[str, object]:
+async def add_list(request: Request, body: ListConfigIn) -> ListConfigOut:
+    """Add a list. Answers with the whole stored row, not an id.
+
+    The body that comes back is the CLEANED one -- trimmed name, trimmed tags, match mode
+    defaulted -- so the form re-seeds from what was actually stored rather than from what it
+    sent (rule 39). Those differ on every save that trimmed anything.
+    """
     async with request.app.state.session_factory() as session:
         try:
             row = await list_config.create(
@@ -91,11 +117,11 @@ async def add_list(request: Request, body: ListConfigIn) -> dict[str, object]:
             )
         except list_config.ListConfigError as exc:
             raise _refused(exc) from None
-        return {"id": row.id, "name": row.name}
+        return _out(row)
 
 
 @router.patch("/lists/configured/{list_id}")
-async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> dict[str, object]:
+async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> ListConfigOut:
     async with request.app.state.session_factory() as session:
         try:
             row = await list_config.update(
@@ -103,7 +129,74 @@ async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> di
             )
         except list_config.ListConfigError as exc:
             raise _refused(exc) from None
-        return {"id": row.id, "name": row.name, "enabled": row.enabled}
+        return _out(row)
+
+
+@router.post("/lists/sync")
+async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
+    """Check one list, or all of them, now. The Lists screen's "Check now".
+
+    The same pass a scan runs, with the same guards, because it IS
+    ``snapshot.sync_protection_lists`` -- a second way to refresh a protection list would be a
+    second set of fail-closed rules to keep in step (rule 3/22's shape for the safety path).
+
+    Synchronous, like the Plex library sync and the Leaving Soon shelf beside it: a refresh
+    reads every *arr and Plex once, and the answer is the whole point of pressing the button,
+    so there is nothing useful to show before it lands.
+
+    A narrowed pass never retires anything -- see ``sync_protection_lists``. What that means
+    here: checking one list can never switch another one off.
+    """
+    app = request.app
+    settings: Settings = app.state.settings
+    box: SecretBox = app.state.secret_box
+    async with AsyncExitStack() as stack:
+        try:
+            radarrs, sonarrs, _tautulli, _seerrs, plex = await scan_runner.build_sources(
+                app.state.session_factory, settings, box, stack=stack
+            )
+        except scan_runner.ScanConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+        # Plex is optional and fails CLOSED, exactly as it does in a scan: with no live
+        # server no collection provider is built, so nothing is synced for one and nothing
+        # is retired either. The stored membership stays as the last good check left it.
+        plex_server: object | None = None
+        plex_error: str | None = None
+        if plex is not None:
+            try:
+                plex_server = await plex.connect()
+            except PlexError as exc:
+                plex_error = (
+                    f"Reaper couldn't reach Plex, so its collections were not checked: {exc}"
+                )
+
+        async with app.state.session_factory() as session:
+            definitions = await list_config.definitions(session)
+            active_movie, active_tv = await profiles.active_policies(session)
+
+        synced = await snapshot.sync_protection_lists(
+            app.state.cache_engine,
+            definitions=definitions,
+            only=body.list_id,
+            keep_tags_only=body.keep_tags,
+            radarrs=radarrs,
+            sonarrs=sonarrs,
+            movie_keep_tags=active_movie.body.keep_tags,
+            movie_keep_match=active_movie.body.keep_tags_match,
+            tv_keep_tags=active_tv.body.keep_tags,
+            tv_keep_match=active_tv.body.keep_tags_match,
+            keep_tags_trusted=not (active_movie.fell_back or active_tv.fell_back),
+            plex_server=plex_server,
+        )
+
+    # What the operator is told. Counting the failures rather than replaying each list's error
+    # here: every one of them is already on the row it belongs to, which this response makes
+    # the screen refetch, and a summary that restated them would be the same refusal written
+    # twice (rule 144).
+    failed = sum(1 for v in synced.values() if isinstance(v, str) and v.startswith("error:"))
+    checked = sum(1 for v in synced.values() if isinstance(v, int))
+    return ListSyncOut(checked=checked, failed=failed, plex_error=plex_error)
 
 
 @router.delete("/lists/configured/{list_id}", status_code=204)

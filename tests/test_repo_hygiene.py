@@ -2373,8 +2373,11 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # server nobody reached.
 # Then 136 -> 137: Settings -> Lists, whose unreadable answer is a positive claim about every
 # protection list at once if it stays silent (#475).
+# Then 137 -> 142, the rest of that screen: a check that would not run (on the row whose button
+# started it, rule 42), a Plex that could not be reached at all so no row can say why, a removal
+# that was refused, and the add/edit form's own save failure and its switched-off warning.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 137
+_EXPECTED_NOTICES = 142
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2633,7 +2636,13 @@ _QUERY_FAILURE_HANDLES = {
     # must say it could not tell them. Keeping a previous good answer on screen would state
     # that the lists are fine at the one moment nobody knows whether they are, and that is the
     # direction a keep list fails in. Both arms are pinned in `ListsPanel.test.tsx`.
-    "frontend/src/components/ListsPanel.tsx": 1,
+    #
+    # 1 -> 2 when the screen gained the list DEFINITIONS beside the membership. Same question
+    # asked of the second read, and it is the read that decides whether a row exists at all:
+    # failing it silently would render a page with no rows and an Add button, which reads as
+    # "you have no lists" to an operator who has several. Both reads share one failure branch
+    # for that reason, and each is driven into it on its own in the tests.
+    "frontend/src/components/ListsPanel.tsx": 2,
     "frontend/src/components/LogsPanel.tsx": 1,
     # 5 -> 6 when the library list moved to ``usePlexLibraries``. No branch here changed: the
     # panel's JSX is untouched, and the extra handle is the walk seeing the bag's two members
@@ -2940,7 +2949,9 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
-_EXPECTED_SELECTS = 21
+# +1 for the Plex library picker on Settings -> Lists: the field #483 was about, which stops
+# being a name Reaper guesses and becomes one the operator picks off their own server.
+_EXPECTED_SELECTS = 22
 
 
 def _without_line_comments(chunk: str) -> str:
@@ -3120,7 +3131,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 51
+# +1 for `ListModal.test.tsx`, the add/edit form on Settings -> Lists, which is a screen of its
+# own and carries its own audit rather than being covered by the panel that opens it.
+_EXPECTED_RENDERING_TEST_FILES = 52
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
