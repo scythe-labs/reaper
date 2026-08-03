@@ -169,6 +169,17 @@ class _FakeSonarr:
         ]
 
 
+class _MuteEpisodesSonarr(_FakeSonarr):
+    """Answers `series()` and refuses `episodes()`, which the scan logs rather than degrading.
+
+    The one shape that leaves a scan holding season statistics and no episode map while the
+    mid-binge hold is ON.
+    """
+
+    async def episodes(self, series_id: int) -> list[dict[str, Any]]:
+        raise IntegrationError("sonarr", "timed out reading episodes")
+
+
 class _StaticList:
     """A protection-list provider with fixed members, for seeding the whitelist."""
 
@@ -2331,7 +2342,12 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         await self._seed_episodes(cache_engine)
 
     async def _scan_under(
-        self, session: AsyncSession, cache_engine: AsyncEngine, tv_policy: Any
+        self,
+        session: AsyncSession,
+        cache_engine: AsyncEngine,
+        tv_policy: Any,
+        *,
+        sonarr: Any = None,
     ) -> tuple[Snapshot, dict[str, Candidate]]:
         tautulli = _FakeTautulli(
             movies=_movie_spine(), shows=_show_spine(), children=self._children()
@@ -2344,7 +2360,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(self._series()), instance_id=1, name="tv"
+                    client=sonarr or _FakeSonarr(self._series()), instance_id=1, name="tv"
                 )
             ],
             tautulli=tautulli,  # type: ignore[arg-type]
@@ -2589,6 +2605,43 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             await self._replayed_guards(session, first, before, self._tv(keep_in_progress=True))
 
         assert caught.value.kind is SimStale.IN_PROGRESS_NOT_READ
+
+    async def test_a_sonarr_that_will_not_answer_reaches_the_same_refusal(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The refusal's SECOND producer, which its sentence used to contradict.
+
+        ``season_scan._episodes_for`` logs and returns when Sonarr will not answer, so a scan
+        that ran with the hold ON also stores no episode map -- it degrades nothing, because
+        falling back to whole-season protection can only keep more (rule 28's sanctioned
+        exception). The bundle records the absence and not which producer left it absent, so
+        the copy has to state the absence: naming the hold told this operator it was off while
+        it was on, and pointed them at a switch whose only effect is to turn a protection off.
+
+        Driven with the hold untouched at its shipped default, so what refuses is the state of
+        the evidence rather than an edit -- and the draft here changes a season rule the panel
+        exists to preview.
+        """
+        await self._seed(cache_engine)
+        first, before = await self._scan_under(
+            session, cache_engine, self._tv(), sonarr=_MuteEpisodesSonarr(self._series())
+        )
+
+        (payload,) = (await self._bundles_json(session, first.id)).values()
+        assert json.loads(payload)["finals"] is None, (
+            "a failed episode read must freeze the three-state None, or the replay answers "
+            "the sequential guard off a map nobody gathered"
+        )
+
+        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+            await self._replayed_guards(session, first, before, self._tv(keep_last_seasons=1))
+        assert caught.value.kind is SimStale.IN_PROGRESS_NOT_READ
+
+        # Both producers land on one sentence, so that sentence may not assert either of them.
+        # The wording is free to change; what is pinned is that it makes no claim about how
+        # the scan was configured, which is the claim this state falsifies.
+        sentence = routes._refused(caught.value.kind, "season").stale_reason or ""
+        assert "switched off" not in sentence and "with it off" not in sentence, sentence
 
     async def test_a_show_whose_every_season_is_kept_is_still_recorded(
         self, session: AsyncSession, cache_engine: AsyncEngine

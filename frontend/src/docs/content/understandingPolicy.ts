@@ -247,7 +247,7 @@ export const understandingPolicy: Doc = {
       "Nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.",
     ),
     p(
-      '**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, a protection\'s switch and its own numbers, or any TV season rule updates the panel instantly. Two things still change what a scan reads: a keep tag, and how far back watching counts. Those say "Needs a fresh scan" and offer a Scan now button, and so does switching on the hold for a viewer part-way through a show, because the last scan never looked at where anyone had got to. An upgrade can say it too, without you having touched anything. A wrong number that looks live is worse than a blank one.',
+      "**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, a protection's switch and its own numbers, or any TV season rule updates the panel instantly. Two things still change what a scan reads: a keep tag, and how far back watching counts. Those say \"Needs a fresh scan\" and offer a Scan now button. So does keeping seasons someone is partway through, whenever the last scan didn't read where anyone had gotten to. An upgrade can say it too, without you having touched anything. A wrong number that looks live is worse than a blank one.",
     ),
     callout(
       "caution",

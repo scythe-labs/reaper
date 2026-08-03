@@ -1959,9 +1959,15 @@ def _refused(kind: SimStale, media_type: str) -> SimulationOut:
             "The last scan didn't record what your season rules need, so there are no numbers "
             "to show. Run a scan, then this becomes exact again."
         ),
+        # Two scans produce this state and the sentence has to be true of both: the guard was
+        # off, so the episode lists were never asked for; or it was on and Sonarr did not
+        # answer for some show (`season_scan._episodes_for` logs and leaves the map unread).
+        # Naming the first as the cause told the second operator their hold was off while it
+        # was on, and pointed them at a switch whose only effect would be to turn a protection
+        # off. So this states what the scan lacks, like the two above it.
         SimStale.IN_PROGRESS_NOT_READ: (
-            "The last scan ran with this switched off, so it never looked at where anyone had "
-            "got to in a show. Run a scan, then this becomes exact again."
+            "The last scan didn't read where anyone had gotten to in each show, so there are "
+            "no numbers to show. Run a scan, then this becomes exact again."
         ),
     }
     return SimulationOut(
@@ -2304,9 +2310,12 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     **The TV lane has a second precondition the hash cannot express.** A season's guard is
     re-derived from a per-show bundle the scan freezes beside the Facts
     (``db.models.SeasonPruneEvidence``), and two policies that gather identically can still
-    disagree about whether that bundle is there and describes the row. Turning the mid-binge
-    hold ON over a scan that ran with it off is the same shape: the policy gathers the same
-    things, and Sonarr's episode lists were never read. Both are asked of the stored evidence
+    disagree about whether that bundle is there and describes the row. A draft holding the
+    mid-binge seasons over a scan that recorded no episode map is the same shape: the policy
+    gathers the same things, and Sonarr's episode lists are not there to place a viewer in.
+    That map is missing after a scan that ran with the hold off, and after one that ran with
+    it on and got no answer from Sonarr, which is why the refusal names neither. Both are
+    asked of the stored evidence
     in ``_season_bundles`` and ``_season_guard_replay``, and each refuses with its own
     ``SimStale`` so the panel names the control at fault (#491, #495).
 
@@ -2386,8 +2395,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         #  2. Scoring changed but the EVIDENCE is unchanged, and every governed row froze its
         #     Facts -> replay the real engine over those Facts. Exact for weight/rating/custom
         #     edits, still zero API calls.
-        #  3. Otherwise the edit changed what the scan gathers (a window, a keep-tag, a
-        #     season rule) -> the frozen evidence is stale, so refuse rather than guess.
+        #  3. Otherwise the edit changed what the scan gathers (a window, a keep-tag)
+        #     -> the frozen evidence is stale, so refuse rather than guess.
         if snapshot.scoring_hash != _combined(PolicyBody.scoring_hash):
             replayable = snapshot.evidence_hash and snapshot.evidence_hash == _combined(
                 PolicyBody.evidence_hash

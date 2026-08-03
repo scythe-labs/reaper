@@ -791,14 +791,22 @@ class SimStale(enum.StrEnum):
     over. The frozen evidence answers a different question, and only a scan fixes it."""
 
     SEASONS_NOT_RECORDED = "seasons_not_recorded"
-    """This snapshot holds no per-show season-prune evidence, or holds some it cannot read.
-    Every scan taken before ``db.models.SeasonPruneEvidence`` shipped is in this state. The
-    rest of the policy still previews; the season card alone cannot."""
+    """This snapshot holds no per-show season-prune evidence, holds some it cannot read, or
+    holds some that does not describe the rows being judged.
+
+    Reached only *after* a scan that wrote the table: a snapshot older than it cannot match
+    the re-scoped ``evidence_hash`` either, so it refuses one tier earlier as
+    :attr:`GATHERS_DIFFERENTLY` (``api.routes.simulate`` states the same thing at length).
+    Like every refusal it zeroes the whole lane rather than the season card alone --
+    ``routes._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
+    verdicts would be worse."""
 
     IN_PROGRESS_NOT_READ = "in_progress_not_read"
-    """The draft turns the part-way-through hold on, over a scan that ran with it off and so
-    never read Sonarr's episode lists. Turning it OFF replays fine -- the guard is
-    short-circuited before the missing map is touched -- which is why this names the one
+    """The draft holds a season someone is part-way through, over a scan that recorded no
+    episode map to place them in. Two scans leave it unread -- one that ran with the hold off,
+    and one that ran with it on and got no answer from Sonarr for some show -- so the copy
+    states the absence rather than either cause. Turning the hold OFF replays fine: the guard
+    is short-circuited before the missing map is touched, which is why this names the one
     direction that cannot be answered rather than the whole control."""
 
 

@@ -191,12 +191,22 @@ agreement test.
 
 ⇒ **Two of the three remaining refusals are not hash questions at all**, which is the part
 worth keeping. A bundle can be absent, unreadable, or describe a different set of seasons than
-the rows being judged; a draft turning the mid-binge hold ON over a scan that ran with it off
-gathers identically and has no episode map, because that fan-out is gated on the guard. Both
-are asked of the stored evidence rather than of the policy, and each carries its own typed
-reason, so the panel names one control instead of blanking nine. A hash cannot say *why* it
-mismatched (§13); it also cannot say anything about evidence two identical policies disagree
-about.
+the rows being judged; a draft holding the mid-binge seasons over a scan that recorded no
+episode map gathers identically and cannot place a viewer. Both are asked of the stored
+evidence rather than of the policy, and each carries its own typed reason, so the panel names
+one control instead of blanking nine. A hash cannot say *why* it mismatched (§13); it also
+cannot say anything about evidence two identical policies disagree about.
+
+⇒ **And that second refusal was written about one of its two producers**, which is the same
+error as the paragraph below it and was made in the same commit. The map is unread after a
+scan that ran with the hold off, because the fan-out is gated on the guard; it is *also*
+unread after a scan that ran with the hold ON and got no answer from Sonarr for some show,
+which `season_scan._episodes_for` logs rather than degrading on, since falling back to
+whole-season protection can only keep more (rule 28's sanctioned exception). The copy named
+the first, so the second operator was told their hold was off while it was on, and the only
+action the sentence suggested was turning a protection off. **A refusal derived from the
+absence of a thing must state the absence, because a cause is a guess about which producer
+left it absent** — and the frozen bundle records the absence, never the producer.
 
 ⇒ **The obvious reading of that is wrong, and the review caught it in six places.** "A
 snapshot predating the table has a matching hash and no bundle" is a tempting sentence and it
@@ -225,10 +235,11 @@ moment something else starts asking a different question of the same data.**
 The exactness proof is a sweep, not a sample. Each of the nine settings is edited alone, two
 real scans are run, and the replayed guard for every season must equal the second scan's stored
 one; a combined edit was the first draft and it proved three of the nine, because the settings
-mask each other (keep-last already holds the season `protect_incomplete_seasons` would). 22
+mask each other (keep-last already holds the season `protect_incomplete_seasons` would). 26
 mutations were checked against it — one per setting on each of the two roads a `PolicyBody`
-takes to the planner, plus the skip, the three-state and the re-derivation — and all 22 fail
-the suite. **Comparing guard reasons rather than verdict tallies is what made that possible**:
+takes to the planner, plus the skip, the three-state, the re-derivation, the dropped
+missing-map refusal, the wrong clock, and the four guards the review below added — and all 26
+fail the suite. **Comparing guard reasons rather than verdict tallies is what made that possible**:
 a setting routinely changes why a season is kept without changing whether it is.
 
 ### 9. Rounding the score after deciding the verdict — **two answers to one question**

@@ -83,7 +83,10 @@ describe("what the panel says when it will not answer", () => {
   const cases = [
     ["gathers_differently", "Needs a fresh scan"],
     ["seasons_not_recorded", "Your season rules need a fresh scan"],
-    ["in_progress_not_read", "Turning that on needs a fresh scan"],
+    // Names the control, not a cause: the episode map is also unread after a scan that ran
+    // WITH the hold on and got no answer from Sonarr, so "turning that on" was false for
+    // that operator (`tests/test_scan_pipeline.py` drives both producers).
+    ["in_progress_not_read", "Your partway-through rule needs a fresh scan"],
   ] as const;
 
   it("gives each refusal its own heading", () => {

@@ -70,7 +70,10 @@ export const RESCAN_QUEUED_LEAD =
 const STALE_HEADINGS: Record<SimStale, string> = {
   gathers_differently: "Needs a fresh scan",
   seasons_not_recorded: "Your season rules need a fresh scan",
-  in_progress_not_read: "Turning that on needs a fresh scan",
+  // Names the control, never the cause: the episode map is also missing after a scan that
+  // ran WITH the hold on and got no answer from Sonarr, and "turning that on" told that
+  // operator they had done something they had not.
+  in_progress_not_read: "Your partway-through rule needs a fresh scan",
 };
 
 /** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
