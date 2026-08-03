@@ -25,5 +25,21 @@ export default defineConfig({
     // costs anyway. If a test needs this much on an IDLE machine, that is the test's problem to
     // fix, not a number to raise again.
     testTimeout: 15000,
+    // Read by `npm run test:coverage`, which is what CI runs; a plain `npm run test`
+    // reports nothing and costs nothing.
+    coverage: {
+      provider: "v8",
+      // lcov is what .github/workflows/ci.yml uploads. text-summary is three lines, which
+      // is the right size for something printed under every CI test run.
+      reporter: ["text-summary", "lcov"],
+      // `include` is what makes the denominator honest. Left to itself, v8 measures only
+      // the files a test imported, so a component nobody tests is missing from the
+      // percentage rather than sitting in it at zero, and coverage climbs by deleting a
+      // test file. Everything under src/ is shipped code and counts.
+      include: ["src/**/*.{ts,tsx}"],
+      // The tests themselves, their fixtures, and type-only declarations. Measuring a test
+      // file measures whether it ran, which is what the test run already reports.
+      exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/**/*.d.ts"],
+    },
   },
 });
