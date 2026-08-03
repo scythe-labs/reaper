@@ -216,3 +216,39 @@ describe("where the fill reaches full strength", () => {
     expect(rampFill(rampStrip("unwatched", 365, 730)!)).toContain("var(--condemn) 11.11%");
   });
 });
+
+// SIZE is the one signal whose BOUND and whose FACT are in different units, and this entry
+// had both wrong in the same direction. `engine/signals.py:_branch_signal` rescales
+// `size_bytes` to gigabytes before ramping it, so the stored `floor`/`saturate_at` the engine
+// compares against are GB. This module read them as bytes, so a 20 GB floor stored as
+// 20000000000 was ramped against a value that tops out in the low thousands: the signal paid
+// 0 at every file size that can exist, while its weight stayed in the score denominator, and
+// nothing on the page said so (#417).
+describe("the size signal's bounds are gigabytes, and its fact is not", () => {
+  it("words a stored bound as the gigabytes the engine ramps it as", () => {
+    expect(rampSentence("size", 20, 80, 20)).toBe(
+      "Pays nothing until 20 GB, and all 20 points at 80 GB.",
+    );
+  });
+
+  it("draws the strip against a track in the same unit as the bounds", () => {
+    // 200 GB of track, so an 80 GB far end sits at 40% of it. Against a byte-denominated
+    // `probeMax` the same bound clamped to 0% and the strip drew nothing at all.
+    expect(rampStrip("size", 20, 80)!.deepAt).toBe(40);
+  });
+
+  it("sends the probe a size in bytes, because the fact is not in the bound's unit", () => {
+    // `preview.READS` maps SIZE to `size_bytes` and `probe_signal` puts the value straight
+    // into that field, where the same /1e9 rescale then runs. So the bound travels as GB and
+    // the value it is measured against travels as bytes.
+    expect(rampUnits("size")?.probeValue?.(50)).toBe(50e9);
+  });
+
+  it("leaves every other signal's probe value in the unit its bounds are in", () => {
+    // The other direction, so the conversion above cannot spread to a signal that reads its
+    // fact and its bounds in one unit (rule 72's sweep, stated as a test).
+    for (const id of ["unwatched", "few_watchers", "low_rating", "season_rank"]) {
+      expect(rampUnits(id)?.probeValue).toBeUndefined();
+    }
+  });
+});
