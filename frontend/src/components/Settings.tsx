@@ -1717,8 +1717,7 @@ const JOB_META: Record<string, JobMeta> = {
   [SCAN_ID]: {
     title: "Update library and apply policy",
     desc: "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read.",
-    modalDesc:
-      "Reaper can scans on its own to keep the queue fresh.",
+    modalDesc: "Reaper can scans on its own to keep the queue fresh.",
   },
   refresh_ratings: {
     title: "Refresh IMDb ratings",
@@ -1734,15 +1733,14 @@ const JOB_META: Record<string, JobMeta> = {
   },
   full_history_sweep: {
     title: "Full watch-history update",
-    desc: 'Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught.',
+    desc: "Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught.",
     offWarning:
       "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught.",
   },
   check_for_updates: {
     title: "Check for updates",
     desc: "Asks GitHub whether a newer Reaper is Available.",
-    offWarning:
-      "With this off, Reaper only checks when you open it.",
+    offWarning: "With this off, Reaper only checks when you open it.",
   },
 };
 
