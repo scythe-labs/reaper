@@ -1681,7 +1681,7 @@ class TestGatherEndToEnd:
             rank=None,
         )
         index = lists.MembershipIndex(
-            _by_imdb={}, _by_tmdb={}, _by_tvdb={5150: ((0, "tv", keep_row),)}
+            _by_imdb={}, _by_tmdb={}, _by_tvdb={5150: ((0, "tv", keep_row),)}, _by_plex_key={}
         )
         _reasons, degrade = _degrade_sink()
 
