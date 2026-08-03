@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,12 +34,15 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     inspect,
+    select,
     text,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from reaper.config import Settings
 from reaper.db.base import NAMING_CONVENTION
+from reaper.db.models import ListConfig
 from reaper.engine.gates import GateId
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, recover_rating_rules
 
@@ -536,3 +540,37 @@ def test_the_migration_reads_a_recoverable_bar_exactly_as_the_shim_does() -> Non
     assert not disagreed, "the migration's copy of the trigger has drifted:\n" + "\n".join(
         disagreed
     )
+
+
+def test_the_seeded_keep_collection_is_readable_through_the_orm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seeded "Never Reap" definition loads, rather than 500ing every read of the table.
+
+    ``list_config.created_at`` is an ``EpochDateTime``: an INTEGER unix timestamp whose read
+    side calls ``datetime.fromtimestamp`` on whatever is stored. A raw ``INSERT`` binds a
+    datetime around that type and lands an ISO string, which SQLite stores happily and the ORM
+    then raises ``TypeError: 'str' object cannot be interpreted as an integer`` on -- so the
+    Lists screen sat on "Loading your lists…" forever and the route 500ed, on the first page
+    load after upgrading. Found by driving a real install, which is the only place the two
+    writers meet: the shipped list's row goes through the ORM and was fine, so the mismatch
+    needed a database holding a row from each.
+
+    This asserts the READ, not the stored shape, because the read is what broke.
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    with Session(engine) as session:
+        rows = session.execute(select(ListConfig)).scalars().all()
+
+    assert [r.name for r in rows] == ["Never Reap"]
+    assert isinstance(rows[0].created_at, datetime)
+    assert rows[0].source == "plex_collection"
+    # The library it points at is the one the code used to hardcode, so the first scan after
+    # an upgrade reads exactly the collection the operator already had (#483 is the screen
+    # that lets them change it, not a silent re-pointing).
+    assert json.loads(rows[0].config_json) == {"library": "Movies", "collection": "Never Reap"}
+
+    engine.dispose()

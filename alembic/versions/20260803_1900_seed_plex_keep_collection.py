@@ -74,7 +74,14 @@ def upgrade() -> None:
         {
             "name": name,
             "config": json.dumps({"library": _LIBRARY, "collection": _COLLECTION}),
-            "now": datetime.now(UTC),
+            # An INTEGER unix timestamp, because that is what the column holds:
+            # ``db.types.EpochDateTime`` stores every instant as one, and its read side calls
+            # ``datetime.fromtimestamp`` on whatever is there. Binding a datetime through raw
+            # SQL goes around the type and lands an ISO STRING, which SQLite accepts happily
+            # and the ORM then raises on -- so every read of the table 500s, on the first page
+            # load after upgrading. Found by driving it; the shipped list's own row is written
+            # through the ORM, so the two rows disagreed and only this one broke.
+            "now": int(datetime.now(UTC).timestamp()),
         },
     )
 

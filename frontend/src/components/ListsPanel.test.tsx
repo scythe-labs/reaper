@@ -295,6 +295,28 @@ describe("the row actions", () => {
     await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalledWith({}));
   });
 
+  it("shows every row as busy while Check all now runs", async () => {
+    // Found by driving it: the footer said "Checking…" while every row still offered "Check
+    // now", so a row invited a second check during the pass it was already part of. A button
+    // reports the state it is in, and "all" really is checking that row.
+    const user = userEvent.setup();
+    let release: (v: unknown) => void = () => {};
+    apiMock.syncLists.mockReturnValue(new Promise((r) => (release = r)));
+    seed([CURATED, PLEX_DEF], [WORKING]);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Check all now" }));
+
+    expect(screen.getByRole("button", { name: "Checking…, IMDb Top 250" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Checking…, Never Reap" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^Check now/ })).not.toBeInTheDocument();
+
+    release({ checked: 2, failed: 0, plex_error: null });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Check now, IMDb Top 250" })).toBeEnabled(),
+    );
+  });
+
   it("says so when Plex could not be reached, since no row can", async () => {
     // With no live server no collection provider is built, so nothing is synced for one and no
     // row carries an error explaining the silence. Without this the screen would report a

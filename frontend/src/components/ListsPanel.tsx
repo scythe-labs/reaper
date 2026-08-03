@@ -247,9 +247,12 @@ function RemoveConfirm({ list, onClose }: { list: ListConfig; onClose: () => voi
           <button type="button" className="ghost" onClick={onClose} disabled={remove.isPending}>
             Cancel
           </button>
+          {/* `danger` alone is the app's destructive button, the one the reap confirmation and
+              the restore card use. Pairing it with `primary` painted red text on the accent
+              fill, which is a one-off variant of a control the app already has (rule 18). */}
           <button
             type="button"
-            className="primary danger"
+            className="danger"
             onClick={() => remove.mutate()}
             disabled={remove.isPending}
           >
@@ -287,6 +290,12 @@ export function ListsPanel() {
   });
   const running = check.isPending ? check.variables : null;
   const failedTarget = check.isError ? check.variables : null;
+  /** Whether `target`'s button is the one to show as busy. "Check all now" really is
+   *  checking every row, so every row says so and none of them can be pressed again while
+   *  it runs. Found by driving it: the footer and the rows disagreed, and a row still
+   *  offering "Check now" during the pass it was already part of invites a second check
+   *  that would race the first (rule 85's shape -- the button reports the state it is in). */
+  const busy = (target: CheckTarget) => running === target || running === "all";
 
   // Both reads, explicitly (rules 17/36). This panel's contract is "always visible", so a
   // failure renders a fallback saying what is unknown rather than an empty screen implying
@@ -378,7 +387,7 @@ export function ListsPanel() {
                 sourceHint(definition)
               }
               error={definition.enabled && errors.length ? errors.join(" ") : null}
-              checking={running === definition.id}
+              checking={busy(definition.id)}
               onCheck={() => check.mutate(definition.id)}
               onEdit={() => setModal({ list: definition })}
               // A list Reaper ships with is never removable: a keep rule in the default
@@ -417,7 +426,7 @@ export function ListsPanel() {
                   "Set the tags on Policy."
                 }
                 error={errors.length ? errors.join(" ") : null}
-                checking={running === "keep-tags"}
+                checking={busy("keep-tags")}
                 onCheck={() => check.mutate("keep-tags")}
                 checkError={failedTarget === "keep-tags" ? (check.error?.message ?? null) : null}
               />
@@ -439,7 +448,7 @@ export function ListsPanel() {
                 "can edit."
               }
               error={row.error}
-              checking={running === "all"}
+              checking={busy("all")}
               onCheck={() => check.mutate("all")}
               checkError={failedTarget === "all" ? (check.error?.message ?? null) : null}
             />
