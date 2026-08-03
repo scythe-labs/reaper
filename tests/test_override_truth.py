@@ -844,14 +844,27 @@ class TestAHandDecisionLeavesARecord:
     """
 
     @staticmethod
-    def _overrides() -> list[str]:
-        return [line.text for line in logbuffer.RING.since(0) if "whitelist.override" in line.text]
+    def _overrides(after: int) -> list[str]:
+        """The override lines written since ``after``, by sequence rather than by index.
+
+        The ring is process-global and no fixture resets it, and ``since`` truncates to its
+        newest ``limit``, so a baseline taken as a LENGTH indexes into a window that slides
+        out from under it: an override line sitting in the oldest slot when the baseline is
+        sampled shifts every later line down one. That reads as a missing line in the three
+        tests below and as an allowed one in the fourth, which is the direction that matters.
+        A sequence cursor names the lines this request produced whatever ran before it.
+        """
+        return [
+            line.text
+            for line in logbuffer.RING.since(after, limit=logbuffer.RING_SIZE)
+            if "whitelist.override" in line.text
+        ]
 
     def test_setting_one_records_the_decision(self, client: TestClient) -> None:
-        before = len(self._overrides())
+        before = logbuffer.RING.last_seq()
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "reap"})
 
-        new = self._overrides()[before:]
+        new = self._overrides(before)
         assert len(new) == 1
         assert "media_key=radarr:1:22" in new[0]
         assert "decision=reap" in new[0]
@@ -860,29 +873,29 @@ class TestAHandDecisionLeavesARecord:
     def test_clearing_one_records_what_it_used_to_be(self, client: TestClient) -> None:
         """The row is gone after this, so the log is the only surviving record."""
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
-        before = len(self._overrides())
+        before = logbuffer.RING.last_seq()
         cleared = client.delete("/api/override/radarr:1:22")
         assert cleared.json() == {"removed": True}, cleared.text
 
-        new = self._overrides()[before:]
+        new = self._overrides(before)
         assert len(new) == 1
         assert "decision=cleared" in new[0]
         assert "prior=spare" in new[0]
 
     def test_flipping_a_spare_to_a_reap_records_both_ends(self, client: TestClient) -> None:
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
-        before = len(self._overrides())
+        before = logbuffer.RING.last_seq()
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "reap"})
 
-        new = self._overrides()[before:]
+        new = self._overrides(before)
         assert len(new) == 1
         assert "prior=spare" in new[0]
         assert "decision=reap" in new[0]
 
     def test_clearing_nothing_says_nothing(self, client: TestClient) -> None:
         """No override to remove is not a decision, and a line for it would read as one."""
-        before = len(self._overrides())
+        before = logbuffer.RING.last_seq()
         response = client.delete("/api/override/radarr:1:99")
 
         assert response.json() == {"removed": False}
-        assert self._overrides()[before:] == []
+        assert self._overrides(before) == []
