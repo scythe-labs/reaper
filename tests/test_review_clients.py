@@ -507,6 +507,62 @@ class TestEveryBaseClientCallIsTraced:
 
         assert "mutation=True" in call_lines()[-1]
 
+    async def test_a_mutation_that_never_answered_reports_no_status(
+        self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]]
+    ) -> None:
+        """A delete that timed out is the one an operator must be able to find, because the
+        file may or may not be gone and only the next scan settles it. `_mutate` maps the
+        timeout kind rather than a fixed budget, and the trace still lands from `finally`."""
+        httpx2_mock.delete(host="radarr.test", path="/api/v3/movie/5").mock(
+            side_effect=httpx2.ConnectTimeout("nope")
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            with pytest.raises(IntegrationError, match=r"timed out \(ConnectTimeout\)"):
+                await client.delete_movie(5, delete_files=True, add_exclusion=True)
+
+        call = call_lines()[-1]
+        assert "mutation=True" in call
+        assert "status=None" in call
+
+    async def test_an_unreachable_host_maps_to_the_domain_error_on_a_mutation(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """A raw transport exception escaping here would defeat every `except
+        IntegrationError` between this and the executor's per-item failure record."""
+        httpx2_mock.delete(host="radarr.test", path="/api/v3/movie/5").mock(
+            side_effect=httpx2.ConnectError("no route")
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            with pytest.raises(IntegrationError, match="unreachable"):
+                await client.delete_movie(5, delete_files=True, add_exclusion=True)
+
+    async def test_an_error_status_on_a_mutation_carries_the_status(
+        self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]]
+    ) -> None:
+        """The executor branches on `status` to decide whether a step failed or is worth a
+        retry, so a mutation refused with 4xx/5xx must arrive typed and not as a bare 200."""
+        httpx2_mock.delete(host="radarr.test", path="/api/v3/movie/5").mock(
+            return_value=httpx.Response(500, json={})
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            with pytest.raises(IntegrationError) as caught:
+                await client.delete_movie(5, delete_files=True, add_exclusion=True)
+
+        assert caught.value.status == 500
+        assert "status=500" in call_lines()[-1]
+
+    async def test_a_redirected_read_is_refused_when_it_cannot_be_replayed(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """A redirect with no Location, or on a method that is not GET or HEAD, has nothing
+        safe to follow, so it is refused rather than guessed at."""
+        httpx2_mock.get("https://radarr.test/api/v3/system/status").mock(
+            return_value=httpx.Response(302)  # a redirect carrying no Location
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError, match="refused redirect"):
+                await client.system_status()
+
     async def test_the_trace_never_carries_a_query_string_or_a_header(
         self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]]
     ) -> None:
