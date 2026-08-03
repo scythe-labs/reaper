@@ -883,13 +883,44 @@ async def sync(
     return len(rows)
 
 
+#: The infix and prefix the two families above are matched on, as the SQL patterns' one
+#: source. The patterns are built from these rather than the other way round, so a family
+#: that is respelled moves the retire sweep and every reader of it together (rule 144).
+KEEP_TAG_INFIX = "-keeptags-"
+PLEX_COLLECTION_PREFIX = "plex-collection-"
+
 #: The two slug families Reaper *derives* from configuration rather than being told, and so
 #: is responsible for retiring. Both change spelling when the configuration behind them
 #: changes -- ``ArrTagRule.slug`` carries the any/all match and the instance id,
 #: ``PlexCollection.slug`` carries the collection name -- so the old row would otherwise sit
 #: there enabled, still protecting from a rule the operator has already replaced.
-KEEP_TAG_SLUGS = "%-keeptags-%"
-PLEX_COLLECTION_SLUGS = "plex-collection-%"
+KEEP_TAG_SLUGS = f"%{KEEP_TAG_INFIX}%"
+PLEX_COLLECTION_SLUGS = f"{PLEX_COLLECTION_PREFIX}%"
+
+
+class ListSource(enum.StrEnum):
+    """Which kind of thing a stored row came from, for a surface that groups by it.
+
+    Derived from the slug, which is the only place the answer currently lives: no column
+    records the provider, and adding one would read NULL until every install had synced
+    again. Confined to this one function for that reason, and it goes away with the list
+    registry, where a row will carry its provider type as a column.
+
+    A surface that groups MUST NOT parse the slug itself. One keep-tag list exists per *arr
+    instance per match mode, so an operator with two Radarrs and two Sonarrs already has four
+    rows for the single protection "titles I tagged reaper-keep", and every instance added
+    multiplies them. Grouping is how that stays readable, and the grouping key belongs
+    wherever the slugs are spelled, not in the component.
+    """
+
+    ARR_TAG = "arr_tag"
+    """One *arr instance's keep tags. Several of these are one protection to the operator."""
+
+    PLEX_COLLECTION = "plex_collection"
+    """A collection curated in the Plex app."""
+
+    CURATED = "curated"
+    """A list Reaper ships with, today just the IMDb Top 250."""
 
 
 async def retire_absent(engine: AsyncEngine, *, family: str, current: Collection[str]) -> list[str]:
@@ -1141,6 +1172,15 @@ class ConfiguredList:
     item_count: int
     last_synced_at: int | None
     last_error: str | None
+
+    @property
+    def source(self) -> ListSource:
+        """Which family this row belongs to. See :class:`ListSource` for why it is derived."""
+        if KEEP_TAG_INFIX in self.slug:
+            return ListSource.ARR_TAG
+        if self.slug.startswith(PLEX_COLLECTION_PREFIX):
+            return ListSource.PLEX_COLLECTION
+        return ListSource.CURATED
 
     @property
     def last_success(self) -> datetime | None:

@@ -798,6 +798,9 @@ export interface ProtectionList {
   /** The stable key rows are keyed on. Never shown: a display name can collide (rule 63). */
   slug: string;
   name: string;
+  /** Which family this belongs to. The panel groups on it: one protection, not one row per
+   *  *arr instance. Never derived in the component -- the slug spellings live server-side. */
+  source: "arr_tag" | "plex_collection" | "curated";
   state: "working" | "stale" | "failing" | "never_checked";
   item_count: number;
   /** When the last check that actually landed was. Null when none ever has. */

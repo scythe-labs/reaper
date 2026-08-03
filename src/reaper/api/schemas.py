@@ -1245,6 +1245,11 @@ class ProtectionListOut(BaseModel):
     """The stable key rows are listed by. Not shown; a display name can collide (rule 63)."""
 
     name: str
+    source: Literal["arr_tag", "plex_collection", "curated"]
+    """Which family this belongs to, so the screen can group rather than print one row per
+    *arr instance. Two Radarrs and two Sonarrs already make four rows for the single
+    protection "titles I tagged reaper-keep", and every instance added multiplies them."""
+
     state: Literal["working", "stale", "failing", "never_checked"]
     item_count: int
     last_checked_at: datetime | None

@@ -39,6 +39,7 @@ async def get_lists(request: Request) -> list[ProtectionListOut]:
         ProtectionListOut(
             slug=row.slug,
             name=row.display_name,
+            source=row.source.value,
             state=row.health(stale_after=WHITELIST_STALE_AFTER, now=now).value,
             item_count=row.item_count,
             last_checked_at=row.last_success,

@@ -712,14 +712,13 @@ button.danger:hover:not(:disabled) {
   margin: var(--space-xs) 0 0;
 }
 
-/* Settings -> Lists (#475). A row per protection list: its name, one sentence on what it is
-   protecting right now, and a state chip on the shared control edge.
-
-   The chip speaks the app's verdict language -- the same four colors the review queue uses --
-   because "this list stopped working" and "this title is condemned" are the same fact at two
-   scales, and a list that is not working is the reason a scan cannot delete anything. It is a
-   chip rather than a `.badge`: a badge names WHAT a thing is (Plex, Sonarr) and holds still,
-   while this names how it is doing and changes between checks. */
+/* Settings -> Lists (#475). Rows are the Jobs tab's `.jobrow`, so the two pages that both
+   answer "is this working, and when did it last run" read the same. What sits where a job's
+   buttons go is a state chip, in the app's verdict language -- the same four colors the review
+   queue uses, because "this list stopped working" and "this title is condemned" are the same
+   fact at two scales, and a list that is not working is the reason a scan cannot delete
+   anything. A chip rather than a `.badge`: a badge names WHAT a thing is (Plex, Sonarr) and
+   holds still, while this names how it is doing and changes between checks. */
 .list-state {
   display: inline-block;
   padding: var(--space-2xs) var(--space-md);
@@ -746,14 +745,12 @@ button.danger:hover:not(:disabled) {
 }
 
 /* Both of these carry text nobody here typed -- a Plex collection's name, an *arr's refusal --
-   so both wrap rather than run through the box holding them (rule 139). `.set-row .help` already
-   sets `overflow-wrap`; the name sits in `.set-label`, which does not. */
+   so both wrap rather than running through the box holding them (rule 139). `.jobrow-desc`
+   already caps its width; neither sets `overflow-wrap`. */
 .list-name {
   overflow-wrap: anywhere;
 }
 .list-error {
-  display: block;
-  margin-top: var(--space-xs);
   color: var(--condemn);
   overflow-wrap: anywhere;
 }

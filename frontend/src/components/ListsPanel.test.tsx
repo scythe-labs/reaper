@@ -26,6 +26,7 @@ vi.mock("../api", () => ({ api: apiMock }));
 const WORKING: ProtectionList = {
   slug: "imdb-top-250",
   name: "IMDb Top 250",
+  source: "curated",
   state: "working",
   item_count: 250,
   last_checked_at: new Date(Date.now() - 8 * 60_000).toISOString(),
@@ -70,6 +71,7 @@ describe("the Lists panel", () => {
         ...WORKING,
         slug: "plex-collection-never-reap",
         name: 'Plex collection: "Never Reap"',
+        source: "plex_collection",
         state: "failing",
         item_count: 0,
         last_checked_at: null,
@@ -99,6 +101,38 @@ describe("the Lists panel", () => {
       screen.getByText(/37 titles from the last good check are still protected/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/protecting nothing/)).not.toBeInTheDocument();
+  });
+
+  it("does not call an empty list working, however well the check went", async () => {
+    // Found by driving a real install: three keep lists sat green at 0 titles, one of them a
+    // "Never Reap" collection. The sync genuinely succeeded, so the server's `working` is
+    // correct about the check -- and green there says "you are covered" to someone covered by
+    // nothing, which is indistinguishable from Reaper reading the wrong library (#483) or from
+    // a list whose entries it cannot identify (#474).
+    apiMock.lists.mockResolvedValue([
+      {
+        ...WORKING,
+        source: "plex_collection",
+        name: 'Plex collection: "Never Reap"',
+        state: "working",
+        item_count: 0,
+      },
+    ]);
+    renderPanel();
+
+    expect(await screen.findByText("Nothing on it")).toBeInTheDocument();
+    expect(screen.getByText(/protecting nothing/)).toBeInTheDocument();
+    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+  });
+
+  it("does not call an empty stale list out of date either", async () => {
+    // Same trap one state over: "still protecting 0 titles" is a sentence about coverage that
+    // does not exist, and rule 72 wants the sibling fixed in the same change.
+    apiMock.lists.mockResolvedValue([{ ...WORKING, state: "stale", item_count: 0 }]);
+    renderPanel();
+
+    expect(await screen.findByText("Nothing on it")).toBeInTheDocument();
+    expect(screen.queryByText("Out of date")).not.toBeInTheDocument();
   });
 
   it("warns that a stale list does not cover what was added since", async () => {
@@ -143,5 +177,69 @@ describe("the Lists panel", () => {
     renderPanel();
 
     expect(await screen.findByText(/No lists yet\./)).toBeInTheDocument();
+  });
+});
+
+describe("collapsing the per-instance keep-tag lists", () => {
+  // Reaper stores one keep-tag list per *arr instance per match mode, so two Radarrs and two
+  // Sonarrs are four stored rows for the single thing the operator did: tag some titles. A row
+  // each grows the page with the server count, which is worst on the installs with the most to
+  // lose, so the family collapses to one row.
+  const tag = (slug: string, name: string, over: Partial<ProtectionList> = {}): ProtectionList => ({
+    slug,
+    name,
+    source: "arr_tag",
+    state: "working",
+    item_count: 4,
+    last_checked_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+    error: null,
+    ...over,
+  });
+
+  it("shows one row for four servers, and sums what they protect", async () => {
+    apiMock.lists.mockResolvedValue([
+      tag("radarr-1-keeptags-any", "Radarr (HD) tag: reaper-keep", { item_count: 1 }),
+      tag("radarr-2-keeptags-any", "Radarr (4k) tag: reaper-keep", { item_count: 2 }),
+      tag("sonarr-3-keeptags-any", "Sonarr (HD) tag: reaper-keep", { item_count: 8 }),
+      tag("sonarr-4-keeptags-any", "Sonarr (4k) tag: reaper-keep", { item_count: 3 }),
+    ]);
+    renderPanel();
+
+    expect(await screen.findByText("Titles you've tagged")).toBeInTheDocument();
+    expect(screen.getByText(/Protecting 14 titles\./)).toBeInTheDocument();
+    expect(screen.getByText(/Across 4 servers\./)).toBeInTheDocument();
+    // The individual list names are gone, which is the whole point.
+    expect(screen.queryByText(/Radarr \(HD\) tag/)).not.toBeInTheDocument();
+  });
+
+  it("wears the worst member's state and names only the servers in it", async () => {
+    // A family reported by its best member says "Working" while one server's keep tags protect
+    // nothing. The operator needs to know WHICH server to go to, and naming all four would put
+    // the row back at one line per server.
+    apiMock.lists.mockResolvedValue([
+      tag("radarr-1-keeptags-any", "Radarr (HD) tag: reaper-keep", { item_count: 9 }),
+      tag("sonarr-3-keeptags-any", "Sonarr (4k) tag: reaper-keep", {
+        state: "failing",
+        item_count: 0,
+        error: "Sonarr refused the request",
+      }),
+    ]);
+    renderPanel();
+
+    expect(await screen.findByText("Not working")).toBeInTheDocument();
+    expect(screen.getByText(/Sonarr \(4k\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/Radarr \(HD\)/)).not.toBeInTheDocument();
+    expect(screen.getByText("Sonarr refused the request")).toBeInTheDocument();
+  });
+
+  it("leaves the other sources as their own rows", async () => {
+    apiMock.lists.mockResolvedValue([
+      WORKING,
+      tag("radarr-1-keeptags-any", "Radarr (HD) tag: reaper-keep"),
+    ]);
+    renderPanel();
+
+    expect(await screen.findByText("IMDb Top 250")).toBeInTheDocument();
+    expect(screen.getByText("Titles you've tagged")).toBeInTheDocument();
   });
 });
