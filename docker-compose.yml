@@ -68,8 +68,9 @@ services:
       #   python -c "import secrets; print(secrets.token_urlsafe(32))"
       # REAPER_SECRET_KEY: "..."
 
-      # Anti-lockout. Set true and restart to print a single-use, 15-minute login link to
-      # the log, then set it back to false. See: docker compose logs reaper | grep -A2 RECOVERY
+      # Anti-lockout. Set true and restart to mint a single-use, 15-minute sign-in code,
+      # then set it back to false. The code goes to the console and to recovery.txt in the
+      # data folder. See: docker compose logs reaper | grep -A2 RECOVERY
       # REAPER_RECOVERY: "false"
 
       # Let the reversible "Leaving Soon" Plex label be written while deletion is still

@@ -181,10 +181,11 @@ class Settings(BaseSettings):
     allow_unarmed_leaving_soon: bool = False
 
     # --- Anti-lockout ---------------------------------------------------------
-    # Set REAPER_RECOVERY=true and restart: Reaper prints a single-use, 15-minute
-    # login link to the container log. Requires the ability to set an env var and
-    # read the logs -- i.e. host access -- so it grants nothing an attacker who
-    # already has the host doesn't have.
+    # Set REAPER_RECOVERY=true and restart: Reaper mints a single-use, 15-minute sign-in
+    # code, prints it to the console, and writes it to recovery.txt in the data folder
+    # (auth.recovery). Two channels because the console is not one on a windowed desktop
+    # build. Requires the ability to set an env var and read either -- i.e. host access --
+    # so it grants nothing an attacker who already has the host doesn't have.
     recovery: bool = False
 
     @field_validator("data_dir")

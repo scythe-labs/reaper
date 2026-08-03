@@ -1136,6 +1136,11 @@ export interface AuthUser {
   provider: string;
   email: string | null;
   thumb_url: string | null;
+  /** This session was opened with a recovery code, so Settings, Security accepts a new
+   *  admin password without the current one. False on every ordinary sign-in. Read it
+   *  only to LOOSEN a requirement, never to grant anything: the server decides, and it
+   *  re-checks the session's own mark on the request. */
+  via_recovery: boolean;
 }
 
 export interface AuthContext {

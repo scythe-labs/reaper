@@ -16,6 +16,11 @@ every install shape answers the same way.
 The data folder default is per-platform only when frozen. Run from a source checkout
 this launcher keeps the repo-relative ``data/`` every other dev entry point uses.
 
+``launcher.conf`` in the data folder is how an install that cannot be handed an
+environment variable is configured at all: the frozen desktop builds, which are
+double-clicked, and the snap, which is a daemon with no configure hook. See
+:func:`reads_launcher_conf` for which shapes read it and why the container does not.
+
 The frozen desktop builds also keep a menu-bar (macOS) / tray (Windows) icon while
 the server runs -- Open Reaper and Quit -- so a windowed build is never an invisible
 process (#431). The icon owns the main thread, which AppKit requires, and uvicorn
@@ -125,6 +130,13 @@ def _resolve_data_dir(env: MutableMapping[str, str], *, frozen: bool) -> None:
 
 #: What the template written on first run offers. Only REAPER_ keys are honored on
 #: read, so the file cannot reach PATH or anything else the process inherits.
+#:
+#: REAPER_RECOVERY is here because this file is the ONLY way a double-clicked app receives
+#: it, and an operator who cannot sign in cannot be told about it from inside the app. A key
+#: nobody knows to type is a key that does not exist for them (#433); its comment says what
+#: turning it on does, since the console that used to say so is not there either. Every line
+#: is enumerated in prose on the Windows and macOS install pages -- update those with this
+#: (rule 144).
 _CONF_TEMPLATE = """\
 # Reaper reads this file when it starts. One setting per line; # starts a comment.
 # Remove the leading # to use a line. Real environment variables still win.
@@ -135,6 +147,10 @@ _CONF_TEMPLATE = """\
 # REAPER_UPDATE_CHECK=false
 # REAPER_TRAY=false
 # REAPER_DOCK_ICON=true
+#
+# Locked out? Set this to true and restart. Reaper writes a single-use sign-in code
+# to recovery.txt, in this folder. Set it back to false and restart afterwards.
+# REAPER_RECOVERY=true
 """
 
 
@@ -461,13 +477,37 @@ def _serve_with_tray(
     return failure[0] if failure else None
 
 
+def reads_launcher_conf(env: MutableMapping[str, str], *, frozen: bool) -> bool:
+    """Whether this install shape configures itself through ``launcher.conf``.
+
+    The file exists for installs nobody can hand an environment variable to. Two qualify. A
+    frozen desktop build is double-clicked. **The snap is one too**, and was missed: it is a
+    daemon snapd starts at boot, and ``snap/snapcraft.yaml`` declares no configure hook, so
+    ``snap set`` reaches nothing and its ``environment:`` block is baked at build time -- which
+    left ``REAPER_RECOVERY`` with no route in at all on that install, the same dead end the
+    desktop builds had for a different reason (#433, rule 72: the fix lands on every sibling).
+
+    The container is deliberately not here: a compose file IS a file of environment variables,
+    so a second one inside ``/data`` would give every setting two homes and a precedence order
+    to get wrong. Nor is a source checkout, which has ``.env``.
+
+    ``REAPER_HOME`` is what names the snap -- ``snapcraft.yaml`` sets it to ``$SNAP``, and no
+    other install shape sets it (the Dockerfile does not).
+    """
+    return frozen or bool(env.get("REAPER_HOME", "").strip())
+
+
 def main() -> None:
     frozen = _bundle_root() is not None
     export_buildinfo(os.environ, _buildinfo_path())
     _resolve_data_dir(os.environ, frozen=frozen)
     conf: Path | None = None
-    if frozen:
-        conf = load_launcher_conf(os.environ, Path(os.environ["REAPER_DATA_DIR"]))
+    # `.get`, not `[...]`: only `_resolve_data_dir` guarantees the key, and it sets it for
+    # frozen builds alone. The snap arrives with it already in the environment; anything
+    # else reaching here without one falls back to the settings default rather than raising.
+    data_dir = os.environ.get("REAPER_DATA_DIR", "").strip()
+    if reads_launcher_conf(os.environ, frozen=frozen) and data_dir:
+        conf = load_launcher_conf(os.environ, Path(data_dir))
 
     # Before anything touches the disk: a plain `pip install reaper` puts this script
     # on PATH with no migrations beside it (site-packages has no alembic/), and

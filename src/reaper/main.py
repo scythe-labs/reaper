@@ -47,7 +47,7 @@ from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
-from reaper.auth.recovery import mint_recovery_token, recovery_base_url
+from reaper.auth.recovery import clear_recovery_file, mint_recovery_token, recovery_base_url
 from reaper.buildinfo import build_version, install_root
 from reaper.config import (
     Settings,
@@ -132,8 +132,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         if settings.recovery:
             await mint_recovery_token(
-                session, base_url=recovery_base_url(settings.host, settings.port)
+                session,
+                base_url=recovery_base_url(settings.host, settings.port),
+                data_dir=settings.data_dir,
             )
+        else:
+            # Recovery is off, so any recovery.txt left in the data folder is a spent or
+            # expired code. Sweeping it here is what makes "set REAPER_RECOVERY=false and
+            # restart" actually tidy up, rather than leaving a stale secret beside the
+            # database for whoever looks next.
+            clear_recovery_file(settings.data_dir)
 
         # Warn loudly if Plex OAuth is the only way in: a plex.tv outage, a
         # revoked token, or a rebuilt server would then lock the owner out of
@@ -141,9 +149,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if await count_local_admins(session) == 0:
             log.warning(
                 "auth.no_local_admin",
+                # Settings first, because it is the only one of the two that exists on
+                # every install: the desktop bundles ship no ``reaper-admin`` (rule 25).
                 detail=(
                     "No local admin exists. If Plex sign-in fails you will be locked out. "
-                    "Create a fallback with: reaper-admin create-admin --username admin"
+                    "Set an admin password in Settings, Security, or on Docker and snap "
+                    "run: reaper-admin create-admin --username admin"
                 ),
             )
 

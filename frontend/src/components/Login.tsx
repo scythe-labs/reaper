@@ -253,17 +253,22 @@ function LocalSheet({
           <Notice tone="warn" standing>
             Sign in with Plex above and Reaper will ask you to set a password, which creates it.
             You’ll need that password to turn deletion on anyway. If Plex is unreachable right now,
-            create an account on the host with{" "}
+            Docker and snap installs can create an account on the host with{" "}
             {/* A name that can be pasted, not a placeholder to fill in. `admin` is what the
                 wizard's own password step would have created, and any local account arms
                 deletion and confirms a restore just the same (`admin_password.verify` checks
                 every local admin, not one by name), so the choice is free and a free choice
-                is one the operator should not have to stop and make. Its three siblings say the
-                same thing (`cli.py`'s lockout warning, `main.py`'s boot warning, and the 409
-                from `api/auth.py` when a recovery link finds no admin), as does the setup
-                step in the README. The last two were left on `<name>` when the others were
-                made pasteable, so an operator arriving by recovery link read something
-                different from one reading this sheet (rule 72). */}
+                is one the operator should not have to stop and make.
+
+                "Docker and snap installs" is not hedging: the Windows and macOS bundles are one
+                PyInstaller executable built from `packaging/pyinstaller/entry.py`, which runs the
+                launcher and nothing else, so `reaper-admin` is not on those machines at all and
+                an unqualified sentence sent half the operators after a command they do not have
+                (rule 25, #433). Its siblings carry the same qualification (`main.py`'s boot
+                warning and the 409 from `api/auth.py` when a recovery code finds no admin), and
+                two deliberately do not: `cli.py`'s lockout warning is printed BY `reaper-admin`,
+                so its reader demonstrably has it, and the manual's first-run callout already
+                says "On a Docker install" (rule 72, swept). */}
             <code>reaper-admin create-admin --username admin</code>.
           </Notice>
         ) : (
@@ -306,9 +311,10 @@ function LocalSheet({
   );
 }
 
-/** The recovery redemption card, shown at /recover. Under REAPER_RECOVERY=true Reaper
- *  prints a single-use CODE to its log; the operator pastes it here. The code is never
- *  carried in the URL, so it stays out of reverse-proxy access logs. */
+/** The recovery redemption card, shown at /recover. Under REAPER_RECOVERY=true Reaper mints a
+ *  single-use CODE and puts it in two places, the console and `recovery.txt` in the data folder;
+ *  the operator pastes it here. The code is never carried in the URL, so it stays out of
+ *  reverse-proxy access logs. */
 function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -340,11 +346,17 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
       {/* The console, NOT "its log": mint_recovery_token prints the banner deliberately
           (auth/recovery.py), so the code never reaches structlog, the in-app Logs tab, or
           the log files that tab downloads. Sending a locked-out operator to Settings ->
-          Logs to find it left them concluding recovery was broken (U-11). */}
+          Logs to find it left them concluding recovery was broken (U-11).
+
+          The file is named FIRST because it is the only one of the two that exists on every
+          install: a windowed Windows build and a Finder-launched .app have no console for the
+          banner to reach (#433). "without the old password" is the promise this screen used to
+          make and could not keep -- see `api/settings.py`'s admin-password route, which is what
+          makes it true. Its siblings are `auth/recovery.py`'s banner and the locked-out page
+          in the manual (rule 144). */}
       <p className="auth-note">
-        Reaper printed a recovery code to the container's console output. Paste it here to sign in
-        as an admin so you can reset a password or re-link Plex; the code expires the moment it is
-        used.
+        The code is in <code>recovery.txt</code> in Reaper's data folder, and in the console output.
+        Paste it to sign in, then set a new password without the old one. It works once.
       </p>
       <form onSubmit={submit} className="local-form">
         <label className="field">

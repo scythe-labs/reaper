@@ -155,6 +155,7 @@ const user: AuthUser = {
   provider: "local",
   email: null,
   thumb_url: null,
+  via_recovery: false,
 };
 
 function renderMenu(onGoToAbout: () => void = () => {}) {

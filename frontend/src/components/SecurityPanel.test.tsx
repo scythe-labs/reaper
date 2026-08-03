@@ -7,6 +7,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
+import { SIGNED_IN_USER } from "../test/apiFixtures";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { SecurityPanel } from "./Settings";
@@ -15,6 +16,11 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     safety: vi.fn(),
     setAdminPassword: vi.fn(async () => ({ ok: true })),
+    // The form reads ["me"] to learn whether a recovery code opened this session, which is the
+    // one case the server takes a new password without the current one. Omitting it would hand
+    // the query `undefined`, and the form would render its strict branch off a FAILED read
+    // rather than off a real answer -- the shape rule 135 exists to fail the run on.
+    me: vi.fn(),
   },
 }));
 
@@ -42,6 +48,8 @@ describe("the admin password form", () => {
     apiMock.safety.mockReset();
     apiMock.setAdminPassword.mockReset();
     apiMock.setAdminPassword.mockResolvedValue({ ok: true });
+    apiMock.me.mockReset();
+    apiMock.me.mockResolvedValue(SIGNED_IN_USER);
   });
 
   // This password arms deletion and is the way back in after a lockout, and the form says why
@@ -229,6 +237,84 @@ describe("the admin password form", () => {
   });
 });
 
+describe("changing the password after signing in with a recovery code", () => {
+  // A forgotten password is what recovery mode is FOR, so this form asking for it left the
+  // operator signed in and still locked out of the credential that arms deletion -- and on a
+  // desktop build there was no CLI to fall back to (#433). The server takes a new password from
+  // a recovery session without the old one; these pin the form agreeing with it.
+  beforeEach(() => {
+    apiMock.safety.mockReset();
+    apiMock.setAdminPassword.mockReset();
+    apiMock.setAdminPassword.mockResolvedValue({ ok: true });
+    apiMock.me.mockReset();
+  });
+
+  it("parks the current-password box and saves without it", async () => {
+    apiMock.safety.mockResolvedValue({ has_password: true });
+    apiMock.me.mockResolvedValue({ ...SIGNED_IN_USER, via_recovery: true });
+    const person = renderPanel();
+
+    const currentBox = await screen.findByLabelText(/current password/i);
+    // Still on screen, so a form the operator has used before is still recognizable, but
+    // plainly inert and carrying the one line that says why.
+    await waitFor(() => expect(currentBox).toBeDisabled());
+    expect(screen.getByText(/not needed\. a recovery code signed you in\./i)).toBeInTheDocument();
+
+    await fill(person, screen.getByLabelText(/^new password$/i), "a-long-enough-password");
+    await fill(person, screen.getByLabelText(/confirm new password/i), "a-long-enough-password");
+
+    const save = screen.getByRole("button", { name: /^save$/i });
+    // Enabled with the current box empty, which is the whole point: on an ordinary session the
+    // same three boxes in this state leave Save off (see "needs the current password" above).
+    await waitFor(() => expect(save).toBeEnabled());
+    await person.click(save);
+
+    // `undefined`, never the empty string: the server reads a present-but-empty current password
+    // as an attempt to prove the old one and refuses it with a 403.
+    expect(apiMock.setAdminPassword).toHaveBeenCalledWith("a-long-enough-password", undefined);
+  });
+
+  it("asks for the current password again once the session's mark is spent", async () => {
+    // The server clears the mark in the same transaction that writes the new hash, so the form
+    // re-reads ["me"] on success. Without that the box would stay parked over a session that no
+    // longer excuses it, and the NEXT change would fail at the API with an empty box on screen.
+    apiMock.safety.mockResolvedValue({ has_password: true });
+    apiMock.me.mockResolvedValueOnce({ ...SIGNED_IN_USER, via_recovery: true });
+    apiMock.me.mockResolvedValue(SIGNED_IN_USER);
+    const person = renderPanel();
+
+    const currentBox = await screen.findByLabelText(/current password/i);
+    await waitFor(() => expect(currentBox).toBeDisabled());
+
+    await fill(person, screen.getByLabelText(/^new password$/i), "a-long-enough-password");
+    await fill(person, screen.getByLabelText(/confirm new password/i), "a-long-enough-password");
+    await person.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/current password/i)).toBeEnabled());
+    expect(screen.queryByText(/a recovery code signed you in/i)).not.toBeInTheDocument();
+  });
+
+  it("demands the current password when the session cannot be read at all", async () => {
+    // Rule 17/36: the unknown state is answered explicitly, and the answer is the strict one.
+    // A read that fails must never be the thing that unlocks a credential change -- so the
+    // fallback here is the ordinary form, identical to a session that is genuinely not a
+    // recovery one. This is the branch a `?? false` would be doing silently; it is asserted so
+    // that flipping the default to the lenient side cannot pass.
+    apiMock.safety.mockResolvedValue({ has_password: true });
+    apiMock.me.mockRejectedValue(new Error("no session"));
+    const person = renderPanel();
+
+    const currentBox = await screen.findByLabelText(/current password/i);
+    await waitFor(() => expect(currentBox).toBeEnabled());
+    expect(screen.queryByText(/a recovery code signed you in/i)).not.toBeInTheDocument();
+
+    await fill(person, screen.getByLabelText(/^new password$/i), "a-long-enough-password");
+    await fill(person, screen.getByLabelText(/confirm new password/i), "a-long-enough-password");
+
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
+  });
+});
+
 describe("what leaving this panel would lose", () => {
   // The panel reports its typed password up to the settings shell, so switching section can stop
   // and ask instead of unmounting three boxes silently.
@@ -236,6 +322,8 @@ describe("what leaving this panel would lose", () => {
     apiMock.safety.mockReset();
     apiMock.setAdminPassword.mockReset();
     apiMock.setAdminPassword.mockResolvedValue({ ok: true });
+    apiMock.me.mockReset();
+    apiMock.me.mockResolvedValue(SIGNED_IN_USER);
   });
 
   it("reports a password too short to save, because leaving still throws it away", async () => {

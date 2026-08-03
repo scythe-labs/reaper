@@ -140,9 +140,49 @@ class TestLauncherConf:
         assert "REAPER_PORT" in text
         assert "REAPER_TRAY" in text
         assert "REAPER_DOCK_ICON" in text
+        # The anti-lockout switch, which this file is the only delivery route for on a
+        # double-clicked app: an operator who cannot sign in cannot be told about it from
+        # inside the app, so a key absent from the template does not exist for them (#433).
+        assert "REAPER_RECOVERY" in text
+        assert "recovery.txt" in text  # and where the code it mints will be
         env2: dict[str, str] = {}
         launcher.load_launcher_conf(env2, tmp_path / "data")
         assert env2 == {}  # the shipped template is all comments
+
+
+class TestWhichInstallsReadTheConf:
+    """The file is for installs nobody can hand an environment variable to, and the snap is
+    one: snapd starts it at boot, ``snapcraft.yaml`` declares no configure hook, so `snap set`
+    reaches nothing. It was missed, which left REAPER_RECOVERY with no route in on that
+    install at all (#433, rule 72).
+
+    Every shape is driven, not just the one that motivated the change: a flag-shaped
+    assertion cannot tell a shape that complies from one that dropped out of the walk
+    (rule 145). The container and a source checkout are the two that must stay OUT, and both
+    are asserted rather than left to the default.
+    """
+
+    def test_a_frozen_desktop_build_reads_it(self) -> None:
+        assert launcher.reads_launcher_conf({}, frozen=True) is True
+
+    def test_the_snap_reads_it(self) -> None:
+        # REAPER_HOME is what names the snap: snapcraft.yaml sets it to $SNAP.
+        assert (
+            launcher.reads_launcher_conf({"REAPER_HOME": "/snap/x/current"}, frozen=False) is True
+        )
+
+    def test_the_container_does_not(self) -> None:
+        # A compose file IS a file of environment variables; a second one inside /data would
+        # give every setting two homes. The Dockerfile sets REAPER_DATA_DIR, never REAPER_HOME.
+        assert launcher.reads_launcher_conf({"REAPER_DATA_DIR": "/data"}, frozen=False) is False
+
+    def test_a_source_checkout_does_not(self) -> None:
+        assert launcher.reads_launcher_conf({}, frozen=False) is False
+
+    def test_an_empty_home_is_not_a_snap(self) -> None:
+        # `.strip()`, not truthiness on the raw value: an env var set to blank is how a
+        # compose file spells "unset", and it must not switch the file on.
+        assert launcher.reads_launcher_conf({"REAPER_HOME": "   "}, frozen=False) is False
 
 
 class TestLoopbackGuard:

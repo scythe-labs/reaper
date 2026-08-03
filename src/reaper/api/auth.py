@@ -46,11 +46,12 @@ from reaper.auth.ratelimit import (
     plex_start_limit,
     recover_throttle,
 )
-from reaper.auth.recovery import redeem_recovery_token
+from reaper.auth.recovery import clear_recovery_file, redeem_recovery_token
 from reaper.auth.sessions import (
     close_session,
     open_session,
     resolve_session_from_cookies,
+    session_via_recovery,
 )
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
@@ -175,6 +176,10 @@ class UserOut(BaseModel):
     provider: str
     email: str | None = None
     thumb_url: str | None = None
+    #: This session was opened with a recovery code, so Settings -> Security lets it set a
+    #: new admin password without the current one. False on every ordinary sign-in, which
+    #: is the only safe default: a caller that cannot tell must ask for the old password.
+    via_recovery: bool = False
 
     @classmethod
     def of(cls, view: UserView) -> UserOut:
@@ -259,7 +264,10 @@ async def context(request: Request) -> AuthContext:
 async def me(request: Request) -> UserOut:
     """The signed-in admin, or 401. The SPA calls this to decide login vs app."""
     async with _factory(request)() as session:
-        user, _ = await resolve_session_from_cookies(session, request.cookies)
+        user, token = await resolve_session_from_cookies(session, request.cookies)
+        # Read the mark before the commit: this is the same answer the password route will
+        # act on, and the Security panel grays out its current-password box from it.
+        via_recovery = await session_via_recovery(session, token)
         await session.commit()
         if user is None:
             raise HTTPException(401, "Not authenticated.")
@@ -269,6 +277,7 @@ async def me(request: Request) -> UserOut:
             provider=str(user.provider),
             email=user.email,
             thumb_url=user.thumb_url,
+            via_recovery=via_recovery,
         )
 
 
@@ -412,10 +421,14 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
     """Redeem a recovery link and sign in as an admin.
 
     The token is single-use and 15 minutes old at most; obtaining it required host
-    access (setting an env var and reading the log). It logs in as an existing
-    admin -- a local one by preference, since recovery exists precisely for when
-    Plex is unreachable -- so the operator lands somewhere they can reset a
-    password or re-link the server.
+    access (setting an env var, then reading either the console or the 0600 file in the
+    data folder). It logs in as an existing admin -- a local one by preference, since
+    recovery exists precisely for when Plex is unreachable.
+
+    The session it opens is marked ``via_recovery``, which is what makes the landing page's
+    promise true: Settings -> Security accepts a new admin password from this session
+    without the current one. Without the mark the operator arrived at a form asking for the
+    password they came here because they had forgotten (#433).
     """
     # No Argon2 here -- recovery redeems a random single-use token, so brute force
     # is already near-hopeless -- but a per-IP cap still stops a token-guessing
@@ -438,16 +451,28 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
             # most needed (B-13). Rolling back leaves the token unused, so it still works
             # once an admin exists.
             await session.rollback()
+            # Name a route that exists on the install reading this. ``reaper-admin`` is not
+            # in the Windows or macOS bundle at all (one PyInstaller executable, built from
+            # ``packaging/pyinstaller/entry.py``, which runs the launcher and nothing else),
+            # so offering it alone sent half of all operators after a command they do not
+            # have (rule 25, #433). Plex sign-in claims an unclaimed server everywhere.
             raise HTTPException(
                 409,
-                "The recovery link was valid, but there is no admin account to sign in as. "
-                "Create one with: reaper-admin create-admin --username admin",
+                "The recovery code was valid, but this install has no admin account yet. "
+                "Sign in with Plex to claim the server, or on Docker and snap run: "
+                "reaper-admin create-admin --username admin",
             )
 
         token_str = await open_session(
-            session, target, user_agent=request.headers.get("user-agent")
+            session, target, user_agent=request.headers.get("user-agent"), via_recovery=True
         )
         await session.commit()
+
+    # Only now, past the commit: the code is spent, so the copy in the data folder is a
+    # secret with no remaining use. Deleting it earlier would take the operator's only
+    # written copy on a path that can still roll the redemption back (rule 125) -- the
+    # no-admin 409 above does exactly that, and leaves the file where it was.
+    clear_recovery_file(_settings(request).data_dir)
 
     recover_throttle.record_success(ip_key)
     log.warning("auth.recovery_login", user=target.username)
@@ -458,6 +483,7 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
         provider=str(target.provider),
         email=target.email,
         thumb_url=target.thumb_url,
+        via_recovery=True,
     )
 
 

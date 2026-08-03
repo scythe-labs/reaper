@@ -1,7 +1,7 @@
 ---
 id: locked-out
 title: Not getting locked out
-description: Reaper always keeps one working local admin, and there are two ways back in.
+description: Reaper always keeps one working local admin, and recovery mode is the way back in.
 sidebar_position: 2
 ---
 
@@ -21,26 +21,77 @@ changes the `machineIdentifier` the ownership check reads. All three happen.
 ## Two ways back in
 
 <Steps>
-  <Step title="The command line.">
-    It talks to the database directly, so it works while the UI is broken. Run
-    `docker compose exec reaper reaper-admin --help` for the full command set. Creating an admin
-    and resetting a password both live here.
-  </Step>
   <Step title="Recovery mode.">
-    Set `REAPER_RECOVERY=true` and restart. This has no setting in the UI on purpose: it has to
-    work when the UI is what has locked you out.
+    Works on every install, including the Windows and macOS apps. Reaper writes a single-use
+    sign-in code to a file you can open, you paste it in, and you set a new password without
+    the old one. The steps are below.
+  </Step>
+  <Step title="The command line.">
+    `reaper-admin` talks to the database directly, so it works while the UI is broken. It ships
+    with **Docker and the snap only**, not with the Windows or macOS apps. Run
+    `docker compose exec reaper reaper-admin --help` for the full command set.
   </Step>
 </Steps>
 
-## What recovery mode gives you
+## Recovering an install, step by step
 
-A **URL and a separate code**. You open `/recover` and paste the code there. It is single-use
-and expires in 15 minutes.
+Recovery mode has no setting in the UI on purpose: it has to work when the UI is what has
+locked you out. You turn it on the same way you set anything else on your install.
 
-The split is deliberate: a code baked into the URL would be recorded verbatim in every reverse
-proxy's access log, which is no place for the key to your admin account.
+<Steps>
+  <Step title="Turn recovery mode on.">
+    Set `REAPER_RECOVERY=true`, then restart Reaper.
 
-## Turn recovery back off
+    | Install | Where to set it |
+    | --- | --- |
+    | Docker, Unraid | `REAPER_RECOVERY: "true"` in `docker-compose.yml`, or the container's environment |
+    | Windows, macOS, Snap | a `REAPER_RECOVERY=true` line in `launcher.conf`, in the data folder |
 
-Recovery mode is a way in, so it is a way in for anyone who can reach the host. Unset
-`REAPER_RECOVERY` and restart once you have a working admin again.
+    The first run already wrote `launcher.conf` with this line in it, commented out. Delete
+    the `#` in front of it and save.
+  </Step>
+  <Step title="Read the code.">
+    Reaper mints one code at startup and puts it in two places.
+
+    - **`recovery.txt`, in the data folder**, next to `reaper.db`. Open it in any text
+      editor. Use this one on Windows and macOS: a double-clicked app has no console to
+      print to.
+    - **The console.** `docker compose logs reaper | grep -A2 RECOVERY` on Docker, or
+      `snap logs scythe-labs-reaper` on the snap.
+
+    The code lasts 15 minutes. If it expires, restart Reaper for a new one.
+  </Step>
+  <Step title="Sign in with it.">
+    Open Reaper and go to `/recover`, for example `http://localhost:8420/recover`. Paste the
+    code and sign in. It works once, and Reaper deletes `recovery.txt` as it is used.
+  </Step>
+  <Step title="Set a new password.">
+    Go to **Settings, Security**. Reaper does not ask for the current password here: signing
+    in with a recovery code is what stands in for it. Type the new password twice and save.
+
+    This signs out every other device, which is what you want if a borrowed session is why
+    you are here.
+  </Step>
+  <Step title="Turn recovery mode back off.">
+    Set `REAPER_RECOVERY` back to `false` and restart. The restart also deletes any recovery
+    file left behind.
+  </Step>
+</Steps>
+
+<Callout tone="caution">
+  **Recovery mode is a way in, so it is a way in for anyone who can reach the host.** Leave it
+  on and every restart mints a fresh code. Turn it off once you have a working password again.
+</Callout>
+
+## Why the code is not in the link
+
+You get a **URL and a separate code**, rather than one link that signs you in. A code baked
+into the URL would be recorded verbatim in every reverse proxy's access log, which is no place
+for the key to your admin account.
+
+## If there is no admin account at all
+
+Recovery mode signs you in as an existing admin, so an install nobody has set up yet has
+nothing for it to sign you in as. Sign in with Plex instead: the first account to sign in
+claims the server, provided it owns it. On Docker and the snap you can also run
+`reaper-admin create-admin --username admin`.

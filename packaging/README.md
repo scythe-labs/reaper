@@ -64,13 +64,26 @@ puts it back; the Windows exe is windowed, so nothing else shows a double-click
 worked. `REAPER_TRAY=false` turns the icon off — on macOS that leaves the app with
 no visible presence at all, and quitting means Activity Monitor.
 
-**Configuration.** A double-clicked app receives no environment variables, so the
-launcher reads `launcher.conf` from the data folder (written as a commented template on
-first run): `~/Library/Application Support/Reaper/` on macOS, `%LOCALAPPDATA%\Reaper` on
-Windows. `REAPER_PORT`, `REAPER_HOST`, `REAPER_LAUNCH_BROWSER`, `REAPER_UPDATE_CHECK`,
-`REAPER_TRAY`, and `REAPER_DOCK_ICON` belong there; real environment variables still
-win. The desktop builds also show a Desktop app group in Settings, General, which edits
-the tray and Dock icon keys in this file and applies them at the next start.
+**Configuration.** An install nobody can hand an environment variable to reads
+`launcher.conf` from the data folder (written as a commented template on first run):
+`~/Library/Application Support/Reaper/` on macOS, `%LOCALAPPDATA%\Reaper` on Windows,
+`/var/snap/scythe-labs-reaper/common` on the snap. That is a double-clicked app, and
+also the snap, whose daemon snapd starts at boot and which declares no configure hook,
+so `snap set` reaches nothing — `launcher.reads_launcher_conf` is the one place that
+decides, and the container is deliberately outside it. Any `REAPER_`-prefixed key is
+honored; `REAPER_PORT`, `REAPER_HOST`, `REAPER_LAUNCH_BROWSER`, `REAPER_UPDATE_CHECK`,
+`REAPER_TRAY`, `REAPER_DOCK_ICON`, and `REAPER_RECOVERY` are the ones the template
+offers. Real environment variables still win. The desktop builds also show a Desktop app
+group in Settings, General, which edits the tray and Dock icon keys in this file and
+applies them at the next start.
+
+**Getting back in.** `REAPER_RECOVERY=true` in that file mints a single-use sign-in code
+at the next start and writes it to `recovery.txt` beside it, because these builds have no
+console for the banner to print to — `entry.py` hands a windowed process devnull, and a
+Finder-launched `.app` has nowhere to show it either. `reaper-admin` is not in these
+bundles at all (one executable, built from `entry.py`), so recovery mode is the whole
+route, and the session it opens may set a new admin password without the old one. The
+operator-facing steps are in `manual/operating/locked-out.mdx`.
 
 **Reaching it from other machines.** The server binds all interfaces (the same
 `0.0.0.0` default as the container); `127.0.0.1` is only the URL the local browser
