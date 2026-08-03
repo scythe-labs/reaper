@@ -339,6 +339,27 @@ class TestDesktopSettings:
         again = client.get("/api/settings/general").json()["desktop"]
         assert again == {"platform": "macos", "tray": False, "dock_icon": True}
 
+    def test_the_dock_icon_is_refused_off_the_mac_app(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        desktop_env: None,
+    ) -> None:
+        """Nothing on Windows reads REAPER_DOCK_ICON, so accepting the field there
+        would persist an inert line that every later read echoes back as a live
+        switch — the schema's own docstring promises the refusal."""
+        from reaper import launcher
+
+        monkeypatch.setattr(launcher, "desktop_platform", lambda *a, **k: "windows")
+        response = client.put("/api/settings/general", json={"dock_icon": True})
+        assert response.status_code == 422
+        assert "macOS app" in response.json()["detail"]
+        conf = tmp_path / "launcher.conf"
+        assert not conf.exists() or "REAPER_DOCK_ICON" not in conf.read_text(encoding="utf-8")
+        # tray, the knob Windows does have, still saves on its own.
+        assert client.put("/api/settings/general", json={"tray": False}).status_code == 200
+
     def test_a_desktop_save_keeps_the_operator_lines_around_it(
         self,
         client: TestClient,

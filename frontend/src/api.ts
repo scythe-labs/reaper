@@ -944,8 +944,9 @@ export interface DesktopSettings {
   platform: "macos" | "windows";
   /** The menu-bar (macOS) / tray (Windows) icon with Open Reaper and Quit. */
   tray: boolean;
-  /** macOS only: show the Dock icon beside the menu-bar icon. Rides along false on
-   *  Windows and the row never renders there. */
+  /** macOS only: show the Dock icon beside the menu-bar icon. The row never renders
+   *  on Windows and the PUT refuses to set it there; the reported value echoes
+   *  launcher.conf, which nothing on Windows reads. */
   dock_icon: boolean;
 }
 

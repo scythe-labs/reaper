@@ -1710,7 +1710,8 @@ class DesktopSettingsOut(BaseModel):
     """The menu-bar (macOS) / tray (Windows) icon with Open Reaper and Quit."""
     dock_icon: bool
     """macOS only: show the Dock icon beside the menu-bar icon. The UI never renders
-    the row on Windows; the field just rides along false there."""
+    the row on Windows and the PUT refuses to set it there; the reported value echoes
+    launcher.conf, which nothing on Windows reads."""
 
 
 class GeneralSettingsOut(BaseModel):
@@ -1902,8 +1903,14 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
         if payload.trusted_proxies is not None:
             await app_settings.set_trusted_proxies(session, payload.trusted_proxies)
         if payload.tray is not None or payload.dock_icon is not None:
-            if launcher.desktop_platform() is None:
+            platform = launcher.desktop_platform()
+            if platform is None:
                 raise HTTPException(422, "These settings exist only on the Windows and macOS apps.")
+            # Refused where it is inert: accepting it would write a launcher.conf line
+            # nothing on Windows reads, and every later read would echo a switch the
+            # platform cannot honor.
+            if payload.dock_icon is not None and platform != "macos":
+                raise HTTPException(422, "The Dock icon setting exists only on the macOS app.")
             desktop_values: dict[str, str] = {}
             if payload.tray is not None:
                 desktop_values[launcher.DESKTOP_TRAY_KEY] = "true" if payload.tray else "false"
