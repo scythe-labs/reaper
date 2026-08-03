@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# What Codecov is allowed to do with the two reports .github/workflows/ci.yml uploads.
+#
+# Coverage here is a measurement, not a gate. `CI gate` is the one required check, and it
+# collects the lanes that actually decide whether a change is sound; a percentage that moves
+# a point either way says nothing about whether a protection still fails closed. So both
+# statuses below are informational: Codecov reports the number and never blocks a merge on
+# it. Raising a target later is two lines, and it should be argued from a real floor rather
+# than from whatever the number happened to be the week it was turned on.
+#
+# Nothing here restates which paths are measured. The Python side is scoped by
+# `[tool.coverage.run] source` in pyproject.toml and the web side by `coverage.include` in
+# frontend/vitest.config.ts, so a report only ever contains what those two admit. An
+# `ignore:` list beside them would be the same fact in a third place, drifting from both.
+
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+# The two halves are uploaded under separate flags because they are produced by separate
+# jobs from separate runs. Carryforward is what makes that safe to read: a run that uploads
+# only one of them keeps the other's last known report instead of counting it as zero, so a
+# frontend-only change cannot look like the backend losing all of its coverage.
+flag_management:
+  default_rules:
+    carryforward: true
+
+# Comment only when the number actually moved. A bot comment on every pull request that
+# says nothing changed is one more thing to scroll past on the way to a review.
+comment:
+  layout: "condensed_header, diff, flags"
+  require_changes: true
+
+# The diff already carries the review. Line annotations on top of it put a second, noisier
+# copy of the same information in the same place.
+github_checks:
+  annotations: false
