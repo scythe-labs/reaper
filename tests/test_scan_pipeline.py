@@ -57,6 +57,7 @@ from reaper.services import (
     watch_evidence,
 )
 from reaper.services.condemned import reap_is_effective
+from reaper.services.planner import MediaRef
 from reaper.services.scan_runner import _allowed_sections, build_gates
 from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, scan
 
@@ -2408,17 +2409,16 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         """The production replay's guard for each season, through the route's own helper."""
         from reaper.engine.facts_codec import facts_from_dict
 
-        bundles = await routes._season_bundles(session, snapshot_id=snapshot.id)
-        policy = season_evidence.SeasonPolicy.from_body(tv_policy)
-        # The same per-show memo the production loop keeps, so a plan cached for one season
-        # of a show is the plan its siblings are judged against here too.
-        plans: dict[str, Any] = {}
+        # The same per-show memo the production loop keeps -- one thaw and one plan per show,
+        # so a plan cached for one season is the plan its siblings are judged against here too.
+        seasons = routes._SeasonReplay(
+            await routes._season_payloads(session, snapshot_id=snapshot.id),
+            policy=season_evidence.SeasonPolicy.from_body(tv_policy),
+        )
         out: dict[str, tuple[Any, ...]] = {}
         for key, row in rows.items():
             _, extra = facts_from_dict(json.loads(row.facts_json or "{}"))
-            replayed = routes._season_guard_replay(
-                row, extra, bundles=bundles, policy=policy, plans=plans
-            )
+            replayed = routes._season_guard_replay(row, extra, seasons=seasons)
             guard = next(e for e in replayed if e.gate is GateId.SEASON_PROGRESSION)
             out[key] = (guard.outcome, guard.detail, guard.blocked, guard.unestablishable)
         return out
@@ -2535,13 +2535,12 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             "the edit moved no figure, so comparing the replay against it proves nothing"
         )
 
-        bundles = await routes._season_bundles(session, snapshot_id=first.id)
         out = await routes._replay_simulation(
             list(before.values()),
             edited,
             {},
             reach_days=history_reach_days(first.horizon_at, now=first.created_at),
-            season_bundles=bundles,
+            season_payloads=await routes._season_payloads(session, snapshot_id=first.id),
         )
 
         assert out.exact is True
@@ -2595,10 +2594,20 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         sequential guard reads was never gathered. Replaying anyway would fall back to
         whole-season protection and show a preview no scan will produce, which is worse than
         a blank. Turning it OFF is the answerable direction and is covered by the sweep.
+
+        The state below is the only producer of this refusal. A scan that asked and got no
+        answer looks the same in ``finals`` and is not the same state, which is what the flag
+        asserted here separates (#500).
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(
             session, cache_engine, self._tv(keep_in_progress=False)
+        )
+
+        (payload,) = (await self._bundles_json(session, first.id)).values()
+        assert json.loads(payload)["finals_unread"] is False, (
+            "a fan-out that never ran must not be recorded as a refused read, or the lane "
+            "previews the mid-binge guard off a map nobody gathered"
         )
 
         with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
@@ -2606,21 +2615,19 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
         assert caught.value.kind is SimStale.IN_PROGRESS_NOT_READ
 
-    async def test_a_sonarr_that_will_not_answer_reaches_the_same_refusal(
+    async def test_a_sonarr_that_will_not_answer_replays_off_what_the_scan_planned_from(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """The refusal's SECOND producer, which its sentence used to contradict.
+        """One flaky show used to cost the operator the whole TV preview (#500).
 
         ``season_scan._episodes_for`` logs and returns when Sonarr will not answer, so a scan
-        that ran with the hold ON also stores no episode map -- it degrades nothing, because
-        falling back to whole-season protection can only keep more (rule 28's sanctioned
-        exception). The bundle records the absence and not which producer left it absent, so
-        the copy has to state the absence: naming the hold told this operator it was off while
-        it was on, and pointed them at a switch whose only effect is to turn a protection off.
+        that ran with the hold ON stores no episode map for that show -- and the scan itself
+        then planned from the empty one, which only ever keeps more (rule 28's sanctioned
+        exception). Refusing over it withheld every TV-lane preview, including edits that
+        touch no season at all, until a scan in which every show's read succeeded.
 
-        Driven with the hold untouched at its shipped default, so what refuses is the state of
-        the evidence rather than an edit -- and the draft here changes a season rule the panel
-        exists to preview.
+        The claim replacing that refusal is the class's own bar, so it is measured the same
+        way: against a second real scan, with Sonarr just as mute, under the edited policy.
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(
@@ -2628,20 +2635,30 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
 
         (payload,) = (await self._bundles_json(session, first.id)).values()
-        assert json.loads(payload)["finals"] is None, (
-            "a failed episode read must freeze the three-state None, or the replay answers "
-            "the sequential guard off a map nobody gathered"
+        frozen = json.loads(payload)
+        assert frozen["finals"] is None, (
+            "a failed episode read must freeze the three-state None, or a scan that never "
+            "asked becomes indistinguishable from one that asked and was refused"
+        )
+        assert frozen["finals_unread"] is True, (
+            "the bundle must record that the read was refused, or the replay cannot tell it "
+            "apart from the fan-out never running and refuses the lane for both"
         )
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
-            await self._replayed_guards(session, first, before, self._tv(keep_last_seasons=1))
-        assert caught.value.kind is SimStale.IN_PROGRESS_NOT_READ
+        edited = self._tv(keep_last_seasons=1)
+        _, after = await self._scan_under(
+            session, cache_engine, edited, sonarr=_MuteEpisodesSonarr(self._series())
+        )
+        assert self._scanned_guards(before) != self._scanned_guards(after), (
+            "the edit moved no guard even with the episode reads refused, so comparing a "
+            "replay against it proves nothing"
+        )
 
-        # Both producers land on one sentence, so that sentence may not assert either of them.
-        # The wording is free to change; what is pinned is that it makes no claim about how
-        # the scan was configured, which is the claim this state falsifies.
-        sentence = routes._refused(caught.value.kind, "season").stale_reason or ""
-        assert "switched off" not in sentence and "with it off" not in sentence, sentence
+        replayed = await self._replayed_guards(session, first, before, edited)
+        assert replayed == self._scanned_guards(after), (
+            "replaying a bundle whose episode read was refused did not reproduce the guard a "
+            "real scan under that policy decided from the same empty map"
+        )
 
     async def test_a_show_whose_every_season_is_kept_is_still_recorded(
         self, session: AsyncSession, cache_engine: AsyncEngine
@@ -2656,10 +2673,10 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         held, rows = await self._scan_under(session, cache_engine, self._tv(keep_last_seasons=6))
         assert rows, "the fixture show produced no season rows"
 
-        bundles = await routes._season_bundles(session, snapshot_id=held.id)
-        assert bundles, "a fully kept show recorded no season evidence at all"
-        for show, bundle in bundles.items():
-            assert bundle.season_final_episode is not None, (
+        stored = await self._bundles_json(session, held.id)
+        assert stored, "a fully kept show recorded no season evidence at all"
+        for show, payload in stored.items():
+            assert json.loads(payload)["finals"] is not None, (
                 f"{show} is fully kept and its episode map was skipped, so lowering "
                 "keep-last cannot be previewed for it"
             )
@@ -2704,18 +2721,15 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(session, cache_engine, self._tv())
-        bundles = await routes._season_bundles(session, snapshot_id=first.id)
+        seasons = routes._SeasonReplay(
+            await routes._season_payloads(session, snapshot_id=first.id),
+            policy=season_evidence.SeasonPolicy.from_body(self._tv()),
+        )
         row = next(iter(before.values()))
 
         with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
-            routes._season_guard_replay(
-                row,
-                # A row whose frozen extras hold no season guard at all.
-                (),
-                bundles=bundles,
-                policy=season_evidence.SeasonPolicy.from_body(self._tv()),
-                plans={},
-            )
+            # A row whose frozen extras hold no season guard at all.
+            routes._season_guard_replay(row, (), seasons=seasons)
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
 
@@ -2756,7 +2770,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         than ``ValueError`` for an out-of-range epoch. Catching only the obvious three turned
         a corrupt timestamp into a 500 on a route whose contract is to refuse cleanly."""
         await self._seed(cache_engine)
-        first, _ = await self._scan_under(session, cache_engine, self._tv())
+        first, before = await self._scan_under(session, cache_engine, self._tv())
 
         stored = await self._bundles_json(session, first.id)
         (show,) = stored
@@ -2770,7 +2784,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         await session.commit()
 
         with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
-            await routes._season_bundles(session, snapshot_id=first.id)
+            await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
 
@@ -2779,7 +2793,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
     ) -> None:
         """Rule 96, on the one decode this path adds: the fallback resolves toward keeping."""
         await self._seed(cache_engine)
-        first, _ = await self._scan_under(session, cache_engine, self._tv())
+        first, before = await self._scan_under(session, cache_engine, self._tv())
         await session.execute(
             update(SeasonPruneEvidence)
             .where(SeasonPruneEvidence.snapshot_id == first.id)
@@ -2788,6 +2802,46 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         await session.commit()
 
         with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
-            await routes._season_bundles(session, snapshot_id=first.id)
+            await self._replayed_guards(session, first, before, self._tv())
+
+        assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
+
+    async def test_a_season_the_plan_dropped_refuses_rather_than_answering_clean(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Membership belongs to the plan, not to the payload's season list (#501).
+
+        ``plan_series_prune`` keeps only content-bearing seasons, so a bundle listing a season
+        with no episode file passed a check against ``bundle.seasons`` and still reached
+        ``guard_result``'s terminal arm -- a clean ABSTAIN reading "checked: prunable by the
+        keep-last / keep-first season rules" over a row whose whole season-protection lane was
+        absent, condemnable on score alone, under ``exact: true``.
+
+        The two sets agree only while ``_judge_series`` writes no Candidate row for a fileless
+        season, which is an invariant held in another module and not by this guard. Driven by
+        emptying one stored season's file count, which is the state that invariant forbids and
+        nothing here may rely on it forbidding.
+        """
+        await self._seed(cache_engine)
+        first, before = await self._scan_under(session, cache_engine, self._tv())
+
+        stored = await self._bundles_json(session, first.id)
+        (show,) = stored
+        payload = json.loads(stored[show])
+        # The season this row is about, emptied of files. It stays in the payload's list and
+        # leaves the plan, which is precisely the gap.
+        target = MediaRef.parse(next(iter(before))).season
+        for season in payload["seasons"]:
+            if season["n"] == target:
+                season["files"] = 0
+        await session.execute(
+            update(SeasonPruneEvidence)
+            .where(SeasonPruneEvidence.snapshot_id == first.id)
+            .values(payload_json=json.dumps(payload))
+        )
+        await session.commit()
+
+        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+            await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED

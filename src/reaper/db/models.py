@@ -649,7 +649,7 @@ class SeasonPruneEvidence(Base):
     """The show key, shared by every season of the show and equal to ``Candidate.group_key``
     for those rows.
 
-    Carries no index of its own: the only read is ``routes._season_bundles``' ``WHERE
+    Carries no index of its own: the only read is ``routes._season_payloads``' ``WHERE
     snapshot_id = ?``, which the unique constraint above already covers on its leading column,
     and nothing filters a show key across snapshots. A second B-tree here would be written
     once per show per scan to serve nobody, in the table whose per-row cost the paragraph
@@ -657,6 +657,12 @@ class SeasonPruneEvidence(Base):
 
     payload_json: Mapped[str] = mapped_column(Text)
     """``services.season_evidence.to_dict`` of the show's ``SeasonPruneInput``.
+
+    **O(viewers x seasons)**, since three of its members are per-user-per-season maps: measured
+    at 1,743 B for a five-season show with five viewers and 8,987 B for a ten-season show with
+    25 viewers, so ~270 MB across the retention window for a thousand shows on the larger shape
+    (``docs/LEARNINGS.md``, "What frozen season evidence costs"). Growth is bounded by the same
+    30-snapshot sweep as everything else here.
 
     A snapshot with no row for a show is the honest "unknown": the simulator refuses the
     season card rather than replaying a partial bundle, and the next scan records one (rule

@@ -20,12 +20,15 @@ that is not an exception to the above: it runs before any watch evidence exists,
 decides nothing (a log line and the fully-kept count), and its own docstring says so.
 
 **A missing episode map is ``None``, never ``{}``.** ``season_final_episode`` is read from
-Sonarr only while ``keep_in_progress`` is on, so a scan taken with that guard off holds no
-map at all -- and an empty dict is what a show whose episodes were read and found nothing
-would carry. Conflating them tells the simulator it may answer a question nobody gathered
-for (rule 93). :attr:`SeasonPruneInput.season_final_episode` is therefore three-state, and
-:func:`missing_episode_map` is what the route asks before it previews an edit that turns the
-guard on.
+Sonarr only while ``keep_in_progress`` is on, and an empty dict is what a show whose episodes
+were read and found nothing carries, so the field is three-state rather than defaulted
+(rule 93). Two different absences land on ``None`` and
+:attr:`SeasonPruneInput.episodes_unreadable` separates them: the guard was off and nobody was
+asked, or Sonarr was asked and did not answer. Only the first is unanswerable. In the second
+the scan planned from the empty map itself, so a replay off that map returns the scan's own
+verdicts -- and refusing over it cost the operator every TV preview until Sonarr answered for
+a whole scan (#500). :func:`missing_episode_map` is what the route asks before it previews an
+edit that turns the guard on.
 
 Pure: no clock, no network, no database. The scan instant rides in the bundle.
 """
@@ -73,10 +76,17 @@ class SeasonPruneInput:
 
     last_play_by_user: Mapping[str, Mapping[int, datetime | None]]
     season_final_episode: Mapping[int, int | None] | None
-    """The highest episode on disk per season, or ``None`` when this scan never asked.
+    """The highest episode on disk per season, or ``None`` when this scan did not read one.
 
-    Three-state on purpose: see the module docstring. ``None`` also covers a Sonarr read
-    that failed, which is the same absence and the same refusal."""
+    Three-state on purpose: see the module docstring. ``None`` covers both a scan that never
+    asked and a Sonarr read that failed; ``episodes_unreadable`` below says which."""
+
+    episodes_unreadable: bool
+    """Whether the episode fan-out ran for this show and Sonarr did not answer.
+
+    The one bit that tells the two ``None`` maps apart. The scan planned from ``{}`` when
+    this is set (:func:`plan_from_frozen`'s ``or {}``), so a replay off the same empty map
+    reproduces what it decided, and :func:`missing_episode_map` lets that show through."""
 
     watchers_by_season: Mapping[int, int | None]
     shortfall_by_season: Mapping[int, str | None]
@@ -197,11 +207,21 @@ def missing_episode_map(inp: SeasonPruneInput, *, policy: SeasonPolicy) -> bool:
 
     Only ``keep_in_progress`` consults ``season_final_episode``, so a draft with that guard
     off replays exactly off a bundle that holds no map -- the planner short-circuits the
-    sequential guard before the map is touched. A draft with it *on* over a bundle that
-    holds none would silently fall back to whole-season protection, which reads as a
+    sequential guard before the map is touched. A draft with it *on* over a bundle whose scan
+    never asked would silently fall back to whole-season protection, which reads as a
     confident preview of an answer nobody gathered.
+
+    A read Sonarr refused is not that state, which is what ``episodes_unreadable`` is for.
+    The scan planned from the empty map and every verdict in the snapshot was decided from
+    it, so a replay off the same empty map returns those verdicts. What it diverges from is a
+    healthy re-scan, by exactly whole-season protection where episode-precise protection
+    would have stood, which keeps more (rule 31). The refusal it replaces was whole-lane, so
+    one show Sonarr would not answer for blanked every TV preview until a scan in which every
+    show's read succeeded (#500).
     """
-    return policy.keep_in_progress and inp.season_final_episode is None
+    return (
+        policy.keep_in_progress and inp.season_final_episode is None and not inp.episodes_unreadable
+    )
 
 
 #: Every field of :class:`SeasonPruneInput`, and the codec key it is stored under. Written
@@ -217,6 +237,7 @@ _KEYS: dict[str, str] = {
     "last_watched_by_user": "last_watched",
     "last_play_by_user": "last_play",
     "season_final_episode": "finals",
+    "episodes_unreadable": "finals_unread",
     "watchers_by_season": "watchers",
     "shortfall_by_season": "shortfall",
     "progress_unreadable": "unreadable",
@@ -319,6 +340,7 @@ def to_dict(inp: SeasonPruneInput) -> dict[str, Any]:
             if inp.season_final_episode is None
             else {str(n): ep for n, ep in inp.season_final_episode.items()}
         ),
+        _KEYS["episodes_unreadable"]: inp.episodes_unreadable,
         _KEYS["watchers_by_season"]: {str(n): c for n, c in inp.watchers_by_season.items()},
         _KEYS["shortfall_by_season"]: {str(n): r for n, r in inp.shortfall_by_season.items()},
         _KEYS["progress_unreadable"]: inp.progress_unreadable,
@@ -336,7 +358,7 @@ def from_dict(d: Mapping[str, Any]) -> SeasonPruneInput:
     Raises on anything it cannot read, rather than defaulting a member. There is no safe
     default here: every one of these is evidence, and a missing key means the scan did not
     record it, which is a refusal (rule 93). The caller catches and refuses to preview -- see
-    ``api.routes._season_bundles``, which catches ``OSError`` and ``OverflowError`` alongside
+    ``api.routes._SeasonReplay``, which catches ``OSError`` and ``OverflowError`` alongside
     the obvious three, because ``from_epoch`` ends in ``datetime.fromtimestamp`` and that
     raises ``OSError`` for an out-of-range epoch. Do not narrow this to a list: the contract
     is that a payload this cannot read never becomes a plan, not that it fails in three
@@ -366,6 +388,7 @@ def from_dict(d: Mapping[str, Any]) -> SeasonPruneInput:
             if finals is None
             else {int(n): None if ep is None else int(ep) for n, ep in finals.items()}
         ),
+        episodes_unreadable=bool(d[_KEYS["episodes_unreadable"]]),
         watchers_by_season={
             int(n): None if c is None else int(c) for n, c in d[_KEYS["watchers_by_season"]].items()
         },

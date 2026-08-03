@@ -2804,6 +2804,30 @@ cut meets it on one straight horizontal edge, so ordering by x unions them exact
 needs no fill rule. The regression test renders and samples rather than reading the path string,
 since the path text looked reasonable the whole time it was wrong.
 
+## What frozen season evidence costs, and where the cost is paid (2026-08-03)
+
+Making a season rule previewable meant freezing `plan_series_prune`'s inputs per show
+(`db.models.SeasonPruneEvidence`). The Sonarr fan-out that fills it was budgeted in a comment;
+the payload and the per-request decode were not, so both were measured.
+
+**The payload is O(viewers × seasons)** — three of its members are per-user-per-season maps.
+Measured through the real codec: **1,743 B** for a five-season show with five viewers, **8,987 B**
+for a ten-season show with 25 viewers. On the larger shape at a thousand shows that is 9.0 MB a
+scan and **270 MB** across the 30-snapshot retention window, which sits beside the ~700 MB the
+section above measures for a six-thousand-item library rather than dwarfing it.
+
+**The decode is 0.21 ms per show at that shape**, so ~205 ms for a thousand shows — and the
+simulate request it fronted arrives on a 250 ms debounce while a control is being dragged, on top
+of the 275 ms the movie lane's replay already costs at 3,468 rows.
+
+The lever was not the total. Every show with a candidate row gets thawed either way, so decoding
+lazily per show saves almost nothing on a healthy library — what it changes is *when*: 205 ms in
+one uninterrupted block ahead of the loop becomes the same work spread across the yields that
+loop already takes, a refusal costs one show's decode instead of the library's, and a show with
+no candidate row is never decoded at all. The general shape: **an eager prefetch and a lazy one
+can have identical totals and completely different tail latency**, so measure the block, not the
+sum.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

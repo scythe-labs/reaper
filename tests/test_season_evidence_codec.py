@@ -65,6 +65,7 @@ def _bundle(**edits: object) -> season_evidence.SeasonPruneInput:
         "last_watched_by_user": {"7": AT, "9": None},
         "last_play_by_user": {"7": {1: AT, 0: None}},
         "season_final_episode": {0: 3, 1: None},
+        "episodes_unreadable": False,
         # `None` is "on disk, but never resolved in Plex" -- not a measured zero (rule 93).
         "watchers_by_season": {0: None, 1: 2},
         "shortfall_by_season": {0: None, 1: "the mirror does not reach back that far"},
@@ -107,7 +108,19 @@ class TestTheBundleSurvivesTheFreeze:
         asked_and_empty = _round_trip(_bundle(season_final_episode={}))
         assert asked_and_empty.season_final_episode == {}
 
-    def test_the_two_are_not_the_same_answer(self) -> None:
+    def test_a_read_sonarr_refused_survives_as_its_own_state(self) -> None:
+        """The third state, which shares ``None`` with the second and is not it.
+
+        A show whose ``episodes()`` call failed carries no map and still had its plan made
+        from the empty one. Losing this bit in the codec would leave the two ``None`` bundles
+        indistinguishable, and the whole lane would refuse for whichever answer that collapsed
+        to (#500).
+        """
+        failed = _round_trip(_bundle(season_final_episode=None, episodes_unreadable=True))
+        assert failed.season_final_episode is None
+        assert failed.episodes_unreadable is True
+
+    def test_the_three_are_not_the_same_answer(self) -> None:
         """And the distinction reaches the decision, not just the dataclass."""
         policy = season_evidence.SeasonPolicy.from_body(
             DEFAULT_TV_POLICY.model_copy(update={"keep_in_progress": True})
@@ -117,6 +130,30 @@ class TestTheBundleSurvivesTheFreeze:
         )
         assert not season_evidence.missing_episode_map(
             _bundle(season_final_episode={}), policy=policy
+        )
+        # Read and refused: the scan planned from the empty map, so replaying off it returns
+        # the verdicts the snapshot holds. Refusing here took the whole TV lane down for one
+        # show Sonarr would not answer for.
+        assert not season_evidence.missing_episode_map(
+            _bundle(season_final_episode=None, episodes_unreadable=True), policy=policy
+        )
+
+    def test_a_refused_read_plans_exactly_as_the_scan_did(self) -> None:
+        """The property the refusal was traded for, stated against the planner.
+
+        The claim is not that the empty map is as good as a real one. It is that the scan
+        made this show's stored plan from the empty map, so a replay off the same bundle
+        reproduces that plan rather than guessing at one.
+        """
+        policy = season_evidence.SeasonPolicy.from_body(
+            DEFAULT_TV_POLICY.model_copy(update={"keep_in_progress": True})
+        )
+        refused = _bundle(season_final_episode=None, episodes_unreadable=True)
+
+        assert season_evidence.plan_from_frozen(
+            _round_trip(refused), policy=policy
+        ) == season_evidence.plan_from_frozen(
+            _bundle(season_final_episode={}, episodes_unreadable=True), policy=policy
         )
 
     def test_a_thawed_bundle_plans_the_same_way_as_the_live_one(self) -> None:
@@ -141,8 +178,8 @@ class TestTheBundleSurvivesTheFreeze:
     def test_a_payload_missing_a_field_raises_rather_than_defaulting(self) -> None:
         """No safe default exists here: every member is evidence, so absence is a refusal.
 
-        The route catches this and declines to preview (``_season_bundles``). Defaulting even
-        one member would let a partial bundle produce a confident plan.
+        The route catches this and declines to preview (``routes._SeasonReplay``). Defaulting
+        even one member would let a partial bundle produce a confident plan.
         """
         payload = season_evidence.to_dict(_bundle())
         del payload["finals"]

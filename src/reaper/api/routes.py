@@ -1959,12 +1959,11 @@ def _refused(kind: SimStale, media_type: str) -> SimulationOut:
             "The last scan didn't record what your season rules need, so there are no numbers "
             "to show. Run a scan, then this becomes exact again."
         ),
-        # Two scans produce this state and the sentence has to be true of both: the guard was
-        # off, so the episode lists were never asked for; or it was on and Sonarr did not
-        # answer for some show (`season_scan._episodes_for` logs and leaves the map unread).
-        # Naming the first as the cause told the second operator their hold was off while it
-        # was on, and pointed them at a switch whose only effect would be to turn a protection
-        # off. So this states what the scan lacks, like the two above it.
+        # One scan shape produces this now: the guard was off, so the episode lists were never
+        # asked for. A scan that asked and got no answer from Sonarr replays off the empty map
+        # it planned from and reaches no refusal at all (#500, `season_evidence`). The sentence
+        # still states what the scan lacks rather than the switch, like the two above it: the
+        # remedy is a scan, and the only other way out is turning a protection off.
         SimStale.IN_PROGRESS_NOT_READ: (
             "The last scan didn't read where anyone had gotten to in each show, so there are "
             "no numbers to show. Run a scan, then this becomes exact again."
@@ -1998,17 +1997,20 @@ class _SeasonEvidenceMissingError(Exception):
         self.kind = kind
 
 
-async def _season_bundles(
-    session: AsyncSession, *, snapshot_id: int
-) -> dict[str, season_evidence.SeasonPruneInput]:
-    """Every show's frozen prune inputs for this snapshot, keyed by show key.
+async def _season_payloads(session: AsyncSession, *, snapshot_id: int) -> dict[str, str]:
+    """Every show's frozen prune inputs for this snapshot, still JSON, keyed by show key.
 
-    Raises :class:`_SeasonEvidenceMissingError` for a payload it cannot read. Unreadable and
-    absent get the same refusal because the operator's remedy is the same one -- scan again
-    -- and because a bundle that half-parses is exactly what must not be replayed from
-    (rule 96: guard the decode, and let the fallback resolve toward keeping).
+    One query, and no decoding: :class:`_SeasonReplay` thaws a show the first time a row asks
+    about it. Thawing all of them here was the same total work whenever every show has a row
+    in the lane, and it was all of it in one uninterrupted block -- measured at 0.21 ms per
+    show for a ten-season show with 25 viewers, so ~205 ms on a thousand shows, in front of a
+    request that arrives on a 250 ms debounce while a control is being dragged
+    (``docs/LEARNINGS.md``, "What frozen season evidence costs"). Decoding inside the row loop
+    spreads it across the yields that loop already takes, skips a show no candidate row asks
+    about, and lets a refusal fire on the first row instead of after the whole library is
+    decoded (#502).
     """
-    stored = (
+    return dict(
         (
             await session.execute(
                 select(SeasonPruneEvidence.group_key, SeasonPruneEvidence.payload_json).where(
@@ -2019,52 +2021,74 @@ async def _season_bundles(
         .tuples()
         .all()
     )
-    bundles: dict[str, season_evidence.SeasonPruneInput] = {}
-    for group_key, payload in stored:
+
+
+class _SeasonReplay:
+    """One show's frozen evidence and the plan derived from it, thawed on first use.
+
+    Built per simulate request and discarded with it, so a memoized plan can never be served
+    under a different draft. Memoized per SHOW because the plan is a property of the show:
+    deriving it per row would re-sort the seasons and re-run the keep-rule conflict detector
+    once for every season of that show, over a lane whose rows outnumber its shows several
+    times over (#493 measured the movie lane's replay at 275 ms for 3,468 rows).
+
+    Every refusal here is fail-closed and takes the whole lane with it: the panel's headline
+    is a count over every governed row, and answering for most shows while holding the rest at
+    their scan-time verdict would put a number on screen that no scan will ever produce
+    (``docs/LEARNINGS.md`` §8). A show with no payload and a payload that will not decode get
+    the same refusal, because the operator's remedy is the same one -- scan again -- and
+    because a bundle that half-parses is exactly what must not be replayed from (rule 96).
+    """
+
+    def __init__(
+        self, payloads: Mapping[str, str], *, policy: season_evidence.SeasonPolicy
+    ) -> None:
+        self._payloads = payloads
+        self._policy = policy
+        self._derived: dict[str, tuple[season_evidence.SeasonPruneInput, SeriesPrunePlan]] = {}
+
+    def for_show(self, show: str) -> tuple[season_evidence.SeasonPruneInput, SeriesPrunePlan]:
+        cached = self._derived.get(show)
+        if cached is not None:
+            return cached
+        payload = self._payloads.get(show)
+        if payload is None:
+            raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
         try:
-            bundles[group_key] = season_evidence.from_dict(json.loads(payload))
+            bundle = season_evidence.from_dict(json.loads(payload))
         # OSError and OverflowError are here for one reason: `from_epoch` ends in
         # `datetime.fromtimestamp`, which raises OSError (errno 84) rather than ValueError
         # for an epoch outside the platform's range. Listing only the tuple `from_dict`'s
         # docstring named would have turned a corrupt timestamp into a 500 on a route whose
         # whole contract is to refuse cleanly.
         except (ValueError, TypeError, KeyError, AttributeError, OSError, OverflowError):
-            log.warning("simulate.season_bundle_unreadable", group_key=group_key)
+            log.warning("simulate.season_bundle_unreadable", group_key=show)
             raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED) from None
-    return bundles
+        if season_evidence.missing_episode_map(bundle, policy=self._policy):
+            raise _SeasonEvidenceMissingError(SimStale.IN_PROGRESS_NOT_READ)
+        derived = (bundle, season_evidence.plan_from_frozen(bundle, policy=self._policy))
+        self._derived[show] = derived
+        return derived
 
 
 def _season_guard_replay(
-    row: Candidate,
-    frozen: Sequence[GateResult],
-    *,
-    bundles: Mapping[str, season_evidence.SeasonPruneInput],
-    policy: season_evidence.SeasonPolicy,
-    plans: dict[str, SeriesPrunePlan],
+    row: Candidate, frozen: Sequence[GateResult], *, seasons: _SeasonReplay
 ) -> list[GateResult]:
-    """This season's frozen gate results, with the season guard re-derived under ``policy``.
+    """This season's frozen gate results, with the season guard re-derived under the draft.
 
     Replaced **in place**, never appended: ``judge_facts`` reads the extras in order and the
     hand spare is inserted ahead of them, so moving the guard's position would change which
     protection the panel names first.
 
-    ``plans`` memoizes per show across the loop. The plan is a property of the SHOW, so
-    deriving it per row would re-sort the seasons and re-run the keep-rule conflict detector
-    once for every season of that show -- and the simulator answers on a 250 ms debounce
-    while a control is being dragged, over a lane whose rows outnumber its shows several
-    times over (#493 measured the movie lane's replay at 275 ms for 3,468 rows).
-
-    Every refusal here is fail-closed. A show with no bundle, a media_key that will not
-    parse, and a season row whose frozen extras carry no season guard at all are three ways
-    of not knowing, and each raises rather than letting the row through on the ordinary gates
-    alone -- which would drop a whole protection lane and preview deletions the scan holds.
+    Fail-closed on everything it cannot answer, exactly as :class:`_SeasonReplay` is. A
+    media_key that will not parse, a season the plan never decided, and a row whose frozen
+    extras carry no season guard at all are three ways of not knowing, and each raises rather
+    than letting the row through on the ordinary gates alone -- which would drop a whole
+    protection lane and preview deletions the scan holds.
     """
     show = whitelist.show_key(row.media_key)
-    bundle = bundles.get(show) if show is not None else None
-    if show is None or bundle is None:
+    if show is None:
         raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
-    if season_evidence.missing_episode_map(bundle, policy=policy):
-        raise _SeasonEvidenceMissingError(SimStale.IN_PROGRESS_NOT_READ)
     try:
         season = MediaRef.parse(row.media_key).season
     except PlanError:
@@ -2072,20 +2096,22 @@ def _season_guard_replay(
     if season is None:
         raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
 
-    # The bundle has to describe THIS season, and parsing does not establish that. A payload
-    # that decodes cleanly but lists no season -- or not this one -- plans an empty show, and
-    # `guard_result` answers a season it never saw with its terminal arm: a clean ABSTAIN
-    # reading "checked: prunable by the keep-last / keep-first season rules". The row then
-    # replays with the whole season-protection lane silently absent, condemnable on score
-    # alone, under `exact: true`. That is the one shape where missing evidence produces a
-    # shown preview rather than a refusal, which is the direction the prime directive
-    # forbids, so membership is checked here rather than inferred from a successful decode.
-    if season not in {s.season_number for s in bundle.seasons}:
+    bundle, plan = seasons.for_show(show)
+    # The plan has to have DECIDED this season, and a payload that decodes does not establish
+    # that. `guard_result` answers a season the plan never saw with its terminal arm: a clean
+    # ABSTAIN reading "checked: prunable by the keep-last / keep-first season rules". The row
+    # then replays with the whole season-protection lane silently absent, condemnable on score
+    # alone, under `exact: true` -- the one shape where missing evidence produces a preview
+    # rather than a refusal, which is the direction the prime directive forbids.
+    #
+    # Asked of the plan, not of the payload's season list. The plan is the set `guard_result`
+    # answers from and it is the smaller one: `plan_series_prune` keeps only content-bearing
+    # seasons, so a bundle listing a season with no episode file passed a list check and still
+    # reached the terminal arm (#501). The two agree only while `_judge_series` writes no
+    # Candidate row for a fileless season, which is an invariant held in another module.
+    if season not in set(plan.prunable) | {p.season_number for p in plan.protected}:
         raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
 
-    plan = plans.get(show)
-    if plan is None:
-        plan = plans[show] = season_evidence.plan_from_frozen(bundle, policy=policy)
     replayed = season_scan.guard_result(
         plan, season, progress_unknown_reason=bundle.progress_unknown_reason
     )
@@ -2100,7 +2126,7 @@ async def _replay_simulation(
     decisions: dict[str, str],
     *,
     reach_days: int | None,
-    season_bundles: Mapping[str, season_evidence.SeasonPruneInput] | None,
+    season_payloads: Mapping[str, str] | None,
 ) -> SimulationOut:
     """Re-decide the governed rows by replaying the REAL engine over each row's frozen Facts.
 
@@ -2155,12 +2181,14 @@ async def _replay_simulation(
     custom = policy.custom_signal_configs()
     keeps = policy.keep_configs()
     window = policy.popularity_window_days()
-    # Built once from the DRAFT, so the season plan below is re-derived under the operator's
-    # edit rather than under the one the scan ran with.
-    season_policy = season_evidence.SeasonPolicy.from_body(policy)
-    # One plan per show, reused by each of its season rows. Cleared with the request, so it
-    # can never serve a plan built under a different draft.
-    season_plans: dict[str, SeriesPrunePlan] = {}
+    # Built from the DRAFT, so each season plan is re-derived under the operator's edit rather
+    # than under the one the scan ran with. One thaw and one plan per show, reused by that
+    # show's season rows and discarded with the request.
+    seasons = (
+        _SeasonReplay(season_payloads, policy=season_evidence.SeasonPolicy.from_body(policy))
+        if season_payloads is not None
+        else None
+    )
 
     histogram = [0] * 10
     condemned = protected = abstained = 0
@@ -2186,14 +2214,8 @@ async def _replay_simulation(
         # re-derived here from the show's frozen plan inputs, so a season rule moves the panel
         # instead of blanking it (#491). `None` is the movie lane, which has no season guard.
         replayed_extra = (
-            _season_guard_replay(
-                row,
-                extra,
-                bundles=season_bundles,
-                policy=season_policy,
-                plans=season_plans,
-            )
-            if season_bundles is not None
+            _season_guard_replay(row, extra, seasons=seasons)
+            if seasons is not None
             else list(extra)
         )
 
@@ -2311,13 +2333,12 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     re-derived from a per-show bundle the scan freezes beside the Facts
     (``db.models.SeasonPruneEvidence``), and two policies that gather identically can still
     disagree about whether that bundle is there and describes the row. A draft holding the
-    mid-binge seasons over a scan that recorded no episode map is the same shape: the policy
-    gathers the same things, and Sonarr's episode lists are not there to place a viewer in.
-    That map is missing after a scan that ran with the hold off, and after one that ran with
-    it on and got no answer from Sonarr, which is why the refusal names neither. Both are
-    asked of the stored evidence
-    in ``_season_bundles`` and ``_season_guard_replay``, and each refuses with its own
-    ``SimStale`` so the panel names the control at fault (#491, #495).
+    mid-binge seasons over a scan that ran with the hold off is the same shape: the policy
+    gathers the same things, and Sonarr's episode lists were never asked for, so there is
+    nothing to place a viewer in. A scan that asked and got no answer is not that state -- it
+    planned from the empty map, and a replay off the same map returns what it decided (#500).
+    Both questions are asked of the stored evidence in ``_SeasonReplay``, and each refuses
+    with its own ``SimStale`` so the panel names the control at fault (#491, #495).
 
     **This is not the state an upgrading install is in**, which is worth saying because the
     obvious reading is wrong. Moving the season fields out of ``evidence_hash`` changed the
@@ -2403,10 +2424,10 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             )
             if replayable and rows and all(r.facts_json for r in rows):
                 try:
-                    # Only the TV lane carries a season guard, so only it loads bundles. A
-                    # movie replay passes None and skips the whole re-derivation.
-                    bundles = (
-                        await _season_bundles(session, snapshot_id=snapshot.id)
+                    # Only the TV lane carries a season guard, so only it reads the frozen
+                    # bundles. A movie replay passes None and skips the whole re-derivation.
+                    payloads = (
+                        await _season_payloads(session, snapshot_id=snapshot.id)
                         if target == "season"
                         else None
                     )
@@ -2417,7 +2438,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                         # From the snapshot's own two stored instants, so a row frozen before
                         # the reach was a fact replays on the reach that scan actually had.
                         reach_days=history_reach_days(snapshot.horizon_at, now=snapshot.created_at),
-                        season_bundles=bundles,
+                        season_payloads=payloads,
                     )
                 except _SeasonEvidenceMissingError as missing:
                     return _refused(missing.kind, body.media_type)

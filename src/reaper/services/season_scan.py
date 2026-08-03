@@ -266,6 +266,12 @@ class _SeriesWork:
     off (the whole fan-out is skipped) and for a read that failed. Frozen onto the show's
     prune bundle, where it is what stops the simulator previewing a guard the scan never
     gathered for (rule 93)."""
+    episodes_unreadable: bool = False
+    """Set when the fan-out ran for this show and Sonarr did not answer, which is the other
+    way ``episodes_read`` is False. Frozen beside the absent map so the simulator can tell the
+    two apart: this scan planned from ``{}`` and every verdict it stored came off that, so a
+    replay off ``{}`` returns them, where a fan-out that never ran has nothing to return
+    (#500)."""
     show_rating_key: int | None = None
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
@@ -1558,7 +1564,8 @@ async def gather(
         # Episode-precise mid-binge needs each season's last on-disk episode -- one extra
         # Sonarr read per show. On failure the map stays empty and every season falls back to
         # season-level protection, never less; `episodes_read` stays False so the simulator
-        # can tell that fallback apart from a show whose episodes really are absent.
+        # can tell that fallback apart from a show whose episodes really are absent, and
+        # `episodes_unreadable` says the plan below was still made from that empty map.
         async with arr_bounds[item.source.instance_id]:
             try:
                 episodes = await item.source.client.episodes(int(item.series["id"]))
@@ -1568,6 +1575,7 @@ async def gather(
                     show=item.series.get("title"),
                     error=str(exc),
                 )
+                item.episodes_unreadable = True
                 return
         item.season_final_episode = _final_episodes(episodes)
         item.episodes_read = True
@@ -1629,6 +1637,10 @@ async def gather(
     # this ever shows up in `season_ms`, the shape to reach for is fetching the map for a show
     # only when a bundle without one would refuse -- not restoring the skip, which is what
     # made the season card unpreviewable.
+    #
+    # What the map is stored in is budgeted separately, on `db.models.SeasonPruneEvidence`: the
+    # payload is O(viewers x seasons), and the read side is measured in `docs/LEARNINGS.md`
+    # under "What frozen season evidence costs".
     season_coros = [_seasons_for(rk) for rk in fallback_keys]
     episode_coros = [_episodes_for(item) for item in work] if keep_in_progress else []
     fanned = await gather_reaped(*season_coros, *episode_coros)
@@ -1890,8 +1902,12 @@ def _judge_series(
         last_play_by_user=_last_play_by_user_season(stats, key_to_number),
         # None, not the empty map, when the fan-out above never ran or its read failed: the
         # planner reads an empty map as whole-season protection, which is right for a scan and
-        # is NOT an answer the simulator may show as exact (rule 93).
+        # is NOT an answer the simulator may show as exact (rule 93). The flag beside it says
+        # which absence this is, and only the never-ran one refuses: a read Sonarr declined
+        # left this scan planning from `{}`, so replaying off `{}` returns the verdicts stored
+        # here rather than guessing at them (#500).
         season_final_episode=dict(item.season_final_episode) if item.episodes_read else None,
+        episodes_unreadable=item.episodes_unreadable,
         watchers_by_season=watchers_by_season,
         shortfall_by_season=shortfall_by_season,
         # The mirror can span the hold perfectly and still not hold the rows, because they are
