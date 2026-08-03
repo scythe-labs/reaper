@@ -785,6 +785,27 @@ export interface SignalCount {
  *  too. Those items sit on both sides of the executor's before/after count, so its gate
  *  cannot see them. No file on disk is affected either way.
  */
+/** One protection list, and whether it is still protecting anything.
+ *
+ *  `state` is decided on the server so this screen and the degraded-scan notice cannot tell
+ *  the operator two different stories about the same failed check (rule 144). `item_count`
+ *  is what the stored copy still covers: a `failing` list above zero went on protecting
+ *  those titles, because a failed refresh leaves the previous membership in place.
+ *
+ *  `name` comes from Plex or an *arr, so a surface rendering it wraps (rule 139).
+ */
+export interface ProtectionList {
+  /** The stable key rows are keyed on. Never shown: a display name can collide (rule 63). */
+  slug: string;
+  name: string;
+  state: "working" | "stale" | "failing" | "never_checked";
+  item_count: number;
+  /** When the last check that actually landed was. Null when none ever has. */
+  last_checked_at: string | null;
+  /** What the last failed check said, from the service that refused. Null when none did. */
+  error: string | null;
+}
+
 export interface PlexTrash {
   /** False when no Plex server is linked, in which case nothing purges. */
   configured: boolean;
@@ -1856,6 +1877,7 @@ export const api = {
     request<PersonDetail>(`/api/fairness/people/${encodeURIComponent(identity)}`),
   reapBreakdown: () => request<ReapBreakdown>("/api/reap/breakdown"),
   plexTrash: () => request<PlexTrash>("/api/reap/plex-trash"),
+  lists: () => request<ProtectionList[]>("/api/lists"),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
   // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.

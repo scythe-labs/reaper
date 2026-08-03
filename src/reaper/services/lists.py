@@ -39,6 +39,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
@@ -49,7 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
-from reaper.clock import utcnow
+from reaper.clock import from_epoch, utcnow
 from reaper.engine import identity
 
 log = structlog.get_logger(__name__)
@@ -1094,16 +1095,100 @@ async def memberships(
     )
 
 
-async def configured(engine: AsyncEngine) -> Sequence[dict[str, object]]:
+class ListHealth(enum.StrEnum):
+    """What a stored row says about whether this list is protecting anything right now.
+
+    One derivation, because ``last_error`` and ``last_synced_at`` are two columns that mean
+    four different things together, and a surface deciding for itself gets a different answer
+    than the degradation check does (rule 144). ``snapshot.protection_sync_degradations`` is
+    the enforcement; this is what the operator is shown, and both read
+    ``snapshot.WHITELIST_STALE_AFTER`` rather than each carrying a bound.
+    """
+
+    WORKING = "working"
+    """The last check succeeded and is recent enough to rely on."""
+
+    STALE = "stale"
+    """It succeeded, but too long ago. A keep list only: a title added since the last good
+    check is not on the stored copy, so it is unprotected until the next one lands. A curated
+    list churns slowly and keeps protecting from its stored copy, which is why the staleness
+    bound is not applied to one."""
+
+    FAILING = "failing"
+    """The last check failed. Whether anything is still protected depends on ``item_count``:
+    the atomic swap in :func:`sync` leaves the previous membership in place, so a populated
+    list still covers what it covered before."""
+
+    NEVER_CHECKED = "never_checked"
+    """No successful check on record. Nothing is stored, so this list protects nothing."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConfiguredList:
+    """One stored row, typed. What the Lists screen renders and nothing else reads.
+
+    Typed rather than the raw mapping it used to be, because every column arrives from
+    SQLite as ``object`` and each of the six readers would otherwise re-narrow it -- the
+    kind of per-caller coercion rule 104 exists to stop. ``health`` is on the row for the
+    same reason: the verdict is derived once, here, beside the columns it reads.
+    """
+
+    slug: str
+    display_name: str
+    mode: str
+    kind: str
+    enabled: bool
+    item_count: int
+    last_synced_at: int | None
+    last_error: str | None
+
+    @property
+    def last_success(self) -> datetime | None:
+        """When the last check that actually landed was. ``last_synced_at`` is written only
+        on success (:func:`sync`), so the column IS the last good check, not the last attempt."""
+        return from_epoch(self.last_synced_at)
+
+    def health(self, *, stale_after: timedelta, now: datetime) -> ListHealth:
+        """This row's state, in the order the states override each other.
+
+        A failure outranks "never checked" even though a first sync that failed leaves
+        ``last_synced_at`` NULL: the list *was* checked, and saying it has not been hides the
+        error that is the whole reason to look. ``item_count`` is deliberately not folded in
+        -- a failing list with members and one without call for different action, and the
+        count is on the row beside this.
+        """
+        if self.last_error:
+            return ListHealth.FAILING
+        last_success = self.last_success
+        if last_success is None:
+            return ListHealth.NEVER_CHECKED
+        if self.kind == ListKind.WHITELIST.value and now - last_success > stale_after:
+            return ListHealth.STALE
+        return ListHealth.WORKING
+
+
+async def configured(engine: AsyncEngine) -> Sequence[ConfiguredList]:
     """Every list, for the settings screen."""
     await ensure_schema(engine)
     async with engine.connect() as conn:
         rows = (
             await conn.execute(
                 text(
-                    "SELECT slug, display_name, mode, kind, weight, enabled, item_count, "
+                    "SELECT slug, display_name, mode, kind, enabled, item_count, "
                     "       last_synced_at, last_error FROM protection_list ORDER BY slug"
                 )
             )
         ).all()
-    return [dict(r._mapping) for r in rows]
+    return [
+        ConfiguredList(
+            slug=str(r.slug),
+            display_name=str(r.display_name),
+            mode=str(r.mode),
+            kind=str(r.kind),
+            enabled=bool(r.enabled),
+            item_count=int(r.item_count or 0),
+            last_synced_at=None if r.last_synced_at is None else int(r.last_synced_at),
+            last_error=None if r.last_error is None else str(r.last_error),
+        )
+        for r in rows
+    ]

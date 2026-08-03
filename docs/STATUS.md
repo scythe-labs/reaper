@@ -21,7 +21,7 @@ Last verified against the code: 2026-08-02.
 | **M0** Skeleton — uv, ruff, mypy strict, Alembic, Docker, CI | ✅ done |
 | **M1** Auth + clients — Plex OAuth + owner check, Tautulli, Sonarr, Radarr, Seerr | ✅ done |
 | **M2a** IMDb ratings dataset | ✅ done |
-| **M2b** Curated lists (IMDb Top 250, *arr tags, Plex collections) | ✅ done |
+| **M2b** Curated lists (Top 250, *arr tags, Plex collections) + Settings → Lists health | ✅ done |
 | **M3a** Scoring engine — gates, signals, observations | ✅ done |
 | **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | 🟡 see open 1 |
 | **M3c** Backtest — replay against the operator's own watch history | 🟡 see open 2 |

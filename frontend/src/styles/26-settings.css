@@ -711,3 +711,49 @@ button.danger:hover:not(:disabled) {
   flex-basis: 100%;
   margin: var(--space-xs) 0 0;
 }
+
+/* Settings -> Lists (#475). A row per protection list: its name, one sentence on what it is
+   protecting right now, and a state chip on the shared control edge.
+
+   The chip speaks the app's verdict language -- the same four colors the review queue uses --
+   because "this list stopped working" and "this title is condemned" are the same fact at two
+   scales, and a list that is not working is the reason a scan cannot delete anything. It is a
+   chip rather than a `.badge`: a badge names WHAT a thing is (Plex, Sonarr) and holds still,
+   while this names how it is doing and changes between checks. */
+.list-state {
+  display: inline-block;
+  padding: var(--space-2xs) var(--space-md);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.list-state-ok {
+  color: var(--protect);
+  background: var(--protect-soft);
+}
+.list-state-warn {
+  color: var(--unknown);
+  background: var(--unknown-soft);
+}
+.list-state-bad {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+}
+.list-state-idle {
+  color: var(--abstain);
+  background: var(--surface-2);
+}
+
+/* Both of these carry text nobody here typed -- a Plex collection's name, an *arr's refusal --
+   so both wrap rather than run through the box holding them (rule 139). `.set-row .help` already
+   sets `overflow-wrap`; the name sits in `.set-label`, which does not. */
+.list-name {
+  overflow-wrap: anywhere;
+}
+.list-error {
+  display: block;
+  margin-top: var(--space-xs);
+  color: var(--condemn);
+  overflow-wrap: anywhere;
+}

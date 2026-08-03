@@ -2371,8 +2371,10 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # have refreshed is still on screen (and its Seerr twin), and a Plex library list whose SYNC
 # failed -- three states that each used to render as a positive claim about a service or a
 # server nobody reached.
+# Then 136 -> 137: Settings -> Lists, whose unreadable answer is a positive claim about every
+# protection list at once if it stays silent (#475).
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 136
+_EXPECTED_NOTICES = 137
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2625,6 +2627,13 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/App.tsx": 8,
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
+    # Whether each protection list is still protecting anything (#475). Undivided on purpose,
+    # like the safety reads above: this screen exists so an operator can tell a list that
+    # stopped working from one that is simply not on a title's side, so an unreadable answer
+    # must say it could not tell them. Keeping a previous good answer on screen would state
+    # that the lists are fine at the one moment nobody knows whether they are, and that is the
+    # direction a keep list fails in. Both arms are pinned in `ListsPanel.test.tsx`.
+    "frontend/src/components/ListsPanel.tsx": 1,
     "frontend/src/components/LogsPanel.tsx": 1,
     # 5 -> 6 when the library list moved to ``usePlexLibraries``. No branch here changed: the
     # panel's JSX is untouched, and the extra handle is the walk seeing the bag's two members
@@ -3111,7 +3120,7 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 50
+_EXPECTED_RENDERING_TEST_FILES = 51
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:

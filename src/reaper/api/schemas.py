@@ -1226,3 +1226,29 @@ class UpdateOut(BaseModel):
     url: str | None
     checked_at: datetime | None
     changes: list[ReleaseChangeOut]
+
+
+class ProtectionListOut(BaseModel):
+    """One protection list, for the Lists screen. Read-only.
+
+    ``name`` is the provider's own display name, which is what the operator configured it
+    from ("Sonarr tag: reaper-keep", 'Plex collection: "Never Reap"'). It arrives from Plex
+    or an *arr, so a surface rendering it wraps rather than truncates (rule 139).
+
+    ``state`` is ``lists.ListHealth``, derived server-side so this screen and the degraded
+    scan notice cannot disagree about what a failed check means (rule 144). ``item_count``
+    is what the stored copy still protects: a ``failing`` list with members above zero went
+    on covering them, because a failed refresh leaves the previous membership in place.
+    """
+
+    slug: str
+    """The stable key rows are listed by. Not shown; a display name can collide (rule 63)."""
+
+    name: str
+    state: Literal["working", "stale", "failing", "never_checked"]
+    item_count: int
+    last_checked_at: datetime | None
+    """When the last SUCCESSFUL check landed. Null when none ever has."""
+
+    error: str | None
+    """What the last failed check said, verbatim from the service that refused."""

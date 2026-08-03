@@ -180,9 +180,9 @@ class TestEveryConfiguredKeepTagMustResolve:
         with pytest.raises(IntegrationError):
             await sync(engine, rule, kind=ListKind.WHITELIST)
 
-        row = next(r for r in await configured(engine) if r["slug"] == rule.slug)
-        assert row["last_error"]
-        assert row["last_synced_at"] is None
+        row = next(r for r in await configured(engine) if r.slug == rule.slug)
+        assert row.last_error
+        assert row.last_synced_at is None
         reasons = await protection_sync_degradations(engine, {rule.slug: "error: partial"})
         assert reasons  # a scan holding this may not delete anything
 

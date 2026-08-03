@@ -53,6 +53,7 @@ import {
   collapseStaleReads,
 } from "./StaleReadNotice";
 import { Switch } from "./Switch";
+import { ListsPanel } from "./ListsPanel";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
 
@@ -64,6 +65,7 @@ export type Panel =
   | "general"
   | "services"
   | "plex"
+  | "lists"
   | "jobs"
   | "notifications"
   | "security"
@@ -71,13 +73,14 @@ export type Panel =
   | "logs"
   | "about";
 
-/** The nine sections, in rail order. Exported for the one test that owns the hand-written label
+/** The ten sections, in rail order. Exported for the one test that owns the hand-written label
  *  table this must agree with (SettingsNav.test.tsx), so a section added here fails there naming
  *  what to do rather than as an unexplained label mismatch (rules 103, 144). */
 export const PANELS: { id: Panel; label: string }[] = [
   { id: "general", label: "General" },
   { id: "services", label: "Services" },
   { id: "plex", label: "Plex" },
+  { id: "lists", label: "Lists" },
   { id: "jobs", label: "Jobs" },
   { id: "notifications", label: "Notifications" },
   { id: "security", label: "Security" },
@@ -2939,6 +2942,9 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
     // one is open. A draft added to the panel BEHIND the modal would need to report.
     services: false,
     plex: plexDirty,
+    // Read-only: it reports what the syncs recorded and edits nothing. A list is still
+    // configured where it always was, so an edit added here would need to report.
+    lists: false,
     // Same shape as services: the job editor (`ScheduleModal`) is a `ModalShell` too.
     jobs: false,
     notifications: webhookDirty,
@@ -3041,6 +3047,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
         {panel === "general" && <GeneralPanel onDirtyChange={setGeneralDirty} />}
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel onDirtyChange={setPlexDirty} />}
+        {panel === "lists" && <ListsPanel />}
         {panel === "jobs" && <JobsPanel onGoToPlex={() => switchPanel("plex")} />}
         {panel === "notifications" && <NotificationsPanel onDirtyChange={setWebhookDirty} />}
         {panel === "security" && <SecurityPanel onDirtyChange={setSecurityDirty} />}
