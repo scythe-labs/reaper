@@ -17,7 +17,7 @@ submitted repository is this one, so the listing reads `contrib/unraid/my-Reaper
 and it points at the GHCR image above.
 
 Releases are CalVer (`vYYYY.M.N`), cut automatically by `release.yml` on every push to
-`main`. Dev builds are the rolling `dev-build` prerelease, refreshed nightly by
+`main`, once ci.yml's gate reports green on that sha. Dev builds are the rolling `dev-build` prerelease, refreshed nightly by
 `binaries.yml` whenever `dev` has moved; the `:dev` container tag keeps coming from
 `ci.yml`. The nightly also builds the arm64 image (`:dev-arm64`) and folds it into
 `:dev` as a multi-arch manifest; every later amd64 push re-stitches the manifest, so

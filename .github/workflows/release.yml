@@ -43,10 +43,44 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      checks: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
+      # ci.yml fires on this same push and shares nothing with this workflow, so
+      # without a wait the cut can tag and publish a sha whose tests are still
+      # running, or already red (#429). `CI gate` is the one check that reports on
+      # every commit, counting skipped lanes as passes. A transient API error reads
+      # as "not reported yet" and retries until the deadline; a dispatch re-run of
+      # an already-verdicted sha passes through on the first poll.
+      - name: Wait for CI's verdict on this sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 1800))
+          while :; do
+            verdict="$(gh api -X GET \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+              -f check_name='CI gate' \
+              -q '.check_runs | map(select(.status == "completed")) | first | .conclusion // empty' \
+              || true)"
+            if [ "${verdict}" = "success" ]; then
+              echo "CI gate: success"
+              break
+            fi
+            if [ -n "${verdict}" ]; then
+              echo "CI gate concluded '${verdict}'; not cutting a release from this sha." >&2
+              exit 1
+            fi
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "CI gate did not report within 30 minutes; not cutting." >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
       # Full history: the count is derived from the tags that already exist.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

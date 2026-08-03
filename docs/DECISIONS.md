@@ -858,7 +858,9 @@ quietly break.
 
 The tag comes from `release.yml`, not a hand: `main` is release-only, so a push to it *is* the
 release decision, and the workflow derives the next free number from the tags that already
-exist (idempotent, so a failed cut is re-run with `workflow_dispatch`). Binaries, the snap, the
+exist (idempotent, so a failed cut is re-run with `workflow_dispatch`). The cut first waits for
+ci.yml's gate to report green on the same sha: a promotion squash is a sha CI never tested, and
+the two workflows otherwise share nothing (#429). Binaries, the snap, the
 versioned image, and the GitHub release all bake the same string via `buildinfo.json`, and the
 in-app update check compares against it, so an operator is only ever told about a version whose
 artifacts exist. Dev builds stay sha-named (`dev (abc1234)`): the rolling `dev-build`
