@@ -421,13 +421,16 @@ jobs:
           # Fold it in beside whatever amd64 image :dev holds right now. The amd64
           # half is resolved to a digest first: :dev may be a single image or an
           # earlier list, and naming the tag as a source would drag the previous
-          # night's arm64 entry along with it.
+          # night's arm64 entry along with it. On a single image the range template
+          # errors out instead of printing nothing, so the error is swallowed and
+          # the empty result routes to the digest fallback.
           if ! docker buildx imagetools inspect "${image}:dev" > /dev/null 2>&1; then
             echo "no ${image}:dev yet; ci.yml will stitch on its next dev push"
             exit 0
           fi
           amd64="$(docker buildx imagetools inspect "${image}:dev" \
-            --format '{{range .Manifest.Manifests}}{{if eq .Platform.Architecture "amd64"}}{{.Digest}}{{end}}{{end}}')"
+            --format '{{range .Manifest.Manifests}}{{if eq .Platform.Architecture "amd64"}}{{.Digest}}{{end}}{{end}}' \
+            2>/dev/null || true)"
           if [ -z "${amd64}" ]; then
             amd64="$(docker buildx imagetools inspect "${image}:dev" --format '{{.Manifest.Digest}}')"
           fi

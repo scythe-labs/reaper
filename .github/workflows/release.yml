@@ -6,6 +6,8 @@ name: Release
 # binaries and snaps (binaries.yml does that work), push the versioned container
 # image, attach everything, publish, then submit the installer to winget (a job
 # below, because publishing with the workflow's own token fires no other workflow).
+# The notes are GitHub-generated over the PRs since the previous tag, sectioned by
+# label per .github/release.yml; the first cut ships .github/first-release-notes.md.
 #
 # The version is year.month.count -- a date names what operators actually ask
 # ("am I on this month's build?"), and the count separates two cuts in one month.
@@ -104,8 +106,31 @@ jobs:
           # The newest released line, for the notes range. Pinned rather than left to
           # GitHub's own pick: the rolling dev-build prerelease tag lives in this same
           # repo, and every release's notes would otherwise rest on GitHub never
-          # choosing it. Empty on the first cut, and then omitted.
+          # choosing it. Empty on the first cut, which ships the curated file below.
           prev="$(git for-each-ref --sort=-v:refname --format='%(refname:short)' --count=1 'refs/tags/v*')"
+          # The tag lands on the promotion PR's head commit, over on dev. The
+          # promotion squash is one commit for a whole release, so notes generated
+          # against main's line would list the promotion PR and nothing else; dev's
+          # line holds one squash commit per landed PR, which is the list the notes
+          # are built from. main only ever advances by these squashes, so the two
+          # commits carry the same tree and the builds below keep checking out
+          # GITHUB_SHA; the tree check makes that assumption explicit rather than
+          # trusted.
+          target="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            -q '[.[] | select(.base.ref == "main" and .merged_at != null)][0].head.sha // empty' \
+            || true)"
+          if [ -n "${target}" ]; then
+            if ! git cat-file -e "${target}^{commit}" 2>/dev/null ||
+               [ "$(git rev-parse "${target}^{tree}")" != "$(git rev-parse "${GITHUB_SHA}^{tree}")" ]; then
+              echo "promotion head ${target} is unknown here or holds a different tree; tagging the pushed sha instead" >&2
+              target=""
+            fi
+          fi
+          if [ -z "${target}" ]; then
+            # The release still cuts correctly from the pushed sha; only the next
+            # release's notes range suffers, since its start tag sits off dev's line.
+            target="${GITHUB_SHA}"
+          fi
           # A leftover DRAFT with this tag is this pipeline's own failed attempt
           # (drafts hold no git tag, so the count above recomputes the same number):
           # replace it. A published release never matches isDraft and is never touched.
@@ -114,9 +139,14 @@ jobs:
           fi
           # Draft until the artifacts are attached, so nobody is told about a release
           # that cannot be downloaded yet. gh creates the git tag at publish time.
-          args=(--draft --target "${GITHUB_SHA}" --generate-notes --title "Reaper ${version}")
+          args=(--draft --target "${target}" --title "Reaper ${version}")
           if [ -n "${prev}" ]; then
-            args+=(--notes-start-tag "${prev}")
+            args+=(--generate-notes --notes-start-tag "${prev}")
+          else
+            # The first cut: generated notes over an unbounded range would recite
+            # every PR since the repository began. The curated summary rides the
+            # repo instead; its header says when it may be deleted.
+            args+=(--notes-file .github/first-release-notes.md)
           fi
           gh release create "${tag}" "${args[@]}"
           {
