@@ -35,6 +35,11 @@ on:
     branches: [main, dev]
   pull_request:
 
+# The default for every job here: read the tree, touch nothing else. The one job
+# that publishes (docker) declares its own packages: write on top.
+permissions:
+  contents: read
+
 # A second push to a branch makes the first one's verdict irrelevant: the only sha anyone
 # acts on is the tip. Grouping by ref and cancelling the older run means a burst of pushes
 # to dev costs one run instead of one per commit, and hands the runner to the push that
