@@ -1727,7 +1727,8 @@ def _judge_series(
     # SHOW never bound, every season takes Unknown from its own branch (`_NO_KEY_REASONS`) and
     # abstains, so there is no readable sibling to endanger -- that case still reports the
     # mid-binge check as passed when it never ran, which is a panel-honesty defect with no file
-    # behind it, filed rather than widened into here.
+    # behind it (#486), filed rather than widened into here: holding it would move every
+    # unmatched show out of the review queue and protect nothing further.
     #
     # Content-bearing only: an announced season with no files is one nobody can be part way
     # through, and counting it would hold every show with a season Sonarr has listed and not

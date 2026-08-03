@@ -481,3 +481,20 @@ sampled — swept at pad=0/1/5/60/300/495/498 (caught) versus pad=499 (missed), 
 sweep. Pinned at `e4bfa18`. The narrower real defect was taken: the helper now takes a
 `last_seq()` cursor, since a one-line race that can allow a forbidden line is still worth closing
 and the three positive tests carried it as a false failure.
+
+**`services/season_scan.py:season_watch_stats` — the two `continue`s that drop a viewer's
+progress row leave the mid-binge hold unfired, so a season somebody is half way through reads as
+Absent (#470).** Traced end to end; the season comes out protected, both branches. The finding
+read one query and the control is in another: `user_season_progress` comes from the `progress`
+read (which filters `media_index IS NOT NULL`, then drops these two cases), but
+`_progress_by_user` **anchors** on `user_season_keys`, which comes from the `pairs` read — no
+`media_index` filter at all, so `pairs` is a strict superset on `(user, key)`. A viewer whose
+position was dropped is therefore still present as a touch, records as `None` ("position unknown"
+rather than absent), and `_anchor_positions` fails closed on `watched is None`, holding the anchor
+season and the one after it. Both `max_ep is None` and `max_unknown > max_ep` produce
+`{'7': {3: None}}` → `prunable [1, 2]`, seasons 3 and 4 held. Pinned at `eb1b60b`. What the pass
+was right about is that nothing pinned the invariant: it lives in a query neither branch sits
+next to, and narrowing `pairs` to match `progress` would delete the protection while reading as a
+tidy-up. Now asserted end to end in
+`test_season_scan.py::test_a_dropped_position_holds_the_season_rather_than_clearing_it` (#485),
+which goes red under exactly that mutation.

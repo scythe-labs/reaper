@@ -2149,6 +2149,8 @@ class TestGatherEndToEnd:
         viewer. Where nothing about the show resolved, every season already takes Unknown from
         its own branch and abstains, so widening the hold to cover it would move a whole
         population of unmatched shows out of the review queue and protect nothing further.
+        What that leaves standing is the panel half alone -- the guard still reads as checked
+        and passed here -- which is #486 and a decision of its own, not this fix's to make.
         """
         series = [
             {
