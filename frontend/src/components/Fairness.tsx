@@ -16,7 +16,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSlowWait } from "../announce";
-import { api, type RequesterRow } from "../api";
+import { ApiError, api, type RequesterRow } from "../api";
 import { bytes, count } from "../format";
 import { CardOpen } from "./CardOpen";
 import { type WatchReach, mirrorNote, reachIsMeasured, watchReach } from "./watchReach";
@@ -260,8 +260,19 @@ export function Fairness({
 
       {/* Divided, and without the exception string rule 21 forbids. The board is refetched by
           the Refresh button above and by every override, so this sat over a fully drawn board
-          saying the read had failed (#190). */}
-      {error && !data && <Notice tone="error">Couldn't load Scales.</Notice>}
+          saying the read had failed (#190).
+
+          The server's own sentence is preferred to a fixed one. Scales refuses with a 400
+          naming the services it needs, and an install with Tautulli plus an *arr and no Seerr
+          is scan-ready by the wizard's own account, so that refusal is the DEFAULT reading of
+          this tab: "Couldn't load Scales." left those operators a dead tab naming nothing they
+          could act on (#412). `ApiError` is the gate because only that carries a reason Reaper
+          wrote; a fetch failure's own message is not operator copy (rule 21). */}
+      {error && !data && (
+        <Notice tone="error">
+          {error instanceof ApiError ? error.message : "Couldn't load Scales."}
+        </Notice>
+      )}
       {error && data && <StaleReadNotice what="Scales" />}
       {isPending && (
         // Live region dropped: it was mounted in the same commit as its text, which several

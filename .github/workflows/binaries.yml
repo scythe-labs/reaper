@@ -6,8 +6,9 @@ name: Binaries
 #
 # Three ways in:
 #   schedule           nightly dev build of the dev tip, skipped when dev has not
-#                      moved since the last one; refreshes the rolling `dev-build`
-#                      prerelease so dev users have something to download.
+#                      moved since the last one that published in full; refreshes
+#                      the rolling `dev-build` prerelease so dev users have
+#                      something to download.
 #   workflow_dispatch  the same, on demand; refreshing the prerelease is opt-in.
 #                      Run it against a branch to prove a packaging change before
 #                      merge: `gh workflow run binaries.yml --ref <branch>`. A run
@@ -449,9 +450,18 @@ jobs:
   # The rolling `dev-build` prerelease: recreated, not appended to, so it always
   # holds exactly one night's artifacts and points at the commit they were built
   # from. Release builds never pass through here.
+  #
+  # It is also the nightly's memory: `plan` skips the whole run when this release's
+  # target already matches dev's tip. So every job that publishes for a night is a
+  # `needs` here, the arm64 image included. One that failed has to leave the sha
+  # unrecorded, or the next nightly reads the night as done and never retries it,
+  # and `:dev` keeps serving an arm64 layer older than its amd64 half until dev
+  # moves again. `plan` only ever clears `build` together with `publish`, so
+  # `docker-arm64` is skipped in exactly the cases this job's own `if` is already
+  # false, and requiring it costs nothing but that retry.
   publish-dev:
     name: Refresh the dev prerelease
-    needs: [plan, build, snap]
+    needs: [plan, build, snap, docker-arm64]
     if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
