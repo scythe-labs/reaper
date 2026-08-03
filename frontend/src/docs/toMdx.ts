@@ -87,7 +87,13 @@ function wrap(open: string, body: string, close: string): string {
  *
  *  No encoding renders an odd run — `c` and `c + 2` are the neighbors GFM can spell, never
  *  `c + 1` — so this refuses the cell instead of publishing a table that lost a column. Same
- *  call `manualPath` makes on an unmapped group: reject over invent. */
+ *  call `manualPath` makes on an unmapped group: reject over invent.
+ *
+ *  CodeQL reads the `replace` below as the sanitizer and reports the backslash it leaves alone
+ *  (`js/incomplete-sanitization`, dismissed as a false positive). The backslash was escaped one
+ *  call earlier, by `escapeText`; escaping it again here is not the missing half of that pass
+ *  but a second one, measured against remark-gfm as 14 of 18 round-trips broken. The query also
+ *  assumes untrusted input, and every cell here is typed doc content compiled into the app. */
 function cell(text: string): string {
   for (const part of text.split(/(`[^`]*`)/g)) {
     if (!part.startsWith("`")) continue;
