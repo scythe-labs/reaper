@@ -2855,3 +2855,92 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
+
+
+class TestTheScanRecordsTheListsItGatheredUnder:
+    """The write side of ``Snapshot.list_config_hash`` (#512).
+
+    ``api.routes.simulate`` refuses whenever the recorded value does not match the registry,
+    so a scan that stopped recording it would not fail loudly: it would leave the panel
+    permanently refusing, which reads as "run a scan" forever. The read side is pinned in
+    ``test_simulate_hardening``; this is the half that fills it in.
+    """
+
+    async def test_it_records_the_fingerprint_of_the_lists_it_synced(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from reaper.engine.policy import ProfileSettings
+        from reaper.services import list_config, scan_runner
+
+        captured: dict[str, Any] = {}
+
+        async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return SimpleNamespace(id=1, item_count=0, degraded=False)
+
+        class _CmTautulli:
+            async def __aenter__(self) -> _CmTautulli:
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+            async def users(self) -> list[dict[str, Any]]:
+                return []
+
+        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
+            return ([], [], _CmTautulli(), [], None)
+
+        async def fake_policies(session: Any) -> Any:
+            return (
+                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
+                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
+            )
+
+        async def fake_profile(session: Any) -> Any:
+            return profiles.ActiveProfile(ProfileSettings())
+
+        async def ok_sync(engine: Any, tautulli: Any) -> Any:
+            return SimpleNamespace(rows=0)
+
+        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
+            return []
+
+        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
+        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
+        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
+        monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
+        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(
+            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+        )
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        try:
+            # Unlike the degradation tests above, this one reads the registry back, so the
+            # tables have to exist rather than being allowed to fail soft.
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            await scan_runner.run_scan(
+                settings=settings,
+                session_factory=factory,
+                cache_engine=cache_engine,
+                box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
+            )
+            # Read back through the same helper the route compares with, so the assertion is
+            # that the two agree rather than that some hash was passed (rule 141).
+            async with factory() as session:
+                expected = await list_config.current_fingerprint(session)
+        finally:
+            await engine.dispose()
+
+        assert expected is not None, "the seeded registry has to be readable for this to mean it"
+        assert captured.get("list_config_hash") == expected

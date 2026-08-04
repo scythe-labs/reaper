@@ -390,6 +390,20 @@ class Snapshot(Base):
     differs, the frozen evidence is stale and a fresh scan is required. See
     ``PolicyBody.evidence_hash``."""
 
+    list_config_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    """The protection lists this scan gathered membership from
+    (``services.list_config.fingerprint``). The lists are not policy, so the hash above
+    cannot carry them, and every tier of the simulator reads evidence derived from them --
+    the replay through the frozen ``Facts.on_lists``, the threshold path through the stored
+    verdict that fact produced. When it differs from the registry as it stands now, the
+    operator changed which titles their keep rules protect and the panel refuses instead of
+    reporting numbers that predate the change (#512).
+
+    ``None`` on a snapshot written before this column, and read as *unknown* rather than as
+    "no lists" (rule 104): it matches no fingerprint, so the panel refuses until the next
+    scan. That is the same one-scan cost ``PolicyBody.evidence_hash`` documents, and it
+    heals the same way."""
+
     horizon_at: Mapped[UtcTimestamp]
     """The earliest watch history we hold. Persisted, not computed: media older than
     this has no evidence either way, and a fresh Tautulli install would otherwise make

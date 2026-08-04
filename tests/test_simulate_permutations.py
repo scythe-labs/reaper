@@ -74,6 +74,7 @@ from reaper.services.snapshot import effective_fate, judge_facts
 
 from . import _policy_lab as lab
 from ._auth import login
+from ._lists import seeded_fingerprint
 
 #: How many of the lab's movie shapes each snapshot carries: all 220 of them. The cap is
 #: stated rather than left implicit so a regenerated fixture that grows cannot quietly shrink
@@ -538,6 +539,9 @@ def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
     """Replace the stored scan with one taken under `policy`."""
     tmp.mkdir(parents=True, exist_ok=True)
     settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
+    # Before the sync session opens, for the reason the fixture's own docstring gives: two
+    # engines on one SQLite file is a lock waiting to happen.
+    list_hash = seeded_fingerprint(settings)
     engine = sa_create_engine(settings.sync_database_url)
     now = utcnow()
     with Session(engine) as session:
@@ -549,6 +553,10 @@ def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
             policy_hash=combine_hashes(policy.policy_hash(), DEFAULT_TV_POLICY.policy_hash()),
             scoring_hash=combine_hashes(policy.scoring_hash(), DEFAULT_TV_POLICY.scoring_hash()),
             evidence_hash=combine_hashes(policy.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()),
+            # What a scan records about the lists it gathered membership under. Omitting it
+            # would make every draft below refuse, which is the correct answer for a snapshot
+            # that cannot say (#512) and a useless one for a battery about the tiers.
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=len(rows),
             degraded=False,

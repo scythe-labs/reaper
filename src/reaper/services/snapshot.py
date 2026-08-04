@@ -570,6 +570,7 @@ async def scan(
     extra_degrade_reasons: Sequence[str] | None = None,
     on_progress: ProgressFn | None = None,
     allowed_sections: set[int] | None = None,
+    list_config_hash: str | None = None,
 ) -> Snapshot:
     """Gather, freeze, judge, persist. Read-only throughout.
 
@@ -887,6 +888,12 @@ async def scan(
         # each Candidate's facts_json without a re-scan (services.snapshot._judge_item freezes
         # them). Movie first, TV second, exactly like the other combined hashes.
         evidence_hash=combine_hashes(movie_policy.evidence_hash(), tv_policy.evidence_hash()),
+        # The lists this scan gathered membership from. Not a policy field and so not in the
+        # hash above, which is the whole reason it is recorded separately: a retagged or
+        # renamed list changes what every `on_list` rule protects without moving one byte of
+        # any policy body. `None` when the registry could not be read -- fail-closed, and the
+        # scan is degraded and un-plannable in that case anyway.
+        list_config_hash=list_config_hash,
         horizon_at=context.horizon,
         item_count=len(items) + len(season_judgments),
         degraded=context.degraded,

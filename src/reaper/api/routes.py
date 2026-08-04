@@ -104,7 +104,14 @@ from reaper.engine.policy import (
 from reaper.engine.preview import UnprobableSignalError, probe_signal
 from reaper.engine.signals import SignalConfig
 from reaper.engine.verdict import decide_verdict
-from reaper.services import app_settings, backup, season_evidence, season_scan, whitelist
+from reaper.services import (
+    app_settings,
+    backup,
+    list_config,
+    season_evidence,
+    season_scan,
+    whitelist,
+)
 from reaper.services.condemned import (
     MATCH_UNREADABLE,
     effective_condemned,
@@ -2339,12 +2346,19 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
        ``PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``: a weight, a rating bar, a custom condemn
        rule, a graded keep, a protect condition, a protection switched on or off, or any of
        the nine season rules. Still zero API calls.
-    3. Otherwise the edit changed what a scan would *gather* (a keep tag, the popularity
-       window) -- the frozen evidence is stale, so it **returns nothing but the reason**. A
-       plausible wrong answer is worse than a blank: the owner acts on it.
+    3. Otherwise the edit changed what a scan would *gather* (the popularity window) -- the
+       frozen evidence is stale, so it **returns nothing but the reason**. A plausible wrong
+       answer is worse than a blank: the owner acts on it.
 
     Tier 2 needs a snapshot that actually froze its evidence: a pre-facts-freeze snapshot
     has a null ``evidence_hash`` or rows with no ``facts_json``, and falls to tier 3.
+
+    **One refusal sits above all three**, because it is not about the policy at all: the
+    protection lists decide which titles an ``on_list`` rule keeps, they are not policy
+    fields, and both tiers read evidence derived from them. So a registry that no longer
+    fingerprints the way the snapshot recorded refuses outright (``list_config.fingerprint``,
+    #512), whatever the edit was -- including no edit at all, which is the case where the
+    operator has changed a list and the panel would otherwise restate pre-edit numbers.
 
     **The TV lane has a second precondition the hash cannot express.** A season's guard is
     re-derived from a per-show bundle the scan freezes beside the Facts
@@ -2426,6 +2440,16 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             .all()
         )
         decisions = await whitelist.overrides(session)
+
+        # Above the tier split, because BOTH tiers below read evidence derived from list
+        # membership: the replay through the frozen `Facts.on_lists`, the threshold path
+        # through the stored verdict that fact produced. The lists are not policy, so no hash
+        # either tier compares can notice that the operator retagged, renamed, repointed or
+        # switched one off -- and the panel would report the membership the scan froze while
+        # calling it exact (#512). A snapshot predating the column carries `None`, which
+        # matches no fingerprint and so refuses: unknown, never "no lists" (rule 104).
+        if snapshot.list_config_hash != await list_config.current_fingerprint(session):
+            return _refused(SimStale.GATHERS_DIFFERENTLY, body.media_type)
 
         # Three tiers of re-decide, most exact first:
         #  1. Scoring behavior unchanged -> re-compare the STORED score against the new

@@ -526,3 +526,106 @@ class TestTheRoutes:
 
         assert r.status_code == 400
         assert "no longer exists" in r.json()["detail"]
+
+
+def _definition(**overrides: object) -> list_config.ListDefinition:
+    base: dict[str, object] = {
+        "id": 1,
+        "name": "Keep",
+        "source": ListSource.ARR_TAG,
+        "config": {"tags": ["keep"], "match": "any"},
+        "enabled": True,
+    }
+    return list_config.ListDefinition(**{**base, **overrides})  # type: ignore[arg-type]
+
+
+class TestTheRegistryFingerprint:
+    """What a scan records so the simulator can tell its evidence went stale (#512).
+
+    ``Snapshot.list_config_hash`` is this value, and ``api.routes.simulate`` refuses when it
+    no longer matches. Every assertion below is about which edits an operator can make that
+    change what a scan would GATHER, so the cases are chosen from that question rather than
+    from the fields the function happens to read.
+    """
+
+    def test_every_edit_that_moves_membership_moves_it(self) -> None:
+        """One table, written from what each edit does to a title's membership.
+
+        Retagging changes which titles match; repointing changes where they are read from;
+        the NAME changes what a keep rule matches, because ``lists.on_list_fact`` joins the
+        names rather than the ids; and switching one off withdraws it altogether.
+        """
+        base = _definition()
+        moved = {
+            "retagged": _definition(config={"tags": ["other"], "match": "any"}),
+            "match mode": _definition(config={"tags": ["keep"], "match": "all"}),
+            "renamed": _definition(name="Keep Forever"),
+            "repointed": _definition(source=ListSource.PLEX_WATCHLIST, config={}),
+            "switched off": _definition(enabled=False),
+        }
+        for what, edited in moved.items():
+            assert list_config.fingerprint([edited]) != list_config.fingerprint([base]), (
+                f"{what} left the fingerprint alone"
+            )
+
+    def test_editing_a_list_that_is_switched_off_costs_no_scan(self) -> None:
+        """A disabled list gathers nothing, so nothing it says can go stale.
+
+        The enabled rows are what the sync builds providers from, so this is the difference
+        between a fingerprint that refuses when membership can have changed and one that
+        refuses whenever any row was touched -- and a panel that refuses too often is one an
+        operator stops reading.
+        """
+        off = _definition(enabled=False)
+        retagged_while_off = _definition(enabled=False, config={"tags": ["other"]})
+
+        assert list_config.fingerprint([off]) == list_config.fingerprint([retagged_while_off])
+
+    def test_the_answer_does_not_depend_on_row_order(self) -> None:
+        first, second = _definition(id=1), _definition(id=2, name="Other")
+
+        assert list_config.fingerprint([first, second]) == list_config.fingerprint([second, first])
+
+    def test_an_empty_registry_still_answers(self) -> None:
+        """An install with no lists has a fingerprint like any other, so its snapshots
+        compare rather than falling into the unknown branch that refuses forever."""
+        assert list_config.fingerprint([]) != ""
+        assert list_config.fingerprint([]) == list_config.fingerprint([])
+        assert list_config.fingerprint([]) != list_config.fingerprint([_definition()])
+
+    @pytest.mark.anyio
+    async def test_a_registry_that_cannot_be_read_answers_none(self, tmp_path: Path) -> None:
+        """Fail closed: unknown, never "no lists configured" (rules 65/91).
+
+        ``None`` matches no recorded fingerprint, so the caller refuses -- where a fallback
+        to the empty registry's hash would match any install that happens to have no lists
+        and preview against membership nobody could confirm.
+
+        The same row is read twice, readable then not, so the ``None`` is pinned to the
+        decode failure and not to anything else about this database (rule 141).
+        """
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        sync_engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(sync_engine)
+        with sync_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
+                    " created_at) VALUES ('Keep', 'arr_tag', '{\"tags\": [\"keep\"]}', 1, 0, 0)"
+                )
+            )
+        sync_engine.dispose()
+
+        engine = create_engine(settings)
+        try:
+            async with create_session_factory(engine)() as session:
+                readable = await list_config.current_fingerprint(session)
+            assert readable is not None, "a registry that reads fine has to answer"
+
+            with sa_create_engine(settings.sync_database_url).begin() as conn:
+                conn.execute(text("UPDATE list_config SET config_json = 'not json'"))
+
+            async with create_session_factory(engine)() as session:
+                assert await list_config.current_fingerprint(session) is None
+        finally:
+            await engine.dispose()

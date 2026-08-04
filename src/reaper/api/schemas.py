@@ -784,16 +784,20 @@ class SimStale(enum.StrEnum):
     """Why the simulator would not answer -- as a value, not as a sentence.
 
     Three refusals with three different remedies, and until this existed the panel showed
-    one paragraph naming every cause at once, so nine season controls, the keep tags and the
-    popularity window shared a sentence that could only be right about one of them. The
+    one paragraph naming every cause at once, so nine season controls, the protection lists
+    and the popularity window shared a sentence that could only be right about one of them. The
     operator's copy lives in ``PolicySimulator.tsx`` and branches on this; the ``stale_reason``
     beside it is the same fact as a sentence, for a reader of the API (rule 66: the frontend
     handles an id it does not know by falling back to that sentence, never by guessing).
     """
 
     GATHERS_DIFFERENTLY = "gathers_differently"
-    """The edit moved what a scan would collect -- a keep tag, or the span watching counts
-    over. The frozen evidence answers a different question, and only a scan fixes it."""
+    """What a scan would collect no longer matches what this one did -- the span watching
+    counts over, or the protection lists an ``on_list`` rule reads. The frozen evidence
+    answers a different question, and only a scan fixes it.
+
+    The lists reach this without any policy edit at all, which is why the sentence says the
+    numbers do not match the last scan rather than naming something the operator changed."""
 
     SEASONS_NOT_RECORDED = "seasons_not_recorded"
     """This snapshot holds no per-show season-prune evidence, holds some it cannot read, or

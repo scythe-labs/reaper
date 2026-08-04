@@ -19,6 +19,7 @@ nothing.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Sequence
@@ -27,7 +28,7 @@ from typing import Any, Literal
 
 import structlog
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
@@ -149,6 +150,49 @@ async def definitions(session: AsyncSession, *, strict: bool = False) -> list[Li
             )
         )
     return out
+
+
+def fingerprint(definitions: Sequence[ListDefinition]) -> str:
+    """Identifies what these definitions would make a scan GATHER into ``Facts.on_lists``.
+
+    The lists are not policy, so no policy hash can carry them: an operator who retags a list,
+    repoints it, renames it or switches it off changes which titles their ``on_list`` rules
+    protect without touching a policy body. ``PolicyBody.evidence_hash`` used to cover exactly
+    this, back when the tags were ``keep_tags`` on the body; moving membership into gathered
+    evidence moved it out from under that hash, and the simulator went on replaying the
+    membership a scan froze while calling the answer exact (#512).
+
+    Only the ENABLED rows, because a disabled list gathers nothing: editing one changes no
+    membership and must not cost a scan, while disabling one drops it from this set and
+    rightly does. Name is in because a keep rule matches on it (``lists.on_list_fact`` joins
+    the names, not the ids), so a rename is a membership change even when the list is
+    otherwise untouched. Sorted by id, so the answer does not depend on row order.
+    """
+    payload = [
+        {
+            "id": d.id,
+            "name": d.name,
+            "source": d.source.value,
+            "config": d.config,
+        }
+        for d in sorted((d for d in definitions if d.enabled), key=lambda d: d.id)
+    ]
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+async def current_fingerprint(session: AsyncSession) -> str | None:
+    """:func:`fingerprint` over the stored registry, or ``None`` when it cannot be read.
+
+    ``None`` is the fail-closed answer and never "no lists configured" (rules 65/91): a
+    caller comparing it against a snapshot's recorded value gets a mismatch and refuses,
+    which is what an unreadable protection registry has to mean.
+    """
+    try:
+        return fingerprint(await definitions(session, strict=True))
+    except (SQLAlchemyError, ListRegistryUnreadableError):
+        log.warning("list_config.fingerprint_unreadable")
+        return None
 
 
 #: What a fresh install starts with: the two lists the default policy's keep rules name.

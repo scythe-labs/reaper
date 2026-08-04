@@ -51,6 +51,7 @@ from reaper.services import retention
 from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
+from ._lists import seeded_fingerprint
 
 # No "whitelisted" row: the gate is retired (list membership protects through ``on_list``
 # keep rules), and the save boundary refuses it -- test_simulate_hardening pins that.
@@ -135,6 +136,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -142,6 +146,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=4,
             degraded=False,
@@ -536,6 +541,9 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -543,6 +551,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=4,
             degraded=False,
@@ -679,6 +688,9 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     )
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -686,6 +698,7 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=1,
             degraded=False,

@@ -823,6 +823,13 @@ async def _run_scan_locked(
             extra_degrade_reasons=pre_scan_degradations,
             on_progress=on_progress,
             allowed_sections=allowed_sections,
+            # Off the definitions this scan actually synced against, never a second read:
+            # a list edited between the two would otherwise be recorded as the configuration
+            # a membership was gathered under when it was not. `None` when they could not be
+            # read at all, which the branch above already degraded the scan for.
+            list_config_hash=(
+                None if list_definitions is None else list_config.fingerprint(list_definitions)
+            ),
         )
         gather_ms = round((time.monotonic() - gather_started) * 1000)
         commit_started = time.monotonic()
