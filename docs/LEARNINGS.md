@@ -2884,6 +2884,41 @@ decode *alone* that was 1.6x that. The general shape: **a cost measured on the w
 can construct projects a ceiling, and reading it as a forecast argues for optimizations the real
 distribution does not need.**
 
+## An invented XML element renders nothing and reports nothing (2026-08-04)
+
+The Unraid channel picker was built against two beliefs about Community Applications, both
+wrong, and a hygiene test was written that enforced them. **Read against the plugin source
+instead** (`Squidly271/community.applications`):
+
+- **CA does not discard a `<Branch>` whose `<Tag>` matches the tag on `<Repository>`.**
+  `include/exec.php` expands one sub-template per branch; the only branch it skips is one that
+  spells `<Tag>` twice inside a single `<Branch>`, which arrives as an array. **539 of the 695
+  branch-using templates in the live app feed list their repository's own tag as a branch**, the
+  count that was read as 539 broken templates and is in fact the convention working. The
+  denominator was inherited as 585 and is wrong too: a number quoted to support a claim is worth
+  re-running, because whoever wrote it was not testing it.
+- **`<DefaultTagDescription>` is read by nothing.** The name appears in no file of the plugin;
+  the Default row's text is hardcoded in `include/helpers.php` as "Install Using The Template's
+  Default Tag (`:<tag>`)". Eight templates in the feed ship the field, so the invention is
+  copied, not original.
+
+Together they cost the release channel its description entirely: no `<Branch>` row to hold one,
+and the field written in its place rendering nowhere. **Nothing reported it.** The template
+parsed, the container installed, the picker appeared, and the hygiene test was green — because
+the test asserted the belief rather than the plugin. An element a vendor does not read is
+indistinguishable from one it does, from inside this repository.
+
+**A vendor contract is verified against the vendor's code or its live data, never against what
+its docs imply.** The forum schema post documents `<Branch>` in one line and says nothing about
+either question. Both answers took one `grep` of a shallow clone and one pass over
+`applicationFeed.json`, which is public and carries every template's parsed elements.
+
+**The feed is the delivery mechanism, and it is not the merge.** `assets.ca.unraid.net` is
+rebuilt on CA's schedule, commonly every few hours but observed with gaps over two days. A
+template change is live on `dev` immediately and reaches an operator's install page only at the
+next rebuild, so "the picker is not there" is the expected reading for hours after a merge, and
+the feed's own `last_updated` against the merge time is what separates that from a defect.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

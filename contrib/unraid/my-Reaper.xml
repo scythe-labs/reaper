@@ -10,16 +10,22 @@
   The package is public, so the pull needs no login.
 
   One entry, two channels. Community Applications reads the <Branch> entries and
-  offers a "Choose A Branch To Install" picker: a Default row that installs
-  <Repository> as written, then one row per <Branch>. The selected tag REPLACES
-  the one on <Repository> rather than appending to it, so the release channel is
-  named once, here, as that element's tag.
+  offers a "Choose A Branch To Install" table: a Default row that installs
+  <Repository> as written, then one row per <Branch>, each showing its <Tag>
+  beside its <TagDescription>. The selected tag REPLACES the one on <Repository>
+  rather than appending to it (include/exec.php builds `$masterRepository[0] . ":"
+  . $branch['Tag']`), so the channel is named once, here, as that element's tag.
 
-  Only the non-default tags get a <Branch>. CA discards a branch whose tag equals
-  the repository's tag (include/exec.php: the `$branch['Tag'] == $masterRepository[1]`
-  arm), so a <Branch> for :latest would be dropped and its <TagDescription> would
-  never reach a screen. The release channel is described by <DefaultTagDescription>
-  instead, which is the field that row reads.
+  The repository's own tag gets a <Branch> too. CA does not drop a branch for
+  matching it: the one branch exec.php skips is a <Branch> that spells <Tag>
+  twice, and 539 templates in the live feed list their repository's tag exactly
+  this way. Drop that row and the release channel keeps only CA's Default row,
+  whose text is hardcoded in include/helpers.php ("Install Using The Template's
+  Default Tag") and which no field in this file can describe.
+
+  Every element here is one CA reads. A plausible-looking invention is not inert:
+  <DefaultTagDescription> shipped in this file and rendered nowhere, because that
+  name appears in no CA source file. docs/LEARNINGS.md carries both measurements.
 
   :latest and :dev are the only two tags that outlive a week in the registry
   (.github/workflows/registry-retention.yml sweeps the rest), so they are the
@@ -32,10 +38,13 @@
   <Name>Reaper</Name>
   <Repository>ghcr.io/scythe-labs/reaper:latest</Repository>
   <Registry>https://github.com/scythe-labs/reaper/pkgs/container/reaper</Registry>
-  <DefaultTagDescription>Follows releases. Use this one.</DefaultTagDescription>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Follows releases. Use this one.</TagDescription>
+  </Branch>
   <Branch>
     <Tag>dev</Tag>
-    <TagDescription>Follows daily development, for testing what is coming. Dev builds change often. Releases are the steadier channel.</TagDescription>
+    <TagDescription>Follows daily development, for testing what is coming. Back up your data folder first: a dev build can upgrade the database past what a release build reads, so moving back needs that backup.</TagDescription>
   </Branch>
   <Network>bridge</Network>
   <MyIP/>
