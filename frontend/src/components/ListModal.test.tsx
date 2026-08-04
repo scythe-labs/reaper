@@ -42,12 +42,13 @@ const PLEX_DEF: ListConfig = {
 function renderModal(editing: ListConfig | null = null) {
   const onClose = vi.fn();
   const onSaved = vi.fn();
+  const onChanged = vi.fn();
   render(
     <QueryClientProvider client={testQueryClient()}>
-      <ListModal editing={editing} onClose={onClose} onSaved={onSaved} />
+      <ListModal editing={editing} onClose={onClose} onSaved={onSaved} onChanged={onChanged} />
     </QueryClientProvider>,
   );
-  return { onClose, onSaved };
+  return { onClose, onSaved, onChanged };
 }
 
 /** Through the picker to one type's form. Adding always starts on the picker now. */
@@ -434,7 +435,12 @@ describe("editing a list", () => {
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });
 
-  it("saves the rename with the form's body", async () => {
+  it("sends only the name when only the name changed", async () => {
+    // `ListConfigPatch` is omitted-means-keep, and this form seeds ONCE from a
+    // `lists-configured` row the cache may have held for up to its 30s staleTime with focus
+    // refetching off. Sending `config` back unchanged is still a WRITE of a value read
+    // minutes ago, so a rename here silently reverted a collection another admin had
+    // repointed in the meantime (the `cached-value-drives-a-write` shape of #203/#204).
     const user = userEvent.setup();
     renderModal(PLEX_DEF);
 
@@ -443,11 +449,47 @@ describe("editing a list", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
+      expect(apiMock.editList).toHaveBeenCalledWith(2, { name: "Films worth keeping" }),
+    );
+  });
+
+  it("sends the config when a config field changed", async () => {
+    // The other half, and the reason this is a dirty check rather than "never send config":
+    // an edit to the collection has to reach the server.
+    const user = userEvent.setup();
+    renderModal(PLEX_DEF);
+
+    await user.clear(await screen.findByLabelText("Collection"));
+    await user.type(screen.getByLabelText("Collection"), "Keep these");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
       expect(apiMock.editList).toHaveBeenCalledWith(2, {
-        name: "Films worth keeping",
-        config: { library: "Films", collection: "Never Reap" },
+        name: "Never Reap",
+        config: { library: "Films", collection: "Keep these" },
       }),
     );
+  });
+
+  it("re-scans once a save lands, because a list edit re-scores the library", async () => {
+    const user = userEvent.setup();
+    const { onChanged } = renderModal(PLEX_DEF);
+
+    await user.clear(await screen.findByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Films worth keeping");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("stops the name at the length the server refuses", async () => {
+    // The schema's `max_length` is checked before `_clean_name` runs, so its sentence
+    // ("That name is too long. Keep it under 100 characters.") could never fire and the
+    // operator met Pydantic's "String should have at most 100 characters" instead (rule 21).
+    // Reachable by paste, since nobody types 101 characters.
+    renderModal(PLEX_DEF);
+
+    expect(await screen.findByLabelText("Name")).toHaveAttribute("maxLength", "100");
   });
 });
 

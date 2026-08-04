@@ -34,6 +34,7 @@ const { apiMock } = vi.hoisted(() => ({
     removeList: vi.fn(),
     plexLibraries: vi.fn(),
     syncPlexLibraries: vi.fn(),
+    startScan: vi.fn(),
   },
 }));
 vi.mock("../api", () => ({ api: apiMock }));
@@ -133,6 +134,7 @@ beforeEach(() => {
   apiMock.plexLibraries.mockResolvedValue([]);
   apiMock.syncPlexLibraries.mockResolvedValue([]);
   apiMock.syncLists.mockResolvedValue({ checked: 1, failed: 0, plex_error: null });
+  apiMock.startScan.mockResolvedValue({ running: true, followup_queued: false });
 });
 
 describe("the Lists panel", () => {
@@ -615,6 +617,39 @@ describe("the row actions", () => {
     await user.click(await screen.findByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalledWith({ list_id: 2 }));
+  });
+
+  it("re-scans after a save, so the queue stops showing fates from the old lists", async () => {
+    // A check refreshes MEMBERSHIP, which is not the same thing: the queue's fates were
+    // scored under the lists as they were, and nothing here re-scored them. So the operator
+    // added a keep list, saw it protecting 40 titles, and the queue went on offering those
+    // titles for deletion with no stale notice, until the executor's list interlock refused
+    // the approved plan at the far end. `PolicyEditor` starts a scan on save for exactly this
+    // class of change, and a list is the half of the policy that moved out of the policy body.
+    const user = userEvent.setup();
+    seed([PLEX_DEF], []);
+    apiMock.editList.mockResolvedValue({ ...PLEX_DEF, name: "Films worth keeping" });
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Never Reap" }));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(apiMock.startScan).toHaveBeenCalled());
+  });
+
+  it("re-scans after a removal too", async () => {
+    // Removing takes the keep rules naming the list with it, so it changes what is protected
+    // just as much as adding does, and it hands back no row to check.
+    const user = userEvent.setup();
+    seed([PLEX_DEF], []);
+    apiMock.removeList.mockResolvedValue(undefined);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Never Reap" }));
+    await user.click(await screen.findByRole("button", { name: "Remove list…" }));
+    await user.click(await screen.findByRole("button", { name: "Remove list" }));
+
+    await waitFor(() => expect(apiMock.startScan).toHaveBeenCalled());
   });
 
   it("says so when Plex could not be reached, since no row can", async () => {

@@ -26,10 +26,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useRef, useState, type ReactNode } from "react";
 
+import { announce } from "../announce";
 import { api, type ListConfig, type ListPolicyUse, type ProtectionList } from "../api";
 import { useBackGuard } from "../backnav";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
+import { RESCAN_HEADING, RESCAN_QUEUED_LEAD } from "./PolicySimulator";
 
 /** How long ago, in the app's usual plain phrasing. Null stamps are handled by the caller,
  *  which has a whole sentence to say about a list that has never checked in. */
@@ -412,6 +414,28 @@ export function ListsPanel({
     () => !blockCloseRef.current,
   );
 
+  // Adding, editing or removing a list changes which titles are protected, and the queue is
+  // showing fates scored under the lists as they were. Nothing here re-scores them: a check
+  // refreshes MEMBERSHIP, which is a different thing, so the queue kept its stale fates with
+  // no stale notice and an approved plan met the executor's list interlock at the far end.
+  // `PolicyEditor` starts a scan on save for exactly this class of change, and a list is the
+  // half of the policy that moved out of the policy body (rules 72, 144).
+  //
+  // It lives on the panel rather than in the modal because the modal is unmounting: a
+  // mutation started on the way out loses the surface that would report it. Idempotent
+  // server-side, so a scan already running is simply followed.
+  const startScan = useMutation({
+    mutationFn: () => api.startScan(),
+    onSuccess: (started) => {
+      queryClient.setQueryData(["scanStatus"], started);
+      // Spoken, because starting a scan is otherwise invisible from this screen: the
+      // progress it drives is on another tab. Same two sentences `PolicyEditor` says, from
+      // the panel that owns them, and branching for the same reason -- a scan that was
+      // already running is scoring the lists as they were before this edit.
+      announce(started.followup_queued ? RESCAN_QUEUED_LEAD : `${RESCAN_HEADING}.`);
+    },
+  });
+
   const check = useMutation({
     mutationFn: (target: CheckTarget) => api.syncLists(target === "all" ? {} : { list_id: target }),
     // Rule 85: the row's chip is the result, and it is only true once the refetch has landed.
@@ -609,6 +633,10 @@ export function ListsPanel({
           // back, a count or the source's own refusal, which is the answer to the question
           // they were really asking when they saved.
           onSaved={(list) => check.mutate(list.id)}
+          // Every path that changed the registry, removal included: what a list keeps is
+          // scored into the queue's fates, so the library has to be re-judged whether a list
+          // arrived, moved, or left.
+          onChanged={() => startScan.mutate()}
         />
       )}
     </div>

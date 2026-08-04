@@ -40,6 +40,12 @@ type BlockedField = "name" | "library" | "collection" | "tags" | "imdb";
 
 const BLOCKED_ID = "list-modal-blocked";
 
+/** How long a list name may be, the number `ListConfigIn.name` and `list_config._clean_name`
+ *  both hold. Exported so the pairing test can read it rather than transcribe it: the
+ *  schema's bound is checked first, so `_clean_name`'s "That name is too long" only ever
+ *  reaches an operator who got past this box (rules 131, 144). */
+export const LIST_NAME_MAX = 100;
+
 /** What the operator is told each source is, in their words. */
 const SOURCE_NAMES: Record<Source, string> = {
   plex_collection: "Plex collection",
@@ -94,6 +100,7 @@ export function ListModal({
   editing,
   onClose,
   onSaved,
+  onChanged,
   blockCloseRef,
 }: {
   editing: ListConfig | null;
@@ -104,6 +111,14 @@ export function ListModal({
    *  than here: this modal is unmounting, and the row already owns a check's whole reporting
    *  surface, its busy button and its own error line. */
   onSaved?: ((list: ListConfig) => void) | undefined;
+  /** Called once the registry has actually changed, by every path that changes it: add,
+   *  edit and remove alike. Separate from `onSaved` because removing changes what protects
+   *  the library just as much as saving does and hands back no row to check.
+   *
+   *  The panel does the acting, for the same reason the check runs there: this modal is
+   *  unmounting, and a mutation started on the way out loses the surface that would report
+   *  it. */
+  onChanged?: (() => void) | undefined;
   /** The panel's mirror of `canClose`, so its Back guard refuses exactly what the scrim,
    *  Escape and the ✕ refuse rather than a stale copy of one of the reasons (rule 80). */
   blockCloseRef?: React.MutableRefObject<boolean> | undefined;
@@ -197,9 +212,35 @@ export function ListModal({
     return {};
   };
 
+  /** Whether any configuration field has moved since the form was seeded.
+   *
+   *  `ListConfigPatch` is omitted-means-keep and `list_config.update` replaces only the
+   *  fields it is given, so a save that sends `config` at all writes the whole thing back.
+   *  This form seeds ONCE, from a `lists-configured` row the cache may have held for a
+   *  while: `main.tsx` sets `refetchOnWindowFocus: false` with a 30 second `staleTime`, and
+   *  nothing refetches between the panel rendering and this modal opening. So a rename typed
+   *  against a stale row silently reverted a collection someone else had repointed, or tags
+   *  they had changed, in another tab (the `cached-value-drives-a-write` shape of #203/#204).
+   *
+   *  Compared field by field against the same expressions that seeded each piece of state
+   *  (rule 39: a dirty check compares canonical forms, and these ARE the canonical forms --
+   *  a raw compare against `editing.config` would read a defaulted `match` as an edit). */
+  const configDirty =
+    source !== (editing?.source ?? source) ||
+    preset !== (editing?.config.preset ?? null) ||
+    library !== (editing?.config.library ?? "") ||
+    collection !== (editing?.config.collection ?? "") ||
+    imdbId !== (editing?.config.list_id ?? "") ||
+    match !== (editing?.config.match ?? "any") ||
+    tags.join(" ") !== (editing?.config.tags ?? []).join(" ");
+
   const save = useMutation({
     mutationFn: async () => {
-      if (editing) return api.editList(editing.id, { name, config: body() });
+      // Omitted, not sent unchanged: sending it is what makes this a write, and a write of
+      // a value read minutes ago is the one that loses somebody else's edit.
+      if (editing) {
+        return api.editList(editing.id, configDirty ? { name, config: body() } : { name });
+      }
       return api.addList(name, source, body());
     },
     onSuccess: async (saved) => {
@@ -216,6 +257,7 @@ export function ListModal({
       // The server's row, not the form's fields: it carries the id, and it is the cleaned
       // copy the save actually stored (rule 39).
       onSaved?.(saved);
+      onChanged?.();
       onClose();
     },
   });
@@ -229,6 +271,7 @@ export function ListModal({
         queryClient.invalidateQueries({ queryKey: ["lists"] }),
         queryClient.invalidateQueries({ queryKey: ["policy"] }),
       ]);
+      onChanged?.();
       onClose();
     },
   });
@@ -440,6 +483,14 @@ export function ListModal({
               onChange={(e) => setName(e.target.value)}
               placeholder="Never Reap"
               autoFocus={!editing}
+              // The same 100 the schema and `_clean_name` bound, so the operator meets the
+              // limit as a box that stops taking characters rather than as Pydantic's
+              // "String should have at most 100 characters" (rule 21): the schema's bound is
+              // checked before the service runs, so the sentence written for this refusal
+              // could never fire. Reachable by paste without it, since nothing here typed
+              // 101 characters (rule 131: producer and consumer read one number, and
+              // `test_list_config.py` is where the two are held together).
+              maxLength={LIST_NAME_MAX}
               aria-describedby={describedBy("name")}
             />
           </label>

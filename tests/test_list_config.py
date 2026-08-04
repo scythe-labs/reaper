@@ -319,6 +319,49 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
                 "trip. Edit both, or drop the browser-side check."
             )
 
+    def test_the_name_length_is_one_number_in_three_places(self) -> None:
+        """The one refusal the modal ENFORCES rather than repeating, and the reason it has to.
+
+        ``_clean_name`` writes the sentence an operator should read, and it can never fire:
+        both schemas bound ``name`` at 100 and FastAPI validates before the route runs, so a
+        101-character name comes back as Pydantic's "String should have at most 100
+        characters", which ``api.ts``'s ``reason()`` joins into "The list wasn't saved: …"
+        (rule 21). The schema bound stays (rule 95) and the box stops taking characters at
+        the same number instead, which makes the state unreachable from the UI. Nobody types
+        101 characters; a paste gets there in one go.
+
+        Three declarations of one number, held together here rather than by a comment asking
+        a future author to remember the other two (rules 131, 144).
+        """
+        from reaper.api.schemas import ListConfigIn, ListConfigPatch
+
+        limit = 100
+        too_long = "x" * (limit + 1)
+        with pytest.raises(list_config.ListConfigError, match="too long"):
+            list_config._clean_name(too_long)
+        assert list_config._clean_name("x" * limit) == "x" * limit
+
+        for model in (ListConfigIn, ListConfigPatch):
+            bounds = [
+                m.max_length
+                for m in model.model_fields["name"].metadata
+                if hasattr(m, "max_length")
+            ]
+            assert bounds == [limit], f"{model.__name__}.name bounds the length at {bounds}"
+
+        modal = (
+            Path(__file__).resolve().parents[1] / "frontend/src/components/ListModal.tsx"
+        ).read_text(encoding="utf-8")
+        assert f"export const LIST_NAME_MAX = {limit};" in modal, (
+            "services/list_config.py refuses a name longer than 100 and api/schemas.py 422s "
+            "before it can, so frontend/src/components/ListModal.tsx caps the box at the same "
+            "number. Move all three, or the operator meets Pydantic's wording instead."
+        )
+        assert "maxLength={LIST_NAME_MAX}" in modal, (
+            "frontend/src/components/ListModal.tsx declares LIST_NAME_MAX and no longer binds "
+            "it to the name input, so the length 422 is reachable by paste again."
+        )
+
 
 class TestWhatIsStored:
     async def test_a_saved_tag_list_keeps_its_tags_and_match(self, session: AsyncSession) -> None:
