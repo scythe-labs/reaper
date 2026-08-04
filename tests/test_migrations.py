@@ -565,9 +565,11 @@ def test_the_seeded_keep_collection_is_readable_through_the_orm(
     with Session(engine) as session:
         rows = session.execute(select(ListConfig)).scalars().all()
 
-    # The Arr-style migration behind the seed adds the tag list beside it -- see
-    # TestTheArrStyleListsMigration for that half.
-    assert [r.name for r in rows] == ["Never Reap", "Titles you've tagged"]
+    # The Arr-style migration behind the seed adds the tag list AND the IMDb list beside
+    # it: it sets the seeded flag, so it must leave every list the default policy's keep
+    # rules name, or a fresh install boots with a rule naming a list that does not exist
+    # (found by driving one). See TestTheArrStyleListsMigration for the rest.
+    assert [r.name for r in rows] == ["Never Reap", "Titles you've tagged", "IMDb Top 250"]
     assert isinstance(rows[0].created_at, datetime)
     assert rows[0].source == "plex_collection"
     # The library it points at is the one the code used to hardcode, so the first scan after

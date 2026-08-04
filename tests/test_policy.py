@@ -3740,9 +3740,27 @@ class TestConvertListProtections:
 
     @staticmethod
     def _convert(
-        raw: object, *, tag: str | None = "Tagged", imdb: str | None = "Top"
+        raw: object,
+        *,
+        tag: str | None = "Tagged",
+        imdb: str | None = "Top",
+        collections: tuple[str, ...] = (),
     ) -> dict[str, object] | None:
-        return convert_list_protections(raw, tag_list_name=tag, imdb_list_name=imdb)
+        return convert_list_protections(
+            raw,
+            tag_list_name=tag,
+            imdb_list_name=imdb,
+            collection_list_names=collections,
+        )
+
+    def test_every_curated_by_hand_list_gets_its_own_rule(self) -> None:
+        """The whitelisted gate covered the Plex collection and watchlist definitions as
+        much as the keep tags, so each existing one converts to its own rule -- or an
+        upgrade would quietly withdraw the collections' cover (rule 118 for the new arm)."""
+        converted = self._convert(self._legacy(), collections=("Never Reap", "My watchlist"))
+        assert converted is not None
+        assert self._rules(converted) == ["Tagged", "Never Reap", "My watchlist", "Top"]
+        assert "whitelisted" not in self._gate_ids(converted)
 
     @staticmethod
     def _rules(body: dict[str, object]) -> list[str]:

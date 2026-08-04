@@ -128,7 +128,35 @@ def upgrade() -> None:
                     },
                 )
 
-    # 4. The defaults are considered seeded: this install has its own rows now, and the
+    # 4. The IMDb list, when none exists. The default policy's keep rule names "IMDb Top
+    # 250", and this migration sets the seeded flag below, so skipping this here would
+    # leave every install whose only row is the previous migration's "Never Reap" seed
+    # with a rule naming a list that does not exist -- found by driving a fresh install.
+    has_imdb = int(
+        conn.execute(
+            sa.text("SELECT COUNT(*) FROM list_config WHERE source = 'imdb'")
+        ).scalar_one()
+        or 0
+    )
+    if not has_imdb:
+        taken = {
+            str(r[0]).casefold()
+            for r in conn.execute(sa.text("SELECT name FROM list_config")).fetchall()
+        }
+        if "imdb top 250" not in taken:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO list_config "
+                    "(name, source, config_json, enabled, built_in, created_at) "
+                    "VALUES ('IMDb Top 250', 'imdb', :config, 1, 0, :now)"
+                ),
+                {
+                    "config": json.dumps({"preset": "top250"}),
+                    "now": int(datetime.now(UTC).timestamp()),
+                },
+            )
+
+    # 5. The defaults are considered seeded: this install has its own rows now, and the
     # first read must not add a second shipped copy beside them.
     now = int(datetime.now(UTC).timestamp())
     existing = conn.execute(

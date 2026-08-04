@@ -244,8 +244,13 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     # the silent substitution rule 65 forbids. Composed, never raced, like the pair below.
     lists_migrated = False
     if has_legacy_list_protections(raw):
-        tag_name, imdb_name = await _conversion_list_names(session)
-        converted = convert_list_protections(raw, tag_list_name=tag_name, imdb_list_name=imdb_name)
+        tag_name, imdb_name, own_names = await _conversion_list_names(session)
+        converted = convert_list_protections(
+            raw,
+            tag_list_name=tag_name,
+            imdb_list_name=imdb_name,
+            collection_list_names=own_names,
+        )
         if converted is not None:
             raw = converted
             lists_migrated = True
@@ -300,7 +305,9 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
         return ActivePolicy(default, "default", fell_back=True)
 
 
-async def _conversion_list_names(session: AsyncSession) -> tuple[str | None, str | None]:
+async def _conversion_list_names(
+    session: AsyncSession,
+) -> tuple[str | None, str | None, tuple[str, ...]]:
     """The current names of the lists ``convert_list_protections``'s rules must point at:
     the tag list the keep tags became, and the shipped IMDb list. Resolved by source and
     age rather than by spelling -- the upgrade migration's rows are the oldest of their
@@ -313,7 +320,8 @@ async def _conversion_list_names(session: AsyncSession) -> tuple[str | None, str
     ).all()
     tag = next((str(r.name) for r in rows if r.source == "arr_tag"), None)
     imdb = next((str(r.name) for r in rows if r.source == "imdb"), None)
-    return tag, imdb
+    own = tuple(str(r.name) for r in rows if r.source in ("plex_collection", "plex_watchlist"))
+    return tag, imdb, own
 
 
 async def active_policies(session: AsyncSession) -> tuple[ActivePolicy, ActivePolicy]:

@@ -1119,7 +1119,11 @@ def has_legacy_list_protections(raw: object) -> bool:
 
 
 def convert_list_protections(
-    raw: object, *, tag_list_name: str | None, imdb_list_name: str | None
+    raw: object,
+    *,
+    tag_list_name: str | None,
+    imdb_list_name: str | None,
+    collection_list_names: tuple[str, ...] = (),
 ) -> dict[str, Any] | None:
     """A stored body from before every list protected through its own keep rule.
 
@@ -1172,8 +1176,14 @@ def convert_list_protections(
     had_tags = not isinstance(tags, list) or any(str(t).strip() for t in tags)
 
     new_rules: list[dict[str, Any]] = []
-    if legacy_gates.get("whitelisted") and had_tags and tag_list_name:
-        new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": tag_list_name})
+    if legacy_gates.get("whitelisted"):
+        # The gate covered every list the operator curates by hand -- the keep tags AND
+        # the Plex collection and watchlist definitions -- so each existing one gets its
+        # own rule, or an upgrade would quietly withdraw the collections' cover.
+        if had_tags and tag_list_name:
+            new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": tag_list_name})
+        for name in collection_list_names:
+            new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": name})
     if legacy_gates.get("curated_list") and imdb_list_name:
         new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": imdb_list_name})
 
