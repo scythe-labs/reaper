@@ -33,7 +33,6 @@ from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind, PlexServer, Snapshot
 from reaper.engine.gates import (
-    CuratedListGate,
     DataHorizonGate,
     Gate,
     GateConfig,
@@ -42,7 +41,6 @@ from reaper.engine.gates import (
     RatingFloorGate,
     ServerPopularityGate,
     StreamingNowGate,
-    WhitelistGate,
 )
 from reaper.engine.policy import PolicyBody
 from reaper.services import (
@@ -108,10 +106,8 @@ def scan_running() -> bool:
 #: RATING_FLOOR is absent on purpose: it takes a set of per-source bars from the policy
 #: rather than a single GateConfig, so ``build_gates`` constructs it explicitly.
 GATE_TYPES: dict[GateId, type] = {
-    GateId.WHITELISTED: WhitelistGate,
     GateId.STREAMING_NOW: StreamingNowGate,
     GateId.SERVER_POPULARITY: ServerPopularityGate,
-    GateId.CURATED_LIST: CuratedListGate,
     GateId.DATA_HORIZON: DataHorizonGate,
     GateId.MIN_DORMANCY: MinDormancyGate,
 }
@@ -759,19 +755,6 @@ async def _run_scan_locked(
                 definitions=list_definitions,
                 radarrs=radarrs,
                 sonarrs=sonarrs,
-                movie_keep_tags=movie_policy.keep_tags,
-                movie_keep_match=movie_policy.keep_tags_match,
-                tv_keep_tags=tv_policy.keep_tags,
-                tv_keep_match=tv_policy.keep_tags_match,
-                # Whether those four values are the operator's own. Only a FALLEN-BACK
-                # policy replaces them with Reaper's defaults: the other two repaired arms
-                # (rescaled, rating rules recovered) hand back the operator's own body with
-                # keep_tags and keep_tags_match untouched, so gating on the broader
-                # ``repaired`` would stop syncing lists that were never in doubt. False here
-                # holds back the keep-tag sync AND its retire, because the slug does not
-                # carry the tag names, so a sync of the defaults would overwrite the
-                # operator's own membership under their own slug (rule 115).
-                keep_tags_trusted=not (active_movie.fell_back or active_tv.fell_back),
                 plex_server=plex_server,
             ),
             # Who requested what: each candidate's "requested by", and the review queue's

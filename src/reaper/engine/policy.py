@@ -46,6 +46,7 @@ from reaper.clock import humanize_days, humanize_window
 from reaper.engine.fields import (
     BY_KEY,
     Condition,
+    FieldType,
     Lane,
     Op,
     ReachSpan,
@@ -260,6 +261,11 @@ class GradedKeepSpec(Frozen):
 
     name: str = Field(min_length=1, max_length=60)
     field: str
+    value: str | None = Field(default=None, max_length=200)
+    """For a membership field (``on_list``): which list, by name. That keep is FLAT, not a
+    ramp -- on the list takes the full ``max_discount``, off it takes none, and a
+    membership that could not be read takes the full one, fail-closed like every keep.
+    ``None`` for every numeric field, whose ramp is below."""
     max_discount: int = Field(ge=1, le=100)
     """Points to subtract at full strength. ``ge=1`` -- "off" is expressed by omitting the rule."""
     floor: int = Field(ge=0)
@@ -270,13 +276,22 @@ class GradedKeepSpec(Frozen):
 
     @model_validator(mode="after")
     def _valid_keep(self) -> Self:
+        spec = BY_KEY.get(self.field)
+        if spec is None:
+            raise ValueError(f'Unknown field "{self.field}".')
+        if spec.type is FieldType.TEXT and spec.multi:
+            # The membership form: flat, so the ramp fields are inert and unvalidated.
+            if not (self.value or "").strip():
+                raise ValueError("Say which list this keep rule is about.")
+            return self
+        if self.value is not None:
+            raise ValueError(
+                f'"{spec.label}" is a number, so this rule ramps; it does not take a list name.'
+            )
         if self.floor >= self.saturate_at:
             raise ValueError(
                 f"floor ({self.floor}) must be below saturate_at ({self.saturate_at})."
             )
-        spec = BY_KEY.get(self.field)
-        if spec is None:
-            raise ValueError(f'Unknown field "{self.field}".')
         if Op.GTE not in spec.ops:
             raise ValueError(
                 f'"{spec.label}" is not a number, so it cannot be graded. Use a protection instead.'
@@ -496,14 +511,11 @@ class PolicyBody(Frozen):
     score, fail-closed. A softer companion to a hard protect condition; it lowers a score
     but never vetoes, and missing data keeps the file. See GradedKeepSpec."""
 
-    keep_tags: tuple[str, ...] = ("reaper-keep",)
-    """The *arr tags that spare a title outright -- the configurable form of "honor your keep
-    list". A title carrying one of these (or all of them, per ``keep_tags_match``) is kept
-    whatever it scores. Read at scan time and synced into the whitelist before scoring. Movies
-    read Radarr tags, TV reads Sonarr tags, so the two policies carry their own."""
-
-    keep_tags_match: Literal["any", "all"] = "any"
-    """Whether a title needs ANY of ``keep_tags`` (the usual case) or ALL of them to be kept."""
+    # ``keep_tags`` / ``keep_tags_match`` lived here: the *arr tags that spared a title,
+    # configured on Policy while every other list lived on Settings -> Lists. They are a
+    # LIST now -- defined once, on Lists, protecting through an ``on_list`` keep rule like
+    # every other list -- and ``convert_list_protections`` carries a stored body's tags
+    # into that shape on load.
 
     keep_rating_rules: tuple[RatingRuleSpec, ...] = ()
     """The per-source bars behind "Keep well-rated titles" (the RATING_FLOOR gate). A title
@@ -617,6 +629,7 @@ class PolicyBody(Frozen):
                 name=k.name,
                 max_discount=k.max_discount,
                 field=k.field,
+                value=k.value,
                 floor=k.floor,
                 saturate_at=k.saturate_at,
                 direction=k.direction,
@@ -1079,6 +1092,128 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
         body["schema_version"] = SCHEMA_VERSION
         return body
     return None
+
+
+#: The two gate ids ``convert_list_protections`` rewrites. Spelled once: the strip and the
+#: conversion must agree on membership, or a body could lose a gate without gaining its rule.
+_LEGACY_LIST_GATES = ("whitelisted", "curated_list")
+
+
+def has_legacy_list_protections(raw: object) -> bool:
+    """Whether ``convert_list_protections`` would fire on this body. Exposed so callers can
+    decide whether resolving the target list names (a database read) is worth it, against
+    the same trigger the conversion itself uses."""
+    if not isinstance(raw, dict):
+        return False
+    if "keep_tags" in raw or "keep_tags_match" in raw:
+        return True
+    gates = raw.get("gates")
+    if isinstance(gates, list) and any(
+        isinstance(g, dict) and g.get("gate") in _LEGACY_LIST_GATES for g in gates
+    ):
+        return True
+    conditions = raw.get("protect_conditions")
+    return isinstance(conditions, list) and any(
+        isinstance(c, dict) and c.get("field") == "on_curated_list" for c in conditions
+    )
+
+
+def convert_list_protections(
+    raw: object, *, tag_list_name: str | None, imdb_list_name: str | None
+) -> dict[str, Any] | None:
+    """A stored body from before every list protected through its own keep rule.
+
+    Three legacy shapes, converted together because they were saved together:
+
+    * ``keep_tags`` / ``keep_tags_match`` -- the *arr tags configured on Policy. The
+      upgrade migration turns them into a list on Settings -> Lists; this rewrites the
+      body's half: the keys leave (``Frozen`` forbids them), and an ENABLED ``whitelisted``
+      gate becomes a keeps-it-outright ``on_list`` rule naming that list. A disabled gate
+      converts to no rule -- the operator had the protection off, and the Lists screen now
+      says "not used by your policy" where the switch used to be.
+    * the ``whitelisted`` and ``curated_list`` gate rows leave the body. Both gates are
+      retired (``gates.GateId``), and unlike ``RETIRED_GATES`` they were LIVE protections,
+      so each enabled one converts to the equivalent rule rather than being dropped --
+      dropping alone would silently withdraw cover, the failure this codebase exists to
+      avoid.
+    * ``on_curated_list`` rules re-spell as ``on_list``: the field was renamed when it
+      widened from the shipped lists to every list. The value is kept -- it is the list's
+      name either way.
+
+    ``tag_list_name`` / ``imdb_list_name`` are the CURRENT names of the registry rows the
+    new rules must point at; the caller reads them from the database because the operator
+    may have renamed either. ``None`` means no such list exists, and that half converts to
+    no rule rather than to a rule naming nothing (rule 25).
+
+    Returns the converted body, or ``None`` when nothing is legacy-shaped. The caller
+    flags the conversion (``profiles.ActivePolicy.lists_migrated``), which makes
+    ``repaired`` true, degrades the scan, and opens the editor on it as an unsaved draft:
+    a protection moved between surfaces is a policy edit nobody has saved yet (rule 105).
+    Must not raise, for the same reason every shim here must not.
+    """
+    if not has_legacy_list_protections(raw):
+        return None
+    assert isinstance(raw, dict)  # has_legacy_list_protections refused everything else
+    gates = raw.get("gates")
+    gate_rows = [g for g in gates if isinstance(g, dict)] if isinstance(gates, list) else []
+    legacy_gates = {
+        str(g.get("gate")): bool(g.get("enabled", True))
+        for g in gate_rows
+        if g.get("gate") in _LEGACY_LIST_GATES
+    }
+
+    body = copy.deepcopy(raw)
+    tags = body.pop("keep_tags", None)
+    body.pop("keep_tags_match", None)
+
+    # An explicit empty tag list is an operator who cleared it, and converts to no rule
+    # (rule 1). A body carrying no key at all ran on the shipped default tag, so it had a
+    # live protection to carry over.
+    had_tags = not isinstance(tags, list) or any(str(t).strip() for t in tags)
+
+    new_rules: list[dict[str, Any]] = []
+    if legacy_gates.get("whitelisted") and had_tags and tag_list_name:
+        new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": tag_list_name})
+    if legacy_gates.get("curated_list") and imdb_list_name:
+        new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": imdb_list_name})
+
+    def converts(gate_id: str) -> bool:
+        """Whether this gate row may leave the body. A disabled row always may, and an
+        enabled one only once its replacement rule exists: stripping an enabled gate whose
+        target list is missing would withdraw a live protection with nothing in its place,
+        so the row stays and ``build_gates`` refuses the scan loudly instead (rule 38)."""
+        if not legacy_gates.get(gate_id):
+            return True
+        if gate_id == "whitelisted":
+            return not had_tags or tag_list_name is not None
+        return imdb_list_name is not None
+
+    if isinstance(gates, list):
+        body["gates"] = [
+            g
+            for g in body["gates"]
+            if not (
+                isinstance(g, dict)
+                and g.get("gate") in _LEGACY_LIST_GATES
+                and converts(str(g.get("gate")))
+            )
+        ]
+    for row in body.get("protect_conditions") or []:
+        if isinstance(row, dict) and row.get("field") == "on_curated_list":
+            row["field"] = "on_list"
+
+    if new_rules:
+        rows = body.get("protect_conditions")
+        if not isinstance(rows, list):
+            rows = []
+        spelled = {
+            str(r.get("value", "")).strip().casefold()
+            for r in rows
+            if isinstance(r, dict) and r.get("field") == "on_list"
+        }
+        rows.extend(r for r in new_rules if str(r["value"]).strip().casefold() not in spelled)
+        body["protect_conditions"] = rows
+    return body
 
 
 def _protect_blocks_on_reach(cond: ConditionSpec) -> ReachSpan | None:
@@ -2116,14 +2251,29 @@ def inspect(
     return warnings
 
 
+#: The names of the two lists a fresh install is seeded with (``list_config``), spelled
+#: here because the default policies' keep rules below name them and the engine must not
+#: import the service layer. ``convert_list_protections`` also reads them, so an upgraded
+#: body's rules and a fresh install's point at the same rows.
+DEFAULT_TAG_LIST_NAME = "Titles you've tagged"
+DEFAULT_IMDB_LIST_NAME = "IMDb Top 250"
+
+#: The keep rules a fresh install starts with: the seeded lists keep their titles
+#: outright, the protection level the retired WHITELISTED and CURATED_LIST gates gave the
+#: same sources. Softening one to a lean, or removing it, is a per-list choice on Policy.
+DEFAULT_LIST_CONDITIONS: tuple[ConditionSpec, ...] = (
+    ConditionSpec(field="on_list", op=Op.EQ, value=DEFAULT_TAG_LIST_NAME),
+    ConditionSpec(field="on_list", op=Op.EQ, value=DEFAULT_IMDB_LIST_NAME),
+)
+
+
 DEFAULT_MOVIE_POLICY = PolicyBody(
     media_type="movie",
     condemn_at=70,
+    protect_conditions=DEFAULT_LIST_CONDITIONS,
     gates=(
-        GateSetting(gate=GateId.WHITELISTED),
         GateSetting(gate=GateId.STREAMING_NOW),
         GateSetting(gate=GateId.DATA_HORIZON),
-        GateSetting(gate=GateId.CURATED_LIST),
         # THE MOST IMPORTANT GATE. Nothing under three years dormant may be deleted at
         # all, whatever else it scores. The measured rewatch rate decays slowly after the
         # first year and its tail never reaches zero (docs/SIGNALS.md, "There is no
@@ -2182,6 +2332,7 @@ DEFAULT_TV_POLICY = PolicyBody(
     keep_last_seasons=2,
     keep_first_season=True,
     # The same protections as movies -- a TV season is kept for the same reasons a film is.
+    protect_conditions=DEFAULT_LIST_CONDITIONS,
     gates=DEFAULT_MOVIE_POLICY.gates,
     signals=(
         SignalSetting(signal=SignalId.UNWATCHED, weight=60, saturate_at=1825, floor=365),

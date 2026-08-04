@@ -173,20 +173,13 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
 
         async with app.state.session_factory() as session:
             definitions = await list_config.definitions(session)
-            active_movie, active_tv = await profiles.active_policies(session)
 
         synced = await snapshot.sync_protection_lists(
             app.state.cache_engine,
             definitions=definitions,
             only=body.list_id,
-            keep_tags_only=body.keep_tags,
             radarrs=radarrs,
             sonarrs=sonarrs,
-            movie_keep_tags=active_movie.body.keep_tags,
-            movie_keep_match=active_movie.body.keep_tags_match,
-            tv_keep_tags=active_tv.body.keep_tags,
-            tv_keep_match=active_tv.body.keep_tags_match,
-            keep_tags_trusted=not (active_movie.fell_back or active_tv.fell_back),
             plex_server=plex_server,
         )
 

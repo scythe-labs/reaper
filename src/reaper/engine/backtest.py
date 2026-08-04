@@ -502,6 +502,9 @@ def facts_as_of(
         # denominator.
         requested=Absent(source="backtest"),
         genres=Absent(source="backtest"),
+        # List memberships were not recorded per historical item, so an ``on_list`` rule
+        # simply does not fire in a backtest -- the same fail-safe reading as the rest.
+        on_lists=Absent(source="backtest"),
         release_age_days=Absent(source="backtest"),
         quality=Absent(source="backtest"),
         # Movies only, so there is no series status to rebuild -- the same reading the

@@ -410,32 +410,34 @@ REGISTRY: tuple[FieldSpec, ...] = (
         bars=_SEASON_BARS,
     ),
     FieldSpec(
-        key="on_curated_list",
-        label="On a protected list",
-        # Only the CURATED lists reach this field: ``snapshot`` splits memberships by kind and
-        # feeds the non-whitelist ones to ``in_curated_list``, so a Plex collection or a tag
-        # list the operator defined is NOT matched here. Naming Settings -> Lists is still
-        # right, because that is where the shipped list's name is now set.
-        help_text="Matches a list Reaper ships with, by the name it has on Settings → Lists.",
+        key="on_list",
+        # Every list, whatever its source: the fact behind this is ``Facts.on_lists``, the
+        # operator's names for every list holding the item, so a rule here is how ANY list
+        # -- tag, collection, watchlist, IMDb -- comes to keep or lean. The stored rules
+        # that used to spell this ``on_curated_list`` are re-spelled by
+        # ``policy.convert_list_protections``.
+        label="On one of your lists",
+        help_text="Matches a list by the name it has on Settings → Lists.",
         type=FieldType.TEXT,
         lanes=(Lane.PROTECT,),
         ops=TEXT_OPS,
         multi=True,
-        read=lambda f: f.in_curated_list,
-        subject="Protected list membership",
+        read=lambda f: f.on_lists,
+        subject="List membership",
     ),
     FieldSpec(
         key="whitelisted",
-        label="On your keep list",
+        label="On a list you curate yourself",
         help_text=(
-            'Tagged "reaper-keep" in Sonarr or Radarr, or in your Plex "Never Reap" collection.'
+            "A tag list, a Plex collection, or your watchlist. Use \"On one of your "
+            "lists\" to match one list by name; this is the yes/no over all of them."
         ),
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
         read=lambda f: f.is_whitelisted,
-        true_phrase="On your keep list",
-        false_phrase="Not on your keep list",
+        true_phrase="On a list you curate yourself",
+        false_phrase="Not on any list you curate yourself",
     ),
     FieldSpec(
         key="streaming_now",

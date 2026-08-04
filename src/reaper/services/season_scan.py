@@ -60,7 +60,7 @@ inline.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from itertools import batched
@@ -612,6 +612,7 @@ def build_season_facts(
     activity_degraded: bool,
     whitelisted: bool,
     curated: list[lists.Membership],
+    memberships: Sequence[lists.Membership] = (),
     imdb_rating: ImdbRating | None = None,
     # Whether the show carried an IMDb id to look a rating up with. `imdb_rating=None`
     # alone cannot tell "this show is unrated" from "we never asked", and those are
@@ -735,6 +736,15 @@ def build_season_facts(
     in_curated: Observation[str] = (
         Known(value=curated_names, source="lists") if curated else Absent(source="lists")
     )
+    # Every list holding the SHOW, by the operator's name for it -- the `on_list` field's
+    # input, deduplicated the way the movie builder does (rule 35: same fact, same shape,
+    # every builder). A season inherits the show's memberships: a list holds shows.
+    list_names = list(dict.fromkeys(m.display_name for m in memberships))
+    on_lists: Observation[str] = (
+        Known(value=", ".join(list_names), source="lists")
+        if list_names
+        else Absent(source="lists")
+    )
 
     # The multi-source keep gate reads this. TV has no Radarr-style ratings object, so it
     # is the show's IMDb dataset value (applied to each season, like the single-source
@@ -812,6 +822,7 @@ def build_season_facts(
         is_managed=Known(value=True, source="sonarr"),
         in_curated_list=in_curated,
         is_whitelisted=Known(value=whitelisted, source="lists"),
+        on_lists=on_lists,
         # --- fields authorable in custom rules ---------------------------------
         requested=requested,
         genres=genres,
@@ -1895,9 +1906,8 @@ def _judge_series(
         tvdb_id=tvdb_id,
         plex_rating_keys=(item.show_rating_key,) if item.show_rating_key is not None else (),
     )
-    hard = [m for m in curated_by_series if m.mode is lists.ListMode.HARD]
-    whitelists = [m for m in hard if m.is_whitelist]
-    curated = [m for m in hard if not m.is_whitelist]
+    whitelists = [m for m in curated_by_series if m.is_whitelist]
+    curated = [m for m in curated_by_series if not m.is_whitelist]
 
     judgments: list[SeasonJudgment] = []
     for season in item.seasons:
@@ -1942,6 +1952,7 @@ def _judge_series(
             activity_degraded=activity_degraded,
             whitelisted=bool(whitelists) or media_key in whitelisted,
             curated=curated,
+            memberships=curated_by_series,
             imdb_rating=show_rating,
             rating_looked_up=show_rating_looked_up,
             rating_dataset_degraded=ratings_degraded,

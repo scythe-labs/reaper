@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
+from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.engine.policy import (
@@ -36,6 +37,8 @@ from reaper.engine.policy import (
     PolicyBody,
     ProfileSettings,
     combine_hashes,
+    convert_list_protections,
+    has_legacy_list_protections,
     rebalance,
     recover_rating_rules,
 )
@@ -176,6 +179,13 @@ class ActivePolicy:
     it as an unsaved draft the operator reviews and saves.
     """
 
+    lists_migrated: bool = False
+    """This is the operator's own body with its list protections re-expressed as ``on_list``
+    keep rules (``policy.convert_list_protections``): the keep tags moved to Settings ->
+    Lists, and the whitelist and curated-list gates became per-list rules. The verdicts are
+    meant to be identical, and it is still never adopted silently -- same contract as the
+    recoveries above: ``repaired``, degraded, opened as a draft to review and save."""
+
     @property
     def repaired(self) -> bool:
         """Any recovery: what is in hand is not what is stored.
@@ -186,7 +196,7 @@ class ActivePolicy:
         the name: an operator's own policy is frequently *called* "default", so the name
         cannot tell the recoveries apart (it silently did not, once).
         """
-        return self.rescaled or self.fell_back or self.rating_rules_recovered
+        return self.rescaled or self.fell_back or self.rating_rules_recovered or self.lists_migrated
 
 
 async def active_policy(session: AsyncSession, media_type: str = "movie") -> ActivePolicy:
@@ -224,9 +234,22 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     try:
         raw = json.loads(row.body_json)
     except ValueError:
-        # Not JSON at all. `model_validate_json` below reports it the same way, and the
-        # two recoveries that read `raw` both refuse a non-dict.
+        # Not JSON at all. `model_validate` below reports it the same way, and the
+        # recoveries that read `raw` all refuse a non-dict.
         raw = None
+
+    # The list-protection conversion runs FIRST, on the raw dict: it strips keys ``Frozen``
+    # forbids (``keep_tags``), so every shim and validation below it must see its output or
+    # a merely-legacy body would read as unreadable and fall back to the shipped default --
+    # the silent substitution rule 65 forbids. Composed, never raced, like the pair below.
+    lists_migrated = False
+    if has_legacy_list_protections(raw):
+        tag_name, imdb_name = await _conversion_list_names(session)
+        converted = convert_list_protections(raw, tag_list_name=tag_name, imdb_list_name=imdb_name)
+        if converted is not None:
+            raw = converted
+            lists_migrated = True
+            log.info("policy.lists_migrated", media_type=media_type, name=row.name)
 
     restored = recover_rating_rules(raw)
     if restored is not None:
@@ -240,15 +263,18 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
             log.warning("policy.rating_rules_unrecoverable", media_type=media_type)
         else:
             log.info("policy.rating_rules_recovered", media_type=media_type, name=row.name)
-            return ActivePolicy(body, row.name, rating_rules_recovered=True)
+            return ActivePolicy(
+                body, row.name, rating_rules_recovered=True, lists_migrated=lists_migrated
+            )
 
     try:
-        return ActivePolicy(PolicyBody.model_validate_json(row.body_json), row.name)
+        return ActivePolicy(
+            PolicyBody.model_validate(raw), row.name, lists_migrated=lists_migrated
+        )
     except ValidationError:
-        # Pydantic raises ValidationError for malformed JSON too, so we land here with a
-        # body that json.loads could not read either. Both that and a body that decodes to
-        # something other than an object (a list, a number, null) fall through to the
-        # shipped default below; neither may escape as an exception.
+        # A body json.loads could not read (`raw` is None), one that decodes to something
+        # other than an object, and one that fails validation all land here; none may
+        # escape as an exception.
         # Compose the two shims, never race them. A body that needs its rating bar put back
         # AND needs rescaling arrives here with `restored` already holding the recovered
         # bar, because the validate above failed on the weights, not on the bar. Rebalancing
@@ -270,9 +296,26 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
                 row.name,
                 rescaled=True,
                 rating_rules_recovered=recovered,
+                lists_migrated=lists_migrated,
             )
         log.warning("policy.unreadable", media_type=media_type, name=row.name)
         return ActivePolicy(default, "default", fell_back=True)
+
+
+async def _conversion_list_names(session: AsyncSession) -> tuple[str | None, str | None]:
+    """The current names of the lists ``convert_list_protections``'s rules must point at:
+    the tag list the keep tags became, and the shipped IMDb list. Resolved by source and
+    age rather than by spelling -- the upgrade migration's rows are the oldest of their
+    source, and both names are the operator's to change. ``None`` means no such list, and
+    the shim then leaves that half's gate in place rather than converting it away."""
+    rows = (
+        await session.execute(
+            select(ListConfigModel.source, ListConfigModel.name).order_by(ListConfigModel.id)
+        )
+    ).all()
+    tag = next((str(r.name) for r in rows if r.source == "arr_tag"), None)
+    imdb = next((str(r.name) for r in rows if r.source == "imdb"), None)
+    return tag, imdb
 
 
 async def active_policies(session: AsyncSession) -> tuple[ActivePolicy, ActivePolicy]:

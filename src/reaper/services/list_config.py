@@ -12,9 +12,9 @@ is the reason for two tables: membership is a rebuildable mirror of somebody els
 a list the operator named is not rebuildable from anything.
 
 **Everything here is fail-closed toward keeping.** Removing a list withdraws a protection, so
-it is refused for a built-in and refused while a policy rule still names it -- an operator who
-deletes the list a keep rule points at has silently unprotected everything that rule covered,
-and the rule would go on reading as a live protection.
+the API pairs it with ``list_rules.detach_list``: the keep rules naming the list leave the
+policies in the same request, and none can go on reading as a live protection covering
+nothing.
 """
 
 from __future__ import annotations
@@ -29,8 +29,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import re
+
 from reaper.clock import utcnow
 from reaper.db.models import ListConfig
+from reaper.services import app_settings
+from reaper.services import lists as lists_service
 from reaper.services.lists import ListSource
 
 log = structlog.get_logger(__name__)
@@ -69,6 +73,17 @@ class ListDefinition:
         is the wider list, which is the keep direction."""
         return "all" if self.config.get("match") == "all" else "any"
 
+    @property
+    def imdb_variant(self) -> str:
+        """The mirror path variant for an ``IMDB`` definition: a preset key or a public
+        list id. Anything unrecognized reads as the Top 250, the list Reaper has always
+        shipped, rather than as a request the mirror will 404."""
+        preset = str(self.config.get("preset", "")).strip()
+        if preset in lists_service.IMDB_PRESETS:
+            return preset
+        list_id = str(self.config.get("list_id", "")).strip()
+        return list_id if list_id else "top250"
+
 
 async def definitions(session: AsyncSession) -> list[ListDefinition]:
     """Every definition, decoded, shipped ones included.
@@ -101,44 +116,45 @@ async def definitions(session: AsyncSession) -> list[ListDefinition]:
     return out
 
 
-#: What Reaper ships with, created once on the first read so the screen is never empty on a
-#: fresh install and the operator can see what a list looks like before making one. Built-in,
-#: so it can be pointed elsewhere or switched off but never deleted: the default policy
-#: carries a keep rule naming it, and a rule naming a list that does not exist is a protection
-#: that reads as live and covers nothing (rule 25).
-BUILT_INS: tuple[tuple[str, ListSource, dict[str, Any]], ...] = (
-    ("IMDb Top 250", ListSource.CURATED, {"list": "imdb-top-250"}),
+#: The name the default policies' keep rules refer to, spelled once. The seed below, the
+#: keep-tags upgrade migration, and ``engine.policy``'s default conditions all read it.
+DEFAULT_TAG_LIST_NAME = "Titles you've tagged"
+DEFAULT_IMDB_LIST_NAME = "IMDb Top 250"
+
+#: What a fresh install starts with: the two lists the default policy's keep rules name.
+#: Deletable like any other list, because deleting one takes its rules with it
+#: (``services.list_rules``); the seed runs once, tracked by a flag rather than by the rows,
+#: so removing them does not resurrect them on the next read.
+DEFAULT_LISTS: tuple[tuple[str, ListSource, dict[str, Any]], ...] = (
+    (DEFAULT_IMDB_LIST_NAME, ListSource.IMDB, {"preset": "top250"}),
+    (DEFAULT_TAG_LIST_NAME, ListSource.ARR_TAG, {"tags": ["reaper-keep"], "match": "any"}),
 )
 
 
-async def ensure_built_ins(session: AsyncSession) -> None:
-    """Create the shipped lists if they are not there. Idempotent, and never overwrites.
-
-    Matched on ``built_in`` rather than on the name, so an operator who RENAMED the shipped
-    list keeps their name instead of getting a second row beside it every time this runs.
-    """
-    existing = set(
-        (await session.execute(select(ListConfig.source).where(ListConfig.built_in))).scalars()
-    )
-    for name, source, config in BUILT_INS:
-        if source.value in existing:
-            continue
+async def ensure_defaults(session: AsyncSession) -> None:
+    """Seed the default lists exactly once. The keep-tags upgrade migration sets the same
+    flag after seeding from the operator's stored policy, so an upgraded install keeps its
+    own tags and never gains a second, shipped copy beside them."""
+    if await app_settings.lists_seeded(session):
+        return
+    for name, source, config in DEFAULT_LISTS:
         session.add(
             ListConfig(
                 name=name,
                 source=source.value,
                 config_json=json.dumps(config),
                 enabled=True,
-                built_in=True,
+                built_in=False,
                 created_at=utcnow(),
             )
         )
+    await app_settings.set_lists_seeded(session)
     await session.commit()
 
 
 async def all_lists(session: AsyncSession) -> Sequence[ListConfig]:
-    """Every configured list, shipped ones included, oldest first so the order holds still."""
-    await ensure_built_ins(session)
+    """Every configured list, oldest first so the order holds still."""
+    await ensure_defaults(session)
     rows = await session.execute(select(ListConfig).order_by(ListConfig.id))
     return list(rows.scalars())
 
@@ -183,9 +199,22 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
             )
         match = "all" if config.get("match") == "all" else "any"
         return json.dumps({"tags": tags, "match": match})
-    # A curated list carries only which shipped list it is, and that is not the operator's to
-    # retype. Kept as it was rather than rebuilt from the request.
-    return json.dumps({"list": str(config.get("list", "imdb-top-250"))})
+    if source is ListSource.PLEX_WATCHLIST:
+        # Nothing to configure: the watchlist is the signed-in account's own.
+        return json.dumps({})
+    preset = str(config.get("preset", "")).strip()
+    if preset:
+        if preset not in lists_service.IMDB_PRESETS:
+            raise ListConfigError("Pick one of the IMDb presets, or paste a list id instead.")
+        return json.dumps({"preset": preset})
+    # A pasted URL carries the id inside it, so the id is extracted rather than the paste
+    # being bounced back for retyping.
+    found = re.search(r"ls\d{6,}", str(config.get("list_id", "")))
+    if not found:
+        raise ListConfigError(
+            "Paste the list's id or URL. An IMDb list id looks like ls005421403."
+        )
+    return json.dumps({"list_id": found.group(0)})
 
 
 async def create(
@@ -195,8 +224,6 @@ async def create(
         kind = ListSource(source)
     except ValueError:
         raise ListConfigError("Pick where the list comes from.") from None
-    if kind is ListSource.CURATED:
-        raise ListConfigError("The lists Reaper ships with cannot be added by hand.")
     row = ListConfig(
         name=_clean_name(name),
         source=kind.value,
@@ -242,20 +269,13 @@ async def update(
 
 
 async def delete(session: AsyncSession, list_id: int) -> None:
-    """Remove a list. Refused for one Reaper ships with, because a shipped keep rule names it.
+    """Remove a list. Every list is removable, the shipped ones included.
 
-    **A second refusal belongs here and is not written yet.** Deleting a list a policy rule
-    points at withdraws a protection while the rule goes on rendering as a live one, so this
-    should also refuse while any rule names it. No rule can name a list until the ``on_list``
-    field exists, and a guard that cannot fire reads as protection that is not there
-    (rule 38/117), so it lands in the change that adds the field rather than sitting here
-    inert.
+    A rule naming the deleted list must not go on rendering as a live protection, so the API
+    route pairs this with ``list_rules.detach_list``, which strips the list's keep rules from
+    every stored policy in the same request; ``tests/test_list_rules.py`` pins the pairing.
     """
     row = await get(session, list_id)
-    if row.built_in:
-        raise ListConfigError(
-            "This list ships with Reaper, so it cannot be deleted. You can switch it off instead."
-        )
     await session.delete(row)
     await session.commit()
     log.info("list_config.deleted", list_id=list_id)

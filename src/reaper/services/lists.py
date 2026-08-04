@@ -37,8 +37,9 @@ Being *on* the list is the signal.
 from __future__ import annotations
 
 import enum
+import json
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
@@ -55,7 +56,22 @@ from reaper.engine import identity
 
 log = structlog.get_logger(__name__)
 
-IMDB_TOP_250_URL = "https://api.radarr.video/v1/list/imdb/top250"
+#: Radarr's own list mirror, the sanctioned source for IMDb charts and public lists (see
+#: the module docstring). Path suffix per variant: a preset name maps to its chart path,
+#: anything else is a public list id appended as-is. All three verified live: ``top250``,
+#: ``popular``, and ``/ls<digits>`` each return the same ``TmdbId``/``ImdbId`` array.
+IMDB_LIST_BASE = "https://api.radarr.video/v1/list/imdb/"
+IMDB_TOP_250_URL = IMDB_LIST_BASE + "top250"
+
+#: The shipped chart choices, keyed by the ``preset`` value a definition stores. The floor
+#: is the truncation guard: a chart of known size that comes back much smaller is a broken
+#: mirror, and installing it would silently stop protecting the titles that fell off. A
+#: custom list has no known size, so its floor is 1 -- the empty-payload refusal in
+#: ``ImdbList.fetch`` is what stands between a flaky mirror and an emptied protection.
+IMDB_PRESETS: dict[str, tuple[str, int]] = {
+    "top250": ("top250", 200),
+    "popular": ("popular", 20),
+}
 
 
 class ContainerMissingError(RuntimeError):
@@ -184,38 +200,41 @@ class ListProvider(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class ImdbTop250:
-    """The IMDb Top 250, via Radarr's own list service. No auth, no key.
+class ImdbList:
+    """An IMDb chart or public list, via Radarr's own list service. No auth, no key.
+
+    ``variant`` is a preset key (:data:`IMDB_PRESETS`) or a public list id (``ls…``); the
+    definition on Settings -> Lists stores which. Movies only, because the mirror is
+    Radarr's own service and serves the movie halves of these lists.
 
     **Membership is binary. There is no rank.**
 
-    The payload carries no rank, position or order field, and the entries come back in
-    roughly *chronological* order -- the first is The Kid (1921). Taking the array index
-    as a chart position would have told the owner "The Kid is #1 on the IMDb Top 250",
-    which is simply false, and the why-panel would have been confidently lying.
-
-    So ``rank`` is left None. Being *on* the list is the signal; where you sit on it is
-    something this source does not know.
+    The payload carries no rank, position or order field, and the Top 250 comes back in
+    roughly *chronological* order -- the first entry is from 1921. Taking the array index
+    as a chart position would have told the owner "this film is #1", which is simply
+    false, and the why-panel would have been confidently lying. So ``rank`` is left None.
+    Being *on* the list is the signal.
     """
 
-    url: str = IMDB_TOP_250_URL
+    variant: str = "top250"
     #: The definition this was synced for. ``None`` only in a test or a one-off refresh that
-    #: has no registry to read; production always builds it from the shipped definition row.
+    #: has no registry to read; production always builds it from the definition row.
     list_id: int | None = None
     list_name: str | None = None
 
     @property
     def slug(self) -> str:
-        return f"{CURATED_PREFIX}{list_suffix(self.list_id)}"
+        return f"{IMDB_PREFIX}{self.variant}{list_suffix(self.list_id)}"
 
     @property
     def display_name(self) -> str:
-        return self.list_name or "IMDb Top 250"
+        return self.list_name or f"IMDb {self.variant}"
 
     async def fetch(self) -> list[ListItem]:
+        path, floor = IMDB_PRESETS.get(self.variant, (self.variant, 1))
         # Through clients/ like every other fetch (rule 33): the shared retry, timeout,
         # error-mapping and redirect policy, instead of a bespoke httpx use down here.
-        parts = urlsplit(self.url)
+        parts = urlsplit(IMDB_LIST_BASE + path)
         async with PublicClient(f"{parts.scheme}://{parts.netloc}") as client:
             payload = await client.get_json(parts.path)
 
@@ -233,13 +252,14 @@ class ImdbTop250:
             for entry in payload
         ]
 
-        if len(items) < 200:
-            # A truncated list is worse than no list: it would silently stop
-            # protecting the films that fell off it.
+        if len(items) < floor:
+            # A truncated or empty answer is worse than no answer: installing it would
+            # silently stop protecting the titles that fell off. An IMDb chart is never
+            # genuinely empty, so even the floor of 1 refuses an empty custom list.
             raise IntegrationError(
                 self.slug,
-                f"expected ~250 entries, got {len(items)}. Refusing to install a "
-                "truncated protection list.",
+                f"expected at least {floor} entries, got {len(items)}. Refusing to "
+                "install a truncated protection list.",
             )
         return items
 
@@ -289,11 +309,16 @@ class ArrTagRule:
     instance_id: int | None = None
     instance_name: str | None = None
     #: The definition this was built from, when the operator defined it on Settings -> Lists.
-    #: ``None`` for the policy's keep tags, which keeps their slug spelled as it always was.
+    #: ``None`` for a legacy policy keep-tag row, which keeps its slug spelled as it always was.
     list_id: int | None = None
-    #: What the operator called it. ``None`` falls back to describing the rule, which is what
-    #: the keep tags -- having no definition to be named by -- always do.
+    #: What the operator called it. ``None`` falls back to describing the rule.
     list_name: str | None = None
+    #: How many titles carried each configured tag, filled by :meth:`fetch` and stored by
+    #: ``sync`` beside the row (see :attr:`sync_stats`). A mutable container on a frozen
+    #: dataclass, deliberately: the counts are a *result* of the fetch, not configuration,
+    #: and a per-tag count is independent of the ANY/ALL mode -- it answers "which tags are
+    #: doing the protecting here", which the Lists screen shows per server.
+    tag_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def slug(self) -> str:
@@ -373,15 +398,23 @@ class ArrTagRule:
                 "add the tag back or take it out of your keep tags.",
             )
 
+        # id -> the operator's spelling, for the per-tag counts. Built from `wanted`, so a
+        # tag that did not resolve counts nothing rather than raising a KeyError here.
+        spelling = {by_label[_tag_key(t)]: t for t in self.tags if _tag_key(t) in by_label}
+        counts: dict[str, int] = {t: 0 for t in self.tags}
+
         def keeps(media: dict[str, Any]) -> bool:
             carried = set(media.get("tags") or [])
+            for tag_id in wanted & carried:
+                counts[spelling[tag_id]] += 1
             if self.match == "all":
                 return wanted <= carried
             return not wanted.isdisjoint(carried)
 
+        self.tag_counts.clear()
         if isinstance(self.client, RadarrClient):
             movies = await self.client.movies()
-            return [
+            out = [
                 ListItem(
                     media_type="movie",
                     imdb_id=m.get("imdbId") or None,
@@ -391,18 +424,26 @@ class ArrTagRule:
                 for m in movies
                 if keeps(m)
             ]
+        else:
+            series = await self.client.series()
+            out = [
+                ListItem(
+                    media_type="tv",
+                    imdb_id=s.get("imdbId") or None,
+                    tvdb_id=s.get("tvdbId") or None,
+                    title=str(s.get("title") or ""),
+                )
+                for s in series
+                if keeps(s)
+            ]
+        self.tag_counts.update(counts)
+        return out
 
-        series = await self.client.series()
-        return [
-            ListItem(
-                media_type="tv",
-                imdb_id=s.get("imdbId") or None,
-                tvdb_id=s.get("tvdbId") or None,
-                title=str(s.get("title") or ""),
-            )
-            for s in series
-            if keeps(s)
-        ]
+    @property
+    def sync_stats(self) -> dict[str, Any] | None:
+        """What ``sync`` stores beside this row: per-tag counts, and which server they are
+        from. Meaningful only after a successful :meth:`fetch`; empty counts before one."""
+        return {"tags": dict(self.tag_counts), "server": self.instance_name}
 
 
 #: What Plex calls a thing -> the kind a protection row is filed under. A collection is
@@ -523,6 +564,62 @@ class PlexCollection:
         return items
 
 
+@dataclass(frozen=True, slots=True)
+class PlexWatchlist:
+    """The watchlist of the Plex account Reaper is signed in with.
+
+    The stored Plex token is the account credential itself (``services.plex_link``
+    verifies the resource token matches the account's on link), so ``myPlexAccount()``
+    needs no second sign-in. Watchlist entries live on plex.tv rather than the PMS, so
+    unlike a collection they carry no usable server rating key; the external ids are the
+    whole join, and an entry without any is held by ``_rows_to_store`` like any other.
+
+    An **empty watchlist is genuinely empty** -- the operator cleared it from the Plex
+    app -- so it empties the stored membership. A watchlist has no missing-container
+    state: any failure to read it raises and leaves the stored copy protecting.
+
+    plexapi is synchronous, so the read runs off the event loop.
+    """
+
+    server: object  # plexapi.server.PlexServer, kept loose like PlexCollection's
+    list_id: int | None = None
+    list_name: str | None = None
+
+    @property
+    def slug(self) -> str:
+        return f"{PLEX_WATCHLIST_PREFIX}account{list_suffix(self.list_id)}"
+
+    @property
+    def display_name(self) -> str:
+        return self.list_name or "Plex watchlist"
+
+    async def fetch(self) -> list[ListItem]:
+        import asyncio
+
+        return await asyncio.to_thread(self._fetch_sync)
+
+    def _fetch_sync(self) -> list[ListItem]:
+        account = self.server.myPlexAccount()  # type: ignore[attr-defined]
+        items: list[ListItem] = []
+        for item in account.watchlist():
+            # Discover metadata carries the external ids as Guid children, same shape as
+            # a PMS item; the legacy `guid` on these is a plex:// uri parse_guids ignores.
+            guid_ids = [str(getattr(g, "id", "")) for g in getattr(item, "guids", None) or []]
+            legacy = getattr(item, "guid", None)
+            ids = identity.parse_guids(guid_ids, str(legacy) if legacy else None)
+            plex_type = str(getattr(item, "type", "") or "")
+            items.append(
+                ListItem(
+                    media_type=_PLEX_MEDIA_TYPES.get(plex_type, plex_type),
+                    imdb_id=ids.imdb,
+                    tmdb_id=ids.tmdb,
+                    tvdb_id=ids.tvdb,
+                    title=str(getattr(item, "title", "") or ""),
+                )
+            )
+        return items
+
+
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
@@ -568,6 +665,11 @@ CREATE INDEX IF NOT EXISTS ix_pli_plex ON protection_list_item (plex_rating_key)
 #: every one is nullable, and the next sync fills it in.
 _ADDED_COLUMNS = {"plex_rating_key": "INTEGER"}
 
+#: The same widening for ``protection_list``. ``stats_json`` holds what a provider knows
+#: about its own sync beyond the count -- per-tag totals and the server they came from --
+#: written on success only, so like the membership it is always from the last good check.
+_ADDED_LIST_COLUMNS = {"stats_json": "TEXT"}
+
 
 @dataclass(frozen=True, slots=True)
 class Membership:
@@ -610,6 +712,13 @@ async def ensure_schema(engine: AsyncEngine) -> None:
                 await conn.execute(
                     text(f"ALTER TABLE protection_list_item ADD COLUMN {column} {kind}")
                 )
+        list_stored = {
+            str(row.name)
+            for row in (await conn.execute(text("PRAGMA table_info(protection_list)"))).all()
+        }
+        for column, kind in _ADDED_LIST_COLUMNS.items():
+            if column not in list_stored:
+                await conn.execute(text(f"ALTER TABLE protection_list ADD COLUMN {column} {kind}"))
         for statement in INDEXES.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
@@ -874,19 +983,20 @@ async def sync(
                 ),
                 list(rows.values()),
             )
+        stats = getattr(provider, "sync_stats", None)
         await conn.execute(
             text(
                 "INSERT INTO protection_list "
                 "(slug, display_name, mode, kind, weight, enabled, item_count, "
-                " last_synced_at, last_error) "
-                "VALUES (:slug, :name, :mode, :kind, :weight, 1, :count, :now, NULL) "
+                " last_synced_at, last_error, stats_json) "
+                "VALUES (:slug, :name, :mode, :kind, :weight, 1, :count, :now, NULL, :stats) "
                 # ``enabled = 1`` on the conflict too, not just on the insert: a slug
                 # ``retire_absent`` switched off is a live list again the moment this
                 # configuration produces it, and a keep-list that syncs while disabled
                 # protects nothing (``load_membership_index`` joins ``WHERE enabled = 1``).
                 "ON CONFLICT(slug) DO UPDATE SET "
                 "  display_name = :name, mode = :mode, kind = :kind, item_count = :count, "
-                "  enabled = 1, last_synced_at = :now, last_error = NULL"
+                "  enabled = 1, last_synced_at = :now, last_error = NULL, stats_json = :stats"
             ),
             {
                 "slug": provider.slug,
@@ -896,6 +1006,7 @@ async def sync(
                 "weight": weight,
                 "count": len(rows),
                 "now": int(utcnow().timestamp()),
+                "stats": json.dumps(stats) if stats is not None else None,
             },
         )
 
@@ -920,17 +1031,21 @@ async def sync(
 #: respelled moves the retire sweep and every reader of it together (rule 144).
 KEEP_TAG_INFIX = "-keeptags-"
 PLEX_COLLECTION_PREFIX = "plex-collection-"
-CURATED_PREFIX = "imdb-top-250"
+PLEX_WATCHLIST_PREFIX = "plex-watchlist-"
+IMDB_PREFIX = "imdb-"
 
-#: The three slug families Reaper *derives* from configuration rather than being told, and so
-#: is responsible for retiring. Each changes spelling when the configuration behind it changes
+#: The slug families Reaper *derives* from configuration rather than being told, and so is
+#: responsible for retiring. Each changes spelling when the configuration behind it changes
 #: -- ``ArrTagRule.slug`` carries the any/all match and the instance id, ``PlexCollection.slug``
 #: carries the collection name, and every list the operator defined carries its definition's id
 #: (see :func:`list_suffix`) -- so the old row would otherwise sit there enabled, still
-#: protecting from a definition the operator has already replaced or switched off.
+#: protecting from a definition the operator has already replaced or removed. The IMDb family
+#: pattern also matches the retired ``imdb-top-250`` spelling an upgrade leaves behind, which
+#: is what re-homes it.
 KEEP_TAG_SLUGS = f"%{KEEP_TAG_INFIX}%"
 PLEX_COLLECTION_SLUGS = f"{PLEX_COLLECTION_PREFIX}%"
-CURATED_SLUGS = f"{CURATED_PREFIX}%"
+PLEX_WATCHLIST_SLUGS = f"{PLEX_WATCHLIST_PREFIX}%"
+IMDB_SLUGS = f"{IMDB_PREFIX}%"
 
 #: How a slug says which definition it was synced for. Appended, so the readable part of a
 #: slug stays at the front and the existing family patterns above go on matching unchanged.
@@ -964,28 +1079,27 @@ def list_id_of(slug: str) -> int | None:
 
 
 class ListSource(enum.StrEnum):
-    """Which kind of thing a stored row came from, for a surface that groups by it.
+    """Which kind of thing a list comes from: the registry's ``source`` column, and the
+    grouping key for stored membership rows (derived from the slug there, since no cache
+    column records the provider).
 
-    Derived from the slug, which is the only place the answer currently lives: no column
-    records the provider, and adding one would read NULL until every install had synced
-    again. Confined to this one function for that reason, and it goes away with the list
-    registry, where a row will carry its provider type as a column.
-
-    A surface that groups MUST NOT parse the slug itself. One keep-tag list exists per *arr
-    instance per match mode, so an operator with two Radarrs and two Sonarrs already has four
-    rows for the single protection "titles I tagged reaper-keep", and every instance added
-    multiplies them. Grouping is how that stays readable, and the grouping key belongs
-    wherever the slugs are spelled, not in the component.
+    A surface that groups MUST NOT parse the slug itself. One tag list exists per *arr
+    instance, so an operator with two Radarrs and two Sonarrs has four stored rows for the
+    single protection "titles I tagged reaper-keep". Grouping is how that stays readable,
+    and the grouping key belongs wherever the slugs are spelled, not in the component.
     """
 
     ARR_TAG = "arr_tag"
-    """One *arr instance's keep tags. Several of these are one protection to the operator."""
+    """One *arr instance's tags. Several stored rows are one protection to the operator."""
 
     PLEX_COLLECTION = "plex_collection"
     """A collection curated in the Plex app."""
 
-    CURATED = "curated"
-    """A list Reaper ships with, today just the IMDb Top 250."""
+    PLEX_WATCHLIST = "plex_watchlist"
+    """The watchlist of the Plex account Reaper is signed in with."""
+
+    IMDB = "imdb"
+    """An IMDb chart or public list, via Radarr's mirror."""
 
 
 async def retire_absent(engine: AsyncEngine, *, family: str, current: Collection[str]) -> list[str]:
@@ -1237,6 +1351,10 @@ class ConfiguredList:
     item_count: int
     last_synced_at: int | None
     last_error: str | None
+    stats: dict[str, Any] | None = None
+    """What the last good sync recorded beyond the count (``stats_json``): per-tag totals
+    and the server name for a tag list, ``None`` for every other source and for rows
+    written before the column existed, which read as "unknown", never as zero."""
 
     @property
     def source(self) -> ListSource:
@@ -1245,7 +1363,9 @@ class ConfiguredList:
             return ListSource.ARR_TAG
         if self.slug.startswith(PLEX_COLLECTION_PREFIX):
             return ListSource.PLEX_COLLECTION
-        return ListSource.CURATED
+        if self.slug.startswith(PLEX_WATCHLIST_PREFIX):
+            return ListSource.PLEX_WATCHLIST
+        return ListSource.IMDB
 
     @property
     def list_id(self) -> int | None:
@@ -1290,10 +1410,23 @@ async def configured(engine: AsyncEngine) -> Sequence[ConfiguredList]:
             await conn.execute(
                 text(
                     "SELECT slug, display_name, mode, kind, enabled, item_count, "
-                    "       last_synced_at, last_error FROM protection_list ORDER BY slug"
+                    "       last_synced_at, last_error, stats_json "
+                    "FROM protection_list ORDER BY slug"
                 )
             )
         ).all()
+
+    def _stats(raw: object) -> dict[str, Any] | None:
+        """A stats body that will not parse reads as absent, never as a raised row
+        (rule 96's shape): the counts are decoration on a row whose count column stands."""
+        if not raw:
+            return None
+        try:
+            body = json.loads(str(raw))
+        except ValueError:
+            return None
+        return body if isinstance(body, dict) else None
+
     return [
         ConfiguredList(
             slug=str(r.slug),
@@ -1304,6 +1437,7 @@ async def configured(engine: AsyncEngine) -> Sequence[ConfiguredList]:
             item_count=int(r.item_count or 0),
             last_synced_at=None if r.last_synced_at is None else int(r.last_synced_at),
             last_error=None if r.last_error is None else str(r.last_error),
+            stats=_stats(r.stats_json),
         )
         for r in rows
     ]

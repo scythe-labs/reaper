@@ -163,6 +163,17 @@ async def _set(session: AsyncSession, key: str, value: Any) -> None:
 # --- deletion enabled ------------------------------------------------------
 
 
+async def lists_seeded(session: AsyncSession) -> bool:
+    """Whether the default protection lists were ever created. A flag rather than "any rows
+    exist": an operator who deletes the shipped lists means it, and reseeding on the next
+    read would resurrect a protection they removed (rule 1's shape for a seed)."""
+    return bool(await _get(session, "lists_seeded", False))
+
+
+async def set_lists_seeded(session: AsyncSession) -> None:
+    await _set(session, "lists_seeded", True)
+
+
 async def destructive_enabled(session: AsyncSession, settings: Settings) -> bool:
     """Whether deletion is currently on.
 
