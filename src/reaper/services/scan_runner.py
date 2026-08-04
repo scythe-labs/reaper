@@ -675,9 +675,16 @@ async def _run_scan_locked(
                 list_definitions = await list_config.definitions(policy_session, strict=True)
             except (SQLAlchemyError, list_config.ListRegistryUnreadableError) as exc:
                 list_definitions = None
+                # The exception text stays in the log and out of the sentence. A
+                # SQLAlchemyError stringifies to the whole failing statement and
+                # `ListRegistryUnreadableError` to a row id, and this line is rendered
+                # verbatim in the incomplete-scan notice on three screens (rule 21).
+                # Neither names anything the reader can go and fix, and the fixed sentence
+                # already says what to do about it.
+                log.warning("scan.lists_unreadable", error=str(exc))
                 lists_degradation = (
                     "Your protection lists could not be read, so Reaper cannot tell which "
-                    f"lists should be keeping titles safe: {exc}"
+                    "lists should be keeping titles safe"
                 )
         movie_gates = build_gates(movie_policy)
         tv_gates = build_gates(tv_policy)
@@ -761,25 +768,29 @@ async def _run_scan_locked(
         # and so does failing to read the user list at all).
         pre_scan_degradations += await _keep_history_degradations(tautulli)
 
-        # Refresh the protection lists BEFORE scoring reads them, or a "Never Reap"
-        # collection and the IMDb Top 250 are silently empty and protect nothing.
+        # Refresh the protection lists BEFORE scoring reads them, or every list the
+        # operator defined is silently empty and protects nothing.
         emit(Progress("lists", 0, 0, "refreshing protection lists"))
 
         # Plex is optional (a movie-only deployment runs without it), but a *configured*
         # Plex that is briefly unreachable must degrade, not crash the whole scan the way an
         # uncaught PlexError from connect() would. Critically it must fail CLOSED: with no
-        # live server the "Never Reap" collection cannot refresh, so we skip it (the atomic
-        # swap keeps any prior membership) AND degrade, so a reap cannot run against a
-        # keep-list that could not be confirmed.
+        # live server no Plex-sourced list can refresh, so each is skipped (the atomic swap
+        # keeps any prior membership) AND degrade, so a reap cannot run against a keep-list
+        # that could not be confirmed.
         plex_server: object | None = None
         if plex is not None:
             try:
                 plex_server = await plex.connect()
             except PlexError as exc:
                 plex_server = None
+                # Named by source, never by collection: the collection is the operator's to
+                # name (#483) and a watchlist list has no collection at all, so spelling one
+                # hardcoded title here claimed a list they may not have and hid the others
+                # that went unrefreshed beside it (rules 21, 144).
                 pre_scan_degradations.append(
-                    f"Plex unreachable: {exc}. The 'Never Reap' collection could not be "
-                    "refreshed, so no reap may run against a keep-list we could not confirm"
+                    f"Plex could not be reached: {exc}. The lists Reaper reads from Plex "
+                    "were not refreshed, so nothing may be deleted from this scan"
                 )
         # Reaper's own Plex server id, read off the connection we already opened (no extra
         # round-trip). It lets the requested-by map skip a portal synced to a DIFFERENT Plex,
