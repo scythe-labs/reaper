@@ -371,9 +371,15 @@ class TestProtectConditions:
             baseline = {v["id"]: judge(v, policy, default_gates(media_type))[0] for v in pool}
             for op in spec.ops:
                 for value in values_for(key, op):
+                    # ADDED beside the shipped rules, never in their place: the default
+                    # policies carry the two on_list rules now, and replacing the list
+                    # would test a policy that also withdrew a protection.
                     with_condition = mutated(
                         policy,
-                        protect_conditions=[{"field": key, "op": op.value, "value": value}],
+                        protect_conditions=[
+                            *(c.model_dump(mode="json") for c in policy.protect_conditions),
+                            {"field": key, "op": op.value, "value": value},
+                        ],
                     )
                     gates = build_gates(with_condition)
                     for v in pool:
@@ -1020,8 +1026,9 @@ class TestPolicyHash:
             "in_progress_hold_days": policy.in_progress_hold_days + 1,
             "keep_specials": not policy.keep_specials,
             "flag_keep_conflicts": not policy.flag_keep_conflicts,
-            "keep_tags": ["another-tag"],
-            "keep_tags_match": "all",
+            # The keep tags left the body for Settings -> Lists; a list acts through an
+            # on_list rule, whose respelling is the edit that must move both hashes.
+            "protect_conditions": [{"field": "on_list", "op": "eq", "value": "another-list"}],
             # A reallocation, not a bump: the total is pinned at 100, so the only weight
             # edit an operator can make is moving points between signals.
             "signals": balanced(

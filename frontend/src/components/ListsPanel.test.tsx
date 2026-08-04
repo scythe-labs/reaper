@@ -9,17 +9,17 @@
 // The state itself is the server's (`lists.ListHealth`) and is not recomputed here -- that is
 // the whole reason it is decided once. What is pinned is the copy each state produces, and the
 // branches this component does own: `item_count` on a failing list, which is the difference
-// between "your titles are still covered" and "nothing on this list is protected"; a list
-// switched off, which no server state describes; and the definition-to-membership join, which
-// is what lets a row carry Edit and Remove at all.
+// between "your titles are still covered" and "nothing on this list is protected"; the
+// policy-use line, which is what tells the operator a defined list protects nothing; and the
+// definition-to-membership join, which is what lets a row carry Edit and Check now at all.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
-import type { ListConfig, ProtectionList } from "../api";
+import type { ListConfig, ListPolicyUse, ProtectionList } from "../api";
 import { ListsPanel } from "./ListsPanel";
 
 // Rule 135: every read the tree under test performs, including the modal's, or React Query
@@ -33,30 +33,39 @@ const { apiMock } = vi.hoisted(() => ({
     editList: vi.fn(),
     removeList: vi.fn(),
     plexLibraries: vi.fn(),
+    syncPlexLibraries: vi.fn(),
   },
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 
-/** The shipped list, as a definition. Built-in, so it never offers Remove. */
-const CURATED: ListConfig = {
+/** The default hard use: one keeps-it-outright rule per media type, the shape a fresh list
+ *  gets server-side. Two entries, one sentence -- the panel deduplicates. */
+const HARD_USE: ListPolicyUse[] = [
+  { media_type: "movie", strength: "hard", points: null },
+  { media_type: "tv", strength: "hard", points: null },
+];
+
+/** The shipped IMDb chart, as a definition. */
+const IMDB_DEF: ListConfig = {
   id: 1,
   name: "IMDb Top 250",
-  source: "curated",
-  config: { list: "imdb-top-250" },
-  enabled: true,
-  built_in: true,
+  source: "imdb",
+  config: { preset: "top250" },
+  policy_use: HARD_USE,
 };
 
 /** Its membership row, joined on `list_id`. */
 const WORKING: ProtectionList = {
   slug: "imdb-top-250-list1",
   name: "IMDb Top 250",
-  source: "curated",
+  source: "imdb",
   state: "working",
   item_count: 250,
   last_checked_at: new Date(Date.now() - 8 * 60_000).toISOString(),
   error: null,
   list_id: 1,
+  tags: null,
+  server: null,
 };
 
 /** A Plex collection the operator defined, which is the shape #483 was about. */
@@ -65,16 +74,41 @@ const PLEX_DEF: ListConfig = {
   name: "Never Reap",
   source: "plex_collection",
   config: { library: "Films", collection: "Never Reap" },
-  enabled: true,
-  built_in: false,
+  policy_use: HARD_USE,
 };
 
-function renderPanel() {
-  return render(
+/** A tag list, read once per *arr instance. */
+const TAG_DEF: ListConfig = {
+  id: 3,
+  name: "Titles you've tagged",
+  source: "arr_tag",
+  config: { tags: ["reaper-keep", "keep-forever"], match: "any" },
+  policy_use: HARD_USE,
+};
+
+function tagRow(slug: string, over: Partial<ProtectionList> = {}): ProtectionList {
+  return {
+    slug,
+    name: "tag: reaper-keep",
+    source: "arr_tag",
+    state: "working",
+    item_count: 4,
+    last_checked_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+    error: null,
+    list_id: 3,
+    tags: null,
+    server: null,
+    ...over,
+  };
+}
+
+function renderPanel(onGoToPolicy = vi.fn()) {
+  render(
     <QueryClientProvider client={testQueryClient()}>
-      <ListsPanel />
+      <ListsPanel onGoToPolicy={onGoToPolicy} />
     </QueryClientProvider>,
   );
+  return { onGoToPolicy };
 }
 
 /** Both reads answered. Every test needs both, because the screen renders one row per
@@ -87,19 +121,20 @@ function seed(definitions: ListConfig[], rows: ProtectionList[]) {
 beforeEach(() => {
   Object.values(apiMock).forEach((fn) => fn.mockReset());
   apiMock.plexLibraries.mockResolvedValue([]);
+  apiMock.syncPlexLibraries.mockResolvedValue([]);
   apiMock.syncLists.mockResolvedValue({ checked: 1, failed: 0, plex_error: null });
 });
 
 describe("the Lists panel", () => {
   it("has no accessibility violations", async () => {
-    seed([CURATED], [WORKING]);
+    seed([IMDB_DEF], [WORKING]);
     renderPanel();
     expect(await screen.findByText("IMDb Top 250")).toBeInTheDocument();
     await expectNoA11yViolations();
   });
 
   it("says what a working list is protecting, and when it last checked", async () => {
-    seed([CURATED], [WORKING]);
+    seed([IMDB_DEF], [WORKING]);
     renderPanel();
 
     expect(await screen.findByText("IMDb Top 250")).toBeInTheDocument();
@@ -141,7 +176,7 @@ describe("the Lists panel", () => {
     // left the previous membership in place, so those titles are still protected and the
     // operator does not have to drop everything.
     seed(
-      [CURATED],
+      [IMDB_DEF],
       [{ ...WORKING, state: "failing", item_count: 37, error: "Sonarr refused the request" }],
     );
     renderPanel();
@@ -170,7 +205,7 @@ describe("the Lists panel", () => {
   it("does not call an empty stale list out of date either", async () => {
     // Same trap one state over: "still protecting 0 titles" is a sentence about coverage that
     // does not exist, and rule 72 wants the sibling fixed in the same change.
-    seed([CURATED], [{ ...WORKING, state: "stale", item_count: 0 }]);
+    seed([IMDB_DEF], [{ ...WORKING, state: "stale", item_count: 0 }]);
     renderPanel();
 
     expect(await screen.findByText("Nothing on it")).toBeInTheDocument();
@@ -178,7 +213,7 @@ describe("the Lists panel", () => {
   });
 
   it("warns that a stale list does not cover what was added since", async () => {
-    seed([CURATED], [{ ...WORKING, state: "stale", item_count: 37 }]);
+    seed([IMDB_DEF], [{ ...WORKING, state: "stale", item_count: 37 }]);
     renderPanel();
 
     expect(await screen.findByText("Out of date")).toBeInTheDocument();
@@ -193,19 +228,6 @@ describe("the Lists panel", () => {
 
     expect(await screen.findByText("Not checked yet")).toBeInTheDocument();
     expect(screen.getByText(/Nothing on it is protected until it does\./)).toBeInTheDocument();
-  });
-
-  it("does not call a switched-off list working, however healthy its stored copy", async () => {
-    // No server state describes this: `lists.ListHealth` reports the last CHECK, and the check
-    // went fine. Saying "Working" about a list the operator switched off is the reassuring
-    // direction, and its 250 stored titles are protecting nothing.
-    seed([{ ...CURATED, enabled: false }], [WORKING]);
-    renderPanel();
-
-    expect(await screen.findByText("Off")).toBeInTheDocument();
-    expect(screen.getByText(/nothing on this list is protected/)).toBeInTheDocument();
-    expect(screen.queryByText("Working")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Protecting 250 titles/)).not.toBeInTheDocument();
   });
 
   it("names where a list points, so two lists are told apart by more than their names", async () => {
@@ -240,7 +262,7 @@ describe("the Lists panel", () => {
 
   it("retries both reads on Try again", async () => {
     const user = userEvent.setup();
-    apiMock.listConfigs.mockResolvedValue([CURATED]);
+    apiMock.listConfigs.mockResolvedValue([IMDB_DEF]);
     apiMock.lists.mockRejectedValueOnce(new Error("nope")).mockResolvedValue([WORKING]);
     renderPanel();
 
@@ -249,12 +271,88 @@ describe("the Lists panel", () => {
   });
 });
 
+describe("the kind badges", () => {
+  it("wears each service's own mark: Plex gold, IMDb yellow, and the Sonarr-Radarr gradient", async () => {
+    seed([IMDB_DEF, PLEX_DEF, TAG_DEF], []);
+    renderPanel();
+    expect(await screen.findByText("IMDb Top 250")).toBeInTheDocument();
+
+    expect(document.querySelector(".kind-badge.kind-imdb")).toHaveTextContent("IMDb");
+    expect(document.querySelector(".kind-badge.kind-plex")).toHaveTextContent("Plex");
+    // The two-color gradient pill: one badge for a list read from both *arrs at once.
+    const arr = document.querySelector(".kind-badge.kind-arr");
+    expect(arr).not.toBeNull();
+    expect(arr).toHaveTextContent(/Sonarr.*Radarr/);
+  });
+});
+
+describe("the policy-use line", () => {
+  it("says a hard rule keeps every title on it, once, and links to Policy", async () => {
+    // Two hard rules (movie and TV) are one sentence: the same fact said twice would read as
+    // two different protections.
+    const user = userEvent.setup();
+    seed([IMDB_DEF], [WORKING]);
+    const { onGoToPolicy } = renderPanel();
+
+    expect(await screen.findByText(/Keeps every title on it\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/Keeps every title on it/)).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Change on Policy" }));
+    expect(onGoToPolicy).toHaveBeenCalled();
+  });
+
+  it("says what a lean is worth, in points", async () => {
+    seed(
+      [
+        {
+          ...IMDB_DEF,
+          policy_use: [{ media_type: "movie", strength: "lean", points: 15 }],
+        },
+      ],
+      [WORKING],
+    );
+    renderPanel();
+
+    expect(
+      await screen.findByText(/Leans toward keeping, up to 15 points off\./),
+    ).toBeInTheDocument();
+  });
+
+  it("warns when no rule names the list, because it then protects nothing", async () => {
+    const user = userEvent.setup();
+    seed([{ ...IMDB_DEF, policy_use: [] }], [WORKING]);
+    const { onGoToPolicy } = renderPanel();
+
+    expect(
+      await screen.findByText(/Not used by your policy yet, so it protects nothing\./),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Set it on Policy" }));
+    expect(onGoToPolicy).toHaveBeenCalled();
+  });
+});
+
 describe("the row actions", () => {
+  it("offers Edit then Check now, rightmost, and never a row-level Remove", async () => {
+    // Remove lives inside Edit, behind the form that names what it destroys, so a row's
+    // actions are two buttons and the destructive one is never one slip away.
+    seed([PLEX_DEF], []);
+    renderPanel();
+    expect(await screen.findByText("Never Reap")).toBeInTheDocument();
+
+    const actions = document.querySelector(".jobrow-actions")!;
+    const buttons = within(actions as HTMLElement).getAllByRole("button");
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Edit Never Reap",
+      "Check now, Never Reap",
+    ]);
+    expect(screen.queryByRole("button", { name: /^Remove / })).not.toBeInTheDocument();
+  });
+
   it("checks one list without touching the others", async () => {
     // A narrowed pass retires nothing (see `sync_protection_lists`), which is the whole reason
     // the id is sent rather than the button just re-running everything.
     const user = userEvent.setup();
-    seed([CURATED, PLEX_DEF], [WORKING]);
+    seed([IMDB_DEF, PLEX_DEF], [WORKING]);
     renderPanel();
 
     await user.click(await screen.findByRole("button", { name: "Check now, Never Reap" }));
@@ -265,7 +363,7 @@ describe("the row actions", () => {
     // Rule 85. The chip IS the result, so the button must go on saying "Checking…" until the
     // refetch has landed -- otherwise it reports done while the old answer is still on screen.
     const user = userEvent.setup();
-    seed([CURATED], [WORKING]);
+    seed([IMDB_DEF], [WORKING]);
     renderPanel();
     await screen.findByText("IMDb Top 250");
     apiMock.lists.mockResolvedValue([{ ...WORKING, item_count: 249 }]);
@@ -278,7 +376,7 @@ describe("the row actions", () => {
     // Rule 42: the failure renders beside the button that retries it, not in a page-level slot
     // where an operator with six lists cannot tell which one it is about.
     const user = userEvent.setup();
-    seed([CURATED], [WORKING]);
+    seed([IMDB_DEF], [WORKING]);
     apiMock.syncLists.mockRejectedValue(new Error("Radarr refused the request"));
     renderPanel();
 
@@ -286,13 +384,18 @@ describe("the row actions", () => {
     expect(await screen.findByText(/Radarr refused the request/)).toBeInTheDocument();
   });
 
-  it("checks everything from the footer", async () => {
+  it("checks everything from the footer, whose last action is Add a list", async () => {
     const user = userEvent.setup();
-    seed([CURATED], [WORKING]);
+    seed([IMDB_DEF], [WORKING]);
     renderPanel();
 
     await user.click(await screen.findByRole("button", { name: "Check all now" }));
     await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalledWith({}));
+
+    // Right-aligned pair: the ghost that touches every row, then the primary that adds one.
+    const foot = document.querySelector(".list-foot")!;
+    const footButtons = within(foot as HTMLElement).getAllByRole("button");
+    expect(footButtons.map((b) => b.textContent)).toEqual(["Check all now", "Add a list"]);
   });
 
   it("shows every row as busy while Check all now runs", async () => {
@@ -302,7 +405,7 @@ describe("the row actions", () => {
     const user = userEvent.setup();
     let release: (v: unknown) => void = () => {};
     apiMock.syncLists.mockReturnValue(new Promise((r) => (release = r)));
-    seed([CURATED, PLEX_DEF], [WORKING]);
+    seed([IMDB_DEF, PLEX_DEF], [WORKING]);
     renderPanel();
 
     await user.click(await screen.findByRole("button", { name: "Check all now" }));
@@ -333,138 +436,74 @@ describe("the row actions", () => {
     await user.click(await screen.findByRole("button", { name: "Check all now" }));
     expect(await screen.findByText(/couldn't reach Plex/)).toBeInTheDocument();
   });
-
-  it("never offers Remove for a list Reaper ships with", async () => {
-    // A keep rule in the default policy names it, and a rule naming a list that is gone reads
-    // as a live protection covering nothing (rule 25). Switching it off stays available.
-    seed([CURATED], [WORKING]);
-    renderPanel();
-
-    expect(await screen.findByText("IMDb Top 250")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Remove IMDb Top 250" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Edit IMDb Top 250" })).toBeInTheDocument();
-  });
-
-  it("says what a removal costs before doing it, and only removes on confirm", async () => {
-    const user = userEvent.setup();
-    seed([PLEX_DEF], []);
-    renderPanel();
-
-    await user.click(await screen.findByRole("button", { name: "Remove Never Reap" }));
-    expect(await screen.findByText(/can be deleted by the next scan/)).toBeInTheDocument();
-    expect(apiMock.removeList).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: "Remove list" }));
-    await waitFor(() => expect(apiMock.removeList).toHaveBeenCalledWith(2));
-  });
-
-  it("keeps the list when the removal is refused, and says why", async () => {
-    const user = userEvent.setup();
-    seed([PLEX_DEF], []);
-    apiMock.removeList.mockRejectedValue(new Error("A keep rule still points at this list."));
-    renderPanel();
-
-    await user.click(await screen.findByRole("button", { name: "Remove Never Reap" }));
-    await user.click(await screen.findByRole("button", { name: "Remove list" }));
-    expect(await screen.findByText(/A keep rule still points at this list\./)).toBeInTheDocument();
-  });
 });
 
-describe("collapsing the per-instance keep-tag lists", () => {
-  // Reaper stores one keep-tag list per *arr instance per match mode, so two Radarrs and two
-  // Sonarrs are four stored rows for the single thing the operator did: tag some titles. A row
-  // each grows the page with the server count, which is worst on the installs with the most to
-  // lose, so the family collapses to one row.
-  const tag = (slug: string, name: string, over: Partial<ProtectionList> = {}): ProtectionList => ({
-    slug,
-    name,
-    source: "arr_tag",
-    state: "working",
-    item_count: 4,
-    last_checked_at: new Date(Date.now() - 60 * 60_000).toISOString(),
-    error: null,
-    // The policy's keep tags have no definition row: they are configured on Policy, which is
-    // exactly why they collapse into a row of their own rather than one per definition.
-    list_id: null,
-    ...over,
+describe("a tag list's counts", () => {
+  // One definition, one row per *arr instance. The pills carry the combined count per tag;
+  // the per-server split folds under the row, so four servers stay one row until asked.
+  const radarr = tagRow("radarr-1-list3", {
+    server: "Radarr",
+    item_count: 8,
+    tags: { "reaper-keep": 8 },
+  });
+  const sonarr = tagRow("sonarr-2-list3", {
+    server: "Sonarr",
+    item_count: 6,
+    tags: { "reaper-keep": 4, "keep-forever": 2 },
   });
 
-  it("shows one row for four servers, and sums what they protect", async () => {
-    seed(
-      [],
-      [
-        tag("radarr-1-keeptags-any", "Radarr (HD) tag: reaper-keep", { item_count: 1 }),
-        tag("radarr-2-keeptags-any", "Radarr (4k) tag: reaper-keep", { item_count: 2 }),
-        tag("sonarr-3-keeptags-any", "Sonarr (HD) tag: reaper-keep", { item_count: 8 }),
-        tag("sonarr-4-keeptags-any", "Sonarr (4k) tag: reaper-keep", { item_count: 3 }),
-      ],
-    );
+  it("sums each tag's count across servers into one pill", async () => {
+    seed([TAG_DEF], [radarr, sonarr]);
     renderPanel();
 
     expect(await screen.findByText("Titles you've tagged")).toBeInTheDocument();
+    const pills = [...document.querySelectorAll(".tag-pill")];
+    expect(pills.map((p) => p.textContent)).toEqual(["reaper-keep12", "keep-forever2"]);
+    expect(screen.getByText(/Across 2 servers\./)).toBeInTheDocument();
     expect(screen.getByText(/Protecting 14 titles\./)).toBeInTheDocument();
-    expect(screen.getByText(/Across 4 servers\./)).toBeInTheDocument();
-    // The individual list names are gone, which is the whole point.
-    expect(screen.queryByText(/Radarr \(HD\) tag/)).not.toBeInTheDocument();
   });
 
-  it("wears the worst member's state and names only the servers in it", async () => {
-    // A family reported by its best member says "Working" while one server's keep tags protect
-    // nothing. The operator needs to know WHICH server to go to, and naming all four would put
-    // the row back at one line per server.
-    seed(
-      [],
-      [
-        tag("radarr-1-keeptags-any", "Radarr (HD) tag: reaper-keep", { item_count: 9 }),
-        tag("sonarr-3-keeptags-any", "Sonarr (4k) tag: reaper-keep", {
-          state: "failing",
-          item_count: 0,
-          error: "Sonarr refused the request",
-        }),
-      ],
-    );
+  it("folds the per-server counts under the row, named by instance", async () => {
+    seed([TAG_DEF], [radarr, sonarr]);
     renderPanel();
 
-    expect(await screen.findByText("Not working")).toBeInTheDocument();
-    expect(screen.getByText(/Sonarr \(4k\)/)).toBeInTheDocument();
-    expect(screen.queryByText(/Radarr \(HD\)/)).not.toBeInTheDocument();
-    expect(screen.getByText("Sonarr refused the request")).toBeInTheDocument();
+    expect(await screen.findByText("Counts by server")).toBeInTheDocument();
+    const grid = document.querySelector(".server-grid")!;
+    expect([...grid.querySelectorAll(".srv")].map((s) => s.textContent)).toEqual([
+      "Radarr",
+      "Sonarr",
+    ]);
+    expect([...grid.querySelectorAll(".cnt")].map((s) => s.textContent)).toEqual([
+      "reaper-keep 8",
+      "reaper-keep 4, keep-forever 2",
+    ]);
   });
 
-  it("offers no Edit or Remove on a row Policy owns", async () => {
-    // The keep tags are not a definition, so there is nothing here to edit or delete. The row
-    // says where they ARE set instead, rather than offering a control that would have to
-    // explain itself.
-    seed([], [tag("radarr-1-keeptags-any", "Radarr (HD) tag: reaper-keep")]);
+  it("shows a bare pill for a tag no check has counted yet, never a zero", async () => {
+    // The counts arrived with this screen, so a row synced before them has `tags: null` --
+    // unknown. Zero would claim a check found nothing, which no check said.
+    seed([TAG_DEF], [tagRow("radarr-1-list3")]);
     renderPanel();
 
     expect(await screen.findByText("Titles you've tagged")).toBeInTheDocument();
-    expect(screen.getByText(/Set the tags on Policy\./)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Edit Titles you've tagged" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Remove Titles you've tagged" }),
-    ).not.toBeInTheDocument();
+    const pills = [...document.querySelectorAll(".tag-pill")];
+    expect(pills.map((p) => p.textContent)).toEqual(["reaper-keep", "keep-forever"]);
+    expect(screen.queryByText("Counts by server")).not.toBeInTheDocument();
   });
 
-  it("checks the keep tags on their own, since no definition names them", async () => {
-    const user = userEvent.setup();
-    seed([], [tag("radarr-1-keeptags-any", "Radarr (HD) tag: reaper-keep")]);
+  it("says titles need every tag only when the list matches ALL of them", async () => {
+    seed([{ ...TAG_DEF, config: { tags: ["reaper-keep"], match: "all" } }], []);
     renderPanel();
 
-    await user.click(
-      await screen.findByRole("button", { name: "Check now, Titles you've tagged" }),
-    );
-    await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalledWith({ keep_tags: true }));
+    expect(await screen.findByText(/Titles need every tag\./)).toBeInTheDocument();
   });
 
-  it("leaves the other sources as their own rows", async () => {
-    seed([CURATED], [WORKING, tag("radarr-1-keeptags-any", "Radarr (HD) tag: reaper-keep")]);
+  it("does not say it for an ANY list, the wider net", async () => {
+    seed([TAG_DEF], []);
     renderPanel();
 
-    expect(await screen.findByText("IMDb Top 250")).toBeInTheDocument();
-    expect(screen.getByText("Titles you've tagged")).toBeInTheDocument();
+    expect(await screen.findByText("Titles you've tagged")).toBeInTheDocument();
+    expect(screen.queryByText(/Titles need every tag/)).not.toBeInTheDocument();
   });
 });
 
@@ -482,23 +521,29 @@ describe("a list stored before the registry existed", () => {
     last_checked_at: new Date(Date.now() - 60 * 60_000).toISOString(),
     error: null,
     list_id: null,
+    tags: null,
+    server: null,
   };
 
-  it("still shows what it is protecting", async () => {
+  it("still shows what it is protecting, and that the next check re-homes it", async () => {
     seed([], [orphan]);
     renderPanel();
 
     expect(await screen.findByText('Plex collection: "Never Reap"')).toBeInTheDocument();
     expect(screen.getByText(/Protecting 12 titles\./)).toBeInTheDocument();
-    expect(screen.getByText(/Set up before this screen existed\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Your next check moves it onto a list you can edit\./),
+    ).toBeInTheDocument();
   });
 
-  it("offers no Edit or Remove, having nothing to edit", async () => {
+  it("offers no Edit, having nothing to edit, but can still be checked", async () => {
     seed([], [orphan]);
     renderPanel();
 
     expect(await screen.findByText('Plex collection: "Never Reap"')).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Edit / })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Remove / })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: 'Check now, Plex collection: "Never Reap"' }),
+    ).toBeInTheDocument();
   });
 });

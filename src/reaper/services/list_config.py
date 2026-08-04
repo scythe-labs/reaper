@@ -20,6 +20,7 @@ nothing.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -29,13 +30,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import re
-
 from reaper.clock import utcnow
 from reaper.db.models import ListConfig
+from reaper.engine.policy import DEFAULT_IMDB_LIST_NAME, DEFAULT_TAG_LIST_NAME
 from reaper.services import app_settings
 from reaper.services import lists as lists_service
-from reaper.engine.policy import DEFAULT_IMDB_LIST_NAME, DEFAULT_TAG_LIST_NAME
 from reaper.services.lists import ListSource
 
 log = structlog.get_logger(__name__)
@@ -115,7 +114,6 @@ async def definitions(session: AsyncSession) -> list[ListDefinition]:
             )
         )
     return out
-
 
 
 #: What a fresh install starts with: the two lists the default policy's keep rules name.
@@ -208,9 +206,7 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
     # being bounced back for retyping.
     found = re.search(r"ls\d{6,}", str(config.get("list_id", "")))
     if not found:
-        raise ListConfigError(
-            "Paste the list's id or URL. An IMDb list id looks like ls005421403."
-        )
+        raise ListConfigError("Paste the list's id or URL. An IMDb list id looks like ls005421403.")
     return json.dumps({"list_id": found.group(0)})
 
 

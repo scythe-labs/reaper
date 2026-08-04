@@ -5,10 +5,11 @@ Membership is somebody else's data mirrored into ``cache.db`` and rebuilt on eve
 definition is not rebuildable from anything, so it lives in ``reaper.db`` and is migrated and
 backed up. These pin the boundary between the two, and every refusal on the way in.
 
-**Everything here fails closed toward keeping.** Removing a list withdraws a protection, so
-the shipped one cannot be removed at all; a configuration that could never match anything is
-refused while the operator is looking at the box that is empty, rather than syncing to empty
-and sitting on the screen reading "Nothing on it".
+**Everything here fails closed toward keeping.** A configuration that could never match
+anything is refused while the operator is looking at the box that is empty, rather than
+syncing to empty and sitting on the screen reading "Nothing on it". Removing a list withdraws
+a protection, so the API pairs the delete with ``list_rules.detach_list`` -- the pairing is
+pinned in ``tests/test_list_rules.py``.
 """
 
 from __future__ import annotations
@@ -57,29 +58,43 @@ async def session(tmp_path: Path) -> Iterator[AsyncSession]:
 
 
 class TestWhatShipsWithReaper:
-    async def test_the_first_read_creates_the_shipped_list(self, session: AsyncSession) -> None:
-        """So the screen is never empty on a fresh install, and the operator can see what a
-        list looks like before making one."""
+    async def test_the_first_read_seeds_the_two_default_lists(self, session: AsyncSession) -> None:
+        """The two lists the default policy's keep rules name, so the screen is never
+        empty on a fresh install and those rules never point at nothing (rule 25)."""
         rows = await list_config.all_lists(session)
 
-        assert [r.name for r in rows] == ["IMDb Top 250"]
-        assert rows[0].built_in is True
+        assert [(r.name, r.source) for r in rows] == [
+            ("IMDb Top 250", "imdb"),
+            ("Titles you've tagged", "arr_tag"),
+        ]
+        assert json.loads(rows[0].config_json) == {"preset": "top250"}
+        assert json.loads(rows[1].config_json) == {"tags": ["reaper-keep"], "match": "any"}
 
-    async def test_reading_twice_does_not_create_it_twice(self, session: AsyncSession) -> None:
+    async def test_reading_twice_does_not_seed_twice(self, session: AsyncSession) -> None:
         await list_config.all_lists(session)
         rows = await list_config.all_lists(session)
 
-        assert len(rows) == 1
+        assert len(rows) == 2
 
-    async def test_a_renamed_shipped_list_keeps_its_new_name(self, session: AsyncSession) -> None:
-        """Matched on ``built_in`` rather than on the name, or an operator who renamed it gets
-        a second row beside theirs on every read -- and two lists answering to one protection."""
-        [row] = await list_config.all_lists(session)
-        await list_config.update(session, row.id, name="Films worth keeping")
-
+    async def test_a_deleted_seeded_list_is_not_resurrected(self, session: AsyncSession) -> None:
+        """The seed runs exactly once, tracked by a flag rather than by the rows: an
+        operator who removed a shipped list must not find it back on the next read."""
         rows = await list_config.all_lists(session)
+        await list_config.delete(session, rows[0].id)
 
-        assert [r.name for r in rows] == ["Films worth keeping"]
+        names = [r.name for r in await list_config.all_lists(session)]
+
+        assert names == ["Titles you've tagged"]
+
+    async def test_a_renamed_seeded_list_keeps_its_new_name(self, session: AsyncSession) -> None:
+        """Same flag, other direction: a rename must not spawn a second shipped copy
+        beside the operator's."""
+        [imdb, _tags] = await list_config.all_lists(session)
+        await list_config.update(session, imdb.id, name="Films worth keeping")
+
+        names = [r.name for r in await list_config.all_lists(session)]
+
+        assert names == ["Films worth keeping", "Titles you've tagged"]
 
 
 class TestRefusingAConfigurationThatCouldNeverMatch:
@@ -133,13 +148,33 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
                 config={"library": "F", "collection": "C"},
             )
 
-    async def test_the_shipped_kind_cannot_be_added_by_hand(self, session: AsyncSession) -> None:
-        with pytest.raises(list_config.ListConfigError, match="ships with"):
+    async def test_the_retired_curated_source_is_refused(self, session: AsyncSession) -> None:
+        """``curated`` left the source vocabulary when the IMDb provider generalized; a
+        hand-crafted save naming it is refused like any unknown source."""
+        with pytest.raises(list_config.ListConfigError, match="where the list comes from"):
             await list_config.create(session, name="Mine", source="curated", config={})
 
     async def test_an_unknown_source_is_refused(self, session: AsyncSession) -> None:
         with pytest.raises(list_config.ListConfigError, match="where the list comes from"):
             await list_config.create(session, name="Mine", source="rss", config={})
+
+    async def test_an_imdb_list_needs_a_preset_or_a_list_id(self, session: AsyncSession) -> None:
+        with pytest.raises(list_config.ListConfigError, match="Paste the list's id"):
+            await list_config.create(session, name="Mine", source="imdb", config={})
+
+    async def test_an_unknown_imdb_preset_is_refused(self, session: AsyncSession) -> None:
+        """A preset the mirror does not serve would 404 on every sync, so it is refused
+        while the operator is looking at the picker."""
+        with pytest.raises(list_config.ListConfigError, match="IMDb presets"):
+            await list_config.create(
+                session, name="Mine", source="imdb", config={"preset": "top1000"}
+            )
+
+    async def test_a_malformed_imdb_list_id_is_refused(self, session: AsyncSession) -> None:
+        with pytest.raises(list_config.ListConfigError, match="looks like ls005421403"):
+            await list_config.create(
+                session, name="Mine", source="imdb", config={"list_id": "watchlist"}
+            )
 
 
 class TestWhatIsStored:
@@ -162,26 +197,78 @@ class TestWhatIsStored:
 
         assert json.loads(row.config_json)["match"] == "any"
 
+    async def test_an_imdb_preset_is_stored_as_the_preset(self, session: AsyncSession) -> None:
+        row = await list_config.create(
+            session, name="Mine", source="imdb", config={"preset": "popular"}
+        )
+
+        assert json.loads(row.config_json) == {"preset": "popular"}
+
+    @pytest.mark.parametrize(
+        "pasted",
+        [
+            "ls005421403",
+            "https://www.imdb.com/list/ls005421403/",
+            "www.imdb.com/list/ls005421403?ref_=hm",
+        ],
+        ids=["bare-id", "full-url", "url-with-query"],
+    )
+    async def test_a_pasted_imdb_url_yields_its_id(
+        self, session: AsyncSession, pasted: str
+    ) -> None:
+        """The id is extracted from wherever it sits in the paste, rather than the paste
+        being bounced back for retyping."""
+        row = await list_config.create(
+            session, name="Mine", source="imdb", config={"list_id": pasted}
+        )
+
+        assert json.loads(row.config_json) == {"list_id": "ls005421403"}
+
+    async def test_a_watchlist_stores_an_empty_config(self, session: AsyncSession) -> None:
+        """Nothing to configure: the watchlist is the signed-in account's own, so whatever
+        arrives in ``config`` is dropped rather than stored as meaningless keys."""
+        row = await list_config.create(
+            session, name="Mine", source="plex_watchlist", config={"stray": "key"}
+        )
+
+        assert json.loads(row.config_json) == {}
+
+    async def test_the_imdb_variant_reads_preset_then_list_id(self, session: AsyncSession) -> None:
+        """The provider path for each stored shape, and the fallback for a body that names
+        neither: the Top 250, the list Reaper has always shipped, never a path the mirror
+        will 404."""
+        preset = await list_config.create(
+            session, name="P", source="imdb", config={"preset": "popular"}
+        )
+        custom = await list_config.create(
+            session, name="C", source="imdb", config={"list_id": "ls005421403"}
+        )
+
+        by_id = {d.id: d for d in await list_config.definitions(session)}
+
+        assert by_id[preset.id].imdb_variant == "popular"
+        assert by_id[custom.id].imdb_variant == "ls005421403"
+        # The seeded default rides along as the fallback shape.
+        assert (
+            list_config.ListDefinition(
+                id=99, name="X", source=ListSource.IMDB, config={}, enabled=True
+            ).imdb_variant
+            == "top250"
+        )
+
 
 class TestRemoving:
-    async def test_the_shipped_list_cannot_be_removed(self, session: AsyncSession) -> None:
-        """The default policy carries a keep rule naming it, and a rule naming a list that is
-        gone reads as a live protection covering nothing (rule 25). Off is the other verb."""
-        [row] = await list_config.all_lists(session)
-
-        with pytest.raises(list_config.ListConfigError, match="ships with Reaper"):
+    async def test_every_list_is_removable_the_seeded_ones_included(
+        self, session: AsyncSession
+    ) -> None:
+        """A list acts through its keep rules now, and the API route deletes those in the
+        same request (``list_rules.detach_list``), so no rule goes on naming a list that is
+        gone (rule 25). With the pairing in place there is nothing left to refuse."""
+        rows = await list_config.all_lists(session)
+        for row in list(rows):
             await list_config.delete(session, row.id)
 
-    async def test_the_route_refuses_it_too(self, client: TestClient) -> None:
-        """The refusal the operator actually meets. Pinned through HTTP as well as at the
-        service, because the route is the only half a browser can reach."""
-        [shipped] = client.get("/api/lists/configured").json()
-
-        r = client.delete(f"/api/lists/configured/{shipped['id']}")
-
-        assert r.status_code == 400
-        assert "ships with Reaper" in r.json()["detail"]
-        assert len(client.get("/api/lists/configured").json()) == 1
+        assert await list_config.all_lists(session) == []
 
     async def test_a_list_the_operator_made_is_removable(self, session: AsyncSession) -> None:
         row = await list_config.create(
@@ -190,7 +277,10 @@ class TestRemoving:
 
         await list_config.delete(session, row.id)
 
-        assert [r.name for r in await list_config.all_lists(session)] == ["IMDb Top 250"]
+        assert [r.name for r in await list_config.all_lists(session)] == [
+            "IMDb Top 250",
+            "Titles you've tagged",
+        ]
 
     async def test_removing_one_that_is_gone_says_so(self, session: AsyncSession) -> None:
         with pytest.raises(list_config.ListConfigError, match="no longer exists"):
@@ -260,9 +350,13 @@ class TestDecodingForTheSync:
 
 
 class TestTheRoutes:
-    def test_adding_answers_with_the_cleaned_row(self, client: TestClient) -> None:
+    def test_adding_answers_with_the_cleaned_row_and_its_policy_use(
+        self, client: TestClient
+    ) -> None:
         """Rule 39: the form re-seeds from what was STORED, not from what it sent. Those
-        differ on every save that trimmed anything, and this one trims two tags."""
+        differ on every save that trimmed anything, and this one trims two tags. The
+        response also carries how Policy now uses the list, because the create attached
+        the keeps-it-outright rule in the same request."""
         r = client.post(
             "/api/lists/configured",
             json={"name": "  Keep  ", "source": "arr_tag", "config": {"tags": [" keep ", "gold"]}},
@@ -272,8 +366,10 @@ class TestTheRoutes:
         body = r.json()
         assert body["name"] == "Keep"
         assert body["config"] == {"tags": ["keep", "gold"], "match": "any"}
-        assert body["enabled"] is True
-        assert body["built_in"] is False
+        assert {(u["media_type"], u["strength"]) for u in body["policy_use"]} == {
+            ("movie", "hard"),
+            ("tv", "hard"),
+        }
 
     def test_a_refusal_reaches_the_operator_in_the_services_own_words(
         self, client: TestClient
@@ -288,9 +384,9 @@ class TestTheRoutes:
         assert r.status_code == 400
         assert r.json()["detail"] == "Say which collection in that library to read."
 
-    def test_switching_a_list_off_leaves_its_body_alone(self, client: TestClient) -> None:
-        """Rule 1: an omitted field and an explicit one are different requests. The switch
-        sends `enabled` alone, so it cannot rewrite where the list points on the way past."""
+    def test_editing_the_config_leaves_the_name_alone(self, client: TestClient) -> None:
+        """Rule 1: an omitted field and an explicit one are different requests. The edit
+        sends `config` alone, so it cannot rename the list on the way past."""
         made = client.post(
             "/api/lists/configured",
             json={
@@ -300,11 +396,14 @@ class TestTheRoutes:
             },
         ).json()
 
-        r = client.patch(f"/api/lists/configured/{made['id']}", json={"enabled": False})
+        r = client.patch(
+            f"/api/lists/configured/{made['id']}",
+            json={"config": {"library": "Films", "collection": "Keep Forever"}},
+        )
 
         assert r.status_code == 200
-        assert r.json()["enabled"] is False
-        assert r.json()["config"] == {"library": "Films", "collection": "Never Reap"}
+        assert r.json()["name"] == "Keep"
+        assert r.json()["config"] == {"library": "Films", "collection": "Keep Forever"}
 
     def test_editing_one_that_is_gone_says_so(self, client: TestClient) -> None:
         r = client.patch("/api/lists/configured/9999", json={"name": "Keep"})

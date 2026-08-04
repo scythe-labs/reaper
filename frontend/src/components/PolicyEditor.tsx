@@ -66,7 +66,6 @@ import {
 import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
-import { TagsEditor } from "./TagsEditor";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
 import { usePolicyProbe } from "../usePolicyProbe";
 import { Switch } from "./Switch";
@@ -972,9 +971,10 @@ export const FIELD_TO_GATE: Record<string, string> = {
   days_unwatched: "min_dormancy",
   recent_watchers: "server_popularity",
   imdb_rating: "rating_floor",
-  on_curated_list: "curated_list",
-  whitelisted: "whitelisted",
   streaming_now: "streaming_now",
+  // `whitelisted` and `on_curated_list` were here, mapped to the two list gates. Both gates
+  // are retired -- every list now protects through an `on_list` keep rule the operator
+  // authors -- so their fields stay authorable and nothing filters them.
 };
 
 // The built-in signals already cover these fields, so they are not offered as custom
@@ -1938,10 +1938,10 @@ export function PolicyEditor({
               gates[i] = g;
               update({ gates });
             };
-            // Protections that carry their own settings render as cards below the plain
-            // rows (the tags card and the rating card), so the visual weight says which
-            // protections have more to configure. They are skipped here.
-            if (gate.gate === "whitelisted" || gate.gate === "rating_floor") return null;
+            // A protection that carries its own settings renders as a card below the plain
+            // rows (the rating card), so the visual weight says which protections have more
+            // to configure. It is skipped here.
+            if (gate.gate === "rating_floor") return null;
             return (
               <GateRow key={gate.gate} gate={gate} onChange={setGate} warnings={gateWarnings} />
             );
@@ -1969,40 +1969,6 @@ export function PolicyEditor({
               onRules={(keep_rating_rules) => update({ keep_rating_rules })}
               onMatch={(keep_rating_match) => update({ keep_rating_match })}
             />
-          );
-        })()}
-
-        {(() => {
-          const i = draft.gates.findIndex((g) => g.gate === "whitelisted");
-          const whitelist = i >= 0 ? draft.gates[i] : undefined;
-          if (!whitelist) return null;
-          const setWhitelist = (enabled: boolean) => {
-            const gates = [...draft.gates];
-            gates[i] = { ...whitelist, enabled };
-            update({ gates });
-          };
-          return (
-            <div className="rules-card">
-              <label className="toggle card-head">
-                <Switch checked={whitelist.enabled} onChange={setWhitelist} />
-                <span className="rule-name">Spare titles you've tagged</span>
-              </label>
-              <p className="help rule-help">
-                A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scored.
-                Plex collections are set up on Settings → Lists.
-              </p>
-              {whitelist.enabled && (
-                <>
-                  <TagsEditor
-                    tags={draft.keep_tags}
-                    match={draft.keep_tags_match}
-                    onTags={(keep_tags) => update({ keep_tags })}
-                    onMatch={(keep_tags_match) => update({ keep_tags_match })}
-                  />
-                  <p className="help">Type each tag exactly as it appears in Sonarr or Radarr.</p>
-                </>
-              )}
-            </div>
           );
         })()}
 

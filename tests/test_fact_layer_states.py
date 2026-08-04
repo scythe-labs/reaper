@@ -405,6 +405,12 @@ class TestARepairedPolicyCannotExecute:
         assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine").repaired is False
         assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine", rescaled=True).repaired is True
         assert ActivePolicy(DEFAULT_MOVIE_POLICY, "default", fell_back=True).repaired is True
+        assert (
+            ActivePolicy(DEFAULT_MOVIE_POLICY, "mine", rating_rules_recovered=True).repaired is True
+        )
+        # The list-protection conversion is a repair like the others: the converted body
+        # is not the one the operator saved, so the scan degrades until they re-save.
+        assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine", lists_migrated=True).repaired is True
 
     def test_the_two_recoveries_are_flags_and_not_read_off_the_name(self) -> None:
         """Regression. These were briefly told apart by ``name != "default"``, which looks

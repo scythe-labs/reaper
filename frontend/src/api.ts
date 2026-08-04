@@ -497,6 +497,10 @@ export type CustomCondemn =
 export interface GradedKeep {
   name: string;
   field: string;
+  /** For a membership field (`on_list`): which list, by name. That keep is FLAT -- on the
+   *  list takes the full `max_discount`, off it takes none -- so the ramp fields are inert
+   *  (send floor 0, saturate_at 1). Null or absent for every numeric field. */
+  value?: string | null;
   max_discount: number;
   floor: number;
   saturate_at: number;
@@ -536,8 +540,6 @@ export interface PolicyBody {
   protect_conditions: Condition[];
   custom_condemn: CustomCondemn[];
   graded_keeps: GradedKeep[];
-  keep_tags: string[];
-  keep_tags_match: "any" | "all";
   keep_rating_rules: RatingRule[];
   keep_rating_match: "any" | "all";
 }
@@ -800,19 +802,26 @@ export interface ProtectionList {
   name: string;
   /** Which family this belongs to. The panel groups on it: one protection, not one row per
    *  *arr instance. Never derived in the component -- the slug spellings live server-side. */
-  source: "arr_tag" | "plex_collection" | "curated";
+  source: "arr_tag" | "plex_collection" | "plex_watchlist" | "imdb";
   state: "working" | "stale" | "failing" | "never_checked";
   item_count: number;
   /** When the last check that actually landed was. Null when none ever has. */
   last_checked_at: string | null;
   /** What the last failed check said, from the service that refused. Null when none did. */
   error: string | null;
-  /** Which `ListConfig` this membership was synced for, so the panel can put Edit and Remove
-   *  on the row without working out from a slug which definition made it. Several rows share
-   *  one id (a tag list is synced once per *arr instance), and it is null for the keep tags,
-   *  which are configured on Policy and have no definition row. Derived on the server, beside
-   *  the slug spellings -- never parsed here (rule 63). */
+  /** Which `ListConfig` this membership was synced for, so the panel can put Edit and Check
+   *  now on the row without working out from a slug which definition made it. Several rows
+   *  share one id (a tag list is synced once per *arr instance); it is null for a row stored
+   *  before its definition existed, which the next successful check re-homes. Derived on the
+   *  server, beside the slug spellings -- never parsed here (rule 63). */
   list_id: number | null;
+  /** A tag list's per-tag counts from the last good check, by the operator's own spelling of
+   *  each tag. Null for every other source, and for a row that has not synced since the
+   *  counts started being recorded: unknown, never zero. */
+  tags: Record<string, number> | null;
+  /** Which *arr instance a tag list's row was read from, for the per-server counts. The
+   *  operator named the instance on Settings; null for every other source. */
+  server: string | null;
 }
 
 /** The settings one list source needs. A union in practice, kept as one optional-field shape
@@ -829,9 +838,21 @@ export type ListConfigBody = {
   /** `arr_tag`: the tag spellings, and whether a title needs any of them or all of them. */
   tags?: string[];
   match?: "any" | "all";
-  /** `curated`: which shipped list this is. Not the operator's to retype. */
-  list?: string;
+  /** `imdb`: a shipped chart's key ("top250", "popular")... */
+  preset?: string;
+  /** ...or a public list's id. The server accepts a pasted URL and keeps the id inside it. */
+  list_id?: string;
 };
+
+/** One keep rule naming a list, for the row's "how Policy uses it" line. Empty `policy_use`
+ *  means no rule does, which the screen renders as a warning: a defined list that protects
+ *  nothing. */
+export interface ListPolicyUse {
+  media_type: "movie" | "tv";
+  strength: "hard" | "lean";
+  /** The lean's discount. Null for a hard rule, which keeps outright. */
+  points: number | null;
+}
 
 /** One list DEFINITION: what the operator named and where it points.
  *
@@ -845,12 +866,10 @@ export interface ListConfig {
   id: number;
   /** The operator's own words, so a surface rendering it wraps (rule 139). */
   name: string;
-  source: "arr_tag" | "plex_collection" | "curated";
+  source: "arr_tag" | "plex_collection" | "plex_watchlist" | "imdb";
   config: ListConfigBody;
-  enabled: boolean;
-  /** True for a list Reaper ships with. It can be switched off or pointed elsewhere, never
-   *  deleted: a keep rule in the default policy names it. */
-  built_in: boolean;
+  /** How the policies use this list right now: one entry per keep rule naming it. */
+  policy_use: ListPolicyUse[];
 }
 
 /** What one "Check now" did. Each failed list's own error is on its row, which the screen
@@ -1941,18 +1960,16 @@ export const api = {
   listConfigs: () => request<ListConfig[]>("/api/lists/configured"),
   addList: (name: string, source: ListConfig["source"], config: ListConfigBody) =>
     post<ListConfig>("/api/lists/configured", { name, source, config }),
-  /** An edit. Every field optional and omitted means "leave it", so switching a list off
-   *  sends `enabled` alone and cannot rewrite the body on the way past (rule 1). */
-  editList: (id: number, body: { name?: string; config?: ListConfigBody; enabled?: boolean }) =>
+  /** An edit. Both fields optional and omitted means "leave it" (rule 1). */
+  editList: (id: number, body: { name?: string; config?: ListConfigBody }) =>
     request<ListConfig>(`/api/lists/configured/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
   removeList: (id: number) => del<void>(`/api/lists/configured/${id}`),
-  /** Check lists now: one definition, the policy's keep tags, or (with neither) all of them.
-   *  The same pass a scan runs. Slow by nature -- it reads every *arr and Plex once. */
-  syncLists: (target: { list_id?: number; keep_tags?: boolean } = {}) =>
-    post<ListSyncResult>("/api/lists/sync", target),
+  /** Check lists now: one definition, or (with none named) all of them. The same pass a
+   *  scan runs. Slow by nature -- it reads every *arr and Plex once. */
+  syncLists: (target: { list_id?: number } = {}) => post<ListSyncResult>("/api/lists/sync", target),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
   // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.

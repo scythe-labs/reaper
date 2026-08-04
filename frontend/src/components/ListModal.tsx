@@ -1,47 +1,100 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Add or edit one protection list (#475). Settings owns what a list IS and where it comes
-// from; Policy owns what it does. Nothing is configured in two places.
+// Add or edit one protection list. Settings owns what a list IS and where it comes from;
+// Policy owns what it does, through a keep rule naming the list.
 //
-// The source is chosen once, when the list is added, and is fixed afterwards. The stored
-// membership is keyed on a slug that carries the source, so re-pointing a Plex collection at
-// an *arr tag would leave the old membership enabled under the old slug -- still protecting
-// from a definition the operator has already replaced, which is the failure `retire_absent`
-// exists to prevent. Editing a list that points at the wrong thing means deleting it and
-// adding the right one, which is one more click and cannot strand a protection.
+// Adding walks two steps, the way the *arrs add an import list: a type picker (Plex
+// collection, Plex watchlist, Sonarr and Radarr tags, IMDb), then the one form that type
+// needs. The source is chosen once and is fixed afterwards: the stored membership is keyed
+// on a slug that carries the source, so re-pointing a Plex collection at an *arr tag would
+// leave the old membership enabled under the old slug -- still protecting from a definition
+// the operator has already replaced, which is the failure `retire_absent` exists to prevent.
+//
+// Removing lives INSIDE Edit, as the third view of this one modal, so a row's actions stay
+// two buttons and the destructive one sits behind the form that names what it destroys.
 //
 // Every refusal rendered here is the server's own sentence. `services.list_config` writes
 // them for the operator and names the box that is empty, so re-phrasing them here would be
 // one requirement written twice, in two places, drifting from the check that enforces it
 // (rule 144).
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api, type ListConfig, type ListConfigBody } from "../api";
+import { usePlexLibraries } from "../usePlexLibraries";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
-import { Segmented } from "./Segmented";
-import { Switch } from "./Switch";
 import { TagsEditor } from "./TagsEditor";
 
 type Source = ListConfig["source"];
 
-/** What the operator is told each source is, in their words. A curated list is not offered
- *  as a choice -- it ships with Reaper -- but it is named here because the edit form for the
- *  shipped list still has to say what kind of thing it is looking at. */
+/** What the operator is told each source is, in their words. */
 const SOURCE_NAMES: Record<Source, string> = {
   plex_collection: "Plex collection",
-  arr_tag: "Sonarr or Radarr tag",
-  curated: "Ships with Reaper",
+  plex_watchlist: "Plex watchlist",
+  arr_tag: "Sonarr and Radarr tags",
+  imdb: "IMDb list",
 };
 
-/** The two an operator can make. Order is deliberate: the Plex collection needs no Reaper
- *  concept at all -- you add a film to it from the phone app you already use. */
-const ADDABLE: readonly (readonly [Source, string])[] = [
-  ["plex_collection", SOURCE_NAMES.plex_collection],
-  ["arr_tag", SOURCE_NAMES.arr_tag],
+/** The shipped IMDb charts. The keys are the server's (`services.lists.IMDB_PRESETS`); no
+ *  route serves them, so this is the one browser copy and it is checked by the tests that
+ *  post each key. A stored preset this table does not know still renders, by its raw key. */
+const IMDB_PRESETS: readonly { key: string; label: string }[] = [
+  { key: "top250", label: "IMDb Top 250" },
+  { key: "popular", label: "IMDb Popular Movies" },
 ];
+
+function presetLabel(key: string): string {
+  return IMDB_PRESETS.find((p) => p.key === key)?.label ?? key;
+}
+
+/** The joined any/all pair, there from the start so the form never has a blank where a
+ *  control belongs. Flat two-button group per the approved mockup, deliberately not the
+ *  pill `Segmented`: both options stay visible, only the chrome differs. */
+function MatchToggle({
+  match,
+  onMatch,
+}: {
+  match: "any" | "all";
+  onMatch: (m: "any" | "all") => void;
+}) {
+  const half = (value: "any" | "all", text: string) => (
+    <button
+      type="button"
+      className={match === value ? "on" : ""}
+      aria-pressed={match === value}
+      onClick={() => onMatch(value)}
+    >
+      {text}
+    </button>
+  );
+  return (
+    <div className="seg2" role="group" aria-label="How many of these tags a title needs">
+      {half("any", "Any of these")}
+      {half("all", "All of these")}
+    </div>
+  );
+}
+
+/** One card in the type picker. */
+function PickCard({
+  name,
+  blurb,
+  children,
+}: {
+  name: string;
+  blurb: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="pick-card">
+      <span className="nm">{name}</span>
+      <p>{blurb}</p>
+      {children}
+    </div>
+  );
+}
 
 export function ListModal({
   editing,
@@ -52,22 +105,41 @@ export function ListModal({
 }) {
   const queryClient = useQueryClient();
 
-  const [name, setName] = useState(editing?.name ?? "");
+  // Adding opens on the type picker; editing goes straight to the form, and the remove
+  // confirmation is the form's own third view rather than a second modal.
+  const [view, setView] = useState<"picker" | "form" | "confirm">(editing ? "form" : "picker");
   const [source, setSource] = useState<Source>(editing?.source ?? "plex_collection");
+  const [preset, setPreset] = useState<string | null>(editing?.config.preset ?? null);
+  const [presetsOpen, setPresetsOpen] = useState(false);
+
+  const [name, setName] = useState(editing?.name ?? "");
   const [library, setLibrary] = useState(editing?.config.library ?? "");
   const [collection, setCollection] = useState(editing?.config.collection ?? "");
   const [tags, setTags] = useState<string[]>(editing?.config.tags ?? []);
   const [match, setMatch] = useState<"any" | "all">(editing?.config.match ?? "any");
-  const [enabled, setEnabled] = useState(editing?.enabled ?? true);
+  const [imdbId, setImdbId] = useState(editing?.config.list_id ?? "");
+
+  const openForm = (next: Source) => {
+    setSource(next);
+    setPreset(null);
+    // The watchlist form has nothing to set up, so the name is the one box -- give it a
+    // starting value the operator can keep.
+    setName(next === "plex_watchlist" ? "My watchlist" : "");
+    setView("form");
+  };
+  const openPreset = (key: string) => {
+    setSource("imdb");
+    setPreset(key);
+    setName(presetLabel(key));
+    setView("form");
+  };
 
   // The operator's real Plex libraries, so the one field that made an install unable to reap
   // at all is picked rather than typed (#483: the keep collection was read out of a library
   // hardcoded to "Movies", so a library named anything else was never read). Optional and
   // soft -- see `libraryOptions` for what happens when Plex cannot be asked.
-  const libraries = useQuery({
-    queryKey: ["plex-libraries"],
-    queryFn: api.plexLibraries,
-    enabled: source === "plex_collection",
+  const { libraries } = usePlexLibraries({
+    enabled: view === "form" && source === "plex_collection",
   });
 
   // The stored library is always among the choices, even when Plex no longer reports one by
@@ -84,204 +156,362 @@ export function ListModal({
   // not be the reason an operator cannot write down which collection protects their files.
   const canPickLibrary = libraries.isSuccess && libraryOptions.length > 0;
 
-  const body = (): ListConfigBody =>
-    source === "plex_collection" ? { library, collection } : { tags, match };
+  const body = (): ListConfigBody => {
+    if (source === "plex_collection") return { library, collection };
+    if (source === "arr_tag") return { tags, match };
+    if (source === "imdb") return preset ? { preset } : { list_id: imdbId };
+    return {};
+  };
 
   const save = useMutation({
     mutationFn: async () => {
-      if (editing) {
-        // `config` is omitted for the shipped list: its body says which curated list it is,
-        // and that is not the operator's to retype (rule 1 -- omitted means "leave it").
-        return api.editList(editing.id, {
-          name,
-          enabled,
-          ...(editing.source === "curated" ? {} : { config: body() }),
-        });
-      }
+      if (editing) return api.editList(editing.id, { name, config: body() });
       return api.addList(name, source, body());
     },
     onSuccess: async () => {
-      // Both halves: the definitions this modal wrote, and the health rows keyed on them --
-      // a list switched off leaves the health view in the same flush, rather than sitting
-      // there reading "Working" against a definition that no longer syncs (rule 79).
+      // Three halves: the definitions this modal wrote, the health rows keyed on them, and
+      // the policies -- adding a list writes its keeps-it-outright rule server-side, and a
+      // rename re-spells every rule naming it, so a stale policy cache would render rules
+      // about a list name that no longer exists (rule 79).
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["lists-configured"] }),
         queryClient.invalidateQueries({ queryKey: ["lists"] }),
+        queryClient.invalidateQueries({ queryKey: ["policy"] }),
       ]);
       onClose();
     },
   });
 
-  const curated = editing?.source === "curated";
+  const remove = useMutation({
+    mutationFn: () => api.removeList(editing!.id),
+    onSuccess: async () => {
+      // Same three: deleting a list deletes the keep rules naming it, in the same request.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["lists-configured"] }),
+        queryClient.invalidateQueries({ queryKey: ["lists"] }),
+        queryClient.invalidateQueries({ queryKey: ["policy"] }),
+      ]);
+      onClose();
+    },
+  });
+
   // What the submit button is waiting on. The server refuses each of these too, in the same
   // words; saying it here means the operator reads it while looking at the empty box rather
   // than after a round trip (the shape `_clean_config`'s docstring describes).
   const missing = ((): string | null => {
     if (!name.trim()) return "Give the list a name, so you can pick it out on the Policy screen.";
-    if (curated) return null;
     if (source === "plex_collection") {
       if (!library.trim()) return "Say which Plex library to look in.";
       if (!collection.trim()) return "Say which collection in that library to read.";
       return null;
     }
-    return tags.length === 0
-      ? "Add at least one tag, spelled as it appears in Sonarr or Radarr."
-      : null;
+    if (source === "arr_tag") {
+      return tags.length === 0
+        ? "Add at least one tag, spelled as it appears in Sonarr or Radarr."
+        : null;
+    }
+    if (source === "imdb" && !preset && !imdbId.trim()) {
+      return "Paste the list's id or URL. An IMDb list id looks like ls005421403.";
+    }
+    return null;
   })();
+
+  const title =
+    view === "picker"
+      ? "Add a list"
+      : view === "confirm"
+        ? `Remove ${editing?.name}?`
+        : editing
+          ? `Edit ${editing.name}`
+          : `Add a list: ${SOURCE_NAMES[source]}`;
 
   return (
     <ModalShell
-      title={editing ? `Edit ${editing.name}` : "Add a list"}
+      title={title}
       onClose={onClose}
       // A close mid-save unmounts the only place the refusal is ever shown, and the operator
       // walks away believing it saved. Cancel below stays live throughout, so this guard
       // never becomes the trap rule 146 describes.
-      canClose={!save.isPending}
+      canClose={!save.isPending && !remove.isPending}
       className="service-modal"
     >
-      <form
-        className="service-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (missing) return;
-          save.mutate();
-        }}
-      >
-        <label className="field-sm">
-          <span className="field-label">Name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Never Reap"
-            autoFocus={!editing}
-          />
-        </label>
-
-        {editing ? (
-          // Stated, never offered. See the note at the top of this file: the stored
-          // membership is keyed on a slug carrying the source, so changing it here would
-          // leave the old list enabled and still protecting.
-          <p className="help">
-            Where it comes from: {SOURCE_NAMES[editing.source]}. To point a list somewhere else,
-            remove it and add the one you want.
-          </p>
-        ) : (
-          <div className="field-sm">
-            <span className="field-label">Where it comes from</span>
-            <Segmented
-              value={source}
-              onChange={setSource}
-              label="Where the list comes from"
-              options={ADDABLE}
-              fill
-            />
+      {view === "picker" && (
+        <div className="service-form">
+          <div className="pick-group">
+            <h3>Plex</h3>
+            <div className="pick-grid">
+              <PickCard
+                name="Collection"
+                blurb="A collection you curate in the Plex app. Add a title from your phone and it's covered."
+              >
+                <div className="acts">
+                  {/* Each card's Add is named for its card: three buttons reading "Add" are
+                      indistinguishable to anyone hearing them listed. */}
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-label="Add a Plex collection"
+                    onClick={() => openForm("plex_collection")}
+                  >
+                    Add
+                  </button>
+                </div>
+              </PickCard>
+              <PickCard
+                name="Watchlist"
+                blurb="The watchlist of the Plex account Reaper is signed in with. Another user's watchlist needs their sign-in."
+              >
+                <div className="acts">
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-label="Add a Plex watchlist"
+                    onClick={() => openForm("plex_watchlist")}
+                  >
+                    Add
+                  </button>
+                </div>
+              </PickCard>
+            </div>
           </div>
-        )}
-
-        {!curated && source === "plex_collection" && (
-          <>
-            <label className="field-sm">
-              <span className="field-label">Plex library</span>
-              {canPickLibrary ? (
-                <select
-                  aria-label="Plex library"
-                  value={library}
-                  onChange={(e) => setLibrary(e.target.value)}
-                >
-                  <option value="">Pick a library…</option>
-                  {libraryOptions.map((title) => (
-                    <option key={title} value={title}>
-                      {title}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={library}
-                  onChange={(e) => setLibrary(e.target.value)}
-                  placeholder="Movies"
-                />
-              )}
-            </label>
-            {!canPickLibrary && (
-              <p className="help">
-                {libraries.isPending
-                  ? "Reading your Plex libraries…"
-                  : "Reaper couldn't read your Plex libraries, so type the name exactly as it " +
-                    "appears in Plex. A name that doesn't match means this list protects nothing."}
-              </p>
-            )}
-            <label className="field-sm">
-              <span className="field-label">Collection</span>
-              <input
-                value={collection}
-                onChange={(e) => setCollection(e.target.value)}
-                placeholder="Never Reap"
-              />
-            </label>
-            <p className="help">
-              The collection's name in Plex. Add a title to it from the Plex app and it is kept from
-              the next scan on.
-            </p>
-          </>
-        )}
-
-        {!curated && source === "arr_tag" && (
-          <div className="field-sm">
-            <span className="field-label">Tags</span>
-            <TagsEditor
-              tags={tags}
-              match={match}
-              onTags={setTags}
-              onMatch={setMatch}
-              addLabel="Add a tag"
-              matchLead="Put a title on this list if it has"
-              emptyHelp="No tags: this list would hold nothing."
-            />
-            <p className="help">
-              Type each tag exactly as it appears in Sonarr or Radarr. Every connected server is
-              read, so a tag used on more than one is one list here.
-            </p>
+          <div className="pick-group">
+            <h3>Sonarr and Radarr</h3>
+            <div className="pick-grid">
+              <PickCard
+                name="Tags"
+                blurb="Titles carrying tags you pick, read from every connected server."
+              >
+                <div className="acts">
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-label="Add a tag list"
+                    onClick={() => openForm("arr_tag")}
+                  >
+                    Add
+                  </button>
+                </div>
+              </PickCard>
+            </div>
           </div>
-        )}
-
-        {curated && (
-          <p className="help">
-            This list ships with Reaper and keeps itself up to date. You can rename it or switch it
-            off; it cannot be pointed somewhere else or removed.
-          </p>
-        )}
-
-        {editing && (
-          <label className="toggle">
-            <Switch checked={enabled} onChange={setEnabled} />
-            <span>Protecting</span>
-          </label>
-        )}
-        {editing && !enabled && (
-          <Notice tone="warn">
-            Switched off, nothing on this list is protected. Anything it was keeping can be deleted
-            by the next scan.
-          </Notice>
-        )}
-
-        {save.error && <Notice tone="error">The list wasn't saved: {save.error.message}</Notice>}
-
-        <div className="add-actions">
-          <span className="flex-spacer" />
-          <button type="button" className="ghost" onClick={onClose} disabled={save.isPending}>
-            Cancel
-          </button>
-          <button type="submit" className="primary" disabled={!!missing || save.isPending}>
-            {save.isPending ? "Saving…" : editing ? "Save" : "Add list"}
-          </button>
-          {missing && (
-            <span className="help help-warn" id="list-modal-blocked">
-              {missing}
-            </span>
-          )}
+          <div className="pick-group">
+            <h3>IMDb</h3>
+            <div className="pick-grid">
+              <PickCard name="IMDb list" blurb="A public IMDb list or chart, refreshed on its own.">
+                <div className="acts">
+                  <button type="button" className="ghost" onClick={() => openForm("imdb")}>
+                    Custom
+                  </button>
+                  {/* The presets reveal as a second row of buttons inside the card rather
+                      than as an anchored popover, which would owe rule 138 a fit pass for
+                      two fixed labels. The name is "Presets" alone: the arrow is decoration
+                      a reader may voice as a shape name, and aria-expanded already says
+                      what it draws (rule 21). */}
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-label="Presets"
+                    aria-expanded={presetsOpen}
+                    onClick={() => setPresetsOpen((v) => !v)}
+                  >
+                    Presets <span aria-hidden="true">▾</span>
+                  </button>
+                </div>
+                {presetsOpen && (
+                  <div className="acts">
+                    {IMDB_PRESETS.map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        className="ghost"
+                        onClick={() => openPreset(p.key)}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </PickCard>
+            </div>
+          </div>
+          <div className="add-actions">
+            <span className="flex-spacer" />
+            <button type="button" className="ghost" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
         </div>
-      </form>
+      )}
+
+      {view === "form" && (
+        <form
+          className="service-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (missing) return;
+            save.mutate();
+          }}
+        >
+          <label className="field-sm">
+            <span className="field-label">Name</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Never Reap"
+              autoFocus={!editing}
+            />
+          </label>
+
+          {editing && (
+            // Stated, never offered. See the note at the top of this file: the stored
+            // membership is keyed on a slug carrying the source, so changing it here would
+            // leave the old list enabled and still protecting.
+            <p className="help">
+              Where it comes from: {SOURCE_NAMES[editing.source]}. To point a list somewhere else,
+              remove it and add the one you want.
+            </p>
+          )}
+
+          {source === "plex_collection" && (
+            <>
+              <label className="field-sm">
+                <span className="field-label">Plex library</span>
+                {canPickLibrary ? (
+                  <select
+                    aria-label="Plex library"
+                    value={library}
+                    onChange={(e) => setLibrary(e.target.value)}
+                  >
+                    <option value="">Pick a library…</option>
+                    {libraryOptions.map((libraryTitle) => (
+                      <option key={libraryTitle} value={libraryTitle}>
+                        {libraryTitle}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={library}
+                    onChange={(e) => setLibrary(e.target.value)}
+                    placeholder="Movies"
+                  />
+                )}
+              </label>
+              {!canPickLibrary && (
+                <p className="help">
+                  {libraries.isPending
+                    ? "Reading your Plex libraries…"
+                    : "Reaper couldn't read your Plex libraries, so type the name exactly as it " +
+                      "appears in Plex. A name that doesn't match means this list protects nothing."}
+                </p>
+              )}
+              <label className="field-sm">
+                <span className="field-label">Collection</span>
+                <input
+                  value={collection}
+                  onChange={(e) => setCollection(e.target.value)}
+                  placeholder="Never Reap"
+                />
+              </label>
+              <p className="help">
+                The collection's name in Plex. Add a title to it from the Plex app and it is kept
+                from the next scan on.
+              </p>
+            </>
+          )}
+
+          {source === "plex_watchlist" && (
+            <p className="help">
+              Reaper reads the watchlist of the Plex account it is signed in with. Nothing else to
+              set up.
+            </p>
+          )}
+
+          {source === "arr_tag" && (
+            <div className="field-sm">
+              <span className="field-label">Tags</span>
+              <TagsEditor tags={tags} onTags={setTags} addLabel="Add a tag" />
+              <MatchToggle match={match} onMatch={setMatch} />
+              <p className="help">
+                Type each tag exactly as it appears in Sonarr or Radarr. Every connected server is
+                read.
+              </p>
+            </div>
+          )}
+
+          {source === "imdb" &&
+            (preset ? (
+              <p className="help">
+                The {presetLabel(preset)} preset. Refreshed on its own, no sign-in needed.
+              </p>
+            ) : (
+              <label className="field-sm">
+                <span className="field-label">List id or URL</span>
+                <input
+                  value={imdbId}
+                  onChange={(e) => setImdbId(e.target.value)}
+                  placeholder="ls0000000, or paste the list's URL"
+                />
+              </label>
+            ))}
+
+          {save.error && <Notice tone="error">The list wasn't saved: {save.error.message}</Notice>}
+
+          <div className="add-actions">
+            {editing && (
+              <button type="button" className="ghost danger" onClick={() => setView("confirm")}>
+                Remove list…
+              </button>
+            )}
+            <span className="flex-spacer" />
+            <button type="button" className="ghost" onClick={onClose} disabled={save.isPending}>
+              Cancel
+            </button>
+            <button type="submit" className="primary" disabled={!!missing || save.isPending}>
+              {save.isPending ? "Saving…" : editing ? "Save" : "Add list"}
+            </button>
+            {missing && (
+              <span className="help help-warn" id="list-modal-blocked">
+                {missing}
+              </span>
+            )}
+          </div>
+        </form>
+      )}
+
+      {view === "confirm" && editing && (
+        <div className="service-form">
+          <p>
+            Anything this list was keeping can be deleted by the next scan. Its keep rules on Policy
+            go with it. Reaper does not delete the collection or the tags themselves, only its own
+            record of them.
+          </p>
+          {remove.error && (
+            <Notice tone="error">The list wasn't removed: {remove.error.message}</Notice>
+          )}
+          <div className="add-actions">
+            <span className="flex-spacer" />
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setView("form")}
+              disabled={remove.isPending}
+            >
+              Cancel
+            </button>
+            {/* `danger` alone is the app's destructive button, the one the reap confirmation
+                and the restore card use (rule 18). */}
+            <button
+              type="button"
+              className="danger"
+              onClick={() => remove.mutate()}
+              disabled={remove.isPending}
+            >
+              {remove.isPending ? "Removing…" : "Remove list"}
+            </button>
+          </div>
+        </div>
+      )}
     </ModalShell>
   );
 }

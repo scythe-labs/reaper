@@ -213,13 +213,13 @@ async def refresh_curated_lists(
     cache_engine: AsyncEngine,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> None:
-    """Refresh the curated protection lists that need no per-scan client (the Top 250).
+    """Refresh the IMDb lists, which need no per-scan client.
 
     Built from the registry, not from a bare provider: a provider's slug carries the
     id of the definition it was synced for, so constructing one without the definition would
     write a SECOND row under a slug no definition owns -- which the next scan's retire sweep
-    would disable, every night, forever. Reading the registry also makes the Protecting switch
-    on the Lists screen mean the same thing here as it does in a scan (rule 72, rule 55).
+    would disable, every night, forever. Reading the registry also makes a removed list mean
+    the same thing here as it does in a scan (rule 72, rule 55).
 
     ``session_factory`` is optional only because the last-run bookkeeping tolerates its
     absence; with no way to read the definitions there is nothing to refresh.

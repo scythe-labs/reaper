@@ -268,9 +268,7 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
             )
 
     try:
-        return ActivePolicy(
-            PolicyBody.model_validate(raw), row.name, lists_migrated=lists_migrated
-        )
+        return ActivePolicy(PolicyBody.model_validate(raw), row.name, lists_migrated=lists_migrated)
     except ValidationError:
         # A body json.loads could not read (`raw` is None), one that decodes to something
         # other than an object, and one that fails validation all land here; none may

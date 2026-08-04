@@ -647,9 +647,7 @@ def evaluate_keep(
                 True,
             )
         if isinstance(observation, Absent):
-            return KeepResult(
-                config.name, 0.0, config.max_discount, "on none of your lists", True
-            )
+            return KeepResult(config.name, 0.0, config.max_discount, "on none of your lists", True)
         # Unknown: the membership could not be read, so the full discount, fail-closed.
         return KeepResult(
             config.name,

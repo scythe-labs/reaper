@@ -401,7 +401,7 @@ class ArrTagRule:
         # id -> the operator's spelling, for the per-tag counts. Built from `wanted`, so a
         # tag that did not resolve counts nothing rather than raising a KeyError here.
         spelling = {by_label[_tag_key(t)]: t for t in self.tags if _tag_key(t) in by_label}
-        counts: dict[str, int] = {t: 0 for t in self.tags}
+        counts: dict[str, int] = dict.fromkeys(self.tags, 0)
 
         def keeps(media: dict[str, Any]) -> bool:
             carried = set(media.get("tags") or [])

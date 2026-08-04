@@ -98,7 +98,7 @@ export const understandingPolicy: Doc = {
       2,
     ),
     p(
-      "A starting point only sets the line, the point mix, and those caps. It never changes your protections, keep tags, rating bars, or TV season rules.",
+      "A starting point only sets the line, the point mix, and those caps. It never changes your protections, keep rules, rating bars, or TV season rules.",
     ),
 
     h3("The flag threshold", "threshold"),
@@ -192,11 +192,6 @@ export const understandingPolicy: Doc = {
           "IMDb 7.5, at least 1,000 votes",
         ],
         [
-          "Spare titles you've tagged",
-          "Anything with your keep tag",
-          "Tag `reaper-keep`, plus a Never Reap collection",
-        ],
-        [
           "Never touch something playing right now",
           "Anything being watched at that moment",
           "On, re-checked live",
@@ -206,8 +201,10 @@ export const understandingPolicy: Doc = {
         // abstain (see `components/policyMeta.ts`). The row has to say what it keeps,
         // because the sentence above this table promises every row keeps something.
         ["Stop if the unwatched time can't be read", "Anything Reaper couldn't measure", "On"],
-        ["Honor protected lists", "Titles on a curated list", "On (IMDb Top 250)"],
       ],
+    ),
+    p(
+      "Your lists protect through **keep rules**, below: each list on Settings, Lists acts through a rule here naming it, and a new list starts with a rule that keeps every title on it outright. Removing the list removes its rules with it.",
     ),
 
     h3("Pace and limits", "pace"),
@@ -247,7 +244,7 @@ export const understandingPolicy: Doc = {
       "Nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.",
     ),
     p(
-      '**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, or a protection\'s switch and its own numbers updates the panel instantly. Anything that changes what a scan reads (a keep tag, a season rule, how far back watching counts) says "Needs a fresh scan" and offers a Scan now button. An upgrade can say it too, without you having touched anything. A wrong number that looks live is worse than a blank one.',
+      '**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, or a protection\'s switch and its own numbers updates the panel instantly. Anything that changes what a scan reads (a list, a season rule, how far back watching counts) says "Needs a fresh scan" and offers a Scan now button. An upgrade can say it too, without you having touched anything. A wrong number that looks live is worse than a blank one.',
     ),
     callout(
       "caution",

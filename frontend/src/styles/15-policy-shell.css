@@ -108,7 +108,8 @@
   color: var(--condemn);
 }
 
-/* The keep-list tag editor: removable chips + a free-type box, and an ANY/ALL switch. */
+/* The tag editor (TagsEditor.tsx): removable chips + a free-type box. The list modal is its
+   consumer; the styles stay here beside the chip shape Policy's own rules tables share. */
 .keep-tags {
   margin-top: var(--space-md);
 }
@@ -170,13 +171,6 @@
 .tag-chips:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-.tag-match {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  margin-top: var(--space-lg);
-  font-size: var(--text-md);
 }
 
 .toggle {

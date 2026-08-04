@@ -1,0 +1,243 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Settings -> Lists, and the list add/edit modal. One piece of Reaper's stylesheet: `../index.css` holds the
+ * design charter and the load order, and that order is load-bearing (see the ordering notes in this file). */
+
+/* Settings -> Lists (#475). Rows are the Jobs tab's `.jobrow`, so the two pages that both
+   answer "is this working, and when did it last run" read the same. What sits where a job's
+   buttons go is a state chip, in the app's verdict language -- the same four colors the review
+   queue uses, because "this list stopped working" and "this title is condemned" are the same
+   fact at two scales, and a list that is not working is the reason a scan cannot delete
+   anything. A chip rather than a `.badge`: a badge names WHAT a thing is (Plex, Sonarr) and
+   holds still, while this names how it is doing and changes between checks. */
+.list-state {
+  display: inline-block;
+  padding: var(--space-2xs) var(--space-md);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.list-state-ok {
+  color: var(--protect);
+  background: var(--protect-soft);
+}
+.list-state-warn {
+  color: var(--unknown);
+  background: var(--unknown-soft);
+}
+.list-state-bad {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+}
+.list-state-idle {
+  color: var(--abstain);
+  background: var(--surface-2);
+}
+
+/* The name and its state chip share a line: the chip is the answer to the question the row
+   asks, so it reads as part of the title rather than as a separate column. It wraps, because a
+   long list name on a narrow screen must push the chip down rather than off. */
+.list-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+/* The footer: one action that touches every row, and the one that adds a row. Both sit on the
+   right after a spacer, ghost before primary, the way a modal's `.add-actions` ends. */
+.list-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: var(--space-xl);
+}
+
+/* Both of these carry text nobody here typed -- a Plex collection's name, an *arr's refusal --
+   so both wrap rather than running through the box holding them (rule 139). `.jobrow-desc`
+   already caps its width; neither sets `overflow-wrap`. */
+.list-name {
+  overflow-wrap: anywhere;
+}
+.list-error {
+  color: var(--condemn);
+  overflow-wrap: anywhere;
+}
+
+/* The kind badge beside a list's name: which family it reads from, in the service brand
+   pairs declared beside --plex in 00-tokens.css. It rides `.kind-badge` above but keeps the
+   products' own mixed-case names and the pill shape the approved mockup settled on -- a
+   service card's mark names an INSTANCE the operator connected, this names a family. */
+.list-head .kind-badge {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: var(--weight-semi);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2xs) var(--space-md);
+  white-space: nowrap;
+}
+.kind-plex {
+  background: var(--plex);
+  color: var(--plex-ink);
+}
+.kind-imdb {
+  background: var(--imdb);
+  color: var(--imdb-ink);
+}
+/* Half Sonarr blue, half Radarr gold, with a tight blend at the seam so it reads as the line
+   separating them. One ink for both halves: --sonarr-ink clears WCAG AA on either fill. */
+.kind-arr {
+  background: linear-gradient(90deg, var(--sonarr) 0 48%, var(--radarr) 52% 100%);
+  color: var(--sonarr-ink);
+}
+
+/* A tag row's display pills: neutral, with the count in accent. Distinct from the green
+   `.tag-chip` on purpose -- one is a fact, the other is a thing you can remove. */
+.tag-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+.tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2xs) var(--space-xl);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  /* The tag is the operator's typing, so it wraps rather than widening the row (rule 139). */
+  overflow-wrap: anywhere;
+}
+.tag-pill b {
+  color: var(--accent-text);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The per-server counts, folded under the pills so four *arrs stay one row until asked. */
+details.per-server {
+  margin-top: var(--space-sm);
+  font-size: var(--text-sm);
+}
+details.per-server summary {
+  cursor: pointer;
+  color: var(--muted);
+  width: fit-content;
+}
+details.per-server summary:hover {
+  color: var(--text);
+}
+.server-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2xs) 1.1rem;
+  margin: var(--space-sm) 0 var(--space-2xs);
+  padding-left: var(--space-3xl);
+}
+.server-grid .srv {
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+.server-grid .cnt {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* How the policies use this list, under every row. Amber when nothing does: a defined list
+   no rule names is a list that protects nothing, which is a fact worth a warning color. */
+.policy-use {
+  margin: var(--space-sm) 0 0;
+  font-size: var(--text-sm);
+}
+.policy-use.unused {
+  color: var(--unknown);
+}
+
+/* The list modal's type picker: one card per source, grouped by service. */
+.pick-group {
+  margin: 0;
+}
+.pick-group > h3 {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-lg);
+}
+.pick-card {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xl) var(--space-2xl) var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.pick-card:hover {
+  border-color: var(--accent);
+}
+.pick-card .nm {
+  font-weight: var(--weight-semi);
+}
+.pick-card p {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  flex: 1;
+}
+.pick-card .acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+.pick-card .acts button {
+  font-size: var(--text-xs);
+  padding: 0.25rem 0.6rem;
+}
+
+/* The any/all choice in the tag form: a joined two-button group, flat, one hairline between
+   the halves, the active half tinted with the operator's accent. Deliberately not the pill
+   `.segmented` -- the approved mockup settled this shape for the list forms. */
+.seg2 {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg);
+  margin-top: var(--space-md);
+}
+.seg2 button {
+  border: none;
+  background: none;
+  border-radius: 0;
+  padding: var(--space-sm) var(--space-3xl);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-weight: var(--weight-medium);
+}
+.seg2 button + button {
+  border-left: 1px solid var(--border-strong);
+}
+.seg2 button:hover:not(.on) {
+  background: var(--hover);
+  color: var(--text);
+}
+.seg2 button.on {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: var(--weight-semi);
+}

@@ -1729,8 +1729,10 @@ const JOB_META: Record<string, JobMeta> = {
       "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
   },
   refresh_curated_lists: {
-    title: "Refresh curated lists",
-    desc: "Re-pulls the protection lists Reaper ships with, like the IMDb Top 250, so nothing on them gets flagged.",
+    // The job id predates the registry; what it refreshes today is every IMDb-source list
+    // the operator has on Settings -> Lists (scheduler.refresh_curated_lists).
+    title: "Refresh IMDb lists",
+    desc: "Re-pulls your IMDb lists, like the IMDb Top 250, so nothing on them gets flagged.",
     offWarning:
       "This only affects the standalone daily refresh. Every scan already re-pulls these lists.",
   },
@@ -2896,7 +2898,15 @@ export function SecurityPanel({
 
 // --- shell -----------------------------------------------------------------
 
-export function Settings({ initialPanel }: { initialPanel?: Panel | undefined }) {
+export function Settings({
+  initialPanel,
+  onGoToPolicy,
+}: {
+  initialPanel?: Panel | undefined;
+  /** Jump to the Policy screen's keep-rules section, for the Lists rows' policy-use links.
+   *  Optional the way `SafetyBanner`'s jump is: tests mount Settings without a navigator. */
+  onGoToPolicy?: (() => void) | undefined;
+}) {
   const [panel, setPanel] = useState<Panel>(initialPanel ?? "general");
   // General's save bar can hold six unsaved fields at once, and switching section unmounts the
   // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
@@ -3047,7 +3057,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
         {panel === "general" && <GeneralPanel onDirtyChange={setGeneralDirty} />}
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel onDirtyChange={setPlexDirty} />}
-        {panel === "lists" && <ListsPanel />}
+        {panel === "lists" && <ListsPanel onGoToPolicy={onGoToPolicy} />}
         {panel === "jobs" && <JobsPanel onGoToPlex={() => switchPanel("plex")} />}
         {panel === "notifications" && <NotificationsPanel onDirtyChange={setWebhookDirty} />}
         {panel === "security" && <SecurityPanel onDirtyChange={setSecurityDirty} />}

@@ -1,42 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// A set of *arr tags, as removable chips plus a free-type box, with the ANY/ALL switch that
-// says how many of them a title needs.
+// A set of *arr tags, as removable chips plus a free-type box.
 //
-// It lives here rather than inside `PolicyEditor` because two screens now ask for the same
-// thing: the policy's "Spare titles you've tagged" card, and a tag list the operator defines
-// on Settings -> Lists. The tags are typed by hand against a spelling only Sonarr and Radarr
-// know, so the chip-and-remove affordance, the comma handling and the focus recovery below
-// are the whole usability of the control -- a second copy of it on the newer screen would be
-// a second set of those to get right (rule 18).
+// One consumer today (the list modal's tag form), and still its own file: the tags are typed
+// by hand against a spelling only Sonarr and Radarr know, so the chip-and-remove affordance,
+// the comma handling and the focus recovery below are the whole usability of the control, and
+// a second copy would be a second set of those to get right (rule 18). How many of the tags a
+// title needs is the caller's control, rendered beside this one -- it is a fact about the
+// list, not about the chips.
 
 import { useRef, useState, type RefObject } from "react";
 
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
-import { Segmented } from "./Segmented";
 
 export function TagsEditor({
   tags,
-  match,
   onTags,
-  onMatch,
-  /** What the ANY/ALL line leads with, and the accessible name of the add box. The two
-   *  callers phrase the same control differently: the policy card is talking about titles
-   *  being kept, and the list modal about what goes ON the list. */
-  addLabel = "Add a keep tag",
-  matchLead = "Keep a title with",
-  /** The sentence under an empty set. Rule 53's shape: a protection configured with nothing
-   *  in it protects nothing, and the control says so where it is, rather than leaving the
-   *  operator to find out from a "Nothing on it" row later. */
-  emptyHelp = "No tags: this protection keeps nothing.",
+  /** The accessible name of the add box. */
+  addLabel = "Add a tag",
 }: {
   tags: string[];
-  match: "any" | "all";
   onTags: (t: string[]) => void;
-  onMatch: (m: "any" | "all") => void;
   addLabel?: string;
-  matchLead?: string;
-  emptyHelp?: string;
 }) {
   const [input, setInput] = useState("");
   const add = () => {
@@ -45,9 +30,8 @@ export function TagsEditor({
     setInput("");
   };
   // Removing a chip destroys the button holding focus, so without this the operator lands on
-  // `<body>` and the next Tab restarts above the whole ~1,900-line policy form -- three times
-  // over for three tags (#173). Focus goes to the next chip's ✕, or to the add box once the
-  // last one is gone.
+  // `<body>` and the next Tab restarts at the top of the form -- once per removed tag (#173).
+  // Focus goes to the next chip's ✕, or to the add box once the last one is gone.
   const addRef = useRef<HTMLInputElement>(null);
   const chips = useRemovalFocus(addRef);
   return (
@@ -58,6 +42,9 @@ export function TagsEditor({
             {t}
             <button
               {...REMOVES_ITS_ROW}
+              // Inside the list modal's <form>, where a bare <button> is type="submit" and a
+              // chip's ✕ would otherwise save the list it was trimming.
+              type="button"
               onClick={() => {
                 chips.removing(i);
                 onTags(tags.filter((x) => x !== t));
@@ -86,21 +73,6 @@ export function TagsEditor({
           placeholder="add a tag…"
         />
       </div>
-      {tags.length >= 1 && (
-        <div className="tag-match">
-          <span className="muted">{matchLead}</span>
-          <Segmented
-            value={match}
-            onChange={onMatch}
-            label="How many of these tags a title needs"
-            options={[
-              ["any", "any of these tags"],
-              ["all", "all of these tags"],
-            ]}
-          />
-        </div>
-      )}
-      {tags.length === 0 && <p className="help">{emptyHelp}</p>}
     </div>
   );
 }

@@ -283,7 +283,73 @@ class TestGradedKeep:
 
     def test_a_graded_keep_on_a_non_numeric_field_is_rejected(self) -> None:
         with pytest.raises(ValidationError, match="not a number"):
-            GradedKeepSpec(name="x", field="genre", max_discount=10, floor=0, saturate_at=5)
+            GradedKeepSpec(name="x", field="whitelisted", max_discount=10, floor=0, saturate_at=5)
+
+    def test_a_membership_keep_is_flat_and_case_folded(self) -> None:
+        """The four arms of the membership branch, driven together because the split is
+        the claim (rule 93): a member takes the FULL discount, a non-member none, a
+        genuine "on no list" none, and a membership that could not be read the full one,
+        evaluated False. The name match is case-folded on both sides (rule 88) and per
+        element of the comma-joined fact."""
+        keep = KeepConfig(
+            name="on my list",
+            max_discount=25,
+            field="on_list",
+            value="  MY LIST ",
+            floor=0,
+            saturate_at=1,
+        )
+
+        member = evaluate_keep(keep, _facts(on_lists=Known("my list, Another", "lists")))
+        assert member.evaluated is True
+        assert member.discount == 25.0
+
+        elsewhere = evaluate_keep(keep, _facts(on_lists=Known("Another", "lists")))
+        assert elsewhere.evaluated is True
+        assert elsewhere.discount == 0.0
+
+        # Absent is real evidence: on none of the operator's lists, so no lean.
+        unlisted = evaluate_keep(keep, _facts(on_lists=Absent(source="lists")))
+        assert unlisted.evaluated is True
+        assert unlisted.discount == 0.0
+        assert unlisted.detail == "on none of your lists"
+
+        # Unknown fails closed: could not check the lists, keep fully.
+        unreadable = evaluate_keep(keep, _facts(on_lists=Unknown("sync failed", "lists")))
+        assert unreadable.evaluated is False
+        assert unreadable.discount == 25.0
+
+    def test_a_membership_keep_must_say_which_list(self) -> None:
+        """The membership form (a multi-text field like ``on_list``) is flat, so the one
+        thing it cannot do without is the list's name -- a nameless one would have nothing
+        to match and read as a live lean covering nothing."""
+        with pytest.raises(ValidationError, match="which list"):
+            GradedKeepSpec(name="x", field="on_list", max_discount=10, floor=0, saturate_at=5)
+        with pytest.raises(ValidationError, match="which list"):
+            GradedKeepSpec(
+                name="x", field="on_list", value="   ", max_discount=10, floor=0, saturate_at=5
+            )
+
+    def test_a_membership_keep_with_a_name_validates_and_ignores_the_ramp(self) -> None:
+        """Flat, so the ramp fields are inert: a floor at or above saturate_at, which a
+        numeric keep refuses, is not validated here because nothing reads it."""
+        spec = GradedKeepSpec(
+            name="x", field="on_list", value="My list", max_discount=10, floor=5, saturate_at=5
+        )
+        assert spec.value == "My list"
+
+    def test_a_numeric_keep_refuses_a_list_name(self) -> None:
+        """The other direction: ``value`` means "which list", so a numeric field carrying
+        one is a rule whose author meant something the ramp cannot express."""
+        with pytest.raises(ValidationError, match="does not take a list name"):
+            GradedKeepSpec(
+                name="x",
+                field="watchers_all_time",
+                value="My list",
+                max_discount=10,
+                floor=0,
+                saturate_at=5,
+            )
 
     def test_a_keep_may_use_a_protect_only_field(self) -> None:
         # watchers_all_time is protect-only, but a keep may use it -- it only lowers a score.

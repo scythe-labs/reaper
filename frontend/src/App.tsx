@@ -1043,6 +1043,8 @@ function Dashboard({ user }: { user: AuthUser }) {
             <Settings
               key={settingsFocus?.nonce ?? "settings"}
               initialPanel={settingsFocus?.panel}
+              // The Lists rows' policy-use links land on the keep-rules card's section.
+              onGoToPolicy={() => goToPolicySection("kept")}
             />
           )}
         </Suspense>

@@ -509,19 +509,8 @@ button.danger:hover:not(:disabled) {
   width: 8rem;
   flex: none;
 }
-/* Lists rows carry a third action (Remove). It gets its own fixed track for the same reason
-   the other two have one: each row is sized independently, so an `auto` track would size to
-   that row's own text and drift the buttons row to row (rule 51). Narrower than the other two
-   because it holds one short word and nothing swaps into it -- the slot is reserved on every
-   row regardless, including the shipped list that has no Remove, so the Check now buttons
-   still line up in one column. */
-.jobrow-actions .slot-del {
-  width: 6rem;
-  flex: none;
-}
 .jobrow-actions .slot-edit button,
-.jobrow-actions .slot-act button,
-.jobrow-actions .slot-del button {
+.jobrow-actions .slot-act button {
   width: 100%;
 }
 /* An off, Plex-gated row reads as unavailable, but its link stays bright enough to act on. */
@@ -544,16 +533,14 @@ button.danger:hover:not(:disabled) {
     width: 100%;
   }
   .jobrow-actions .slot-edit,
-  .jobrow-actions .slot-act,
-  .jobrow-actions .slot-del {
+  .jobrow-actions .slot-act {
     flex: 1 1 0;
     width: auto;
   }
-  /* An empty slot on a phone would hold a third of the row's width for nothing, leaving the
-     shipped list's two buttons squeezed into two thirds while every other row's three fill
+  /* An empty slot on a phone would hold half the row's width for nothing, leaving an
+     orphaned row's one button squeezed into the other half while every other row's two fill
      it. The desktop columns keep the reserved slot; here there is no column to hold. */
-  .jobrow-actions .slot-edit:empty,
-  .jobrow-actions .slot-del:empty {
+  .jobrow-actions .slot-edit:empty {
     display: none;
   }
 }
@@ -729,67 +716,4 @@ button.danger:hover:not(:disabled) {
 .safety-row .notice {
   flex-basis: 100%;
   margin: var(--space-xs) 0 0;
-}
-
-/* Settings -> Lists (#475). Rows are the Jobs tab's `.jobrow`, so the two pages that both
-   answer "is this working, and when did it last run" read the same. What sits where a job's
-   buttons go is a state chip, in the app's verdict language -- the same four colors the review
-   queue uses, because "this list stopped working" and "this title is condemned" are the same
-   fact at two scales, and a list that is not working is the reason a scan cannot delete
-   anything. A chip rather than a `.badge`: a badge names WHAT a thing is (Plex, Sonarr) and
-   holds still, while this names how it is doing and changes between checks. */
-.list-state {
-  display: inline-block;
-  padding: var(--space-2xs) var(--space-md);
-  border-radius: var(--radius-pill);
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-}
-.list-state-ok {
-  color: var(--protect);
-  background: var(--protect-soft);
-}
-.list-state-warn {
-  color: var(--unknown);
-  background: var(--unknown-soft);
-}
-.list-state-bad {
-  color: var(--condemn);
-  background: var(--condemn-soft);
-}
-.list-state-idle {
-  color: var(--abstain);
-  background: var(--surface-2);
-}
-
-/* The name and its state chip share a line: the chip is the answer to the question the row
-   asks, so it reads as part of the title rather than as a separate column. It wraps, because a
-   long list name on a narrow screen must push the chip down rather than off. */
-.list-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-}
-
-/* The footer: one action that touches every row, and the one that adds a row. Same shape as a
-   modal's `.add-actions` -- ghost on the left, primary on the right -- so the page's last line
-   reads the way every form's does. */
-.list-foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  margin-top: var(--space-xl);
-}
-
-/* Both of these carry text nobody here typed -- a Plex collection's name, an *arr's refusal --
-   so both wrap rather than running through the box holding them (rule 139). `.jobrow-desc`
-   already caps its width; neither sets `overflow-wrap`. */
-.list-name {
-  overflow-wrap: anywhere;
-}
-.list-error {
-  color: var(--condemn);
-  overflow-wrap: anywhere;
 }

@@ -40,14 +40,11 @@ export const GATE_META: Record<string, GateMeta> = {
     label: "Never touch something playing right now",
     help: "Re-checked in the seconds before any removal, not just at scan time.",
   },
-  whitelisted: {
-    label: "Spare titles you've tagged",
-    help: "A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scores. Plex collections are set up on Settings → Lists.",
-  },
-  curated_list: {
-    label: "Honor protected lists",
-    help: "The IMDb Top 250, unless you renamed it on Settings → Lists. Anything on it is kept.",
-  },
+  // `whitelisted` and `curated_list` were here. Both gates are retired: every list now
+  // protects through an `on_list` keep rule on Policy, and the loader converts a stored body
+  // still carrying either gate (`engine/policy.py convert_list_protections`). A row that
+  // survives conversion -- an enabled gate whose target list is gone -- renders by the
+  // `titleCase` fallback both readers carry, which is rule 66's unknown-id path.
   data_horizon: {
     // Was "Don't judge what predates your history", promising an outcome this switch does
     // not control. Tautulli can't see plays from before it was installed, and the defense

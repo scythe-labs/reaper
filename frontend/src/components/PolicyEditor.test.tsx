@@ -28,6 +28,10 @@ const { apiMock } = vi.hoisted(() => ({
     validatePolicy: vi.fn(),
     vocabulary: vi.fn(),
     vocabularyValues: vi.fn(),
+    // Read by the keep-rules composer's list picker, but only while the protect vocabulary
+    // offers `on_list`; answered anyway so a fixture that adds the field cannot render a
+    // failed read (rule 135).
+    listConfigs: vi.fn(),
     savePolicy: vi.fn(),
     saveProfile: vi.fn(),
     setDeletion: vi.fn(),
@@ -80,8 +84,6 @@ function body(custom: CustomCondemn[] = []): PolicyBody {
     protect_conditions: [],
     custom_condemn: custom,
     graded_keeps: [],
-    keep_tags: [],
-    keep_tags_match: "any",
     keep_rating_rules: [],
     keep_rating_match: "any",
   };
@@ -155,6 +157,7 @@ function renderEditor(
   if (vocabulary) apiMock.vocabulary.mockImplementation(() => Promise.reject(vocabulary));
   else apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [] });
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
+  apiMock.listConfigs.mockResolvedValue([]);
   apiMock.validatePolicy.mockResolvedValue({
     policy_hash: "hash",
     name: "default",
@@ -1266,12 +1269,12 @@ describe("the controls a screen reader has to tell apart", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  // A placeholder is an accessible name of last resort, so this box announced itself as the
-  // example text inside it -- and lost even that the moment anything was typed. The tags entered
-  // here are a protection: they are what stops a title being removed.
-  it("names the keep-tag box for what it does, not for its placeholder", async () => {
-    // The box lives inside the keep-tags card, which renders only while its own gate is on
-    // (rule 41), so the gate has to be present and enabled for the control to exist at all.
+  // The keep-tags card left Policy: tags are a LIST now, defined on Settings -> Lists and
+  // protecting through an `on_list` keep rule. A stored draft can still carry the retired
+  // gate, though -- the loader keeps an enabled row whose target list could not be created
+  // rather than silently withdrawing cover -- so the editor renders it as a plain protection
+  // row by the `titleCase` fallback (rule 66) instead of dropping it or crashing.
+  it("tolerates a stored draft still carrying the retired whitelisted gate", async () => {
     renderEditor({
       body: {
         ...body(),
@@ -1279,9 +1282,10 @@ describe("the controls a screen reader has to tell apart", () => {
       },
     });
 
-    const tagBox = await screen.findByLabelText("Add a keep tag");
-    expect(tagBox.tagName.toLowerCase()).toBe("input");
-    expect(screen.queryByLabelText("add a tag…")).not.toBeInTheDocument();
+    expect(await screen.findByRole("switch", { name: "Whitelisted" })).toBeChecked();
+    // The card, its tag boxes and its own copy are gone with the feature.
+    expect(screen.queryByText("Spare titles you've tagged")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Add a keep tag")).not.toBeInTheDocument();
   });
 
   it("gives two lean keep rules on one field Remove buttons that answer to different names", async () => {

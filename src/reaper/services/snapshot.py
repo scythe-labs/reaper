@@ -35,7 +35,7 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any
 
 import structlog
 from sqlalchemy import bindparam, select, text
@@ -434,9 +434,7 @@ def build_facts(
     # (one per *arr instance) are one name to the operator.
     list_names = list(dict.fromkeys(m.display_name for m in memberships))
     on_lists: Observation[str] = (
-        Known(value=", ".join(list_names), source="lists")
-        if list_names
-        else Absent(source="lists")
+        Known(value=", ".join(list_names), source="lists") if list_names else Absent(source="lists")
     )
 
     # --- streaming right now ------------------------------------------------

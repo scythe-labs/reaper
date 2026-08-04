@@ -55,16 +55,22 @@ def upgrade() -> None:
         sa.Column("source", sa.String(length=32), nullable=False),
         # The source's own settings: which collection in which library, which tags on which
         # *arr. JSON because each source needs different keys, and a column per source would
-        # be mostly NULL and would need a migration for every source added.
-        sa.Column("config_json", sa.Text(), nullable=False, server_default="{}"),
+        # be mostly NULL and would need a migration for every source added. No server
+        # defaults on these three: the model supplies Python-side defaults, and a stray
+        # server default reads as schema drift to `alembic check` forever after.
+        sa.Column("config_json", sa.Text(), nullable=False),
         # Off keeps the row and its name, so a list switched off can be switched back on with
         # its rules intact. Deleting is the other verb and it is the operator's to choose.
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("enabled", sa.Boolean(), nullable=False),
         # A list Reaper ships with. It may be edited and switched off, never deleted, because
         # a rule shipped in the default policy names it (rule 25: copy may only reference a
         # mechanism that is wired).
-        sa.Column("built_in", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("built_in", sa.Boolean(), nullable=False),
+        # Epoch seconds, like every other timestamp in this schema: ``UtcTimestamp`` stores
+        # them through ``db.types.EpochDateTime``, so a DateTime column here would read as
+        # schema drift. This first shipped as DATETIME with server defaults on the three
+        # columns above; 20260804_1300 heals a database created in that window.
+        sa.Column("created_at", sa.Integer(), nullable=False),
         sa.UniqueConstraint("name", name="uq_list_config_name"),
     )
 

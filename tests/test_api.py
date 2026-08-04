@@ -52,8 +52,9 @@ from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
 
+# No "whitelisted" row: the gate is retired (list membership protects through ``on_list``
+# keep rules), and the save boundary refuses it -- test_simulate_hardening pins that.
 DEFAULT_GATES = [
-    {"gate": "whitelisted"},
     {"gate": "min_dormancy", "threshold": 1095},
     {"gate": "rating_floor", "threshold": 75},
     {"gate": "server_popularity", "threshold": 3},
@@ -1423,7 +1424,6 @@ class TestTheSimulatorRefusesToGuess:
         """Gates decide the *verdict*, and the verdict is stored too. Loosening the
         rating floor would un-protect items the snapshot still records as protected."""
         loosened = [
-            {"gate": "whitelisted"},
             {"gate": "min_dormancy", "threshold": 1095},
             {"gate": "rating_floor", "threshold": 60},  # was 75
             {"gate": "server_popularity", "threshold": 3},

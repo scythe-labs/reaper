@@ -429,8 +429,8 @@ REGISTRY: tuple[FieldSpec, ...] = (
         key="whitelisted",
         label="On a list you curate yourself",
         help_text=(
-            "A tag list, a Plex collection, or your watchlist. Use \"On one of your "
-            "lists\" to match one list by name; this is the yes/no over all of them."
+            'A tag list, a Plex collection, or your watchlist. Use "On one of your '
+            'lists" to match one list by name; this is the yes/no over all of them.'
         ),
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),

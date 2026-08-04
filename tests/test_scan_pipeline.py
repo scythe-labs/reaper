@@ -163,10 +163,14 @@ class _FakeSonarr:
 
 
 class _StaticList:
-    """A protection-list provider with fixed members, for seeding the whitelist."""
+    """A protection-list provider with fixed members, for seeding the keep list.
+
+    Named as the seeded default tag list, because that is the name the shipped policies'
+    ``on_list`` keep rules match: membership protects through the rule naming the list
+    now, not through a gate that read a boolean."""
 
     slug = "keep-list"
-    display_name = "Keep list"
+    display_name = "Titles you've tagged"
 
     def __init__(self, items: list[lists.ListItem]) -> None:
         self._items = items
@@ -479,11 +483,12 @@ class TestScanPipelineEndToEnd:
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert len(rows) == 8
 
-        # The dormant movie condemns; the whitelisted one protects AND names the
-        # protection; the unmatched one abstains.
+        # The dormant movie condemns; the keep-listed one protects AND the explanation
+        # names the list, which is the only thing separating this hold from any other
+        # rule's in the why-panel; the unmatched one abstains.
         assert rows["radarr:1:1"].verdict == "condemn"
         assert rows["radarr:1:2"].verdict == "protect"
-        assert "whitelisted" in (rows["radarr:1:2"].explanation_json or "")
+        assert "Titles you've tagged" in (rows["radarr:1:2"].explanation_json or "")
         assert rows["radarr:1:3"].verdict == "abstain"
 
         # Seasons rode the same judge: the keep-last/keep-first guards protected

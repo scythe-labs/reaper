@@ -347,9 +347,9 @@ class TestAnExplanationSaysWhatItFound:
 
     def test_a_boolean_uses_the_words_the_owner_uses(self) -> None:
         cond = Condition(field="whitelisted", op=Op.EQ, value=True)
-        assert evaluate(cond, _facts()).detail == "Not on your keep list"
+        assert evaluate(cond, _facts()).detail == "Not on any list you curate yourself"
         kept = _facts(is_whitelisted=Known(value=True, source="plex"))
-        assert evaluate(cond, kept).detail == "On your keep list"
+        assert evaluate(cond, kept).detail == "On a list you curate yourself"
 
     def test_a_days_field_is_spelled_the_way_the_signals_spell_it(self) -> None:
         """One panel showing "900 days" beside "2 years, 5 months" reads as two

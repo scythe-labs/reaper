@@ -103,8 +103,8 @@ CLIENT_ONLY = {
 # through the ALIAS entry above. The third new name, `ListConfigBody`, is a type alias rather
 # than an interface and is counted by neither walk -- the same case the `PolicyProbe` note
 # above describes, and the reason these two numbers are reconciled against the tree separately.
-EXPECTED_INTERFACES = 90
-EXPECTED_PAIRS = 87
+EXPECTED_INTERFACES = 91
+EXPECTED_PAIRS = 88
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

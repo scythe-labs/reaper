@@ -168,4 +168,4 @@ async def usage(session: AsyncSession) -> dict[str, list[dict[str, object]]]:
     return out
 
 
-__all__ = ["attach_list", "detach_list", "rename_list", "usage", "MEDIA_TYPES"]
+__all__ = ["MEDIA_TYPES", "attach_list", "detach_list", "rename_list", "usage"]

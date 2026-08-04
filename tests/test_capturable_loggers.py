@@ -82,11 +82,12 @@ class TestALoggerFrozenByAnEarlierTestIsStillCapturable:
 
 class TestTheGuardReachesEveryLoggerInTheTree:
     """A guard that SCANS is proven against the population it claims to cover, not against
-    one member of it (rule 145). The count is reconciled by hand: 48 files under
+    one member of it (rule 145). The count is reconciled by hand: 49 files under
     ``src/reaper`` declare a module-level logger, and ``grep -rl`` over the tree agrees.
 
     47 until ``services/list_config.py`` (the operator's own protection lists) landed with a
-    logger and this number did not move with it, which is what the guard is for."""
+    logger and this number did not move with it, which is what the guard is for; 49 with
+    ``services/list_rules.py`` (the keep rules a list acts through)."""
 
     @staticmethod
     def _modules_declaring_a_logger() -> set[str]:
@@ -102,7 +103,7 @@ class TestTheGuardReachesEveryLoggerInTheTree:
         return found
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
-        assert len(self._modules_declaring_a_logger()) == 48
+        assert len(self._modules_declaring_a_logger()) == 49
 
     def test_every_declared_logger_is_reachable_from_the_walk(self) -> None:
         """Imported first, because the walk can only see loaded modules -- which is also

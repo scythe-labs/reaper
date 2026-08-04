@@ -131,6 +131,7 @@ def store(tmp_path: Path) -> Iterator[object]:
         item_count: int = 0,
         last_synced_at: int | None = None,
         last_error: str | None = None,
+        stats_json: str | None = None,
     ) -> None:
         # Every column spelled out rather than assembled from whatever the caller passed. The
         # dynamic version read as a SQL-injection vector to ruff (S608) and it was right to:
@@ -141,9 +142,9 @@ def store(tmp_path: Path) -> Iterator[object]:
                 text(
                     "INSERT OR REPLACE INTO protection_list "
                     "(slug, display_name, mode, kind, enabled, item_count, "
-                    " last_synced_at, last_error) "
+                    " last_synced_at, last_error, stats_json) "
                     "VALUES (:slug, :display_name, :mode, :kind, :enabled, :item_count, "
-                    "        :last_synced_at, :last_error)"
+                    "        :last_synced_at, :last_error, :stats_json)"
                 ),
                 {
                     "slug": slug,
@@ -154,6 +155,7 @@ def store(tmp_path: Path) -> Iterator[object]:
                     "item_count": item_count,
                     "last_synced_at": last_synced_at,
                     "last_error": last_error,
+                    "stats_json": stats_json,
                 },
             )
 
@@ -224,6 +226,39 @@ class TestRoute:
             )
         slugs = [row["slug"] for row in client.get("/api/lists").json()]
         assert slugs == ["sonarr-1-keeptags-all"]
+
+    def test_a_tag_list_row_carries_its_per_tag_counts_and_server(
+        self, client: TestClient, store: Any
+    ) -> None:
+        """What the last good check recorded beyond the count: which tags are doing the
+        protecting, and which *arr instance the row was read from."""
+        store(
+            slug="sonarr-1-keeptags-any-list3",
+            display_name="Tagged titles",
+            item_count=3,
+            last_synced_at=int(NOW.timestamp()),
+            stats_json='{"tags": {"keep": 2, "gold": 1}, "server": "hd"}',
+        )
+        [row] = client.get("/api/lists").json()
+        assert row["tags"] == {"keep": 2, "gold": 1}
+        assert row["server"] == "hd"
+
+    @pytest.mark.parametrize("stored", [None, "not json", '{"tags": "nope", "server": ""}'])
+    def test_missing_or_malformed_stats_read_as_unknown_not_zero(
+        self, client: TestClient, store: Any, stored: str | None
+    ) -> None:
+        """A row from before the counts were recorded, or one whose body will not parse,
+        answers null: unknown, never a zero that reads as "these tags protect nothing"."""
+        store(
+            slug="sonarr-1-keeptags-any-list3",
+            display_name="Tagged titles",
+            item_count=3,
+            last_synced_at=int(NOW.timestamp()),
+            stats_json=stored,
+        )
+        [row] = client.get("/api/lists").json()
+        assert row["tags"] is None
+        assert row["server"] is None
 
     def test_the_route_needs_a_session(self, client: TestClient) -> None:
         assert TestClient(client.app).get("/api/lists").status_code == 401  # type: ignore[arg-type]

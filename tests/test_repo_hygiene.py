@@ -2377,7 +2377,7 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # started it, rule 42), a Plex that could not be reached at all so no row can say why, a removal
 # that was refused, and the add/edit form's own save failure and its switched-off warning.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 142
+_EXPECTED_NOTICES = 141
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2650,7 +2650,7 @@ _QUERY_FAILURE_HANDLES = {
     # the population is the thing this pins.
     "frontend/src/components/PlexPanel.tsx": 6,
     "frontend/src/components/PolicyEditor.tsx": 4,
-    "frontend/src/components/PolicyRuleEditors.tsx": 2,
+    "frontend/src/components/PolicyRuleEditors.tsx": 3,
     "frontend/src/components/ReapBreakdown.tsx": 2,
     "frontend/src/components/ReapConfirm.tsx": 2,
     # 4th: the pre-flight read that says what would turn a real run away (#383). Deliberately
@@ -2951,7 +2951,7 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
 # +1 for the Plex library picker on Settings -> Lists: the field #483 was about, which stops
 # being a name Reaper guesses and becomes one the operator picks off their own server.
-_EXPECTED_SELECTS = 22
+_EXPECTED_SELECTS = 23
 
 
 def _without_line_comments(chunk: str) -> str:

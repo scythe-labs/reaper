@@ -741,9 +741,7 @@ def build_season_facts(
     # every builder). A season inherits the show's memberships: a list holds shows.
     list_names = list(dict.fromkeys(m.display_name for m in memberships))
     on_lists: Observation[str] = (
-        Known(value=", ".join(list_names), source="lists")
-        if list_names
-        else Absent(source="lists")
+        Known(value=", ".join(list_names), source="lists") if list_names else Absent(source="lists")
     )
 
     # The multi-source keep gate reads this. TV has no Radarr-style ratings object, so it

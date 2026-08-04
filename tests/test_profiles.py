@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
+from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
@@ -345,6 +346,80 @@ class TestACorruptPolicyBodyNeverRaises:
         assert active.rating_rules_recovered is False
         assert active.repaired is False
         assert active.body.keep_rating_rules == ()
+
+
+def _legacy_list_body() -> dict[str, object]:
+    """A stored body from before every list protected through its own keep rule: the keep
+    tags on the policy, plus the two retired list gates, both enabled."""
+    body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+    body["protect_conditions"] = []
+    body["keep_tags"] = ["reaper-keep"]
+    body["keep_tags_match"] = "any"
+    body["gates"] = [
+        {"gate": "whitelisted", "enabled": True},
+        {"gate": "curated_list", "enabled": True},
+        *body["gates"],
+    ]
+    return body
+
+
+async def _seed_list_rows(session: AsyncSession) -> None:
+    """The registry rows the conversion's rules must point at, under names the operator
+    may have chosen: resolution is by source and age, never by spelling."""
+    for name, source, config in (
+        ("Films worth keeping", "imdb", {"preset": "top250"}),
+        ("My tagged titles", "arr_tag", {"tags": ["reaper-keep"], "match": "any"}),
+    ):
+        session.add(
+            ListConfigModel(
+                name=name,
+                source=source,
+                config_json=json.dumps(config),
+                enabled=True,
+                built_in=False,
+                created_at=utcnow(),
+            )
+        )
+    await session.commit()
+
+
+class TestALegacyListBodyIsConvertedOnLoad:
+    """``active_policy`` composes ``convert_list_protections`` FIRST, on the raw dict:
+    ``keep_tags`` is a key ``Frozen`` forbids, so a merely-legacy body read without the
+    conversion falls back to the shipped default -- the silent substitution rule 65
+    forbids. The conversion is a repair like the others: flagged, degrading, never
+    silently adopted (rule 105)."""
+
+    async def test_the_body_loads_with_its_gates_as_rules_and_is_flagged(
+        self, session: AsyncSession
+    ) -> None:
+        await _seed_list_rows(session)
+        await _store_policy(session, json.dumps(_legacy_list_body()))
+
+        active = await active_policy(session, "movie")
+
+        assert active.lists_migrated is True
+        assert active.repaired is True  # the scan degrades on it
+        assert active.fell_back is False
+        assert active.name == "stored"
+        # Each enabled gate became a rule naming the CURRENT list of its source -- the
+        # operator's own names, resolved from the registry rather than assumed.
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"My tagged titles", "Films worth keeping"}
+        # ...and the retired gate rows left the body.
+        assert not {g.gate.value for g in active.body.gates} & {"whitelisted", "curated_list"}
+
+    async def test_a_body_that_is_not_legacy_shaped_is_untouched(
+        self, session: AsyncSession
+    ) -> None:
+        await _seed_list_rows(session)
+        await _store_policy(session, DEFAULT_MOVIE_POLICY.model_dump_json())
+
+        active = await active_policy(session, "movie")
+
+        assert active.lists_migrated is False
+        assert active.repaired is False
+        assert active.body == DEFAULT_MOVIE_POLICY
 
 
 class TestInvariantsHoldThroughTheService:

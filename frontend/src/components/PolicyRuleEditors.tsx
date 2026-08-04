@@ -98,6 +98,10 @@ function uniqueName(existing: { name: string }[], base: string): string {
 
 /** Turn a stored condition back into a sentence, in the units a person reads. */
 function describeCondition(c: Condition, fields: VocabField[]): string {
+  // The membership field reads as a sentence about the LIST, not as "field op value": the
+  // value is the operator's own name for it. A stored rule whose list no longer exists still
+  // renders, by that stored name.
+  if (c.field === "on_list") return `Keep it when on your list ${String(c.value)}`;
   const f = fields.find((x) => x.key === c.field);
   const label = f?.label ?? c.field;
   const op = OP_LABELS[c.op] ?? c.op;
@@ -635,6 +639,37 @@ export function RemoveRulesEditor({
   );
 }
 
+/** The lists a membership rule can name, by the operator's own names for them. One select
+ *  for both strengths (rule 72): the hard composer and the lean composer offer the same
+ *  choice, so they render the same control. */
+function ListNameSelect({
+  value,
+  names,
+  onChange,
+  describedBy,
+}: {
+  value: string;
+  names: string[];
+  onChange: (v: string) => void;
+  describedBy?: string | undefined;
+}) {
+  return (
+    <select
+      value={value}
+      aria-label="Which list"
+      aria-describedby={describedBy}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">Pick a list…</option>
+      {names.map((n) => (
+        <option key={n} value={n}>
+          {n}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /** The owner's own keep rules, both strengths in one card: a rule can keep a title
  *  outright (a protection), or just lean toward keeping by lowering its score. Neither
  *  can ever flag anything -- the protect vocabulary is filtered server-side. */
@@ -665,8 +700,32 @@ export function KeepRulesEditor({
     const gate = FIELD_TO_GATE[f.key];
     return !gate || !gateIds.includes(gate);
   });
-  // A lean ramps a number, so only numeric fields (those that accept >=) can drive one.
-  const leanFields = allFields.filter((f) => f.ops.includes("gte"));
+  // A lean ramps a number, so only numeric fields (those that accept >=) can drive one --
+  // plus the membership field, whose lean is FLAT: on the list takes the full discount, off
+  // it takes none. Offered first, since a list is what most leans are about.
+  const onListField = allFields.find((f) => f.key === "on_list");
+  const leanFields = [
+    ...(onListField ? [onListField] : []),
+    ...allFields.filter((f) => f.ops.includes("gte")),
+  ];
+
+  // The names a membership rule can pick from. Read only while the vocabulary actually
+  // offers the field (rule 66: the server decides what is authorable), which also keeps the
+  // query out of every test tree that never composes one.
+  const lists = useQuery({
+    queryKey: ["lists-configured"],
+    queryFn: api.listConfigs,
+    enabled: onListField !== undefined,
+  });
+  const listNames = (lists.data ?? []).map((l) => l.name);
+  // Why the list select is empty, said once for both composers (rule 72). A failed read is
+  // named as one, never shown as "you have no lists" (rules 17/36).
+  const noListsMessage =
+    !lists.isPending && listNames.length === 0
+      ? lists.isError
+        ? "Reaper couldn't load your lists, so there's nothing to pick from right now."
+        : "You have no lists yet. Add one on Settings → Lists first."
+      : null;
 
   const [strength, setStrength] = useState<"hard" | "lean">("hard");
 
@@ -675,8 +734,9 @@ export function KeepRulesEditor({
   const [hOp, setHOp] = useState("");
   const [hValue, setHValue] = useState("");
   const hardField = hardFields.find((f) => f.key === hField);
+  const hardIsList = hardField?.key === "on_list";
   // Why Add is off here, the condemn composer's twin (rule 72). A yes/no always has an answer,
-  // so only a typed value can be missing.
+  // so only a typed value -- or an unpicked list -- can be missing.
   const hardEmpty = hardField !== undefined && hardField.type !== "bool" && hValue.trim() === "";
   // The keep-rule twin of the re-seed above, and suppressed for the same reason: a new field
   // needs its own comparison and value, and `hardFields` is reallocated every render (H-3).
@@ -687,10 +747,14 @@ export function KeepRulesEditor({
     setHValue(f.type === "bool" ? "true" : "");
   }, [hField]); // eslint-disable-line react-hooks/exhaustive-deps
   const addHard = () => {
-    if (!hardField || !hOp) return;
+    if (!hardField || (!hOp && !hardIsList)) return;
     onConditions([
       ...conditions,
-      { field: hardField.key, op: hOp, value: coerceValue(hardField, hValue) },
+      hardIsList
+        ? // A list is a membership, not a comparison: the one op is "is", so no op select
+          // renders and none is read.
+          { field: hardField.key, op: "eq", value: hValue }
+        : { field: hardField.key, op: hOp, value: coerceValue(hardField, hValue) },
     ]);
     // Same silence as the condemn composer's Add, on the same guard (rule 72).
     announce("Rule added.");
@@ -705,28 +769,52 @@ export function KeepRulesEditor({
   const [lPoints, setLPoints] = useState(15);
   const [lAt, setLAt] = useState("");
   const [lDir, setLDir] = useState<"high_keeps" | "low_keeps">("high_keeps");
+  // The membership lean's own list, apart from `lAt`: the number box keeps its draft across
+  // field changes on purpose, and a held "365" must not be sendable as a list name.
+  const [lList, setLList] = useState("");
   const leanField = leanFields.find((f) => f.key === lField);
-  // And the third (rule 72). This one has no yes/no branch: a lean always ramps to a number.
-  const leanEmpty = leanField !== undefined && lAt === "";
+  const leanIsList = leanField?.key === "on_list";
+  // And the third (rule 72). A numeric lean waits on its number; a membership lean on its list.
+  const leanEmpty = leanField !== undefined && (leanIsList ? lList === "" : lAt === "");
   const addLean = () => {
-    if (!leanField || lAt === "") return;
-    const saturate = Number(coerceValue(leanField, lAt));
-    onKeeps([
-      ...keeps,
-      {
-        name: uniqueName(keeps, leanField.label),
-        field: leanField.key,
-        max_discount: lPoints,
-        floor: 0,
-        saturate_at: Math.max(1, saturate),
-        direction: lDir,
-      },
-    ]);
+    if (!leanField || leanEmpty) return;
+    if (leanIsList) {
+      // Flat, not a ramp: on the list takes the full discount, off it takes none, and a
+      // membership that could not be read takes the full one, fail-closed like every keep.
+      // The ramp fields are inert; floor 0 / saturate 1 is the shape the server expects.
+      // The name clamps to the server's 60-character bound before `uniqueName` suffixes it.
+      onKeeps([
+        ...keeps,
+        {
+          name: uniqueName(keeps, lList.slice(0, 56)),
+          field: leanField.key,
+          value: lList,
+          max_discount: lPoints,
+          floor: 0,
+          saturate_at: 1,
+          direction: "high_keeps",
+        },
+      ]);
+    } else {
+      const saturate = Number(coerceValue(leanField, lAt));
+      onKeeps([
+        ...keeps,
+        {
+          name: uniqueName(keeps, leanField.label),
+          field: leanField.key,
+          max_discount: lPoints,
+          floor: 0,
+          saturate_at: Math.max(1, saturate),
+          direction: lDir,
+        },
+      ]);
+    }
     // And the third (rule 72).
     announce("Rule added.");
     leanFieldRef.current?.focus();
     setLField("");
     setLAt("");
+    setLList("");
   };
   const hardFieldRef = useRef<HTMLSelectElement>(null);
   const leanFieldRef = useRef<HTMLSelectElement>(null);
@@ -771,14 +859,22 @@ export function KeepRulesEditor({
           ))}
           {keeps.map((k, i) => {
             const f = allFields.find((x) => x.key === k.field);
+            // A membership lean is a sentence about the list, by its stored name -- which
+            // still renders after the list itself is gone, so the rule can be found and
+            // removed rather than orphaned invisibly.
+            const sentence =
+              k.value != null
+                ? `On your list ${k.value}`
+                : `${f?.label ?? k.field}: the ${
+                    k.direction === "low_keeps" ? "less" : "more"
+                  }, the safer (full effect at ${rampValue(f, k.saturate_at)})`;
             return (
               <div className="rules-row rules-row-simple" key={`k-${k.name}-${i}`}>
                 <span className="rules-rule">
                   <span className="rule-kind">
                     Leans<span aria-hidden="true"> · </span>
                   </span>
-                  {f?.label ?? k.field}: the {k.direction === "low_keeps" ? "less" : "more"}, the
-                  safer (full effect at {rampValue(f, k.saturate_at)})
+                  {sentence}
                 </span>
                 <span className="rules-weight-keep">
                   lowers the score, up to −{k.max_discount} points
@@ -791,9 +887,7 @@ export function KeepRulesEditor({
                   // `uniqueName` precisely because they collide -- and the field alone gives
                   // both Remove buttons the same name. What gets removed by mistake is a keep
                   // rule, so the next scan condemns titles the operator believed were held.
-                  aria-label={`Remove rule: leans, ${f?.label ?? k.field}, the ${
-                    k.direction === "low_keeps" ? "less" : "more"
-                  }, the safer, full effect at ${rampValue(f, k.saturate_at)}`}
+                  aria-label={`Remove rule: leans, ${sentence}, up to ${k.max_discount} points off`}
                   onClick={() => {
                     rows.removing(conditions.length + i);
                     onKeeps(keeps.filter((_, j) => j !== i));
@@ -845,18 +939,29 @@ export function KeepRulesEditor({
                 </select>
                 {hardField && (
                   <>
-                    <select
-                      value={hOp}
-                      aria-label="Comparison"
-                      onChange={(e) => setHOp(e.target.value)}
-                    >
-                      {hardField.ops.map((o) => (
-                        <option key={o} value={o}>
-                          {OP_LABELS[o] ?? o}
-                        </option>
-                      ))}
-                    </select>
-                    {hardField.type === "bool" ? (
+                    {/* A membership rule's one comparison is "is", so no op select renders:
+                        a dropdown with a single choice is a control that cannot be used. */}
+                    {!hardIsList && (
+                      <select
+                        value={hOp}
+                        aria-label="Comparison"
+                        onChange={(e) => setHOp(e.target.value)}
+                      >
+                        {hardField.ops.map((o) => (
+                          <option key={o} value={o}>
+                            {OP_LABELS[o] ?? o}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {hardIsList ? (
+                      <ListNameSelect
+                        value={hValue}
+                        names={listNames}
+                        onChange={setHValue}
+                        describedBy={hardEmpty ? HARD_EMPTY_ID : undefined}
+                      />
+                    ) : hardField.type === "bool" ? (
                       // Two visible options, so both stay readable at a glance (Segmented.tsx).
                       <Segmented
                         value={hValue === "false" ? "false" : "true"}
@@ -884,9 +989,12 @@ export function KeepRulesEditor({
                     is out of the Tab order, so the sentence has to live on the box. */}
                 {hardEmpty && (
                   <p className="help help-warn" id={HARD_EMPTY_ID}>
-                    Enter a value to add this rule.
+                    {hardIsList
+                      ? "Pick a list to add this rule."
+                      : "Enter a value to add this rule."}
                   </p>
                 )}
+                {hardIsList && noListsMessage && <p className="help help-warn">{noListsMessage}</p>}
                 {hardField?.help_text && <p className="help">{hardField.help_text}</p>}
               </div>
             ) : (
@@ -906,35 +1014,48 @@ export function KeepRulesEditor({
                 </select>
                 {leanField && (
                   <>
-                    {/* Both directions stay on screen: a dropdown let the default save
-                        without the operator ever seeing there was a choice. */}
-                    <Segmented
-                      value={lDir}
-                      onChange={setLDir}
-                      label="Which way it leans"
-                      options={[
-                        ["high_keeps", "the more, the safer"],
-                        ["low_keeps", "the less, the safer"],
-                      ]}
-                    />
-                    <span className="muted">full effect at</span>
-                    {leanField.unit_suffix ? (
-                      <FixedQuantity
-                        value={lAt}
-                        suffix={leanField.unit_suffix}
-                        step={leanField.type === "rating_tenths" ? 0.1 : 1}
-                        ariaLabel="Full effect at"
+                    {leanIsList ? (
+                      // Flat: on the list takes the full discount, so there is no direction
+                      // and no ramp end to set -- membership isn't a number.
+                      <ListNameSelect
+                        value={lList}
+                        names={listNames}
+                        onChange={setLList}
                         describedBy={leanEmpty ? LEAN_EMPTY_ID : undefined}
-                        onChange={(v) => setLAt(String(v))}
                       />
                     ) : (
-                      <input
-                        type="number"
-                        value={lAt}
-                        aria-label="Full effect at"
-                        aria-describedby={leanEmpty ? LEAN_EMPTY_ID : undefined}
-                        onChange={(e) => setLAt(e.target.value)}
-                      />
+                      <>
+                        {/* Both directions stay on screen: a dropdown let the default save
+                            without the operator ever seeing there was a choice. */}
+                        <Segmented
+                          value={lDir}
+                          onChange={setLDir}
+                          label="Which way it leans"
+                          options={[
+                            ["high_keeps", "the more, the safer"],
+                            ["low_keeps", "the less, the safer"],
+                          ]}
+                        />
+                        <span className="muted">full effect at</span>
+                        {leanField.unit_suffix ? (
+                          <FixedQuantity
+                            value={lAt}
+                            suffix={leanField.unit_suffix}
+                            step={leanField.type === "rating_tenths" ? 0.1 : 1}
+                            ariaLabel="Full effect at"
+                            describedBy={leanEmpty ? LEAN_EMPTY_ID : undefined}
+                            onChange={(v) => setLAt(String(v))}
+                          />
+                        ) : (
+                          <input
+                            type="number"
+                            value={lAt}
+                            aria-label="Full effect at"
+                            aria-describedby={leanEmpty ? LEAN_EMPTY_ID : undefined}
+                            onChange={(e) => setLAt(e.target.value)}
+                          />
+                        )}
+                      </>
                     )}
                     {/* One control standard: a number with a fixed unit is a FixedQuantity,
                         never a bare number box beside loose text. */}
@@ -958,9 +1079,12 @@ export function KeepRulesEditor({
                 {/* And the third (rule 72). */}
                 {leanEmpty && (
                   <p className="help help-warn" id={LEAN_EMPTY_ID}>
-                    Enter a number to add this rule.
+                    {leanIsList
+                      ? "Pick a list to add this rule."
+                      : "Enter a number to add this rule."}
                   </p>
                 )}
+                {leanIsList && noListsMessage && <p className="help help-warn">{noListsMessage}</p>}
                 {leanField?.help_text && <p className="help">{leanField.help_text}</p>}
               </div>
             )}

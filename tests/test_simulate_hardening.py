@@ -46,7 +46,7 @@ from reaper.api.routes import (
     _policy_out,
     _to_body,
 )
-from reaper.api.schemas import GateSettingIn, PolicyIn, SignalSettingIn
+from reaper.api.schemas import ConditionIn, GateSettingIn, PolicyIn, SignalSettingIn
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -70,9 +70,11 @@ from ._auth import login
 
 #: The draft policy every simulation below is run under. Its scoring hash has to be the one
 #: the fixture snapshot was "scored" with, or the route refuses to re-decide at all -- so
-#: the gates and signals here and in ``_fixture_scoring_hash`` are the same list.
+#: the gates and signals here and in ``_fixture_scoring_hash`` are the same list. The
+#: ``whitelisted`` gate is retired (list membership protects through ``on_list`` keep rules
+#: now), so it appears in stored EXPLANATIONS below but never in a draft: the save boundary
+#: refuses it, which ``test_a_retired_gate_is_refused_at_the_save_boundary`` pins.
 GATES: list[dict[str, Any]] = [
-    {"gate": "whitelisted"},
     {"gate": "min_dormancy", "threshold": 1095},
     {"gate": "rating_floor", "threshold": 75},
 ]
@@ -454,11 +456,19 @@ def test_the_draft_policy_matches_the_fixture(client: TestClient) -> None:
 def test_the_fixture_gates_and_signals_are_the_wire_shapes() -> None:
     """The two lists are dicts on the wire, so a typo in one is a 422, not a bad hash."""
     assert [GateSettingIn.model_validate(g).gate for g in GATES] == [
-        "whitelisted",
         "min_dormancy",
         "rating_floor",
     ]
     assert [SignalSettingIn.model_validate(s).weight for s in SIGNALS] == [100]
+
+
+def test_a_retired_gate_is_refused_at_the_save_boundary() -> None:
+    """A draft naming ``whitelisted`` is operator input asking for a protection that no
+    longer exists as a gate, so the boundary says so. A STORED body naming it converts on
+    load instead (``policy.convert_list_protections``); refusing the stored copy would take
+    the install offline, and dropping the draft silently would hide the typo."""
+    with pytest.raises(ValueError, match="whitelisted"):
+        GateSettingIn.model_validate({"gate": "whitelisted"})
 
 
 # ---------------------------------------------------------------------------
@@ -478,12 +488,16 @@ REPLAY_GATES: list[dict[str, Any]] = [*GATES, {"gate": "streaming_now"}]
 
 #: The draft the replay fixture is built for: the wire payload, the domain body it becomes,
 #: and the evidence hash that body would gather under. Built through the route's own
-#: ``_to_body`` so the fixture cannot drift from what the request produces.
+#: ``_to_body`` so the fixture cannot drift from what the request produces. The keep list
+#: protects through the operator's own rule now -- the ``whitelisted`` FIELD, since the gate
+#: of that name is retired -- so the draft carries the rule the fixture's keep-list row
+#: needs to stay held.
 REPLAY_PAYLOAD = PolicyIn(
     condemn_at=70,
     coverage_floor_bp=0,
     gates=[GateSettingIn.model_validate(g) for g in REPLAY_GATES],
     signals=[SignalSettingIn.model_validate(s) for s in SIGNALS],
+    protect_conditions=[ConditionIn(field="whitelisted", op="eq", value=True)],
 )
 REPLAY_BODY = _to_body(REPLAY_PAYLOAD)
 
@@ -655,8 +669,8 @@ class TestTheFrozenFactsReplay:
         assert result["condemned"] == 2
         assert result["reclaimable_bytes"] == 2 * SIZE
         assert result["protected_by"] == [
+            {"gate": "custom", "count": 1},
             {"gate": "streaming_now", "count": 1},
-            {"gate": "whitelisted", "count": 1},
         ]
 
     def test_a_hand_reap_the_engine_cannot_honor_is_not_previewed_as_a_deletion(

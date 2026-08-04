@@ -14,34 +14,37 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
 import respx
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.config import Settings
 from reaper.db.session import create_engine
-from reaper.services import history_sync
+from reaper.services import history_sync, lists
 from reaper.services.list_config import ListDefinition
-from reaper.services.lists import IMDB_TOP_250_URL, ListSource, memberships
+from reaper.services.lists import IMDB_TOP_250_URL, ArrTagRule, ListKind, ListSource, memberships
 from reaper.services.season_scan import SonarrSource
 from reaper.services.snapshot import _watch_stats, sync_protection_lists
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
-# Every list except the policy's keep tags now comes from the registry the operator edits on
-# Settings -> Lists, so the sync is handed definitions rather than the three hardcoded strings
-# it used to carry. Ids are pinned here because they end up in the stored slug: that is what
-# lets one definition own several stored rows (one per *arr) and survive being renamed.
-CURATED = ListDefinition(
+# Every list comes from the registry the operator edits on Settings -> Lists, so the sync is
+# handed definitions rather than hardcoded strings. Ids are pinned here because they end up
+# in the stored slug: that is what lets one definition own several stored rows (one per
+# *arr) and survive being renamed.
+IMDB = ListDefinition(
     id=1,
     name="IMDb Top 250",
-    source=ListSource.CURATED,
-    config={"list": "imdb-top-250"},
+    source=ListSource.IMDB,
+    config={"preset": "top250"},
     enabled=True,
 )
-CURATED_SLUG = "imdb-top-250-list1"
+IMDB_SLUG = "imdb-top250-list1"
 
 
 def _plex_list(collection: str = "Never Reap", *, library: str = "Movies") -> ListDefinition:
@@ -52,6 +55,30 @@ def _plex_list(collection: str = "Never Reap", *, library: str = "Movies") -> Li
         config={"library": library, "collection": collection},
         enabled=True,
     )
+
+
+def _tag_list(
+    tags: tuple[str, ...] = ("keep",), match: str = "any", *, list_id: int = 3
+) -> ListDefinition:
+    return ListDefinition(
+        id=list_id,
+        name="Tagged titles",
+        source=ListSource.ARR_TAG,
+        config={"tags": list(tags), "match": match},
+        enabled=True,
+    )
+
+
+TAG_SLUG = "sonarr-1-keeptags-any-list3"
+
+WATCHLIST = ListDefinition(
+    id=4,
+    name="My watchlist",
+    source=ListSource.PLEX_WATCHLIST,
+    config={},
+    enabled=True,
+)
+WATCHLIST_SLUG = "plex-watchlist-account-list4"
 
 
 @pytest.fixture
@@ -67,6 +94,16 @@ def _top250_payload(count: int = 250) -> list[dict[str, object]]:
     ]
 
 
+async def _enabled(engine: AsyncEngine, slug: str) -> bool | None:
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text("SELECT enabled FROM protection_list WHERE slug = :slug"), {"slug": slug}
+            )
+        ).one_or_none()
+    return None if row is None else bool(row.enabled)
+
+
 class TestTheTop250IsPopulatedForAScan:
     async def test_after_sync_a_top250_film_is_a_member(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
@@ -77,36 +114,103 @@ class TestTheTop250IsPopulatedForAScan:
             return_value=httpx.Response(200, json=_top250_payload())
         )
 
-        synced = await sync_protection_lists(engine, definitions=[CURATED])
+        synced = await sync_protection_lists(engine, definitions=[IMDB])
 
-        assert synced[CURATED_SLUG] == 250
+        assert synced[IMDB_SLUG] == 250
         found = await memberships(engine, media_type="movie", imdb_id="tt0000005")
         assert len(found) == 1  # a scan would now see this film as protected
 
     async def test_a_list_switched_off_stops_protecting(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
-        """The Protecting switch on the Lists screen, end to end. A disabled definition builds
-        no provider, so its slug is outside the set the retire sweep is judged against and the
-        stored membership is disabled. Without the sweep the switch would be decoration: the
-        list would go on protecting every title it ever matched (rule 25)."""
+        """A disabled definition builds no provider, so its slug is outside the set the
+        retire sweep is judged against and the stored membership is disabled. Without the
+        sweep the switch would be decoration: the list would go on protecting every title
+        it ever matched (rule 25)."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
         )
-        await sync_protection_lists(engine, definitions=[CURATED])
+        await sync_protection_lists(engine, definitions=[IMDB])
         assert await memberships(engine, media_type="movie", imdb_id="tt0000005")
 
         off = ListDefinition(
-            id=CURATED.id,
-            name=CURATED.name,
-            source=CURATED.source,
-            config=CURATED.config,
+            id=IMDB.id,
+            name=IMDB.name,
+            source=IMDB.source,
+            config=IMDB.config,
             enabled=False,
         )
         synced = await sync_protection_lists(engine, definitions=[off])
 
-        assert synced[CURATED_SLUG] == "retired"
+        assert synced[IMDB_SLUG] == "retired"
         assert not await memberships(engine, media_type="movie", imdb_id="tt0000005")
+
+
+class TestAnUnreadableRegistryBuildsNothingAndRetiresNothing:
+    """``definitions`` is three-state, and ``None`` is the one that matters: the registry
+    could not be READ, which is not the same fact as an operator having no lists (rule 1,
+    rule 93). Retiring on it would disable every list on the install because a table was
+    briefly unavailable."""
+
+    async def test_none_leaves_every_stored_list_exactly_as_it_was(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
+        await sync_protection_lists(engine, definitions=[IMDB])
+
+        synced = await sync_protection_lists(engine, definitions=None)
+
+        assert synced == {}  # nothing built, nothing retired
+        assert await _enabled(engine, IMDB_SLUG) is True
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000005")
+
+    async def test_an_empty_registry_by_contrast_retires(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        """The genuine "no lists" answer does retire -- the contrast that keeps the case
+        above from passing for a sweep that never runs at all."""
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
+        await sync_protection_lists(engine, definitions=[IMDB])
+
+        synced = await sync_protection_lists(engine, definitions=[])
+
+        assert synced[IMDB_SLUG] == "retired"
+        assert not await memberships(engine, media_type="movie", imdb_id="tt0000005")
+
+
+class TestANarrowedPassNeverRetires:
+    async def test_checking_one_list_cannot_switch_another_off(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        """``only=`` produces one list's slugs, and a sweep reading that as the whole truth
+        about a family would disable every other list in it -- including, as here, a list
+        the registry no longer carries at all."""
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
+        popular = ListDefinition(
+            id=5,
+            name="Popular",
+            source=ListSource.IMDB,
+            config={"preset": "popular"},
+            enabled=True,
+        )
+        httpx2_mock.get(lists.IMDB_LIST_BASE + "popular").mock(
+            return_value=httpx.Response(200, json=_top250_payload(count=60))
+        )
+        await sync_protection_lists(engine, definitions=[IMDB, popular])
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000005")
+
+        # The narrowed pass is handed a registry that has already dropped the Top 250.
+        synced = await sync_protection_lists(engine, definitions=[popular], only=popular.id)
+
+        assert synced == {"imdb-popular-list5": 60}
+        assert await _enabled(engine, IMDB_SLUG) is True
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000005")
 
 
 class TestAnEmptyCacheDoesNotCrashTheScan:
@@ -141,10 +245,10 @@ class TestOneFailingListDoesNotSinkTheScan:
         delete something the list would have saved."""
         httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
 
-        synced = await sync_protection_lists(engine, definitions=[CURATED])
+        synced = await sync_protection_lists(engine, definitions=[IMDB])
 
-        assert isinstance(synced[CURATED_SLUG], str)
-        assert "error" in synced[CURATED_SLUG]
+        assert isinstance(synced[IMDB_SLUG], str)
+        assert "error" in synced[IMDB_SLUG]
 
     async def test_a_truncated_list_is_refused(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
@@ -156,10 +260,10 @@ class TestOneFailingListDoesNotSinkTheScan:
             return_value=httpx.Response(200, json=_top250_payload(count=50))
         )
 
-        synced = await sync_protection_lists(engine, definitions=[CURATED])
+        synced = await sync_protection_lists(engine, definitions=[IMDB])
 
-        assert isinstance(synced[CURATED_SLUG], str)
-        assert "error" in synced[CURATED_SLUG]
+        assert isinstance(synced[IMDB_SLUG], str)
+        assert "error" in synced[IMDB_SLUG]
 
 
 class _TaggedSonarr:
@@ -191,8 +295,6 @@ class _CollectionServer:
         guid = None
 
         def __init__(self, imdb: str) -> None:
-            from types import SimpleNamespace
-
             self.guids = [SimpleNamespace(id=f"imdb://{imdb}")]
 
     class _Collection:
@@ -222,13 +324,33 @@ class _CollectionServer:
         self.library = self._Library(imdb)
 
 
+class _WatchlistServer:
+    """A Plex stand-in whose account watchlist holds one movie, or raises."""
+
+    def __init__(self, imdb: str = "tt0000001", *, broken: bool = False) -> None:
+        self._imdb = imdb
+        self._broken = broken
+
+    def myPlexAccount(self) -> Any:  # noqa: N802 - mirrors plexapi
+        if self._broken:
+            raise RuntimeError("plex.tv did not answer")
+        item = SimpleNamespace(
+            type="movie",
+            title="A title",
+            guid=None,
+            guids=[SimpleNamespace(id=f"imdb://{self._imdb}")],
+        )
+        return SimpleNamespace(watchlist=lambda: [item])
+
+
 class TestEachInstanceKeepsItsOwnKeepList:
     async def test_two_instances_of_one_service_both_protect(self, engine: AsyncEngine) -> None:
-        """Two Sonarr instances, each with its own keep-tagged title. The slug carries
-        the instance id, so each instance syncs its OWN list. With a shared slug (the
-        old shape), each sync atomically replaced the other's membership: whichever ran
-        last erased the other instance's keep-tagged titles from the whitelist, silently
-        -- a protection failing open, in whichever order the syncs happened to finish."""
+        """Two Sonarr instances, each with its own keep-tagged title, one tag definition.
+        The definition builds one provider PER INSTANCE and the slug carries the instance
+        id, so each instance syncs its OWN list. With a shared slug (the old shape), each
+        sync atomically replaced the other's membership: whichever ran last erased the
+        other instance's keep-tagged titles from the whitelist, silently -- a protection
+        failing open, in whichever order the syncs happened to finish."""
         first = SonarrSource(
             client=_TaggedSonarr(
                 [{"id": 1, "label": "keep"}],
@@ -247,12 +369,12 @@ class TestEachInstanceKeepsItsOwnKeepList:
         )
 
         synced = await sync_protection_lists(
-            engine, sonarrs=[first, second], tv_keep_tags=("keep",)
+            engine, definitions=[_tag_list()], sonarrs=[first, second]
         )
 
         # Two distinct lists, so neither sync can mask the other's outcome either.
-        assert synced["sonarr-1-keeptags-any"] == 1
-        assert synced["sonarr-2-keeptags-any"] == 1
+        assert synced["sonarr-1-keeptags-any-list3"] == 1
+        assert synced["sonarr-2-keeptags-any-list3"] == 1
         # And BOTH instances' keep-tagged titles are protected at the same time.
         assert await memberships(engine, media_type="tv", tvdb_id=10)
         assert await memberships(engine, media_type="tv", tvdb_id=20)
@@ -284,20 +406,18 @@ class TestAReplacedKeepListStopsProtecting:
     ) -> None:
         await sync_protection_lists(
             engine,
+            definitions=[_tag_list(("keep", "gold"), "any")],
             sonarrs=[self._sonarr()],
-            tv_keep_tags=("keep", "gold"),
-            tv_keep_match="any",
         )
         assert await memberships(engine, media_type="tv", tvdb_id=10)
 
         synced = await sync_protection_lists(
             engine,
+            definitions=[_tag_list(("keep", "gold"), "all")],
             sonarrs=[self._sonarr()],
-            tv_keep_tags=("keep", "gold"),
-            tv_keep_match="all",
         )
 
-        assert synced["sonarr-1-keeptags-any"] == "retired"
+        assert synced[TAG_SLUG] == "retired"
         assert not await memberships(engine, media_type="tv", tvdb_id=10)  # only "keep"
         assert await memberships(engine, media_type="tv", tvdb_id=11)  # both tags
 
@@ -308,22 +428,39 @@ class TestAReplacedKeepListStopsProtecting:
         for match in ("any", "all", "any"):
             await sync_protection_lists(
                 engine,
+                definitions=[_tag_list(("keep", "gold"), match)],
                 sonarrs=[self._sonarr()],
-                tv_keep_tags=("keep", "gold"),
-                tv_keep_match=match,
             )
 
         assert await memberships(engine, media_type="tv", tvdb_id=10)
 
-    async def test_clearing_the_tags_retires_the_whole_keep_list(self, engine: AsyncEngine) -> None:
-        """The stronger trigger: with no tags configured no provider is built at all, so
+    async def test_deleting_the_tag_list_retires_the_whole_keep_list(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The stronger trigger: a deleted definition builds no provider at all, so
         without the retire pass nothing touches the stored list and every title it ever
-        matched stays protected by a rule the operator deleted."""
-        await sync_protection_lists(engine, sonarrs=[self._sonarr()], tv_keep_tags=("keep",))
+        matched stays protected by a list the operator deleted."""
+        await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[self._sonarr()])
         assert await memberships(engine, media_type="tv", tvdb_id=10)
 
-        await sync_protection_lists(engine, sonarrs=[self._sonarr()], tv_keep_tags=())
+        await sync_protection_lists(engine, definitions=[], sonarrs=[self._sonarr()])
 
+        assert not await memberships(engine, media_type="tv", tvdb_id=10)
+
+    async def test_a_definition_with_no_tags_builds_no_provider_and_retires(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The save boundary refuses an empty tag list, so this row can only be a stored
+        body edited by hand -- and it reads as "no tags configured", never as a sync of
+        everything or of nothing that leaves the old membership protecting."""
+        await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[self._sonarr()])
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+
+        synced = await sync_protection_lists(
+            engine, definitions=[_tag_list(())], sonarrs=[self._sonarr()]
+        )
+
+        assert synced[TAG_SLUG] == "retired"
         assert not await memberships(engine, media_type="tv", tvdb_id=10)
 
     async def test_a_failed_sync_is_never_retired(self, engine: AsyncEngine) -> None:
@@ -335,12 +472,13 @@ class TestAReplacedKeepListStopsProtecting:
             async def tags(self) -> list[dict[str, object]]:
                 raise RuntimeError("connection refused")
 
-        await sync_protection_lists(engine, sonarrs=[self._sonarr()], tv_keep_tags=("keep",))
+        await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[self._sonarr()])
 
         broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
-        synced = await sync_protection_lists(engine, sonarrs=[broken], tv_keep_tags=("keep",))
+        synced = await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[broken])
 
-        assert "error" in str(synced["sonarr-1-keeptags-any"])
+        assert "error" in str(synced[TAG_SLUG])
+        assert await _enabled(engine, TAG_SLUG) is True
         assert await memberships(engine, media_type="tv", tvdb_id=10)
 
     async def test_renaming_the_plex_collection_retires_the_old_one(
@@ -372,6 +510,98 @@ class TestAReplacedKeepListStopsProtecting:
             engine, definitions=[_plex_list()], plex_server=_CollectionServer()
         )
 
-        await sync_protection_lists(engine, definitions=[_plex_list()], plex_server=None)
+        synced = await sync_protection_lists(engine, definitions=[_plex_list()], plex_server=None)
 
+        assert synced == {}  # the collection was skipped, so nothing was checked either
         assert await memberships(engine, media_type="movie", imdb_id="tt0000001")
+
+
+class TestTheWatchlistFollowsThePlexRules:
+    """The watchlist is account data read through the connected server, so it takes the
+    collection family's fail-closed shape: no live server, no provider, and the retire
+    sweep stands down with it."""
+
+    async def test_a_watchlist_definition_syncs_and_protects(self, engine: AsyncEngine) -> None:
+        synced = await sync_protection_lists(
+            engine, definitions=[WATCHLIST], plex_server=_WatchlistServer()
+        )
+
+        assert synced[WATCHLIST_SLUG] == 1
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000001")
+
+    async def test_an_unreachable_plex_skips_and_never_retires_the_watchlist(
+        self, engine: AsyncEngine
+    ) -> None:
+        await sync_protection_lists(engine, definitions=[WATCHLIST], plex_server=_WatchlistServer())
+
+        synced = await sync_protection_lists(engine, definitions=[WATCHLIST], plex_server=None)
+
+        assert synced == {}
+        assert await _enabled(engine, WATCHLIST_SLUG) is True
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000001")
+
+    async def test_a_deleted_watchlist_definition_retires_when_plex_answered(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The other half, without which the stand-down above could be a sweep that never
+        runs: with Plex live and the definition gone, the stored watchlist is disabled."""
+        await sync_protection_lists(engine, definitions=[WATCHLIST], plex_server=_WatchlistServer())
+
+        synced = await sync_protection_lists(engine, definitions=[], plex_server=_WatchlistServer())
+
+        assert synced[WATCHLIST_SLUG] == "retired"
+        assert not await memberships(engine, media_type="movie", imdb_id="tt0000001")
+
+
+class TestLegacySlugsAreRehomedOnlyByALandedSync:
+    """The upgrade path. Policy keep tags wrote slugs with no ``-list`` suffix; the
+    definition-driven sync writes the suffixed spelling. The old row is retired exactly
+    when its replacement actually synced (rule 115): retiring it on a failed sync would
+    withdraw the only membership still protecting the operator's tagged titles."""
+
+    @staticmethod
+    def _sonarr_client() -> _TaggedSonarr:
+        return _TaggedSonarr(
+            [{"id": 1, "label": "keep"}],
+            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        )
+
+    async def _store_legacy_row(self, engine: AsyncEngine) -> str:
+        """A keep-tag list as the pre-registry code stored it: no definition id."""
+        rule = ArrTagRule(self._sonarr_client(), ("keep",), "any", instance_id=1)  # type: ignore[arg-type]
+        await lists.sync(engine, rule, kind=ListKind.WHITELIST)
+        return rule.slug
+
+    async def test_the_legacy_slug_retires_once_the_definition_driven_sync_lands(
+        self, engine: AsyncEngine
+    ) -> None:
+        legacy = await self._store_legacy_row(engine)
+        assert legacy == "sonarr-1-keeptags-any"
+
+        source = SonarrSource(client=self._sonarr_client(), instance_id=1, name="hd")
+        synced = await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[source])
+
+        assert synced[TAG_SLUG] == 1
+        assert synced[legacy] == "retired"
+        # The title stays protected throughout: the new row covers it.
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+
+    async def test_a_failed_replacement_sync_blocks_the_whole_family_sweep(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Rule 115's second half. The failed slug itself is in ``current`` and safe from
+        the sweep; the row it was meant to REPLACE is not, and disabling that one on the
+        strength of a sync that did not land is the fail-open this stands against."""
+        legacy = await self._store_legacy_row(engine)
+
+        class _Unreachable(_TaggedSonarr):
+            async def tags(self) -> list[dict[str, object]]:
+                raise RuntimeError("connection refused")
+
+        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        synced = await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[broken])
+
+        assert "error" in str(synced[TAG_SLUG])
+        assert legacy not in synced  # not retired
+        assert await _enabled(engine, legacy) is True
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
