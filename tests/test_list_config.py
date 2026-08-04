@@ -624,9 +624,12 @@ class TestTheRegistryFingerprint:
     async def test_a_registry_that_cannot_be_read_answers_none(self, tmp_path: Path) -> None:
         """Fail closed: unknown, never "no lists configured" (rules 65/91).
 
-        ``None`` matches no recorded fingerprint, so the caller refuses -- where a fallback
-        to the empty registry's hash would match any install that happens to have no lists
-        and preview against membership nobody could confirm.
+        A fallback to the empty registry's hash would match any install that happens to have
+        no lists, and preview against membership nobody could confirm. ``None`` is not that,
+        and it is also not a value to COMPARE: a snapshot that degraded for the same
+        unreadable registry recorded ``None`` too, so each caller tests either side for it
+        and refuses (``api.routes.simulate``, ``services.executor``), rather than resting on
+        an inequality that reads two unknowns as agreement.
 
         The same row is read twice, readable then not, so the ``None`` is pinned to the
         decode failure and not to anything else about this database (rule 141).

@@ -51,7 +51,7 @@ from reaper.api.schemas import ConditionIn, GateSettingIn, PolicyIn, SignalSetti
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import Candidate, Snapshot, WhitelistEntry
+from reaper.db.models import Candidate, ListConfig, Snapshot, WhitelistEntry
 from reaper.engine import facts_codec
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Absent, Known
@@ -1435,4 +1435,37 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
 
         after = _simulate(client, 40)
         assert after["exact"] is False, "answered off a snapshot that cannot say its lists"
+        assert "scan" in after["stale_reason"].lower()
+
+    def test_two_unknowns_are_not_a_match(self, client: TestClient, tmp_path: Path) -> None:
+        """Both sides ``None`` is the pairing an equality test reads as agreement.
+
+        ``None`` means "unknown" on each side and they are different unknowns: the snapshot's
+        is a scan that degraded for a registry it could not read, and the live one is a
+        registry that cannot be read right now. Comparing them answered "exact" off a scan
+        that had itself given up on the lists, which is the one case where the frozen
+        membership is least trustworthy (rules 93, 104).
+
+        Both sides are driven to ``None`` at once, because either alone already refuses
+        through the inequality and would leave this green with the fix removed (rule 118).
+        """
+        assert _simulate(client, 40)["exact"] is True
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            session.execute(sa_update(Snapshot).values(list_config_hash=None))
+            # A body that will not parse makes `definitions(strict=True)` raise, which is
+            # what `current_fingerprint` answers `None` to. The row stays in the table, so
+            # this is the live registry being unreadable rather than being empty.
+            session.execute(
+                sa_update(ListConfig)
+                .where(ListConfig.source == "arr_tag")
+                .values(config_json="{not json")
+            )
+            session.commit()
+        engine.dispose()
+
+        after = _simulate(client, 40)
+        assert after["exact"] is False, "previewed as exact with neither side able to say"
         assert "scan" in after["stale_reason"].lower()

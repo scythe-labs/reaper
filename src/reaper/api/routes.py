@@ -2439,9 +2439,20 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         # through the stored verdict that fact produced. The lists are not policy, so no hash
         # either tier compares can notice that the operator retagged, renamed, repointed or
         # switched one off -- and the panel would report the membership the scan froze while
-        # calling it exact (#512). A snapshot predating the column carries `None`, which
-        # matches no fingerprint and so refuses: unknown, never "no lists" (rule 104).
-        if snapshot.list_config_hash != await list_config.current_fingerprint(session):
+        # calling it exact (#512).
+        #
+        # Either side being `None` refuses on its own, and neither is compared to the other:
+        # a snapshot predating the column has one, a scan that degraded for an unreadable
+        # registry stamped one (`scan_runner`), and `current_fingerprint` returns one when the
+        # registry cannot be read right now. `None` is "unknown" on both sides, never "no
+        # lists" (rules 93, 104) -- so an equality test alone answered "exact" for two
+        # unknowns, which is the one pairing where both scans were degraded.
+        current = await list_config.current_fingerprint(session)
+        if (
+            snapshot.list_config_hash is None
+            or current is None
+            or snapshot.list_config_hash != current
+        ):
             return _refused(SimStale.GATHERS_DIFFERENTLY, body.media_type)
 
         # Three tiers of re-decide, most exact first:

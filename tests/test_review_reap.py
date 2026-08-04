@@ -31,7 +31,7 @@ from reaper.db.base import Base
 from reaper.db.models import ActionStep, Candidate, RunState, Snapshot
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import ProfileSettings
-from reaper.services import whitelist
+from reaper.services import list_config, whitelist
 from reaper.services.executor import Executor
 from reaper.services.planner import PlanError, build_plan
 from reaper.services.profiles import live_policy_hash
@@ -61,6 +61,9 @@ async def _snapshot(session: AsyncSession, condemned: list[tuple[str, int]]) -> 
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),
+        # Stamped the way a scan stamps it, so the executor's list interlock sees the
+        # registry these tests actually run against rather than an unknown that refuses.
+        list_config_hash=await list_config.current_fingerprint(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(condemned),
@@ -100,6 +103,9 @@ async def _snapshot_show(
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),
+        # Stamped the way a scan stamps it, so the executor's list interlock sees the
+        # registry these tests actually run against rather than an unknown that refuses.
+        list_config_hash=await list_config.current_fingerprint(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(seasons),
@@ -194,6 +200,7 @@ class TestBulkReapOfAShowGroupKey:
         snapshot = Snapshot(
             created_at=now,
             policy_hash=await live_policy_hash(session),
+            list_config_hash=await list_config.current_fingerprint(session),
             scoring_hash="s" * 64,
             horizon_at=now,
             item_count=2,

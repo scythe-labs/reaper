@@ -184,9 +184,11 @@ def fingerprint(definitions: Sequence[ListDefinition]) -> str:
 async def current_fingerprint(session: AsyncSession) -> str | None:
     """:func:`fingerprint` over the stored registry, or ``None`` when it cannot be read.
 
-    ``None`` is the fail-closed answer and never "no lists configured" (rules 65/91): a
-    caller comparing it against a snapshot's recorded value gets a mismatch and refuses,
-    which is what an unreadable protection registry has to mean.
+    ``None`` is "unknown", never "no lists configured" (rules 65/91, 93). **It is not a value
+    to compare**, and a caller must not: a snapshot that degraded for the same unreadable
+    registry recorded ``None`` too, so ``stored != current`` reads two unknowns as agreement
+    and passes. Every caller tests each side for ``None`` first and refuses on either
+    (``api.routes.simulate``, ``services.executor``).
     """
     try:
         return fingerprint(await definitions(session, strict=True))

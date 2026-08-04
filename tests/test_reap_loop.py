@@ -51,7 +51,7 @@ from reaper.db.models import (
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
 from reaper.services import executor as executor_module
-from reaper.services import whitelist
+from reaper.services import list_config, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -124,6 +124,9 @@ async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int |
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),
+        # Stamped the way a scan stamps it, so the executor's list interlock sees the
+        # registry these tests actually run against rather than an unknown that refuses.
+        list_config_hash=await list_config.current_fingerprint(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(condemned),
@@ -2693,6 +2696,9 @@ async def _snapshot_many(
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),
+        # Stamped the way a scan stamps it, so the executor's list interlock sees the
+        # registry these tests actually run against rather than an unknown that refuses.
+        list_config_hash=await list_config.current_fingerprint(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(items),
@@ -3415,6 +3421,102 @@ class TestAPolicyEditVoidsAPendingPlan:
         report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
 
         assert report.state is RunState.COMPLETED
+
+
+class TestAListEditVoidsAPendingPlan:
+    """The same hole one layer out, opened by moving the keep tags off the policy body.
+
+    They used to be ``keep_tags`` ON the body, so retagging moved ``policy_hash`` and the
+    interlock above refused. They are a list on Settings, Lists now, and a config-only edit
+    (retag it, repoint it at another Plex collection) rewrites no policy rule at all: every
+    body stays byte for byte the same, so both hashes above still match. The per-item
+    interlocks never re-read membership either, so an operator who narrowed a keep list
+    after approving a plan would come back and delete the titles it had been keeping.
+
+    ``Snapshot.list_config_hash`` is what closes it, and until this it had exactly one
+    reader: the simulator's preview panel.
+    """
+
+    @staticmethod
+    async def _retag(session: AsyncSession) -> None:
+        """Change what one list matches, and nothing else. No policy row is written."""
+        rows = await list_config.all_lists(session)
+        tag_list = next((r for r in rows if r.source == "arr_tag"), None)
+        assert tag_list is not None, "the seeded registry has no tag list to retag"
+        await list_config.update(
+            session, tag_list.id, config={"tags": ["a-different-tag"], "match": "any"}
+        )
+
+    async def test_a_plan_under_the_lists_in_force_still_runs(self, session: AsyncSession) -> None:
+        """The control: nothing edited, so nothing is refused."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+        assert report.state is RunState.COMPLETED
+
+    async def test_retagging_a_list_after_approval_refuses_the_run(
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The edit that moves neither hash above, so this is the single variable."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        policy_before = await live_policy_hash(session)
+        await self._retag(session)
+        assert await live_policy_hash(session) == policy_before, (
+            "the retag moved the policy hash, so this test would pass with the list "
+            "interlock deleted (rule 118)"
+        )
+        await session.commit()
+
+        radarr = FakeRadarr()
+        with pytest.raises(ExecutionError, match="protection lists changed"):
+            await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
+        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
+
+    async def test_the_dry_run_proves_the_same_refusal(self, session: AsyncSession) -> None:
+        """Or the operator meets the refusal only after typing the confirmation phrase."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        await self._retag(session)
+
+        executor = Executor(session, safety=_read_only(), settings=ProfileSettings(), dry_run=True)
+        with pytest.raises(ExecutionError, match="protection lists changed"):
+            await executor.execute(run.id)
+
+    async def test_a_snapshot_that_never_recorded_its_lists_refuses(
+        self, session: AsyncSession
+    ) -> None:
+        """The pre-upgrade shape, and a scan that degraded for a registry it could not read.
+        Both stamp ``None``, which is unknown and never "no lists" (rules 93, 104): a plan
+        built under lists nobody can name is exactly what must not execute."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        snapshot = await session.get(Snapshot, snapshot_id)
+        assert snapshot is not None
+        snapshot.list_config_hash = None
+        await session.flush()
+
+        with pytest.raises(ExecutionError, match="protection lists changed"):
+            await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+    async def test_a_registry_unreadable_at_execute_refuses(self, session: AsyncSession) -> None:
+        """The live side unknown. Both sides are driven to ``None`` at once, because that is
+        the pairing an equality test reads as agreement and lets through."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        snapshot = await session.get(Snapshot, snapshot_id)
+        assert snapshot is not None
+        snapshot.list_config_hash = None
+        rows = await list_config.all_lists(session)
+        rows[0].config_json = "{not json"
+        await session.flush()
+
+        with pytest.raises(ExecutionError, match="protection lists changed"):
+            await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
 
 
 # ---------------------------------------------------------------------------
