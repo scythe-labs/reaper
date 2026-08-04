@@ -483,6 +483,44 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         assert values == {"IMDb Top 250", "Titles you've tagged"}, (
             "an unreadable registry moved the shipped conditions"
         )
+
+    async def test_a_registry_it_cannot_read_says_so_instead_of_scanning_quietly(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Leaving the shipped rules alone is right and is not enough on its own.
+
+        The seeded collection above has no rule naming it in this body, so the scan is about
+        to judge the whole library with that keep list doing nothing. It used to carry a log
+        line and an empty ``repairs``, so the scan's degradation loop never fired -- and the
+        scan's OWN registry read is a separate query that can succeed on a transient error,
+        which is what let the run complete clean (rules 65/91).
+
+        Not a ``PolicyRepair``: every member of that enum is answered by saving the policy,
+        and saving fixes nothing here. It still reads as ``repaired``, because that is what
+        degrades the scan and what stops ``list_rules`` persisting a body missing the rules.
+        """
+        await self._seed_plex_collection(session)
+
+        async def unreadable(
+            _session: AsyncSession,
+        ) -> tuple[str | None, str | None, tuple[str, ...]]:
+            raise SQLAlchemyError("the registry could not be read")
+
+        monkeypatch.setattr(profiles, "_conversion_list_names", unreadable)
+
+        active = await active_policy(session, "movie")
+
+        assert active.lists_unreadable is True
+        assert active.repaired is True, "the scan would not degrade"
+        assert active.repairs == (), "nothing was repaired, so no save can clear it"
+
+    async def test_a_registry_that_reads_fine_is_not_flagged(self, session: AsyncSession) -> None:
+        """The other side of rule 65's line: a read that SUCCEEDS and finds nothing of the
+        operator's own falls back to the shipped conditions silently, and must not degrade
+        every scan on an install that simply has no Plex lists."""
+        active = await active_policy(session, "movie")
+
+        assert active.lists_unreadable is False
         assert active.repaired is False
 
     async def test_a_watchlist_definition_is_kept_too(self, session: AsyncSession) -> None:

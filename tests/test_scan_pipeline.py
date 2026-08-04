@@ -1338,6 +1338,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
         monkeypatch: pytest.MonkeyPatch,
         *,
         repairs: tuple[PolicyRepair, ...],
+        lists_unreadable: bool = False,
     ) -> tuple[Any, async_sessionmaker[AsyncSession], AsyncEngine]:
         from types import SimpleNamespace
 
@@ -1364,7 +1365,12 @@ class TestARepairedPolicyCannotBeReapedFrom:
 
         async def fake_policies(session: Any) -> Any:
             return (
-                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default", repairs),
+                profiles.ActivePolicy(
+                    DEFAULT_MOVIE_POLICY,
+                    "default",
+                    repairs,
+                    lists_unreadable=lists_unreadable,
+                ),
                 profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
             )
 
@@ -1433,6 +1439,32 @@ class TestARepairedPolicyCannotBeReapedFrom:
                         snapshot_id=snapshot.id,
                         approved_by="test",
                     )
+        finally:
+            await engine.dispose()
+
+    async def test_a_policy_built_without_its_lists_degrades_and_says_which(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The registry was unreadable while the shipped default was assembled, so this scan
+        is judging with no keep rule naming the operator's own Plex lists.
+
+        It carries no ``PolicyRepair`` on purpose -- nothing was repaired and no save clears
+        it -- so the degradation loop keying on ``repairs`` alone let the scan through, and
+        the scan's own registry read is a separate query that can succeed on the same
+        transient error (rules 65/91).
+
+        Both halves are asserted: that it degrades, and that it does NOT send the operator to
+        press a Save that would fix nothing.
+        """
+        snapshot, _factory, engine = await self._run(
+            tmp_path, cache_engine, monkeypatch, repairs=(), lists_unreadable=True
+        )
+        try:
+            assert snapshot.degraded is True
+            reason = snapshot.degraded_reason or ""
+            assert "protection lists could not be read" in reason, reason
+            assert "movie" in reason, reason
+            assert "needs saving again" not in reason, reason
         finally:
             await engine.dispose()
 

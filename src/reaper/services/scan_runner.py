@@ -719,12 +719,22 @@ async def _run_scan_locked(
         # something. `api/routes.py`'s simulator sentence already maps its own lane this way
         # (rules 21, 144).
         for label, active in (("movie", active_movie), ("TV", active_tv)):
-            if not active.repaired:
-                continue
-            pre_scan_degradations.append(
-                f"your {label} policy needs saving again before anything can be removed: "
-                f"open the policy page, {_what_to_check(active.repairs)}, and save"
-            )
+            if active.repairs:
+                pre_scan_degradations.append(
+                    f"your {label} policy needs saving again before anything can be removed: "
+                    f"open the policy page, {_what_to_check(active.repairs)}, and save"
+                )
+            # A different fault under the same `repaired` flag, and it needs a different
+            # sentence: nothing was repaired and saving fixes nothing. The registry could not
+            # be read while the shipped default was assembled, so this scan is judging with no
+            # keep rule naming the operator's own Plex lists -- and the scan's own registry
+            # read can succeed on a transient error, which is what let it run clean (rule 65).
+            elif active.lists_unreadable:
+                pre_scan_degradations.append(
+                    f"your protection lists could not be read while the {label} policy was "
+                    "worked out, so this scan ran without them and nothing may be removed "
+                    "from it. Run another scan"
+                )
 
         # Same reasoning for the profile's caps and grace: when the stored settings blob was
         # unreadable, the run is holding the shipped defaults, which can be LOOSER than what

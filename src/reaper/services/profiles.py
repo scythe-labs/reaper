@@ -169,6 +169,18 @@ class ActivePolicy:
     repairs happened.
     """
 
+    lists_unreadable: bool = False
+    """The list registry could not be read while this body was built, so any keep rule the
+    operator's own Plex lists would have contributed is MISSING from it.
+
+    Deliberately not a ``PolicyRepair``: every member of that enum is answered by the
+    operator opening the policy page and saving, and saving fixes nothing here. It is
+    ``repaired`` all the same, because both things ``repaired`` gates are right for it --
+    the scan degrades (rules 65/91: a config read failure is not "nothing configured"), and
+    ``services.list_rules`` declines to write a policy row, since persisting this body would
+    make the missing rules permanent. Only ``scan_runner``'s sentence tells the two apart.
+    """
+
     @property
     def repaired(self) -> bool:
         """Any recovery: what is in hand is not what is stored.
@@ -179,7 +191,7 @@ class ActivePolicy:
         the name: an operator's own policy is frequently *called* "default", so the name
         cannot tell the recoveries apart (it silently did not, once).
         """
-        return bool(self.repairs)
+        return bool(self.repairs) or self.lists_unreadable
 
 
 async def active_policy(session: AsyncSession, media_type: str = "movie") -> ActivePolicy:
@@ -212,7 +224,8 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     default = DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY
 
     if row is None:
-        return ActivePolicy(await _default_with_own_lists(session, default), "default")
+        body, lists_unreadable = await _default_with_own_lists(session, default)
+        return ActivePolicy(body, "default", lists_unreadable=lists_unreadable)
 
     try:
         raw = json.loads(row.body_json)
@@ -310,8 +323,11 @@ async def _conversion_list_names(
     return tag, imdb, own
 
 
-async def _default_with_own_lists(session: AsyncSession, default: PolicyBody) -> PolicyBody:
-    """The shipped default, plus an outright keep rule for each Plex list the registry holds.
+async def _default_with_own_lists(
+    session: AsyncSession, default: PolicyBody
+) -> tuple[PolicyBody, bool]:
+    """The shipped default plus an outright keep rule for each Plex list the registry holds,
+    and whether the registry could be read at all.
 
     ``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
     Plex keep collection arrives by migration instead (``20260803_1900``), so on an install
@@ -323,12 +339,19 @@ async def _default_with_own_lists(session: AsyncSession, default: PolicyBody) ->
 
     Additive only. An unreadable registry, or one with nothing of its own, leaves the shipped
     conditions exactly as they are: this may add cover, never withdraw it.
+
+    **The two cases are not the same answer, which is why the flag is returned beside the
+    body.** A registry read that SUCCEEDS and finds nothing may fall back to the shipped
+    conditions silently; one that FAILS may not (rules 65/91), and it used to, on a bare log
+    line. The scan's own registry read is separate and can succeed on a transient error, so
+    nothing downstream could otherwise notice that this scan is running with no rule naming
+    the operator's keep collection.
     """
     try:
         _, _, own = await _conversion_list_names(session)
     except SQLAlchemyError:
         log.warning("policy.default_lists_unreadable")
-        return default
+        return default, True
     carried = {
         str(c.value).strip().casefold()
         for c in default.protect_conditions
@@ -341,8 +364,11 @@ async def _default_with_own_lists(session: AsyncSession, default: PolicyBody) ->
         if name.strip().casefold() not in carried
     )
     if not extra:
-        return default
-    return default.model_copy(update={"protect_conditions": default.protect_conditions + extra})
+        return default, False
+    return (
+        default.model_copy(update={"protect_conditions": default.protect_conditions + extra}),
+        False,
+    )
 
 
 async def active_policies(session: AsyncSession) -> tuple[ActivePolicy, ActivePolicy]:
