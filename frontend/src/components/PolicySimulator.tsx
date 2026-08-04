@@ -260,7 +260,7 @@ export function Outcome({
           <ul className="sim-examples">
             {simulation.examples_newly_condemned.map((e) => (
               <li key={`${e.title}-${e.year ?? ""}`}>
-                <span>
+                <span className="sim-example-title">
                   {e.title}
                   {e.year !== null && <span className="muted"> ({e.year})</span>}
                 </span>
