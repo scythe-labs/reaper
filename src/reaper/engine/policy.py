@@ -423,12 +423,18 @@ class PolicyBody(Frozen):
     points (5000 = 50%). Below it the item abstains rather than being judged on
     fragments. Guards against condemning an item we can barely see."""
 
-    keep_last_seasons: int = Field(default=2, ge=0)
+    keep_last_seasons: int = Field(default=2, ge=0, le=1_000)
     """Season pruning: the N most recent seasons of a show are protected outright,
     whatever they score. Movies ignore this. A hard floor, not a weight -- ``0`` means
     "keep no season on age alone" (the other guards and the score still apply); it does
     NOT mean "unlimited", which is the Janitorr footgun the whole policy module avoids.
-    See ``services.season_pruning``."""
+    See ``services.season_pruning``.
+
+    The ceiling is arithmetic hygiene rather than a policy opinion, and the same on all
+    three season numbers here: it sits far above any real setting, so it cannot invalidate
+    a stored body. ``api.schemas.PolicyIn`` declares it too, and
+    ``tests/test_policy.py::TestTheTwoPolicyDeclarationsAgree`` fails when the two drift
+    (rules 95 and 131)."""
 
     keep_first_season: bool = True
     """Season pruning: protect the first content-bearing season of every show, so a
@@ -440,17 +446,21 @@ class PolicyBody(Frozen):
     requested (``requested``). Fail-closed: under ``requested``, when we cannot tell whether a
     show was requested, the floor still applies -- Unknown counts as "might be requested"."""
 
-    season_lookahead: int = Field(default=0, ge=0)
+    season_lookahead: int = Field(default=0, ge=0, le=1_000)
     """How many seasons BEYOND a viewer's current position to also protect while they binge.
     ``0`` protects exactly the season they are mid-way through, or the next one if they have
-    finished the current. Replaces the old hardcoded look-ahead. Movies ignore it."""
+    finished the current. Replaces the old hardcoded look-ahead. Movies ignore it.
+
+    ``season_pruning.sequential_protections`` builds ``range(lookahead + 1)`` once per anchor
+    per viewer per show, so the ceiling is what keeps an unbounded draft from allocating
+    inside the event loop that serves ``/policy/simulate``."""
 
     keep_in_progress: bool = True
     """Season pruning: protect the season a viewer is partway through (and the next one,
     once they finish it) -- the sequential-progression guard in ``services.season_pruning``.
     On by default; turning it off removes that guard entirely. Movies ignore it."""
 
-    in_progress_hold_days: int = Field(default=180, ge=0)
+    in_progress_hold_days: int = Field(default=180, ge=0, le=36_500)
     """How long a viewer's place in a show is held after their last watch of that show.
     Past this many days without watching, the show counts as abandoned by that viewer and
     their half-finished season no longer protects anything. ``0`` holds forever. A viewer
@@ -461,7 +471,11 @@ class PolicyBody(Frozen):
     it past how far the mirror reaches (``0`` included, which no finite mirror can cover)
     makes the claim unsupportable: ``gates.progress_is_establishable``
     then holds every season on disk rather than letting an unseeable viewer read as an
-    absent one."""
+    absent one.
+
+    ``season_pruning.active_progress`` computes ``now - timedelta(days=hold_days)``, which
+    raises ``OverflowError`` before any of that once the value runs past what a ``datetime``
+    can hold. The ceiling is 100 years, which no mirror reaches and ``0`` already covers."""
 
     keep_specials: bool = True
     """Season pruning: never remove specials (Season 0). On by default. When off, specials

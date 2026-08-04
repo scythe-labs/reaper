@@ -17,9 +17,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from reaper.api.schemas import GateSettingIn
+from reaper.api.schemas import GateSettingIn, PolicyIn
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
@@ -3718,3 +3718,84 @@ class TestTheGradedKeepRemedyReadsAsASentence:
         assert self._said(self._keep("recent_watchers", 40, condemn_at=condemn_at)).endswith(
             f"Wait for it to build up, or {remedy}"
         )
+
+
+class TestTheTwoPolicyDeclarationsAgree:
+    """``api.schemas.PolicyIn`` and ``engine.policy.PolicyBody`` declare the same numbers
+    twice, and nothing compared them.
+
+    Rule 131: a bound the producer honors and the consumer enforces comes off one
+    declaration, or off two a test keeps in step. These two cannot merge -- ``PolicyIn`` is
+    the wire body and ``PolicyBody`` carries ``schema_version``/``scorer_version`` the browser
+    never sends -- so the test is the seam. ``test_api_type_mirror`` pairs them already and
+    compares field *names* against the browser's copy, which is why a bound present on one
+    side and absent on the other survived it: ``in_progress_hold_days`` and
+    ``season_lookahead`` were ``ge=0`` with no ceiling on both, and the value that reached
+    ``active_progress`` raised ``OverflowError`` out of a scan.
+    """
+
+    @staticmethod
+    def _bounds(model: type[BaseModel]) -> dict[str, list[str]]:
+        """Each shared field's constraint metadata, spelled for comparison.
+
+        ``repr`` rather than the objects themselves so a failure names the numbers. Sorted
+        because ``Field(ge=0, le=5)`` and ``Field(le=5, ge=0)`` are the same constraint.
+        """
+        return {
+            name: sorted(repr(m) for m in field.metadata)
+            for name, field in model.model_fields.items()
+        }
+
+    def test_every_shared_field_carries_the_same_bounds(self) -> None:
+        wire = self._bounds(PolicyIn)
+        engine = self._bounds(PolicyBody)
+        shared = sorted(set(wire) & set(engine))
+
+        # Rules 145 and 147: pin what the walk COLLECTS. A comparison over an empty
+        # intersection, or over a set that quietly stopped containing the numeric fields,
+        # passes while proving nothing -- and this test exists because the previous guard
+        # compared names only.
+        assert len(shared) >= 20, f"only {len(shared)} shared fields; the pairing broke"
+        constrained = {name for name in shared if wire[name]}
+        assert {
+            "condemn_at",
+            "coverage_floor_bp",
+            "keep_last_seasons",
+            "season_lookahead",
+            "in_progress_hold_days",
+        } <= constrained, f"a bounded field lost its bounds on the wire: {sorted(constrained)}"
+
+        disagree = [
+            f"{name}: PolicyIn {wire[name]} != PolicyBody {engine[name]}"
+            for name in shared
+            if wire[name] != engine[name]
+        ]
+        assert not disagree, (
+            "these fields are declared with different bounds in the two policy models\n"
+            "(src/reaper/api/schemas.py and src/reaper/engine/policy.py), so the wire\n"
+            "accepts a value the engine rejects or the reverse:\n  " + "\n  ".join(disagree)
+        )
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("in_progress_hold_days", 999_999),
+            ("season_lookahead", 10**9),
+        ],
+    )
+    def test_the_ceiling_refuses_a_value_that_breaks_the_planner(
+        self, field: str, value: int
+    ) -> None:
+        """The two that had no ceiling, at the values that demonstrated why they needed one.
+
+        ``in_progress_hold_days`` reached ``now - timedelta(days=...)`` and raised
+        ``OverflowError``; ``season_lookahead`` reached ``range(lookahead + 1)`` and allocated
+        it per anchor per viewer per show. Both arrive through ``PolicyIn``, so refusing at
+        that boundary is what keeps them out of the scan and out of ``/policy/simulate``.
+        """
+        wire = DEFAULT_TV_POLICY.model_dump(mode="json")
+        # The premise: the payload is accepted before the one field is pushed past its
+        # ceiling, so the raise below is that field's and not a malformed body's.
+        PolicyIn.model_validate(wire)
+        with pytest.raises(ValidationError):
+            PolicyIn.model_validate({**wire, field: value})

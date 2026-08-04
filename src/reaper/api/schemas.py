@@ -642,12 +642,19 @@ class PolicyIn(BaseModel):
     media_type: str = "movie"
     condemn_at: int = Field(ge=1, le=100)
     coverage_floor_bp: int = Field(default=5000, ge=0, le=10_000)
-    keep_last_seasons: int = Field(default=2, ge=0)
+    # Ceilings, not policy opinions (rule 95). `active_progress` computes
+    # `now - timedelta(days=hold_days)` and `sequential_protections` builds
+    # `range(lookahead + 1)` per anchor per viewer per show, so an unbounded value raises
+    # OverflowError out of a scan and out of `/policy/simulate`, or allocates inside the
+    # event loop. Each ceiling sits far above any real setting, so adding them cannot
+    # invalidate a body an operator already saved. `engine.policy.PolicyBody` declares the
+    # same three, and `test_policy.py` fails when the two stop agreeing (rule 131).
+    keep_last_seasons: int = Field(default=2, ge=0, le=1_000)
     keep_first_season: bool = True
     keep_last_scope: Literal["all", "requested"] = "all"
-    season_lookahead: int = Field(default=0, ge=0)
+    season_lookahead: int = Field(default=0, ge=0, le=1_000)
     keep_in_progress: bool = True
-    in_progress_hold_days: int = Field(default=180, ge=0)
+    in_progress_hold_days: int = Field(default=180, ge=0, le=36_500)
     keep_specials: bool = True
     protect_incomplete_seasons: bool = True
     flag_keep_conflicts: bool = True
@@ -852,16 +859,22 @@ class SimulationOut(BaseModel):
     no_longer_condemned: int
 
     condemned_before: int = 0
-    """How many titles the SAVED policy flags, so the panel can compare against it directly.
+    """How many titles the LAST SCAN flags, so the panel can compare against it directly.
+
+    The scan, not the saved policy: both tiers count it as
+    ``effective_verdict(row, decisions) == "condemn"`` -- the stored verdicts, with live
+    overrides applied. Saving a policy starts a scan rather than being one, so between the
+    save and that scan finishing, or after it fails, the saved policy is not the policy these
+    rows were judged under. ``changed_titles`` below names the same set the same way ("the
+    lane they are in now"), and the panel's sentence follows both.
 
     Equal to ``condemned - newly_condemned + no_longer_condemned``, which is how the panel
     used to reconstruct it. That derivation is only sound while both deltas count every way
     into and out of the removal list, and it printed a confident wrong number the moment one
     of them did not: ``no_longer_condemned`` missed condemn -> protect, so an outright keep
-    rule rendered as "your saved policy flags N. This draft flags N." -- the draft's own
-    count on both sides of a sentence built to contrast them. The server counts the pre-edit
-    lane per row either way, so sending it costs one line per tier and leaves the browser
-    with no server fact to re-derive (rule 144).
+    rule put the draft's own count on both sides of a sentence built to contrast them. The
+    server counts the pre-edit lane per row either way, so sending it costs one line per tier
+    and leaves the browser with no server fact to re-derive (rule 144).
     """
 
     changed_titles: int = 0
