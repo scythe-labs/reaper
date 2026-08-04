@@ -70,6 +70,10 @@ async def get_lists(request: Request) -> list[ProtectionListOut]:
     async with request.app.state.session_factory() as session:
         definitions = await list_config.definitions(session)
     await lists.adopt_legacy(request.app.state.cache_engine, definitions)
+    # And an adopted row learns the name its keep rule matches, which the legacy row it was
+    # built from never carried. Cheap, and it means the roll-up and the protection arrive
+    # together rather than the screen showing a healthy list that keeps nothing (#507).
+    await lists.sync_rule_names(request.app.state.cache_engine, definitions)
     out: list[ProtectionListOut] = []
     for row in await lists.configured(request.app.state.cache_engine):
         if not row.enabled:
@@ -169,6 +173,12 @@ async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> Li
         # A renamed list's rules follow it, or every one of them would go on naming a list
         # that no longer exists while rendering as a live protection.
         await list_rules.rename_list(session, before, row.name)
+        # And so does its stored membership, which is the other half of the same rename:
+        # the rules now spell the new name and the rows still carried the old one, so the
+        # protection would be off until the next successful check (#507).
+        await lists.sync_rule_names(
+            request.app.state.cache_engine, await list_config.definitions(session)
+        )
         uses = await list_rules.usage(session)
         return _out(row, [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])])
 

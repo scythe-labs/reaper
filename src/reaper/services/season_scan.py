@@ -736,13 +736,10 @@ def build_season_facts(
     in_curated: Observation[str] = (
         Known(value=curated_names, source="lists") if curated else Absent(source="lists")
     )
-    # Every list holding the SHOW, by the operator's name for it -- the `on_list` field's
-    # input, deduplicated the way the movie builder does (rule 35: same fact, same shape,
-    # every builder). A season inherits the show's memberships: a list holds shows.
-    list_names = list(dict.fromkeys(m.display_name for m in memberships))
-    on_lists: Observation[str] = (
-        Known(value=", ".join(list_names), source="lists") if list_names else Absent(source="lists")
-    )
+    # Every list holding the SHOW, by the name its keep rule spells -- the `on_list` field's
+    # input, through the same derivation the movie builder uses (rule 35: same fact, same
+    # shape, every builder). A season inherits the show's memberships: a list holds shows.
+    on_lists = lists.on_list_fact(memberships)
 
     # The multi-source keep gate reads this. TV has no Radarr-style ratings object, so it
     # is the show's IMDb dataset value (applied to each season, like the single-source

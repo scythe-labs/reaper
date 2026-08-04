@@ -429,13 +429,9 @@ def build_facts(
         value=bool(whitelists) or item.media_key in whitelisted,
         source=whitelists[0].display_name if whitelists else "lists",
     )
-    # Every list, by the operator's name for it -- the `on_list` field's input, and the one
-    # the keep rules match. Deduplicated keeping order: two stored rows of one tag list
-    # (one per *arr instance) are one name to the operator.
-    list_names = list(dict.fromkeys(m.display_name for m in memberships))
-    on_lists: Observation[str] = (
-        Known(value=", ".join(list_names), source="lists") if list_names else Absent(source="lists")
-    )
+    # Every list, by the name its keep rule spells -- the `on_list` field's input, derived
+    # in `lists.on_list_fact` for both fact builders at once.
+    on_lists = lists.on_list_fact(memberships)
 
     # --- streaming right now ------------------------------------------------
     streaming: Observation[bool]

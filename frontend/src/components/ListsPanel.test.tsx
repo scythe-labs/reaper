@@ -318,6 +318,29 @@ describe("the policy-use line", () => {
     ).toBeInTheDocument();
   });
 
+  it("names only the outright rule when a stored body carries both strengths", async () => {
+    // An outright rule decides the item on its own, so a lean beside it can never change an
+    // outcome. Saying both described one list as doing two things, and sent the operator to
+    // tune points that could not matter (#510). Policy will not compose the pair any more;
+    // a body stored before that could, and this is what it reads as.
+    seed(
+      [
+        {
+          ...IMDB_DEF,
+          policy_use: [
+            { media_type: "movie", strength: "hard", points: null },
+            { media_type: "movie", strength: "lean", points: 15 },
+          ],
+        },
+      ],
+      [WORKING],
+    );
+    renderPanel();
+
+    expect(await screen.findByText(/Keeps every title on it\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Leans toward keeping/)).not.toBeInTheDocument();
+  });
+
   it("warns when no rule names the list, because it then protects nothing", async () => {
     const user = userEvent.setup();
     seed([{ ...IMDB_DEF, policy_use: [] }], [WORKING]);

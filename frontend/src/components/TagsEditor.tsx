@@ -26,7 +26,11 @@ export function TagsEditor({
   const [input, setInput] = useState("");
   const add = () => {
     const t = input.trim();
-    if (t && !tags.includes(t)) onTags([...tags, t]);
+    // Case-folded, because Sonarr and Radarr lower-case every label: "Keep" and "keep" are
+    // one tag there, and adding both here left the list reporting a count of zero against
+    // whichever spelling lost (#509). The server folds the same way on save.
+    const already = tags.some((x) => x.toLowerCase() === t.toLowerCase());
+    if (t && !already) onTags([...tags, t]);
     setInput("");
   };
   // Removing a chip destroys the button holding focus, so without this the operator lands on

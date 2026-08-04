@@ -279,13 +279,20 @@ function PolicyUse({
   definition: ListConfig;
   onGoToPolicy?: (() => void) | undefined;
 }) {
+  // An outright rule decides the item on its own, so a lean beside it never changes an
+  // outcome and saying both described one list as doing two things (#510). Policy will not
+  // compose the pair any more; a body stored before it could still carry one, and this is
+  // what the operator is told about it: the strength that actually acts.
+  const outright = definition.policy_use.some((use) => use.strength === "hard");
   const sentences = [
     ...new Set(
-      definition.policy_use.map((use) =>
-        use.strength === "hard"
-          ? "Keeps every title on it"
-          : `Leans toward keeping, up to ${use.points ?? 0} points off`,
-      ),
+      definition.policy_use
+        .filter((use) => !outright || use.strength === "hard")
+        .map((use) =>
+          use.strength === "hard"
+            ? "Keeps every title on it"
+            : `Leans toward keeping, up to ${use.points ?? 0} points off`,
+        ),
     ),
   ];
   if (sentences.length === 0) {

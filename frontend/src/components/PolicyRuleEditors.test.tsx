@@ -15,7 +15,7 @@
 // emits, because the server validates it (`GradedKeepSpec._valid_keep`) and a wrong shape is
 // a keep rule that refuses to save.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
@@ -301,5 +301,114 @@ describe("a lean keep rule on a list", () => {
 
     expect(await screen.findByText(/On your list Old list/)).toBeInTheDocument();
     expect(screen.getByText(/lowers the score, up to −20 points/)).toBeInTheDocument();
+  });
+});
+
+/** Choose the membership field, once the vocabulary that offers it has landed. user-event
+ *  reports a select with no matching option as a no-op, so acting a turn early does nothing
+ *  and fails later on a state the no-op never produced (rule 137). */
+async function pickTheListField(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "On one of your lists" })).toBeInTheDocument(),
+  );
+  await user.selectOptions(screen.getByRole("combobox", { name: "Field" }), "on_list");
+}
+
+describe("one list, one keep rule", () => {
+  // Both strengths were offered whatever rules already existed, so a list could be kept
+  // outright AND leaned on. The outright rule decides the item alone, so the lean could never
+  // change an outcome, and the operator was tuning points that could not matter (#510).
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
+    apiMock.listConfigs.mockResolvedValue([
+      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
+      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+    ]);
+  });
+
+  it("does not offer a list an outright rule already names, at either strength", async () => {
+    const { user } = renderKeepEditor({
+      conditions: [{ field: "on_list", op: "eq", value: "Never Reap" }],
+    });
+
+    await pickTheListField(user);
+    const hard = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "IMDb Top 250" })).toBeInTheDocument(),
+    );
+    expect(within(hard).queryByRole("option", { name: "Never Reap" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Leans toward keeping" }));
+    await pickTheListField(user);
+    const lean = await screen.findByRole("combobox", { name: "Which list" });
+
+    expect(within(lean).queryByRole("option", { name: "Never Reap" })).not.toBeInTheDocument();
+    expect(within(lean).getByRole("option", { name: "IMDb Top 250" })).toBeInTheDocument();
+  });
+
+  it("does not offer a list a lean already names either, so the lean cannot double", async () => {
+    // Two leans on one list both evaluate and `score()` subtracts the sum, so 15 points twice
+    // is 30 off -- and `uniqueName` suffixed the second so the body validated.
+    const { user } = renderKeepEditor({
+      keeps: [
+        {
+          name: "Never Reap",
+          field: "on_list",
+          value: "Never Reap",
+          max_discount: 15,
+          floor: 0,
+          saturate_at: 1,
+          direction: "high_keeps",
+        },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Leans toward keeping" }));
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+
+    expect(within(lists).queryByRole("option", { name: "Never Reap" })).not.toBeInTheDocument();
+  });
+
+  it("matches the stored rule against the list name the way the scan does", async () => {
+    // Case-folded on both sides (rule 88): a rule stored as the operator typed it then still
+    // names the list the scan will match, so offering it again would compose the pair.
+    const { user } = renderKeepEditor({
+      conditions: [{ field: "on_list", op: "eq", value: "never reap" }],
+    });
+
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+
+    expect(within(lists).queryByRole("option", { name: "Never Reap" })).not.toBeInTheDocument();
+  });
+
+  it("says why the picker is empty when every list already has a rule", async () => {
+    // Distinct from "you have no lists yet", which sends the operator to add one they do not
+    // need, and from a failed read, which is not their doing at all (rules 17/36).
+    const { user } = renderKeepEditor({
+      conditions: [
+        { field: "on_list", op: "eq", value: "Never Reap" },
+        { field: "on_list", op: "eq", value: "IMDb Top 250" },
+      ],
+    });
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "Every list already has a keep rule. Remove one above to give it a different strength.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
+  });
+
+  it("still says you have no lists when there are none", async () => {
+    apiMock.listConfigs.mockResolvedValue([]);
+    const { user } = renderKeepEditor();
+
+    await pickTheListField(user);
+
+    expect(await screen.findByText(/You have no lists yet/)).toBeInTheDocument();
   });
 });

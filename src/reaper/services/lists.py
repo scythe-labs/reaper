@@ -54,6 +54,7 @@ from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
 from reaper.clock import from_epoch, utcnow
 from reaper.engine import identity
+from reaper.engine.observation import Absent, Known, Observation
 
 if TYPE_CHECKING:
     # Annotation only. ``list_config`` imports this module at runtime, so the runtime
@@ -197,7 +198,31 @@ class ListProvider(Protocol):
     @property
     def display_name(self) -> str: ...
 
+    @property
+    def list_name(self) -> str | None: ...
+
+    """The operator's own name for this list, from its definition on Settings -> Lists.
+    ``None`` for a row derived from configuration that predates the registry. Declared
+    here because :func:`rule_name` is derived from it for every source at once."""
+
     async def fetch(self) -> list[ListItem]: ...
+
+
+def rule_name(provider: ListProvider) -> str:
+    """The name a policy keep rule matches this list by, which is not its display name.
+
+    ``ArrTagRule.display_name`` puts the server after the operator's name ("Keepers (4k)"),
+    because one list is one stored row per *arr and the row has to say which. A keep rule
+    stores the name the operator typed, once, and ``on_list`` matches per element and
+    exactly -- so a fact built from display names matched nothing, and every tag list
+    protected nothing while the Lists screen reported it healthy (#507).
+
+    So the matched name is STORED (``protection_list.rule_name``) rather than derived from
+    a display string, and derived here for both writers at once: :func:`sync` on success and
+    :func:`_record_sync_error` on a first failure, which must agree or a list's protection
+    would depend on whether its first check landed.
+    """
+    return provider.list_name or provider.display_name
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +680,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS protection_list (
     slug          TEXT PRIMARY KEY,
     display_name  TEXT    NOT NULL,
+    rule_name     TEXT,
     mode          TEXT    NOT NULL DEFAULT 'hard',
     kind          TEXT    NOT NULL DEFAULT 'curated',
     weight        INTEGER NOT NULL DEFAULT 0,
@@ -695,7 +721,9 @@ _ADDED_COLUMNS = {"plex_rating_key": "INTEGER"}
 #: The same widening for ``protection_list``. ``stats_json`` holds what a provider knows
 #: about its own sync beyond the count -- per-tag totals and the server they came from --
 #: written on success only, so like the membership it is always from the last good check.
-_ADDED_LIST_COLUMNS = {"stats_json": "TEXT"}
+#: ``rule_name`` is what a keep rule matches (:func:`rule_name`); a stored row that predates
+#: it reads as its display name, which is what it was matched by before the column existed.
+_ADDED_LIST_COLUMNS = {"stats_json": "TEXT", "rule_name": "TEXT"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -707,6 +735,17 @@ class Membership:
     mode: ListMode
     kind: ListKind
     rank: int | None
+    rule_name: str = ""
+    """What a keep rule naming this list spells (:func:`rule_name`), which is not always
+    what the operator is shown: a tag list's display name carries the server. Defaulted so
+    the fact builders' own fixtures need not restate it; every production read comes from
+    the stored column, and a row written before it falls back to the display name."""
+
+    def matched_by(self) -> str:
+        """The name the ``on_list`` field compares against. Falls back to the display name
+        for a row stored before ``rule_name`` existed, which is the spelling it was matched
+        by then, so a widened database keeps whatever it was already protecting."""
+        return self.rule_name or self.display_name
 
     @property
     def is_whitelist(self) -> bool:
@@ -715,6 +754,24 @@ class Membership:
     def describe(self) -> str:
         position = f" (#{self.rank})" if self.rank else ""
         return f"{self.display_name}{position}"
+
+
+def on_list_fact(memberships: Sequence[Membership]) -> Observation[str]:
+    """The ``on_list`` field's input: every list holding an item, by the name its keep rule
+    spells, deduplicated keeping order and comma-joined the way a multi-valued fact is read.
+
+    One derivation for both fact builders (rule 35: same fact, same shape, every builder).
+    They each carried their own copy, so the movie path and the season path could disagree
+    about what a keep rule sees -- and did, because each joined DISPLAY names, which for a
+    tag list carry the server and so matched no rule at all (#507).
+
+    ``Absent``, never ``Unknown``: an item on no list is one we looked up and found on
+    nothing, which is a checked miss. A membership we could not READ never reaches here --
+    a failed list sync degrades the snapshot instead (rule 2), and the stored copy from the
+    last good check is what these rows are.
+    """
+    names = tuple(dict.fromkeys(m.matched_by() for m in memberships))
+    return Known(value=", ".join(names), source="lists") if names else Absent(source="lists")
 
 
 async def ensure_schema(engine: AsyncEngine) -> None:
@@ -765,13 +822,17 @@ async def _record_sync_error(
         await conn.execute(
             text(
                 "INSERT INTO protection_list "
-                "(slug, display_name, mode, kind, weight, last_error) "
-                "VALUES (:slug, :name, :mode, :kind, :weight, :err) "
+                "(slug, display_name, rule_name, mode, kind, weight, last_error) "
+                "VALUES (:slug, :name, :rule, :mode, :kind, :weight, :err) "
                 "ON CONFLICT(slug) DO UPDATE SET last_error = :err"
             ),
             {
                 "slug": provider.slug,
                 "name": provider.display_name,
+                # Written on the INSERT, so a list whose very first check failed still
+                # carries the name its keep rule matches. The conflict arm leaves it as a
+                # successful sync wrote it, like ``display_name`` beside it.
+                "rule": rule_name(provider),
                 "mode": mode.value,
                 "kind": kind.value,
                 "weight": weight,
@@ -1014,20 +1075,23 @@ async def sync(
         await conn.execute(
             text(
                 "INSERT INTO protection_list "
-                "(slug, display_name, mode, kind, weight, enabled, item_count, "
+                "(slug, display_name, rule_name, mode, kind, weight, enabled, item_count, "
                 " last_synced_at, last_error, stats_json) "
-                "VALUES (:slug, :name, :mode, :kind, :weight, 1, :count, :now, NULL, :stats) "
+                "VALUES (:slug, :name, :rule, :mode, :kind, :weight, 1, :count, :now, NULL, "
+                "        :stats) "
                 # ``enabled = 1`` on the conflict too, not just on the insert: a slug
                 # ``retire_absent`` switched off is a live list again the moment this
                 # configuration produces it, and a keep-list that syncs while disabled
                 # protects nothing (``load_membership_index`` joins ``WHERE enabled = 1``).
                 "ON CONFLICT(slug) DO UPDATE SET "
-                "  display_name = :name, mode = :mode, kind = :kind, item_count = :count, "
-                "  enabled = 1, last_synced_at = :now, last_error = NULL, stats_json = :stats"
+                "  display_name = :name, rule_name = :rule, mode = :mode, kind = :kind, "
+                "  item_count = :count, enabled = 1, last_synced_at = :now, "
+                "  last_error = NULL, stats_json = :stats"
             ),
             {
                 "slug": provider.slug,
                 "name": provider.display_name,
+                "rule": rule_name(provider),
                 "mode": mode.value,
                 "kind": kind.value,
                 "weight": weight,
@@ -1169,6 +1233,41 @@ async def retire_absent(engine: AsyncEngine, *, family: str, current: Collection
     for slug in stale:
         log.info("lists.retired", slug=slug, family=family)
     return stale
+
+
+async def sync_rule_names(engine: AsyncEngine, definitions: Sequence[ListDefinition]) -> int:
+    """Write each definition's current name onto every row synced for it. Returns how many
+    rows moved.
+
+    A stored row learns the name its keep rule matches from the sync that wrote it
+    (:func:`rule_name`), so between a rename and the next successful check the row still
+    carries the old spelling while ``list_rules.rename_list`` has already re-spelled the
+    rules. That gap is a live protection switched off, silently, by an edit that reads as
+    cosmetic -- so the two surfaces are brought back into step the moment the rename lands,
+    and again whenever the Lists screen is read, which is also what gives an adopted legacy
+    row its name before anything has been checked.
+
+    Rows are found by the definition id in their slug, never by the old name, so a row is
+    re-homed however many renames it slept through.
+    """
+    await ensure_schema(engine)
+    by_id = {d.id: d.name for d in definitions}
+    moved = 0
+    async with engine.begin() as conn:
+        # Read inside the write transaction (rule 58).
+        rows = (await conn.execute(text("SELECT slug, rule_name FROM protection_list"))).all()
+        for row in rows:
+            wanted = by_id.get(list_id_of(str(row.slug)) or -1)
+            if wanted is None or str(row.rule_name or "") == wanted:
+                continue
+            await conn.execute(
+                text("UPDATE protection_list SET rule_name = :name WHERE slug = :slug"),
+                {"name": wanted, "slug": str(row.slug)},
+            )
+            moved += 1
+    if moved:
+        log.info("lists.rule_names_synced", rows=moved)
+    return moved
 
 
 #: A keep-tag row as the policy era spelled it: service, optional instance id, match mode --
@@ -1357,7 +1456,7 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
             await conn.execute(
                 text(
                     "SELECT i.imdb_id, i.tmdb_id, i.tvdb_id, i.plex_rating_key, i.media_type, "
-                    "       l.slug, l.display_name, l.mode, l.kind, i.rank "
+                    "       l.slug, l.display_name, l.rule_name, l.mode, l.kind, i.rank "
                     "FROM protection_list_item i "
                     "JOIN protection_list l ON l.slug = i.slug "
                     "WHERE l.enabled = 1"
@@ -1376,6 +1475,7 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
             mode=ListMode(row.mode),
             kind=ListKind(row.kind),
             rank=int(row.rank) if row.rank is not None else None,
+            rule_name=str(row.rule_name) if row.rule_name else "",
         )
         media_type = str(row.media_type)
         if row.imdb_id:

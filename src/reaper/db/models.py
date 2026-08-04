@@ -810,12 +810,20 @@ class ListConfig(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(100, collation="NOCASE"), unique=True)
     """The operator's own name, and what a policy rule names to use this list.
 
     Unique, because a rule naming a list has to mean exactly one list. Two rows answering to
     one name would make a protection point at whichever was written last, which is a
     protection that silently changes what it covers.
+
+    **Unique WITHOUT REGARD TO CASE**, because that is how every reader compares it: rule 88
+    case-folds both sides of a name match, so "Never Reap" and "never reap" are two rows here
+    and one list to `services.list_rules` and to the ``on_list`` field. They shared a single
+    keep rule, and deleting either one stripped the rule from the policy and stopped the
+    other protecting, untouched and unannounced (#508). The collation is what makes the
+    stored constraint agree with the comparison; `list_config._clean_name` refuses the
+    collision first, so the operator reads a sentence rather than a failed write.
     """
 
     source: Mapped[str] = mapped_column(String(32))

@@ -281,6 +281,28 @@ describe("adding a tag list", () => {
       }),
     );
   });
+
+  it("takes one tag once however it is capitalized", async () => {
+    // Sonarr and Radarr lower-case every label, so "Keep" and "keep" are one tag there. Both
+    // chips saved left the list reporting a count of zero against the spelling that lost, on
+    // the screen whose subject is whether a list is protecting anything (#509).
+    const user = userEvent.setup();
+    await openForm(user, "Add a tag list");
+    await user.type(await screen.findByLabelText("Name"), "Keep");
+    await user.type(screen.getByLabelText("Add a tag"), "Keep,keep,KEEP,gold,");
+
+    expect(screen.queryByText("keep")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Remove Keep")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add list" }));
+
+    await waitFor(() =>
+      expect(apiMock.addList).toHaveBeenCalledWith("Keep", "arr_tag", {
+        tags: ["Keep", "gold"],
+        match: "any",
+      }),
+    );
+  });
 });
 
 describe("adding an IMDb list", () => {

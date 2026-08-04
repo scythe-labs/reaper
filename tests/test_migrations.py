@@ -38,6 +38,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from reaper.config import Settings
@@ -823,4 +824,112 @@ class TestTheListConfigShapeHeal:
         assert isinstance(columns["created_at"]["type"], Integer)
         for name in ("config_json", "enabled", "built_in"):
             assert columns[name]["default"] is None, name
+        engine.dispose()
+
+
+# The case-insensitive name constraint and the revision just before it.
+_NAME_NOCASE = "e5f6a7b8c9d0"
+
+
+class TestAListNameIsUniqueWithoutRegardToCase:
+    """``list_config.name`` was unique byte for byte while every reader case-folds it, so two
+    rows differing only in case answered to one keep rule: the second never got a rule of its
+    own, and deleting either one took that rule away and stopped the other protecting (#508).
+
+    The collation is what makes the stored constraint compare the way the code does. A
+    database that already holds a collision has to upgrade rather than refuse to boot, which
+    is the whole reason the disambiguation runs before the rebuild.
+
+    Every name here is one the migrations do not seed, so what these assert on is what the
+    test put there.
+    """
+
+    @staticmethod
+    def _added(engine: Engine) -> list[str]:
+        """The names this test added, in insert order. The seeded definitions are skipped by
+        their id: every row here is inserted with the fixed stamp below."""
+        with engine.begin() as conn:
+            return [
+                str(r.name)
+                for r in conn.execute(
+                    text("SELECT name FROM list_config WHERE created_at = 1750000000 ORDER BY id")
+                )
+            ]
+
+    @staticmethod
+    def _add(engine: Engine, *names: str) -> None:
+        with engine.begin() as conn:
+            for name in names:
+                conn.execute(
+                    text(
+                        "INSERT INTO list_config "
+                        "(name, source, config_json, enabled, built_in, created_at) "
+                        "VALUES (:name, 'arr_tag', :config, 1, 0, 1750000000)"
+                    ),
+                    {"name": name, "config": json.dumps({"tags": ["keep"], "match": "any"})},
+                )
+
+    def test_the_constraint_refuses_a_name_differing_only_in_case(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+        self._add(engine, "Keepers")
+        with pytest.raises(IntegrityError):
+            self._add(engine, "keepers")
+
+        engine.dispose()
+
+    def test_a_database_already_holding_a_collision_upgrades(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both rows survive, the older keeps its spelling, and the constraint lands. Refusing
+        the upgrade instead would leave the operator unable to boot at all, which is a worse
+        answer than a list that has to be renamed."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers", "keepers", "KEEPERS")
+
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert self._added(engine) == ["Keepers", "keepers (2)", "KEEPERS (3)"]
+        with pytest.raises(IntegrityError):
+            self._add(engine, "KEEPers")
+        engine.dispose()
+
+    def test_a_database_with_no_collision_keeps_every_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ordinary upgrade renames nothing. A migration that suffixed a name it did not
+        have to would withdraw the keep rule naming it."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers", "Kids", "Awards")
+
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert self._added(engine) == ["Keepers", "Kids", "Awards"]
+        engine.dispose()
+
+    def test_running_it_again_on_a_converted_database_changes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The guard reads the stored DDL, because SQLite reflection does not report a
+        collation: ``get_columns`` gives the type and nothing about how it compares. Replayed
+        by stamping back and upgrading again, the shape a re-run actually takes."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers")
+
+        command.stamp(config, _LIST_CONFIG_HEAL)
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert self._added(engine) == ["Keepers"]
+        with pytest.raises(IntegrityError):
+            self._add(engine, "keepers")
         engine.dispose()

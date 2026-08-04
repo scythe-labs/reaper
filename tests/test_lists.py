@@ -1327,6 +1327,9 @@ class TestMembershipIndexParity:
 class _StaticProvider:
     slug = "static-keep"
     display_name = "Static keep"
+    # A row the operator never named, so its keep rule matches the display name. The
+    # registry-defined providers carry a name here and are covered in TestTheNameAKeepRuleMatches.
+    list_name = None
 
     def __init__(self, items: list[ListItem]) -> None:
         self._items = items

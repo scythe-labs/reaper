@@ -167,10 +167,15 @@ class _StaticList:
 
     Named as the seeded default tag list, because that is the name the shipped policies'
     ``on_list`` keep rules match: membership protects through the rule naming the list
-    now, not through a gate that read a boolean."""
+    now, not through a gate that read a boolean.
+
+    **The two names differ, as a tag list's really do.** This double used to spell them
+    alike, so the scan it drives could not tell the matched name from the displayed one and
+    stayed green while every real tag list protected nothing (#507, rule 141)."""
 
     slug = "keep-list"
-    display_name = "Titles you've tagged"
+    display_name = "Titles you've tagged (4k)"
+    list_name = "Titles you've tagged"
 
     def __init__(self, items: list[lists.ListItem]) -> None:
         self._items = items

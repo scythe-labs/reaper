@@ -129,24 +129,90 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
                 session, name="Keep", source="arr_tag", config={"tags": ["  ", ""]}
             )
 
+    @pytest.mark.parametrize(
+        ("saved", "stored"),
+        [
+            (["keep", "keep"], ["keep"]),
+            (["Keep", "keep"], ["Keep"]),
+            (["keep", "KEEP", "gold"], ["keep", "gold"]),
+            (["Keep", " keep "], ["Keep"]),
+        ],
+    )
+    async def test_one_tag_is_stored_once_however_it_is_capitalized(
+        self, session: AsyncSession, saved: list[str], stored: list[str]
+    ) -> None:
+        """Sonarr and Radarr lower-case every label, so two spellings are one tag upstream.
+        Stored twice they collapsed to one tag id at fetch time and only the later spelling
+        was counted, so the Lists screen showed a chip reading zero for a tag protecting
+        everything it names (#509). The first spelling is the one kept: it is what the
+        operator typed before the duplicate."""
+        row = await list_config.create(
+            session, name=f"Keep {'-'.join(saved)}", source="arr_tag", config={"tags": saved}
+        )
+
+        assert json.loads(row.config_json)["tags"] == stored
+
+    async def test_a_stored_duplicate_reads_as_one_tag(self, session: AsyncSession) -> None:
+        """The read side too, so a body saved before the check above existed corrects itself
+        rather than waiting for the operator to re-save a list to fix a number."""
+        row = await list_config.create(
+            session, name="Keep", source="arr_tag", config={"tags": ["Keep"]}
+        )
+        row.config_json = json.dumps({"tags": ["Keep", "keep", "KEEP"], "match": "all"})
+        await session.commit()
+
+        [definition] = [d for d in await list_config.definitions(session) if d.id == row.id]
+
+        assert definition.tags == ("Keep",)
+
     async def test_a_list_needs_a_name(self, session: AsyncSession) -> None:
         with pytest.raises(list_config.ListConfigError, match="Give the list a name"):
             await list_config.create(
                 session, name="   ", source="arr_tag", config={"tags": ["keep"]}
             )
 
-    async def test_two_lists_cannot_share_a_name(self, session: AsyncSession) -> None:
+    @pytest.mark.parametrize("second", ["Keep", "keep", "KEEP", "  keep  "])
+    async def test_two_lists_cannot_share_a_name(self, session: AsyncSession, second: str) -> None:
         """A rule naming a list has to mean exactly one list, or the protection points at
-        whichever row was written last."""
+        whichever row was written last.
+
+        Swept over capitalization because every reader case-folds the name (rule 88), so a
+        second row differing only in case is a second row answering to one keep rule: it
+        never got a rule of its own, and deleting either one stripped that rule and stopped
+        the other protecting, untouched and unannounced (#508)."""
         await list_config.create(session, name="Keep", source="arr_tag", config={"tags": ["a"]})
 
         with pytest.raises(list_config.ListConfigError, match="already have a list"):
             await list_config.create(
                 session,
-                name="Keep",
+                name=second,
                 source="plex_collection",
                 config={"library": "F", "collection": "C"},
             )
+
+    async def test_a_rename_cannot_take_another_list_s_name(self, session: AsyncSession) -> None:
+        """The same refusal on the edit path, which is the one an operator reaches by
+        renaming rather than by adding (rule 72's sibling of the check above)."""
+        await list_config.create(session, name="Keep", source="arr_tag", config={"tags": ["a"]})
+        other = await list_config.create(
+            session, name="Hold", source="arr_tag", config={"tags": ["b"]}
+        )
+
+        with pytest.raises(list_config.ListConfigError, match="already have a list"):
+            await list_config.update(session, other.id, name="KEEP")
+
+    async def test_a_list_can_be_renamed_to_its_own_name_in_another_case(
+        self, session: AsyncSession
+    ) -> None:
+        """Fixing your own list's capitalization is not a collision with itself. Without the
+        self-exclusion the operator could never restyle a name they already own."""
+        row = await list_config.create(
+            session, name="keep", source="arr_tag", config={"tags": ["a"]}
+        )
+
+        renamed = await list_config.update(session, row.id, name="Keep")
+
+        assert renamed.name == "Keep"
 
     async def test_the_retired_curated_source_is_refused(self, session: AsyncSession) -> None:
         """``curated`` left the source vocabulary when the IMDb provider generalized; a

@@ -717,14 +717,30 @@ export function KeepRulesEditor({
     queryFn: api.listConfigs,
     enabled: onListField !== undefined,
   });
-  const listNames = (lists.data ?? []).map((l) => l.name);
+  const allListNames = (lists.data ?? []).map((l) => l.name);
+  // One list, one rule. A list already named by a rule is not offered again at EITHER
+  // strength: the two rules do not combine, the outright one wins and the lean beside it can
+  // never change an outcome, so the operator was tuning points that could not matter (#510).
+  // Softening a rule is Remove, then add it at the other strength. Case-folded, because that
+  // is how the scan matches a rule's value against a list name (rule 88).
+  const named = new Set(
+    [
+      ...conditions.filter((c) => c.field === "on_list").map((c) => String(c.value)),
+      ...keeps.filter((k) => k.field === "on_list" && k.value != null).map((k) => String(k.value)),
+    ].map((v) => v.trim().toLowerCase()),
+  );
+  const listNames = allListNames.filter((n) => !named.has(n.trim().toLowerCase()));
   // Why the list select is empty, said once for both composers (rule 72). A failed read is
-  // named as one, never shown as "you have no lists" (rules 17/36).
+  // named as one, never shown as "you have no lists" (rules 17/36), and a set of lists that
+  // all already have a rule is a fourth thing again: nothing is wrong, and adding another
+  // list is not the move.
   const noListsMessage =
     !lists.isPending && listNames.length === 0
       ? lists.isError
         ? "Reaper couldn't load your lists, so there's nothing to pick from right now."
-        : "You have no lists yet. Add one on Settings → Lists first."
+        : allListNames.length > 0
+          ? "Every list already has a keep rule. Remove one above to give it a different strength."
+          : "You have no lists yet. Add one on Settings → Lists first."
       : null;
 
   const [strength, setStrength] = useState<"hard" | "lean">("hard");
@@ -1089,10 +1105,14 @@ export function KeepRulesEditor({
               </div>
             )}
           </div>
+          {/* Rule 144: this paragraph is the operator-facing copy of what the two composers
+              filter out, and both filters are stated, or the one left unsaid reads as a list
+              that went missing. */}
           <p className="help">
             Suggestions are values from your own library. Pick one, or type anything else. Fields
             already covered by a protection you've turned on aren't offered for outright keeps, so a
-            rule never repeats a built-in.
+            rule never repeats a built-in. A list that already has a keep rule isn't offered either:
+            one list takes one rule, at one strength.
           </p>
         </>
       )}

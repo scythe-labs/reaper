@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,9 +62,26 @@ class ListDefinition:
 
     @property
     def tags(self) -> tuple[str, ...]:
-        """The *arr tag spellings, for an ``ARR_TAG`` definition. Empty for any other source."""
+        """The *arr tag spellings, for an ``ARR_TAG`` definition. Empty for any other source.
+
+        Deduplicated on the comparison form here as well as at the save boundary, so a body
+        stored before that check existed reads as one tag per tag rather than reporting a
+        count of zero against the spelling it lost (#509). Read-side too, because the
+        alternative is asking the operator to re-save a list to correct a number.
+        """
         raw = self.config.get("tags")
-        return tuple(str(t) for t in raw) if isinstance(raw, list) else ()
+        if not isinstance(raw, list):
+            return ()
+        seen: set[str] = set()
+        out: list[str] = []
+        for entry in raw:
+            tag = str(entry)
+            key = tag.strip().casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(tag)
+        return tuple(out)
 
     @property
     def match(self) -> Literal["any", "all"]:
@@ -170,6 +187,24 @@ def _clean_name(name: str) -> str:
     return cleaned
 
 
+async def _refuse_name_twice(session: AsyncSession, name: str, *, this_row: int | None) -> None:
+    """Refuse a name another list already answers to, capitalized differently or not.
+
+    The column's ``NOCASE`` collation is what actually holds (a read-then-insert can be
+    beaten between the two), and it raises ``IntegrityError``, which says nothing an
+    operator can act on. This runs first so they read the reason; the constraint is the
+    backstop.
+
+    Case-folded on both sides (rule 88), the comparison every reader of a list name makes:
+    two lists whose names differ only in case are one list to a keep rule naming either.
+    """
+    stmt = select(ListConfig.id).where(func.lower(ListConfig.name) == name.strip().casefold())
+    if this_row is not None:
+        stmt = stmt.where(ListConfig.id != this_row)
+    if (await session.execute(stmt)).first() is not None:
+        raise ListConfigError("You already have a list with that name. Pick another.")
+
+
 def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
     """Refuse a configuration that could never match anything, at the save boundary.
 
@@ -187,7 +222,22 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
             raise ListConfigError("Say which collection in that library to read.")
         return json.dumps({"library": library, "collection": collection})
     if source is ListSource.ARR_TAG:
-        tags = [str(t).strip() for t in config.get("tags", []) if str(t).strip()]
+        # One entry per tag, on the comparison form Sonarr and Radarr themselves use: they
+        # lower-case every label, so "Keep" and "keep" are one tag there and were two here.
+        # Stored twice, the pair collapsed to one tag id at fetch time and only the later
+        # spelling was counted, so the Lists screen showed a chip reading "Keep 0" beside
+        # "keep 12" for a tag protecting everything it names -- and under match ALL the
+        # collapsed set made ALL behave as ANY (#509). The FIRST spelling is kept, which is
+        # the one the operator typed before the duplicate.
+        seen: set[str] = set()
+        tags: list[str] = []
+        for raw in config.get("tags", []):
+            tag = str(raw).strip()
+            key = tag.casefold()
+            if not tag or key in seen:
+                continue
+            seen.add(key)
+            tags.append(tag)
         if not tags:
             raise ListConfigError(
                 "Add at least one tag, spelled as it appears in Sonarr or Radarr."
@@ -217,8 +267,10 @@ async def create(
         kind = ListSource(source)
     except ValueError:
         raise ListConfigError("Pick where the list comes from.") from None
+    cleaned = _clean_name(name)
+    await _refuse_name_twice(session, cleaned, this_row=None)
     row = ListConfig(
-        name=_clean_name(name),
+        name=cleaned,
         source=kind.value,
         config_json=_clean_config(kind, config),
         enabled=True,
@@ -247,7 +299,9 @@ async def update(
 ) -> ListConfig:
     row = await get(session, list_id)
     if name is not None:
-        row.name = _clean_name(name)
+        cleaned = _clean_name(name)
+        await _refuse_name_twice(session, cleaned, this_row=list_id)
+        row.name = cleaned
     if config is not None:
         row.config_json = _clean_config(ListSource(row.source), config)
     if enabled is not None:
