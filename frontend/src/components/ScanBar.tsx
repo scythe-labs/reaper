@@ -171,6 +171,14 @@ export function ScanRow({
   const delta =
     before && snapshot && snapshot.id !== before.id ? scanDelta(before, snapshot) : null;
 
+  // The snapshot in hand is not the last scan's, so nothing on this row may speak for it. Two
+  // windows: a scan is running, and the moment after one ends, where `useScanSettled`'s refetch
+  // of `["snapshot"]` is still out and `before` still holds the id that is on screen -- the same
+  // fact `delta` waits on above. A run that ended in an error wrote no snapshot, so the one in
+  // hand is still the newest and still speaks for itself.
+  const supersededSnapshot =
+    scanning || (before !== null && !status?.error && snapshot?.id === before.id);
+
   // The scan's live phase, shown in the shared status slot while it runs.
   const runLabel = status
     ? `${phaseLabel(status.phase)}${status.detail ? `, ${status.detail}` : ""}${
@@ -266,8 +274,16 @@ export function ScanRow({
 
         {/* `standing`, same route one step later: `useScanSettled` invalidates `["snapshot"]` on
             the running-to-idle edge it sees through that same 15s poll, so a scheduled scan
-            finishing incomplete draws this with no press either. */}
-        {snapshot?.degraded && (
+            finishing incomplete draws this with no press either.
+
+            Held while that snapshot is superseded, which is this notice specifically and not the
+            two others carrying the same claim (rule 72). It renders inside the running scan's own
+            row, under its progress bar, where "This scan" reads as the one in flight -- and the
+            operator starting a rescan has already answered it. The other two sit on pages with no
+            scan in view and stay: `ReapPlan`'s is why Build is disabled over that snapshot, and
+            `App.tsx`'s freshness line is the age of the queue rendered below it, both still true
+            for as long as that snapshot is the one on hand. */}
+        {snapshot?.degraded && !supersededSnapshot && (
           <Notice tone="warn" standing>
             <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason}
           </Notice>
