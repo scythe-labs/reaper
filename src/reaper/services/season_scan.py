@@ -81,16 +81,17 @@ from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
-from reaper.engine.gates import (
-    Facts,
-    GateId,
-    GateResult,
-    lifetime_shortfall,
-    progress_is_establishable,
-)
+from reaper.engine.gates import Facts, GateId, GateResult, lifetime_shortfall
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource, merge_by_source
-from reaper.services import history_sync, library_index, lists, requested_by, watch_evidence
+from reaper.services import (
+    history_sync,
+    library_index,
+    lists,
+    requested_by,
+    season_evidence,
+    watch_evidence,
+)
 from reaper.services.display_meta import (
     IMDB_UNREADABLE_REASON,
     NO_IMDB_ID_REASON,
@@ -98,12 +99,7 @@ from reaper.services.display_meta import (
     dataset_lookup,
 )
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
-from reaper.services.season_pruning import (
-    SPECIALS_SEASON,
-    SeriesPrunePlan,
-    active_progress,
-    plan_series_prune,
-)
+from reaper.services.season_pruning import SPECIALS_SEASON, SeriesPrunePlan, plan_series_prune
 
 log = structlog.get_logger(__name__)
 
@@ -176,6 +172,14 @@ class SeasonJudgment:
 
     facts: Facts
     guard_result: GateResult
+
+    prune_input: season_evidence.SeasonPruneInput
+    """The frozen evidence this season's guard result was derived from, shared by every
+    season of the show. Stored once per show per snapshot (``db.models.SeasonPruneEvidence``)
+    so the policy simulator can re-derive the guard under an edited policy rather than
+    refusing every season rule (#491). Not a verdict input: the verdict is ``guard_result``,
+    already decided from this."""
+
     watch_reading: watch_evidence.Reading | None = None
     """What this scan measured for the season's watch history, for the caller to fold into
     the high-water marks. ``None`` when the season resolved to no Plex key, which is not the
@@ -250,10 +254,24 @@ class _SeriesWork:
     series: dict[str, Any]
     seasons: list[SeasonStats]
     plan: SeriesPrunePlan
-    # No season is prunable -- every one is kept by a guard. Still gathered and surfaced as
-    # kept (never hide content), but spared the per-show episodes() read, which only feeds
-    # mid-binge precision a fully-kept show cannot use.
+    # No season is prunable under THIS scan's policy -- every one is kept by a guard. Still
+    # gathered and surfaced as kept (never hide content), and counted so the scan can say how
+    # many shows have nothing reapable. It used to spare the show its episodes() read as
+    # well; it no longer does, because a show fully kept today is exactly the show an
+    # operator lowering keep-last is asking the simulator about (see `episode_coros`).
     fully_protected: bool = False
+    episodes_read: bool = False
+    """Whether Sonarr's episode list was read for this show, so ``season_final_episode`` above
+    means "nothing on disk" rather than "nobody asked". False whenever the mid-binge guard is
+    off (the whole fan-out is skipped) and for a read that failed. Frozen onto the show's
+    prune bundle, where it is what stops the simulator previewing a guard the scan never
+    gathered for (rule 93)."""
+    episodes_unreadable: bool = False
+    """Set when the fan-out ran for this show and Sonarr did not answer, which is the other
+    way ``episodes_read`` is False. Frozen beside the absent map so the simulator can tell the
+    two apart: this scan planned from ``{}`` and every verdict it stored came off that, so a
+    replay off ``{}`` returns them, where a fan-out that never ran has nothing to return
+    (#500)."""
     show_rating_key: int | None = None
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
@@ -1122,6 +1140,21 @@ def _final_episodes(episodes: list[dict[str, Any]]) -> dict[int, int | None]:
     return final
 
 
+def _requested_known_false(
+    series: Mapping[str, Any],
+    request_index: requested_by.RequestIndex | None,
+) -> bool:
+    """Whether the index said, definitely, that nobody requested this show.
+
+    The whole of what ``keep_last_scope`` reads, and the one bit the show's prune bundle
+    freezes for it. An Unknown -- no Seerr, an unreachable one, a show with no tvdb id -- is
+    not a definite no and returns False, which is what keeps the scope fail-closed.
+    """
+    tvdb_id = int(series["tvdbId"]) if series.get("tvdbId") else None
+    requested = request_index.show_requested(tvdb_id) if request_index is not None else None
+    return isinstance(requested, Known) and requested.value is False
+
+
 def _keep_last_applies(
     series: Mapping[str, Any],
     keep_last_scope: str,
@@ -1129,14 +1162,13 @@ def _keep_last_applies(
 ) -> bool:
     """Whether the keep-last floor applies to this show under the scope.
 
-    Fail-closed under a "requested only" scope: apply keep-last unless we KNOW the show was
-    not requested (Unknown counts as "might be requested").
+    Resolves the evidence, then defers to ``season_evidence.keep_last_applies`` for the
+    decision, so the offline pass below and the simulator's replay read one predicate.
     """
-    if keep_last_scope != "requested":
-        return True
-    tvdb_id = int(series["tvdbId"]) if series.get("tvdbId") else None
-    requested = request_index.show_requested(tvdb_id) if request_index is not None else None
-    return not (isinstance(requested, Known) and requested.value is False)
+    return season_evidence.keep_last_applies(
+        keep_last_scope=keep_last_scope,
+        requested_known_false=_requested_known_false(series, request_index),
+    )
 
 
 def _season_digest(seasons: list[SeasonStats]) -> list[dict[str, Any]]:
@@ -1258,6 +1290,21 @@ async def gather(
     if not sonarrs:
         return []
 
+    # The nine season settings, gathered into the carrier the plan derivation takes. Built
+    # once here so every show in this scan is judged against one object, and so the shape the
+    # scan plans with is the shape the simulator replays with (``services.season_evidence``).
+    season_policy = season_evidence.SeasonPolicy(
+        keep_last_seasons=keep_last_seasons,
+        keep_first_season=keep_first_season,
+        keep_last_scope=keep_last_scope,
+        season_lookahead=season_lookahead,
+        keep_in_progress=keep_in_progress,
+        in_progress_hold_days=in_progress_hold_days,
+        keep_specials=keep_specials,
+        protect_incomplete_seasons=protect_incomplete_seasons,
+        flag_keep_conflicts=flag_keep_conflicts,
+    )
+
     # The scan passes its already-loaded index so movies and seasons read the same
     # frozen list state; a direct caller (tests) gets a fresh load.
     if membership_index is None:
@@ -1348,8 +1395,9 @@ async def gather(
                 # No prunable season, but the show has content on disk, so it is NOT dropped:
                 # it is judged and surfaced as kept, every season protected by its guard, so the
                 # operator always sees it (with the reason) instead of it vanishing from the UI.
-                # Never hide content. The flag only spares it the per-show episodes() read below,
-                # which feeds mid-binge precision it does not need (every season is already kept).
+                # Never hide content. The flag now only counts: it used to spare the show the
+                # per-show episodes() read below, which is exactly what left the policy
+                # simulator unable to preview lowering keep-last for it (see `episode_coros`).
                 fully_protected.append(str(series.get("title") or "?"))
             _log_series_decision(
                 source,
@@ -1514,8 +1562,10 @@ async def gather(
 
     async def _episodes_for(item: _SeriesWork) -> None:
         # Episode-precise mid-binge needs each season's last on-disk episode -- one extra
-        # Sonarr read per prunable show. On failure the map stays empty and every season
-        # falls back to season-level protection, never less.
+        # Sonarr read per show. On failure the map stays empty and every season falls back to
+        # season-level protection, never less; `episodes_read` stays False so the simulator
+        # can tell that fallback apart from a show whose episodes really are absent, and
+        # `episodes_unreadable` says the plan below was still made from that empty map.
         async with arr_bounds[item.source.instance_id]:
             try:
                 episodes = await item.source.client.episodes(int(item.series["id"]))
@@ -1525,8 +1575,10 @@ async def gather(
                     show=item.series.get("title"),
                     error=str(exc),
                 )
+                item.episodes_unreadable = True
                 return
         item.season_final_episode = _final_episodes(episodes)
+        item.episodes_read = True
 
     # The DISTINCT matched shows: two Sonarr series can bind to the same Plex show, and it is
     # still one show's season list.
@@ -1569,12 +1621,28 @@ async def gather(
     # is never consulted (season_pruning short-circuits to no sequential protection), so the
     # whole Sonarr fan-out is skipped. Skipping only ever keeps MORE: with no final-episode map
     # the guard falls back to whole-season protection.
+    #
+    # It reads every show while the guard IS on, including one whose every season is currently
+    # kept. That show used to be skipped, since mid-binge precision cannot change a fate that
+    # is already "keep everything" -- true for the scan, and the reason the policy simulator
+    # could not preview a season rule for exactly the shows an operator asks it about. A show
+    # fully kept under today's keep-last is the one that becomes prunable when they lower it,
+    # and answering that needs the map this read fetches.
+    #
+    # **The cost is a share of the library, not a handful of shows.** Under shipped defaults
+    # (keep-last 2, plus keep-first) every show with three seasons or fewer is fully kept, so
+    # on an ordinary library this is closer to doubling the Sonarr episode fan-out than to a
+    # few extra calls. It is bounded by the same per-instance semaphore as the rest and it is
+    # Sonarr rather than Plex, but it is paid by every scan to serve a preview surface. If
+    # this ever shows up in `season_ms`, the shape to reach for is fetching the map for a show
+    # only when a bundle without one would refuse -- not restoring the skip, which is what
+    # made the season card unpreviewable.
+    #
+    # What the map is stored in is budgeted separately, on `db.models.SeasonPruneEvidence`: the
+    # payload is O(viewers x seasons), and the read side is measured in `docs/LEARNINGS.md`
+    # under "What frozen season evidence costs".
     season_coros = [_seasons_for(rk) for rk in fallback_keys]
-    episode_coros = (
-        [_episodes_for(item) for item in work if not item.fully_protected]
-        if keep_in_progress
-        else []
-    )
+    episode_coros = [_episodes_for(item) for item in work] if keep_in_progress else []
     fanned = await gather_reaped(*season_coros, *episode_coros)
     for rk, seasons in fanned[: len(season_coros)]:
         resolved_shows[rk] = seasons
@@ -1627,18 +1695,10 @@ async def gather(
                 now=now,
                 active_rating_keys=active_rating_keys,
                 activity_degraded=activity_degraded,
-                keep_last_seasons=keep_last_seasons,
-                keep_first_season=keep_first_season,
                 whitelisted=whitelisted,
                 requested=requested or {},
                 request_index=request_index,
-                keep_last_scope=keep_last_scope,
-                season_lookahead=season_lookahead,
-                keep_in_progress=keep_in_progress,
-                in_progress_hold_days=in_progress_hold_days,
-                keep_specials=keep_specials,
-                protect_incomplete_seasons=protect_incomplete_seasons,
-                flag_keep_conflicts=flag_keep_conflicts,
+                season_policy=season_policy,
                 ratings=ratings,
                 ratings_degraded=ratings_degraded,
                 membership_index=membership_index,
@@ -1664,27 +1724,18 @@ def _judge_series(
     now: datetime | None = None,
     active_rating_keys: set[int],
     activity_degraded: bool,
-    keep_last_seasons: int,
-    keep_first_season: bool,
     whitelisted: set[str],
     membership_index: lists.MembershipIndex,
     requested: dict[str, str] | None = None,
     request_index: requested_by.RequestIndex | None = None,
-    keep_last_scope: str = "all",
-    season_lookahead: int = 0,
-    keep_in_progress: bool = True,
-    # Mirrors ``TvPolicy.in_progress_hold_days``'s own default, which is what the only
-    # production caller passes (``services.snapshot.scan``). It read 0 here, a value no
-    # shipped policy has, and 0 means the hold never expires -- so every caller that omitted
-    # it was exercising an unbounded claim the mirror cannot support (rule 141).
-    in_progress_hold_days: int = 180,
-    # Required for the same reason as on ``gather`` above, and it is the same class of defect
-    # rule 141 records one parameter up: a default that silently exercises a claim the caller
-    # never made. Here the default disabled a protection outright.
+    # The nine season settings, as one carrier rather than nine parameters with defaults.
+    # Required, because every default here was rule 141's shape: ``in_progress_hold_days``
+    # defaulted to a value no shipped policy has, and 0 means the hold never expires, so a
+    # caller that omitted it exercised an unbounded claim the mirror cannot support.
+    season_policy: season_evidence.SeasonPolicy,
+    # Required for the same reason, and it is the same class of defect: a default that
+    # silently exercises a claim the caller never made. Here it disabled a protection.
     watch_marks: Mapping[str, watch_evidence.Mark],
-    keep_specials: bool = True,
-    protect_incomplete_seasons: bool = True,
-    flag_keep_conflicts: bool = True,
     ratings: dict[str, ImdbRating] | None = None,
     # True when the IMDb dataset could not be read at all, so `ratings` being empty
     # says nothing about any show in it. See build_season_facts.
@@ -1790,17 +1841,10 @@ def _judge_series(
     progress_unknown_reason = (
         no_key_reason(item.match_status) if item.show_rating_key is None else None
     )
-    # Expire abandoned viewers before the guard sees them: a place in the show is held
-    # only while its viewer stayed active within the policy's hold window. The helper
-    # keeps every viewer whose last-watched time cannot be read, and 0 disables expiry.
-    # What it CANNOT do is keep a viewer the mirror never saw, which is why the reach is
-    # asked separately below rather than left for this filter to imply.
-    progress = active_progress(
-        _progress_by_user(stats, key_to_number),
-        _last_watched_by_user(stats, key_to_number),
-        now=now or utcnow(),
-        hold_days=in_progress_hold_days,
-    )
+    # One clock read for this show, shared by the season ages below and by the mid-binge
+    # expiry inside the plan. It is frozen onto the bundle, so a replay expires viewers
+    # against the instant the evidence was taken rather than whenever the editor was opened.
+    judged_at = now or utcnow()
     # Built over the seasons ON DISK -- the exact set the conflict detector compares --
     # not over the ones Plex happened to resolve (rule 30). A season on disk that Plex
     # never resolved has no rating key, so nobody could read its history: that is None,
@@ -1836,52 +1880,57 @@ def _judge_series(
         # a truncated one. The same derivation `build_season_facts` records as
         # `Facts.days_since_added` below, off the same date.
         age: Observation[float] = (
-            Known(value=float(dormancy_days(added_at, now=now or utcnow())), source="plex")
+            Known(value=float(dormancy_days(added_at, now=judged_at)), source="plex")
             if added_at is not None
             else Unknown(reason=NO_ADDED_AT_REASON, source="plex")
         )
         shortfall_by_season[season.season_number] = lifetime_shortfall(reach, age)
-    plan = plan_series_prune(
+    # Everything the plan reads that is NOT the operator's policy, in one frozen bundle. The
+    # scan derives its plan from it below and the snapshot stores it, so the policy simulator
+    # can call the same derivation under an edited policy instead of refusing (#491). Nothing
+    # is pre-applied here: the mid-binge expiry, the mirror-reach predicate and the keep-last
+    # scope all take a policy number, so each stays in `plan_from_frozen` where the draft's
+    # number reaches it -- baking any of them in would leave that setting unpreviewable while
+    # looking exactly as though it were not.
+    prune_input = season_evidence.SeasonPruneInput(
         series_title=series_title,
-        seasons=item.seasons,
-        keep_last=keep_last_seasons,
-        keep_first_season=keep_first_season,
-        apply_keep_last=_keep_last_applies(series, keep_last_scope, request_index),
-        progress_by_user=progress,
+        seasons=tuple(item.seasons),
+        airing_seasons=tuple(sorted(airing_seasons(series, item.seasons))),
+        # Un-expired, so `in_progress_hold_days` is still an open question at replay time.
+        progress_by_user=_progress_by_user(stats, key_to_number),
+        last_watched_by_user=_last_watched_by_user(stats, key_to_number),
         last_play_by_user=_last_play_by_user_season(stats, key_to_number),
-        season_final_episode=item.season_final_episode,
-        season_lookahead=season_lookahead,
-        keep_in_progress=keep_in_progress,
-        # The same reach that qualifies the watcher counts on `Facts.history_reach_days`,
-        # read here by the mid-binge half of this roll-up (rule 140). A hold the mirror does
-        # not span makes the viewer set un-establishable, and the planner holds the seasons
-        # rather than reading "no rows" as "nobody is part-way through".
-        progress_established=progress_is_establishable(
-            reach_days=reach_days, hold_days=in_progress_hold_days
-        ),
-        # The same guard's other blind spot, and the reason the check above is not enough: the
-        # mirror can span the hold perfectly and still not hold the rows, because they are
+        # None, not the empty map, when the fan-out above never ran or its read failed: the
+        # planner reads an empty map as whole-season protection, which is right for a scan and
+        # is NOT an answer the simulator may show as exact (rule 93). The flag beside it says
+        # which absence this is, and only the never-ran one refuses: a read Sonarr declined
+        # left this scan planning from `{}`, so replaying off `{}` returns the verdicts stored
+        # here rather than guessing at them (#500).
+        season_final_episode=dict(item.season_final_episode) if item.episodes_read else None,
+        episodes_unreadable=item.episodes_unreadable,
+        watchers_by_season=watchers_by_season,
+        shortfall_by_season=shortfall_by_season,
+        # The mirror can span the hold perfectly and still not hold the rows, because they are
         # filed under a rating key the season no longer carries. `active_progress` keeps a
         # viewer whose last-watched time is unreadable, but this viewer is not unreadable, they
         # are missing, and there is nobody to keep -- the exact sentence
         # `gates.progress_is_establishable` uses about a short mirror (rule 140).
         progress_unreadable=show_watch_unreadable,
-        # And the third: a season Plex never resolved for us. `resolve_season_keys` returning an
-        # empty map on a failed read is fail-closed for that show's OWN seasons, which all
-        # abstain on Unknown facts; it says nothing about the assertion the show then makes
-        # about viewer progress, and a PARTIAL resolution leaves readable siblings to condemn on
-        # it (#472).
+        # And a season Plex never resolved for us. `resolve_season_keys` returning an empty map
+        # on a failed read is fail-closed for that show's OWN seasons, which all abstain on
+        # Unknown facts; it says nothing about the assertion the show then makes about viewer
+        # progress, and a PARTIAL resolution leaves readable siblings to condemn on it (#472).
         progress_seasons_unmatched=show_seasons_unmatched,
-        keep_specials=keep_specials,
-        protect_incomplete=protect_incomplete_seasons,
-        flag_keep_conflicts=flag_keep_conflicts,
-        airing_seasons=airing_seasons(series, item.seasons),
-        watchers_by_season=watchers_by_season,
-        # The other half of the same sweep: these counts come off the same mirror, so the
-        # keep-conflict detector is handed the bound with them rather than comparing two
-        # lower bounds at full confidence.
-        shortfall_by_season=shortfall_by_season,
+        progress_unknown_reason=progress_unknown_reason,
+        requested_known_false=_requested_known_false(series, request_index),
+        # The same reach that qualifies the watcher counts on `Facts.history_reach_days`, read
+        # by the mid-binge half of this roll-up (rule 140). A hold the mirror does not span
+        # makes the viewer set un-establishable, and the planner holds the seasons rather than
+        # reading "no rows" as "nobody is part-way through".
+        reach_days=reach_days,
+        now=judged_at,
     )
+    plan = season_evidence.plan_from_frozen(prune_input, policy=season_policy)
 
     # Every id the show carries is passed together: a show without an imdbId in Sonarr is
     # common, and a keep tag or "Never Reap" row stored under its tvdb or tmdb id must
@@ -1984,6 +2033,7 @@ def _judge_series(
                 size_source=SizeSource.SONARR if season.size_on_disk is not None else None,
                 facts=facts,
                 guard_result=guard_result(plan, n, progress_unknown_reason=progress_unknown_reason),
+                prune_input=prune_input,
                 watch_reading=reading,
                 watch_blind_reason=season_blind,
                 year=show_year,

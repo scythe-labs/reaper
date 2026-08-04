@@ -146,7 +146,7 @@ covers weights, rating bars, custom condemn rules, graded keeps and protect cond
 the refusal.
 
 ⇒ The refusal is now scoped to edits that change what a scan would *gather* — a keep tag,
-a season rule, the popularity window — where the frozen evidence really is stale. The
+the popularity window — where the frozen evidence really is stale. The
 replayable set is an **allow-list**, so a field nobody classified falls into the refusal
 rather than into a plausible wrong preview. The lesson survives its own fix: the rule was
 never "only thresholds are safe," it was "never show a number you cannot derive."
@@ -178,6 +178,87 @@ hash its own scan computed. On that install `policy_hash` and `scoring_hash` bot
 matched while the evidence hash could not, so until the next scan even a weight edit refuses
 where it used to replay. It heals on that scan, which is exactly what `schema_version` could
 not do — and that difference is the one to check before re-scoping either hash again.
+
+**The season card needed the other half: freeze the inputs, not the answer.** The nine season
+rules were the last controls to blank, and no hash change could reach them — `facts_json`
+freezes the season guard's *output*, while `plan_series_prune` decides per show from Sonarr's
+season statistics, who is part-way through, and each season's watcher count with the mirror's
+bound on it. None of that was on `Facts`, so there was nothing to re-decide from. ⇒ The scan
+now freezes the plan's inputs per show (`db.models.SeasonPruneEvidence`, one row per show per
+snapshot) and the replay calls `season_evidence.plan_from_frozen` — the same function the scan
+itself derives its plan through, so the two cannot drift by construction rather than by
+agreement test.
+
+⇒ **Two of the three remaining refusals are not hash questions at all**, which is the part
+worth keeping. A bundle can be absent, unreadable, or describe a different set of seasons than
+the rows being judged; a draft holding the mid-binge seasons over a scan that recorded no
+episode map gathers identically and cannot place a viewer. Both are asked of the stored
+evidence rather than of the policy, and each carries its own typed reason, so the panel names
+one control instead of blanking nine. A hash cannot say *why* it mismatched (§13); it also
+cannot say anything about evidence two identical policies disagree about.
+
+⇒ **And that second refusal was written about one of its two producers**, which is the same
+error as the paragraph below it and was made in the same commit. The map is unread after a
+scan that ran with the hold off, because the fan-out is gated on the guard; it is *also*
+unread after a scan that ran with the hold ON and got no answer from Sonarr for some show,
+which `season_scan._episodes_for` logs rather than degrading on, since falling back to
+whole-season protection can only keep more (rule 28's sanctioned exception). The copy named
+the first, so the second operator was told their hold was off while it was on, and the only
+action the sentence suggested was turning a protection off. **A refusal derived from the
+absence of a thing must state the absence, because a cause is a guess about which producer
+left it absent** — and the frozen bundle records the absence, never the producer.
+
+⇒ **The obvious reading of that is wrong, and the review caught it in six places.** "A
+snapshot predating the table has a matching hash and no bundle" is a tempting sentence and it
+describes nobody: re-scoping the hash to make the season fields replayable *changed the
+formula*, so no snapshot written by an earlier build can match it, and every edit lands on the
+generic refusal until the next scan. The specific refusals describe the state after that scan.
+The general lesson is the one §13 already carries in a different costume: **a change to what a
+hash covers silently re-partitions the population every sentence about that hash describes**,
+and prose written about the new mechanism will keep describing the old population unless
+somebody computes both formulas and compares them.
+
+⇒ **Naming the cause in the generic refusal was wrong more often than it helped**, for the
+same reason. It read "a keep tag, a season rule, or how far back watching counts reads
+differently from your policy now" — three causes it could not distinguish between, at an
+operator who, on the first Policy page after any upgrade that moves the formula, had changed
+none of them. It states the condition and the remedy now, and nothing about the cause.
+
+⇒ **A perf skip became a correctness hole once the evidence was frozen.** The episode read was
+skipped for a show whose every season was already kept — true reasoning for a scan, since
+mid-binge precision cannot change "keep everything", and exactly wrong for a preview: a show
+fully kept under today's keep-last is *the* show that becomes prunable when the operator lowers
+it. The skip is gone, at one Sonarr `episodes()` call per fully-kept show while the guard is on.
+The general shape: **an optimization justified by "this cannot change the answer" expires the
+moment something else starts asking a different question of the same data.**
+
+The exactness proof is a sweep, not a sample. Each of the nine settings is edited alone, two
+real scans are run, and the replayed guard for every season must equal the second scan's stored
+one; a combined edit was the first draft and it proved three of the nine, because the settings
+mask each other (keep-last already holds the season `protect_incomplete_seasons` would).
+
+**23 mutations were re-run mechanically, and 22 of them failed.** Eighteen are one per setting
+on each of the two roads a `PolicyBody` takes to the planner — `SeasonPolicy.from_body` and
+`season_scan.gather`'s carrier — each pinned to its shipped default, which is exactly "this road
+drops the operator's edit". Every one reds its OWN parametrization, so the sweep discriminates
+all nine settings rather than catching them in a bundle. **Comparing guard reasons rather than
+verdict tallies is what made that possible**: a setting routinely changes why a season is kept
+without changing whether it is. Four more fail too — restoring the skip, collapsing the
+three-state to `{}`, returning the frozen guard instead of re-deriving it, and dropping the
+missing-map refusal.
+
+**The one that survived is the finding.** Replacing `now=inp.now` with a live `utcnow()` in
+`plan_from_frozen` — the mid-binge expiry measuring against whenever the editor was opened
+rather than the scan instant — passed all 3,547 tests. The exactness sweep freezes its clock ten
+days from the wall, and ten days moves no viewer across a 180-day hold, so the fixture best
+placed to catch it was shaped not to. The behavior was always right; nothing held it there.
+`TestTheReplayExpiresAgainstTheScansOwnClock` does now, off a bundle scanned ten years back so
+the drift dwarfs any hold, with a negative control proving the assertion reads the guard at all.
+
+The general shape: **a mutation count is worth nothing without the harness that produced it.**
+This claim previously read "26 mutations … all 26 fail", written by hand from an enumeration
+that does not add to 26 either way, and it was wrong in the direction that flatters — asserting
+coverage of exactly the case that had none. A count nobody can re-run is a number, not a proof.
 
 ### 9. Rounding the score after deciding the verdict — **two answers to one question**
 
@@ -2740,6 +2821,68 @@ blocks that meet the cut spliced in as detours. That needs no boolean — everyt
 cut meets it on one straight horizontal edge, so ordering by x unions them exactly — and it
 needs no fill rule. The regression test renders and samples rather than reading the path string,
 since the path text looked reasonable the whole time it was wrong.
+
+## What frozen season evidence costs, and where the cost is paid (2026-08-03)
+
+Making a season rule previewable meant freezing `plan_series_prune`'s inputs per show
+(`db.models.SeasonPruneEvidence`). The Sonarr fan-out that fills it was budgeted in a comment;
+the payload and the per-request decode were not, so both were measured.
+
+**The payload is O(viewers × seasons)** — three of its members are per-user-per-season maps.
+Measured through the real codec: **1,743 B** for a five-season show with five viewers, **8,987 B**
+for a ten-season show with 25 viewers. On the larger shape at a thousand shows that is 9.0 MB a
+scan and **270 MB** across the 30-snapshot retention window, which sits beside the ~700 MB the
+section above measures for a six-thousand-item library rather than dwarfing it.
+
+**The decode is 0.21 ms per show at that shape**, so ~205 ms for a thousand shows — and the
+simulate request it fronted arrives on a 250 ms debounce while a control is being dragged, on top
+of the 275 ms the movie lane's replay already costs at 3,468 rows. That projection is a ceiling
+rather than an estimate, and the section below measures the real distribution at a fraction of
+it: the lab shape was the large one.
+
+The lever was not the total. Every show with a candidate row gets thawed either way, so decoding
+lazily per show saves almost nothing on a healthy library — what it changes is *when*: 205 ms in
+one uninterrupted block ahead of the loop becomes the same work spread across the yields that
+loop already takes, a refusal costs one show's decode instead of the library's, and a show with
+no candidate row is never decoded at all. The general shape: **an eager prefetch and a lazy one
+can have identical totals and completely different tail latency**, so measure the block, not the
+sum.
+
+## Both simulator tiers, timed across a 64x range of library sizes (2026-08-03)
+
+`POST /api/policy/simulate` answers one question two ways: tier 1 re-compares the stored scores
+against the new thresholds, tier 2 replays the real engine over the frozen Facts. Tier 2 is exact
+for everything tier 1 covers, so tier 1 is an optimization and #493 asked whether it earns its
+keep. Settled by driving the real route against a `.backup` clone of a live snapshot — 3,469
+movie rows, 2,498 season rows over 985 shows, best of five, warm.
+
+| request | tier 1 | tier 2 |
+| --- | --- | --- |
+| movie | 59 ms | 305 ms |
+| TV, season-rule edit | 56 ms | 366 ms |
+
+**Tier 2 is linear with no knee: 81 µs/row on movies and 133 µs/row on seasons, flat to within
+6% from 433 rows to 27,752.** So the ceiling is set by library size and nothing else, which is
+what makes it decidable rather than arguable: at 4x this install a threshold drag settles in
+~1.2 s, at 8x in ~2.3 s, on top of the 250 ms debounce it already waits out.
+
+Measured apart rather than subtracted, the row query is 29 ms and 24 ms and the bundle query is
+1.5 ms, which puts the **tier-1 loop at ~9 and ~12 µs/row — 9x and 11x cheaper per row.** The
+gap is per-row, so it widens with the library instead of amortizing.
+
+**Tier 1 stays**, and two of the three reasons are not about perceived latency. The replay is a
+Python loop on the event loop, so a 2.3 s replay is 2.3 s of contention for every other request
+on the box; and tier 1 is still the only path that answers a snapshot which froze no Facts at
+all. `tests/test_verdict_agreement.py` therefore stays load-bearing: it is what stands between
+the two paths and another §9.
+
+**The season lane's extra cost is the work, not overhead in front of it.** The bundle query is
+1.5 ms of a 366 ms request, 0.4%, so there is nothing left to defer that #502's lazy per-show
+thaw did not already take. Every season-specific cost combined — decode, plan derivation and
+guard replay across 985 shows — is ~130 ms, or ~0.13 ms per show, against a lab estimate for the
+decode *alone* that was 1.6x that. The general shape: **a cost measured on the worst shape you
+can construct projects a ceiling, and reading it as a forecast argues for optimizations the real
+distribution does not need.**
 
 ## Prior art
 

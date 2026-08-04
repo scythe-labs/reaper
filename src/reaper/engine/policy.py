@@ -392,13 +392,14 @@ class PolicyBody(Frozen):
         untrustworthy. Degrading on this would make the first scan after an upgrade
         un-plannable for every install, over a protection that was never doing anything.
 
-        It moves all three hashes, not just ``policy_hash``. ``policy_hash`` voids a plan
-        approved before the upgrade and asks for a re-scan (rule 113). ``scoring_hash`` and
-        ``evidence_hash`` move too, because ``gates`` is excluded from neither
-        ``_POST_SCORE_FIELDS`` nor ``_EVIDENCE_REPLAYABLE_FIELDS`` -- so the policy simulator
-        misses both its exact tier and its frozen-facts replay tier and withholds every number
-        until that re-scan. That is the honest outcome: the stored policy really is not the one
-        now in force, even though every verdict it produces is identical.
+        It moves ``policy_hash``, which voids a plan approved before the upgrade and asks for
+        a re-scan (rule 113), and ``scoring_hash``, since ``gates`` is not in
+        ``_POST_SCORE_FIELDS`` -- so the simulator loses its stored-score tier. It does NOT
+        move ``evidence_hash`` any more: ``gates`` reaches that hash only through
+        ``_gathering_evidence``, and no retired gate is the popularity gate, so the window is
+        unchanged and the frozen-facts replay answers. The first Policy page after such an
+        upgrade therefore shows numbers rather than a blank, which is the honest outcome and
+        the reverse of what this paragraph said while the whole list sat in the hash.
 
         What it must NOT do is let a surface blame the operator for it. The simulator's stale
         notice once opened "You changed what the scan reads" at an install that had changed
@@ -422,12 +423,18 @@ class PolicyBody(Frozen):
     points (5000 = 50%). Below it the item abstains rather than being judged on
     fragments. Guards against condemning an item we can barely see."""
 
-    keep_last_seasons: int = Field(default=2, ge=0)
+    keep_last_seasons: int = Field(default=2, ge=0, le=1_000)
     """Season pruning: the N most recent seasons of a show are protected outright,
     whatever they score. Movies ignore this. A hard floor, not a weight -- ``0`` means
     "keep no season on age alone" (the other guards and the score still apply); it does
     NOT mean "unlimited", which is the Janitorr footgun the whole policy module avoids.
-    See ``services.season_pruning``."""
+    See ``services.season_pruning``.
+
+    The ceiling is arithmetic hygiene rather than a policy opinion, and the same on all
+    three season numbers here: it sits far above any real setting, so it cannot invalidate
+    a stored body. ``api.schemas.PolicyIn`` declares it too, and
+    ``tests/test_policy.py::TestTheTwoPolicyDeclarationsAgree`` fails when the two drift
+    (rules 95 and 131)."""
 
     keep_first_season: bool = True
     """Season pruning: protect the first content-bearing season of every show, so a
@@ -439,17 +446,21 @@ class PolicyBody(Frozen):
     requested (``requested``). Fail-closed: under ``requested``, when we cannot tell whether a
     show was requested, the floor still applies -- Unknown counts as "might be requested"."""
 
-    season_lookahead: int = Field(default=0, ge=0)
+    season_lookahead: int = Field(default=0, ge=0, le=1_000)
     """How many seasons BEYOND a viewer's current position to also protect while they binge.
     ``0`` protects exactly the season they are mid-way through, or the next one if they have
-    finished the current. Replaces the old hardcoded look-ahead. Movies ignore it."""
+    finished the current. Replaces the old hardcoded look-ahead. Movies ignore it.
+
+    ``season_pruning.sequential_protections`` builds ``range(lookahead + 1)`` once per anchor
+    per viewer per show, so the ceiling is what keeps an unbounded draft from allocating
+    inside the event loop that serves ``/policy/simulate``."""
 
     keep_in_progress: bool = True
     """Season pruning: protect the season a viewer is partway through (and the next one,
     once they finish it) -- the sequential-progression guard in ``services.season_pruning``.
     On by default; turning it off removes that guard entirely. Movies ignore it."""
 
-    in_progress_hold_days: int = Field(default=180, ge=0)
+    in_progress_hold_days: int = Field(default=180, ge=0, le=36_500)
     """How long a viewer's place in a show is held after their last watch of that show.
     Past this many days without watching, the show counts as abandoned by that viewer and
     their half-finished season no longer protects anything. ``0`` holds forever. A viewer
@@ -460,7 +471,11 @@ class PolicyBody(Frozen):
     it past how far the mirror reaches (``0`` included, which no finite mirror can cover)
     makes the claim unsupportable: ``gates.progress_is_establishable``
     then holds every season on disk rather than letting an unseeable viewer read as an
-    absent one."""
+    absent one.
+
+    ``season_pruning.active_progress`` computes ``now - timedelta(days=hold_days)``, which
+    raises ``OverflowError`` before any of that once the value runs past what a ``datetime``
+    can hold. The ceiling is 100 years, which no mirror reaches and ``0`` already covers."""
 
     keep_specials: bool = True
     """Season pruning: never remove specials (Season 0). On by default. When off, specials
@@ -731,6 +746,20 @@ class PolicyBody(Frozen):
     #: CURRENT ``score``/``evaluate_all``/``decide_verdict`` over the frozen Facts, so a new
     #: scorer's answer is reproduced exactly. It stays in ``scoring_hash``, which is what
     #: routes a scorer bump to the replay instead of to the stale stored scores.
+    #:
+    #: **The nine season fields are here, and they are the one entry not answered by
+    #: ``facts_json`` alone.** A season's guard result is decided per SHOW, from Sonarr's
+    #: season statistics and who is part-way through it -- inputs that never reached ``Facts``
+    #: -- so freezing the guard's output was enough to explain a scan and never enough to
+    #: re-decide one. The scan now freezes those inputs too
+    #: (``db.models.SeasonPruneEvidence``) and the replay re-derives the plan through the same
+    #: ``season_evidence.plan_from_frozen`` the scan used. What that buys is a hash that no
+    #: longer refuses a season rule; what it does NOT buy is an answer for a snapshot with no
+    #: bundle, or for turning the mid-binge hold on over a scan that never read Sonarr's
+    #: episode lists. Neither is a hash question -- a hash cannot say WHY it mismatched
+    #: (``docs/LEARNINGS.md`` §13) -- so both are asked of the stored evidence itself in
+    #: ``api.routes._season_guard_replay``, which is what lets the panel name the one control at
+    #: fault instead of blanking nine.
     _EVIDENCE_REPLAYABLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "condemn_at",
@@ -743,6 +772,15 @@ class PolicyBody(Frozen):
             "keep_rating_match",
             "protect_conditions",
             "gates",
+            "keep_last_seasons",
+            "keep_first_season",
+            "keep_last_scope",
+            "season_lookahead",
+            "keep_in_progress",
+            "in_progress_hold_days",
+            "keep_specials",
+            "protect_incomplete_seasons",
+            "flag_keep_conflicts",
         }
     )
 
@@ -785,9 +823,23 @@ class PolicyBody(Frozen):
         fields (weights, rating bars, custom rules, protect conditions, thresholds).
 
         When it differs, the edit changed the evidence itself -- the popularity window, a
-        keep-tag, a season-pruning rule, the media type -- so the frozen Facts are stale and
-        a real scan is required. The set of replayable fields is an allow-list, so an
-        unclassified field falls into this hash and forces the safe, honest fresh scan.
+        keep-tag, the media type -- so the frozen Facts are stale and a real scan is required.
+        The set of replayable fields is an allow-list, so an unclassified field falls into
+        this hash and forces the safe, honest fresh scan.
+
+        A season rule used to be on that list and no longer is: the scan freezes its plan's
+        inputs per show now (``db.models.SeasonPruneEvidence``), so the replay re-derives the
+        guard rather than reading a stale one. What a matching hash therefore promises about
+        a TV row is narrower than it looks -- it says the FACTS replay, not that the show's
+        bundle is present, readable, and describes that season.
+        ``api.routes._season_guard_replay`` asks the evidence that second question, because a
+        hash cannot answer it: two policies that gather identically can still disagree about
+        stored evidence, which is a fact about the snapshot and not about the policy.
+
+        Moving those nine fields out of here changed the formula, so this is another instance
+        of the one-scan cost below: no snapshot written by an earlier build can match it, and
+        until the next scan every edit refuses. The season-specific refusals therefore describe
+        the state *after* that scan, never the upgrade.
 
         The allow-list is the right default and it has one sharp edge: a field that is pure
         bookkeeping falls in here too and forces a rescan that can never help. That is what

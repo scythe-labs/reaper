@@ -96,10 +96,12 @@ SPECIALS_SEASON = 0
 #: (:func:`_protection_reason`) and the flag the caller reads off them cannot drift apart --
 #: rule 142's lesson, kept inside one module.
 #:
-#: The three differ only in WHY the answer is missing, and each is worth its own sentence: the
+#: The four differ only in WHY the answer is missing, and each is worth its own sentence: the
 #: first is fixed by holding more history, the second by repairing it at the source, the third
-#: by fixing the season's Plex match, and copy that named one cause for three would send the
-#: operator to the wrong place.
+#: by fixing the season's Plex match and the fourth by fixing the show's, and copy that named
+#: one cause for four would send the operator to the wrong place. That is #489: a show that
+#: never bound to Plex was told its watch history was too short, which is true and is not the
+#: wall it is standing at -- no depth of mirror can read a place in a show that has no address.
 PROGRESS_UNESTABLISHABLE_REASON = "your watch history is too short to tell who is part-way through"
 PROGRESS_UNREADABLE_REASON = (
     "some plays are no longer readable, so who is part-way through is unknown"
@@ -107,13 +109,21 @@ PROGRESS_UNREADABLE_REASON = (
 PROGRESS_UNMATCHED_REASON = (
     "a season of this show is not matched in Plex, so who is part-way through is unknown"
 )
+PROGRESS_SHOW_UNMATCHED_REASON = (
+    "this show is not matched in Plex, so who is part-way through is unknown"
+)
 
 #: Every reason above, for the caller that asks "was this held because we could not answer".
 #: A membership test against the constants in this module, never a prefix test on the wording
 #: across a boundary (rule 142); adding a fourth reason above means adding it here, and
 #: ``tests/test_season_pruning.py`` fails on one that is missing.
 UNANSWERABLE_REASONS = frozenset(
-    {PROGRESS_UNESTABLISHABLE_REASON, PROGRESS_UNREADABLE_REASON, PROGRESS_UNMATCHED_REASON}
+    {
+        PROGRESS_UNESTABLISHABLE_REASON,
+        PROGRESS_UNREADABLE_REASON,
+        PROGRESS_UNMATCHED_REASON,
+        PROGRESS_SHOW_UNMATCHED_REASON,
+    }
 )
 
 
@@ -438,6 +448,14 @@ def plan_series_prune(
     # ``_NO_KEY_REASONS``). True holds every season on disk, for the identical reason: the
     # viewer set is unreadable, not empty.
     progress_seasons_unmatched: bool = False,
+    # The whole show, rather than one of its seasons: nothing here bound to Plex at all, so
+    # `key_to_number` is empty, no play was ever queried, and the guard below answers "is
+    # anyone part way through this" having asked nobody. The three flags above all describe a
+    # show that DID bind, so none of them fires, and the season fell through to the
+    # short-mirror sentence -- true, and naming a remedy that cannot work while the show has
+    # no address (#489). It holds nothing extra: every season already takes Unknown from its
+    # own facts. It picks the sentence.
+    progress_show_unmatched: bool = False,
     keep_specials: bool = True,
     protect_incomplete: bool = True,
     flag_keep_conflicts: bool = True,
@@ -506,6 +524,8 @@ def plan_series_prune(
     progress_plays_unreadable = keep_in_progress and progress_unreadable
     # And the third, on the same switch for the same reason.
     progress_season_unmatched = keep_in_progress and progress_seasons_unmatched
+    # The fourth, same switch again.
+    progress_show_unbound = keep_in_progress and progress_show_unmatched
     total_ranked = len(ranks)
 
     real_numbers = [s.season_number for s in on_disk if s.season_number != SPECIALS_SEASON]
@@ -531,6 +551,7 @@ def plan_series_prune(
             progress_unestablished=progress_unestablished,
             progress_plays_unreadable=progress_plays_unreadable,
             progress_season_unmatched=progress_season_unmatched,
+            progress_show_unbound=progress_show_unbound,
         )
         if reason is None:
             prunable.append(n)
@@ -578,6 +599,7 @@ def _protection_reason(
     progress_unestablished: bool = False,
     progress_plays_unreadable: bool = False,
     progress_season_unmatched: bool = False,
+    progress_show_unbound: bool = False,
 ) -> str | None:
     """Why this season is kept, or ``None`` if it may be pruned.
 
@@ -625,17 +647,31 @@ def _protection_reason(
         return "a viewer is part-way through the show"
     # Last, so a season we can actually name a viewer for gets that sharper reason instead.
     # These are the honest sentences for the rest: the mid-binge guard was asked a question the
-    # watch history cannot answer, and "we could not tell" holds the season. Widest failure
-    # first, since that is the one whose remedy fixes the others as a side effect: a mirror too
-    # short to span the hold is the operator's own setting, an unreadable play is repaired at
-    # the source, and an unmatched season is the narrowest -- it names one season to go look at.
+    # watch history cannot answer, and "we could not tell" holds the season.
+    #
+    # Widest failure first, since that is the one whose remedy fixes the others as a side
+    # effect: a mirror too short to span the hold is the operator's own setting, an unreadable
+    # play is repaired at the source, and an unmatched season is the narrowest -- it names one
+    # season to go look at.
+    #
+    # `progress_show_unbound` re-words whichever of the three fired; it never fires alone.
+    # A show with no rating key anywhere is standing at a wall behind all three -- no depth of
+    # mirror, no repair, no per-season match can read a place in a show that has no address --
+    # so it is the sentence to say (#489). But saying it is ALL it does: making it hold on its
+    # own would move every unmatched show out of the review queue's abstain lane and onto the
+    # Protected page, which is the UX trade #486 declined and
+    # `test_a_show_plex_never_matched_at_all_is_left_alone` pins. The seasons here are already
+    # held by the cause that fired, and already abstain on their own Unknown facts otherwise.
+    held_by = progress_unestablished or progress_plays_unreadable or progress_season_unmatched
+    if not held_by:
+        return None
+    if progress_show_unbound:
+        return PROGRESS_SHOW_UNMATCHED_REASON
     if progress_unestablished:
         return PROGRESS_UNESTABLISHABLE_REASON
     if progress_plays_unreadable:
         return PROGRESS_UNREADABLE_REASON
-    if progress_season_unmatched:
-        return PROGRESS_UNMATCHED_REASON
-    return None
+    return PROGRESS_UNMATCHED_REASON
 
 
 def _detect_conflicts(

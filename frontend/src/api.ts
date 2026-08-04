@@ -616,11 +616,18 @@ export interface GateCount {
   count: number;
 }
 
+/** Why the simulator would not answer. Mirrors `api.schemas.SimStale`, and the panel
+ *  branches on it for the heading; an id this build does not know falls back to
+ *  `stale_reason`, which is the same fact as a sentence and always populated. */
+export type SimStale = "gathers_differently" | "seasons_not_recorded" | "in_progress_not_read";
+
 export interface Simulation {
   /** Whether these numbers actually answer the question that was asked. False when the
    *  candidate policy changed a weight or a gate, in which case the stored scores were
    *  produced by a different policy and every count below is zeroed. */
   exact: boolean;
+  /** Which refusal this is. Null exactly when `exact`. */
+  stale_kind: SimStale | null;
   stale_reason: string | null;
   condemned: number;
   protected: number;
@@ -630,6 +637,18 @@ export interface Simulation {
   unknown_size_items: number;
   newly_condemned: number;
   no_longer_condemned: number;
+  /** How many titles the LAST SCAN flags -- the stored verdicts with overrides applied, which
+   *  is what the panel's compare line names. Not the saved policy: saving starts a scan rather
+   *  than being one, so the two differ until it finishes and keep differing if it fails. The
+   *  panel used to reconstruct this from the two deltas above, which is sound only while both
+   *  count every way into and out of the removal list -- and it printed the draft's own count
+   *  on both sides of the compare line the moment `no_longer_condemned` missed condemn ->
+   *  protect. The server counts it per row regardless. */
+  condemned_before: number;
+  /** Titles this draft puts in a different lane than the one they are in now. A superset of
+   *  the two deltas above, which cannot see a protection edit moving a title between spared
+   *  and not judged -- the move that made a working panel read as a broken one (#488). */
+  changed_titles: number;
   histogram: number[];
   /** Populated only when exact; empty on a stale refusal, like every count above. */
   examples_newly_condemned: SimExample[];

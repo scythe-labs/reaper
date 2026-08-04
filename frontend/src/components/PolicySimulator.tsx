@@ -9,7 +9,7 @@
 // is the most important behavior on the page.
 
 import type { RefObject } from "react";
-import type { ProfileSettings, Simulation } from "../api";
+import type { ProfileSettings, SimStale, Simulation } from "../api";
 import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
 import { GATE_META, titleCase } from "./policyMeta";
@@ -59,6 +59,36 @@ export const RESCAN_HEADING = "Rescanning to apply your changes";
 export const RESCAN_QUEUED_LEAD =
   "A scan was already running, so your changes go into a second scan that starts right after it.";
 
+/** What saving does, and the one thing the counts beside it cannot show: they describe a
+ *  draft, and nothing on the server moves until a scan re-scores the library under it.
+ *  `PolicyEditor`'s save mutation starts that scan itself.
+ *
+ *  One string, rendered here and in the savebar, because the two surfaces answer the same
+ *  question and an operator reads them in either order (rule 144). It used to be the
+ *  savebar's alone, which is the bar at the bottom of the LEFT column -- so an operator
+ *  watching this panel's numbers move had nowhere on it to learn that the list they review
+ *  had not moved with them. The refusal notice below carries the same news for the edits
+ *  that cannot preview; this is the sentence for the ones that can. */
+export const APPLIES_ON_NEXT_SCAN =
+  "Policy changes apply on the next scan, which starts by itself after saving.";
+
+/** The heading for each refusal, keyed by what the server said the refusal was.
+ *
+ *  A heading only. The paragraph under it is the server's own `stale_reason`, so the
+ *  sentence the operator reads and the sentence a reviewer reads are one string
+ *  (`api/routes.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
+ *  was the only one anybody ever saw. An id this build does not know keeps the general
+ *  heading and still renders that sentence, which is rule 66's "fallback handles unknown
+ *  ids only": the server is always able to say what happened, even to an older browser. */
+const STALE_HEADINGS: Record<SimStale, string> = {
+  gathers_differently: "Needs a fresh scan",
+  seasons_not_recorded: "Your season rules need a fresh scan",
+  // Names the control, never the cause: the episode map is also missing after a scan that
+  // ran WITH the hold on and got no answer from Sonarr, and "turning that on" told that
+  // operator they had done something they had not.
+  in_progress_not_read: "Your partway-through rule needs a fresh scan",
+};
+
 /** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
  *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
  *  you the one button that fixes it. A start that fails says so right here, or the button
@@ -71,6 +101,8 @@ export function StaleNotice({
   onScan,
   percent,
   detail,
+  staleKind,
+  staleReason,
 }: {
   scanning: boolean;
   /** A scan was already running when the rescan was requested, so a second one starts
@@ -82,6 +114,11 @@ export function StaleNotice({
   onScan: () => void;
   percent: number;
   detail: string;
+  /** Which refusal this is, from the server. Null on a snapshot answered by an older build
+   *  that did not send one, which lands on the general heading. */
+  staleKind: SimStale | null;
+  /** The server's sentence for that refusal. The only copy of it. */
+  staleReason: string | null;
 }) {
   // "Scan now" replaces its own branch with the progress bar, and it is `disabled` from the press,
   // so focus is at `<body>` before the swap. Nothing focusable mounts in its place in ANY state of
@@ -92,7 +129,9 @@ export function StaleNotice({
   return (
     <div className="sim sim-info">
       <h3 ref={afterStart.ref as RefObject<HTMLHeadingElement>} tabIndex={-1}>
-        {scanning ? RESCAN_HEADING : "Needs a fresh scan"}
+        {scanning
+          ? RESCAN_HEADING
+          : ((staleKind && STALE_HEADINGS[staleKind]) ?? STALE_HEADINGS.gathers_differently)}
       </h3>
       {scanning ? (
         <>
@@ -120,19 +159,18 @@ export function StaleNotice({
         </>
       ) : (
         <>
-          {/* States the condition, never who caused it. This used to open "You changed what
-              the scan reads" at operators who had changed nothing: any upgrade adding a field
+          {/* The server's sentence, rendered rather than restated. It states the condition
+              and never who caused it: this notice used to open "You changed what the scan
+              reads" at operators who had changed nothing, because any upgrade adding a field
               to the hashed body leaves the recorded hash unmatchable until the next scan.
-              True for a real edit and for an upgrade alike.
 
-              The list no longer opens on "a protection", because switching one on or off is
-              previewed now (engine/policy.py's evidence_hash). What is left is the three
-              edits that really do change what a scan reads, and the backend says the same
-              three in the same order (api/routes.py's stale_reason, rule 144). */}
-          <p>
-            This policy doesn't match the last scan: a keep tag, a season rule, or how far back
-            watching counts reads differently now. Scan to apply it.
-          </p>
+              It used to be a hardcoded paragraph here that named a keep tag, a season rule
+              and the watch span all at once, beside a second copy in api/routes.py that
+              nothing ever rendered. Three refusals now, each with its own remedy, and only
+              one of them is still about a keep tag -- a season rule previews. Keeping that as
+              two hand-synced copies would have meant the reviewed sentence and the read
+              sentence being different strings again (rule 144). */}
+          <p>{staleReason ?? "This policy doesn't match the last scan. Scan to apply it."}</p>
           <button
             className="primary sm"
             onClick={() => {
@@ -154,15 +192,21 @@ export function Outcome({
   simulation,
   threshold,
   pace,
+  edited,
 }: {
   simulation: Simulation;
   threshold: number;
   pace: ProfileSettings | null;
+  /** Whether the draft these numbers describe differs from the saved policy. The panel
+   *  simulates on mount, before anything has been touched, so this is what separates "your
+   *  edit changed no title" from "you changed nothing".
+   *
+   *  False while the answer on screen is a previous draft's. `PolicyEditor` keeps the last
+   *  result rendered across a refetch, so "is this an edit" and "what did that edit do" can
+   *  describe two different bodies for a round trip, and the sentence below is categorical
+   *  enough that the mismatch reads as a finding rather than as a stale number (rule 85). */
+  edited: boolean;
 }) {
-  // The saved policy's count is derivable: what this draft flags, minus what only this
-  // draft flags, plus what only the saved one flags.
-  const savedFlags =
-    simulation.condemned - simulation.newly_condemned + simulation.no_longer_condemned;
   const moreExamples = simulation.newly_condemned - simulation.examples_newly_condemned.length;
 
   return (
@@ -180,10 +224,30 @@ export function Outcome({
         </div>
       </div>
 
-      <p className="sim-compare">
-        Your saved policy flags <strong>{count(savedFlags)}</strong>. This draft flags{" "}
-        <strong>{count(simulation.condemned)}</strong>.
-      </p>
+      {/* The comparison needs a draft to compare, so it renders only once there is one: with
+          nothing edited it put the same number on both sides of a sentence built to contrast
+          them, and the headline above already answers the untouched case on its own. On an
+          inert edit the sentence IS the finding, which is why that branch stays. A `Notice`
+          would be the wrong shape -- `NoticeTone` is error/warn and the component treats tone
+          as a claim about severity, which this is not. */}
+      {edited && (
+        <>
+          {simulation.changed_titles === 0 ? (
+            <p className="sim-compare sim-inert">Your changes leave every title as it is.</p>
+          ) : (
+            <p className="sim-compare">
+              Your last scan flags <strong>{count(simulation.condemned_before)}</strong>. This draft
+              flags <strong>{count(simulation.condemned)}</strong>.
+            </p>
+          )}
+          {/* Under the same `edited` gate as the line above, and for the same reason: with
+              nothing edited there is no save to describe, and an unprompted "a scan will
+              start" beside numbers already drawn from the last one reads as a demand. It
+              belongs on BOTH branches -- an inert edit saves and scans exactly like any
+              other, and that operator has the most reason to wonder why a scan began. */}
+          <p className="help">{APPLIES_ON_NEXT_SCAN}</p>
+        </>
+      )}
 
       <Histogram buckets={simulation.histogram} threshold={threshold} />
       <p className="help">
@@ -205,7 +269,7 @@ export function Outcome({
             ))}
             {moreExamples > 0 && (
               <li className="muted">
-                …and {count(moreExamples)} more that your saved policy left alone
+                …and {count(moreExamples)} more that your last scan left alone
               </li>
             )}
           </ul>
@@ -227,6 +291,15 @@ export function Outcome({
       )}
 
       <dl className="sim-delta">
+        {/* First, because it is the only row that summarizes the other four. The two deltas
+            below count what enters and leaves the removal list, and the two after them are
+            absolute counts with no before to read them against, so a protection edit that
+            moved a sixth of the spared set into "not judged" left every number on this panel
+            holding still (#488). */}
+        <div className="sim-changed">
+          <dt>Titles that change</dt>
+          <dd>{count(simulation.changed_titles)}</dd>
+        </div>
         <div>
           <dt>Newly condemned</dt>
           <dd className={simulation.newly_condemned > 0 ? "danger" : ""}>
