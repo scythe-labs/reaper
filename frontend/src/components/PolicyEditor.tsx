@@ -1337,7 +1337,11 @@ export function PolicyEditor({
     return () => clearTimeout(id);
   }, [draft, draftedUnmeasured]);
 
-  const { data: simulation, error: simError } = useQuery({
+  const {
+    data: simulation,
+    error: simError,
+    isPlaceholderData,
+  } = useQuery({
     queryKey: ["simulate", debounced],
     queryFn: () => api.simulate(debounced!),
     enabled: debounced !== null,
@@ -1349,12 +1353,12 @@ export function PolicyEditor({
   // inert edit from their untouched policy -- and the second reading would be the panel calling
   // a rule useless on the evidence of nobody having tried it yet.
   //
-  // Against `debounced` rather than `draft`, because that is the body the counts came from: on
-  // `draft` the sentence would lead its own figures by the debounce and change under a
-  // keystroke that had not been simulated. Raw JSON.stringify compares canonical forms for the
-  // same reason `dirty` below may (rule 39): the draft is re-seeded from the server's own
-  // response after each save. `dirty`'s forced flags are deliberately absent -- `needs_save`
-  // and `fell_back` are reasons to show a savebar, never evidence a rule was changed.
+  // Against `debounced` rather than `draft`, so the sentence cannot lead its own figures by the
+  // debounce and flip under a keystroke nothing has simulated yet. Raw JSON.stringify compares
+  // canonical forms for the same reason `dirty` below may (rule 39): the draft is re-seeded from
+  // the server's own response after each save. `dirty`'s forced flags are deliberately absent --
+  // `needs_save` and `fell_back` are reasons to show a savebar, never evidence a rule was
+  // changed.
   const simulatedIsEdited = useMemo(
     () =>
       debounced !== null &&
@@ -1362,6 +1366,16 @@ export function PolicyEditor({
       JSON.stringify(debounced) !== JSON.stringify(saved.body),
     [debounced, saved],
   );
+
+  // `debounced` is the body the REQUEST was made from, which is not the body the numbers on
+  // screen came from: `keepPreviousData` keeps the previous answer rendered, `status` reads
+  // "success" throughout, and this memo recomputes in the same commit the query key changes.
+  // So for one round trip -- 305 to 366 ms measured, and `docs/LEARNINGS.md` projects seconds
+  // on a large library -- `edited` described the new draft while `simulation` still answered
+  // the old one. The untouched policy always returns `changed_titles === 0`, so the FIRST edit
+  // of a session met "Your changes leave every title as it is." before anything had scored it.
+  // Rule 85: the claim waits for the answer it is about.
+  const simulationIsSettled = !isPlaceholderData;
 
   // validatePolicy 422s when the policy is *provably* invalid (e.g. a dormancy floor under
   // 5 days); that error is what "you can't save this" means, and it is shown near the controls,
@@ -2119,6 +2133,7 @@ export function PolicyEditor({
                     value={draft.keep_last_seasons}
                     suffix={draft.keep_last_seasons === 1 ? "season" : "seasons"}
                     min={0}
+                    max={1000}
                     width="narrow"
                     ariaLabel="Newest seasons to always keep"
                     // This anchor's block serves two controls, so each takes only the warnings
@@ -2195,6 +2210,10 @@ export function PolicyEditor({
                         value={draft.in_progress_hold_days}
                         suffix="days"
                         min={0}
+                        // Matches `PolicyIn`'s ceiling, so the box clamps instead of the
+                        // save coming back 422 (rule 131). Far past any watch history: 0
+                        // is what "hold forever" is spelled as.
+                        max={36500}
                         width="narrow"
                         ariaLabel="Days without watching before a held place is released"
                         // One anchor, one field, one box: this is the control the warning's
@@ -2217,6 +2236,7 @@ export function PolicyEditor({
                         value={draft.season_lookahead}
                         suffix={draft.season_lookahead === 1 ? "season" : "seasons"}
                         min={0}
+                        max={1000}
                         width="narrow"
                         ariaLabel="Seasons to keep ahead of a mid-binge viewer"
                         onChange={(v) => update({ season_lookahead: Math.max(0, v) })}
@@ -2630,7 +2650,7 @@ export function PolicyEditor({
               simulation={simulation}
               threshold={draft.condemn_at}
               pace={pace}
-              edited={simulatedIsEdited}
+              edited={simulatedIsEdited && simulationIsSettled}
             />
           ) : (
             <StaleNotice

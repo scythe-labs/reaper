@@ -637,10 +637,13 @@ export interface Simulation {
   unknown_size_items: number;
   newly_condemned: number;
   no_longer_condemned: number;
-  /** How many titles the SAVED policy flags. The panel used to reconstruct this from the two
-   *  deltas above, which is sound only while both count every way into and out of the removal
-   *  list -- and it printed the draft's own count on both sides of the compare line the moment
-   *  `no_longer_condemned` missed condemn -> protect. The server counts it per row regardless. */
+  /** How many titles the LAST SCAN flags -- the stored verdicts with overrides applied, which
+   *  is what the panel's compare line names. Not the saved policy: saving starts a scan rather
+   *  than being one, so the two differ until it finishes and keep differing if it fails. The
+   *  panel used to reconstruct this from the two deltas above, which is sound only while both
+   *  count every way into and out of the removal list -- and it printed the draft's own count
+   *  on both sides of the compare line the moment `no_longer_condemned` missed condemn ->
+   *  protect. The server counts it per row regardless. */
   condemned_before: number;
   /** Titles this draft puts in a different lane than the one they are in now. A superset of
    *  the two deltas above, which cannot see a protection edit moving a title between spared

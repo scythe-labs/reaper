@@ -186,9 +186,12 @@ export function Outcome({
   pace: ProfileSettings | null;
   /** Whether the draft these numbers describe differs from the saved policy. The panel
    *  simulates on mount, before anything has been touched, so this is what separates "your
-   *  edit changed no title" from "you changed nothing" -- and it is computed against the
-   *  DEBOUNCED draft the numbers came from, or the sentence would lead its own figures by
-   *  250 ms and flicker on every keystroke. */
+   *  edit changed no title" from "you changed nothing".
+   *
+   *  False while the answer on screen is a previous draft's. `PolicyEditor` keeps the last
+   *  result rendered across a refetch, so "is this an edit" and "what did that edit do" can
+   *  describe two different bodies for a round trip, and the sentence below is categorical
+   *  enough that the mismatch reads as a finding rather than as a stale number (rule 85). */
   edited: boolean;
 }) {
   const moreExamples = simulation.newly_condemned - simulation.examples_newly_condemned.length;
@@ -219,8 +222,8 @@ export function Outcome({
           <p className="sim-compare sim-inert">Your changes leave every title as it is.</p>
         ) : (
           <p className="sim-compare">
-            Your saved policy flags <strong>{count(simulation.condemned_before)}</strong>. This
-            draft flags <strong>{count(simulation.condemned)}</strong>.
+            Your last scan flags <strong>{count(simulation.condemned_before)}</strong>. This draft
+            flags <strong>{count(simulation.condemned)}</strong>.
           </p>
         ))}
 
@@ -244,7 +247,7 @@ export function Outcome({
             ))}
             {moreExamples > 0 && (
               <li className="muted">
-                …and {count(moreExamples)} more that your saved policy left alone
+                …and {count(moreExamples)} more that your last scan left alone
               </li>
             )}
           </ul>

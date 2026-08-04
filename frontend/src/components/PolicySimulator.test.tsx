@@ -210,7 +210,7 @@ describe("the outcome panel on an edit that changes no title", () => {
     renderOutcome({ changed_titles: 0 }, true);
 
     expect(screen.getByText(INERT)).toBeInTheDocument();
-    // The line it replaces, which is the one that read as broken: "Your saved policy flags
+    // The line it replaces, which is the one that read as broken: "Your last scan flags
     // 412. This draft flags 412." is a sentence built to contrast two numbers that are equal.
     expect(screen.queryByText(/This draft flags/)).not.toBeInTheDocument();
   });
@@ -219,16 +219,16 @@ describe("the outcome panel on an edit that changes no title", () => {
     // The panel simulates on mount, before anything is touched. The inert sentence keyed on
     // the count alone would open by telling the operator their untouched policy does nothing;
     // the comparison keyed on nothing at all opened by contrasting a number with itself
-    // ("Your saved policy flags 412. This draft flags 412."). With no draft there is no
+    // ("Your last scan flags 412. This draft flags 412."). With no draft there is no
     // comparison to draw, and the headline above already says what the policy flags.
     renderOutcome({ changed_titles: 0 }, false);
 
     expect(screen.queryByText(INERT)).not.toBeInTheDocument();
     expect(screen.queryByText(/This draft flags/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Your saved policy flags/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your last scan flags/)).not.toBeInTheDocument();
   });
 
-  it("reads the saved policy's count off the server rather than off the two deltas", () => {
+  it("reads the last scan's count off the server rather than off the two deltas", () => {
     // The fixture is deliberately inconsistent: it is the payload the server sent while
     // `no_longer_condemned` was broken, where the old derivation
     // (condemned - newly + gone) collapsed to the draft's own 14 and printed it on both
@@ -239,7 +239,7 @@ describe("the outcome panel on an edit that changes no title", () => {
     );
 
     const line = screen.getByText(/This draft flags/);
-    expect(line).toHaveTextContent("Your saved policy flags 281. This draft flags 14.");
+    expect(line).toHaveTextContent("Your last scan flags 281. This draft flags 14.");
   });
 
   it("keeps the comparison when titles do move", () => {
