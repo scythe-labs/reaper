@@ -176,6 +176,12 @@
    summarizes and leaves a hole in the last cell. */
 .sim-delta .sim-changed {
   grid-column: 1 / -1;
+  /* Packed, not spread. The four rows below inherit `space-between` and read fine because a
+     column is narrow; across both columns it parks the count a whole panel-width from the
+     label it belongs to, and the one row meant to be read at a glance is the one that makes
+     you scan for its number. */
+  justify-content: start;
+  gap: var(--space-md);
 }
 .sim-delta .sim-changed dt {
   color: var(--text);
