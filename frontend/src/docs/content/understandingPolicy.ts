@@ -76,8 +76,13 @@ export const understandingPolicy: Doc = {
     ]),
 
     h2("What's in a policy", "in-a-policy"),
+    // "which starts by itself" is the same fact as `APPLIES_ON_NEXT_SCAN`
+    // (components/PolicySimulator.tsx), the sentence the savebar and the simulator both show.
+    // Kept as its own wording because this paragraph names which controls sit in that half,
+    // and left saying only "take effect on the next scan" it read as a chore the operator has
+    // to remember to start (rule 144).
     p(
-      "A policy has two halves. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan. The limits on how much one run may remove, and how long a title shows as leaving (caps and grace), take effect immediately. Movies and TV are two separate policies, tuned on their own.",
+      "A policy has two halves. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan, which starts by itself when you save. The limits on how much one run may remove, and how long a title shows as leaving (caps and grace), take effect immediately. Movies and TV are two separate policies, tuned on their own.",
     ),
 
     h3("Your starting point", "starting-point"),

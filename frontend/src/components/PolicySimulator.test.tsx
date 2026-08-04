@@ -14,7 +14,13 @@ import { describe, expect, it } from "vitest";
 
 import type { Simulation } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
+import {
+  APPLIES_ON_NEXT_SCAN,
+  Outcome,
+  RESCAN_HEADING,
+  RESCAN_QUEUED_LEAD,
+  StaleNotice,
+} from "./PolicySimulator";
 
 function renderNotice(props: Partial<Parameters<typeof StaleNotice>[0]> = {}) {
   return render(
@@ -149,11 +155,17 @@ describe("who is allowed to write the rescan sentences", () => {
     const panel = read("PolicySimulator.tsx");
     expect(panel).toContain(`export const RESCAN_HEADING = "${RESCAN_HEADING}"`);
     expect(panel).toContain(`"${RESCAN_QUEUED_LEAD}"`);
+    // The savebar's sentence, now that this panel shows it too. The savebar is at the foot of
+    // the left column and this panel is the right one, so a reword reaching only one of them
+    // leaves two answers to "when does this take effect" on one screen.
+    expect(panel).toContain("export const APPLIES_ON_NEXT_SCAN");
+    expect(panel).toContain(`"${APPLIES_ON_NEXT_SCAN}"`);
 
     const editor = read("PolicyEditor.tsx");
     for (const [name, sentence] of [
       ["RESCAN_HEADING", RESCAN_HEADING],
       ["RESCAN_QUEUED_LEAD", RESCAN_QUEUED_LEAD],
+      ["APPLIES_ON_NEXT_SCAN", APPLIES_ON_NEXT_SCAN],
     ] as const) {
       expect(
         editor.includes(sentence),
@@ -163,6 +175,7 @@ describe("who is allowed to write the rescan sentences", () => {
       ).toBe(false);
     }
     expect(editor).toContain("RESCAN_QUEUED_LEAD");
+    expect(editor).toContain("APPLIES_ON_NEXT_SCAN");
   });
 });
 
@@ -226,6 +239,22 @@ describe("the outcome panel on an edit that changes no title", () => {
     expect(screen.queryByText(INERT)).not.toBeInTheDocument();
     expect(screen.queryByText(/This draft flags/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Your last scan flags/)).not.toBeInTheDocument();
+    // And says nothing about a scan either, for the same reason: there is no save pending
+    // for one to follow, and these numbers already describe the scan that has run.
+    expect(screen.queryByText(APPLIES_ON_NEXT_SCAN)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["a draft that moves titles", 65],
+    ["a draft that moves none", 0],
+  ])("says a scan applies it, on %s", (_case, changed_titles) => {
+    // The panel previews a keep rule exactly, off frozen evidence, so it answers instead of
+    // asking for a scan -- and an operator who watched these numbers move had nothing here
+    // telling them the list they review had not moved with them until a scan re-scored it.
+    // Both branches, because an inert edit still saves and still starts a scan (rule 118).
+    renderOutcome({ changed_titles }, true);
+
+    expect(screen.getByText(APPLIES_ON_NEXT_SCAN)).toBeInTheDocument();
   });
 
   it("reads the last scan's count off the server rather than off the two deltas", () => {

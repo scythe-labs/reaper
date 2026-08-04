@@ -59,6 +59,19 @@ export const RESCAN_HEADING = "Rescanning to apply your changes";
 export const RESCAN_QUEUED_LEAD =
   "A scan was already running, so your changes go into a second scan that starts right after it.";
 
+/** What saving does, and the one thing the counts beside it cannot show: they describe a
+ *  draft, and nothing on the server moves until a scan re-scores the library under it.
+ *  `PolicyEditor`'s save mutation starts that scan itself.
+ *
+ *  One string, rendered here and in the savebar, because the two surfaces answer the same
+ *  question and an operator reads them in either order (rule 144). It used to be the
+ *  savebar's alone, which is the bar at the bottom of the LEFT column -- so an operator
+ *  watching this panel's numbers move had nowhere on it to learn that the list they review
+ *  had not moved with them. The refusal notice below carries the same news for the edits
+ *  that cannot preview; this is the sentence for the ones that can. */
+export const APPLIES_ON_NEXT_SCAN =
+  "Policy changes apply on the next scan, which starts by itself after saving.";
+
 /** The heading for each refusal, keyed by what the server said the refusal was.
  *
  *  A heading only. The paragraph under it is the server's own `stale_reason`, so the
@@ -217,15 +230,24 @@ export function Outcome({
           inert edit the sentence IS the finding, which is why that branch stays. A `Notice`
           would be the wrong shape -- `NoticeTone` is error/warn and the component treats tone
           as a claim about severity, which this is not. */}
-      {edited &&
-        (simulation.changed_titles === 0 ? (
-          <p className="sim-compare sim-inert">Your changes leave every title as it is.</p>
-        ) : (
-          <p className="sim-compare">
-            Your last scan flags <strong>{count(simulation.condemned_before)}</strong>. This draft
-            flags <strong>{count(simulation.condemned)}</strong>.
-          </p>
-        ))}
+      {edited && (
+        <>
+          {simulation.changed_titles === 0 ? (
+            <p className="sim-compare sim-inert">Your changes leave every title as it is.</p>
+          ) : (
+            <p className="sim-compare">
+              Your last scan flags <strong>{count(simulation.condemned_before)}</strong>. This draft
+              flags <strong>{count(simulation.condemned)}</strong>.
+            </p>
+          )}
+          {/* Under the same `edited` gate as the line above, and for the same reason: with
+              nothing edited there is no save to describe, and an unprompted "a scan will
+              start" beside numbers already drawn from the last one reads as a demand. It
+              belongs on BOTH branches -- an inert edit saves and scans exactly like any
+              other, and that operator has the most reason to wonder why a scan began. */}
+          <p className="help">{APPLIES_ON_NEXT_SCAN}</p>
+        </>
+      )}
 
       <Histogram buckets={simulation.histogram} threshold={threshold} />
       <p className="help">

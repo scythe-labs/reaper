@@ -63,7 +63,13 @@ import {
   type PresetCaps,
   type PresetId,
 } from "./policyPresets";
-import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
+import {
+  APPLIES_ON_NEXT_SCAN,
+  Outcome,
+  RESCAN_HEADING,
+  RESCAN_QUEUED_LEAD,
+  StaleNotice,
+} from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
@@ -2555,9 +2561,9 @@ export function PolicyEditor({
               {/* What Save will ACTUALLY write, not what is merely dirty: a held-back policy
                   half must not be described as applying on the next scan (PR-7). */}
               {willSavePolicy && willSavePace
-                ? "Policy changes apply on the next scan, which starts by itself after saving. Pace applies immediately."
+                ? `${APPLIES_ON_NEXT_SCAN} Pace applies immediately.`
                 : willSavePolicy
-                  ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. It applies on the next scan, which starts by itself after saving.`
+                  ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. ${APPLIES_ON_NEXT_SCAN}`
                   : willSavePace
                     ? "Pace applies immediately. Changing a limit never affects a run you've already approved."
                     : null}
