@@ -2,8 +2,8 @@
  *
  * The active-filter chips, the filter bar, and the two popovers they open. One piece of Reaper's stylesheet: `../index.css` holds the design charter and
  * the load order, and that order is load-bearing (see the ordering notes in this file). */
-/* Active review-queue filters, one removable chip each -- the .tag-chip shape in the
-   accent tone, so a stacked combination reads at a glance above the list. */
+/* Active review-queue filters, one removable chip each -- the .tag-chip shape (34-lists.css) in
+   the accent tone, so a stacked combination reads at a glance above the list. */
 .active-filters {
   display: flex;
   flex-wrap: wrap;
@@ -22,7 +22,7 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-semi);
 }
-/* Same --tap-min sizing as .tag-chip, the shape this one borrows. */
+/* Same --tap-min sizing as .tag-chip (34-lists.css), the shape this one borrows. */
 .filter-chip button {
   display: inline-flex;
   align-items: center;

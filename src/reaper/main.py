@@ -30,6 +30,7 @@ from reaper.api.backup import router as backup_router
 from reaper.api.breakdown import router as breakdown_router
 from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
+from reaper.api.lists import router as lists_router
 from reaper.api.logs import router as logs_router
 from reaper.api.middleware import (
     CSRF_HEADER,
@@ -351,6 +352,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.data_dir,
         session_factory=factory,
         secret_box=box,
+        settings=settings,
         # The app's own checker, so the nightly check and the About route share one cache.
         update_checker=app.state.update_checker,
         timezone=scheduler_tz,
@@ -396,6 +398,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 data_dir=settings.data_dir,
                 session_factory=factory,
                 secret_box=box,
+                settings=settings,
                 update_checker=app.state.update_checker,
                 timezone=scheduler_tz,
             )
@@ -749,6 +752,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(breakdown_router)
     app.include_router(plex_trash_router)
     app.include_router(leaving_soon_router)
+    app.include_router(lists_router)
     app.include_router(logs_router)
 
     # The gate. Every /api route above requires a session and passes a CSRF check,

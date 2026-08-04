@@ -62,7 +62,9 @@ export const WORDMARK = {
 
 /** Protections that were evaluated and did NOT hold the file, which is the block the app is
  *  built around and the one no comparable tool shows. Rows 1 and 2 are the active-session and
- *  protected-list gates, row 3 the dormancy floor, the only one of the three carrying numbers.
+ *  popularity gates, row 3 the dormancy floor. (Row 2 quoted the protected-list gate until
+ *  that gate retired: lists protect through the operator's own keep rules now, whose copy is
+ *  per-rule and not a gate sentence this card can quote.)
  *
  *  `source` is the literal each row is quoted from in engine/gates.py, and socialCard.test.ts
  *  reads that file and fails naming any row it can no longer find. Rule 144: a claim about what
@@ -70,7 +72,11 @@ export const WORDMARK = {
  *  flattering direction. `lines` is where it wraps, since SVG will not wrap it. */
 export const CLEARED_ROWS: readonly { lines: readonly string[]; source: string }[] = [
   { lines: ["Nobody is watching it right now."], source: "Nobody is watching it right now." },
-  { lines: ["Not on any protected list."], source: "Not on any protected list." },
+  {
+    // "year" is the shipped window, filled into the gate's f-string; the head is the literal.
+    lines: ["Nobody here watched it in the last year."],
+    source: "Nobody here watched it in the last",
+  },
   {
     lines: ["Untouched for 5 years, 7 months, past the 3 years it", "has to sit unwatched first."],
     // Built from an f-string spanning two source lines, so only this tail is a literal there.

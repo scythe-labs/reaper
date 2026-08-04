@@ -240,11 +240,11 @@ class TestTheRampReachesTheWire:
         # It matched or it did not; it cannot land part-way, so there is no line to state
         # and inventing one would draw a ramp the rule does not have.
         boolean = CustomSignalConfig(
-            name="on a list",
+            name="the show ended",
             weight=100,
             kind="boolean",
-            field="on_curated_list",
-            condition=Condition(field="on_curated_list", op=Op.EQ, value=True),
+            field="show_ended",
+            condition=Condition(field="show_ended", op=Op.EQ, value=True),
         )
         item = score([], _facts(), custom_condemn=[boolean])
         row = json.loads(_explain(EVALUATION, item, _policy()))["signals"][0]

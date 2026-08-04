@@ -170,6 +170,10 @@ class KeepConfig:
     floor: int
     saturate_at: int
     direction: Literal["high_keeps", "low_keeps"] = "high_keeps"
+    value: str | None = None
+    """For a membership field (``on_list``): which list, by name. The keep is then FLAT --
+    on the list takes the full discount, off it none, and a membership that could not be
+    read takes the full one, the same fail-closed arm every keep has. ``None`` ramps."""
 
     @property
     def enabled(self) -> bool:
@@ -626,6 +630,33 @@ def evaluate_keep(
     spec = fields.BY_KEY.get(config.field)
     label = spec.label if spec is not None else config.field
     observation = spec.read(facts) if spec is not None else None
+
+    if config.value is not None:
+        # The membership form: flat, per the spec (GradedKeepSpec.value). Both sides of the
+        # name match are case-folded (rule 88), and the fact is the multi convention's
+        # comma-joined list, split the way `fields.evaluate` splits it.
+        wanted = config.value.strip().casefold()
+        if isinstance(observation, Known) and isinstance(observation.value, str):
+            names = {part.strip().casefold() for part in observation.value.split(",")}
+            on_it = wanted in names
+            return KeepResult(
+                config.name,
+                float(config.max_discount) if on_it else 0.0,
+                config.max_discount,
+                f'on your list "{config.value}"' if on_it else f'not on your list "{config.value}"',
+                True,
+            )
+        if isinstance(observation, Absent):
+            return KeepResult(config.name, 0.0, config.max_discount, "on none of your lists", True)
+        # Unknown: the membership could not be read, so the full discount, fail-closed.
+        return KeepResult(
+            config.name,
+            float(config.max_discount),
+            config.max_discount,
+            "kept fully: could not check your lists",
+            evaluated=False,
+        )
+
     raw = (
         float(observation.value)
         if isinstance(observation, Known) and isinstance(observation.value, int | float)

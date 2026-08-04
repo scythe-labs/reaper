@@ -22,15 +22,21 @@ that carry no usable id (rule 90).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clients.base import IntegrationError
 from reaper.config import Settings
 from reaper.db.session import create_engine
+from reaper.engine.fields import Condition, CustomProtectGate, Op
+from reaper.engine.gates import PROTECT
+from reaper.engine.observation import Absent, Known
+from reaper.engine.policy import DEFAULT_TAG_LIST_NAME
 from reaper.services.lists import (
     ArrTagRule,
     ContainerMissingError,
@@ -38,9 +44,11 @@ from reaper.services.lists import (
     PlexCollection,
     configured,
     load_membership_index,
+    on_list_fact,
     sync,
 )
 from reaper.services.snapshot import protection_sync_degradations
+from tests.test_engine_invariants import _ALL_READABLE
 
 
 @pytest.fixture
@@ -180,9 +188,9 @@ class TestEveryConfiguredKeepTagMustResolve:
         with pytest.raises(IntegrationError):
             await sync(engine, rule, kind=ListKind.WHITELIST)
 
-        row = next(r for r in await configured(engine) if r["slug"] == rule.slug)
-        assert row["last_error"]
-        assert row["last_synced_at"] is None
+        row = next(r for r in await configured(engine) if r.slug == rule.slug)
+        assert row.last_error
+        assert row.last_synced_at is None
         reasons = await protection_sync_degradations(engine, {rule.slug: "error: partial"})
         assert reasons  # a scan holding this may not delete anything
 
@@ -240,3 +248,134 @@ class TestEveryConfiguredKeepTagMustResolve:
 
         with pytest.raises(ContainerMissingError):
             await rule.fetch()
+
+
+class TestTheNameAKeepRuleMatches:
+    """A list protects through a keep rule naming it, so the name the scan compares against
+    has to be the one the operator typed on Settings -> Lists.
+
+    A tag list is one stored row per *arr instance and its DISPLAY name says which ("Keepers
+    (4k)"), while the rule stores "Keepers" once. ``on_list`` matches per element and
+    exactly, so building the fact from display names matched nothing: every tag list on a
+    named instance protected nothing while the Lists screen reported it healthy (#507). Every
+    *arr instance carries a name, so that was every tag list, including the one a fresh
+    install ships.
+
+    Driven through the real ``sync`` and ``load_membership_index`` and evaluated by the real
+    gate, because each half looked correct alone -- the row stored what it displayed, and the
+    matcher matched what it was given.
+    """
+
+    @staticmethod
+    def _sonarr() -> _FakeSonarr:
+        return _FakeSonarr(
+            [{"id": 1, "label": "reaper-keep"}],
+            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        )
+
+    @staticmethod
+    def _gate(names: str) -> CustomProtectGate:
+        return CustomProtectGate(condition=Condition(field="on_list", op=Op.EQ, value=names))
+
+    @pytest.mark.parametrize("instance", ["4k", "HD", None])
+    async def test_the_shipped_keep_rule_fires_whatever_the_instance_is_called(
+        self, engine: AsyncEngine, instance: str | None
+    ) -> None:
+        """Swept over instance names because the bug was invisible at the one value a
+        fixture reaches for: an unnamed instance appends nothing and matched all along
+        (rule 141)."""
+        rule = ArrTagRule(
+            self._sonarr(),  # type: ignore[arg-type]
+            ("reaper-keep",),
+            "any",
+            instance_id=1,
+            instance_name=instance,
+            list_id=7,
+            list_name=DEFAULT_TAG_LIST_NAME,
+        )
+        await sync(engine, rule, kind=ListKind.WHITELIST)
+
+        index = await load_membership_index(engine)
+        found = index.lookup(media_type="tv", tvdb_id=10)
+        facts = replace(_ALL_READABLE, on_lists=on_list_fact(found))
+        result = self._gate(DEFAULT_TAG_LIST_NAME).evaluate(facts)
+
+        assert result.outcome == PROTECT
+        assert result.blocked is False
+
+    async def test_the_operator_still_sees_which_server_a_row_came_from(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The two names are kept apart rather than collapsed: the row still says which *arr
+        it is, which is what the Lists screen and the degraded-scan sentence name when one
+        instance's check fails."""
+        rule = ArrTagRule(
+            self._sonarr(),  # type: ignore[arg-type]
+            ("reaper-keep",),
+            "any",
+            instance_id=1,
+            instance_name="4k",
+            list_id=7,
+            list_name="Keepers",
+        )
+        await sync(engine, rule, kind=ListKind.WHITELIST)
+
+        row = next(r for r in await configured(engine) if r.slug == rule.slug)
+        stored = index_row = (await load_membership_index(engine)).lookup(
+            media_type="tv", tvdb_id=10
+        )[0]
+
+        assert row.display_name == "Keepers (4k)"
+        assert stored.display_name == "Keepers (4k)"
+        assert index_row.matched_by() == "Keepers"
+
+    async def test_one_list_across_four_servers_reads_as_one_name(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Four stored rows, one instruction. The fact says the list once, or a rule using
+        ``in`` against a list of names would see the same list four times."""
+        for instance_id, name in ((1, "HD"), (2, "4k"), (3, "kids"), (4, "anime")):
+            await sync(
+                engine,
+                ArrTagRule(
+                    self._sonarr(),  # type: ignore[arg-type]
+                    ("reaper-keep",),
+                    "any",
+                    instance_id=instance_id,
+                    instance_name=name,
+                    list_id=7,
+                    list_name="Keepers",
+                ),
+                kind=ListKind.WHITELIST,
+            )
+
+        found = (await load_membership_index(engine)).lookup(media_type="tv", tvdb_id=10)
+
+        assert len(found) == 4
+        assert on_list_fact(found) == Known(value="Keepers", source="lists")
+
+    async def test_a_row_stored_before_the_column_existed_keeps_its_old_spelling(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The widened database's fallback. A row synced by an older build has no stored
+        rule name, and reads as its display name -- which is exactly what it was matched by
+        then, so widening never withdraws a protection that was working."""
+        rule = ArrTagRule(
+            self._sonarr(),  # type: ignore[arg-type]
+            ("reaper-keep",),
+            "any",
+            list_id=7,
+            list_name="Keepers",
+        )
+        await sync(engine, rule, kind=ListKind.WHITELIST)
+        async with engine.begin() as conn:
+            await conn.execute(text("UPDATE protection_list SET rule_name = NULL"))
+
+        found = (await load_membership_index(engine)).lookup(media_type="tv", tvdb_id=10)
+
+        assert on_list_fact(found) == Known(value=rule.display_name, source="lists")
+
+    async def test_an_item_on_no_list_is_a_checked_miss_not_an_unreadable_one(self) -> None:
+        """Absent, never Unknown: the gate reports a checked miss rather than blocking, which
+        is the difference between "we looked" and "we could not look" (rule 93)."""
+        assert on_list_fact([]) == Absent(source="lists")

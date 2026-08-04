@@ -2377,8 +2377,22 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # have refreshed is still on screen (and its Seerr twin), and a Plex library list whose SYNC
 # failed -- three states that each used to render as a positive claim about a service or a
 # server nobody reached.
+# Then 136 -> 137: Settings -> Lists, whose unreadable answer is a positive claim about every
+# protection list at once if it stays silent (#475).
+# Then 137 -> 142, the rest of that screen: a check that would not run (on the row whose button
+# started it, rule 42), a Plex that could not be reached at all so no row can say why, a removal
+# that was refused, and the add/edit form's own save failure and its switched-off warning.
+# Then 141 -> 144, from that screen's UI review: a failed "Check all now", which on an install
+# with no migrated rows had no sink at all and went back to rest saying nothing; the Review
+# page's incomplete-scan line, which was a bare styled span so amber was its only severity
+# signal; and a retired protection still switched on, which refuses every scan while reading as
+# an ordinary healthy one.
+# Then 144 -> 143: the policy editor's three hand-written recovery notices became two renders
+# over `REPAIR_NOTICES`, one per placement, so a repair kind added later gets its sentence from
+# the map instead of a fourth copy of the same JSX (#516). The population shrank; the number of
+# notices an operator can see did not.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 136
+_EXPECTED_NOTICES = 143
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2478,6 +2492,13 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # already `standing` for that reason, and rule 72 for the two that were not.
 # Then 35: About's dev-build banner, a fact about the install that is true on first paint
 # and unchanged for the process's whole life.
+# Then 36: the Review page's incomplete-scan line, which became a `Notice` so its severity is
+# not amber alone. It is the age of the snapshot the queue below is built from, so it is page
+# furniture for as long as that snapshot is the one on hand; the scan that produces it
+# announces itself from `ScanBar`, where the transition actually happens.
+# Then 36 -> 35: the policy editor's two standing recovery notices became one render over the
+# `top` half of `REPAIR_NOTICES`. Still standing, and for the same reason -- a repair is carried
+# by the fetch, so it is the state of the page from its first paint (#516).
 # Re-derive it by running the test, never by arithmetic on this comment.
 _EXPECTED_STANDING = 35
 
@@ -2631,6 +2652,19 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/App.tsx": 8,
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
+    # Whether each protection list is still protecting anything (#475). Undivided on purpose,
+    # like the safety reads above: this screen exists so an operator can tell a list that
+    # stopped working from one that is simply not on a title's side, so an unreadable answer
+    # must say it could not tell them. Keeping a previous good answer on screen would state
+    # that the lists are fine at the one moment nobody knows whether they are, and that is the
+    # direction a keep list fails in. Both arms are pinned in `ListsPanel.test.tsx`.
+    #
+    # 1 -> 2 when the screen gained the list DEFINITIONS beside the membership. Same question
+    # asked of the second read, and it is the read that decides whether a row exists at all:
+    # failing it silently would render a page with no rows and an Add button, which reads as
+    # "you have no lists" to an operator who has several. Both reads share one failure branch
+    # for that reason, and each is driven into it on its own in the tests.
+    "frontend/src/components/ListsPanel.tsx": 2,
     "frontend/src/components/LogsPanel.tsx": 1,
     # 5 -> 6 when the library list moved to ``usePlexLibraries``. No branch here changed: the
     # panel's JSX is untouched, and the extra handle is the walk seeing the bag's two members
@@ -2638,7 +2672,7 @@ _QUERY_FAILURE_HANDLES = {
     # the population is the thing this pins.
     "frontend/src/components/PlexPanel.tsx": 6,
     "frontend/src/components/PolicyEditor.tsx": 4,
-    "frontend/src/components/PolicyRuleEditors.tsx": 2,
+    "frontend/src/components/PolicyRuleEditors.tsx": 3,
     "frontend/src/components/ReapBreakdown.tsx": 2,
     "frontend/src/components/ReapConfirm.tsx": 2,
     # 4th: the pre-flight read that says what would turn a real run away (#383). Deliberately
@@ -2937,7 +2971,11 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
-_EXPECTED_SELECTS = 21
+# +1 for the Plex library picker on Settings -> Lists: the field #483 was about, which stops
+# being a name Reaper guesses and becomes one the operator picks off their own server. +1 for
+# `PolicyRuleEditors`'s ListNameSelect, the picker an `on_list` keep rule names its list from --
+# a rule that matches on the name, so it is a picker rather than a box (rule 108's separator half).
+_EXPECTED_SELECTS = 23
 
 
 def _without_line_comments(chunk: str) -> str:
@@ -3117,7 +3155,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 50
+# +1 for `ListModal.test.tsx`, the add/edit form on Settings -> Lists, which is a screen of its
+# own and carries its own audit rather than being covered by the panel that opens it.
+_EXPECTED_RENDERING_TEST_FILES = 52
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:

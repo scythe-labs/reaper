@@ -11,7 +11,8 @@ So this scheduler exists to do the unglamorous upkeep:
 * **Refresh the IMDb ratings dataset** nightly, and **once on startup if it is stale or
   missing**. The startup catch-up is what makes a fresh install work: without it the
   first scan (and every scan until a day boundary happened to pass) would degrade.
-* **Refresh the curated lists** (the IMDb Top 250) daily, independent of scans.
+* **Refresh every list on Settings, Lists** daily, independent of scans -- the same pass a
+  scan runs, so a tag or a collection edited between scans starts protecting within a day.
 * **Check whether a newer Reaper exists**, daily. Not upkeep for the scan like the two
   above: it is here because a check that only ran when someone opened the UI never ran at
   all on the servers most likely to need it (#464).
@@ -32,6 +33,7 @@ first ratings load can take a while -- never stacks a second copy on top of itse
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 from datetime import timedelta, tzinfo
 from pathlib import Path
 
@@ -44,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from reaper.auth import sessions
+from reaper.clients.plex import PlexError
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
@@ -53,10 +56,12 @@ from reaper.services import (
     app_settings,
     history_sync,
     imdb_dataset,
-    lists,
+    list_config,
     retention,
     scan_runner,
 )
+from reaper.services import lists as lists_service
+from reaper.services import snapshot as snapshot_service
 from reaper.services.imdb_dataset import ImdbRatings
 from reaper.services.update_check import UpdateChecker
 
@@ -211,19 +216,156 @@ async def refresh_ratings(
 async def refresh_curated_lists(
     cache_engine: AsyncEngine,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    settings: Settings | None = None,
+    secret_box: SecretBox | None = None,
 ) -> None:
-    """Refresh the curated protection lists that need no per-scan client (the Top 250)."""
+    """Refresh EVERY list on Settings, Lists, the way a scan does.
+
+    It used to refresh only the IMDb ones, because those need no client -- and that left the
+    other three sources with no automatic refresh between scans at all, while the screen
+    presents all four as one uniform thing. So this now runs the same pass a scan runs
+    (``snapshot.sync_protection_lists``), which is also what the screen's own "Check now"
+    calls: a second way to refresh a protection list would be a second set of fail-closed
+    rules to keep in step (rule 3/22's shape for the safety path).
+
+    The job id is still ``refresh_curated_lists``. It is a stored schedule key, so renaming it
+    would orphan the cron an operator saved; only what it does and what it is called on screen
+    have changed.
+
+    **This pass retires**, unlike the old one, and that is a durable protection-DISABLING
+    write. It is safe here for the reasons ``sync_protection_lists`` states and enforces, not
+    on trust: a family is retired only when the configuration it is judged against was
+    actually readable, and only when its own sync did not raise -- so an *arr that is down at
+    3:45 AM keeps every list it feeds (rule 115).
+
+    Plex is optional and fails CLOSED exactly as it does in a scan and on the Lists screen:
+    with no live server no collection provider is built, so nothing is synced for one and
+    nothing is retired either, and the stored membership stays as the last good check left it.
+
+    ``session_factory``, ``settings`` and ``secret_box`` are optional only because the
+    last-run bookkeeping tolerates their absence; with no way to read the definitions or reach
+    the sources there is nothing to refresh.
+
+    **Every exit records a run**, which is what the catch-all here is for. The body raises by
+    several routes -- ``adopt_legacy``, ``sync_rule_names``, ``retire_absent`` and the
+    cache-database faults ``gather_reaped`` re-raises -- and APScheduler has no failure
+    listener writing these rows, so a raise left the Jobs row reading green from the last
+    successful night while nothing had refreshed since. Same shape as ``refresh_ratings``.
+    """
+    if session_factory is None or settings is None or secret_box is None:
+        log.warning("scheduler.lists_refresh_skipped", reason="not wired")
+        return
+
     try:
-        count = await lists.sync(cache_engine, lists.ImdbTop250(), mode=lists.ListMode.HARD)
-        log.info("scheduler.lists_refreshed", **{lists.ImdbTop250().slug: count})
-        await _record_run(
-            session_factory, "refresh_curated_lists", ok=True, result="Lists refreshed"
-        )
+        await _refresh_curated_lists(cache_engine, session_factory, settings, secret_box)
     except Exception as exc:
+        # The stored membership is untouched: `lists.sync` swaps atomically, and a family is
+        # retired only when its own syncs landed (rule 115). So the cost of a failure here is
+        # a night of staleness, which the scan's own bound catches -- provided this row says
+        # it happened.
         log.warning("scheduler.lists_refresh_failed", error=str(exc))
         await _record_run(
             session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
         )
+
+
+async def _refresh_curated_lists(
+    cache_engine: AsyncEngine,
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    secret_box: SecretBox,
+) -> None:
+    """The refresh itself. Split out so its caller's catch-all covers every line of it."""
+    async with AsyncExitStack() as stack:
+        try:
+            # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry
+            # a scan's Tautulli precondition -- an install with Plex linked and no Tautulli
+            # still gets its collections refreshed.
+            radarrs, sonarrs, _tautulli, _seerrs, plex = await scan_runner.build_sources(
+                session_factory,
+                settings,
+                secret_box,
+                stack=stack,
+                require_scan_sources=False,
+            )
+        except scan_runner.ScanConfigError as exc:
+            log.warning("scheduler.lists_refresh_failed", error=str(exc))
+            await _record_run(
+                session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
+            )
+            return
+
+        plex_server: object | None = None
+        plex_reached = False
+        if plex is not None:
+            try:
+                plex_server = await plex.connect()
+                plex_reached = True
+            except PlexError as exc:
+                log.warning("scheduler.lists_refresh_plex_unreachable", error=str(exc))
+
+        try:
+            async with session_factory() as session:
+                # ``strict``: this pass retires, so a row that will not decode has to stop it
+                # rather than read as one the operator deleted (rules 65/91, 115).
+                definitions = await list_config.definitions(session, strict=True)
+        except Exception as exc:
+            log.warning("scheduler.lists_refresh_failed", error=str(exc))
+            await _record_run(
+                session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
+            )
+            return
+
+        synced = await snapshot_service.sync_protection_lists(
+            cache_engine,
+            definitions=definitions,
+            radarrs=radarrs,
+            sonarrs=sonarrs,
+            plex_server=plex_server,
+        )
+
+    failed = sum(1 for v in synced.values() if isinstance(v, str) and v.startswith("error:"))
+    checked = sum(1 for v in synced.values() if isinstance(v, int))
+    # With no live server no Plex provider is built, so those lists produce no entry at all:
+    # they are not in `failed`, not in `checked`, and the job used to record "Lists refreshed"
+    # while every one of them went unchecked. Keyed on a Plex-sourced definition EXISTING,
+    # never on `plex` being None, so an install with no Plex lists still reports a clean pass.
+    # The manual route says the same thing through `plex_error` and a scan degrades outright,
+    # so this row is the third copy of one fact and had been the only cheerful one (rules
+    # 72, 144).
+    plex_lists = [
+        d
+        for d in definitions
+        if d.enabled
+        and d.source
+        in (lists_service.ListSource.PLEX_COLLECTION, lists_service.ListSource.PLEX_WATCHLIST)
+    ]
+    log.info(
+        "scheduler.lists_refreshed",
+        checked=checked,
+        failed=failed,
+        plex_lists_skipped=0 if plex_reached else len(plex_lists),
+    )
+    if plex_lists and not plex_reached:
+        result = (
+            "Couldn't reach Plex, so its lists weren't checked"
+            if plex is not None
+            else "Plex isn't connected, so its lists weren't checked"
+        )
+        ok = False
+    elif not failed:
+        result = "Lists refreshed"
+        ok = True
+    elif not checked:
+        result = "Couldn't refresh lists"
+        ok = False
+    else:
+        # Only the partial outcome needs the count: a total failure and a clean pass each say
+        # so in one phrase, and restating the per-list reasons here would be the same refusal
+        # written twice -- every one of them is already on the row it belongs to (rule 144).
+        result = f"Refreshed {checked} lists, {failed} couldn't be checked"
+        ok = False
+    await _record_run(session_factory, "refresh_curated_lists", ok=ok, result=result)
 
 
 async def full_history_sweep(
@@ -504,6 +646,7 @@ def _maintenance_specs(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    settings: Settings,
     update_checker: UpdateChecker,
 ) -> dict[str, tuple[object, list[object]]]:
     """The (callable, args) each upkeep job is added with. One place, so wiring a job at
@@ -515,7 +658,10 @@ def _maintenance_specs(
     """
     return {
         "refresh_ratings": (refresh_ratings, [cache_engine, data_dir, session_factory]),
-        "refresh_curated_lists": (refresh_curated_lists, [cache_engine, session_factory]),
+        "refresh_curated_lists": (
+            refresh_curated_lists,
+            [cache_engine, session_factory, settings, secret_box],
+        ),
         "full_history_sweep": (full_history_sweep, [session_factory, cache_engine, secret_box]),
         "check_for_updates": (check_for_updates, [update_checker, session_factory]),
     }
@@ -538,6 +684,7 @@ def apply_maintenance_schedule(
     data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    settings: Settings,
     update_checker: UpdateChecker,
     timezone: tzinfo,
 ) -> None:
@@ -553,6 +700,7 @@ def apply_maintenance_schedule(
         data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
+        settings=settings,
         update_checker=update_checker,
     )
     if job_id not in specs:
@@ -576,6 +724,7 @@ def run_maintenance_now(
     data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    settings: Settings,
     update_checker: UpdateChecker,
 ) -> None:
     """Fire an upkeep job immediately, whether or not it is on a schedule.
@@ -589,6 +738,7 @@ def run_maintenance_now(
         data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
+        settings=settings,
         update_checker=update_checker,
     )
     if job_id not in specs:
@@ -638,6 +788,7 @@ def build_scheduler(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    settings: Settings,
     update_checker: UpdateChecker,
     timezone: tzinfo,
     reap_running: Callable[[], bool],
@@ -660,6 +811,7 @@ def build_scheduler(
         data_dir,
         session_factory=session_factory,
         secret_box=secret_box,
+        settings=settings,
         update_checker=update_checker,
     )
     for job_id, cron in DEFAULT_MAINTENANCE_CRONS.items():
@@ -741,6 +893,7 @@ def reschedule_timezone(
                 data_dir=data_dir,
                 session_factory=session_factory,
                 secret_box=secret_box,
+                settings=settings,
                 update_checker=update_checker,
                 timezone=timezone,
             )

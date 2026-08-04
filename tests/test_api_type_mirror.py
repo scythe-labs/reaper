@@ -67,6 +67,9 @@ ALIAS = {
     # names this one for what it is rather than for which direction it travels, because the
     # editor reads it as a result and never posts it.
     "PolicyProbeResult": "PolicyProbeOut",
+    # What one "Check now" on Settings -> Lists did. Same shape as the entry above: the
+    # browser names it for what it is, and never posts it.
+    "ListSyncResult": "ListSyncOut",
 }
 
 #: Browser types with no server declaration to mirror, classified rather than silenced
@@ -93,8 +96,15 @@ CLIENT_ONLY = {
 # separately instead of one being derived from the other.
 # Both +1 again for the desktop build's Settings group: `DesktopSettings` pairs with
 # `DesktopSettingsOut` on the suffix rule.
-EXPECTED_INTERFACES = 87
-EXPECTED_PAIRS = 84
+# Both +1 again for Settings -> Lists (#475): `ProtectionList` pairs with `ProtectionListOut`
+# on the same suffix rule.
+# Both +2 again for the rest of that screen: `ListConfig` (the list DEFINITIONS the operator
+# edits) pairs with `ListConfigOut` on the suffix rule, and `ListSyncResult` with `ListSyncOut`
+# through the ALIAS entry above. The third new name, `ListConfigBody`, is a type alias rather
+# than an interface and is counted by neither walk -- the same case the `PolicyProbe` note
+# above describes, and the reason these two numbers are reconciled against the tree separately.
+EXPECTED_INTERFACES = 91
+EXPECTED_PAIRS = 88
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")

@@ -35,7 +35,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from reaper.clients.sonarr_stats import SeasonStats
-from reaper.engine.fields import BY_KEY, Lane, Op
+from reaper.engine.fields import BY_KEY, Condition, Lane, Op
 from reaper.engine.gates import GateId
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
@@ -346,6 +346,25 @@ NUMERIC_VALUES = {
 }
 
 
+def _saveable(key: str, op: Op, value: object) -> bool:
+    """Whether the save boundary would accept this condition at all.
+
+    ``mutated`` round-trips every policy through ``model_validate``, so a value the API
+    refuses fails these tests as a ValidationError rather than as the invariant they are
+    about. Asked of the production validator rather than re-derived here (rule 119).
+
+    It removes exactly one pairing today: the comma-bearing genre, which is in the pool to
+    exercise ``in``'s split and can never match under ``eq``, because a multi-valued fact is
+    one comma-joined string that ``_compare`` splits back (rule 108's separator half).
+    """
+    lane = Lane.PROTECT if Lane.PROTECT in BY_KEY[key].lanes else Lane.CONDEMN
+    try:
+        Condition(field=key, op=op, value=value).validate_for(lane)  # type: ignore[arg-type]
+    except ValueError:
+        return False
+    return True
+
+
 def values_for(key: str, op: Op) -> list:
     spec = BY_KEY[key]
     if key in NUMERIC_VALUES:
@@ -357,8 +376,12 @@ def values_for(key: str, op: Op) -> list:
     else:
         pool = ["x"]
     if op in (Op.IN, Op.CONTAINS):
-        return [v for v in pool if isinstance(v, str)]
-    return pool
+        pool = [v for v in pool if isinstance(v, str)]
+    keep = [v for v in pool if _saveable(key, op, v)]
+    # A pairing whose whole pool is unsaveable would sweep nothing while still reading as a
+    # green parametrized case, which is the silent-empty-walk rule 145 is about.
+    assert keep, f"every {key} value is refused for {op.value}, so this op sweeps nothing"
+    return keep
 
 
 class TestProtectConditions:
@@ -371,9 +394,15 @@ class TestProtectConditions:
             baseline = {v["id"]: judge(v, policy, default_gates(media_type))[0] for v in pool}
             for op in spec.ops:
                 for value in values_for(key, op):
+                    # ADDED beside the shipped rules, never in their place: the default
+                    # policies carry the two on_list rules now, and replacing the list
+                    # would test a policy that also withdrew a protection.
                     with_condition = mutated(
                         policy,
-                        protect_conditions=[{"field": key, "op": op.value, "value": value}],
+                        protect_conditions=[
+                            *(c.model_dump(mode="json") for c in policy.protect_conditions),
+                            {"field": key, "op": op.value, "value": value},
+                        ],
                     )
                     gates = build_gates(with_condition)
                     for v in pool:
@@ -1020,8 +1049,9 @@ class TestPolicyHash:
             "in_progress_hold_days": policy.in_progress_hold_days + 1,
             "keep_specials": not policy.keep_specials,
             "flag_keep_conflicts": not policy.flag_keep_conflicts,
-            "keep_tags": ["another-tag"],
-            "keep_tags_match": "all",
+            # The keep tags left the body for Settings -> Lists; a list acts through an
+            # on_list rule, whose respelling is the edit that must move both hashes.
+            "protect_conditions": [{"field": "on_list", "op": "eq", "value": "another-list"}],
             # A reallocation, not a bump: the total is pinned at 100, so the only weight
             # edit an operator can make is moving points between signals.
             "signals": balanced(

@@ -14,7 +14,7 @@ import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import type { WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
-import { PolicyEditor, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
+import { PolicyEditor, REPAIR_NOTICES, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -28,6 +28,10 @@ const { apiMock } = vi.hoisted(() => ({
     validatePolicy: vi.fn(),
     vocabulary: vi.fn(),
     vocabularyValues: vi.fn(),
+    // Read by the keep-rules composer's list picker, but only while the protect vocabulary
+    // offers `on_list`; answered anyway so a fixture that adds the field cannot render a
+    // failed read (rule 135).
+    listConfigs: vi.fn(),
     savePolicy: vi.fn(),
     saveProfile: vi.fn(),
     setDeletion: vi.fn(),
@@ -80,8 +84,6 @@ function body(custom: CustomCondemn[] = []): PolicyBody {
     protect_conditions: [],
     custom_condemn: custom,
     graded_keeps: [],
-    keep_tags: [],
-    keep_tags_match: "any",
     keep_rating_rules: [],
     keep_rating_match: "any",
   };
@@ -155,6 +157,7 @@ function renderEditor(
   if (vocabulary) apiMock.vocabulary.mockImplementation(() => Promise.reject(vocabulary));
   else apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [] });
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
+  apiMock.listConfigs.mockResolvedValue([]);
   apiMock.validatePolicy.mockResolvedValue({
     policy_hash: "hash",
     name: "default",
@@ -187,6 +190,60 @@ function renderEditor(
   );
 }
 
+describe("a policy the server had to repair", () => {
+  // The invariant, driven for EVERY repair the app knows and one it does not: a repaired
+  // policy always offers the Save that replaces it. That is the whole exit from a degraded
+  // scan -- the incomplete-scan notice says "open the policy page, check X, and save" and
+  // nothing else clears it -- so a repair the editor stays clean on strands the operator
+  // with a permanent banner and no control that answers it (#516).
+  //
+  // Keys, not a hand-written list, so a repair added to REPAIR_NOTICES is driven the day it
+  // lands. The count is pinned because a walk cannot tell a member that complies from one
+  // that dropped out of it (rule 145); `tests/test_policy_repairs.py` reconciles this same
+  // number against `PolicyRepair` on the server, which is the declaration both sides mirror.
+  const KNOWN = Object.keys(REPAIR_NOTICES);
+
+  it("knows the four repairs the server can report", () => {
+    expect(KNOWN).toHaveLength(4);
+  });
+
+  it.each([...KNOWN, "a_repair_this_build_has_never_heard_of"])(
+    "opens dirty on %s, so the degraded scan's remedy is followable",
+    async (repair) => {
+      const { container } = renderEditor({ body: body(), repairs: [repair] });
+
+      await screen.findByText("Movies policy");
+      const savebar = container.querySelector(".savebar");
+      expect(savebar).not.toBeNull();
+      expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    },
+  );
+
+  it("says what happened, in words about the repair that happened", async () => {
+    renderEditor({ body: body(), repairs: ["lists_migrated"] });
+
+    // The lists conversion is the repair that shipped with no copy at all, so it is the one
+    // pinned by its sentence rather than only by the savebar above.
+    expect(await screen.findByText(/Your protected lists moved to Settings/)).toBeInTheDocument();
+    // And it does NOT borrow the rescale's sentence, which is what the degradation used to
+    // tell the operator to go and check.
+    expect(screen.queryByText(/points have been spread/)).not.toBeInTheDocument();
+  });
+
+  it("still says something for a repair id it does not know", async () => {
+    renderEditor({ body: body(), repairs: ["invented_later"] });
+
+    expect(await screen.findByText(/Reaper had to change your saved policy/)).toBeInTheDocument();
+  });
+
+  it("says both when a body needed two repairs", async () => {
+    renderEditor({ body: body(), repairs: ["lists_migrated", "rescaled"] });
+
+    expect(await screen.findByText(/Your protected lists moved to Settings/)).toBeInTheDocument();
+    expect(screen.getByText(/points have been spread/)).toBeInTheDocument();
+  });
+});
+
 describe("a policy that couldn't be read", () => {
   // The rules that condemn files are written here, on the longest form in the app: thresholds,
   // weights, and protections, many of them a number beside a switch. A control that reads out as
@@ -202,11 +259,11 @@ describe("a policy that couldn't be read", () => {
   });
 
   it("says so on the load it happened, with nothing else dirty", async () => {
-    // fell_back and needs_save are mutually exclusive on the server: a body that could
-    // not be read at all never carries needs_save. The notice used to live inside the
-    // savebar, which only renders when something is dirty, so it was invisible in
-    // exactly the state it explains.
-    const { container } = renderEditor({ body: body(), needs_save: false, fell_back: true });
+    // `fell_back` arrives alone: nothing of the stored body survived for a second repair to
+    // be about (services/profiles.py). The notice used to live inside the savebar, which
+    // only renders when something is dirty, so it was invisible in exactly the state it
+    // explains.
+    const { container } = renderEditor({ body: body(), repairs: ["fell_back"] });
 
     expect(await screen.findByText(/Your saved policy couldn't be read/)).toBeInTheDocument();
     // And the way out is offered: the savebar renders, so the fallback can be replaced.
@@ -1268,12 +1325,12 @@ describe("the controls a screen reader has to tell apart", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  // A placeholder is an accessible name of last resort, so this box announced itself as the
-  // example text inside it -- and lost even that the moment anything was typed. The tags entered
-  // here are a protection: they are what stops a title being removed.
-  it("names the keep-tag box for what it does, not for its placeholder", async () => {
-    // The box lives inside the keep-tags card, which renders only while its own gate is on
-    // (rule 41), so the gate has to be present and enabled for the control to exist at all.
+  // The keep-tags card left Policy: tags are a LIST now, defined on Settings -> Lists and
+  // protecting through an `on_list` keep rule. A stored draft can still carry the retired
+  // gate, though -- the loader keeps an enabled row whose target list could not be created
+  // rather than silently withdrawing cover -- so the editor renders it as a plain protection
+  // row by the `titleCase` fallback (rule 66) instead of dropping it or crashing.
+  it("tolerates a stored draft still carrying the retired whitelisted gate", async () => {
     renderEditor({
       body: {
         ...body(),
@@ -1281,9 +1338,20 @@ describe("the controls a screen reader has to tell apart", () => {
       },
     });
 
-    const tagBox = await screen.findByLabelText("Add a keep tag");
-    expect(tagBox.tagName.toLowerCase()).toBe("input");
-    expect(screen.queryByLabelText("add a tag…")).not.toBeInTheDocument();
+    // Named in the operator's words, not by the `titleCase` fallback. The gate is retired as a
+    // switch, but a stored body from before the upgrade still carries its id, so its copy stays
+    // in `GATE_META` and the row reads as a sentence rather than as "Whitelisted".
+    //
+    // And it says what THIS gate meant: tags and the "Never Reap" collection, the lists the
+    // operator curates by hand. The two retired labels were taken from `engine/fields.py` in
+    // source order and landed on the wrong ids, so this one wore the other's words while
+    // `curated_list` -- the IMDb Top 250 -- read "On a list you curate yourself".
+    expect(
+      await screen.findByRole("switch", { name: "On a list you curate yourself" }),
+    ).toBeChecked();
+    // The card, its tag boxes and its own copy are gone with the feature.
+    expect(screen.queryByText("Spare titles you've tagged")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Add a keep tag")).not.toBeInTheDocument();
   });
 
   it("gives two lean keep rules on one field Remove buttons that answer to different names", async () => {

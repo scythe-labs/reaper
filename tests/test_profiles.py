@@ -15,16 +15,19 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
+from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, ProfileSettings
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyRepair, ProfileSettings
 from reaper.ratings import RatingSource
+from reaper.services import profiles
 from reaper.services.profiles import (
     active_policy,
     active_profile,
@@ -237,9 +240,10 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.fell_back is True
-        assert active.rescaled is False
+        assert active.repairs == (PolicyRepair.FELL_BACK,)
         assert active.repaired is True  # the scan degrades on it
+        # Alone: nothing of the stored body survived for a second repair to be about, and a
+        # notice saying their lists were converted would describe a body that is not on screen.
         assert active.body == DEFAULT_MOVIE_POLICY
         assert active.name == "default"
 
@@ -267,8 +271,7 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.fell_back is False
-        assert active.rescaled is True
+        assert active.repairs == (PolicyRepair.RESCALED,)
         assert active.name == "stored"
         assert sum(s.weight for s in active.body.signals) == 100
 
@@ -289,9 +292,8 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.rating_rules_recovered is True
+        assert active.repairs == (PolicyRepair.RATING_RULES_RESTORED,)
         assert active.repaired is True  # the scan degrades on it
-        assert active.rescaled is False and active.fell_back is False
         assert active.name == "stored"
         assert [(r.source, r.floor, r.min_votes) for r in active.body.keep_rating_rules] == [
             (RatingSource.IMDB, 75, 1000)
@@ -321,9 +323,9 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.rescaled is True
-        assert active.rating_rules_recovered is True  # the bar survived the rebalance
-        assert active.fell_back is False
+        # Both repairs, in the order they were applied: the bar survived the rebalance, and
+        # the operator's notices read in the order the repairs happened.
+        assert active.repairs == (PolicyRepair.RATING_RULES_RESTORED, PolicyRepair.RESCALED)
         assert sum(s.weight for s in active.body.signals) == 100
         assert [(r.source, r.floor, r.min_votes) for r in active.body.keep_rating_rules] == [
             (RatingSource.IMDB, 75, 1000)
@@ -342,9 +344,225 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.rating_rules_recovered is False
+        assert active.repairs == ()
         assert active.repaired is False
         assert active.body.keep_rating_rules == ()
+
+
+def _legacy_list_body() -> dict[str, object]:
+    """A stored body from before every list protected through its own keep rule: the keep
+    tags on the policy, plus the two retired list gates, both enabled."""
+    body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+    body["protect_conditions"] = []
+    body["keep_tags"] = ["reaper-keep"]
+    body["keep_tags_match"] = "any"
+    body["gates"] = [
+        {"gate": "whitelisted", "enabled": True},
+        {"gate": "curated_list", "enabled": True},
+        *body["gates"],
+    ]
+    return body
+
+
+async def _seed_list_rows(session: AsyncSession) -> None:
+    """The registry rows the conversion's rules must point at, under names the operator
+    may have chosen: resolution is by source and age, never by spelling."""
+    for name, source, config in (
+        ("Films worth keeping", "imdb", {"preset": "top250"}),
+        ("My tagged titles", "arr_tag", {"tags": ["reaper-keep"], "match": "any"}),
+    ):
+        session.add(
+            ListConfigModel(
+                name=name,
+                source=source,
+                config_json=json.dumps(config),
+                enabled=True,
+                built_in=False,
+                created_at=utcnow(),
+            )
+        )
+    await session.commit()
+
+
+class TestALegacyListBodyIsConvertedOnLoad:
+    """``active_policy`` composes ``convert_list_protections`` FIRST, on the raw dict:
+    ``keep_tags`` is a key ``Frozen`` forbids, so a merely-legacy body read without the
+    conversion falls back to the shipped default -- the silent substitution rule 65
+    forbids. The conversion is a repair like the others: flagged, degrading, never
+    silently adopted (rule 105)."""
+
+    async def test_the_body_loads_with_its_gates_as_rules_and_is_flagged(
+        self, session: AsyncSession
+    ) -> None:
+        await _seed_list_rows(session)
+        await _store_policy(session, json.dumps(_legacy_list_body()))
+
+        active = await active_policy(session, "movie")
+
+        assert active.repairs == (PolicyRepair.LISTS_MIGRATED,)
+        assert active.repaired is True  # the scan degrades on it
+        assert active.name == "stored"
+        # Each enabled gate became a rule naming the CURRENT list of its source -- the
+        # operator's own names, resolved from the registry rather than assumed.
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"My tagged titles", "Films worth keeping"}
+        # ...and the retired gate rows left the body.
+        assert not {g.gate.value for g in active.body.gates} & {"whitelisted", "curated_list"}
+
+    async def test_a_body_that_is_not_legacy_shaped_is_untouched(
+        self, session: AsyncSession
+    ) -> None:
+        await _seed_list_rows(session)
+        await _store_policy(session, DEFAULT_MOVIE_POLICY.model_dump_json())
+
+        active = await active_policy(session, "movie")
+
+        assert active.repairs == ()
+        assert active.repaired is False
+        assert active.body == DEFAULT_MOVIE_POLICY
+
+
+class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
+    """``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
+    Plex keep collection arrives by migration instead, and an install that has never saved a
+    policy returns before ``convert_list_protections`` can run -- so nothing pointed a rule at
+    it, while the WHITELISTED gate that used to spare its titles is retired. A protection that
+    fired on the previous release and cannot fire on this one, silently."""
+
+    @staticmethod
+    async def _seed_plex_collection(session: AsyncSession, name: str = "Never Reap") -> None:
+        session.add(
+            ListConfigModel(
+                name=name,
+                source="plex_collection",
+                config_json=json.dumps({"library": "Films", "collection": name}),
+                enabled=True,
+                built_in=False,
+                created_at=utcnow(),
+            )
+        )
+        await session.commit()
+
+    @pytest.mark.parametrize("media_type", ["movie", "tv"])
+    async def test_a_seeded_collection_is_kept_outright(
+        self, session: AsyncSession, media_type: str
+    ) -> None:
+        await self._seed_plex_collection(session)
+
+        active = await active_policy(session, media_type)
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert "Never Reap" in values
+        # Additive: the shipped conditions are still there, and nothing is flagged, because
+        # putting the rule back removes the loss rather than announcing it.
+        assert {"IMDb Top 250", "Titles you've tagged"} <= values
+        assert active.repaired is False
+        assert active.name == "default"
+
+    async def test_a_registry_it_cannot_read_leaves_the_shipped_rules_alone(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The direction this helper promises: it may ADD cover, never withdraw it.
+
+        A read failure here is not "no lists of your own" (rules 65/91), and the only safe
+        reading of an unanswerable registry is the shipped set unchanged -- returning the
+        default is what makes that true, so the failure is driven rather than argued.
+        """
+        await self._seed_plex_collection(session)
+
+        async def unreadable(
+            _session: AsyncSession,
+        ) -> tuple[str | None, str | None, tuple[str, ...]]:
+            raise SQLAlchemyError("the registry could not be read")
+
+        monkeypatch.setattr(profiles, "_conversion_list_names", unreadable)
+
+        active = await active_policy(session, "movie")
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"IMDb Top 250", "Titles you've tagged"}, (
+            "an unreadable registry moved the shipped conditions"
+        )
+
+    async def test_a_registry_it_cannot_read_says_so_instead_of_scanning_quietly(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Leaving the shipped rules alone is right and is not enough on its own.
+
+        The seeded collection above has no rule naming it in this body, so the scan is about
+        to judge the whole library with that keep list doing nothing. It used to carry a log
+        line and an empty ``repairs``, so the scan's degradation loop never fired -- and the
+        scan's OWN registry read is a separate query that can succeed on a transient error,
+        which is what let the run complete clean (rules 65/91).
+
+        Not a ``PolicyRepair``: every member of that enum is answered by saving the policy,
+        and saving fixes nothing here. It still reads as ``repaired``, because that is what
+        degrades the scan and what stops ``list_rules`` persisting a body missing the rules.
+        """
+        await self._seed_plex_collection(session)
+
+        async def unreadable(
+            _session: AsyncSession,
+        ) -> tuple[str | None, str | None, tuple[str, ...]]:
+            raise SQLAlchemyError("the registry could not be read")
+
+        monkeypatch.setattr(profiles, "_conversion_list_names", unreadable)
+
+        active = await active_policy(session, "movie")
+
+        assert active.lists_unreadable is True
+        assert active.repaired is True, "the scan would not degrade"
+        assert active.repairs == (), "nothing was repaired, so no save can clear it"
+
+    async def test_a_registry_that_reads_fine_is_not_flagged(self, session: AsyncSession) -> None:
+        """The other side of rule 65's line: a read that SUCCEEDS and finds nothing of the
+        operator's own falls back to the shipped conditions silently, and must not degrade
+        every scan on an install that simply has no Plex lists."""
+        active = await active_policy(session, "movie")
+
+        assert active.lists_unreadable is False
+        assert active.repaired is False
+
+    async def test_a_watchlist_definition_is_kept_too(self, session: AsyncSession) -> None:
+        """The other source ``_conversion_list_names`` returns as the operator's own."""
+        session.add(
+            ListConfigModel(
+                name="My watchlist",
+                source="plex_watchlist",
+                config_json="{}",
+                enabled=True,
+                built_in=False,
+                created_at=utcnow(),
+            )
+        )
+        await session.commit()
+
+        active = await active_policy(session, "movie")
+
+        assert "My watchlist" in {
+            str(c.value) for c in active.body.protect_conditions if c.field == "on_list"
+        }
+
+    async def test_an_empty_registry_leaves_the_shipped_conditions_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """The helper may only ever ADD cover. With nothing of the operator's own to point
+        at, the default is returned exactly as shipped rather than with its rules rebuilt."""
+        active = await active_policy(session, "movie")
+
+        assert active.body == DEFAULT_MOVIE_POLICY
+
+    async def test_a_collection_the_default_already_names_gains_no_second_rule(
+        self, session: AsyncSession
+    ) -> None:
+        """Case-folded on both sides, the comparison every reader of a list name makes
+        (rule 88), so a duplicate rule cannot arrive by capitalization."""
+        await self._seed_plex_collection(session, name="imdb top 250")
+
+        active = await active_policy(session, "movie")
+
+        values = [str(c.value) for c in active.body.protect_conditions if c.field == "on_list"]
+        assert values == [c.value for c in DEFAULT_MOVIE_POLICY.protect_conditions]
 
 
 class TestInvariantsHoldThroughTheService:

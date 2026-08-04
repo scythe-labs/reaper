@@ -10,6 +10,7 @@ export function Segmented<T extends string>({
   onChange,
   label,
   fill = false,
+  variant = "pill",
   describedBy,
   disabled = false,
 }: {
@@ -21,6 +22,13 @@ export function Segmented<T extends string>({
   /** Give every segment equal width, so short and long labels center in the track
    *  instead of the active pill hogging its side. Off by default. */
   fill?: boolean;
+  /** The chrome, not the behavior. `pill` is the raised track the queue and policy screens
+   *  wear; `flat` is one bordered box split by a hairline, with the chosen half tinted, which
+   *  is what the approved mockup settled for the list forms. A variant rather than a second
+   *  component: the list form shipped its own `MatchToggle`/`.seg2` pair, which reproduced
+   *  this file's semantics and CSS down to the `data-label` strut, and a second either-or
+   *  control is what rules 18 and 41 refuse. */
+  variant?: "pill" | "flat";
   /** Ids of the message(s) explaining what is wrong with this choice. On the group, not the
    *  segments: the complaint is about which option is in force, not about the button under the
    *  cursor. No `invalid` companion -- `aria-invalid` on a `role="group"` is not a state ARIA
@@ -38,7 +46,9 @@ export function Segmented<T extends string>({
 }) {
   return (
     <div
-      className={fill ? "segmented fill" : "segmented"}
+      className={["segmented", fill ? "fill" : "", variant === "flat" ? "flat" : ""]
+        .filter(Boolean)
+        .join(" ")}
       role="group"
       aria-label={label}
       aria-describedby={describedBy}

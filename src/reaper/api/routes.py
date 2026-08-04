@@ -96,6 +96,7 @@ from reaper.engine.policy import (
     ConditionSpec,
     GateSetting,
     PolicyBody,
+    PolicyRepair,
     ProfileSettings,
     SignalSetting,
     combine_hashes,
@@ -104,7 +105,14 @@ from reaper.engine.policy import (
 from reaper.engine.preview import UnprobableSignalError, probe_signal
 from reaper.engine.signals import SignalConfig
 from reaper.engine.verdict import decide_verdict
-from reaper.services import app_settings, backup, season_evidence, season_scan, whitelist
+from reaper.services import (
+    app_settings,
+    backup,
+    list_config,
+    season_evidence,
+    season_scan,
+    whitelist,
+)
 from reaper.services.condemned import (
     MATCH_UNREADABLE,
     effective_condemned,
@@ -1510,8 +1518,6 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             # Already engine specs (BooleanCondemnSpec / GradedCondemnSpec) -- passed through.
             custom_condemn=tuple(payload.custom_condemn),
             graded_keeps=tuple(payload.graded_keeps),
-            keep_tags=tuple(t.strip() for t in payload.keep_tags if t.strip()),
-            keep_tags_match=payload.keep_tags_match,
             # Already engine specs (RatingRuleSpec) -- passed through, validated on the wire.
             keep_rating_rules=tuple(payload.keep_rating_rules),
             keep_rating_match=payload.keep_rating_match,
@@ -1578,9 +1584,7 @@ def _policy_out(
     requests_app_configured: bool,
     settings: ProfileSettings,
     history_reach_days: float | None = None,
-    needs_save: bool = False,
-    fell_back: bool = False,
-    rating_rules_restored: bool = False,
+    repairs: tuple[PolicyRepair, ...] = (),
 ) -> PolicyOut:
     return PolicyOut(
         policy_hash=body.policy_hash(),
@@ -1596,9 +1600,7 @@ def _policy_out(
                 DEFAULT_TV_POLICY if body.media_type == "tv" else DEFAULT_MOVIE_POLICY
             ).signals
         ],
-        needs_save=needs_save,
-        fell_back=fell_back,
-        rating_rules_restored=rating_rules_restored,
+        repairs=list(repairs),
         body=PolicyIn(
             name=name,
             media_type=body.media_type,
@@ -1633,16 +1635,14 @@ def _policy_out(
             ],
             custom_condemn=list(body.custom_condemn),
             graded_keeps=list(body.graded_keeps),
-            keep_tags=list(body.keep_tags),
-            keep_tags_match=body.keep_tags_match,
             keep_rating_rules=list(body.keep_rating_rules),
             keep_rating_match=body.keep_rating_match,
         ),
         warnings=[
-            # Only draft warnings here. The two LOAD-time recoveries (rescaled /
-            # fell_back) are separate fields, not warnings: the editor renders warnings
-            # from re-validating the DRAFT, so anything attached to the GET response
-            # never reaches the page at all. That was a real silent drop.
+            # Only draft warnings here. The LOAD-time repairs are their own field, not
+            # warnings: the editor renders warnings from re-validating the DRAFT, so
+            # anything attached to the GET response never reaches the page at all. That
+            # was a real silent drop.
             PolicyWarningOut(field=w.field, message=w.message, severity=w.severity)
             # The operator's SAVED settings, not the defaults. Passing ProfileSettings()
             # here made every settings-based warning unreachable: the caps and the
@@ -1690,12 +1690,6 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     async with _sessions(request)() as session:
         active = await active_policy(session, media_type)
         body, name = active.body, active.name
-        # The recoveries read very differently to an operator -- "your policy, in new
-        # units" versus "your policy is gone" versus "a protection was put back" -- so they
-        # are separate flags, never inferred from the name (an operator's own policy is
-        # often called "default").
-        needs_save, fell_back = active.rescaled, active.fell_back
-        rating_rules_restored = active.rating_rules_recovered
         has_requests_app = await _requests_app_configured(session)
         settings = await active_profile_settings(session)
     return _policy_out(
@@ -1704,9 +1698,11 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
         requests_app_configured=has_requests_app,
         settings=settings,
         history_reach_days=await _history_reach_days(request),
-        needs_save=needs_save,
-        fell_back=fell_back,
-        rating_rules_restored=rating_rules_restored,
+        # The repairs read very differently to an operator -- "your policy, in new units"
+        # versus "your policy is gone" versus "a protection was put back" -- so each is its
+        # own `PolicyRepair`, never inferred from the name (an operator's own policy is
+        # often called "default") and never collapsed into one "needs saving" boolean.
+        repairs=active.repairs,
     )
 
 
@@ -2295,7 +2291,7 @@ async def _replay_simulation(
             # A set for the same reason the threshold path's spare branch uses one: a row
             # both hand-spared and keep-list tagged carries the injected WHITELISTED and
             # the gate's own, and a gate spares a row once.
-            spared_by.update({r.gate.value for r in judged.evaluation.protectors})
+            spared_by.update(_spared_by_id(r) for r in judged.evaluation.protectors)
         else:
             abstained += 1
 
@@ -2343,12 +2339,19 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
        ``PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``: a weight, a rating bar, a custom condemn
        rule, a graded keep, a protect condition, a protection switched on or off, or any of
        the nine season rules. Still zero API calls.
-    3. Otherwise the edit changed what a scan would *gather* (a keep tag, the popularity
-       window) -- the frozen evidence is stale, so it **returns nothing but the reason**. A
-       plausible wrong answer is worse than a blank: the owner acts on it.
+    3. Otherwise the edit changed what a scan would *gather* (the popularity window) -- the
+       frozen evidence is stale, so it **returns nothing but the reason**. A plausible wrong
+       answer is worse than a blank: the owner acts on it.
 
     Tier 2 needs a snapshot that actually froze its evidence: a pre-facts-freeze snapshot
     has a null ``evidence_hash`` or rows with no ``facts_json``, and falls to tier 3.
+
+    **One refusal sits above all three**, because it is not about the policy at all: the
+    protection lists decide which titles an ``on_list`` rule keeps, they are not policy
+    fields, and both tiers read evidence derived from them. So a registry that no longer
+    fingerprints the way the snapshot recorded refuses outright (``list_config.fingerprint``,
+    #512), whatever the edit was -- including no edit at all, which is the case where the
+    operator has changed a list and the panel would otherwise restate pre-edit numbers.
 
     **The TV lane has a second precondition the hash cannot express.** A season's guard is
     re-derived from a per-show bundle the scan freezes beside the Facts
@@ -2431,13 +2434,34 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         )
         decisions = await whitelist.overrides(session)
 
+        # Above the tier split, because BOTH tiers below read evidence derived from list
+        # membership: the replay through the frozen `Facts.on_lists`, the threshold path
+        # through the stored verdict that fact produced. The lists are not policy, so no hash
+        # either tier compares can notice that the operator retagged, renamed, repointed or
+        # switched one off -- and the panel would report the membership the scan froze while
+        # calling it exact (#512).
+        #
+        # Either side being `None` refuses on its own, and neither is compared to the other:
+        # a snapshot predating the column has one, a scan that degraded for an unreadable
+        # registry stamped one (`scan_runner`), and `current_fingerprint` returns one when the
+        # registry cannot be read right now. `None` is "unknown" on both sides, never "no
+        # lists" (rules 93, 104) -- so an equality test alone answered "exact" for two
+        # unknowns, which is the one pairing where both scans were degraded.
+        current = await list_config.current_fingerprint(session)
+        if (
+            snapshot.list_config_hash is None
+            or current is None
+            or snapshot.list_config_hash != current
+        ):
+            return _refused(SimStale.GATHERS_DIFFERENTLY, body.media_type)
+
         # Three tiers of re-decide, most exact first:
         #  1. Scoring behavior unchanged -> re-compare the STORED score against the new
         #     thresholds. Exact and cheapest (below).
         #  2. Scoring changed but the EVIDENCE is unchanged, and every governed row froze its
         #     Facts -> replay the real engine over those Facts. Exact for weight/rating/custom
         #     edits, still zero API calls.
-        #  3. Otherwise the edit changed what the scan gathers (a window, a keep-tag)
+        #  3. Otherwise the edit changed what the scan gathers (the popularity window)
         #     -> the frozen evidence is stale, so refuse rather than guess.
         if snapshot.scoring_hash != _combined(PolicyBody.scoring_hash):
             replayable = snapshot.evidence_hash and snapshot.evidence_hash == _combined(
@@ -2509,7 +2533,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 # beside a headline count that correctly held still.
                 # A set because a row both hand-spared and keep-list tagged fires
                 # WHITELISTED twice, and a gate spares a row once.
-                spared_by.update({*_fired_gates(row.explanation_json), "whitelisted"})
+                spared_by.update({*_fired_gates(row.explanation_json), HAND_SPARE_TALLY_ID})
             elif reap_is_effective(row):
                 condemned += 1
                 if row.size_bytes is None:
@@ -2604,6 +2628,21 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             for gate, n in sorted(spared_by.items(), key=lambda kv: (-kv[1], kv[0]))
         ],
     )
+
+
+#: The spared-by tally's id for a hand spare. Not a gate: the replay path injects the spare as
+#: a WHITELISTED protector so ``judge_facts`` applies it live, and the threshold path adds it
+#: beside the gates that fired. Tallying it under ``whitelisted`` reported every hand spare as
+#: list membership -- and on a fresh install, where ``WhitelistGate`` is retired and no gate
+#: emits that id at all, "Why titles were spared" was hand spares wearing a list's name, which
+#: invites softening a keep rule that covers none of them (rule 144). The frontend's
+#: ``GATE_META`` carries the copy for it.
+HAND_SPARE_TALLY_ID = "hand_spare"
+
+
+def _spared_by_id(result: GateResult) -> str:
+    """The tally id for one protector: its gate, unless it is the injected hand spare."""
+    return HAND_SPARE_TALLY_ID if result.detail == HAND_SPARE_DETAIL else result.gate.value
 
 
 def _fired_gates(explanation_json: str) -> list[str]:

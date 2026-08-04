@@ -4,11 +4,13 @@ source it could not read in full must degrade it.
 
 Three separate ways the scan pipeline used to fail quietly:
 
-* **The keep-tag retire pass ran unconditionally.** A scan holding a policy Reaper had
-  to repair carries the SHIPPED keep tags and match mode, so retiring "every keep list
-  this configuration no longer produces" disabled every list the operator actually
-  saved. Nothing could be deleted from that scan, but the disabling write is durable
-  and outlives it (rule 115).
+* **The retire pass ran on configuration the scan could not vouch for.** The original
+  case was a repaired policy carrying the SHIPPED keep tags, which retired every keep
+  list the operator actually saved; the keep tags have since moved to the list registry,
+  so the policy no longer feeds the sync at all and that trigger is gone structurally.
+  The registry itself is the surviving trigger: a read failure handed to the sync as "no
+  lists" would retire every list on the install. Nothing could be deleted from that scan,
+  but the disabling write is durable and outlives it (rule 115).
 * **A short batched metadata read only logged.** Those ``Rating`` children are the one
   source of the per-provider scores, so a windowed response takes the keep bar off the
   tail of every chunk: a protection WITHDRAWN, which rule 28 never lets pass as a log
@@ -31,7 +33,8 @@ from reaper.clients.plex import PlexClient, collecting_incomplete_reads
 from reaper.config import RuntimeSafety, Settings
 from reaper.db.session import create_engine
 from reaper.services import library_index
-from reaper.services.lists import load_membership_index
+from reaper.services.list_config import ListDefinition
+from reaper.services.lists import ListSource, load_membership_index
 from reaper.services.season_scan import SonarrSource
 from reaper.services.snapshot import sync_protection_lists
 
@@ -68,43 +71,46 @@ def _sonarr() -> SonarrSource:
     )
 
 
-class TestAPolicyReaperHadToRepairNeverRetiresAKeepList:
-    """The slug carries the match mode, so a fallen-back policy (which carries the SHIPPED
-    'any') retires the '-all' list an operator saved. The scan is already degraded and
-    refuses to plan, so nothing is deleted -- but the keep list stays disabled afterwards,
-    protecting nothing, until the next scan under a policy that loads."""
+class TestAConfigurationTheScanCannotVouchForNeverRetiresAKeepList:
+    """Rule 115's durable half, from the degraded scan's side. A registry that could not
+    be READ arrives as ``definitions=None``, and the sweep must stand down whole: reading
+    it as "no lists" would disable every list on the install, and the disabling write
+    outlives the (already un-plannable) scan that made it. The keep-tags version of this
+    trigger -- a repaired policy carrying the SHIPPED tags -- is gone structurally, because
+    the policy no longer feeds the sync anything at all; ``services.list_rules`` carries
+    the repaired-policy skip now, pinned in ``tests/test_list_rules.py``."""
 
     @staticmethod
-    async def _sync(engine: AsyncEngine, *, match: str, trusted: bool) -> dict[str, int | str]:
-        return await sync_protection_lists(
-            engine,
-            sonarrs=[_sonarr()],
-            tv_keep_tags=("keep",),
-            tv_keep_match=match,
-            keep_tags_trusted=trusted,
-            include_top_250=False,
+    def _tag_list(match: str = "all") -> ListDefinition:
+        return ListDefinition(
+            id=3,
+            name="Tagged",
+            source=ListSource.ARR_TAG,
+            config={"tags": ["keep"], "match": match},
+            enabled=True,
         )
 
-    async def test_the_saved_keep_list_survives_a_fallen_back_scan(
+    async def test_the_saved_keep_list_survives_an_unreadable_registry(
         self, engine: AsyncEngine
     ) -> None:
-        await self._sync(engine, match="all", trusted=True)
+        await sync_protection_lists(engine, definitions=[self._tag_list()], sonarrs=[_sonarr()])
         assert (await load_membership_index(engine)).lookup(media_type="tv", tvdb_id=10)
 
-        # The next scan holds a repaired policy: shipped tags, shipped match.
-        synced = await self._sync(engine, match="any", trusted=False)
+        synced = await sync_protection_lists(engine, definitions=None, sonarrs=[_sonarr()])
 
-        assert "retired" not in str(synced.get("sonarr-1-keeptags-all"))
+        assert "retired" not in str(synced.get("sonarr-1-keeptags-all-list3"))
         assert (await load_membership_index(engine)).lookup(media_type="tv", tvdb_id=10)
 
-    async def test_a_trusted_policy_still_retires_it(self, engine: AsyncEngine) -> None:
+    async def test_a_readable_registry_still_retires_it(self, engine: AsyncEngine) -> None:
         """The control, so the test above cannot pass by the retire pass being broken: with
-        the operator's own policy in hand, flipping the match still retires the old list."""
-        await self._sync(engine, match="all", trusted=True)
+        the registry in hand, flipping the match still retires the old list."""
+        await sync_protection_lists(engine, definitions=[self._tag_list()], sonarrs=[_sonarr()])
 
-        synced = await self._sync(engine, match="any", trusted=True)
+        synced = await sync_protection_lists(
+            engine, definitions=[self._tag_list("any")], sonarrs=[_sonarr()]
+        )
 
-        assert synced["sonarr-1-keeptags-all"] == "retired"
+        assert synced["sonarr-1-keeptags-all-list3"] == "retired"
 
 
 def _fromstring(xml: str) -> Any:

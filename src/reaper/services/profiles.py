@@ -25,17 +25,24 @@ from dataclasses import dataclass
 import structlog
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
+from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
+from reaper.engine.fields import Op
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
+    ConditionSpec,
     PolicyBody,
+    PolicyRepair,
     ProfileSettings,
     combine_hashes,
+    convert_list_protections,
+    has_legacy_list_protections,
     rebalance,
     recover_rating_rules,
 )
@@ -149,31 +156,29 @@ class ActivePolicy:
     body: PolicyBody
     name: str
 
-    rescaled: bool = False
-    """This is the operator's own body, rescaled to load (``policy.rebalance``).
+    repairs: tuple[PolicyRepair, ...] = ()
+    """Every way this body had to be changed to load it, in the order they were applied.
 
-    Their tuning survived; only the units moved. The rescale is not exactly
-    score-preserving -- integer rounding can move a score a point or two, enough to cross
-    a condemn line (see ``policy.rebalance``) -- which is why this flag makes ``repaired``
-    true and the editor opens on it as an unsaved draft for them to review and re-save.
+    One field, not four booleans, because each repair obliges four surfaces at once and a
+    boolean can be wired to three of them and read correct at each. ``PolicyRepair`` carries
+    what each member means and the test that walks them.
+
+    Composed, never exclusive: a body needing its rating bar put back AND rescaling arrives
+    carrying both, and one needing its lists converted first carries that too. Order is the
+    order ``active_policy`` applied them, so the operator's notices read in the order the
+    repairs happened.
     """
 
-    fell_back: bool = False
-    """The stored body could not be repaired, so this is the SHIPPED DEFAULT.
+    lists_unreadable: bool = False
+    """The list registry could not be read while this body was built, so any keep rule the
+    operator's own Plex lists would have contributed is MISSING from it.
 
-    Their tuning did not survive. Louder than ``rescaled`` in the UI, because the numbers
-    on screen are ones they never chose.
-    """
-
-    rating_rules_recovered: bool = False
-    """This is the operator's own body with their rating bar restored
-    (``policy.recover_rating_rules``).
-
-    The bar moved off the RATING_FLOOR gate row with no backfill, so a body written before
-    that move still validates while protecting nothing. Restoring it changes what the scan
-    decides -- titles their bar keeps stop being condemnable -- so it is never adopted
-    silently: this flag makes ``repaired`` true, the scan degrades, and the editor opens on
-    it as an unsaved draft the operator reviews and saves.
+    Deliberately not a ``PolicyRepair``: every member of that enum is answered by the
+    operator opening the policy page and saving, and saving fixes nothing here. It is
+    ``repaired`` all the same, because both things ``repaired`` gates are right for it --
+    the scan degrades (rules 65/91: a config read failure is not "nothing configured"), and
+    ``services.list_rules`` declines to write a policy row, since persisting this body would
+    make the missing rules permanent. Only ``scan_runner``'s sentence tells the two apart.
     """
 
     @property
@@ -186,7 +191,7 @@ class ActivePolicy:
         the name: an operator's own policy is frequently *called* "default", so the name
         cannot tell the recoveries apart (it silently did not, once).
         """
-        return self.rescaled or self.fell_back or self.rating_rules_recovered
+        return bool(self.repairs) or self.lists_unreadable
 
 
 async def active_policy(session: AsyncSession, media_type: str = "movie") -> ActivePolicy:
@@ -219,14 +224,35 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     default = DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY
 
     if row is None:
-        return ActivePolicy(default, "default")
+        body, lists_unreadable = await _default_with_own_lists(session, default)
+        return ActivePolicy(body, "default", lists_unreadable=lists_unreadable)
 
     try:
         raw = json.loads(row.body_json)
     except ValueError:
-        # Not JSON at all. `model_validate_json` below reports it the same way, and the
-        # two recoveries that read `raw` both refuse a non-dict.
+        # Not JSON at all. `model_validate` below reports it the same way, and the
+        # recoveries that read `raw` all refuse a non-dict.
         raw = None
+
+    # The list-protection conversion runs FIRST, on the raw dict: it strips keys ``Frozen``
+    # forbids (``keep_tags``), so every shim and validation below it must see its output or
+    # a merely-legacy body would read as unreadable and fall back to the shipped default --
+    # the silent substitution rule 65 forbids. Composed, never raced, like the pair below.
+    # Every repair applied on the way to a loadable body, in the order applied. Composed,
+    # so a body needing two of them reports two and the editor says both.
+    repairs: tuple[PolicyRepair, ...] = ()
+    if has_legacy_list_protections(raw):
+        tag_name, imdb_name, own_names = await _conversion_list_names(session)
+        converted = convert_list_protections(
+            raw,
+            tag_list_name=tag_name,
+            imdb_list_name=imdb_name,
+            collection_list_names=own_names,
+        )
+        if converted is not None:
+            raw = converted
+            repairs = (*repairs, PolicyRepair.LISTS_MIGRATED)
+            log.info("policy.lists_migrated", media_type=media_type, name=row.name)
 
     restored = recover_rating_rules(raw)
     if restored is not None:
@@ -240,15 +266,14 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
             log.warning("policy.rating_rules_unrecoverable", media_type=media_type)
         else:
             log.info("policy.rating_rules_recovered", media_type=media_type, name=row.name)
-            return ActivePolicy(body, row.name, rating_rules_recovered=True)
+            return ActivePolicy(body, row.name, (*repairs, PolicyRepair.RATING_RULES_RESTORED))
 
     try:
-        return ActivePolicy(PolicyBody.model_validate_json(row.body_json), row.name)
+        return ActivePolicy(PolicyBody.model_validate(raw), row.name, repairs)
     except ValidationError:
-        # Pydantic raises ValidationError for malformed JSON too, so we land here with a
-        # body that json.loads could not read either. Both that and a body that decodes to
-        # something other than an object (a list, a number, null) fall through to the
-        # shipped default below; neither may escape as an exception.
+        # A body json.loads could not read (`raw` is None), one that decodes to something
+        # other than an object, and one that fails validation all land here; none may
+        # escape as an exception.
         # Compose the two shims, never race them. A body that needs its rating bar put back
         # AND needs rescaling arrives here with `restored` already holding the recovered
         # bar, because the validate above failed on the weights, not on the bar. Rebalancing
@@ -256,8 +281,8 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
         # were rescaled and nothing about the protection that vanished, and saving the draft
         # the editor opens would write the loss back permanently (rules 105 and 65).
         source = restored if isinstance(restored, dict) else raw
-        repaired = rebalance(source) if isinstance(source, dict) else None
-        if repaired is not None:
+        rescaled = rebalance(source) if isinstance(source, dict) else None
+        if rescaled is not None:
             recovered = source is restored
             log.info(
                 "policy.rebalanced",
@@ -265,14 +290,85 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
                 name=row.name,
                 rating_rules_recovered=recovered,
             )
+            if recovered:
+                repairs = (*repairs, PolicyRepair.RATING_RULES_RESTORED)
             return ActivePolicy(
-                PolicyBody.model_validate(repaired),
+                PolicyBody.model_validate(rescaled),
                 row.name,
-                rescaled=True,
-                rating_rules_recovered=recovered,
+                (*repairs, PolicyRepair.RESCALED),
             )
         log.warning("policy.unreadable", media_type=media_type, name=row.name)
-        return ActivePolicy(default, "default", fell_back=True)
+        # Nothing of the stored body survives, so the repairs that got partway there are not
+        # reported: the operator is looking at the shipped default, and a notice saying their
+        # lists were converted would be about a body that is no longer on screen.
+        return ActivePolicy(default, "default", (PolicyRepair.FELL_BACK,))
+
+
+async def _conversion_list_names(
+    session: AsyncSession,
+) -> tuple[str | None, str | None, tuple[str, ...]]:
+    """The current names of the lists ``convert_list_protections``'s rules must point at:
+    the tag list the keep tags became, and the shipped IMDb list. Resolved by source and
+    age rather than by spelling -- the upgrade migration's rows are the oldest of their
+    source, and both names are the operator's to change. ``None`` means no such list, and
+    the shim then leaves that half's gate in place rather than converting it away."""
+    rows = (
+        await session.execute(
+            select(ListConfigModel.source, ListConfigModel.name).order_by(ListConfigModel.id)
+        )
+    ).all()
+    tag = next((str(r.name) for r in rows if r.source == "arr_tag"), None)
+    imdb = next((str(r.name) for r in rows if r.source == "imdb"), None)
+    own = tuple(str(r.name) for r in rows if r.source in ("plex_collection", "plex_watchlist"))
+    return tag, imdb, own
+
+
+async def _default_with_own_lists(
+    session: AsyncSession, default: PolicyBody
+) -> tuple[PolicyBody, bool]:
+    """The shipped default plus an outright keep rule for each Plex list the registry holds,
+    and whether the registry could be read at all.
+
+    ``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
+    Plex keep collection arrives by migration instead (``20260803_1900``), so on an install
+    that has never saved a policy nothing pointed a rule at it: the row above returns before
+    ``convert_list_protections`` can run, and the WHITELISTED gate that used to spare its
+    titles is retired. That is a protection which fired on the previous release and cannot
+    fire on this one, with no degradation and no draft to review -- so the rule is put back
+    here rather than announced.
+
+    Additive only. An unreadable registry, or one with nothing of its own, leaves the shipped
+    conditions exactly as they are: this may add cover, never withdraw it.
+
+    **The two cases are not the same answer, which is why the flag is returned beside the
+    body.** A registry read that SUCCEEDS and finds nothing may fall back to the shipped
+    conditions silently; one that FAILS may not (rules 65/91), and it used to, on a bare log
+    line. The scan's own registry read is separate and can succeed on a transient error, so
+    nothing downstream could otherwise notice that this scan is running with no rule naming
+    the operator's keep collection.
+    """
+    try:
+        _, _, own = await _conversion_list_names(session)
+    except SQLAlchemyError:
+        log.warning("policy.default_lists_unreadable")
+        return default, True
+    carried = {
+        str(c.value).strip().casefold()
+        for c in default.protect_conditions
+        if c.field == "on_list" and isinstance(c.value, str)
+    }
+    # Case-folded on both sides, the comparison every reader of a list name makes (rule 88).
+    extra = tuple(
+        ConditionSpec(field="on_list", op=Op.EQ, value=name)
+        for name in dict.fromkeys(own)
+        if name.strip().casefold() not in carried
+    )
+    if not extra:
+        return default, False
+    return (
+        default.model_copy(update={"protect_conditions": default.protect_conditions + extra}),
+        False,
+    )
 
 
 async def active_policies(session: AsyncSession) -> tuple[ActivePolicy, ActivePolicy]:

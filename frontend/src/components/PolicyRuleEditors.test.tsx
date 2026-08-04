@@ -1,24 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The value suggester's keyboard contract.
+// Two contracts, one file: the value suggester's keyboard behavior, and the keep-rule
+// composer's membership rules.
 //
-// It is an aria-activedescendant listbox: the <input> keeps DOM focus and the arrow keys move
-// which option is marked current. That is a contract the browser does not help with -- nothing
-// has focus in the list, so nothing scrolls on the operator's behalf -- and the app's other
-// popups were deliberately de-roled rather than pay it (the comment in ReviewQueue.tsx says so
-// by name). This is the one place that pays it, so this is the one place that has to prove it.
+// The suggester is an aria-activedescendant listbox: the <input> keeps DOM focus and the
+// arrow keys move which option is marked current. That is a contract the browser does not
+// help with -- nothing has focus in the list, so nothing scrolls on the operator's behalf --
+// and the app's other popups were deliberately de-roled rather than pay it (the comment in
+// ReviewQueue.tsx says so by name). This is the one place that pays it, so this is the one
+// place that has to prove it.
+//
+// The membership rules ("On one of your lists") are how every list protects: a hard rule
+// keeps outright, a lean is a FLAT discount. What is pinned is the exact body each composer
+// emits, because the server validates it (`GradedKeepSpec._valid_keep`) and a wrong shape is
+// a keep rule that refuses to save.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-import type { VocabField } from "../api";
+import type { Condition, GradedKeep, VocabField } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
-import { RemoveRulesEditor } from "./PolicyRuleEditors";
+import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { vocabulary: vi.fn(), vocabularyValues: vi.fn() },
+  apiMock: { vocabulary: vi.fn(), vocabularyValues: vi.fn(), listConfigs: vi.fn() },
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -130,5 +137,282 @@ describe("arrowing through the value suggester", () => {
 
     expect(optionNamed("value-05")).toHaveAttribute("aria-selected", "true");
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Membership keep rules: "On one of your lists", both strengths.
+// ---------------------------------------------------------------------------
+
+/** The field as the protect vocabulary serves it (`engine/fields.py`). */
+const ON_LIST: VocabField = {
+  key: "on_list",
+  label: "On one of your lists",
+  help_text: "Matches a list by the name it has on Settings → Lists.",
+  type: "text",
+  unit_suffix: "",
+  ops: ["eq", "in", "contains"],
+};
+
+/** A numeric protect field beside it, so the composer's on_list branches are asserted against
+ *  a sibling that keeps the ramp controls. */
+const VOTES: VocabField = {
+  key: "imdb_votes",
+  label: "IMDb vote count",
+  help_text: "",
+  type: "count",
+  unit_suffix: "votes",
+  ops: ["gte", "lte"],
+};
+
+function renderKeepEditor(over: { conditions?: Condition[]; keeps?: GradedKeep[] } = {}) {
+  const onConditions = vi.fn();
+  const onKeeps = vi.fn();
+  render(
+    <QueryClientProvider client={testQueryClient()}>
+      <KeepRulesEditor
+        conditions={over.conditions ?? []}
+        keeps={over.keeps ?? []}
+        gateIds={[]}
+        mediaType="movie"
+        onConditions={onConditions}
+        onKeeps={onKeeps}
+      />
+    </QueryClientProvider>,
+  );
+  return { onConditions, onKeeps, user: userEvent.setup() };
+}
+
+describe("a hard keep rule on a list", () => {
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
+    apiMock.listConfigs.mockResolvedValue([
+      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
+      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+    ]);
+  });
+
+  it("hides the comparison, offers the lists by name, and emits field/eq/name", async () => {
+    const { onConditions, user } = renderKeepEditor();
+
+    const picker = screen.getByRole("combobox", { name: "Field" });
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "On one of your lists" })).toBeInTheDocument(),
+    );
+    await user.selectOptions(picker, "on_list");
+
+    // A membership's one comparison is "is": no op select renders, only the list picker.
+    expect(screen.queryByRole("combobox", { name: "Comparison" })).not.toBeInTheDocument();
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "Never Reap" })).toBeInTheDocument(),
+    );
+
+    // Nothing picked yet: Add waits, and the sentence names the wait (rule 42's shape).
+    expect(screen.getByRole("button", { name: "Add rule" })).toBeDisabled();
+    expect(screen.getByText("Pick a list to add this rule.")).toBeInTheDocument();
+
+    await user.selectOptions(lists, "Never Reap");
+    await user.click(screen.getByRole("button", { name: "Add rule" }));
+
+    expect(onConditions).toHaveBeenCalledWith([
+      { field: "on_list", op: "eq", value: "Never Reap" },
+    ]);
+  });
+
+  it("renders a stored rule as a sentence about the list, even one whose list is gone", async () => {
+    apiMock.listConfigs.mockResolvedValue([]);
+    renderKeepEditor({ conditions: [{ field: "on_list", op: "eq", value: "Old list" }] });
+
+    expect(await screen.findByText(/Keep it when on your list Old list/)).toBeInTheDocument();
+  });
+});
+
+describe("a lean keep rule on a list", () => {
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
+    apiMock.listConfigs.mockResolvedValue([
+      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
+    ]);
+  });
+
+  async function openLean(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: "Leans toward keeping" }));
+    const picker = screen.getByRole("combobox", { name: "Field" });
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "On one of your lists" })).toBeInTheDocument(),
+    );
+    await user.selectOptions(picker, "on_list");
+  }
+
+  it("offers the membership field first, flat: no direction, no ramp end", async () => {
+    const { user } = renderKeepEditor();
+    await openLean(user);
+
+    const options = screen
+      .getAllByRole("option")
+      .map((o) => o.textContent)
+      .filter((t) => t !== "when…" && t !== "Pick a list…" && t !== "Never Reap");
+    expect(options[0]).toBe("On one of your lists");
+
+    // Membership isn't a number, so the ramp controls stay off the page for it.
+    expect(screen.queryByRole("group", { name: "Which way it leans" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Full effect at")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Points this rule takes off")).toBeInTheDocument();
+  });
+
+  it("emits the flat lean the server validates: value set, inert ramp, points off", async () => {
+    const { onKeeps, user } = renderKeepEditor();
+    await openLean(user);
+
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Which list" }), [
+      "Never Reap",
+    ]);
+    await user.click(screen.getByRole("button", { name: "Add rule" }));
+
+    expect(onKeeps).toHaveBeenCalledWith([
+      {
+        name: "Never Reap",
+        field: "on_list",
+        value: "Never Reap",
+        max_discount: 15,
+        floor: 0,
+        saturate_at: 1,
+        direction: "high_keeps",
+      },
+    ]);
+  });
+
+  it("renders a stored membership lean by its stored name, with its points", async () => {
+    apiMock.listConfigs.mockResolvedValue([]);
+    renderKeepEditor({
+      keeps: [
+        {
+          name: "Old list",
+          field: "on_list",
+          value: "Old list",
+          max_discount: 20,
+          floor: 0,
+          saturate_at: 1,
+          direction: "high_keeps",
+        },
+      ],
+    });
+
+    expect(await screen.findByText(/On your list Old list/)).toBeInTheDocument();
+    // "by", not "up to": membership is not a number, so this rule pays its whole discount or
+    // none of it. "up to" is this file's word for a ramp, and it was printed on both branches,
+    // describing an all-or-nothing rule as a sliding one.
+    expect(screen.getByText(/lowers the score by −20 points/)).toBeInTheDocument();
+    expect(screen.queryByText(/up to −20 points/)).not.toBeInTheDocument();
+  });
+});
+
+/** Choose the membership field, once the vocabulary that offers it has landed. user-event
+ *  reports a select with no matching option as a no-op, so acting a turn early does nothing
+ *  and fails later on a state the no-op never produced (rule 137). */
+async function pickTheListField(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "On one of your lists" })).toBeInTheDocument(),
+  );
+  await user.selectOptions(screen.getByRole("combobox", { name: "Field" }), "on_list");
+}
+
+describe("one list, one keep rule", () => {
+  // Both strengths were offered whatever rules already existed, so a list could be kept
+  // outright AND leaned on. The outright rule decides the item alone, so the lean could never
+  // change an outcome, and the operator was tuning points that could not matter (#510).
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
+    apiMock.listConfigs.mockResolvedValue([
+      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
+      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+    ]);
+  });
+
+  it("does not offer a list an outright rule already names, at either strength", async () => {
+    const { user } = renderKeepEditor({
+      conditions: [{ field: "on_list", op: "eq", value: "Never Reap" }],
+    });
+
+    await pickTheListField(user);
+    const hard = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "IMDb Top 250" })).toBeInTheDocument(),
+    );
+    expect(within(hard).queryByRole("option", { name: "Never Reap" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Leans toward keeping" }));
+    await pickTheListField(user);
+    const lean = await screen.findByRole("combobox", { name: "Which list" });
+
+    expect(within(lean).queryByRole("option", { name: "Never Reap" })).not.toBeInTheDocument();
+    expect(within(lean).getByRole("option", { name: "IMDb Top 250" })).toBeInTheDocument();
+  });
+
+  it("does not offer a list a lean already names either, so the lean cannot double", async () => {
+    // Two leans on one list both evaluate and `score()` subtracts the sum, so 15 points twice
+    // is 30 off -- and `uniqueName` suffixed the second so the body validated.
+    const { user } = renderKeepEditor({
+      keeps: [
+        {
+          name: "Never Reap",
+          field: "on_list",
+          value: "Never Reap",
+          max_discount: 15,
+          floor: 0,
+          saturate_at: 1,
+          direction: "high_keeps",
+        },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Leans toward keeping" }));
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+
+    expect(within(lists).queryByRole("option", { name: "Never Reap" })).not.toBeInTheDocument();
+  });
+
+  it("matches the stored rule against the list name the way the scan does", async () => {
+    // Case-folded on both sides (rule 88): a rule stored as the operator typed it then still
+    // names the list the scan will match, so offering it again would compose the pair.
+    const { user } = renderKeepEditor({
+      conditions: [{ field: "on_list", op: "eq", value: "never reap" }],
+    });
+
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+
+    expect(within(lists).queryByRole("option", { name: "Never Reap" })).not.toBeInTheDocument();
+  });
+
+  it("says why the picker is empty when every list already has a rule", async () => {
+    // Distinct from "you have no lists yet", which sends the operator to add one they do not
+    // need, and from a failed read, which is not their doing at all (rules 17/36).
+    const { user } = renderKeepEditor({
+      conditions: [
+        { field: "on_list", op: "eq", value: "Never Reap" },
+        { field: "on_list", op: "eq", value: "IMDb Top 250" },
+      ],
+    });
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "Every list already has a keep rule. Remove one above to give it a different strength.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
+  });
+
+  it("still says you have no lists when there are none", async () => {
+    apiMock.listConfigs.mockResolvedValue([]);
+    const { user } = renderKeepEditor();
+
+    await pickTheListField(user);
+
+    expect(await screen.findByText(/You have no lists yet/)).toBeInTheDocument();
   });
 });

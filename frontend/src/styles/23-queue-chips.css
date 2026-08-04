@@ -174,6 +174,15 @@
   border-radius: var(--radius-pill);
   white-space: nowrap;
 }
+/* The non-truncating member. The chip truncates because the queue's cards give it a fixed
+   column; outside that column there is no column to protect, and an ellipsis there would be
+   rule 139's failure -- two chips whose labels differ only in the tail truncate alike. Used
+   by Settings, Lists, whose row wraps instead. */
+.status-chip.status-chip-wrap {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
 .status-kept {
   color: var(--protect);
   background: var(--protect-soft);
@@ -185,6 +194,13 @@
 .status-look {
   color: var(--unknown);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 55%, transparent);
+}
+/* Filled amber, where `.status-look` is outlined. Outlined means "left for you to decide";
+   this one states a condition that is simply wrong and wants attention -- Settings, Lists
+   wears it for a protection whose last check is too old to trust. */
+.status-warn {
+  color: var(--unknown);
+  background: var(--unknown-soft);
 }
 .status-pressure {
   color: var(--condemn);

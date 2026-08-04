@@ -44,7 +44,7 @@ from reaper.db.session import create_cache_engine, create_engine, create_session
 from reaper.engine.dormancy import history_reach_days
 from reaper.engine.gates import GateId
 from reaper.engine.observation import Known, Unknown
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, PolicyRepair
 from reaper.services import (
     app_settings,
     history_sync,
@@ -182,10 +182,19 @@ class _MuteEpisodesSonarr(_FakeSonarr):
 
 
 class _StaticList:
-    """A protection-list provider with fixed members, for seeding the whitelist."""
+    """A protection-list provider with fixed members, for seeding the keep list.
+
+    Named as the seeded default tag list, because that is the name the shipped policies'
+    ``on_list`` keep rules match: membership protects through the rule naming the list
+    now, not through a gate that read a boolean.
+
+    **The two names differ, as a tag list's really do.** This double used to spell them
+    alike, so the scan it drives could not tell the matched name from the displayed one and
+    stayed green while every real tag list protected nothing (#507, rule 141)."""
 
     slug = "keep-list"
-    display_name = "Keep list"
+    display_name = "Titles you've tagged (4k)"
+    list_name = "Titles you've tagged"
 
     def __init__(self, items: list[lists.ListItem]) -> None:
         self._items = items
@@ -498,11 +507,12 @@ class TestScanPipelineEndToEnd:
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert len(rows) == 8
 
-        # The dormant movie condemns; the whitelisted one protects AND names the
-        # protection; the unmatched one abstains.
+        # The dormant movie condemns; the keep-listed one protects AND the explanation
+        # names the list, which is the only thing separating this hold from any other
+        # rule's in the why-panel; the unmatched one abstains.
         assert rows["radarr:1:1"].verdict == "condemn"
         assert rows["radarr:1:2"].verdict == "protect"
-        assert "whitelisted" in (rows["radarr:1:2"].explanation_json or "")
+        assert "Titles you've tagged" in (rows["radarr:1:2"].explanation_json or "")
         assert rows["radarr:1:3"].verdict == "abstain"
 
         # Seasons rode the same judge: the keep-last/keep-first guards protected
@@ -679,7 +689,7 @@ class TestScanPipelineEndToEnd:
         # Loud, and fail-closed: the snapshot says which instance is missing, and the
         # reachable instance's items are all still there.
         assert snapshot.degraded is True
-        assert "radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
+        assert "Radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert set(rows) == {"radarr:1:1", "radarr:1:2", "radarr:1:3"}
 
@@ -968,7 +978,7 @@ class TestAStaleMirrorDegradesTheSnapshot:
         snapshot = await self._scan_with(session, cache_engine)
 
         assert snapshot.degraded is True
-        assert "watch history has not updated recently" in (snapshot.degraded_reason or "")
+        assert "Watch history has not updated recently" in (snapshot.degraded_reason or "")
 
     async def test_a_mirror_that_never_synced_degrades(
         self, session: AsyncSession, cache_engine: AsyncEngine
@@ -981,7 +991,7 @@ class TestAStaleMirrorDegradesTheSnapshot:
         snapshot = await self._scan_with(session, cache_engine)
 
         assert snapshot.degraded is True
-        assert "watch history has not updated recently" in (snapshot.degraded_reason or "")
+        assert "Watch history has not updated recently" in (snapshot.degraded_reason or "")
 
     async def test_a_quiet_library_that_synced_recently_does_not_degrade(
         self, session: AsyncSession, cache_engine: AsyncEngine
@@ -1327,7 +1337,8 @@ class TestARepairedPolicyCannotBeReapedFrom:
         cache_engine: AsyncEngine,
         monkeypatch: pytest.MonkeyPatch,
         *,
-        rescaled: bool,
+        repairs: tuple[PolicyRepair, ...],
+        lists_unreadable: bool = False,
     ) -> tuple[Any, async_sessionmaker[AsyncSession], AsyncEngine]:
         from types import SimpleNamespace
 
@@ -1354,7 +1365,12 @@ class TestARepairedPolicyCannotBeReapedFrom:
 
         async def fake_policies(session: Any) -> Any:
             return (
-                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default", rescaled=rescaled),
+                profiles.ActivePolicy(
+                    DEFAULT_MOVIE_POLICY,
+                    "default",
+                    repairs,
+                    lists_unreadable=lists_unreadable,
+                ),
                 profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
             )
 
@@ -1398,20 +1414,57 @@ class TestARepairedPolicyCannotBeReapedFrom:
         from reaper.services.planner import PlanError, build_plan
 
         snapshot, factory, engine = await self._run(
-            tmp_path, cache_engine, monkeypatch, rescaled=True
+            tmp_path, cache_engine, monkeypatch, repairs=(PolicyRepair.LISTS_MIGRATED,)
         )
         try:
             assert snapshot.degraded is True
             reason = snapshot.degraded_reason or ""
             assert "movie policy needs saving again" in reason, reason
+            # The lane is named the way the app spells it, not by its raw media-type id: this
+            # sentence goes verbatim into the incomplete-scan notice, and "tv policy" read as
+            # a typo in the middle of it (rule 21).
+            assert "tv policy" not in reason, reason
+            # The remedy names the control that actually moved. This clause was an if/else
+            # over one flag, so a converted list policy was told to "check the points" -- and
+            # no points had moved, so nothing on the page it sent them to matched the
+            # instruction (#516).
+            assert "check your keep rules" in reason, reason
+            assert "check the points" not in reason, reason
 
             async with factory() as s:
-                with pytest.raises(PlanError, match="degraded"):
+                # The refusal is operator copy, and does not use the internal word.
+                with pytest.raises(PlanError, match="came back incomplete"):
                     await build_plan(
                         s,
                         snapshot_id=snapshot.id,
                         approved_by="test",
                     )
+        finally:
+            await engine.dispose()
+
+    async def test_a_policy_built_without_its_lists_degrades_and_says_which(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The registry was unreadable while the shipped default was assembled, so this scan
+        is judging with no keep rule naming the operator's own Plex lists.
+
+        It carries no ``PolicyRepair`` on purpose -- nothing was repaired and no save clears
+        it -- so the degradation loop keying on ``repairs`` alone let the scan through, and
+        the scan's own registry read is a separate query that can succeed on the same
+        transient error (rules 65/91).
+
+        Both halves are asserted: that it degrades, and that it does NOT send the operator to
+        press a Save that would fix nothing.
+        """
+        snapshot, _factory, engine = await self._run(
+            tmp_path, cache_engine, monkeypatch, repairs=(), lists_unreadable=True
+        )
+        try:
+            assert snapshot.degraded is True
+            reason = snapshot.degraded_reason or ""
+            assert "protection lists could not be read" in reason, reason
+            assert "movie" in reason, reason
+            assert "needs saving again" not in reason, reason
         finally:
             await engine.dispose()
 
@@ -1423,9 +1476,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
         some unrelated reason."""
         from reaper.services.planner import build_plan
 
-        snapshot, factory, engine = await self._run(
-            tmp_path, cache_engine, monkeypatch, rescaled=False
-        )
+        snapshot, factory, engine = await self._run(tmp_path, cache_engine, monkeypatch, repairs=())
         try:
             assert snapshot.degraded is False, snapshot.degraded_reason
 
@@ -1694,6 +1745,57 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert rows
         assert all(c.verdict != "condemn" for c in rows.values())
+
+    async def test_one_outage_reads_as_one_failure_per_lane_in_whole_sentences(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The notice the operator reads is prose, and it was neither of those things.
+
+        ``build_index`` runs once per media lane against ONE reasons list, so a single
+        spine timeout reached its ``degrade`` twice. Undifferentiated, that appended the
+        same sentence verbatim twice and one outage read as two (#513). And every reason
+        was an unterminated fragment joined on ``"; "``, so the last one fused into the
+        sentence each notice writes after it (#514). Both are proven here against the
+        assembled string, because that string is the whole of what is rendered.
+        """
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+
+        class _BrokenSpine(_FakeTautulli):
+            async def libraries(self) -> list[dict[str, Any]]:
+                raise IntegrationError("tautulli", "libraries timed out")
+
+        # Both lanes populated, so both reach `build_index` and the duplicate can occur.
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[
+                season_scan.SonarrSource(
+                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                )
+            ],
+            tautulli=_BrokenSpine(movies=_movie_spine()),  # type: ignore[arg-type]
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+        reason = snapshot.degraded_reason or ""
+
+        # #513: the same failure in the two lanes is told apart by the lane, so neither
+        # sentence is a verbatim repeat of the other.
+        assert "Movies: the Plex library listing could not be read" in reason, reason
+        assert "TV shows: the Plex library listing could not be read" in reason, reason
+        sentences = [s.strip() for s in reason.split(". ") if s.strip()]
+        assert len(sentences) == len(set(sentences)), reason
+
+        # #514: whole sentences. No fragment joiner survives, and the string terminates --
+        # every notice rendering it writes more prose immediately after.
+        assert "; " not in reason, reason
+        assert reason.endswith("."), reason
 
 
 class TestKeepHistoryCoverage:
@@ -2845,3 +2947,92 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
+
+
+class TestTheScanRecordsTheListsItGatheredUnder:
+    """The write side of ``Snapshot.list_config_hash`` (#512).
+
+    ``api.routes.simulate`` refuses whenever the recorded value does not match the registry,
+    so a scan that stopped recording it would not fail loudly: it would leave the panel
+    permanently refusing, which reads as "run a scan" forever. The read side is pinned in
+    ``test_simulate_hardening``; this is the half that fills it in.
+    """
+
+    async def test_it_records_the_fingerprint_of_the_lists_it_synced(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from reaper.engine.policy import ProfileSettings
+        from reaper.services import list_config, scan_runner
+
+        captured: dict[str, Any] = {}
+
+        async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return SimpleNamespace(id=1, item_count=0, degraded=False)
+
+        class _CmTautulli:
+            async def __aenter__(self) -> _CmTautulli:
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+            async def users(self) -> list[dict[str, Any]]:
+                return []
+
+        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
+            return ([], [], _CmTautulli(), [], None)
+
+        async def fake_policies(session: Any) -> Any:
+            return (
+                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
+                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
+            )
+
+        async def fake_profile(session: Any) -> Any:
+            return profiles.ActiveProfile(ProfileSettings())
+
+        async def ok_sync(engine: Any, tautulli: Any) -> Any:
+            return SimpleNamespace(rows=0)
+
+        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
+            return []
+
+        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
+        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
+        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
+        monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
+        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(
+            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+        )
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        try:
+            # Unlike the degradation tests above, this one reads the registry back, so the
+            # tables have to exist rather than being allowed to fail soft.
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            await scan_runner.run_scan(
+                settings=settings,
+                session_factory=factory,
+                cache_engine=cache_engine,
+                box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
+            )
+            # Read back through the same helper the route compares with, so the assertion is
+            # that the two agree rather than that some hash was passed (rule 141).
+            async with factory() as session:
+                expected = await list_config.current_fingerprint(session)
+        finally:
+            await engine.dispose()
+
+        assert expected is not None, "the seeded registry has to be readable for this to mean it"
+        assert captured.get("list_config_hash") == expected

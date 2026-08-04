@@ -146,6 +146,21 @@ async def build_index(
     inconsistent join is exactly the drift rule 3 forbids. Scoping only ever removes an
     item's enrichment (it then resolves unmatched and is kept), never adds condemnation.
     """
+    # This function runs TWICE per scan -- movies from `snapshot.build_movie_index`, shows
+    # from `season_scan.build_tv_index` -- against one shared `degraded_reasons` list. So a
+    # single outage reaches every `degrade` below twice, and undifferentiated it appended the
+    # identical sentence twice and read as two separate failures (#513). Naming the lane is
+    # what tells the two apart; it rides every message from here rather than being written
+    # into each of the seven, so a message added later cannot forget it.
+    lane = "Movies" if section_type == "movie" else "TV shows"
+    _shared_degrade = degrade
+
+    def _lane_degrade(reason: str) -> None:
+        _shared_degrade(f"{lane}: {reason}")
+
+    # Rebound, rather than introduced under a second name, so `degrade` is the only one in
+    # scope below and a message added later cannot reach the unprefixed callback by habit.
+    degrade = _lane_degrade
 
     async def _sweep() -> tuple[dict[int, identity.PlexItem], bool]:
         """The sweep's items, and whether it *spoke* for the scoped sections.
@@ -165,8 +180,14 @@ async def build_index(
                 True,
             )
         except PlexError as exc:
+            # Plain language, because this lands verbatim in the incomplete-scan notice on
+            # three screens (rule 21). It read "Plex GUID sweep failed (...): id matching
+            # unavailable, snapshot un-executable" -- three pieces of internal vocabulary and
+            # a raw exception carrying the URL -- which said nothing to the person deciding
+            # what to delete.
             degrade(
-                f"Plex GUID sweep failed ({exc}): id matching unavailable, snapshot un-executable"
+                f"Reaper couldn't read your Plex libraries ({exc}), so nothing in this scan "
+                "could be matched to your libraries and nothing may be deleted from it"
             )
             return {}, False
 

@@ -25,7 +25,6 @@ from reaper.engine import fields, gates
 from reaper.engine.gates import (
     ABSTAIN,
     PROTECT,
-    CuratedListGate,
     DataHorizonGate,
     Evaluation,
     Facts,
@@ -38,7 +37,6 @@ from reaper.engine.gates import (
     RatingRule,
     ServerPopularityGate,
     StreamingNowGate,
-    WhitelistGate,
     evaluate_all,
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
@@ -97,6 +95,7 @@ def facts(draw: st.DrawFn) -> Facts:
         is_managed=draw(observations(st.booleans())),
         in_curated_list=draw(observations(st.text(max_size=20))),
         is_whitelisted=draw(observations(st.booleans())),
+        on_lists=draw(observations(st.text(max_size=20))),
         # Drawn across the popularity gate's 365-day window in both directions, so the
         # sweep keeps reaching the gate's answering branches. Left at its default this is
         # `Absent`, which the gate reads as un-checkable: every example would block, and
@@ -105,12 +104,17 @@ def facts(draw: st.DrawFn) -> Facts:
     )
 
 
-ALL_GATES = [
+def _on_list_gate(name: str = "My keep list") -> fields.CustomProtectGate:
+    """List membership protects through the operator's own ``on_list`` rule now; the
+    whitelist and curated-list gate classes are deleted."""
+    return fields.CustomProtectGate(fields.Condition(field="on_list", op=fields.Op.EQ, value=name))
+
+
+ALL_GATES: list[Gate] = [
     RatingFloorGate(rules=(_IMDB_BAR,)),
     StreamingNowGate(GateConfig(GateId.STREAMING_NOW)),
     ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)),
-    WhitelistGate(GateConfig(GateId.WHITELISTED)),
-    CuratedListGate(GateConfig(GateId.CURATED_LIST)),
+    _on_list_gate(),
 ]
 
 ALL_SIGNALS = [
@@ -292,8 +296,6 @@ FAIL_CLOSED_GUARDS: list[tuple[Gate, str]] = [
     (RatingFloorGate(rules=(_IMDB_BAR,)), "imdb_votes"),
     (StreamingNowGate(GateConfig(GateId.STREAMING_NOW)), "is_streaming_now"),
     (ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)), "distinct_watchers"),
-    (WhitelistGate(GateConfig(GateId.WHITELISTED)), "is_whitelisted"),
-    (CuratedListGate(GateConfig(GateId.CURATED_LIST)), "in_curated_list"),
     (MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1095)), "days_observed_unwatched"),
     (DataHorizonGate(GateConfig(GateId.DATA_HORIZON)), "days_observed_unwatched"),
 ]
@@ -378,45 +380,78 @@ class TestEveryFailClosedGuardKeepsTheFile:
         }
 
 
-class TestTheCuratedListGateHoldsWhatIsOnTheList:
+class TestAnOnListRuleHoldsWhatIsOnTheList:
     """The arm that fires the protection, driven directly.
 
-    Every `Facts` the suite built carried `in_curated_list` as `Absent` or as a generated
-    draw nothing asserted on, so nothing drove a list *hit*. Deleting the membership test
-    therefore turned "on a protected list" into "Not on any protected list" behind a green
-    run: a protection withdrawn from every listed title in the library, with nothing to say
-    so. Rule 118, in the condemn direction.
+    List membership protects through the operator's own ``on_list`` keep rule now
+    (``fields.CustomProtectGate``), so this class pins the same three claims the deleted
+    gate classes carried: a listed title is held and the list is named, a title on no list
+    is a checked miss, and an unreadable membership blocks rather than passing. Deleting
+    the membership arm turns "on your list" into a green miss behind a green run: a
+    protection withdrawn from every listed title in the library, with nothing to say so.
+    Rule 118, in the condemn direction.
     """
 
     def test_a_listed_title_is_protected_and_the_list_is_named(self) -> None:
-        """The hold fires, and says which list produced it.
+        """The hold fires, and the detail names the list the rule matched.
 
-        The name is not decoration. It is the only thing separating this hold from the keep
-        list's in the "Protections that fired" list, and a protection the operator cannot
-        trace to its source is one they cannot turn off. Pinned whole, including the missing
-        trailing period: a fired protection reads as a lowercase fragment in that list,
-        beside "someone is watching it right now".
+        The fact is the multi convention's comma-joined names, so an item on two lists is
+        matched per element, and the match is case-insensitive on both sides (rule 88):
+        the rule spells the list "awards shortlist" and the fact carries the operator's
+        own casing.
         """
-        gate = CuratedListGate(GateConfig(GateId.CURATED_LIST))
-        listed = replace(_ALL_READABLE, in_curated_list=Known(value="Awards Shortlist", source="t"))
+        gate = _on_list_gate("awards shortlist")
+        listed = replace(
+            _ALL_READABLE, on_lists=Known(value="Awards Shortlist, Second List", source="t")
+        )
 
         result = gate.evaluate(listed)
 
         assert result.outcome == PROTECT
         assert result.blocked is False
-        assert result.detail == "on a protected list: Awards Shortlist"
+        assert result.detail == "your rule: List membership includes awards shortlist"
 
-    def test_a_title_on_no_list_abstains_and_says_so(self) -> None:
-        """The other half, without which the case above holds for a gate that protects
-        everything. Its sentence is pinned too: it is what the why-panel prints under the
-        checks that ran and did not fire, where a blank reads as a check that never ran."""
-        gate = CuratedListGate(GateConfig(GateId.CURATED_LIST))
+    def test_a_title_on_other_lists_only_is_a_checked_miss(self) -> None:
+        """eq on a multi-valued fact is per element, never a whole-string comparison --
+        but it must still be an exact element match, or "keep" would match "keep list"."""
+        gate = _on_list_gate("My keep list")
+        elsewhere = replace(
+            _ALL_READABLE, on_lists=Known(value="My keep list extended", source="t")
+        )
 
-        result = gate.evaluate(_ALL_READABLE)  # `in_curated_list` is a genuine Absent
+        result = gate.evaluate(elsewhere)
 
         assert result.outcome == ABSTAIN
         assert result.blocked is False
-        assert result.detail == "Not on any protected list."
+
+    def test_a_title_on_no_list_abstains_and_says_so(self) -> None:
+        """The other half, without which the fired case holds for a gate that protects
+        everything. Its sentence is what the why-panel prints under the checks that ran
+        and did not fire, where a blank reads as a check that never ran."""
+        gate = _on_list_gate()
+        unlisted = replace(_ALL_READABLE, on_lists=Absent(source="t"))
+
+        result = gate.evaluate(unlisted)
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is False
+        assert result.detail == "checked your rule: On one of your lists: none recorded"
+
+    def test_an_unreadable_membership_blocks_the_rule(self) -> None:
+        """Rule 93: a membership that could not be read is ``Unknown``, and the rule
+        blocks -- amber, "could not check" -- rather than reporting a green miss that
+        withdraws the protection library-wide."""
+        gate = _on_list_gate()
+        unreadable = replace(
+            _ALL_READABLE, on_lists=Unknown(reason="the list sync failed", source="t")
+        )
+
+        result = gate.evaluate(unreadable)
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is True
+        assert result.detail.startswith("could not check")
+        assert "the list sync failed" in result.detail
 
 
 class TestScoreBounds:
@@ -474,7 +509,9 @@ class TestScoreBounds:
 
 
 class TestProtectionAlwaysBeatsScore:
-    def test_a_whitelisted_item_is_protected_at_any_score(self) -> None:
+    def test_a_listed_item_is_protected_at_any_score(self) -> None:
+        """The keep list's job, in its new spelling: an ``on_list`` rule naming the list
+        the item is on holds it whatever it scores."""
         item = Facts(
             title="Beloved",
             days_observed_unwatched=Known(value=5000.0, source="t"),  # maximal pressure
@@ -487,7 +524,8 @@ class TestProtectionAlwaysBeatsScore:
             is_streaming_now=Known(value=False, source="t"),
             is_managed=Known(value=True, source="t"),
             in_curated_list=Absent(source="t"),
-            is_whitelisted=Known(value=True, source="t"),  # <- the whitelist
+            is_whitelisted=Known(value=True, source="t"),
+            on_lists=Known(value="My keep list", source="t"),  # <- the operator's list
             # Deeper than the popularity window, so the zero watcher count is a real
             # measurement and FEW_WATCHERS charges its full pressure. The point of this
             # test is that a maximal score still loses to a protection, so the score has
@@ -1401,11 +1439,11 @@ _KEEPS = [
 
 #: Facts nothing in the score lane reads, so an ``Unknown`` substituted here would
 #: exercise nothing. All three are protection facts: their ``FieldSpec``s are
-#: protect-lane only, and in every policy Reaper ships they are read by a gate
-#: (``CuratedListGate``, ``WhitelistGate``, ``StreamingNowGate``), which returns
-#: PROTECT or ABSTAIN and can never add pressure. Move one into the sweep the day a
-#: signal, custom rule or keep above references it.
-_GATE_ONLY = frozenset({"in_curated_list", "is_whitelisted", "is_streaming_now"})
+#: protect-lane only, read by ``StreamingNowGate`` or by an operator-authored protect
+#: rule (``whitelisted``, ``on_list`` -> ``fields.CustomProtectGate``), each of which
+#: returns PROTECT or ABSTAIN and can never add pressure. Move one into the sweep the
+#: day a signal, custom rule or keep above references it.
+_GATE_ONLY = frozenset({"on_lists", "is_whitelisted", "is_streaming_now"})
 
 
 def _observed_fields() -> tuple[str, ...]:

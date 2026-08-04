@@ -41,6 +41,7 @@ SCALES: Final = "Scales"
 GENERAL: Final = "General"
 SERVICES: Final = "Services"
 PLEX: Final = "Plex"
+LISTS: Final = "Lists"
 JOBS: Final = "Jobs"
 NOTIFICATIONS: Final = "Notifications"
 SECURITY: Final = "Security"
@@ -81,6 +82,7 @@ GROUPS: Final[tuple[tuple[str, tuple[tuple[str, str], ...]], ...]] = (
             (GENERAL, "Name, time zone, colors, and the API key another tool signs in with."),
             (SERVICES, "The Radarr, Sonarr, Tautulli, and Seerr servers Reaper works through."),
             (PLEX, "Link a Plex server and choose which libraries Reaper may touch."),
+            (LISTS, "The lists that keep titles safe, and whether each one is still working."),
             (JOBS, "Scheduled work: scans, upkeep, and the Leaving Soon shelf."),
             (NOTIFICATIONS, "Where Reaper posts what it is about to delete."),
             (SECURITY, "The deletion switch from Policy → Deletion, and the password."),

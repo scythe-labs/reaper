@@ -345,9 +345,17 @@ async def build_plan(
     if snapshot.degraded:
         # A degraded snapshot missed a source or saw the history regress. Planning a
         # deletion from it means acting on a candidate list we already know is wrong.
+        # Reaches the operator as an HTTP 422 body on the Reap page (`api/runs.py`), so it is
+        # written for them: no snapshot id, and not "degraded", the word the docs record as
+        # internal. It is the same sentence the three incomplete-scan notices lead with, which
+        # is the point -- this is the enforcement behind what they say (rules 21, 144).
+        # The reason goes LAST, with nothing after it. `ScanContext.degrade` terminates every
+        # reason it writes, but this reads a stored column, and a row written by anything else
+        # is not covered by that -- put prose after it and an unterminated one fuses into the
+        # sentence following, which is #514 all over again.
         raise PlanError(
-            f"Snapshot {snapshot_id} is degraded ({snapshot.degraded_reason}). "
-            "No plan may be built from it."
+            "That scan came back incomplete, so Reaper won't act on it. Fix the source and "
+            f"scan again. {snapshot.degraded_reason}"
         )
 
     all_condemned = list(

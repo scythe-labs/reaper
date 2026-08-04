@@ -51,9 +51,11 @@ from reaper.services import retention
 from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
+from ._lists import seeded_fingerprint
 
+# No "whitelisted" row: the gate is retired (list membership protects through ``on_list``
+# keep rules), and the save boundary refuses it -- test_simulate_hardening pins that.
 DEFAULT_GATES = [
-    {"gate": "whitelisted"},
     {"gate": "min_dormancy", "threshold": 1095},
     {"gate": "rating_floor", "threshold": 75},
     {"gate": "server_popularity", "threshold": 3},
@@ -134,6 +136,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -141,6 +146,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=4,
             degraded=False,
@@ -535,6 +541,9 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -542,6 +551,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=4,
             degraded=False,
@@ -678,6 +688,9 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     )
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -685,6 +698,7 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=1,
             degraded=False,
@@ -1427,8 +1441,18 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
         same for all three refusals -- so without this the discriminator could be dropped
         from the response and nothing here would notice, while the panel silently fell back
         to the general heading for every cause (#495).
+
+        Driven by the popularity WINDOW, which is the span ``distinct_watchers`` is counted
+        over and so the one gate field a scan reads before it freezes an item's facts. It
+        replaced a keep-tag edit, which stopped gathering differently when the keep tags left
+        the policy body for Settings -> Lists: a list now protects through an ``on_list`` rule
+        reading membership the scan gathered whether or not any rule named it.
         """
-        result = self._simulate(client, _policy(keep_tags=["something-else"]))
+        widened = [
+            {**gate, "window_days": 180} if gate["gate"] == "server_popularity" else gate
+            for gate in DEFAULT_GATES
+        ]
+        result = self._simulate(client, _policy(gates=widened))
 
         assert result["exact"] is False
         assert result["stale_kind"] == "gathers_differently"
@@ -1466,7 +1490,6 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
         ``test_simulate_hardening.py`` proves it replays -- but because this snapshot has no
         evidence to replay over. That is the state every install was in before the freeze."""
         loosened = [
-            {"gate": "whitelisted"},
             {"gate": "min_dormancy", "threshold": 1095},
             {"gate": "rating_floor", "threshold": 60},  # was 75
             {"gate": "server_popularity", "threshold": 3},
@@ -1563,8 +1586,9 @@ class TestPolicyPersistence:
         assert out["name"] == "stale"
         assert sum(s["weight"] for s in out["body"]["signals"]) == 100
         # ...and handed over as an unsaved draft, so nothing is written until they look.
-        assert out["needs_save"] is True
-        assert out["fell_back"] is False
+        # The list is what the editor counts to open dirty, so an empty one here is the
+        # limbo #516 was: a degraded scan pointing at a page holding no Save.
+        assert out["repairs"] == ["rescaled"]
 
     def test_a_stored_policy_we_cannot_repair_falls_back_and_says_so(
         self, client: TestClient, tmp_path: Path
@@ -1590,8 +1614,7 @@ class TestPolicyPersistence:
         out = client.get("/api/policy").json()
 
         assert out["name"] == "default"
-        assert out["fell_back"] is True
-        assert out["needs_save"] is False
+        assert out["repairs"] == ["fell_back"]
 
     def test_a_saved_policy_is_what_loads_next(self, client: TestClient) -> None:
         client.post("/api/policy", json=_policy(condemn_at=55, name="mine"))

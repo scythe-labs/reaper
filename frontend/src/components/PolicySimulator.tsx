@@ -166,10 +166,14 @@ export function StaleNotice({
 
               It used to be a hardcoded paragraph here that named a keep tag, a season rule
               and the watch span all at once, beside a second copy in api/routes.py that
-              nothing ever rendered. Three refusals now, each with its own remedy, and only
-              one of them is still about a keep tag -- a season rule previews. Keeping that as
-              two hand-synced copies would have meant the reviewed sentence and the read
-              sentence being different strings again (rule 144). */}
+              nothing ever rendered. Three refusals now, each with its own remedy, and a
+              season rule previews rather than reaching any of them. Keeping that as two
+              hand-synced copies would have meant the reviewed sentence and the read sentence
+              being different strings again (rule 144).
+
+              gathers_differently also fires with no policy edit at all, when the operator
+              changes a protection list: the numbers then predate the lists, which is why the
+              sentence states the mismatch and never names an edit (#512). */}
           <p>{staleReason ?? "This policy doesn't match the last scan. Scan to apply it."}</p>
           <button
             className="primary sm"

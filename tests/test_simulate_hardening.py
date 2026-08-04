@@ -37,6 +37,7 @@ from typing import Any, NamedTuple
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from reaper.api.routes import (
@@ -46,11 +47,11 @@ from reaper.api.routes import (
     _policy_out,
     _to_body,
 )
-from reaper.api.schemas import GateSettingIn, PolicyIn, SignalSettingIn
+from reaper.api.schemas import ConditionIn, GateSettingIn, PolicyIn, SignalSettingIn
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import Candidate, Snapshot, WhitelistEntry
+from reaper.db.models import Candidate, ListConfig, Snapshot, WhitelistEntry
 from reaper.engine import facts_codec
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Absent, Known
@@ -67,12 +68,15 @@ from reaper.engine.policy import (
 from reaper.main import create_app
 
 from ._auth import login
+from ._lists import seeded_fingerprint
 
 #: The draft policy every simulation below is run under. Its scoring hash has to be the one
 #: the fixture snapshot was "scored" with, or the route refuses to re-decide at all -- so
-#: the gates and signals here and in ``_fixture_scoring_hash`` are the same list.
+#: the gates and signals here and in ``_fixture_scoring_hash`` are the same list. The
+#: ``whitelisted`` gate is retired (list membership protects through ``on_list`` keep rules
+#: now), so it appears in stored EXPLANATIONS below but never in a draft: the save boundary
+#: refuses it, which ``test_a_retired_gate_is_refused_at_the_save_boundary`` pins.
 GATES: list[dict[str, Any]] = [
-    {"gate": "whitelisted"},
     {"gate": "min_dormancy", "threshold": 1095},
     {"gate": "rating_floor", "threshold": 75},
 ]
@@ -251,6 +255,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -260,6 +267,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                 DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
             ),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=len(ROWS),
             degraded=False,
@@ -488,11 +496,19 @@ def test_the_draft_policy_matches_the_fixture(client: TestClient) -> None:
 def test_the_fixture_gates_and_signals_are_the_wire_shapes() -> None:
     """The two lists are dicts on the wire, so a typo in one is a 422, not a bad hash."""
     assert [GateSettingIn.model_validate(g).gate for g in GATES] == [
-        "whitelisted",
         "min_dormancy",
         "rating_floor",
     ]
     assert [SignalSettingIn.model_validate(s).weight for s in SIGNALS] == [100]
+
+
+def test_a_retired_gate_is_refused_at_the_save_boundary() -> None:
+    """A draft naming ``whitelisted`` is operator input asking for a protection that no
+    longer exists as a gate, so the boundary says so. A STORED body naming it converts on
+    load instead (``policy.convert_list_protections``); refusing the stored copy would take
+    the install offline, and dropping the draft silently would hide the typo."""
+    with pytest.raises(ValueError, match="whitelisted"):
+        GateSettingIn.model_validate({"gate": "whitelisted"})
 
 
 # ---------------------------------------------------------------------------
@@ -512,12 +528,16 @@ REPLAY_GATES: list[dict[str, Any]] = [*GATES, {"gate": "streaming_now"}]
 
 #: The draft the replay fixture is built for: the wire payload, the domain body it becomes,
 #: and the evidence hash that body would gather under. Built through the route's own
-#: ``_to_body`` so the fixture cannot drift from what the request produces.
+#: ``_to_body`` so the fixture cannot drift from what the request produces. The keep list
+#: protects through the operator's own rule now -- the ``whitelisted`` FIELD, since the gate
+#: of that name is retired -- so the draft carries the rule the fixture's keep-list row
+#: needs to stay held.
 REPLAY_PAYLOAD = PolicyIn(
     condemn_at=70,
     coverage_floor_bp=0,
     gates=[GateSettingIn.model_validate(g) for g in REPLAY_GATES],
     signals=[SignalSettingIn.model_validate(s) for s in SIGNALS],
+    protect_conditions=[ConditionIn(field="whitelisted", op="eq", value=True)],
 )
 REPLAY_BODY = _to_body(REPLAY_PAYLOAD)
 
@@ -558,6 +578,9 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     rows = {
@@ -576,6 +599,7 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
             evidence_hash=combine_hashes(
                 REPLAY_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
             ),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=len(rows) + 2,
             degraded=False,
@@ -689,8 +713,8 @@ class TestTheFrozenFactsReplay:
         assert result["condemned"] == 2
         assert result["reclaimable_bytes"] == 2 * SIZE
         assert result["protected_by"] == [
+            {"gate": "custom", "count": 1},
             {"gate": "streaming_now", "count": 1},
-            {"gate": "whitelisted", "count": 1},
         ]
 
     def test_a_hand_reap_the_engine_cannot_honor_is_not_previewed_as_a_deletion(
@@ -748,6 +772,9 @@ def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     # Two ways out of the removal list and one row that stays on it, so the count cannot come
@@ -767,6 +794,7 @@ def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
             evidence_hash=combine_hashes(
                 REPLAY_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
             ),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=len(rows),
             degraded=False,
@@ -948,6 +976,9 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -962,6 +993,7 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
             evidence_hash=combine_hashes(
                 STORED_OLD_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
             ),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=1,
             degraded=False,
@@ -1079,6 +1111,9 @@ def _reach_client(
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     # Encoded by production's own codec rather than transcribed (rule 119); only the
@@ -1100,6 +1135,7 @@ def _reach_client(
             evidence_hash=combine_hashes(
                 REACH_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
             ),
+            list_config_hash=list_hash,
             horizon_at=now - timedelta(days=horizon_days),
             item_count=1,
             degraded=False,
@@ -1201,6 +1237,9 @@ def spared_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -1210,6 +1249,7 @@ def spared_client(tmp_path: Path) -> Iterator[TestClient]:
                 DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
             ),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=len(SPARED_ROWS),
             degraded=False,
@@ -1280,18 +1320,152 @@ class TestAHandSpareIsOneProtectionAmongTheRest:
     def test_the_other_protection_on_a_spared_row_is_still_named(
         self, spared_client: TestClient
     ) -> None:
-        """The bug, at its plainest. Both rows are spared by hand, so ``whitelisted`` is owed
-        2; the first row also cleared the rating floor, which used to vanish from the tally
-        entirely because the hand spare was counted in its place."""
-        assert self._tally(spared_client) == {"whitelisted": 2, "rating_floor": 1}
+        """The bug, at its plainest. Both rows are spared by hand, so the hand-spare id is
+        owed 2; the first row also cleared the rating floor, which used to vanish from the
+        tally entirely because the hand spare was counted in its place.
+
+        The hand spare tallies under its OWN id, not under ``whitelisted``. It rode in on the
+        retired gate's id, and the simulator names a tally row by that id's copy -- so on a
+        fresh install, where no gate emits ``whitelisted`` at all, every hand spare was
+        reported to the operator as membership of a list (rule 144).
+
+        The second row's stored ``whitelisted`` explanation is now its own entry beside the
+        hand spare, where the two used to collapse into one. That is the split doing its job:
+        the list is still holding that title, and the operator also spared it by hand.
+        """
+        assert self._tally(spared_client) == {
+            "hand_spare": 2,
+            "rating_floor": 1,
+            "whitelisted": 1,
+        }
 
     def test_a_row_spared_by_hand_and_on_the_keep_list_counts_once(
         self, spared_client: TestClient
     ) -> None:
-        """A gate spares a row once. The second row reports ``whitelisted`` from its stored
-        explanation and again from the hand spare, and a tally that added both would claim
-        more spared titles than the fixture has rows -- so the fix that restores the other
+        """A gate spares a row once. The second row reports its stored ``whitelisted``
+        explanation and is also spared by hand, and a tally that added both would claim more
+        spared titles than the fixture has rows -- so the fix that restores the other
         protections must not restore this one twice.
+
+        The two are separate rows now, which is the point: one says what a list is holding,
+        the other says what the operator did by hand.
         """
         tally = self._tally(spared_client)
-        assert tally["whitelisted"] == len(SPARED_ROWS)
+        assert tally["hand_spare"] == len(SPARED_ROWS)
+
+
+class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
+    """The protection lists are not policy, and every tier reads evidence derived from them.
+
+    While the keep tags lived on the policy body they sat inside ``PolicyBody.evidence_hash``,
+    so retagging them made the panel ask for a scan. Moving membership into gathered evidence
+    (``Facts.on_lists``) moved them out from under that hash and put nothing back: an operator
+    could retag, repoint or rename a list and the panel went on reporting the membership the
+    scan froze, labeled exact (#512). ``Snapshot.list_config_hash`` is what put it back.
+
+    **The operator action here is a tag edit that leaves the name alone**, and the choice is
+    what makes these proofs rather than coincidences. Adding a list attaches a keep rule and
+    renaming one rewrites the rules that spell it (``api.lists``), so both edit the stored
+    policies -- and the route mixes the OTHER media type's stored policy into every hash it
+    compares (``_combined``), so either action refuses through the policy hash whether this
+    interlock exists or not. Verified by deleting the interlock: the add-a-list and rename
+    versions of these tests stayed green, which is rule 118's undiscriminating test exactly.
+    Changing only ``config`` touches no policy, so the fingerprint is the single variable.
+
+    Both tiers are driven, because the refusal sits above the split and each goes stale by its
+    own route -- the replay through the frozen fact, the threshold path through the stored
+    verdict that fact produced. Gating tier 2 alone would leave the identical wrong number
+    reachable by moving a threshold, which is the edit this page exists for (rule 72).
+    """
+
+    @staticmethod
+    def _retag_a_list(client: TestClient) -> None:
+        """Change what one list matches, and nothing else. No policy is touched."""
+        listed = client.get("/api/lists/configured").json()
+        tag_list = next((row for row in listed if row["source"] == "arr_tag"), None)
+        assert tag_list is not None, "the fixture's registry has no tag list to retag"
+
+        patched = client.patch(
+            f"/api/lists/configured/{tag_list['id']}",
+            json={"config": {"tags": ["a-different-tag"], "match": "any"}},
+        )
+        assert patched.status_code == 200, patched.text
+
+    def test_the_threshold_path_refuses_once_the_lists_move(self, client: TestClient) -> None:
+        before = _simulate(client, 40)
+        assert before["exact"] is True, before.get("stale_reason")
+
+        self._retag_a_list(client)
+
+        after = _simulate(client, 40)
+        assert after["exact"] is False, "previewed a threshold against pre-edit list membership"
+        assert after["condemned"] == 0
+        assert "scan" in after["stale_reason"].lower()
+
+    def test_the_replay_refuses_once_the_lists_move(self, replay_client: TestClient) -> None:
+        draft = REPLAY_PAYLOAD.model_dump()
+        before = replay_client.post("/api/policy/simulate", json=draft).json()
+        assert before["exact"] is True, before.get("stale_reason")
+
+        self._retag_a_list(replay_client)
+
+        after = replay_client.post("/api/policy/simulate", json=draft).json()
+        assert after["exact"] is False, "replayed a scoring edit against pre-edit list membership"
+        assert after["condemned"] == 0
+        assert "scan" in after["stale_reason"].lower()
+
+    def test_a_snapshot_that_never_recorded_its_lists_refuses(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The pre-upgrade shape: ``None`` reads as unknown, never as "no lists" (rule 104).
+
+        Driven by clearing the recorded value rather than by building a second fixture, so
+        what is pinned is the NULL itself and not some other difference between two
+        snapshots. ``tmp_path`` is the one the ``client`` fixture built this database in --
+        pytest hands the same directory to a fixture and the test that asks for it.
+        """
+        assert _simulate(client, 40)["exact"] is True
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            session.execute(sa_update(Snapshot).values(list_config_hash=None))
+            session.commit()
+        engine.dispose()
+
+        after = _simulate(client, 40)
+        assert after["exact"] is False, "answered off a snapshot that cannot say its lists"
+        assert "scan" in after["stale_reason"].lower()
+
+    def test_two_unknowns_are_not_a_match(self, client: TestClient, tmp_path: Path) -> None:
+        """Both sides ``None`` is the pairing an equality test reads as agreement.
+
+        ``None`` means "unknown" on each side and they are different unknowns: the snapshot's
+        is a scan that degraded for a registry it could not read, and the live one is a
+        registry that cannot be read right now. Comparing them answered "exact" off a scan
+        that had itself given up on the lists, which is the one case where the frozen
+        membership is least trustworthy (rules 93, 104).
+
+        Both sides are driven to ``None`` at once, because either alone already refuses
+        through the inequality and would leave this green with the fix removed (rule 118).
+        """
+        assert _simulate(client, 40)["exact"] is True
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            session.execute(sa_update(Snapshot).values(list_config_hash=None))
+            # A body that will not parse makes `definitions(strict=True)` raise, which is
+            # what `current_fingerprint` answers `None` to. The row stays in the table, so
+            # this is the live registry being unreadable rather than being empty.
+            session.execute(
+                sa_update(ListConfig)
+                .where(ListConfig.source == "arr_tag")
+                .values(config_json="{not json")
+            )
+            session.commit()
+        engine.dispose()
+
+        after = _simulate(client, 40)
+        assert after["exact"] is False, "previewed as exact with neither side able to say"
+        assert "scan" in after["stale_reason"].lower()

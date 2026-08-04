@@ -380,12 +380,29 @@ class Snapshot(Base):
 
     evidence_hash: Mapped[str | None] = mapped_column(String(64), default=None)
     """The policy fields that decide what evidence the scan gathers and freezes: the
-    popularity window, the keep-tags, the season-pruning guard, the media type. Two
+    popularity window and the media type. The keep-tags were here until the tags a title
+    carries became gathered evidence (``Facts.on_lists``), and the season-pruning guard
+    until the scan began freezing its inputs per show; ``PolicyBody.evidence_hash`` is the
+    one place that set is declared, so read it there rather than trusting this list. Two
     policies sharing this produce the same frozen Facts for every item, so the simulator
     may replay the real engine over ``Candidate.facts_json`` and get an exact verdict for
     any change *outside* these fields (weights, rating bars, custom rules). When it
     differs, the frozen evidence is stale and a fresh scan is required. See
     ``PolicyBody.evidence_hash``."""
+
+    list_config_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    """The protection lists this scan gathered membership from
+    (``services.list_config.fingerprint``). The lists are not policy, so the hash above
+    cannot carry them, and every tier of the simulator reads evidence derived from them --
+    the replay through the frozen ``Facts.on_lists``, the threshold path through the stored
+    verdict that fact produced. When it differs from the registry as it stands now, the
+    operator changed which titles their keep rules protect and the panel refuses instead of
+    reporting numbers that predate the change (#512).
+
+    ``None`` on a snapshot written before this column, and read as *unknown* rather than as
+    "no lists" (rule 104): it matches no fingerprint, so the panel refuses until the next
+    scan. That is the same one-scan cost ``PolicyBody.evidence_hash`` documents, and it
+    heals the same way."""
 
     horizon_at: Mapped[UtcTimestamp]
     """The earliest watch history we hold. Persisted, not computed: media older than
@@ -839,6 +856,64 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value_json: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[UtcTimestamp]
+
+
+class ListConfig(Base):
+    """A protection list the operator authored, or one Reaper ships with.
+
+    **Definition here, membership in the cache.** ``protection_list`` and
+    ``protection_list_item`` hold what each list currently contains, and they are excluded
+    from Alembic and from backups on purpose: they mirror somebody else's data and the next
+    sync rebuilds them. A list the operator *named and pointed at something* is not
+    rebuildable from anything, so it lives in this database, is migrated, and is backed up.
+    Storing it beside the membership would mean a restore drops every list they configured
+    and the next scan reaps what those lists were protecting.
+
+    **The id is stable across every edit.** A derived list is identified by a slug carrying
+    the settings that produced it, so changing a setting mints a new slug and strands the old
+    row still protecting from a rule the operator already replaced -- which is the whole
+    reason ``lists.retire_absent`` exists. A row here keeps its id, so an edit is an UPDATE
+    and there is nothing to retire.
+    """
+
+    __tablename__ = "list_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    name: Mapped[str] = mapped_column(String(100, collation="NOCASE"), unique=True)
+    """The operator's own name, and what a policy rule names to use this list.
+
+    Unique, because a rule naming a list has to mean exactly one list. Two rows answering to
+    one name would make a protection point at whichever was written last, which is a
+    protection that silently changes what it covers.
+
+    **Unique WITHOUT REGARD TO CASE**, because that is how every reader compares it: rule 88
+    case-folds both sides of a name match, so "Never Reap" and "never reap" are two rows here
+    and one list to `services.list_rules` and to the ``on_list`` field. They shared a single
+    keep rule, and deleting either one stripped the rule from the policy and stopped the
+    other protecting, untouched and unannounced (#508). The collation is what makes the
+    stored constraint agree with the comparison; `list_config._clean_name` refuses the
+    collision first, so the operator reads a sentence rather than a failed write.
+    """
+
+    source: Mapped[str] = mapped_column(String(32))
+    """Which kind of thing this reads: a Plex collection, an *arr tag rule, a curated list.
+    See ``services.lists.ListSource``."""
+
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    """That source's own settings -- which collection in which library, which tags and
+    whether they match ANY or ALL. JSON because each source needs different keys."""
+
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    """Off keeps the row and its name, so a list switched off comes back with its rules
+    intact. Deleting is a separate verb and is the operator's to choose."""
+
+    built_in: Mapped[bool] = mapped_column(Boolean, default=False)
+    """Ships with Reaper (the IMDb Top 250). Editable and switchable, never deletable: the
+    default policy carries a keep rule naming it, and copy may only reference a mechanism
+    that is wired (rule 25)."""
+
+    created_at: Mapped[UtcTimestamp]
 
 
 class RunState(enum.StrEnum):

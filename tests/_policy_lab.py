@@ -21,7 +21,11 @@ from typing import Any
 
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Unknown
-from reaper.engine.policy import PolicyBody
+from reaper.engine.policy import (
+    DEFAULT_IMDB_LIST_NAME,
+    DEFAULT_TAG_LIST_NAME,
+    PolicyBody,
+)
 from reaper.engine.signals import SignalConfig
 from reaper.ratings import Rating, RatingSource
 from reaper.services.scan_runner import build_gates
@@ -100,6 +104,30 @@ def to_observation(name: str, obs: dict[str, Any]) -> Known[Any] | Absent | Unkn
     return Unknown(reason="recorded as unobservable", source="lab")
 
 
+def _on_lists_from(f: dict[str, Any]) -> Known[str] | Absent | Unknown:
+    """Synthesize ``Facts.on_lists`` from the fixture's two recorded list facts.
+
+    The fixture predates ``on_lists`` and records list membership as the booleans the
+    retired gates read (``is_whitelisted``, ``in_curated_list``). Production now derives
+    the membership NAMES from the same lists those facts came from, and the shipped
+    policies protect through ``on_list`` rules naming the two seeded defaults -- so the
+    recorded facts are carried into those names, the same move ``_ratings_from`` makes
+    for the rating gate. An unknown on either source is an unknown membership: the old
+    gates blocked on it, and the ``on_list`` rules must keep doing so."""
+    whitelisted = f["is_whitelisted"]
+    curated = f["in_curated_list"]
+    if whitelisted["state"] == "unknown" or curated["state"] == "unknown":
+        return Unknown(reason="recorded as unobservable", source="lab")
+    names: list[str] = []
+    if whitelisted["state"] == "known" and whitelisted["value"]:
+        names.append(DEFAULT_TAG_LIST_NAME)
+    if curated["state"] == "known" and str(curated.get("value") or "").strip():
+        names.append(DEFAULT_IMDB_LIST_NAME)
+    if names:
+        return Known(value=", ".join(names), source="lab")
+    return Absent(source="lab")
+
+
 def _ratings_from(f: dict[str, Any]) -> tuple[Rating, ...]:
     """Synthesize the multi-source rating set from the fixture's IMDb fields.
 
@@ -142,6 +170,7 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         is_managed=to_observation("is_managed", f["is_managed"]),
         in_curated_list=to_observation("in_curated_list", f["in_curated_list"]),
         is_whitelisted=to_observation("is_whitelisted", f["is_whitelisted"]),
+        on_lists=_on_lists_from(f),
         requested=to_observation("requested", f["requested"]),
         genres=to_observation("genres", f["genres"]),
         release_age_days=to_observation("release_age_days", f["release_age_days"]),

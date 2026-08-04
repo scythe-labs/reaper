@@ -53,6 +53,7 @@ import {
   collapseStaleReads,
 } from "./StaleReadNotice";
 import { Switch } from "./Switch";
+import { ListsPanel } from "./ListsPanel";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
 
@@ -64,6 +65,7 @@ export type Panel =
   | "general"
   | "services"
   | "plex"
+  | "lists"
   | "jobs"
   | "notifications"
   | "security"
@@ -71,13 +73,14 @@ export type Panel =
   | "logs"
   | "about";
 
-/** The nine sections, in rail order. Exported for the one test that owns the hand-written label
+/** The ten sections, in rail order. Exported for the one test that owns the hand-written label
  *  table this must agree with (SettingsNav.test.tsx), so a section added here fails there naming
  *  what to do rather than as an unexplained label mismatch (rules 103, 144). */
 export const PANELS: { id: Panel; label: string }[] = [
   { id: "general", label: "General" },
   { id: "services", label: "Services" },
   { id: "plex", label: "Plex" },
+  { id: "lists", label: "Lists" },
   { id: "jobs", label: "Jobs" },
   { id: "notifications", label: "Notifications" },
   { id: "security", label: "Security" },
@@ -1726,10 +1729,13 @@ const JOB_META: Record<string, JobMeta> = {
       "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
   },
   refresh_curated_lists: {
-    title: "Refresh curated lists",
-    desc: "Re-pulls the protection lists Reaper ships with, like the IMDb Top 250, so nothing on them gets flagged.",
+    // The job id is a stored schedule key and predates the registry, so it keeps its old
+    // spelling; what it refreshes is every list on Settings -> Lists, whatever its source
+    // (scheduler.refresh_curated_lists).
+    title: "Refresh your lists",
+    desc: "Re-checks every list on Settings, Lists, so a tag or a collection you edited starts protecting without waiting for a scan.",
     offWarning:
-      "This only affects the standalone daily refresh. Every scan already re-pulls these lists.",
+      "This only affects the standalone daily refresh. Every scan already re-checks your lists, and you can check one on Settings, Lists.",
   },
   full_history_sweep: {
     title: "Full watch-history update",
@@ -2893,7 +2899,15 @@ export function SecurityPanel({
 
 // --- shell -----------------------------------------------------------------
 
-export function Settings({ initialPanel }: { initialPanel?: Panel | undefined }) {
+export function Settings({
+  initialPanel,
+  onGoToPolicy,
+}: {
+  initialPanel?: Panel | undefined;
+  /** Jump to the Policy screen's keep-rules section, for the Lists rows' policy-use links.
+   *  Optional the way `SafetyBanner`'s jump is: tests mount Settings without a navigator. */
+  onGoToPolicy?: (() => void) | undefined;
+}) {
   const [panel, setPanel] = useState<Panel>(initialPanel ?? "general");
   // General's save bar can hold six unsaved fields at once, and switching section unmounts the
   // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
@@ -2939,6 +2953,12 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
     // one is open. A draft added to the panel BEHIND the modal would need to report.
     services: false,
     plex: plexDirty,
+    // Same shape as services: a list's drafts live in `ListModal`, inside a `ModalShell`, so
+    // the rail cannot be reached while one is open. This said the panel was read-only and
+    // "a list is still configured where it always was" -- both untrue as of the Lists screen,
+    // which is now the one place a list IS defined, and the next author to add an inline edit
+    // here would have read that and left this entry alone (rule 146).
+    lists: false,
     // Same shape as services: the job editor (`ScheduleModal`) is a `ModalShell` too.
     jobs: false,
     notifications: webhookDirty,
@@ -3041,6 +3061,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
         {panel === "general" && <GeneralPanel onDirtyChange={setGeneralDirty} />}
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel onDirtyChange={setPlexDirty} />}
+        {panel === "lists" && <ListsPanel onGoToPolicy={onGoToPolicy} />}
         {panel === "jobs" && <JobsPanel onGoToPlex={() => switchPanel("plex")} />}
         {panel === "notifications" && <NotificationsPanel onDirtyChange={setWebhookDirty} />}
         {panel === "security" && <SecurityPanel onDirtyChange={setSecurityDirty} />}

@@ -1501,6 +1501,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 data_dir=_settings(request).data_dir,
                 session_factory=_factory(request),
                 secret_box=_box(request),
+                settings=_settings(request),
                 update_checker=request.app.state.update_checker,
                 timezone=job_tz,
             )
@@ -1538,6 +1539,7 @@ async def run_job(request: Request, job_id: str) -> dict[str, str]:
         data_dir=_settings(request).data_dir,
         session_factory=_factory(request),
         secret_box=_box(request),
+        settings=_settings(request),
         update_checker=request.app.state.update_checker,
     )
     log.info("jobs.run_now", job=job_id)
