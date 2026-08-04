@@ -74,6 +74,14 @@ SCORER_VERSION = 2
 Both are inside the policy hash: an item scored under a different scorer was not
 approved under this one.
 
+Adding evidence changes what a scan gathers, and the body cannot express that: a new
+``Facts`` field, signal or gate leaves a stored body hashing exactly as it did, so a plan
+already approved executes on evidence gathered without it (rule 113). Bumping here is one
+answer; a loader shim that rewrites every affected body is the other, since that edit moves
+those hashes itself. ``tests/test_scorer_surface.py`` records the declarations against this
+number and fails when one moves and the other does not, so the choice is made rather than
+missed -- which is what it was until that file existed.
+
 Deliberately plain ``int`` and not ``Literal``. Pinning the field to a single literal
 means the *next* bump makes every stored body fail ``model_validate_json``, and the one
 caller that reads them (``services.profiles.active_policy``) has no fallback -- so the
