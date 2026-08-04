@@ -269,8 +269,7 @@ export function ScanRow({
             finishing incomplete draws this with no press either. */}
         {snapshot?.degraded && (
           <Notice tone="warn" standing>
-            <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason} You can
-            still look at it, but Reaper won't act on it.
+            <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason}
           </Notice>
         )}
       </div>
