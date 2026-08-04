@@ -51,7 +51,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("snapshot_id", "group_key"),
     )
     # No standalone index on `group_key`: the unique constraint above already serves the one
-    # read (`routes._season_bundles`, `WHERE snapshot_id = ?`) on its leading column, and no
+    # read (`routes._season_payloads`, `WHERE snapshot_id = ?`) on its leading column, and no
     # query filters a show key across snapshots.
 
 
