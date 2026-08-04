@@ -19,10 +19,11 @@
 // (rule 144).
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, type ListConfig, type ListConfigBody } from "../api";
 import { usePlexLibraries } from "../usePlexLibraries";
+import { FilterMenu } from "./FilterMenu";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
 import { TagsEditor } from "./TagsEditor";
@@ -81,14 +82,17 @@ function MatchToggle({
 function PickCard({
   name,
   blurb,
+  cardRef,
   children,
 }: {
   name: string;
   blurb: string;
+  /** For a card holding a popover: the outside-click close checks containment on this. */
+  cardRef?: React.Ref<HTMLDivElement>;
   children: React.ReactNode;
 }) {
   return (
-    <div className="pick-card">
+    <div className="pick-card" ref={cardRef}>
       <span className="nm">{name}</span>
       <p>{blurb}</p>
       {children}
@@ -111,6 +115,29 @@ export function ListModal({
   const [source, setSource] = useState<Source>(editing?.source ?? "plex_collection");
   const [preset, setPreset] = useState<string | null>(editing?.config.preset ?? null);
   const [presetsOpen, setPresetsOpen] = useState(false);
+  /** The IMDb card, which anchors the presets menu; a press outside it closes the menu. */
+  const presetsRef = useRef<HTMLDivElement>(null);
+
+  // Close the open presets menu on an outside click or Escape, the queue's menu contract.
+  useEffect(() => {
+    if (!presetsOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!presetsRef.current?.contains(e.target as Node)) setPresetsOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // The menu is the newest layer, so it consumes the press: ModalShell's Escape sits on
+      // `window`, and without this stop the same press would tear down the whole modal.
+      e.stopPropagation();
+      setPresetsOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [presetsOpen]);
 
   const [name, setName] = useState(editing?.name ?? "");
   const [library, setLibrary] = useState(editing?.config.library ?? "");
@@ -297,40 +324,43 @@ export function ListModal({
           <div className="pick-group">
             <h3>IMDb</h3>
             <div className="pick-grid">
-              <PickCard name="IMDb list" blurb="A public IMDb list or chart, refreshed on its own.">
+              <PickCard
+                name="IMDb list"
+                blurb="A public IMDb list or chart, refreshed on its own."
+                cardRef={presetsRef}
+              >
                 <div className="acts">
                   <button type="button" className="ghost" onClick={() => openForm("imdb")}>
                     Custom
                   </button>
-                  {/* The presets reveal as a second row of buttons inside the card rather
-                      than as an anchored popover, which would owe rule 138 a fit pass for
-                      two fixed labels. The name is "Presets" alone: the arrow is decoration
-                      a reader may voice as a shape name, and aria-expanded already says
-                      what it draws (rule 21). */}
+                  {/* The name is "Presets" alone: the arrow is decoration a reader may voice
+                      as a shape name, and aria-expanded already says what it draws (rule 21). */}
                   <button
                     type="button"
                     className="ghost"
                     aria-label="Presets"
                     aria-expanded={presetsOpen}
+                    aria-controls={presetsOpen ? "imdb-preset-menu" : undefined}
                     onClick={() => setPresetsOpen((v) => !v)}
                   >
                     Presets <span aria-hidden="true">▾</span>
                   </button>
+                  {presetsOpen && (
+                    <FilterMenu id="imdb-preset-menu" label="Presets" anchorClass="acts">
+                      {IMDB_PRESETS.map((p) => (
+                        <li key={p.key}>
+                          <button
+                            type="button"
+                            className="filter-mi"
+                            onClick={() => openPreset(p.key)}
+                          >
+                            {p.label}
+                          </button>
+                        </li>
+                      ))}
+                    </FilterMenu>
+                  )}
                 </div>
-                {presetsOpen && (
-                  <div className="acts">
-                    {IMDB_PRESETS.map((p) => (
-                      <button
-                        key={p.key}
-                        type="button"
-                        className="ghost"
-                        onClick={() => openPreset(p.key)}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </PickCard>
             </div>
           </div>

@@ -64,6 +64,12 @@ def _tag_stats(row: lists.ConfiguredList) -> tuple[dict[str, int] | None, str | 
 @router.get("/lists")
 async def get_lists(request: Request) -> list[ProtectionListOut]:
     now = utcnow()
+    # Rows stored before their definition existed are re-homed under the definition before
+    # this screen reads them, so an upgrade's lists render rolled up and editable at once
+    # rather than after the next successful check (``lists.adopt_legacy``).
+    async with request.app.state.session_factory() as session:
+        definitions = await list_config.definitions(session)
+    await lists.adopt_legacy(request.app.state.cache_engine, definitions)
     out: list[ProtectionListOut] = []
     for row in await lists.configured(request.app.state.cache_engine):
         if not row.enabled:

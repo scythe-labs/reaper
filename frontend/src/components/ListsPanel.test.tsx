@@ -491,6 +491,18 @@ describe("a tag list's counts", () => {
     expect(screen.queryByText("Counts by server")).not.toBeInTheDocument();
   });
 
+  it("drops a server with nothing to say about these tags from the fold-out", async () => {
+    // A stats body written before the counts existed, or for tags since renamed, has a
+    // server name and an empty counts object. Rendering it put a bare instance name beside
+    // an empty column, which reads as a broken row.
+    seed([TAG_DEF], [radarr, tagRow("sonarr-2-list3", { server: "Sonarr", tags: {} })]);
+    renderPanel();
+
+    expect(await screen.findByText("Counts by server")).toBeInTheDocument();
+    const grid = document.querySelector(".server-grid")!;
+    expect([...grid.querySelectorAll(".srv")].map((s) => s.textContent)).toEqual(["Radarr"]);
+  });
+
   it("says titles need every tag only when the list matches ALL of them", async () => {
     seed([{ ...TAG_DEF, config: { tags: ["reaper-keep"], match: "all" } }], []);
     renderPanel();

@@ -227,6 +227,29 @@ class TestRoute:
         slugs = [row["slug"] for row in client.get("/api/lists").json()]
         assert slugs == ["sonarr-1-keeptags-all"]
 
+    def test_a_legacy_row_is_adopted_by_its_definition_on_read(
+        self, client: TestClient, store: Any
+    ) -> None:
+        """An upgrade's membership rows keep their pre-registry slugs until something
+        rewrites them. This route adopts them onto their definitions before answering
+        (``lists.adopt_legacy``), so the screen renders one editable list per protection
+        instead of an uneditable orphan beside a definition protecting nothing."""
+        store(
+            slug="sonarr-1-keeptags-any",
+            display_name="Sonarr tag: reaper-keep",
+            item_count=37,
+            last_synced_at=int(NOW.timestamp()),
+        )
+        tag_def = next(
+            d for d in client.get("/api/lists/configured").json() if d["source"] == "arr_tag"
+        )
+
+        [row] = client.get("/api/lists").json()
+
+        assert row["slug"] == f"sonarr-1-keeptags-any-list{tag_def['id']}"
+        assert row["list_id"] == tag_def["id"]
+        assert row["item_count"] == 37
+
     def test_a_tag_list_row_carries_its_per_tag_counts_and_server(
         self, client: TestClient, store: Any
     ) -> None:

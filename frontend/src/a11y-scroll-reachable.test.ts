@@ -116,9 +116,9 @@ const CONTAINERS: Record<string, Container> = {
     why: "one <button> per doc, plus a button per section of the open doc",
   },
   ".filter-menu": {
-    file: "components/ReviewQueue.tsx",
+    file: "components/FilterMenu.tsx",
     reach: "has-controls",
-    why: "every row of the filter menu is a <button>",
+    why: "every row of the menu is a <button>; the queue's filter pickers and the list modal's presets both render this one component",
   },
   ".bulk-bar": {
     file: "components/ReviewQueue.tsx",

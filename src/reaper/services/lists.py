@@ -38,10 +38,11 @@ from __future__ import annotations
 
 import enum
 import json
+import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 import structlog
@@ -53,6 +54,11 @@ from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
 from reaper.clock import from_epoch, utcnow
 from reaper.engine import identity
+
+if TYPE_CHECKING:
+    # Annotation only. ``list_config`` imports this module at runtime, so the runtime
+    # import would be circular; the definitions arrive as plain values either way.
+    from reaper.services.list_config import ListDefinition
 
 log = structlog.get_logger(__name__)
 
@@ -388,6 +394,14 @@ class ArrTagRule:
         if missing:
             names = ", ".join(repr(t) for t in missing)
             if not wanted or self.match == "all":
+                if not wanted:
+                    # No tag exists, so no title carries one: every count is a true zero,
+                    # and recording them is what lets the genuinely-empty first sync say
+                    # "0" instead of leaving the screen blank. Under ALL with a tag still
+                    # resolved this is skipped -- the resolved tags' counts were never
+                    # taken, and an untaken count is unknown, not zero (rule 96).
+                    self.tag_counts.clear()
+                    self.tag_counts.update(dict.fromkeys(self.tags, 0))
                 raise ContainerMissingError(
                     f"keep tag {names} does not exist in {self.client.service}"
                 )
@@ -440,10 +454,23 @@ class ArrTagRule:
         return out
 
     @property
+    def server_label(self) -> str:
+        """The server, named for the operator: the service with the instance after it
+        ("Radarr (4k)"), so two same-named instances of different services stay apart in
+        the per-server counts. The same shape :attr:`display_name` puts after a name."""
+        where = f" ({self.instance_name})" if self.instance_name else ""
+        return f"{self.client.service.title()}{where}"
+
+    @property
     def sync_stats(self) -> dict[str, Any] | None:
         """What ``sync`` stores beside this row: per-tag counts, and which server they are
-        from. Meaningful only after a successful :meth:`fetch`; empty counts before one."""
-        return {"tags": dict(self.tag_counts), "server": self.instance_name}
+        from. The counts are ``None`` -- unknown, never zero -- unless a counting pass
+        actually ran (:meth:`fetch` fills them, on success and on the no-tag-exists first
+        sync alike)."""
+        return {
+            "tags": dict(self.tag_counts) if self.tag_counts else None,
+            "server": self.server_label,
+        }
 
 
 #: What Plex calls a thing -> the kind a protection row is filed under. A collection is
@@ -1142,6 +1169,104 @@ async def retire_absent(engine: AsyncEngine, *, family: str, current: Collection
     for slug in stale:
         log.info("lists.retired", slug=slug, family=family)
     return stale
+
+
+#: A keep-tag row as the policy era spelled it: service, optional instance id, match mode --
+#: and no ``-list`` tail, which is what marks it as predating the registry.
+_LEGACY_KEEP_TAG = re.compile(rf"^(?:radarr|sonarr)(?:-\d+)?{re.escape(KEEP_TAG_INFIX)}(any|all)$")
+
+
+async def adopt_legacy(
+    engine: AsyncEngine, definitions: Sequence[ListDefinition]
+) -> list[tuple[str, str]]:
+    """Re-home rows stored before their definition existed onto the definition's slug.
+
+    The upgrade migrations seed a definition for everything the old code derived -- the keep
+    tags, the keep collection, the shipped IMDb chart -- but the stored membership keeps its
+    legacy slug until a successful check rewrites it. Until then the screen shows one
+    protection twice: an editable definition protecting nothing, beside an uneditable row
+    holding everything. Renaming the stored slug in place hands the definition the
+    membership, stats and timestamps the legacy row earned, so an upgrade's lists arrive
+    rolled up and editable before anything has been checked.
+
+    Conservative on every edge, because a wrong adoption files one list's membership under
+    another list's name. A legacy row moves only when exactly ONE enabled definition claims
+    its spelling; never onto a slug that already has a stored row (a check landed there
+    first, and the retire sweep stands the legacy row down on its own); and a disabled row,
+    one a sweep already retired, stays where it is.
+    """
+    claims: dict[str, list[str]] = {}
+    tag_defs: dict[str, list[int]] = {}
+    for definition in definitions:
+        if not definition.enabled:
+            continue
+        if definition.source is ListSource.ARR_TAG:
+            # Keyed by match mode, because the mode is in the stored slug: a legacy ANY row
+            # must not land under a definition the operator has since tightened to ALL.
+            tag_defs.setdefault(definition.match, []).append(definition.id)
+        elif definition.source is ListSource.IMDB:
+            variant = definition.imdb_variant
+            new = ImdbList(variant=variant, list_id=definition.id).slug
+            claims.setdefault(ImdbList(variant=variant).slug, []).append(new)
+            if variant == "top250":
+                # The chart's pre-registry spelling, which an upgraded cache still holds.
+                claims.setdefault("imdb-top-250", []).append(new)
+        elif definition.source is ListSource.PLEX_COLLECTION:
+            collection = str(definition.config.get("collection", "")).strip()
+            if not collection:
+                continue
+            # The providers spell their own slugs, so adoption cannot drift from the sync
+            # (rule 144). Only the slug is read; no server is needed to derive it.
+            claims.setdefault(
+                PlexCollection(server=None, section_name="", collection_name=collection).slug,
+                [],
+            ).append(
+                PlexCollection(
+                    server=None,
+                    section_name="",
+                    collection_name=collection,
+                    list_id=definition.id,
+                ).slug
+            )
+        elif definition.source is ListSource.PLEX_WATCHLIST:
+            claims.setdefault(PlexWatchlist(server=None).slug, []).append(
+                PlexWatchlist(server=None, list_id=definition.id).slug
+            )
+
+    await ensure_schema(engine)
+    renames: list[tuple[str, str]] = []
+    async with engine.begin() as conn:
+        # Read inside the write transaction (rule 58): the rows being renamed and the
+        # occupancy check on their targets are decided from what this transaction sees.
+        rows = (await conn.execute(text("SELECT slug, enabled FROM protection_list"))).all()
+        stored = {str(r.slug) for r in rows}
+        for row in rows:
+            slug = str(row.slug)
+            if not row.enabled or list_id_of(slug) is not None:
+                continue
+            wanted = claims.get(slug, [])
+            matched = _LEGACY_KEEP_TAG.match(slug)
+            if matched:
+                mine = tag_defs.get(matched.group(1), [])
+                wanted = [slug + list_suffix(mine[0])] if len(mine) == 1 else []
+            if len(wanted) != 1 or wanted[0] in stored:
+                continue
+            renames.append((slug, wanted[0]))
+            # Claimed: a second legacy spelling of the same list must not rename onto it
+            # too, which would collide on the table's primary key.
+            stored.add(wanted[0])
+        for old, new in renames:
+            await conn.execute(
+                text("UPDATE protection_list SET slug = :new WHERE slug = :old"),
+                {"old": old, "new": new},
+            )
+            await conn.execute(
+                text("UPDATE protection_list_item SET slug = :new WHERE slug = :old"),
+                {"old": old, "new": new},
+            )
+    for old, new in renames:
+        log.info("lists.adopted", old=old, new=new)
+    return renames
 
 
 @dataclass(frozen=True, slots=True)

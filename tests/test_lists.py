@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from reaper.clients.base import IntegrationError
 from reaper.config import Settings
 from reaper.db.session import create_engine
+from reaper.services.list_config import ListDefinition
 from reaper.services.lists import (
     IMDB_LIST_BASE,
     IMDB_TOP_250_URL,
@@ -30,8 +31,10 @@ from reaper.services.lists import (
     ListItem,
     ListKind,
     ListMode,
+    ListSource,
     PlexCollection,
     PlexWatchlist,
+    adopt_legacy,
     configured,
     ensure_schema,
     load_membership_index,
@@ -216,10 +219,48 @@ class TestArrTagRule:
         assert rule.tag_counts == {"Reaper-Keep": 1}
 
     async def test_sync_stats_carries_the_counts_and_the_server(self, sonarr: _FakeSonarr) -> None:
+        """The server is named service-first ("Sonarr (hd)"): the instance name alone is
+        the operator's own label ("hd", "4k"), which two services can share, and the
+        per-server fold-out on the Lists screen echoes this string as the whole row head."""
         rule = ArrTagRule(sonarr, ("keep",), "any", instance_name="hd")  # type: ignore[arg-type]
         await rule.fetch()
 
-        assert rule.sync_stats == {"tags": {"keep": 2}, "server": "hd"}
+        assert rule.sync_stats == {"tags": {"keep": 2}, "server": "Sonarr (hd)"}
+
+    async def test_stats_before_any_counting_pass_read_as_unknown_not_zero(
+        self, sonarr: _FakeSonarr
+    ) -> None:
+        """An untaken count is unknown, never zero (rule 96): before a fetch the stats
+        carry ``tags: None``, which the screen renders as bare pills."""
+        rule = ArrTagRule(sonarr, ("keep",), "any", instance_name="hd")  # type: ignore[arg-type]
+
+        assert rule.sync_stats == {"tags": None, "server": "Sonarr (hd)"}
+
+    async def test_a_wholly_missing_tag_counts_zero_for_every_tag(self) -> None:
+        """No configured tag exists upstream, so no title carries one: every count is a
+        TRUE zero, and recording them is what lets the genuinely-empty first sync show
+        "0" on the Lists screen instead of a blank."""
+        sonarr = _FakeSonarr([{"id": 1, "label": "other"}], [])
+        rule = ArrTagRule(sonarr, ("keep", "gold"), "any")  # type: ignore[arg-type]
+
+        with pytest.raises(ContainerMissingError):
+            await rule.fetch()
+
+        assert rule.sync_stats == {"tags": {"keep": 0, "gold": 0}, "server": "Sonarr"}
+
+    async def test_all_mode_with_one_tag_resolved_leaves_the_counts_unknown(
+        self, sonarr: _FakeSonarr
+    ) -> None:
+        """Under ALL one absent tag aborts the fetch before the counting pass, so the
+        resolved tags' counts were never taken -- and an untaken count is unknown, not
+        zero (rule 96): "keep" genuinely covers titles here, and storing 0 would say the
+        opposite."""
+        rule = ArrTagRule(sonarr, ("keep", "absent"), "all")  # type: ignore[arg-type]
+
+        with pytest.raises(ContainerMissingError):
+            await rule.fetch()
+
+        assert rule.sync_stats == {"tags": None, "server": "Sonarr"}
 
 
 class TestSyncStatsRoundTrip:
@@ -241,7 +282,7 @@ class TestSyncStatsRoundTrip:
 
         rows = {r.slug: r for r in await configured(engine)}
 
-        assert rows[rule.slug].stats == {"tags": {"keep": 1}, "server": "hd"}
+        assert rows[rule.slug].stats == {"tags": {"keep": 1}, "server": "Sonarr (hd)"}
 
     async def test_a_provider_without_stats_stores_none(self, engine: AsyncEngine) -> None:
         provider = _StaticProvider([ListItem(media_type="movie", imdb_id="tt0000001", title="A")])
@@ -269,6 +310,179 @@ class TestSyncStatsRoundTrip:
         rows = {r.slug: r for r in await configured(engine)}
 
         assert rows[rule.slug].stats is None
+
+
+class TestAdoptLegacy:
+    """Rows stored before their definition existed are renamed onto the definition's slug,
+    so an upgrade's lists arrive rolled up and editable with their membership, instead of
+    sitting as uneditable orphans until the next successful check."""
+
+    @staticmethod
+    def _definition(
+        list_id: int,
+        source: ListSource,
+        config: dict[str, object],
+        *,
+        enabled: bool = True,
+        name: str = "A list",
+    ) -> ListDefinition:
+        return ListDefinition(id=list_id, name=name, source=source, config=config, enabled=enabled)
+
+    @staticmethod
+    async def _seed_keep_tag_row(engine: AsyncEngine) -> ArrTagRule:
+        """One legacy keep-tag list with a member, exactly as the policy era stored it:
+        no ``-list`` suffix on the slug."""
+        sonarr = _FakeSonarr(
+            [{"id": 1, "label": "keep"}],
+            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        )
+        rule = ArrTagRule(sonarr, ("keep",), "any", instance_id=3, instance_name="hd")  # type: ignore[arg-type]
+        assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
+        return rule
+
+    async def test_a_keep_tag_row_takes_its_definitions_slug_with_its_membership(
+        self, engine: AsyncEngine
+    ) -> None:
+        rule = await self._seed_keep_tag_row(engine)
+        definition = self._definition(7, ListSource.ARR_TAG, {"tags": ["keep"], "match": "any"})
+
+        renamed = await adopt_legacy(engine, [definition])
+
+        assert renamed == [(rule.slug, f"{rule.slug}-list7")]
+        rows = {r.slug: r for r in await configured(engine)}
+        adopted = rows[f"{rule.slug}-list7"]
+        assert rule.slug not in rows
+        assert adopted.list_id == 7
+        assert adopted.item_count == 1
+        assert adopted.last_synced_at is not None  # the legacy row's history came along
+        assert adopted.stats == {"tags": {"keep": 1}, "server": "Sonarr (hd)"}
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="tv", tvdb_id=10)  # the item rows moved with it
+
+    async def test_two_definitions_of_the_same_match_adopt_nothing(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Which of the two the row belongs to cannot be known, and a wrong adoption files
+        one list's membership under another list's name -- so neither claims it, and the
+        next successful sync sorts it out."""
+        rule = await self._seed_keep_tag_row(engine)
+        definitions = [
+            self._definition(7, ListSource.ARR_TAG, {"tags": ["keep"], "match": "any"}),
+            self._definition(8, ListSource.ARR_TAG, {"tags": ["gold"], "match": "any"}, name="B"),
+        ]
+
+        assert await adopt_legacy(engine, definitions) == []
+        assert rule.slug in {r.slug for r in await configured(engine)}
+
+    async def test_a_definition_of_the_other_match_mode_adopts_nothing(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The match mode is in the stored slug: a legacy ANY row under a definition since
+        tightened to ALL would protect wider than the definition says."""
+        rule = await self._seed_keep_tag_row(engine)
+        definition = self._definition(7, ListSource.ARR_TAG, {"tags": ["keep"], "match": "all"})
+
+        assert await adopt_legacy(engine, [definition]) == []
+        assert rule.slug in {r.slug for r in await configured(engine)}
+
+    async def test_an_occupied_target_slug_is_never_overwritten(self, engine: AsyncEngine) -> None:
+        """A check already landed under the definition's slug, so that row is the living
+        one; the legacy row stays for the retire sweep to stand down."""
+        rule = await self._seed_keep_tag_row(engine)
+        sonarr = _FakeSonarr([{"id": 1, "label": "keep"}], [])
+        claimed = ArrTagRule(
+            sonarr,  # type: ignore[arg-type]
+            ("keep",),
+            "any",
+            instance_id=3,
+            instance_name="hd",
+            list_id=7,
+        )
+        await sync(engine, claimed, kind=ListKind.WHITELIST)
+        definition = self._definition(7, ListSource.ARR_TAG, {"tags": ["keep"], "match": "any"})
+
+        assert await adopt_legacy(engine, [definition]) == []
+        slugs = {r.slug for r in await configured(engine)}
+        assert {rule.slug, claimed.slug} <= slugs
+
+    async def test_a_disabled_row_stays_where_a_sweep_put_it(self, engine: AsyncEngine) -> None:
+        rule = await self._seed_keep_tag_row(engine)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE protection_list SET enabled = 0 WHERE slug = :slug"),
+                {"slug": rule.slug},
+            )
+        definition = self._definition(7, ListSource.ARR_TAG, {"tags": ["keep"], "match": "any"})
+
+        assert await adopt_legacy(engine, [definition]) == []
+
+    async def test_a_disabled_definition_claims_nothing(self, engine: AsyncEngine) -> None:
+        rule = await self._seed_keep_tag_row(engine)
+        definition = self._definition(
+            7, ListSource.ARR_TAG, {"tags": ["keep"], "match": "any"}, enabled=False
+        )
+
+        assert await adopt_legacy(engine, [definition]) == []
+        assert rule.slug in {r.slug for r in await configured(engine)}
+
+    @staticmethod
+    async def _seed_raw_row(engine: AsyncEngine, slug: str) -> None:
+        """A stored row under a legacy slug, with one member, as an old version left it."""
+        await ensure_schema(engine)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO protection_list "
+                    "(slug, display_name, mode, kind, weight, enabled, item_count, "
+                    " last_synced_at) VALUES (:slug, :slug, 'hard', 'curated', 0, 1, 1, 100)"
+                ),
+                {"slug": slug},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO protection_list_item (slug, media_type, imdb_id, title) "
+                    "VALUES (:slug, 'movie', 'tt0000001', 'A')"
+                ),
+                {"slug": slug},
+            )
+
+    async def test_the_retired_imdb_spelling_lands_under_the_preset_definition(
+        self, engine: AsyncEngine
+    ) -> None:
+        """``imdb-top-250`` is the chart's pre-registry slug; the definition's provider
+        spells the variant ``top250``."""
+        await self._seed_raw_row(engine, "imdb-top-250")
+        definition = self._definition(4, ListSource.IMDB, {"preset": "top250"})
+
+        assert await adopt_legacy(engine, [definition]) == [("imdb-top-250", "imdb-top250-list4")]
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", imdb_id="tt0000001")
+
+    async def test_a_plex_collection_row_lands_under_its_definition(
+        self, engine: AsyncEngine
+    ) -> None:
+        await self._seed_raw_row(engine, "plex-collection-never-reap")
+        definition = self._definition(
+            2, ListSource.PLEX_COLLECTION, {"library": "Movies", "collection": "Never Reap"}
+        )
+
+        assert await adopt_legacy(engine, [definition]) == [
+            ("plex-collection-never-reap", "plex-collection-never-reap-list2")
+        ]
+
+    async def test_both_imdb_spellings_stored_at_once_adopt_only_one(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Two legacy spellings of the same chart map to one target; renaming both would
+        collide on the table's primary key, so the second stays for the retire sweep."""
+        await self._seed_raw_row(engine, "imdb-top-250")
+        await self._seed_raw_row(engine, "imdb-top250")
+        definition = self._definition(4, ListSource.IMDB, {"preset": "top250"})
+
+        renamed = await adopt_legacy(engine, [definition])
+
+        assert len(renamed) == 1
+        assert {r.slug for r in await configured(engine)} >= {"imdb-top250-list4"}
 
 
 class TestAVanishedContainerNeverWipesTheList:

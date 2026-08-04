@@ -85,10 +85,16 @@
   background: var(--imdb);
   color: var(--imdb-ink);
 }
-/* Half Sonarr blue, half Radarr gold, with a tight blend at the seam so it reads as the line
-   separating them. One ink for both halves: --sonarr-ink clears WCAG AA on either fill. */
+/* Half Sonarr blue, half Radarr gold: a hard split with a thin dark seam, no blend -- the
+   seam is the line separating them. One ink for both halves: --sonarr-ink clears WCAG AA on
+   either fill. */
 .kind-arr {
-  background: linear-gradient(90deg, var(--sonarr) 0 48%, var(--radarr) 52% 100%);
+  background: linear-gradient(
+    90deg,
+    var(--sonarr) 0 calc(50% - 0.5px),
+    rgba(0, 0, 0, 0.55) calc(50% - 0.5px) calc(50% + 0.5px),
+    var(--radarr) calc(50% + 0.5px) 100%
+  );
   color: var(--sonarr-ink);
 }
 
@@ -198,14 +204,25 @@ details.per-server summary:hover {
   flex: 1;
 }
 .pick-card .acts {
+  /* The presets menu (`FilterMenu`, anchorClass "acts") hangs from this row: an inline
+     `.filter-anchor` wrapper around the button would break the card's column. */
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
   margin-top: var(--space-sm);
 }
-.pick-card .acts button {
+/* Direct children only: the menu's own rows keep `.filter-mi`'s sizing. */
+.pick-card .acts > button {
   font-size: var(--text-xs);
   padding: 0.25rem 0.6rem;
+}
+/* Opens UPWARD. The IMDb card is the picker's last group, flush with the modal's bottom
+   edge, and the modal clips on its own scroll boundary (`.modal` overflow-y) -- dropped
+   below the row, the menu opened half out of view. */
+.pick-card .filter-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 /* The any/all choice in the tag form: a joined two-button group, flat, one hairline between

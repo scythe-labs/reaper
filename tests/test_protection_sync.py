@@ -553,11 +553,14 @@ class TestTheWatchlistFollowsThePlexRules:
         assert not await memberships(engine, media_type="movie", imdb_id="tt0000001")
 
 
-class TestLegacySlugsAreRehomedOnlyByALandedSync:
-    """The upgrade path. Policy keep tags wrote slugs with no ``-list`` suffix; the
-    definition-driven sync writes the suffixed spelling. The old row is retired exactly
-    when its replacement actually synced (rule 115): retiring it on a failed sync would
-    withdraw the only membership still protecting the operator's tagged titles."""
+class TestLegacySlugsAreRehomedOnUpgrade:
+    """The upgrade path. Policy keep tags wrote slugs with no ``-list`` suffix. A definition
+    that alone claims such a row ADOPTS it before the pass (``lists.adopt_legacy``): the row
+    is renamed onto the definition's slug with its membership, so the operator's tagged
+    titles are one editable list before anything has been checked. Where adoption must stand
+    down -- two definitions could claim the row -- the sweep's contract holds: the legacy row
+    is retired exactly when its replacements actually synced (rule 115), never on a failed
+    sync that would withdraw the only membership still protecting."""
 
     @staticmethod
     def _sonarr_client() -> _TaggedSonarr:
@@ -572,7 +575,7 @@ class TestLegacySlugsAreRehomedOnlyByALandedSync:
         await lists.sync(engine, rule, kind=ListKind.WHITELIST)
         return rule.slug
 
-    async def test_the_legacy_slug_retires_once_the_definition_driven_sync_lands(
+    async def test_a_claimable_legacy_row_is_adopted_before_the_sync(
         self, engine: AsyncEngine
     ) -> None:
         legacy = await self._store_legacy_row(engine)
@@ -582,11 +585,46 @@ class TestLegacySlugsAreRehomedOnlyByALandedSync:
         synced = await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[source])
 
         assert synced[TAG_SLUG] == 1
-        assert synced[legacy] == "retired"
-        # The title stays protected throughout: the new row covers it.
+        assert legacy not in synced  # renamed before the pass, so there was nothing to retire
+        assert await _enabled(engine, legacy) is None  # the old spelling is gone entirely
         assert await memberships(engine, media_type="tv", tvdb_id=10)
 
-    async def test_a_failed_replacement_sync_blocks_the_whole_family_sweep(
+    async def test_a_failed_sync_after_adoption_keeps_the_stored_membership(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The adopted row already holds the legacy membership, and the atomic swap in
+        ``lists.sync`` leaves it exactly as the last good check left it -- so a failed
+        refresh right after the upgrade still protects every tagged title."""
+        await self._store_legacy_row(engine)
+
+        class _Unreachable(_TaggedSonarr):
+            async def tags(self) -> list[dict[str, object]]:
+                raise RuntimeError("connection refused")
+
+        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        synced = await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[broken])
+
+        assert "error" in str(synced[TAG_SLUG])
+        assert await _enabled(engine, TAG_SLUG) is True
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+
+    async def test_an_unclaimable_legacy_row_retires_once_the_syncs_land(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Two same-match definitions could each own the row, so adoption stands down and
+        the sweep takes over -- retired here, where both replacements landed, and the new
+        row carries the title on."""
+        legacy = await self._store_legacy_row(engine)
+        source = SonarrSource(client=self._sonarr_client(), instance_id=1, name="hd")
+        two = [_tag_list(), _tag_list(("gold",), "any", list_id=4)]
+
+        synced = await sync_protection_lists(engine, definitions=two, sonarrs=[source])
+
+        assert synced[TAG_SLUG] == 1
+        assert synced[legacy] == "retired"
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+
+    async def test_an_unclaimable_row_survives_a_failed_replacement_sync(
         self, engine: AsyncEngine
     ) -> None:
         """Rule 115's second half. The failed slug itself is in ``current`` and safe from
@@ -599,7 +637,8 @@ class TestLegacySlugsAreRehomedOnlyByALandedSync:
                 raise RuntimeError("connection refused")
 
         broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
-        synced = await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[broken])
+        two = [_tag_list(), _tag_list(("gold",), "any", list_id=4)]
+        synced = await sync_protection_lists(engine, definitions=two, sonarrs=[broken])
 
         assert "error" in str(synced[TAG_SLUG])
         assert legacy not in synced  # not retired

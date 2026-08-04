@@ -127,11 +127,7 @@ function serverOf(row: ProtectionList): string {
  *  colors. A tag list reads Sonarr and Radarr at once, so its pill is half of each. */
 function kindBadge(source: ListConfig["source"]): ReactNode {
   if (source === "arr_tag") {
-    return (
-      <span className="kind-badge kind-arr">
-        Sonarr<span aria-hidden="true"> · </span>Radarr
-      </span>
-    );
+    return <span className="kind-badge kind-arr">Sonarr Radarr</span>;
   }
   if (source === "imdb") return <span className="kind-badge kind-imdb">IMDb</span>;
   return <span className="kind-badge kind-plex">Plex</span>;
@@ -232,7 +228,12 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
     if (holders.length === 0) return null;
     return holders.reduce((n, r) => n + (r.tags[tag] ?? 0), 0);
   };
-  const perServer = counted.filter((r) => r.server !== null);
+  // Only servers with something to say about THESE tags: a stats body written before the
+  // counts existed, or for tags since renamed, would otherwise render a server name beside
+  // an empty count column.
+  const perServer = counted.filter(
+    (r) => r.server !== null && tags.some((tag) => r.tags[tag] !== undefined),
+  );
   return (
     <>
       <div className="tag-pills">
@@ -384,10 +385,11 @@ export function ListsPanel({
   /** Every health row synced for one definition. Several for a tag list: one per *arr. */
   const forList = (id: number) => rows.filter((r) => r.list_id === id);
 
-  // Anything stored before a definition existed to own it. An upgrade re-homes such a row
-  // under a new slug on its first successful check; until then it is still protecting, so it
-  // is rendered rather than hidden -- a row that holds titles and is invisible here is the
-  // failure this screen exists to fix.
+  // Anything stored before a definition existed to own it. The server re-homes such rows
+  // onto their definitions before answering (`lists.adopt_legacy`), so what reaches here is
+  // only what no definition could safely claim; the next successful check retires it. It is
+  // still protecting until then, so it is rendered rather than hidden -- a row that holds
+  // titles and is invisible here is the failure this screen exists to fix.
   const orphans = rows.filter((r) => r.list_id === null);
 
   return (

@@ -2394,6 +2394,11 @@ async def sync_protection_lists(
     # enabled and the list would go on protecting after being removed (rule 25).
     #: Whether the registry was readable at all. See the docstring: unreadable retires nothing.
     registry_known = definitions is not None
+    if registry_known:
+        # Rows stored before their definition existed take the definition's slug first, so
+        # this pass refreshes the adopted row in place -- and if its own sync then fails,
+        # the membership the legacy row earned is already under the slug that coasts.
+        await lists.adopt_legacy(engine, definitions or ())
     wanted = [d for d in definitions or () if d.enabled and (only is None or d.id == only)]
     for definition in wanted:
         if definition.source is lists.ListSource.IMDB:

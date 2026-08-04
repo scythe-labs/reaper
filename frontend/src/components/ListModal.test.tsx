@@ -11,7 +11,7 @@
 // The library picker is the #483 fix at the surface: the library stops being a name Reaper
 // guessed ("Movies") and becomes one picked off the operator's own server.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -78,15 +78,44 @@ describe("the type picker", () => {
     await expectNoA11yViolations();
   });
 
-  it("reveals the shipped charts behind Presets, inside the card", async () => {
+  it("reveals the shipped charts behind Presets, as the app's anchored menu", async () => {
+    // The one menu grammar (`FilterMenu`, rule 18): the same popover the queue's filter
+    // pickers render, not a second row of card buttons.
     const user = userEvent.setup();
     renderModal();
 
     expect(screen.queryByRole("button", { name: "IMDb Top 250" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "Presets" }));
 
-    expect(screen.getByRole("button", { name: "IMDb Top 250" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "IMDb Popular Movies" })).toBeInTheDocument();
+    const menu = screen.getByRole("list", { name: "Presets" });
+    expect(menu).toHaveClass("filter-menu");
+    expect(within(menu).getByRole("button", { name: "IMDb Top 250" })).toBeInTheDocument();
+    expect(within(menu).getByRole("button", { name: "IMDb Popular Movies" })).toBeInTheDocument();
+  });
+
+  it("Escape closes the menu and leaves the modal standing", async () => {
+    // The menu is the newest layer, so it consumes the press; without the stop the same
+    // Escape reaches ModalShell's window listener and tears the whole modal down.
+    const user = userEvent.setup();
+    const { onClose } = renderModal();
+    await user.click(await screen.findByRole("button", { name: "Presets" }));
+    expect(screen.getByRole("list", { name: "Presets" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("list", { name: "Presets" })).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("a click outside the card closes the menu", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await user.click(await screen.findByRole("button", { name: "Presets" }));
+    expect(screen.getByRole("list", { name: "Presets" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("heading", { name: "Add a list" }));
+
+    expect(screen.queryByRole("list", { name: "Presets" })).not.toBeInTheDocument();
   });
 });
 
