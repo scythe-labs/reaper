@@ -380,7 +380,10 @@ class Snapshot(Base):
 
     evidence_hash: Mapped[str | None] = mapped_column(String(64), default=None)
     """The policy fields that decide what evidence the scan gathers and freezes: the
-    popularity window, the keep-tags, the season-pruning guard, the media type. Two
+    popularity window and the media type. The keep-tags were here until the tags a title
+    carries became gathered evidence (``Facts.on_lists``), and the season-pruning guard
+    until the scan began freezing its inputs per show; ``PolicyBody.evidence_hash`` is the
+    one place that set is declared, so read it there rather than trusting this list. Two
     policies sharing this produce the same frozen Facts for every item, so the simulator
     may replay the real engine over ``Candidate.facts_json`` and get an exact verdict for
     any change *outside* these fields (weights, rating bars, custom rules). When it

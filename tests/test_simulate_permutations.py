@@ -305,6 +305,18 @@ def _without(gate: GateId) -> PolicyBody:
     return BASE.model_copy(update={"gates": tuple(g for g in BASE.gates if g.gate != gate)})
 
 
+def _without_list(condition: ConditionSpec) -> PolicyBody:
+    """`BASE` with one shipped list protection removed.
+
+    The successor to `_without` for the two retired list gates: membership protects through
+    a ``protect_conditions`` rule per list now, so dropping one drops one list's cover
+    rather than every list's at once.
+    """
+    return BASE.model_copy(
+        update={"protect_conditions": tuple(c for c in BASE.protect_conditions if c != condition)}
+    )
+
+
 def _with_threshold(gate: GateId, **changes: Any) -> PolicyBody:
     return BASE.model_copy(
         update={
@@ -364,6 +376,12 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
     ],
     # --- every shipped gate, dropped ------------------------------------------------
     *[(f"drop:{g.gate.value}", _without(g.gate)) for g in BASE.gates],
+    # --- every shipped list protection, dropped -------------------------------------
+    # Where `drop:whitelisted` and `drop:curated_list` used to sit. Those gates retired and
+    # list membership now protects through an `on_list` condition per list, so the lane is
+    # swept by dropping conditions; generated off the shipped policy, so a seeded list added
+    # later is swept without editing this.
+    *[(f"drop:on_list={c.value}", _without_list(c)) for c in BASE.protect_conditions],
     # --- gate thresholds ------------------------------------------------------------
     *[
         (f"min_dormancy={d}", _with_threshold(GateId.MIN_DORMANCY, threshold=d))
@@ -733,11 +751,14 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
             "coverage_floor_bp=7500",
             "coverage_floor_bp=10000",
             # Protections whose rows another protection already covers. Real, and the reason
-            # the sweep drops gates one at a time rather than trusting any single one to move
-            # the library.
-            "drop:whitelisted",
+            # the sweep drops protections one at a time rather than trusting any single one
+            # to move the library. The two list rules are the retired whitelist and curated
+            # gates, and they cover the same rows those gates did: 14 of the sampled 220
+            # carry a readable membership, and each is also held by a gate -- dormancy for
+            # 12 of them, the rating floor alone for the other 2.
             "drop:data_horizon",
-            "drop:curated_list",
+            "drop:on_list=Titles you've tagged",
+            "drop:on_list=IMDb Top 250",
             # The popularity gate's threshold, which on this library changes who it protects
             # without changing anyone's fate: dormancy covers the same rows.
             "server_popularity=1",
@@ -773,13 +794,21 @@ class TestEveryDraftSurvivesTheRoundTripTheRouteCompares:
 #: Edits that change what a scan GATHERS rather than what it makes of what it gathered. The
 #: frozen evidence cannot answer these, and the panel's contract is to say so rather than to
 #: report a confident number off stale facts.
+#:
+#: `keep_tags` and `keep_tags_match` were the other two, and they left the policy rather than
+#: this list: the tags a title carries are gathered into `Facts.on_lists` now, and the rule
+#: naming them is `protect_conditions`, which replays. So the window is the only *policy*
+#: field that still moves the gathering half, and a second case cannot be invented -- swept
+#: at two windows instead, since one draft cannot show the refusal tracks the value.
 NEEDS_A_SCAN: list[tuple[str, PolicyBody]] = [
     (
-        "popularity_window",
+        "popularity_window=90",
         _with_threshold(GateId.SERVER_POPULARITY, window_days=90),
     ),
-    ("keep_tags", BASE.model_copy(update={"keep_tags": ("another-tag",)})),
-    ("keep_tags_match", BASE.model_copy(update={"keep_tags_match": "all"})),
+    (
+        "popularity_window=730",
+        _with_threshold(GateId.SERVER_POPULARITY, window_days=730),
+    ),
 ]
 
 

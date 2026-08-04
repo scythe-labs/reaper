@@ -846,8 +846,8 @@ class PolicyBody(Frozen):
         ``decide_verdict`` under the edited policy, exact for any change to the replayable
         fields (weights, rating bars, custom rules, protect conditions, thresholds).
 
-        When it differs, the edit changed the evidence itself -- the popularity window, a
-        keep-tag, the media type -- so the frozen Facts are stale and a real scan is required.
+        When it differs, the edit changed the evidence itself -- the popularity window, the
+        media type -- so the frozen Facts are stale and a real scan is required.
         The set of replayable fields is an allow-list, so an unclassified field falls into
         this hash and forces the safe, honest fresh scan.
 

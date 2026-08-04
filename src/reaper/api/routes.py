@@ -2433,7 +2433,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         #  2. Scoring changed but the EVIDENCE is unchanged, and every governed row froze its
         #     Facts -> replay the real engine over those Facts. Exact for weight/rating/custom
         #     edits, still zero API calls.
-        #  3. Otherwise the edit changed what the scan gathers (a window, a keep-tag)
+        #  3. Otherwise the edit changed what the scan gathers (the popularity window)
         #     -> the frozen evidence is stale, so refuse rather than guess.
         if snapshot.scoring_hash != _combined(PolicyBody.scoring_hash):
             replayable = snapshot.evidence_hash and snapshot.evidence_hash == _combined(
