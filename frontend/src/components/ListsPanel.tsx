@@ -378,8 +378,11 @@ function PolicyUse({
   );
 }
 
-/** Which rows a check is running for. `"all"` is the footer's button; a number is one
- *  definition. */
+/** Which rows a check is running for. A number is one definition; `"all"` is the whole-pass
+ *  target, which only an ORPHAN row uses now -- a stored row no definition owns has no id to
+ *  check by, so checking everything is the only pass that can reach it. The screen's
+ *  "Check all now" was removed with it: the nightly job checks every list and has its own
+ *  Run now on Settings, Jobs. */
 type CheckTarget = number | "all";
 
 export function ListsPanel({
@@ -422,7 +425,8 @@ export function ListsPanel({
    *  checking every row, so every row says so and none of them can be pressed again while
    *  it runs. Found by driving it: the footer and the rows disagreed, and a row still
    *  offering "Check now" during the pass it was already part of invites a second check
-   *  that would race the first (rule 85's shape -- the button reports the state it is in). */
+   *  that would race the first (rule 85's shape -- the button reports the state it is in).
+   *  Reachable from an orphan row's own button now that the footer's is gone. */
   const busy = (target: CheckTarget) => running === target || running === "all";
 
   // Both reads, explicitly (rules 17/36). This panel's contract is "always visible", so a
@@ -563,11 +567,11 @@ export function ListsPanel({
       </div>
 
       {/* The sink for a failed check of EVERYTHING, whether it was started here or from an
-          orphan row, whose button drives the same "all" target. Every row's own sink compares
+          orphan row, whose button drives the "all" target. Every row's own sink compares
           `failedTarget` against a definition id, which is a number and can never equal "all",
-          and the orphan rows only exist on a migrated install -- so on a normal one this
-          failure had nowhere to land: the button went back to "Check all now", every row kept
-          its stale chip, and nothing said the check had not run (rules 17/36, 42). */}
+          so before this the whole-pass failure had nowhere to land at all: the button went
+          back to rest, every row kept its stale chip, and nothing said the check had not run
+          (rules 17/36, 42). */}
       {failedTarget === "all" && (
         <Notice tone="error">The check didn't run: {check.error?.message}</Notice>
       )}
@@ -580,11 +584,14 @@ export function ListsPanel({
         <Notice tone="warn">{check.data.plex_error}</Notice>
       )}
 
+      {/* No "Check all now" here. Checking everything is the upkeep job's whole purpose --
+          it runs nightly and has its own Run now on Settings, Jobs -- and it used to be the
+          IMDb lists only, which is why this screen grew a second way to do it. Now that the
+          job covers every source, two buttons meaning "refresh all of them" in two places is
+          the same job offered twice. Per-row Check now stays: it is the one thing the job
+          cannot do, which is check the single list you just edited. */}
       <div className="list-foot">
         <span className="flex-spacer" />
-        <button className="ghost" onClick={() => check.mutate("all")} disabled={check.isPending}>
-          {running === "all" ? "Checking…" : "Check all now"}
-        </button>
         <button className="primary" onClick={() => setModal({ list: null })}>
           Add a list
         </button>

@@ -352,6 +352,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.data_dir,
         session_factory=factory,
         secret_box=box,
+        settings=settings,
         # The app's own checker, so the nightly check and the About route share one cache.
         update_checker=app.state.update_checker,
         timezone=scheduler_tz,
@@ -397,6 +398,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 data_dir=settings.data_dir,
                 session_factory=factory,
                 secret_box=box,
+                settings=settings,
                 update_checker=app.state.update_checker,
                 timezone=scheduler_tz,
             )

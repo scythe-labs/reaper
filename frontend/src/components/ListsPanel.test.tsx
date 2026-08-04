@@ -497,31 +497,37 @@ describe("the row actions", () => {
     expect(await screen.findByText(/Radarr refused the request/)).toBeInTheDocument();
   });
 
-  it("checks everything from the footer, whose last action is Add a list", async () => {
-    const user = userEvent.setup();
+  it("offers Add a list alone in the footer, with no second way to check everything", async () => {
     seed([IMDB_DEF], [WORKING]);
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Check all now" }));
-    await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalledWith({}));
-
-    // Right-aligned pair: the ghost that touches every row, then the primary that adds one.
+    // "Check all now" was here. Checking every list is the nightly upkeep job's whole
+    // purpose and it has its own Run now on Settings, Jobs, so a button here meaning the
+    // same thing is one job offered in two places (rule 18). Per-row Check now stays: it is
+    // the one thing the job cannot do, which is check the single list you just edited.
+    expect(await screen.findByRole("button", { name: "Add a list" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check all now" })).not.toBeInTheDocument();
     const foot = document.querySelector(".list-foot")!;
     const footButtons = within(foot as HTMLElement).getAllByRole("button");
-    expect(footButtons.map((b) => b.textContent)).toEqual(["Check all now", "Add a list"]);
+    expect(footButtons.map((b) => b.textContent)).toEqual(["Add a list"]);
   });
 
-  it("shows every row as busy while Check all now runs", async () => {
-    // Found by driving it: the footer said "Checking…" while every row still offered "Check
-    // now", so a row invited a second check during the pass it was already part of. A button
-    // reports the state it is in, and "all" really is checking that row.
+  it("shows every row as busy while a whole-pass check runs", async () => {
+    // Found by driving it: the pass said "Checking…" on one row while every other still
+    // offered "Check now", so a row invited a second check during the pass it was already
+    // part of. A button reports the state it is in, and "all" really is checking that row.
+    //
+    // Driven from an ORPHAN row, which is the only button left that checks everything: a
+    // stored row no definition owns has no id to check by. The footer's "Check all now" is
+    // gone, and the nightly job is what checks every list now.
     const user = userEvent.setup();
     let release: (v: unknown) => void = () => {};
     apiMock.syncLists.mockReturnValue(new Promise((r) => (release = r)));
-    seed([IMDB_DEF, PLEX_DEF], [WORKING]);
+    seed([IMDB_DEF, PLEX_DEF], [WORKING, ORPHAN_ROW]);
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Check all now" }));
+    await user.click(await screen.findByRole("button", { name: `Check now, ${ORPHAN_ROW.name}` }));
+    await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalledWith({}));
 
     expect(screen.getByRole("button", { name: "Checking…, IMDb Top 250" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Checking…, Never Reap" })).toBeDisabled();
@@ -624,7 +630,7 @@ describe("the row actions", () => {
     });
     renderPanel();
 
-    await user.click(await screen.findByRole("button", { name: "Check all now" }));
+    await user.click(await screen.findByRole("button", { name: "Check now, Never Reap" }));
     expect(await screen.findByText(/couldn't reach Plex/)).toBeInTheDocument();
   });
 });
@@ -713,26 +719,28 @@ describe("a tag list's counts", () => {
   });
 });
 
+/** A stored row no definition owns: an upgrade re-homes it on its first successful check.
+ *  It is also the only button left that checks EVERY list, having no id to check by. */
+const ORPHAN_ROW: ProtectionList = {
+  slug: "plex-collection-never-reap",
+  name: 'Plex collection: "Never Reap"',
+  source: "plex_collection",
+  state: "working",
+  item_count: 12,
+  last_checked_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+  error: null,
+  list_id: null,
+  tags: null,
+  server: null,
+};
+
 describe("a list stored before the registry existed", () => {
   // An upgrade re-homes a stored list under a slug carrying its definition's id, and that
   // happens on its first successful check. Until then the old row has no definition to be
   // rendered from -- and it is still protecting, so hiding it would make this screen lie by
   // omission about the very thing it exists to show.
-  const orphan: ProtectionList = {
-    slug: "plex-collection-never-reap",
-    name: 'Plex collection: "Never Reap"',
-    source: "plex_collection",
-    state: "working",
-    item_count: 12,
-    last_checked_at: new Date(Date.now() - 60 * 60_000).toISOString(),
-    error: null,
-    list_id: null,
-    tags: null,
-    server: null,
-  };
-
   it("still shows what it is protecting, and that the next check re-homes it", async () => {
-    seed([], [orphan]);
+    seed([], [ORPHAN_ROW]);
     renderPanel();
 
     expect(await screen.findByText('Plex collection: "Never Reap"')).toBeInTheDocument();
@@ -743,7 +751,7 @@ describe("a list stored before the registry existed", () => {
   });
 
   it("offers no Edit, having nothing to edit, but can still be checked", async () => {
-    seed([], [orphan]);
+    seed([], [ORPHAN_ROW]);
     renderPanel();
 
     expect(await screen.findByText('Plex collection: "Never Reap"')).toBeInTheDocument();

@@ -95,7 +95,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Setup readiness | **Scanning and reaping are two readinesses, reported apart** † |
 | Adding a service | **Connect, test, then map** — Save waits on a pass and one mapped folder |
 | Plex library list | **Synced when the server is linked**, never left for the operator to press |
-| Protection lists | **Defined on Settings, checked on save**; act through keep rules, by id |
+| Protection lists | **Defined on Settings, checked on save and nightly**; via keep rules, by id |
 | Versioning | **CalVer `vYYYY.M.N`, tagged by CI on every push to `main`** † |
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |

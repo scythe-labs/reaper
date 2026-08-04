@@ -1729,12 +1729,13 @@ const JOB_META: Record<string, JobMeta> = {
       "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
   },
   refresh_curated_lists: {
-    // The job id predates the registry; what it refreshes today is every IMDb-source list
-    // the operator has on Settings -> Lists (scheduler.refresh_curated_lists).
-    title: "Refresh IMDb lists",
-    desc: "Re-pulls your IMDb lists, like the IMDb Top 250, so nothing on them gets flagged.",
+    // The job id is a stored schedule key and predates the registry, so it keeps its old
+    // spelling; what it refreshes is every list on Settings -> Lists, whatever its source
+    // (scheduler.refresh_curated_lists).
+    title: "Refresh your lists",
+    desc: "Re-checks every list on Settings, Lists, so a tag or a collection you edited starts protecting without waiting for a scan.",
     offWarning:
-      "This only affects the standalone daily refresh. Every scan already re-pulls these lists.",
+      "This only affects the standalone daily refresh. Every scan already re-checks your lists, and you can check one on Settings, Lists.",
   },
   full_history_sweep: {
     title: "Full watch-history update",
