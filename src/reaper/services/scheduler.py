@@ -60,6 +60,7 @@ from reaper.services import (
     retention,
     scan_runner,
 )
+from reaper.services import lists as lists_service
 from reaper.services import snapshot as snapshot_service
 from reaper.services.imdb_dataset import ImdbRatings
 from reaper.services.update_check import UpdateChecker
@@ -244,11 +245,37 @@ async def refresh_curated_lists(
     ``session_factory``, ``settings`` and ``secret_box`` are optional only because the
     last-run bookkeeping tolerates their absence; with no way to read the definitions or reach
     the sources there is nothing to refresh.
+
+    **Every exit records a run**, which is what the catch-all here is for. The body raises by
+    several routes -- ``adopt_legacy``, ``sync_rule_names``, ``retire_absent`` and the
+    cache-database faults ``gather_reaped`` re-raises -- and APScheduler has no failure
+    listener writing these rows, so a raise left the Jobs row reading green from the last
+    successful night while nothing had refreshed since. Same shape as ``refresh_ratings``.
     """
     if session_factory is None or settings is None or secret_box is None:
         log.warning("scheduler.lists_refresh_skipped", reason="not wired")
         return
 
+    try:
+        await _refresh_curated_lists(cache_engine, session_factory, settings, secret_box)
+    except Exception as exc:
+        # The stored membership is untouched: `lists.sync` swaps atomically, and a family is
+        # retired only when its own syncs landed (rule 115). So the cost of a failure here is
+        # a night of staleness, which the scan's own bound catches -- provided this row says
+        # it happened.
+        log.warning("scheduler.lists_refresh_failed", error=str(exc))
+        await _record_run(
+            session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
+        )
+
+
+async def _refresh_curated_lists(
+    cache_engine: AsyncEngine,
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    secret_box: SecretBox,
+) -> None:
+    """The refresh itself. Split out so its caller's catch-all covers every line of it."""
     async with AsyncExitStack() as stack:
         try:
             # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry
@@ -269,9 +296,11 @@ async def refresh_curated_lists(
             return
 
         plex_server: object | None = None
+        plex_reached = False
         if plex is not None:
             try:
                 plex_server = await plex.connect()
+                plex_reached = True
             except PlexError as exc:
                 log.warning("scheduler.lists_refresh_plex_unreachable", error=str(exc))
 
@@ -297,17 +326,46 @@ async def refresh_curated_lists(
 
     failed = sum(1 for v in synced.values() if isinstance(v, str) and v.startswith("error:"))
     checked = sum(1 for v in synced.values() if isinstance(v, int))
-    log.info("scheduler.lists_refreshed", checked=checked, failed=failed)
-    if not failed:
+    # With no live server no Plex provider is built, so those lists produce no entry at all:
+    # they are not in `failed`, not in `checked`, and the job used to record "Lists refreshed"
+    # while every one of them went unchecked. Keyed on a Plex-sourced definition EXISTING,
+    # never on `plex` being None, so an install with no Plex lists still reports a clean pass.
+    # The manual route says the same thing through `plex_error` and a scan degrades outright,
+    # so this row is the third copy of one fact and had been the only cheerful one (rules
+    # 72, 144).
+    plex_lists = [
+        d
+        for d in definitions
+        if d.enabled
+        and d.source
+        in (lists_service.ListSource.PLEX_COLLECTION, lists_service.ListSource.PLEX_WATCHLIST)
+    ]
+    log.info(
+        "scheduler.lists_refreshed",
+        checked=checked,
+        failed=failed,
+        plex_lists_skipped=0 if plex_reached else len(plex_lists),
+    )
+    if plex_lists and not plex_reached:
+        result = (
+            "Couldn't reach Plex, so its lists weren't checked"
+            if plex is not None
+            else "Plex isn't connected, so its lists weren't checked"
+        )
+        ok = False
+    elif not failed:
         result = "Lists refreshed"
+        ok = True
     elif not checked:
         result = "Couldn't refresh lists"
+        ok = False
     else:
         # Only the partial outcome needs the count: a total failure and a clean pass each say
         # so in one phrase, and restating the per-list reasons here would be the same refusal
         # written twice -- every one of them is already on the row it belongs to (rule 144).
         result = f"Refreshed {checked} lists, {failed} couldn't be checked"
-    await _record_run(session_factory, "refresh_curated_lists", ok=not failed, result=result)
+        ok = False
+    await _record_run(session_factory, "refresh_curated_lists", ok=ok, result=result)
 
 
 async def full_history_sweep(
