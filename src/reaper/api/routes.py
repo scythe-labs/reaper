@@ -1500,8 +1500,6 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             # Already engine specs (BooleanCondemnSpec / GradedCondemnSpec) -- passed through.
             custom_condemn=tuple(payload.custom_condemn),
             graded_keeps=tuple(payload.graded_keeps),
-            keep_tags=tuple(t.strip() for t in payload.keep_tags if t.strip()),
-            keep_tags_match=payload.keep_tags_match,
             # Already engine specs (RatingRuleSpec) -- passed through, validated on the wire.
             keep_rating_rules=tuple(payload.keep_rating_rules),
             keep_rating_match=payload.keep_rating_match,
@@ -1623,8 +1621,6 @@ def _policy_out(
             ],
             custom_condemn=list(body.custom_condemn),
             graded_keeps=list(body.graded_keeps),
-            keep_tags=list(body.keep_tags),
-            keep_tags_match=body.keep_tags_match,
             keep_rating_rules=list(body.keep_rating_rules),
             keep_rating_match=body.keep_rating_match,
         ),

@@ -35,6 +35,7 @@ from reaper.clock import utcnow
 from reaper.db.models import ListConfig
 from reaper.services import app_settings
 from reaper.services import lists as lists_service
+from reaper.engine.policy import DEFAULT_IMDB_LIST_NAME, DEFAULT_TAG_LIST_NAME
 from reaper.services.lists import ListSource
 
 log = structlog.get_logger(__name__)
@@ -116,10 +117,6 @@ async def definitions(session: AsyncSession) -> list[ListDefinition]:
     return out
 
 
-#: The name the default policies' keep rules refer to, spelled once. The seed below, the
-#: keep-tags upgrade migration, and ``engine.policy``'s default conditions all read it.
-DEFAULT_TAG_LIST_NAME = "Titles you've tagged"
-DEFAULT_IMDB_LIST_NAME = "IMDb Top 250"
 
 #: What a fresh install starts with: the two lists the default policy's keep rules name.
 #: Deletable like any other list, because deleting one takes its rules with it

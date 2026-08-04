@@ -657,8 +657,6 @@ class PolicyIn(BaseModel):
     # validation runs on the wire and the two cannot drift.
     custom_condemn: list[CustomCondemnSpec] = Field(default_factory=list)
     graded_keeps: list[GradedKeepSpec] = Field(default_factory=list)
-    keep_tags: list[str] = Field(default_factory=lambda: ["reaper-keep"])
-    keep_tags_match: Literal["any", "all"] = "any"
     # The engine spec is reused directly (like custom_condemn/graded_keeps) so its
     # per-source vote-floor validation runs on the wire.
     keep_rating_rules: list[RatingRuleSpec] = Field(default_factory=list)
@@ -1245,7 +1243,7 @@ class ProtectionListOut(BaseModel):
     """The stable key rows are listed by. Not shown; a display name can collide (rule 63)."""
 
     name: str
-    source: Literal["arr_tag", "plex_collection", "curated"]
+    source: Literal["arr_tag", "plex_collection", "plex_watchlist", "imdb"]
     """Which family this belongs to, so the screen can group rather than print one row per
     *arr instance. Two Radarrs and two Sonarrs already make four rows for the single
     protection "titles I tagged reaper-keep", and every instance added multiplies them."""
@@ -1260,10 +1258,19 @@ class ProtectionListOut(BaseModel):
 
     list_id: int | None
     """Which ``ListConfig`` this membership was synced for, so the screen can render one row
-    per definition and put Edit and Remove on it. Several rows share one id -- a tag list is
-    synced once per *arr instance -- and it is null for the keep tags, which are configured
-    on Policy, and for a row stored before the registry existed. Derived from the slug in
+    per definition and put Edit and Check now on it. Several rows share one id -- a tag list
+    is synced once per *arr instance -- and it is null for a row stored before its
+    definition existed, which the next successful check re-homes. Derived from the slug in
     ``lists.list_id_of``, beside the spellings, never parsed in the browser (rule 63)."""
+
+    tags: dict[str, int] | None = None
+    """A tag list's per-tag counts from the last good check, by the operator's spelling of
+    each tag. Null for every other source, and for a row that has not synced since the
+    counts started being recorded -- unknown, never zero."""
+
+    server: str | None = None
+    """Which *arr instance a tag list's row was read from, for the per-server counts. The
+    operator named the instance on Settings; null for every other source."""
 
 
 class ListConfigIn(BaseModel):
@@ -1276,9 +1283,7 @@ class ListConfigIn(BaseModel):
     """
 
     name: str = Field(min_length=1, max_length=100)
-    source: Literal["arr_tag", "plex_collection"]
-    """A curated list ships with Reaper and is not one the operator adds by hand."""
-
+    source: Literal["arr_tag", "plex_collection", "plex_watchlist", "imdb"]
     config: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1288,20 +1293,12 @@ class ListConfigPatch(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=100)
     config: dict[str, Any] | None = None
-    enabled: bool | None = None
 
 
 class ListSyncIn(BaseModel):
-    """Which lists to check now. Both fields omitted means all of them.
-
-    They are alternatives, not a pair: ``list_id`` names one definition, ``keep_tags`` names
-    the policy's keep tags, which have no definition to be named by. Setting both narrows to
-    the keep tags, which is the conservative reading -- a narrowed pass retires nothing, so
-    the worst it can do is check less than was asked.
-    """
+    """Which lists to check now. Omitted means all of them."""
 
     list_id: int | None = Field(default=None, ge=1)
-    keep_tags: bool = False
 
 
 class ListSyncOut(BaseModel):
@@ -1319,6 +1316,16 @@ class ListSyncOut(BaseModel):
     row carries an error explaining why. Null when Plex answered or none is linked."""
 
 
+class ListPolicyUseOut(BaseModel):
+    """One keep rule naming a list, summarized for the Lists screen's "how Policy uses
+    it" line."""
+
+    media_type: Literal["movie", "tv"]
+    strength: Literal["hard", "lean"]
+    points: int | None = None
+    """The lean's discount. Null for a hard rule, which keeps outright."""
+
+
 class ListConfigOut(BaseModel):
     """A list definition: what the operator named it and where it points.
 
@@ -1332,12 +1339,11 @@ class ListConfigOut(BaseModel):
     name: str
     """The operator's own words. Free text, so a surface rendering it wraps (rule 139)."""
 
-    source: Literal["arr_tag", "plex_collection", "curated"]
+    source: Literal["arr_tag", "plex_collection", "plex_watchlist", "imdb"]
     config: dict[str, Any]
     """The source's own settings, shaped per source by ``list_config._clean_config``."""
 
-    enabled: bool
-    built_in: bool
-    """True for a list Reaper ships with. It can be switched off or pointed elsewhere,
-    never deleted: the default policy carries a keep rule naming it, and a rule naming a
-    list that is gone reads as a live protection covering nothing (rule 25)."""
+    policy_use: list[ListPolicyUseOut] = Field(default_factory=list)
+    """How the policies use this list right now: one entry per keep rule naming it
+    (``services.list_rules.usage``). Empty means no rule does, which the screen renders as
+    a warning -- a defined list that protects nothing."""

@@ -31,6 +31,7 @@ from reaper.api.schemas import (
     ListConfigIn,
     ListConfigOut,
     ListConfigPatch,
+    ListPolicyUseOut,
     ListSyncIn,
     ListSyncOut,
     ProtectionListOut,
@@ -40,29 +41,49 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import ListConfig
-from reaper.services import list_config, lists, profiles, scan_runner, snapshot
+from reaper.services import list_config, list_rules, lists, scan_runner, snapshot
 from reaper.services.snapshot import WHITELIST_STALE_AFTER
 
 router = APIRouter(prefix="/api", tags=[api_tags.LISTS])
 
 
+def _tag_stats(row: lists.ConfiguredList) -> tuple[dict[str, int] | None, str | None]:
+    """The per-tag counts and server name a tag list's last good check recorded. Absent or
+    malformed reads as unknown, never as zero counts (rule 96's direction)."""
+    stats = row.stats or {}
+    tags = stats.get("tags")
+    counts = (
+        {str(k): int(v) for k, v in tags.items() if isinstance(v, int)}
+        if isinstance(tags, dict)
+        else None
+    )
+    server = stats.get("server")
+    return counts, str(server) if server else None
+
+
 @router.get("/lists")
 async def get_lists(request: Request) -> list[ProtectionListOut]:
     now = utcnow()
-    return [
-        ProtectionListOut(
-            slug=row.slug,
-            name=row.display_name,
-            source=row.source.value,
-            state=row.health(stale_after=WHITELIST_STALE_AFTER, now=now).value,
-            item_count=row.item_count,
-            last_checked_at=row.last_success,
-            error=row.last_error,
-            list_id=row.list_id,
+    out: list[ProtectionListOut] = []
+    for row in await lists.configured(request.app.state.cache_engine):
+        if not row.enabled:
+            continue
+        tag_counts, server = _tag_stats(row)
+        out.append(
+            ProtectionListOut(
+                slug=row.slug,
+                name=row.display_name,
+                source=row.source.value,
+                state=row.health(stale_after=WHITELIST_STALE_AFTER, now=now).value,
+                item_count=row.item_count,
+                last_checked_at=row.last_success,
+                error=row.last_error,
+                list_id=row.list_id,
+                tags=tag_counts,
+                server=server,
+            )
         )
-        for row in await lists.configured(request.app.state.cache_engine)
-        if row.enabled
-    ]
+    return out
 
 
 def _refused(exc: list_config.ListConfigError) -> HTTPException:
@@ -71,7 +92,7 @@ def _refused(exc: list_config.ListConfigError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
-def _out(row: ListConfig) -> ListConfigOut:
+def _out(row: ListConfig, uses: list[ListPolicyUseOut] | None = None) -> ListConfigOut:
     """One stored definition, on the wire. A stored body that will not parse reads as an
     empty one rather than raising a row off the screen (rule 96): the operator can see the
     list, and Edit rewrites the body through ``_clean_config``, which is the way out."""
@@ -84,8 +105,7 @@ def _out(row: ListConfig) -> ListConfigOut:
         name=row.name,
         source=row.source,
         config=config if isinstance(config, dict) else {},
-        enabled=row.enabled,
-        built_in=row.built_in,
+        policy_use=uses or [],
     )
 
 
@@ -99,7 +119,15 @@ async def get_configured(request: Request) -> list[ListConfigOut]:
     exist until one has run. The browser joins them on ``ProtectionListOut.list_id``.
     """
     async with request.app.state.session_factory() as session:
-        return [_out(row) for row in await list_config.all_lists(session)]
+        rows = await list_config.all_lists(session)
+        uses = await list_rules.usage(session)
+    return [
+        _out(
+            row,
+            [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])],
+        )
+        for row in rows
+    ]
 
 
 @router.post("/lists/configured", status_code=201)
@@ -117,19 +145,26 @@ async def add_list(request: Request, body: ListConfigIn) -> ListConfigOut:
             )
         except list_config.ListConfigError as exc:
             raise _refused(exc) from None
-        return _out(row)
+        # The fail-safe default the modal promises: a new list keeps its titles outright
+        # until the operator softens or removes the rule on Policy.
+        await list_rules.attach_list(session, row.name)
+        uses = await list_rules.usage(session)
+        return _out(row, [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])])
 
 
 @router.patch("/lists/configured/{list_id}")
 async def edit_list(request: Request, list_id: int, body: ListConfigPatch) -> ListConfigOut:
     async with request.app.state.session_factory() as session:
         try:
-            row = await list_config.update(
-                session, list_id, name=body.name, config=body.config, enabled=body.enabled
-            )
+            before = (await list_config.get(session, list_id)).name
+            row = await list_config.update(session, list_id, name=body.name, config=body.config)
         except list_config.ListConfigError as exc:
             raise _refused(exc) from None
-        return _out(row)
+        # A renamed list's rules follow it, or every one of them would go on naming a list
+        # that no longer exists while rendering as a live protection.
+        await list_rules.rename_list(session, before, row.name)
+        uses = await list_rules.usage(session)
+        return _out(row, [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])])
 
 
 @router.post("/lists/sync")
@@ -194,18 +229,17 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
 
 @router.delete("/lists/configured/{list_id}", status_code=204)
 async def remove_list(request: Request, list_id: int) -> None:
-    """Delete a list. Refused for one Reaper ships with; switching it off is always available.
-
-    **The rules-still-name-it check is deliberately absent, not forgotten.** Deleting a list
-    a keep rule points at would withdraw a protection while the rule went on rendering as a
-    live one, so that refusal belongs here -- but no policy rule can name a list until the
-    ``on_list`` field exists, so the check could not fire today and a guard that cannot fire
-    reads as protection that is not there (rule 38/117). It lands in the change that adds the
-    field, and `tests/test_list_config.py` pins that this route refuses a built-in so the
-    other half is not the only thing standing between an operator and a deleted protection.
-    """
+    """Delete a list, and the keep rules naming it in the same request. Deleting only the
+    row would leave rules rendering as live protections that cover nothing (rule 25);
+    deleting only the rules would leave a list that quietly stopped acting. Both policies
+    are re-saved through the editor's own append-only path, so pending approvals bound to
+    the old hash refuse to execute (rule 113)."""
     async with request.app.state.session_factory() as session:
         try:
+            name = (await list_config.get(session, list_id)).name
             await list_config.delete(session, list_id)
         except list_config.ListConfigError as exc:
             raise _refused(exc) from None
+        # The rules naming it leave with it, so none goes on rendering as a live
+        # protection covering nothing (rule 25).
+        await list_rules.detach_list(session, name)

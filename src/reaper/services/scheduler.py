@@ -215,7 +215,7 @@ async def refresh_curated_lists(
 ) -> None:
     """Refresh the curated protection lists that need no per-scan client (the Top 250).
 
-    Built from the registry, not from a bare ``ImdbTop250()``: a provider's slug carries the
+    Built from the registry, not from a bare provider: a provider's slug carries the
     id of the definition it was synced for, so constructing one without the definition would
     write a SECOND row under a slug no definition owns -- which the next scan's retire sweep
     would disable, every night, forever. Reading the registry also makes the Protecting switch
@@ -232,9 +232,13 @@ async def refresh_curated_lists(
             definitions = await list_config.definitions(session)
         refreshed: dict[str, int] = {}
         for definition in definitions:
-            if definition.source is not lists.ListSource.CURATED or not definition.enabled:
+            if definition.source is not lists.ListSource.IMDB or not definition.enabled:
                 continue
-            provider = lists.ImdbTop250(list_id=definition.id, list_name=definition.name)
+            provider = lists.ImdbList(
+                variant=definition.imdb_variant,
+                list_id=definition.id,
+                list_name=definition.name,
+            )
             refreshed[provider.slug] = await lists.sync(
                 cache_engine, provider, mode=lists.ListMode.HARD
             )
