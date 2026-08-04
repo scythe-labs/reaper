@@ -2972,7 +2972,9 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
 # +1 for the Plex library picker on Settings -> Lists: the field #483 was about, which stops
-# being a name Reaper guesses and becomes one the operator picks off their own server.
+# being a name Reaper guesses and becomes one the operator picks off their own server. +1 for
+# `PolicyRuleEditors`'s ListNameSelect, the picker an `on_list` keep rule names its list from --
+# a rule that matches on the name, so it is a picker rather than a box (rule 108's separator half).
 _EXPECTED_SELECTS = 23
 
 
