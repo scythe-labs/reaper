@@ -110,7 +110,7 @@
 
 /* The tag editor (TagsEditor.tsx): removable chips + a free-type box. The list modal is its
    consumer; the styles stay here beside the chip shape Policy's own rules tables share. */
-.keep-tags {
+.tag-editor {
   margin-top: var(--space-md);
 }
 .tag-chips {

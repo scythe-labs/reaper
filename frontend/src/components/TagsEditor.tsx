@@ -35,7 +35,7 @@ export function TagsEditor({
   const addRef = useRef<HTMLInputElement>(null);
   const chips = useRemovalFocus(addRef);
   return (
-    <div className="keep-tags">
+    <div className="tag-editor">
       <div className="tag-chips" ref={chips.ref as RefObject<HTMLDivElement>}>
         {tags.map((t, i) => (
           <span key={t} className="tag-chip">
