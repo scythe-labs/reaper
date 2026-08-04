@@ -93,8 +93,11 @@ class SeasonPruneInput:
     progress_unreadable: bool
     progress_seasons_unmatched: bool
     progress_unknown_reason: str | None
-    """Why nobody could be asked about this show's viewers, or ``None``. Passed to
-    ``season_scan.guard_result``, not to the planner."""
+    """Why nobody could be asked about this show's viewers, or ``None``.
+
+    Its wording goes to ``season_scan.guard_result``. Whether it is set at all also goes to
+    the planner, as ``progress_show_unmatched``: a show with no rating key anywhere is the one
+    shape whose mid-binge hold must not blame the watch mirror's depth (#489)."""
 
     requested_known_false: bool
     """Whether the request index said, definitely, that nobody requested this show. The one
@@ -193,6 +196,11 @@ def plan_from_frozen(inp: SeasonPruneInput, *, policy: SeasonPolicy) -> SeriesPr
         ),
         progress_unreadable=inp.progress_unreadable,
         progress_seasons_unmatched=inp.progress_seasons_unmatched,
+        # Non-None is exactly "this show has no Plex rating key" (`season_scan` derives it as
+        # `no_key_reason(...) if item.show_rating_key is None else None`), which is the one
+        # state where no depth of watch mirror can name a viewer's place. The planner takes
+        # the bit rather than the sentence, so the wording stays operator copy (rule 142).
+        progress_show_unmatched=inp.progress_unknown_reason is not None,
         keep_specials=policy.keep_specials,
         protect_incomplete=policy.protect_incomplete_seasons,
         flag_keep_conflicts=policy.flag_keep_conflicts,
