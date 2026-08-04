@@ -2818,7 +2818,9 @@ section above measures for a six-thousand-item library rather than dwarfing it.
 
 **The decode is 0.21 ms per show at that shape**, so ~205 ms for a thousand shows — and the
 simulate request it fronted arrives on a 250 ms debounce while a control is being dragged, on top
-of the 275 ms the movie lane's replay already costs at 3,468 rows.
+of the 275 ms the movie lane's replay already costs at 3,468 rows. That projection is a ceiling
+rather than an estimate, and the section below measures the real distribution at a fraction of
+it: the lab shape was the large one.
 
 The lever was not the total. Every show with a candidate row gets thawed either way, so decoding
 lazily per show saves almost nothing on a healthy library — what it changes is *when*: 205 ms in
@@ -2827,6 +2829,42 @@ loop already takes, a refusal costs one show's decode instead of the library's, 
 no candidate row is never decoded at all. The general shape: **an eager prefetch and a lazy one
 can have identical totals and completely different tail latency**, so measure the block, not the
 sum.
+
+## Both simulator tiers, timed across a 64x range of library sizes (2026-08-03)
+
+`POST /api/policy/simulate` answers one question two ways: tier 1 re-compares the stored scores
+against the new thresholds, tier 2 replays the real engine over the frozen Facts. Tier 2 is exact
+for everything tier 1 covers, so tier 1 is an optimization and #493 asked whether it earns its
+keep. Settled by driving the real route against a `.backup` clone of a live snapshot — 3,469
+movie rows, 2,498 season rows over 985 shows, best of five, warm.
+
+| request | tier 1 | tier 2 |
+| --- | --- | --- |
+| movie | 59 ms | 305 ms |
+| TV, season-rule edit | 56 ms | 366 ms |
+
+**Tier 2 is linear with no knee: 81 µs/row on movies and 133 µs/row on seasons, flat to within
+6% from 433 rows to 27,752.** So the ceiling is set by library size and nothing else, which is
+what makes it decidable rather than arguable: at 4x this install a threshold drag settles in
+~1.2 s, at 8x in ~2.3 s, on top of the 250 ms debounce it already waits out.
+
+Measured apart rather than subtracted, the row query is 29 ms and 24 ms and the bundle query is
+1.5 ms, which puts the **tier-1 loop at ~9 and ~12 µs/row — 9x and 11x cheaper per row.** The
+gap is per-row, so it widens with the library instead of amortizing.
+
+**Tier 1 stays**, and two of the three reasons are not about perceived latency. The replay is a
+Python loop on the event loop, so a 2.3 s replay is 2.3 s of contention for every other request
+on the box; and tier 1 is still the only path that answers a snapshot which froze no Facts at
+all. `tests/test_verdict_agreement.py` therefore stays load-bearing: it is what stands between
+the two paths and another §9.
+
+**The season lane's extra cost is the work, not overhead in front of it.** The bundle query is
+1.5 ms of a 366 ms request, 0.4%, so there is nothing left to defer that #502's lazy per-show
+thaw did not already take. Every season-specific cost combined — decode, plan derivation and
+guard replay across 985 shows — is ~130 ms, or ~0.13 ms per show, against a lab estimate for the
+decode *alone* that was 1.6x that. The general shape: **a cost measured on the worst shape you
+can construct projects a ceiling, and reading it as a forecast argues for optimizations the real
+distribution does not need.**
 
 ## Prior art
 
