@@ -1230,19 +1230,24 @@ _UNRAID_TEMPLATE_COUNT = 1
 
 
 def test_the_unraid_template_offers_every_channel_it_declares() -> None:
-    """A ``<Branch>`` repeating the repository's own tag is discarded in silence.
+    """Every channel the picker offers is a ``<Branch>``, described in a field CA reads.
 
-    Community Applications expands one install row per ``<Branch>``, but skips any branch whose
-    ``<Tag>`` equals the tag on ``<Repository>``, because the Default row already installs that
-    one (``include/exec.php``). The branch's ``<TagDescription>`` then never reaches a screen,
-    and nothing reports it: the template still parses, still installs, and still shows a picker.
-    539 of the 585 branch-using templates in the live app feed carry one of these dead entries.
+    Community Applications expands one install row per ``<Branch>``, showing its ``<Tag>``
+    beside its ``<TagDescription>``, above a Default row that installs ``<Repository>`` as
+    written. The only branch ``include/exec.php`` skips is one that spells ``<Tag>`` twice
+    inside a single ``<Branch>``; a tag matching ``<Repository>``'s is expanded like any other,
+    and 539 templates in the live app feed list theirs that way.
 
-    So the offered channels are the repository's tag plus one branch each for the others, the
-    default channel is described by ``<DefaultTagDescription>`` rather than by a branch, and the
-    tags are checked against the registry retention job rather than a literal list here:
-    everything outside its protected set is swept after a week, so offering a tag from outside
-    it hands the operator a channel whose image stops resolving (rule 25).
+    Both halves of that were once believed backwards, and this test enforced the belief. The
+    release channel lost its ``<Branch>`` and was described by an invented
+    ``<DefaultTagDescription>``, a name no file in the Community Applications source reads: the
+    Default row's text is hardcoded in ``include/helpers.php``, so the release channel shipped
+    with no description at all. An invented element parses, installs, and renders nothing.
+
+    So the repository's own tag carries a ``<Branch>`` like every other channel, that invented
+    field stays gone, and the tags are read off the registry retention job rather than copied
+    into a literal here: everything outside its protected set is swept after a week, so offering
+    a tag from outside it hands the operator a channel whose image stops resolving (rule 25).
     """
     templates = sorted(_UNRAID_TEMPLATES.glob("*.xml"))
     assert len(templates) == _UNRAID_TEMPLATE_COUNT, (
@@ -1279,15 +1284,16 @@ def test_the_unraid_template_offers_every_channel_it_declares() -> None:
     assert "/" not in default_tag, (
         f"the colon in <Repository> ({repository}) sits in the host or path, not before a tag"
     )
-    assert default_tag not in tags, (
-        f"a <Branch> repeats {default_tag!r}, the tag already on <Repository> ({repository}). "
-        "Community Applications drops that branch and installs it from the Default row instead, "
-        f"so its <TagDescription> is never shown. Describe {default_tag!r} with "
-        "<DefaultTagDescription> and give a <Branch> only to the other channels."
+    assert default_tag in tags, (
+        f"{default_tag!r}, the tag on <Repository> ({repository}), has no <Branch>. Community "
+        "Applications expands it like any other branch, and without one the release channel's "
+        "only row is CA's Default row, whose text is hardcoded in include/helpers.php and which "
+        "no field in the template can describe."
     )
-    assert (root.findtext("DefaultTagDescription") or "").strip(), (
-        f"{templates[0].name} needs a <DefaultTagDescription>: it is the only copy the picker's "
-        f"Default row can show for {default_tag!r}, and that row is the one most operators take."
+    assert root.find("DefaultTagDescription") is None, (
+        f"{templates[0].name} declares <DefaultTagDescription>, which no file in the Community "
+        "Applications source reads: the Default row's text is hardcoded in include/helpers.php. "
+        f"Describe {default_tag!r} in its own <Branch>/<TagDescription> instead."
     )
     assert image, f"<Repository> ({repository}) has no image path before its tag"
 
