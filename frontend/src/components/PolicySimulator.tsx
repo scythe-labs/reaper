@@ -191,10 +191,6 @@ export function Outcome({
    *  250 ms and flicker on every keystroke. */
   edited: boolean;
 }) {
-  // The saved policy's count is derivable: what this draft flags, minus what only this
-  // draft flags, plus what only the saved one flags.
-  const savedFlags =
-    simulation.condemned - simulation.newly_condemned + simulation.no_longer_condemned;
   const moreExamples = simulation.newly_condemned - simulation.examples_newly_condemned.length;
 
   return (
@@ -212,18 +208,21 @@ export function Outcome({
         </div>
       </div>
 
-      {/* The comparison line is the one that answers, because on an inert edit it is also the
-          one that reads as broken: two identical numbers in a sentence built to contrast them.
-          A `Notice` would be the wrong shape -- `NoticeTone` is error/warn and the component
-          treats tone as a claim about severity, which this is not. */}
-      {edited && simulation.changed_titles === 0 ? (
-        <p className="sim-compare sim-inert">Your changes leave every title as it is.</p>
-      ) : (
-        <p className="sim-compare">
-          Your saved policy flags <strong>{count(savedFlags)}</strong>. This draft flags{" "}
-          <strong>{count(simulation.condemned)}</strong>.
-        </p>
-      )}
+      {/* The comparison needs a draft to compare, so it renders only once there is one: with
+          nothing edited it put the same number on both sides of a sentence built to contrast
+          them, and the headline above already answers the untouched case on its own. On an
+          inert edit the sentence IS the finding, which is why that branch stays. A `Notice`
+          would be the wrong shape -- `NoticeTone` is error/warn and the component treats tone
+          as a claim about severity, which this is not. */}
+      {edited &&
+        (simulation.changed_titles === 0 ? (
+          <p className="sim-compare sim-inert">Your changes leave every title as it is.</p>
+        ) : (
+          <p className="sim-compare">
+            Your saved policy flags <strong>{count(simulation.condemned_before)}</strong>. This
+            draft flags <strong>{count(simulation.condemned)}</strong>.
+          </p>
+        ))}
 
       <Histogram buckets={simulation.histogram} threshold={threshold} />
       <p className="help">
@@ -268,10 +267,10 @@ export function Outcome({
 
       <dl className="sim-delta">
         {/* First, because it is the only row that summarizes the other four. The two deltas
-            below count threshold crossings alone, and the two after them are absolute counts
-            with no before to read them against, so a protection edit that moved a sixth of
-            the spared set into "not judged" left every number on this panel holding still
-            (#488). */}
+            below count what enters and leaves the removal list, and the two after them are
+            absolute counts with no before to read them against, so a protection edit that
+            moved a sixth of the spared set into "not judged" left every number on this panel
+            holding still (#488). */}
         <div className="sim-changed">
           <dt>Titles that change</dt>
           <dd>{count(simulation.changed_titles)}</dd>

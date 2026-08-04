@@ -185,6 +185,7 @@ describe("the outcome panel on an edit that changes no title", () => {
     unknown_size_items: 0,
     newly_condemned: 0,
     no_longer_condemned: 0,
+    condemned_before: 412,
     changed_titles: 0,
     histogram: [180, 402, 611, 688, 590, 430, 292, 168, 78, 30],
     examples_newly_condemned: [],
@@ -214,13 +215,31 @@ describe("the outcome panel on an edit that changes no title", () => {
     expect(screen.queryByText(/This draft flags/)).not.toBeInTheDocument();
   });
 
-  it("stays quiet until something has actually been edited", () => {
-    // The panel simulates on mount, before anything is touched, so the sentence keyed on the
-    // count alone would open by telling the operator their untouched policy does nothing.
+  it("compares nothing at all until something has been edited", () => {
+    // The panel simulates on mount, before anything is touched. The inert sentence keyed on
+    // the count alone would open by telling the operator their untouched policy does nothing;
+    // the comparison keyed on nothing at all opened by contrasting a number with itself
+    // ("Your saved policy flags 412. This draft flags 412."). With no draft there is no
+    // comparison to draw, and the headline above already says what the policy flags.
     renderOutcome({ changed_titles: 0 }, false);
 
     expect(screen.queryByText(INERT)).not.toBeInTheDocument();
-    expect(screen.getByText(/This draft flags/)).toBeInTheDocument();
+    expect(screen.queryByText(/This draft flags/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your saved policy flags/)).not.toBeInTheDocument();
+  });
+
+  it("reads the saved policy's count off the server rather than off the two deltas", () => {
+    // The fixture is deliberately inconsistent: it is the payload the server sent while
+    // `no_longer_condemned` was broken, where the old derivation
+    // (condemned - newly + gone) collapsed to the draft's own 14 and printed it on both
+    // sides of the sentence. A delta bug must not be able to reach this line again.
+    renderOutcome(
+      { condemned: 14, condemned_before: 281, newly_condemned: 0, changed_titles: 813 },
+      true,
+    );
+
+    const line = screen.getByText(/This draft flags/);
+    expect(line).toHaveTextContent("Your saved policy flags 281. This draft flags 14.");
   });
 
   it("keeps the comparison when titles do move", () => {

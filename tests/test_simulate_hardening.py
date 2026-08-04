@@ -736,6 +736,119 @@ class TestTheFrozenFactsReplay:
         assert result["no_longer_condemned"] == 0
 
 
+@pytest.fixture
+def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A snapshot of stored condemns, two of which the draft's protections now keep.
+
+    The scenario an operator reported: they add an outright keep, most of the removal list
+    leaves it, and both deltas read zero. Every row here is stored ``condemn`` with no hand
+    override, so ``was`` is condemn for all three and the only thing that moves them is the
+    draft's own protections firing on the frozen facts.
+    """
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    # Two ways out of the removal list and one row that stays on it, so the count cannot come
+    # out right by counting a single protection, or by counting every row.
+    rows = {
+        "radarr:1:1": _facts(is_whitelisted=Known(value=True, source="test")),
+        "radarr:1:2": _facts(is_streaming_now=Known(value=True, source="test")),
+        "radarr:1:3": _facts(),
+    }
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=combine_hashes(
+                DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
+            ),
+            scoring_hash="b" * 64,
+            evidence_hash=combine_hashes(
+                REPLAY_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
+            ),
+            horizon_at=now,
+            item_count=len(rows),
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        for index, (media_key, facts) in enumerate(rows.items(), start=1):
+            session.add(
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key=media_key,
+                    title=f"Example Movie {index}",
+                    media_type="movie",
+                    size_bytes=SIZE,
+                    verdict="condemn",
+                    score=95,
+                    coverage_bp=10_000,
+                    explanation_json=_healthy(),
+                    facts_json=json.dumps(facts_codec.facts_to_dict(facts)),
+                    created_at=now,
+                )
+            )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestATitleAProtectionRescuesLeavesTheRemovalList:
+    """A title going condemn -> protect is one the operator no longer has to review.
+
+    ``no_longer_condemned`` was counted in the replay's abstain arm alone, so it meant
+    condemn -> **abstain** and nothing else. A protection edit is the one that takes a title
+    straight from condemn to protect, which is also the edit the delta exists to describe, so
+    the panel answered an outright keep rule with -0 and a compare line that put the draft's
+    own count on both sides of a sentence built to contrast it.
+
+    Expectations are read off the fixture: ``radarr:1:1`` is kept by the keep list and
+    ``radarr:1:2`` by the streaming stop, both from stored condemn; ``radarr:1:3`` has nothing
+    to keep it and stays condemned.
+    """
+
+    def _replay(self, client: TestClient) -> dict[str, Any]:
+        response = client.post("/api/policy/simulate", json=REPLAY_PAYLOAD.model_dump())
+        assert response.status_code == 200, response.text
+        body: dict[str, Any] = response.json()
+        assert body["exact"] is True, body.get("stale_reason")
+        return body
+
+    def test_the_rescued_titles_land_in_the_protected_lane(
+        self, keep_rule_client: TestClient
+    ) -> None:
+        """The premise. Without this the delta assertion could pass on rows that never moved."""
+        result = self._replay(keep_rule_client)
+        assert result["condemned"] == 1
+        assert result["protected"] == 2
+        assert result["abstained"] == 0
+
+    def test_both_are_counted_as_no_longer_condemned(self, keep_rule_client: TestClient) -> None:
+        result = self._replay(keep_rule_client)
+        assert result["no_longer_condemned"] == 2
+        assert result["newly_condemned"] == 0
+        assert result["changed_titles"] == 2
+
+    def test_the_saved_policy_count_is_sent_rather_than_derived(
+        self, keep_rule_client: TestClient
+    ) -> None:
+        """Rule 144: the panel is told what the saved policy flags, never left to rebuild it.
+
+        The identity is asserted alongside the value because the browser used to depend on it
+        and could not check it: a delta that misses a direction breaks the derivation while
+        every number it is built from still reads as a plausible count.
+        """
+        result = self._replay(keep_rule_client)
+        assert result["condemned_before"] == 3
+        assert result["condemned_before"] == (
+            result["condemned"] - result["newly_condemned"] + result["no_longer_condemned"]
+        )
+
+
 class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
     """The edit an operator makes most often on this page, answered off the last scan.
 

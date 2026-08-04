@@ -1979,6 +1979,7 @@ def _refused(kind: SimStale, media_type: str) -> SimulationOut:
         reclaimable_bytes=0,
         newly_condemned=0,
         no_longer_condemned=0,
+        condemned_before=0,
         changed_titles=0,
         histogram=[0] * 10,
     )
@@ -2196,6 +2197,7 @@ async def _replay_simulation(
     reclaimable = 0
     unknown_size = 0
     newly = gone = 0
+    before = 0
     changed = 0
     # (row, re-decided score) -- the NEW score, since a weight edit moves it, not the stored one.
     newly_rows: list[tuple[Candidate, int]] = []
@@ -2263,12 +2265,23 @@ async def _replay_simulation(
         # POLICY edit caused. The stored verdict alone is pure policy and would misattribute it.
         was = effective_verdict(row, decisions)
         was_condemned = was == "condemn"
-        # Every lane move, not only the two that cross the threshold. This is the path a
-        # protection edit takes, and a protection edit moves titles between protect and
-        # abstain without going near the threshold -- which the two deltas below cannot see
-        # by construction, and the panel's other rows report as absolute counts (#488).
+        if was_condemned:
+            before += 1
+        # `changed` counts every lane move, not only the two that cross the threshold: a
+        # protection edit moves titles between protect and abstain without going near it,
+        # which the two deltas cannot see by construction, and the panel's other rows report
+        # as absolute counts (#488).
+        #
+        # Both deltas read off `was` and `verdict` alone, so each counts every way into and
+        # out of the removal list. `gone` was counted in the abstain arm below, which made it
+        # condemn -> abstain only: an outright keep takes a condemned title straight to
+        # protect, so a rule that emptied most of the removal list reported -0.
         if verdict != was:
             changed += 1
+            if verdict == "condemn":
+                newly += 1
+            elif was_condemned:
+                gone += 1
         if verdict == "condemn":
             condemned += 1
             if row.size_bytes is None:
@@ -2276,7 +2289,6 @@ async def _replay_simulation(
             else:
                 reclaimable += row.size_bytes
             if not was_condemned:
-                newly += 1
                 newly_rows.append((row, score_value))
         elif verdict == "protect":
             protected += 1
@@ -2286,8 +2298,6 @@ async def _replay_simulation(
             spared_by.update({r.gate.value for r in judged.evaluation.protectors})
         else:
             abstained += 1
-            if was_condemned:
-                gone += 1
 
     newly_rows.sort(key=lambda rs: rs[1], reverse=True)
     return SimulationOut(
@@ -2299,6 +2309,7 @@ async def _replay_simulation(
         unknown_size_items=unknown_size,
         newly_condemned=newly,
         no_longer_condemned=gone,
+        condemned_before=before,
         changed_titles=changed,
         histogram=histogram,
         examples_newly_condemned=[
@@ -2459,6 +2470,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     reclaimable = 0
     unknown_size = 0
     newly = gone = 0
+    before = 0
     changed = 0
     newly_rows: list[Candidate] = []
     spared_by: Counter[str] = Counter()
@@ -2476,6 +2488,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         # returned before this was read, and a trap for the next branch added above them.
         was = effective_verdict(row, decisions)
         was_condemned = was == "condemn"
+        if was_condemned:
+            before += 1
 
         # A hand override wins at any threshold: the owner looked and decided, and the
         # scan honors that decision, so the simulator must too. A spare protects; a
@@ -2579,6 +2593,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         unknown_size_items=unknown_size,
         newly_condemned=newly,
         no_longer_condemned=gone,
+        condemned_before=before,
         changed_titles=changed,
         histogram=histogram,
         examples_newly_condemned=[

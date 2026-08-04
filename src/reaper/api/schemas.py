@@ -851,6 +851,19 @@ class SimulationOut(BaseModel):
 
     no_longer_condemned: int
 
+    condemned_before: int = 0
+    """How many titles the SAVED policy flags, so the panel can compare against it directly.
+
+    Equal to ``condemned - newly_condemned + no_longer_condemned``, which is how the panel
+    used to reconstruct it. That derivation is only sound while both deltas count every way
+    into and out of the removal list, and it printed a confident wrong number the moment one
+    of them did not: ``no_longer_condemned`` missed condemn -> protect, so an outright keep
+    rule rendered as "your saved policy flags N. This draft flags N." -- the draft's own
+    count on both sides of a sentence built to contrast them. The server counts the pre-edit
+    lane per row either way, so sending it costs one line per tier and leaves the browser
+    with no server fact to re-derive (rule 144).
+    """
+
     changed_titles: int = 0
     """How many titles this draft puts in a different lane than the one they are in now.
 
