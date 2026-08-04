@@ -40,7 +40,7 @@ from typing import Any
 import structlog
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 from reaper.aio import gather_reaped, reap
 from reaper.clients.arr import RadarrClient
@@ -2610,6 +2610,23 @@ async def protection_sync_degradations(
       protecting from its stored copy; its staleness bound is a separate policy, not here.
     * **No record of a successful sync at all** (whitelist only, members present but no
       ``last_synced_at``): recency cannot be confirmed, so it is not assumed.
+
+    A fourth case is not a failed sync at all: a keep list this pass **did not check**, so it
+    never reaches ``synced`` and none of the three above can see it. Unlinking Plex is the way
+    in -- ``DELETE /api/settings/plex`` drops only the server row, the collection and watchlist
+    definitions stay enabled, and with no live server no provider is built for either. The
+    stored membership goes on protecting and goes on aging, with nothing bounding it, so a keep
+    list that has been unreadable for months reads exactly like one checked minutes ago. That
+    is the same unprotected window the recency bound above exists for, reached without an
+    error, so it is bounded the same way and by the same constant, over the stored rows rather
+    than over this pass's output.
+
+    **Keyed on a stored row, never on a definition**, which is what keeps a Plex-less install
+    off it: a row is written only by a sync that actually ran (``lists.sync``, and
+    ``_record_sync_error`` on the failing path), so the seeded Plex collection on an install
+    that has never linked Plex has no row and cannot degrade anything. Disabled rows are
+    skipped for the reason they always are: ``retire_absent`` disables a superseded slug and
+    keeps its members, so it reads as populated while protecting nothing.
     """
     await lists.ensure_schema(engine)
     reasons: list[str] = []
@@ -2694,4 +2711,52 @@ async def protection_sync_degradations(
                     f"more than {hours} hours old. Anything added to it since then is not "
                     "protected, so nothing may be deleted from this scan"
                 )
+        reasons += await _unchecked_keep_list_degradations(conn, synced, now=now)
+    return reasons
+
+
+async def _unchecked_keep_list_degradations(
+    conn: AsyncConnection, synced: Mapping[str, int | str], *, now: datetime
+) -> list[str]:
+    """Keep lists this pass never checked at all, past the same recency bound.
+
+    The loop above walks ``synced``, so it can only see a list that was checked and failed.
+    A list nothing built a provider for is absent from it entirely and coasts on its stored
+    membership forever. See :func:`protection_sync_degradations` for why the row, not the
+    definition, is the key.
+
+    Whitelist only, matching the recency rule above: a curated external list churns slowly
+    and keeps protecting from its stored copy, and bounding that is a separate policy.
+    """
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT slug, mode, kind, last_synced_at, display_name "
+                "FROM protection_list WHERE enabled = 1"
+            )
+        )
+    ).all()
+    hours = int(WHITELIST_STALE_AFTER.total_seconds() // 3600)
+    reasons: list[str] = []
+    for row in rows:
+        if str(row.slug) in synced:
+            continue  # checked this pass; the walk above already had its say
+        if str(row.mode) != lists.ListMode.HARD.value:
+            continue
+        if str(row.kind) != lists.ListKind.WHITELIST.value:
+            continue
+        named = str(row.display_name) if row.display_name else str(row.slug)
+        last_success = from_epoch(row.last_synced_at)
+        if last_success is None:
+            reasons.append(
+                f"the protection list '{named}' was not checked, and Reaper has no record "
+                "of it ever checking successfully. Titles on it may not be protected, so "
+                "nothing may be deleted from this scan"
+            )
+        elif now - last_success > WHITELIST_STALE_AFTER:
+            reasons.append(
+                f"the protection list '{named}' was not checked and the stored copy is more "
+                f"than {hours} hours old. Anything added to it since then is not protected, "
+                "so nothing may be deleted from this scan"
+            )
     return reasons

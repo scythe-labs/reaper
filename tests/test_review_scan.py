@@ -40,7 +40,7 @@ from reaper.engine.gates import Facts, GateId
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.ratings import Rating, RatingSource
-from reaper.services import history_sync, watch_evidence
+from reaper.services import history_sync, lists, watch_evidence
 from reaper.services.library_index import _RETIRED_DEGRADE_FLOOR, _RETIRED_DEGRADE_SHARE
 from reaper.services.season_scan import build_tv_index
 from reaper.services.snapshot import (
@@ -1367,6 +1367,122 @@ class TestProtectionSyncDegradations:
         assert reasons == []
 
 
+class TestAKeepListNothingCheckedAtAll:
+    """The gap the three checks above cannot see: they walk ``synced``, so a list nothing
+    built a provider for is absent from it entirely.
+
+    Unlinking Plex is the way in. ``DELETE /api/settings/plex`` drops only the server row, so
+    the collection and watchlist definitions stay enabled, no provider is built for either,
+    and their stored membership goes on protecting and goes on aging with nothing bounding
+    it. A keep list unreadable for months read exactly like one checked minutes ago.
+    """
+
+    async def test_an_unchecked_keep_list_past_the_bound_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The removed-server case. Its slug is not in ``synced`` at all, which is the
+        difference from every test above."""
+        await _seed_list(
+            cache_engine,
+            slug="plex-collection:1",
+            kind="whitelist",
+            members=40,
+            last_synced_at=int((NOW - timedelta(days=3)).timestamp()),
+        )
+
+        reasons = await protection_sync_degradations(cache_engine, {})
+
+        assert any("plex-collection:1" in r and "hours old" in r for r in reasons), reasons
+
+    async def test_an_unchecked_keep_list_inside_the_bound_does_not_degrade(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The control, and the reason the bound is a bound: a scan that runs between two
+        nightly list refreshes finds every list unchecked by ITSELF and recently checked by
+        the job, and must not degrade on that."""
+        await _seed_list(
+            cache_engine,
+            slug="plex-collection:1",
+            kind="whitelist",
+            members=40,
+            last_synced_at=int(NOW.timestamp()) - 3600,
+        )
+
+        assert await protection_sync_degradations(cache_engine, {}) == []
+
+    async def test_an_unchecked_keep_list_with_no_sync_record_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_list(
+            cache_engine, slug="plex-collection:1", kind="whitelist", members=0, last_synced_at=None
+        )
+
+        reasons = await protection_sync_degradations(cache_engine, {})
+
+        assert any("plex-collection:1" in r for r in reasons), reasons
+
+    async def test_an_install_that_never_synced_the_list_at_all_stays_clean(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The case this must NOT fire on, and the reason it keys on a stored ROW.
+
+        The seed migration puts an enabled Plex collection definition on every install,
+        including one that has never linked Plex. Nothing ever synced it, so no
+        ``protection_list`` row exists, and an operator who does not use Plex must not meet
+        an incomplete-scan notice on every scan forever.
+        """
+        await lists.ensure_schema(cache_engine)
+
+        assert await protection_sync_degradations(cache_engine, {}) == []
+
+    async def test_a_retired_row_does_not_degrade(self, cache_engine: AsyncEngine) -> None:
+        """``retire_absent`` disables a superseded slug and keeps its members, so a row the
+        operator switched off or replaced would otherwise degrade every scan from then on
+        with no way to clear it."""
+        await _seed_list(
+            cache_engine,
+            slug="plex-collection:1",
+            kind="whitelist",
+            members=40,
+            last_synced_at=int((NOW - timedelta(days=30)).timestamp()),
+            enabled=0,
+        )
+
+        assert await protection_sync_degradations(cache_engine, {}) == []
+
+    async def test_an_unchecked_curated_list_does_not_degrade_on_staleness(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Same split as the failed-sync walk above: a curated external list churns slowly
+        and keeps protecting from its stored copy, so the recency bound is a keep-list rule
+        and this stays one line of policy rather than two."""
+        await _seed_list(
+            cache_engine,
+            slug="imdb-top-250",
+            kind="curated",
+            members=250,
+            last_synced_at=int((NOW - timedelta(days=30)).timestamp()),
+        )
+
+        assert await protection_sync_degradations(cache_engine, {}) == []
+
+    async def test_a_list_checked_this_pass_is_left_to_the_walk_above(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """A successful check is a successful check, whatever the stored stamp said before
+        it, and a failed one is already reported by name. Either way this must not add a
+        second sentence about the same list."""
+        await _seed_list(
+            cache_engine,
+            slug="plex-collection:1",
+            kind="whitelist",
+            members=40,
+            last_synced_at=int((NOW - timedelta(days=30)).timestamp()),
+        )
+
+        assert await protection_sync_degradations(cache_engine, {"plex-collection:1": 40}) == []
+
+
 async def _seed_list(
     engine: AsyncEngine,
     *,
@@ -1382,8 +1498,6 @@ async def _seed_list(
     ``enabled`` defaults to 1, matching the column's own ``NOT NULL DEFAULT 1``. Pass 0 for
     a slug ``retire_absent`` has superseded: those keep their membership rows on purpose.
     """
-    from reaper.services import lists
-
     await lists.ensure_schema(engine)
     async with engine.begin() as conn:
         await conn.execute(
