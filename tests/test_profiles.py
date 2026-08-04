@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.clock import utcnow
@@ -26,6 +27,7 @@ from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, ProfileSettings
 from reaper.ratings import RatingSource
+from reaper.services import profiles
 from reaper.services.profiles import (
     active_policy,
     active_profile,
@@ -458,6 +460,32 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         assert {"IMDb Top 250", "Titles you've tagged"} <= values
         assert active.repaired is False
         assert active.name == "default"
+
+    async def test_a_registry_it_cannot_read_leaves_the_shipped_rules_alone(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The direction this helper promises: it may ADD cover, never withdraw it.
+
+        A read failure here is not "no lists of your own" (rules 65/91), and the only safe
+        reading of an unanswerable registry is the shipped set unchanged -- returning the
+        default is what makes that true, so the failure is driven rather than argued.
+        """
+        await self._seed_plex_collection(session)
+
+        async def unreadable(
+            _session: AsyncSession,
+        ) -> tuple[str | None, str | None, tuple[str, ...]]:
+            raise SQLAlchemyError("the registry could not be read")
+
+        monkeypatch.setattr(profiles, "_conversion_list_names", unreadable)
+
+        active = await active_policy(session, "movie")
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"IMDb Top 250", "Titles you've tagged"}, (
+            "an unreadable registry moved the shipped conditions"
+        )
+        assert active.repaired is False
 
     async def test_a_watchlist_definition_is_kept_too(self, session: AsyncSession) -> None:
         """The other source ``_conversion_list_names`` returns as the operator's own."""

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,6 +25,8 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api import lists as list_config_api
+from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
@@ -629,3 +632,220 @@ class TestTheRegistryFingerprint:
                 assert await list_config.current_fingerprint(session) is None
         finally:
             await engine.dispose()
+
+
+class TestCheckingTheListsNow:
+    """``POST /api/lists/sync`` -- the Lists screen's "Check now".
+
+    ``test_protection_sync.py`` covers ``sync_protection_lists`` itself at length. What had no
+    test at all is the route around it, which is where this pass can go wrong in the direction
+    that matters: it builds the sources, decides whether Plex answered, and decides whether to
+    run at all. Each of those resolves toward leaving the stored membership alone, because a
+    check that runs on half an answer retires slugs (rule 115) and a retired slug is a
+    protection that stopped covering.
+    """
+
+    @staticmethod
+    def _sources(monkeypatch: pytest.MonkeyPatch, *, plex: object | None = None) -> None:
+        async def fake_build(factory: object, settings: object, box: object, **kw: object) -> Any:
+            return ([], [], None, [], plex)
+
+        monkeypatch.setattr(list_config_api.scan_runner, "build_sources", fake_build)
+
+    @staticmethod
+    def _syncs(monkeypatch: pytest.MonkeyPatch, result: dict[str, object]) -> dict[str, Any]:
+        """Stand in for the sync, and record whether it was called at all."""
+        seen: dict[str, Any] = {}
+
+        async def fake_sync(engine: object, **kw: object) -> dict[str, object]:
+            seen["called"] = True
+            seen.update(kw)
+            return result
+
+        monkeypatch.setattr(list_config_api.snapshot, "sync_protection_lists", fake_sync)
+        return seen
+
+    def test_a_list_saved_in_a_form_reaper_cannot_read_stops_the_whole_check(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Not just that list: none of them.
+
+        This pass retires every slug the registry no longer produces, so a row that will not
+        decode is indistinguishable from one the operator deleted -- and running anyway would
+        switch off the membership it is still protecting with (rules 65/91).
+        """
+        self._sources(monkeypatch)
+        seen = self._syncs(monkeypatch, {})
+        # Read once so the shipped lists are actually seeded -- the registry fills in lazily,
+        # and corrupting an empty table would leave a valid registry and prove nothing.
+        assert client.get("/api/lists/configured").json()
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        with engine.begin() as conn:
+            assert conn.execute(text("UPDATE list_config SET config_json = 'not json'")).rowcount
+        engine.dispose()
+
+        response = client.post("/api/lists/sync", json={})
+
+        assert response.status_code == 409, response.text
+        assert "can't read" in response.json()["detail"]
+        assert not seen, "checked the lists anyway, which retires what it could not read"
+
+    def test_plex_not_answering_is_said_plainly_and_retires_nothing(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Plex fails closed here exactly as it does in a scan: no live server, no collection
+        provider, so nothing is synced for one and nothing is retired either."""
+
+        class _Plex:
+            async def connect(self) -> object:
+                raise PlexError("unreachable (boom)")
+
+        self._sources(monkeypatch, plex=_Plex())
+        self._syncs(monkeypatch, {"imdb:1": 12})
+
+        response = client.post("/api/lists/sync", json={})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["plex_error"] and "couldn't reach Plex" in body["plex_error"]
+        # The rest of the pass still ran, so a Plex outage does not stop the *arr tag sweeps.
+        assert body["checked"] == 1
+        assert body["failed"] == 0
+
+    def test_a_source_reaper_cannot_build_is_a_plain_refusal(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def refuses(factory: object, settings: object, box: object, **kw: object) -> Any:
+            raise list_config_api.scan_runner.ScanConfigError("Add a Radarr before checking.")
+
+        monkeypatch.setattr(list_config_api.scan_runner, "build_sources", refuses)
+        seen = self._syncs(monkeypatch, {})
+
+        response = client.post("/api/lists/sync", json={})
+
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == "Add a Radarr before checking."
+        assert not seen
+
+    def test_it_counts_the_checks_that_landed_apart_from_the_ones_that_failed(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A count each, from the shape ``sync_protection_lists`` answers in: an int is a
+        membership size, an ``error:`` string is a list whose check did not land."""
+        self._sources(monkeypatch)
+        self._syncs(
+            monkeypatch,
+            {"imdb:1": 250, "arr_tag:2": 0, "plex_collection:3": "error: unreachable"},
+        )
+
+        body = client.post("/api/lists/sync", json={}).json()
+
+        assert body["checked"] == 2, "a list that matched nothing was still checked"
+        assert body["failed"] == 1
+        assert body["plex_error"] is None
+
+    def test_checking_one_list_passes_that_list_through(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The narrowed pass, which must reach the service as a narrowing rather than being
+        widened to everything here -- ``sync_protection_lists`` retires nothing when it is
+        given one list, and that promise depends on the id arriving."""
+        self._sources(monkeypatch)
+        seen = self._syncs(monkeypatch, {"imdb:1": 5})
+
+        assert client.post("/api/lists/sync", json={"list_id": 1}).status_code == 200
+        assert seen["only"] == 1
+
+
+class TestTheUniqueNameConstraintIsTheThingThatHolds:
+    """The backstop under ``_refuse_name_twice``, driven rather than argued.
+
+    The pre-check reads and then writes, and can be beaten between the two, so the NOCASE
+    unique column is what actually holds -- and what it raises, ``IntegrityError``, says
+    nothing an operator can act on. Losing the handler turns a lost race into a 500 on the
+    Lists screen. The race is simulated by taking the pre-check out of the way, which is the
+    only way to reach the constraint from one thread; both callers get their own case because
+    the handler is duplicated in each (rule 72).
+    """
+
+    @staticmethod
+    def _lose_the_race(monkeypatch: pytest.MonkeyPatch) -> None:
+        async def never_refuses(session: object, name: str, *, this_row: int | None) -> None:
+            return None
+
+        monkeypatch.setattr(list_config, "_refuse_name_twice", never_refuses)
+
+    async def test_creating_a_second_list_with_a_taken_name_says_so(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await list_config.create(session, name="Keep", source="arr_tag", config={"tags": ["keep"]})
+        self._lose_the_race(monkeypatch)
+
+        with pytest.raises(list_config.ListConfigError, match="already have a list with that name"):
+            await list_config.create(
+                session, name="keep", source="arr_tag", config={"tags": ["other"]}
+            )
+
+    async def test_renaming_onto_a_taken_name_says_so(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await list_config.create(session, name="Keep", source="arr_tag", config={"tags": ["keep"]})
+        other = await list_config.create(
+            session, name="Also keep", source="arr_tag", config={"tags": ["gold"]}
+        )
+        self._lose_the_race(monkeypatch)
+
+        with pytest.raises(list_config.ListConfigError, match="already have a list with that name"):
+            await list_config.update(session, other.id, name="KEEP")
+
+    async def test_the_rolled_back_session_still_works(
+        self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The rollback is why the refusal is usable: without it the session stays poisoned
+        and the operator's next save fails for a reason that has nothing to do with it."""
+        await list_config.create(session, name="Keep", source="arr_tag", config={"tags": ["keep"]})
+        self._lose_the_race(monkeypatch)
+        with pytest.raises(list_config.ListConfigError):
+            await list_config.create(
+                session, name="keep", source="arr_tag", config={"tags": ["other"]}
+            )
+
+        made = await list_config.create(
+            session, name="Something else", source="arr_tag", config={"tags": ["gold"]}
+        )
+
+        assert made.name == "Something else"
+
+
+class TestARowStaysOnScreenSoTheOperatorCanFixIt:
+    """A definition Reaper cannot decode still renders, and deleting one that is gone says so.
+
+    Both are the same instinct on the screen an operator repairs a list from. Raising the bad
+    row off the list would hide the only control that rewrites it -- Edit saves through
+    ``_clean_config``, which is the way out -- so the body reads as empty instead (rule 96).
+    """
+
+    def test_a_body_that_will_not_parse_renders_as_an_empty_one(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        assert client.get("/api/lists/configured").json()
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        with engine.begin() as conn:
+            assert conn.execute(
+                text("UPDATE list_config SET config_json = 'not json' WHERE source = 'arr_tag'")
+            ).rowcount
+        engine.dispose()
+
+        response = client.get("/api/lists/configured")
+
+        assert response.status_code == 200, response.text
+        rows = {r["source"]: r for r in response.json()}
+        assert rows["arr_tag"]["config"] == {}, "an unreadable body has to read as empty"
+        # And the rest of the screen is unharmed, which is the point of not raising.
+        assert rows["imdb"]["config"] == {"preset": "top250"}
+
+    def test_deleting_a_list_that_is_already_gone_says_so(self, client: TestClient) -> None:
+        response = client.delete("/api/lists/configured/9999")
+
+        assert response.status_code == 400, response.text
+        assert "no longer exists" in response.json()["detail"]
