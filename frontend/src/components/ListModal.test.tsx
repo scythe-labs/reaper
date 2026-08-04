@@ -41,18 +41,20 @@ const PLEX_DEF: ListConfig = {
 
 function renderModal(editing: ListConfig | null = null) {
   const onClose = vi.fn();
+  const onSaved = vi.fn();
   render(
     <QueryClientProvider client={testQueryClient()}>
-      <ListModal editing={editing} onClose={onClose} />
+      <ListModal editing={editing} onClose={onClose} onSaved={onSaved} />
     </QueryClientProvider>,
   );
-  return { onClose };
+  return { onClose, onSaved };
 }
 
 /** Through the picker to one type's form. Adding always starts on the picker now. */
 async function openForm(user: ReturnType<typeof userEvent.setup>, card: RegExp | string) {
-  renderModal();
+  const handles = renderModal();
   await user.click(await screen.findByRole("button", { name: card }));
+  return handles;
 }
 
 beforeEach(() => {
@@ -226,6 +228,48 @@ describe("adding a Plex watchlist", () => {
     await waitFor(() =>
       expect(apiMock.addList).toHaveBeenCalledWith("My watchlist", "plex_watchlist", {}),
     );
+  });
+});
+
+describe("what a save hands back", () => {
+  it("names the stored row, so the list is checked without a second press", async () => {
+    // The panel runs the check, and it needs the id, which only the server's row carries. A
+    // list nobody has read protects nothing, so a save that ends with the operator hunting
+    // for Check now is a list left unprotecting for as long as they take to find it.
+    const user = userEvent.setup();
+    const { onSaved, onClose } = await openForm(user, "Add a Plex watchlist");
+
+    await user.click(await screen.findByRole("button", { name: "Add list" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(PLEX_DEF));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("does the same for an edit, which re-points what the list reads", async () => {
+    // An edit changes where the membership comes from, so the stored copy is the old
+    // definition's until something re-reads it (rule 72: one save, both paths).
+    const user = userEvent.setup();
+    const { onSaved } = renderModal(PLEX_DEF);
+
+    await user.clear(await screen.findByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Films worth keeping");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(PLEX_DEF));
+  });
+
+  it("hands nothing back when the save was refused", async () => {
+    // A check of a list that was not stored would report on the definition it replaced, or
+    // on nothing at all, and the row would say a check ran for an edit that never landed.
+    const user = userEvent.setup();
+    apiMock.editList.mockRejectedValue(new Error("You already have a list with that name."));
+    const { onSaved, onClose } = renderModal(PLEX_DEF);
+
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(/You already have a list with that name\./)).toBeInTheDocument();
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
 

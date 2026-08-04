@@ -77,6 +77,16 @@ const PLEX_DEF: ListConfig = {
   policy_use: HARD_USE,
 };
 
+/** What the server stores for a watchlist added through the modal: the form with no fields,
+ *  so a test can walk the whole add flow without setting anything up. */
+const WATCHLIST_DEF: ListConfig = {
+  id: 4,
+  name: "My watchlist",
+  source: "plex_watchlist",
+  config: {},
+  policy_use: HARD_USE,
+};
+
 /** A tag list, read once per *arr instance. */
 const TAG_DEF: ListConfig = {
   id: 3,
@@ -519,6 +529,84 @@ describe("the row actions", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Check now, IMDb Top 250" })).toBeEnabled(),
     );
+  });
+
+  it("checks a list as soon as it is added, without a second press", async () => {
+    // A list is protecting nothing until something reads it, and the first read used to wait
+    // for the next scan -- so an operator who had just told Reaper what to keep watched the
+    // row say "Nothing on it is protected until it does" and had no way to know whether the
+    // collection they named was even the right one.
+    const user = userEvent.setup();
+    seed([], []);
+    apiMock.addList.mockResolvedValue(WATCHLIST_DEF);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Add a list" }));
+    await user.click(await screen.findByRole("button", { name: "Add a Plex watchlist" }));
+    // The definition the save wrote is on screen by the time its check starts, so the row is
+    // the one that reports it.
+    apiMock.listConfigs.mockResolvedValue([WATCHLIST_DEF]);
+    await user.click(await screen.findByRole("button", { name: "Add list" }));
+
+    await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalledWith({ list_id: 4 }));
+    expect(await screen.findByRole("button", { name: "Check now, My watchlist" })).toBeEnabled();
+  });
+
+  it("says the new row is being checked, rather than to wait for the next scan", async () => {
+    // The row has nothing stored yet, and its never-checked sentence is about the scan that
+    // would have read it. Beside a button reading "Checking…", that is two answers to one
+    // question, and it is what a save now puts on screen every time.
+    const user = userEvent.setup();
+    let release: (v: unknown) => void = () => {};
+    apiMock.syncLists.mockReturnValue(new Promise((r) => (release = r)));
+    seed([], []);
+    apiMock.addList.mockResolvedValue(WATCHLIST_DEF);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Add a list" }));
+    await user.click(await screen.findByRole("button", { name: "Add a Plex watchlist" }));
+    apiMock.listConfigs.mockResolvedValue([WATCHLIST_DEF]);
+    await user.click(await screen.findByRole("button", { name: "Add list" }));
+
+    expect(await screen.findByText("Checking it now.")).toBeInTheDocument();
+    expect(screen.queryByText(/Runs with your next scan/)).not.toBeInTheDocument();
+
+    release({ checked: 1, failed: 0, plex_error: null });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Check now, My watchlist" })).toBeEnabled(),
+    );
+    // Once it settles the row is back to its stored state, which the substitution only ever
+    // covered for: here the health read still answers empty.
+    expect(await screen.findByText(/Runs with your next scan/)).toBeInTheDocument();
+  });
+
+  it("shows the new row as busy while that check runs, and says what came back", async () => {
+    // The check is the panel's own, so it reports where every other check does: the row's
+    // button, and the row's error line when the source refuses (rule 42).
+    const user = userEvent.setup();
+    seed([], []);
+    apiMock.addList.mockResolvedValue(WATCHLIST_DEF);
+    apiMock.syncLists.mockRejectedValue(new Error("Reaper isn't signed in to Plex"));
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Add a list" }));
+    await user.click(await screen.findByRole("button", { name: "Add a Plex watchlist" }));
+    apiMock.listConfigs.mockResolvedValue([WATCHLIST_DEF]);
+    await user.click(await screen.findByRole("button", { name: "Add list" }));
+
+    expect(await screen.findByText(/Reaper isn't signed in to Plex/)).toBeInTheDocument();
+  });
+
+  it("checks an edited list too, since an edit re-points what it reads", async () => {
+    const user = userEvent.setup();
+    seed([PLEX_DEF], []);
+    apiMock.editList.mockResolvedValue({ ...PLEX_DEF, name: "Films worth keeping" });
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Never Reap" }));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalledWith({ list_id: 2 }));
   });
 
   it("says so when Plex could not be reached, since no row can", async () => {

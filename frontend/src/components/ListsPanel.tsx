@@ -451,6 +451,13 @@ export function ListsPanel({
             mine.length === 0
               ? describe("never_checked", 0)
               : describe(state, items, state === "working" ? undefined : wanted);
+          // A row with nothing stored is the one whose sentence a running check contradicts:
+          // "Runs with your next scan" beside a button that says "Checking…". That pair is now
+          // what every operator sees for the length of the check a save starts, so the row says
+          // what is happening instead. Every other state describes the LAST check and stays
+          // true while the next one runs.
+          const detail =
+            busy(definition.id) && mine.length === 0 ? "Checking it now." : shown.detail;
           const checked = mine
             .map((r) => r.last_checked_at)
             .filter((v): v is string => v !== null)
@@ -465,7 +472,7 @@ export function ListsPanel({
               key={definition.id}
               title={definition.name}
               badge={kindBadge(definition.source)}
-              detail={shown.detail}
+              detail={detail}
               label={shown.label}
               tone={shown.tone}
               meta={
@@ -520,7 +527,19 @@ export function ListsPanel({
         </button>
       </div>
 
-      {modal && <ListModal editing={modal.list} onClose={() => setModal(null)} />}
+      {modal && (
+        <ListModal
+          editing={modal.list}
+          onClose={() => setModal(null)}
+          // A saved list is checked on the spot, through the same mutation the row's own
+          // button drives: a list is protecting nothing until something reads it, and an
+          // operator who has just said what the list is should not have to say "now go and
+          // read it" as a second step. The row shows it as busy and carries whatever comes
+          // back, a count or the source's own refusal, which is the answer to the question
+          // they were really asking when they saved.
+          onSaved={(list) => check.mutate(list.id)}
+        />
+      )}
     </div>
   );
 }

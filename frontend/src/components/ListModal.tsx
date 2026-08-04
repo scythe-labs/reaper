@@ -112,9 +112,16 @@ function PickCard({
 export function ListModal({
   editing,
   onClose,
+  onSaved,
 }: {
   editing: ListConfig | null;
   onClose: () => void;
+  /** The stored row, handed back so the panel can check it straight away. A list nobody has
+   *  read yet protects nothing, so leaving the first check to the operator makes "save" and
+   *  "protected" two different moments with a button in between. The check runs there rather
+   *  than here: this modal is unmounting, and the row already owns a check's whole reporting
+   *  surface, its busy button and its own error line. */
+  onSaved?: ((list: ListConfig) => void) | undefined;
 }) {
   const queryClient = useQueryClient();
 
@@ -204,7 +211,7 @@ export function ListModal({
       if (editing) return api.editList(editing.id, { name, config: body() });
       return api.addList(name, source, body());
     },
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
       // Three halves: the definitions this modal wrote, the health rows keyed on them, and
       // the policies -- adding a list writes its keeps-it-outright rule server-side, and a
       // rename re-spells every rule naming it, so a stale policy cache would render rules
@@ -214,6 +221,10 @@ export function ListModal({
         queryClient.invalidateQueries({ queryKey: ["lists"] }),
         queryClient.invalidateQueries({ queryKey: ["policy"] }),
       ]);
+      // After the refetch, so the row this names is already on screen to report the check.
+      // The server's row, not the form's fields: it carries the id, and it is the cleaned
+      // copy the save actually stored (rule 39).
+      onSaved?.(saved);
       onClose();
     },
   });
