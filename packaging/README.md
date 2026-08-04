@@ -119,10 +119,16 @@ the secret the workflows build and attach the snap but skip the store, green.
 `submit-winget.yml` opens the version PR on every release, using the `WINGET_TOKEN`
 secret (a PAT with `public_repo` scope). Without the secret it skips, green.
 
+**VirusTotal.** Mint a key at <https://www.virustotal.com/gui/my-apikey> and store it
+as the `VT_API_KEY` secret. `virustotal.yml` then scans every published asset on every
+release. The free tier covers a release: it allows four requests a minute, and the
+workflow sends two assets a minute because an asset over 32 MB costs two requests.
+Without the secret it skips, green.
+
 ## Antivirus false positives, and what is wired
 
 Unsigned Windows installers start with zero reputation, so some scanners flag them.
-Three remedies, in order of effect:
+Four remedies, in order of effect:
 
 1. **Code signing — not wired yet.** It needs a paid identity before any workflow can
    use it: for Windows an Azure Trusted Signing account (or an EV certificate) and a
@@ -137,3 +143,8 @@ Three remedies, in order of effect:
    submit the installer at
    <https://www.microsoft.com/en-us/wdsi/filesubmission> as a false positive;
    Microsoft typically clears verdicts within days, retroactively for everyone.
+4. **VirusTotal links in the release body — wired.** One analysis link per published
+   asset, appended to the release notes, so an operator who hits a warning reads every
+   engine's verdict on the exact file they downloaded instead of taking one vendor's
+   word. It clears no flag; it is the evidence a flag gets confirmed or dismissed
+   against, and it is also how *we* find out a release is being flagged at all.
