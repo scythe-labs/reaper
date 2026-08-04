@@ -161,7 +161,14 @@ class ScanContext:
 
     def degrade(self, reason: str) -> None:
         log.warning("snapshot.degraded", reason=reason)
-        self.degraded_reasons.append(reason)
+        # Terminated HERE, the one point every reason passes through -- the ~18 call sites,
+        # `build_index`'s callback, and the caller's `extra_degrade_reasons` alike. The
+        # reasons are joined into one operator-facing string and every notice rendering it
+        # writes more prose directly after, so an unterminated fragment fuses into the
+        # sentence that follows: the incomplete-scan notice read "... could not be matched to
+        # your libraries You can still look at it" (#514). Terminating at each call site
+        # instead would leave the next one added to fuse again.
+        self.degraded_reasons.append(reason if reason.endswith((".", "!", "?")) else f"{reason}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -897,7 +904,9 @@ async def scan(
         horizon_at=context.horizon,
         item_count=len(items) + len(season_judgments),
         degraded=context.degraded,
-        degraded_reason="; ".join(context.degraded_reasons) or None,
+        # A space, not "; ": `degrade` terminates every reason, so these are whole sentences
+        # now and a semicolon between them would read "...this scan.; radarr 'x' unreachable".
+        degraded_reason=" ".join(context.degraded_reasons) or None,
     )
     session.add(snapshot)
     await session.flush()

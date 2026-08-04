@@ -1705,6 +1705,57 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
         assert rows
         assert all(c.verdict != "condemn" for c in rows.values())
 
+    async def test_one_outage_reads_as_one_failure_per_lane_in_whole_sentences(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The notice the operator reads is prose, and it was neither of those things.
+
+        ``build_index`` runs once per media lane against ONE reasons list, so a single
+        spine timeout reached its ``degrade`` twice. Undifferentiated, that appended the
+        same sentence verbatim twice and one outage read as two (#513). And every reason
+        was an unterminated fragment joined on ``"; "``, so the last one fused into the
+        sentence each notice writes after it (#514). Both are proven here against the
+        assembled string, because that string is the whole of what is rendered.
+        """
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+
+        class _BrokenSpine(_FakeTautulli):
+            async def libraries(self) -> list[dict[str, Any]]:
+                raise IntegrationError("tautulli", "libraries timed out")
+
+        # Both lanes populated, so both reach `build_index` and the duplicate can occur.
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[
+                season_scan.SonarrSource(
+                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                )
+            ],
+            tautulli=_BrokenSpine(movies=_movie_spine()),  # type: ignore[arg-type]
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+        reason = snapshot.degraded_reason or ""
+
+        # #513: the same failure in the two lanes is told apart by the lane, so neither
+        # sentence is a verbatim repeat of the other.
+        assert "Movies: the Plex library listing could not be read" in reason, reason
+        assert "TV shows: the Plex library listing could not be read" in reason, reason
+        sentences = [s.strip() for s in reason.split(". ") if s.strip()]
+        assert len(sentences) == len(set(sentences)), reason
+
+        # #514: whole sentences. No fragment joiner survives, and the string terminates --
+        # every notice rendering it writes more prose immediately after.
+        assert "; " not in reason, reason
+        assert reason.endswith("."), reason
+
 
 class TestKeepHistoryCoverage:
     """A user with Tautulli's per-user Keep History off is invisible in the
