@@ -235,12 +235,30 @@ moment something else starts asking a different question of the same data.**
 The exactness proof is a sweep, not a sample. Each of the nine settings is edited alone, two
 real scans are run, and the replayed guard for every season must equal the second scan's stored
 one; a combined edit was the first draft and it proved three of the nine, because the settings
-mask each other (keep-last already holds the season `protect_incomplete_seasons` would). 26
-mutations were checked against it — one per setting on each of the two roads a `PolicyBody`
-takes to the planner, plus the skip, the three-state, the re-derivation, the dropped
-missing-map refusal, the wrong clock, and the four guards the review below added — and all 26
-fail the suite. **Comparing guard reasons rather than verdict tallies is what made that possible**:
-a setting routinely changes why a season is kept without changing whether it is.
+mask each other (keep-last already holds the season `protect_incomplete_seasons` would).
+
+**23 mutations were re-run mechanically, and 22 of them failed.** Eighteen are one per setting
+on each of the two roads a `PolicyBody` takes to the planner — `SeasonPolicy.from_body` and
+`season_scan.gather`'s carrier — each pinned to its shipped default, which is exactly "this road
+drops the operator's edit". Every one reds its OWN parametrization, so the sweep discriminates
+all nine settings rather than catching them in a bundle. **Comparing guard reasons rather than
+verdict tallies is what made that possible**: a setting routinely changes why a season is kept
+without changing whether it is. Four more fail too — restoring the skip, collapsing the
+three-state to `{}`, returning the frozen guard instead of re-deriving it, and dropping the
+missing-map refusal.
+
+**The one that survived is the finding.** Replacing `now=inp.now` with a live `utcnow()` in
+`plan_from_frozen` — the mid-binge expiry measuring against whenever the editor was opened
+rather than the scan instant — passed all 3,547 tests. The exactness sweep freezes its clock ten
+days from the wall, and ten days moves no viewer across a 180-day hold, so the fixture best
+placed to catch it was shaped not to. The behavior was always right; nothing held it there.
+`TestTheReplayExpiresAgainstTheScansOwnClock` does now, off a bundle scanned ten years back so
+the drift dwarfs any hold, with a negative control proving the assertion reads the guard at all.
+
+The general shape: **a mutation count is worth nothing without the harness that produced it.**
+This claim previously read "26 mutations … all 26 fail", written by hand from an enumeration
+that does not add to 26 either way, and it was wrong in the direction that flatters — asserting
+coverage of exactly the case that had none. A count nobody can re-run is a number, not a proof.
 
 ### 9. Rounding the score after deciding the verdict — **two answers to one question**
 

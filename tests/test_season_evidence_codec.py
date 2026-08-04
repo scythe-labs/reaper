@@ -17,11 +17,12 @@ ones a fixture is least likely to exercise.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from reaper.clients.sonarr_stats import SeasonStats
+from reaper.clock import utcnow
 from reaper.engine.policy import DEFAULT_TV_POLICY
 from reaper.services import season_evidence
 
@@ -194,3 +195,99 @@ class TestTheBundleSurvivesTheFreeze:
 
         with pytest.raises(ValueError, match="no scan instant"):
             season_evidence.from_dict(payload)
+
+
+class TestTheReplayExpiresAgainstTheScansOwnClock:
+    """The frozen ``now`` decides the mid-binge expiry, not whenever the editor was opened.
+
+    ``SeasonPruneInput.now`` exists for this and says so, and nothing tested it: replacing
+    ``now=inp.now`` with a live ``utcnow()`` inside :func:`plan_from_frozen` passed the whole
+    suite, the two-real-scan exactness sweep included. That sweep freezes its clock ten days
+    from the wall, and ten days moves no viewer across a 180-day hold, so the one fixture that
+    could have caught it was shaped not to.
+
+    What it would cost is the feature's own claim: a viewer inside the hold when the scan ran
+    and outside it by the time the Policy page is opened keeps the season in the review queue
+    and loses it on the panel, which is a preview no scan will reproduce.
+
+    Its own seasons rather than the file's, because every season there reaches a guard that
+    is checked BEFORE the mid-binge one -- season 0 is specials and season 1 is incomplete and
+    airing -- so neither can ever show this arm.
+    """
+
+    #: Far enough back that the drift dwarfs any hold: the viewer is ten days into a 180-day
+    #: hold at the scan instant and ten years past it against the wall. Taken from the wall
+    #: clock rather than written down, so the gap cannot shrink as the date moves.
+    LONG_AGO_DAYS = 3650
+
+    @staticmethod
+    def _plain_seasons() -> tuple[SeasonStats, ...]:
+        """Three ordinary seasons: complete, monitored, none of them specials."""
+        return tuple(
+            SeasonStats(
+                season_number=n,
+                monitored=True,
+                episode_file_count=5,
+                size_on_disk=1_000_000_000,
+                total_episode_count=5,
+                wanted_episode_count=5,
+            )
+            for n in (1, 2, 3)
+        )
+
+    def _scanned_long_ago(self) -> season_evidence.SeasonPruneInput:
+        scanned_at = utcnow() - timedelta(days=self.LONG_AGO_DAYS)
+        watched = scanned_at - timedelta(days=10)
+        return _bundle(
+            seasons=self._plain_seasons(),
+            airing_seasons=(),
+            now=scanned_at,
+            # Three episodes into season 2 of five, ten days before the scan.
+            progress_by_user={"7": {2: 3}},
+            last_watched_by_user={"7": watched},
+            last_play_by_user={"7": {2: watched}},
+            season_final_episode={1: 5, 2: 5, 3: 5},
+            watchers_by_season={1: 1, 2: 1, 3: 1},
+            shortfall_by_season={1: None, 2: None, 3: None},
+            progress_unreadable=False,
+        )
+
+    @staticmethod
+    def _policy(**edits: object) -> season_evidence.SeasonPolicy:
+        """Every other season guard switched off, so only the mid-binge one can hold."""
+        return season_evidence.SeasonPolicy.from_body(
+            DEFAULT_TV_POLICY.model_copy(
+                update={
+                    "keep_last_seasons": 0,
+                    "keep_first_season": False,
+                    "protect_incomplete_seasons": False,
+                    **edits,
+                }
+            )
+        )
+
+    def test_a_viewer_inside_the_hold_when_the_scan_ran_still_holds_their_season(self) -> None:
+        plan = season_evidence.plan_from_frozen(self._scanned_long_ago(), policy=self._policy())
+
+        held = {p.season_number: p.reason for p in plan.protected}
+        assert held.get(2) == "a viewer is part-way through the show", (
+            "season 2 lost its mid-binge hold, so the expiry was measured against something "
+            f"other than the bundle's own scan instant. protected={held}"
+        )
+
+    def test_the_same_viewer_expires_once_the_hold_is_shorter_than_their_gap(self) -> None:
+        """The negative control, on the same bundle and the same clock.
+
+        Without it the test above passes on a plan that holds season 2 for some other reason,
+        which is how a guard proves nothing (rule 118). Nine days of hold sits under the ten
+        the viewer has been idle AT THE SCAN INSTANT, so the hold expires on its own terms and
+        the comparison is demonstrably live.
+        """
+        plan = season_evidence.plan_from_frozen(
+            self._scanned_long_ago(), policy=self._policy(in_progress_hold_days=9)
+        )
+
+        assert 2 in plan.prunable, (
+            "season 2 stayed protected with the hold set under the viewer's own idle gap, so "
+            "the assertion above is not reading the mid-binge guard at all"
+        )
