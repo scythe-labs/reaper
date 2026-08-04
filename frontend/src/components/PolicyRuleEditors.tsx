@@ -101,7 +101,19 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
   // The membership field reads as a sentence about the LIST, not as "field op value": the
   // value is the operator's own name for it. A stored rule whose list no longer exists still
   // renders, by that stored name.
-  if (c.field === "on_list") return `Keep it when on your list ${String(c.value)}`;
+  //
+  // The op is still read, because `on_list` carries TEXT_OPS and this branch used to
+  // short-circuit past it: the composer only ever writes `eq`, but
+  // `policy.convert_list_protections` re-spells a legacy `on_curated_list` rule keeping
+  // whatever op it had, and an imported body can hold one. A stored `contains "Top"` then
+  // rendered as an exact match on a list named "Top" -- a rule described as narrower than it
+  // is, on the screen where its strength is judged.
+  if (c.field === "on_list") {
+    const listValue = String(c.value);
+    return c.op === "eq"
+      ? `Keep it when on your list ${listValue}`
+      : `Keep it when on a list whose name ${OP_LABELS[c.op] ?? c.op} ${listValue}`;
+  }
   const f = fields.find((x) => x.key === c.field);
   const label = f?.label ?? c.field;
   const op = OP_LABELS[c.op] ?? c.op;
@@ -729,7 +741,15 @@ export function KeepRulesEditor({
       ...keeps.filter((k) => k.field === "on_list" && k.value != null).map((k) => String(k.value)),
     ].map((v) => v.trim().toLowerCase()),
   );
-  const listNames = allListNames.filter((n) => !named.has(n.trim().toLowerCase()));
+  // The same rule, reached by the blanket field instead of by name. `whitelisted` is a yes/no
+  // over EVERY hand-curated list at once, so an outright rule on it keeps all of them and any
+  // per-list rule beside it can never change an outcome -- #510 again, through the one field
+  // `named` cannot see, and it became authorable on every install when the retired gate stopped
+  // filtering it out of the composer. Treated as what it is: every list already ruled.
+  const keptByBlanketRule = conditions.some((c) => c.field === "whitelisted" && c.value === true);
+  const listNames = keptByBlanketRule
+    ? []
+    : allListNames.filter((n) => !named.has(n.trim().toLowerCase()));
   // Why the list select is empty, said once for both composers (rule 72). A failed read is
   // named as one, never shown as "you have no lists" (rules 17/36), and a set of lists that
   // all already have a rule is a fourth thing again: nothing is wrong, and adding another
@@ -738,9 +758,12 @@ export function KeepRulesEditor({
     !lists.isPending && listNames.length === 0
       ? lists.isError
         ? "Reaper couldn't load your lists, so there's nothing to pick from right now."
-        : allListNames.length > 0
-          ? "Every list already has a keep rule. Remove one above to give it a different strength."
-          : "You have no lists yet. Add one on Settings → Lists first."
+        : keptByBlanketRule
+          ? 'Your "On a list you curate yourself" rule already keeps every one of your lists. ' +
+            "Remove it above to set a strength per list."
+          : allListNames.length > 0
+            ? "Every list already has a keep rule. Remove one above to give it a different strength."
+            : "You have no lists yet. Add one on Settings → Lists first."
       : null;
 
   const [strength, setStrength] = useState<"hard" | "lean">("hard");
@@ -884,6 +907,11 @@ export function KeepRulesEditor({
                 : `${f?.label ?? k.field}: the ${
                     k.direction === "low_keeps" ? "less" : "more"
                   }, the safer (full effect at ${rampValue(f, k.saturate_at)})`;
+            // Membership is not a number, so this rule pays its whole discount or none of it.
+            // "up to" is this file's own word for a RAMP -- `describeCondemn`'s row says the
+            // number flat for a yes/no rule for exactly this reason -- and it was printed here
+            // on both branches, describing an all-or-nothing rule as a sliding one (rule 72).
+            const isRampLean = k.value == null;
             return (
               <div className="rules-row rules-row-simple" key={`k-${k.name}-${i}`}>
                 <span className="rules-rule">
@@ -893,7 +921,7 @@ export function KeepRulesEditor({
                   {sentence}
                 </span>
                 <span className="rules-weight-keep">
-                  lowers the score, up to −{k.max_discount} points
+                  lowers the score{isRampLean ? ", up to" : " by"} −{k.max_discount} points
                 </span>
                 <button
                   {...REMOVES_ITS_ROW}
@@ -903,7 +931,9 @@ export function KeepRulesEditor({
                   // `uniqueName` precisely because they collide -- and the field alone gives
                   // both Remove buttons the same name. What gets removed by mistake is a keep
                   // rule, so the next scan condemns titles the operator believed were held.
-                  aria-label={`Remove rule: leans, ${sentence}, up to ${k.max_discount} points off`}
+                  aria-label={`Remove rule: leans, ${sentence}, ${
+                    isRampLean ? "up to " : ""
+                  }${k.max_discount} points off`}
                   onClick={() => {
                     rows.removing(conditions.length + i);
                     onKeeps(keeps.filter((_, j) => j !== i));
@@ -1002,15 +1032,26 @@ export function KeepRulesEditor({
                   </>
                 )}
                 {/* Beside the box that fixes it (rule 42), and bound to it: a disabled button
-                    is out of the Tab order, so the sentence has to live on the box. */}
-                {hardEmpty && (
-                  <p className="help help-warn" id={HARD_EMPTY_ID}>
-                    {hardIsList
-                      ? "Pick a list to add this rule."
-                      : "Enter a value to add this rule."}
-                  </p>
-                )}
-                {hardIsList && noListsMessage && <p className="help help-warn">{noListsMessage}</p>}
+                    is out of the Tab order, so the sentence has to live on the box.
+
+                    ONE of these two, never both. They stacked, so an operator with no lists
+                    read "Pick a list to add this rule." directly above "You have no lists yet"
+                    -- the first instructing the exact action the second says is impossible --
+                    and the second was bound to no control at all. When there is nothing to
+                    pick, why there is nothing to pick is the whole message, and it takes the
+                    id the select points at (rule 45). */}
+                {hardEmpty &&
+                  (hardIsList && noListsMessage ? (
+                    <p className="help help-warn" id={HARD_EMPTY_ID}>
+                      {noListsMessage}
+                    </p>
+                  ) : (
+                    <p className="help help-warn" id={HARD_EMPTY_ID}>
+                      {hardIsList
+                        ? "Pick a list to add this rule."
+                        : "Enter a value to add this rule."}
+                    </p>
+                  ))}
                 {hardField?.help_text && <p className="help">{hardField.help_text}</p>}
               </div>
             ) : (
@@ -1074,9 +1115,11 @@ export function KeepRulesEditor({
                       </>
                     )}
                     {/* One control standard: a number with a fixed unit is a FixedQuantity,
-                        never a bare number box beside loose text. */}
+                        never a bare number box beside loose text. "up to" only for a ramp:
+                        membership is not a number, so a list lean pays its whole discount or
+                        none of it, matching `RemoveRulesEditor`'s own split (rule 72). */}
                     <label className="inline-weight">
-                      up to
+                      {leanIsList ? "" : "up to"}
                       <FixedQuantity
                         value={lPoints}
                         onChange={setLPoints}
@@ -1092,15 +1135,20 @@ export function KeepRulesEditor({
                     </button>
                   </>
                 )}
-                {/* And the third (rule 72). */}
-                {leanEmpty && (
-                  <p className="help help-warn" id={LEAN_EMPTY_ID}>
-                    {leanIsList
-                      ? "Pick a list to add this rule."
-                      : "Enter a number to add this rule."}
-                  </p>
-                )}
-                {leanIsList && noListsMessage && <p className="help help-warn">{noListsMessage}</p>}
+                {/* And the third (rule 72). One of the two, never both, same as the hard
+                    composer above and for the same reason. */}
+                {leanEmpty &&
+                  (leanIsList && noListsMessage ? (
+                    <p className="help help-warn" id={LEAN_EMPTY_ID}>
+                      {noListsMessage}
+                    </p>
+                  ) : (
+                    <p className="help help-warn" id={LEAN_EMPTY_ID}>
+                      {leanIsList
+                        ? "Pick a list to add this rule."
+                        : "Enter a number to add this rule."}
+                    </p>
+                  ))}
                 {leanField?.help_text && <p className="help">{leanField.help_text}</p>}
               </div>
             )}

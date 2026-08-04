@@ -40,7 +40,7 @@ export const cheatSheet: Doc = {
       ],
     ),
     p(
-      "Your lists (Settings, Lists) protect through **keep rules** here: a new list keeps every title on it outright until you soften or remove its rule. Shipped lists: the `reaper-keep` tag, and IMDb Top 250.",
+      'Your lists (Settings, Lists) protect through **keep rules** here: a new list keeps every title on it outright until you soften or remove its rule. Shipped lists: "Titles you\'ve tagged" (the `reaper-keep` tag), and IMDb Top 250.',
     ),
 
     h2("Pace and limits, defaults", "pace"),

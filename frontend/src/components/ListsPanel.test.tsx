@@ -318,11 +318,13 @@ describe("the kind badges", () => {
     const arr = document.querySelector(".kind-badge.kind-arr");
     expect(arr).not.toBeNull();
     expect(arr).toHaveTextContent(/Sonarr.*Radarr/);
-    // A span per half, each carrying its own fill and padding, so the seam lands ON the gap
-    // between the words instead of near it. The space between the halves is layout-inert but
-    // stays in the text: run together the badge announces itself as one invented word.
-    expect(arr?.querySelectorAll(":scope > span")).toHaveLength(2);
-    expect(arr?.textContent).toBe("Sonarr Radarr");
+    // A span per painted half, each carrying its own fill and padding, so the seam lands ON
+    // the gap between the words instead of near it. Both are hidden from a reader, and the
+    // name is said once in a `.sr-only` sibling -- run together the badge announces itself as
+    // one invented word, and whether whitespace between two flex items reaches the
+    // accessibility tree is not a thing jsdom can answer, so the name does not rest on it.
+    expect(arr?.querySelectorAll(':scope > span[aria-hidden="true"]')).toHaveLength(2);
+    expect(arr?.querySelector(".sr-only")?.textContent).toBe("Sonarr and Radarr");
   });
 });
 
@@ -647,7 +649,9 @@ describe("a tag list's counts", () => {
 
     expect(await screen.findByText("Titles you've tagged")).toBeInTheDocument();
     const pills = [...document.querySelectorAll(".tag-pill")];
-    expect(pills.map((p) => p.textContent)).toEqual(["reaper-keep12", "keep-forever2"]);
+    // Separated in the TEXT, not by a flex gap: as adjacent flex items the tag and its count
+    // had nothing between them, so the pill read and copied as "reaper-keep12".
+    expect(pills.map((p) => p.textContent)).toEqual(["reaper-keep 12", "keep-forever 2"]);
     expect(screen.getByText(/Across 2 servers\./)).toBeInTheDocument();
     expect(screen.getByText(/Protecting 14 titles\./)).toBeInTheDocument();
   });
@@ -676,7 +680,8 @@ describe("a tag list's counts", () => {
 
     expect(await screen.findByText("Titles you've tagged")).toBeInTheDocument();
     const pills = [...document.querySelectorAll(".tag-pill")];
-    expect(pills.map((p) => p.textContent)).toEqual(["reaper-keep", "keep-forever"]);
+    // A trailing space and no count: nothing has been counted, so the pill is bare.
+    expect(pills.map((p) => p.textContent?.trim())).toEqual(["reaper-keep", "keep-forever"]);
     expect(screen.queryByText("Counts by server")).not.toBeInTheDocument();
   });
 

@@ -161,14 +161,22 @@ class ScanContext:
 
     def degrade(self, reason: str) -> None:
         log.warning("snapshot.degraded", reason=reason)
-        # Terminated HERE, the one point every reason passes through -- the ~18 call sites,
-        # `build_index`'s callback, and the caller's `extra_degrade_reasons` alike. The
-        # reasons are joined into one operator-facing string and every notice rendering it
-        # writes more prose directly after, so an unterminated fragment fuses into the
-        # sentence that follows: the incomplete-scan notice read "... could not be matched to
-        # your libraries You can still look at it" (#514). Terminating at each call site
-        # instead would leave the next one added to fuse again.
-        self.degraded_reasons.append(reason if reason.endswith((".", "!", "?")) else f"{reason}.")
+        # Made a SENTENCE here, the one point every reason passes through -- the ~18 call
+        # sites, `build_index`'s callback, and the caller's `extra_degrade_reasons` alike.
+        #
+        # Terminated, because the reasons are joined into one operator-facing string and every
+        # notice rendering it writes more prose directly after, so an unterminated fragment
+        # fuses into the sentence that follows: the incomplete-scan notice read "... could not
+        # be matched to your libraries You can still look at it" (#514).
+        #
+        # And capitalized, because terminating them turned a "; "-joined LIST into a run of
+        # sentences, and all but the seven that carry a lane prefix start lower case: the
+        # notice then read "... what is playing right now. radarr 'Main' unreachable." -- a
+        # lower-case sentence after a full stop, with the product's name mis-spelled against
+        # every other surface. Only the first character is touched, so an id or a quoted name
+        # that starts a reason keeps its own spelling.
+        said = reason if reason.endswith((".", "!", "?")) else f"{reason}."
+        self.degraded_reasons.append(said[:1].upper() + said[1:])
 
 
 @dataclass(frozen=True, slots=True)

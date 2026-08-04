@@ -462,11 +462,19 @@ button.danger:hover:not(:disabled) {
   font-weight: var(--weight-semi);
   font-size: var(--text-base);
 }
+/* Both lines carry text nobody in this app typed -- an *arr instance's display name and its
+   own refusal on `.jobrow-desc`, a Plex collection and library name or a pasted IMDb list id
+   on `.jobrow-sched` (Settings, Lists `sourceHint`) -- so both get a break opportunity rather
+   than painting through the box holding them (rule 139). `max-width` is not one: a single
+   unbroken token runs straight past 70ch, and `.jobrow-main { min-width: 0 }` lets the flex
+   item get narrower than its content besides. Wrap, never truncate: these name the thing to
+   go and fix, and two instance names can differ only in their tail. */
 .jobrow-desc {
   margin: 0.18rem 0 0;
   font-size: var(--text-sm);
   color: var(--muted);
   max-width: 70ch;
+  overflow-wrap: anywhere;
 }
 .jobrow-meta {
   margin: 0.4rem 0 0;
@@ -482,6 +490,7 @@ button.danger:hover:not(:disabled) {
   margin: 0.2rem 0 0;
   font-size: var(--text-sm);
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 .jobrow-run {
   margin: var(--space-sm) 0 0;

@@ -141,11 +141,17 @@ describe("ScanFreshness", () => {
     // The amber span opens on its own first word. It used to open on the period ENDING the
     // neutral sentence before it, which took the warning's color and weight and painted a
     // floating yellow dot a word ahead of the sentence it belonged to.
+    // "Warning: " first, which is `Notice`'s visually-hidden severity lead: this was a bare
+    // styled span, so amber was the only thing carrying severity, on the page approvals are
+    // made from (rules 18, 72). Then the sentence, and it says what an incomplete scan MEANS
+    // before it says where to go.
     const warn = container.querySelector(".freshness-warn");
-    expect(warn?.textContent?.trimStart()).toMatch(/^The last scan came back incomplete/);
+    expect(warn?.textContent?.trimStart()).toMatch(
+      /^Warning: The last scan came back incomplete, so Reaper won't act on it\./,
+    );
     // And the neutral half keeps a period of its own rather than trailing off mid-sentence.
     expect(container.querySelector(".scan-freshness")?.textContent).toMatch(
-      /items\.\s*The last scan/,
+      /items\.\s*Warning: The last scan/,
     );
   });
 });

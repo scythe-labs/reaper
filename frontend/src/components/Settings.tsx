@@ -2952,8 +2952,11 @@ export function Settings({
     // one is open. A draft added to the panel BEHIND the modal would need to report.
     services: false,
     plex: plexDirty,
-    // Read-only: it reports what the syncs recorded and edits nothing. A list is still
-    // configured where it always was, so an edit added here would need to report.
+    // Same shape as services: a list's drafts live in `ListModal`, inside a `ModalShell`, so
+    // the rail cannot be reached while one is open. This said the panel was read-only and
+    // "a list is still configured where it always was" -- both untrue as of the Lists screen,
+    // which is now the one place a list IS defined, and the next author to add an inline edit
+    // here would have read that and left this entry alone (rule 146).
     lists: false,
     // Same shape as services: the job editor (`ScheduleModal`) is a `ModalShell` too.
     jobs: false,

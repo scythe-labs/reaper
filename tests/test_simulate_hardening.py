@@ -1320,21 +1320,38 @@ class TestAHandSpareIsOneProtectionAmongTheRest:
     def test_the_other_protection_on_a_spared_row_is_still_named(
         self, spared_client: TestClient
     ) -> None:
-        """The bug, at its plainest. Both rows are spared by hand, so ``whitelisted`` is owed
-        2; the first row also cleared the rating floor, which used to vanish from the tally
-        entirely because the hand spare was counted in its place."""
-        assert self._tally(spared_client) == {"whitelisted": 2, "rating_floor": 1}
+        """The bug, at its plainest. Both rows are spared by hand, so the hand-spare id is
+        owed 2; the first row also cleared the rating floor, which used to vanish from the
+        tally entirely because the hand spare was counted in its place.
+
+        The hand spare tallies under its OWN id, not under ``whitelisted``. It rode in on the
+        retired gate's id, and the simulator names a tally row by that id's copy -- so on a
+        fresh install, where no gate emits ``whitelisted`` at all, every hand spare was
+        reported to the operator as membership of a list (rule 144).
+
+        The second row's stored ``whitelisted`` explanation is now its own entry beside the
+        hand spare, where the two used to collapse into one. That is the split doing its job:
+        the list is still holding that title, and the operator also spared it by hand.
+        """
+        assert self._tally(spared_client) == {
+            "hand_spare": 2,
+            "rating_floor": 1,
+            "whitelisted": 1,
+        }
 
     def test_a_row_spared_by_hand_and_on_the_keep_list_counts_once(
         self, spared_client: TestClient
     ) -> None:
-        """A gate spares a row once. The second row reports ``whitelisted`` from its stored
-        explanation and again from the hand spare, and a tally that added both would claim
-        more spared titles than the fixture has rows -- so the fix that restores the other
+        """A gate spares a row once. The second row reports its stored ``whitelisted``
+        explanation and is also spared by hand, and a tally that added both would claim more
+        spared titles than the fixture has rows -- so the fix that restores the other
         protections must not restore this one twice.
+
+        The two are separate rows now, which is the point: one says what a list is holding,
+        the other says what the operator did by hand.
         """
         tally = self._tally(spared_client)
-        assert tally["whitelisted"] == len(SPARED_ROWS)
+        assert tally["hand_spare"] == len(SPARED_ROWS)
 
 
 class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:

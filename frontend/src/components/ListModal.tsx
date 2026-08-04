@@ -13,19 +13,24 @@
 // Removing lives INSIDE Edit, as the third view of this one modal, so a row's actions stay
 // two buttons and the destructive one sits behind the form that names what it destroys.
 //
-// Every refusal rendered here is the server's own sentence. `services.list_config` writes
-// them for the operator and names the box that is empty, so re-phrasing them here would be
-// one requirement written twice, in two places, drifting from the check that enforces it
-// (rule 144).
+// The `blocked` sentences below are a SECOND copy of refusals `services.list_config` also
+// writes, said here so the operator reads them while looking at the empty box rather than
+// after a round trip. Two copies of one requirement is rule 144's hazard, and this file used
+// to carry a comment claiming there was only one, which is worse than the duplication: each
+// side was pinned by its own test, nothing bound the pair, and a one-sided edit left both
+// suites green. `tests/test_list_config.py` names this file in the failure message that
+// fires when the server's wording moves, so the copies cannot drift silently.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import { api, type ListConfig, type ListConfigBody } from "../api";
+import { useBackGuard } from "../backnav";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { FilterMenu } from "./FilterMenu";
 import { ModalShell } from "./ModalShell";
 import { Notice } from "./Notice";
+import { Segmented } from "./Segmented";
 import { TagsEditor } from "./TagsEditor";
 
 type Source = ListConfig["source"];
@@ -55,37 +60,13 @@ function presetLabel(key: string): string {
   return IMDB_PRESETS.find((p) => p.key === key)?.label ?? key;
 }
 
-/** The joined any/all pair, there from the start so the form never has a blank where a
- *  control belongs. Flat two-button group per the approved mockup, deliberately not the
- *  pill `Segmented`: both options stay visible, only the chrome differs. */
-function MatchToggle({
-  match,
-  onMatch,
-}: {
-  match: "any" | "all";
-  onMatch: (m: "any" | "all") => void;
-}) {
-  const half = (value: "any" | "all", text: string) => (
-    <button
-      type="button"
-      className={match === value ? "on" : ""}
-      // Reserves the chosen half's bold width at either weight, so pressing one does not widen
-      // it and shove the other sideways -- the same strut `.seg` and `.tab` take, defined once
-      // in 04-buttons.css. Without it both halves resized under the cursor on every press.
-      data-label={text}
-      aria-pressed={match === value}
-      onClick={() => onMatch(value)}
-    >
-      {text}
-    </button>
-  );
-  return (
-    <div className="seg2" role="group" aria-label="How many of these tags a title needs">
-      {half("any", "Any of these")}
-      {half("all", "All of these")}
-    </div>
-  );
-}
+/** The any/all pair, there from the start so the form never has a blank where a control
+ *  belongs. The shared `Segmented` in its flat variant: the mockup's chrome, one either-or
+ *  control (rules 18, 41). */
+const MATCH_OPTIONS = [
+  ["any", "Any of these"],
+  ["all", "All of these"],
+] as const satisfies readonly (readonly ["any" | "all", string])[];
 
 /** One card in the type picker. */
 function PickCard({
@@ -113,6 +94,7 @@ export function ListModal({
   editing,
   onClose,
   onSaved,
+  blockCloseRef,
 }: {
   editing: ListConfig | null;
   onClose: () => void;
@@ -122,6 +104,9 @@ export function ListModal({
    *  than here: this modal is unmounting, and the row already owns a check's whole reporting
    *  surface, its busy button and its own error line. */
   onSaved?: ((list: ListConfig) => void) | undefined;
+  /** The panel's mirror of `canClose`, so its Back guard refuses exactly what the scrim,
+   *  Escape and the ✕ refuse rather than a stale copy of one of the reasons (rule 80). */
+  blockCloseRef?: React.MutableRefObject<boolean> | undefined;
 }) {
   const queryClient = useQueryClient();
 
@@ -133,6 +118,12 @@ export function ListModal({
   const [presetsOpen, setPresetsOpen] = useState(false);
   /** The IMDb card, which anchors the presets menu; a press outside it closes the menu. */
   const presetsRef = useRef<HTMLDivElement>(null);
+
+  // Back closes the open presets menu rather than the layer beneath it, the same contract the
+  // queue's filter popover and the spare menu keep (`ReviewQueue`, `OverrideControls`). Without
+  // it the press skipped the menu, was spent on the Settings section frame, and the panel
+  // behind the modal navigated while the menu was still drawn (rules 80, 72).
+  useBackGuard(presetsOpen, () => setPresetsOpen(false));
 
   // Close the open presets menu on an outside click or Escape, the queue's menu contract.
   useEffect(() => {
@@ -271,7 +262,7 @@ export function ListModal({
     if (source === "imdb" && !preset && !imdbId.trim()) {
       return {
         on: "imdb",
-        why: "Paste the list's id or URL. An IMDb list id looks like ls005421403.",
+        why: "Paste the list's id or URL. An IMDb list id looks like ls000000000.",
       };
     }
     return null;
@@ -279,6 +270,30 @@ export function ListModal({
   const missing = blocked?.why ?? null;
   /** `aria-describedby` for the one control the blocking sentence is about. */
   const describedBy = (field: BlockedField) => (blocked?.on === field ? BLOCKED_ID : undefined);
+
+  /** Whether a dismissal is allowed, computed ONCE and handed to every path that can dismiss.
+   *
+   *  A close mid-save unmounts the only place the refusal is ever shown -- the scrim swallows
+   *  the server's sentence, the invalidations never run, and the operator walks away believing
+   *  the list saved.
+   *
+   *  Cancel is deliberately NOT gated on this, the arrangement `ServiceModal` states and this
+   *  modal reversed: both Cancels were disabled while their mutation was in flight, so in the
+   *  one state this guard refuses a close, the scrim, Escape, the ✕ AND Cancel were all
+   *  refused and the only live control on the confirm view was Remove. A guard whose only exit
+   *  is the destructive button is a trap, not a guard (rule 146). What this refuses is the
+   *  ACCIDENTAL dismissals: scrim, Escape, ✕, Back. */
+  const canClose = !save.isPending && !remove.isPending;
+
+  // Mirror it up to ListsPanel's Back guard, so browser Back honors the same predicate the
+  // scrim, Escape and the ✕ do (rule 80), and clear it on unmount so a stale true never
+  // lingers after the modal closes.
+  useEffect(() => {
+    if (blockCloseRef) blockCloseRef.current = !canClose;
+    return () => {
+      if (blockCloseRef) blockCloseRef.current = false;
+    };
+  }, [canClose, blockCloseRef]);
 
   const title =
     view === "picker"
@@ -290,15 +305,7 @@ export function ListModal({
           : `Add a list: ${SOURCE_NAMES[source]}`;
 
   return (
-    <ModalShell
-      title={title}
-      onClose={onClose}
-      // A close mid-save unmounts the only place the refusal is ever shown, and the operator
-      // walks away believing it saved. Cancel below stays live throughout, so this guard
-      // never becomes the trap rule 146 describes.
-      canClose={!save.isPending && !remove.isPending}
-      className="service-modal"
-    >
+    <ModalShell title={title} onClose={onClose} canClose={canClose} className="service-modal">
       {view === "picker" && (
         <div className="service-form">
           <div className="pick-group">
@@ -313,7 +320,7 @@ export function ListModal({
                       indistinguishable to anyone hearing them listed. */}
                   <button
                     type="button"
-                    className="ghost"
+                    className="ghost sm"
                     aria-label="Add a Plex collection"
                     onClick={() => openForm("plex_collection")}
                   >
@@ -323,12 +330,15 @@ export function ListModal({
               </PickCard>
               <PickCard
                 name="Watchlist"
-                blurb="The watchlist of the Plex account Reaper is signed in with. Another user's watchlist needs their sign-in."
+                // No second sentence about another user's watchlist: there is no way to sign
+                // Reaper into a second Plex account, so naming one advertised a route that
+                // does not exist (rule 25).
+                blurb="The watchlist of the Plex account Reaper is signed in with."
               >
                 <div className="acts">
                   <button
                     type="button"
-                    className="ghost"
+                    className="ghost sm"
                     aria-label="Add a Plex watchlist"
                     onClick={() => openForm("plex_watchlist")}
                   >
@@ -348,7 +358,7 @@ export function ListModal({
                 <div className="acts">
                   <button
                     type="button"
-                    className="ghost"
+                    className="ghost sm"
                     aria-label="Add a tag list"
                     onClick={() => openForm("arr_tag")}
                   >
@@ -367,36 +377,40 @@ export function ListModal({
                 cardRef={presetsRef}
               >
                 <div className="acts">
-                  <button type="button" className="ghost" onClick={() => openForm("imdb")}>
+                  <button type="button" className="ghost sm" onClick={() => openForm("imdb")}>
                     Custom
                   </button>
-                  {/* The name is "Presets" alone: the arrow is decoration a reader may voice
-                      as a shape name, and aria-expanded already says what it draws (rule 21). */}
-                  <button
-                    type="button"
-                    className="ghost"
-                    aria-label="Presets"
-                    aria-expanded={presetsOpen}
-                    aria-controls={presetsOpen ? "imdb-preset-menu" : undefined}
-                    onClick={() => setPresetsOpen((v) => !v)}
-                  >
-                    Presets <span aria-hidden="true">▾</span>
-                  </button>
-                  {presetsOpen && (
-                    <FilterMenu id="imdb-preset-menu" label="Presets" anchorClass="acts">
-                      {IMDB_PRESETS.map((p) => (
-                        <li key={p.key}>
-                          <button
-                            type="button"
-                            className="filter-mi"
-                            onClick={() => openPreset(p.key)}
-                          >
-                            {p.label}
-                          </button>
-                        </li>
-                      ))}
-                    </FilterMenu>
-                  )}
+                  {/* The menu is anchored on this wrapper, so it aligns to the button that
+                      opens it rather than to the whole row (rule 138). */}
+                  <span className="preset-anchor">
+                    {/* The name is "Presets" alone: the arrow is decoration a reader may voice
+                        as a shape name, and aria-expanded already says what it draws (rule 21). */}
+                    <button
+                      type="button"
+                      className="ghost sm"
+                      aria-label="Presets"
+                      aria-expanded={presetsOpen}
+                      aria-controls={presetsOpen ? "imdb-preset-menu" : undefined}
+                      onClick={() => setPresetsOpen((v) => !v)}
+                    >
+                      Presets <span aria-hidden="true">▾</span>
+                    </button>
+                    {presetsOpen && (
+                      <FilterMenu id="imdb-preset-menu" label="Presets" anchorClass="preset-anchor">
+                        {IMDB_PRESETS.map((p) => (
+                          <li key={p.key}>
+                            <button
+                              type="button"
+                              className="filter-mi"
+                              onClick={() => openPreset(p.key)}
+                            >
+                              {p.label}
+                            </button>
+                          </li>
+                        ))}
+                      </FilterMenu>
+                    )}
+                  </span>
                 </div>
               </PickCard>
             </div>
@@ -507,11 +521,20 @@ export function ListModal({
                 addLabel="Add a tag"
                 describedBy={describedBy("tags")}
               />
-              <MatchToggle match={match} onMatch={setMatch} />
+              {/* Directly beneath the box it is about, and above the any/all pair, which is a
+                  separate question. It sat under the pair, so it read as covering both and the
+                  pair got none of its own (rule 45). */}
               <p className="help">
                 Type each tag exactly as it appears in Sonarr or Radarr. Every connected server is
                 read.
               </p>
+              <Segmented
+                value={match}
+                options={MATCH_OPTIONS}
+                onChange={setMatch}
+                variant="flat"
+                label="How many of these tags a title needs"
+              />
             </div>
           )}
 
@@ -526,7 +549,7 @@ export function ListModal({
                 <input
                   value={imdbId}
                   onChange={(e) => setImdbId(e.target.value)}
-                  placeholder="ls0000000, or paste the list's URL"
+                  placeholder="ls000000000, or paste the list's URL"
                   aria-describedby={describedBy("imdb")}
                 />
               </label>
@@ -541,7 +564,9 @@ export function ListModal({
               </button>
             )}
             <span className="flex-spacer" />
-            <button type="button" className="ghost" onClick={onClose} disabled={save.isPending}>
+            {/* Live through the save: it is the deliberate way out, and it is what keeps
+                `canClose` a guard rather than a trap (see `canClose` above, rule 146). */}
+            <button type="button" className="ghost" onClick={onClose}>
               Cancel
             </button>
             <button type="submit" className="primary" disabled={!!missing || save.isPending}>
@@ -568,12 +593,9 @@ export function ListModal({
           )}
           <div className="add-actions">
             <span className="flex-spacer" />
-            <button
-              type="button"
-              className="ghost"
-              onClick={() => setView("form")}
-              disabled={remove.isPending}
-            >
+            {/* Live through the remove, same reason as the form's Cancel: with it disabled,
+                the one control still pressable on this view was Remove itself. */}
+            <button type="button" className="ghost" onClick={() => setView("form")}>
               Cancel
             </button>
             {/* `danger` alone is the app's destructive button, the one the reap confirmation

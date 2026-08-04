@@ -2298,7 +2298,7 @@ async def _replay_simulation(
             # A set for the same reason the threshold path's spare branch uses one: a row
             # both hand-spared and keep-list tagged carries the injected WHITELISTED and
             # the gate's own, and a gate spares a row once.
-            spared_by.update({r.gate.value for r in judged.evaluation.protectors})
+            spared_by.update(_spared_by_id(r) for r in judged.evaluation.protectors)
         else:
             abstained += 1
 
@@ -2529,7 +2529,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 # beside a headline count that correctly held still.
                 # A set because a row both hand-spared and keep-list tagged fires
                 # WHITELISTED twice, and a gate spares a row once.
-                spared_by.update({*_fired_gates(row.explanation_json), "whitelisted"})
+                spared_by.update({*_fired_gates(row.explanation_json), HAND_SPARE_TALLY_ID})
             elif reap_is_effective(row):
                 condemned += 1
                 if row.size_bytes is None:
@@ -2624,6 +2624,21 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             for gate, n in sorted(spared_by.items(), key=lambda kv: (-kv[1], kv[0]))
         ],
     )
+
+
+#: The spared-by tally's id for a hand spare. Not a gate: the replay path injects the spare as
+#: a WHITELISTED protector so ``judge_facts`` applies it live, and the threshold path adds it
+#: beside the gates that fired. Tallying it under ``whitelisted`` reported every hand spare as
+#: list membership -- and on a fresh install, where ``WhitelistGate`` is retired and no gate
+#: emits that id at all, "Why titles were spared" was hand spares wearing a list's name, which
+#: invites softening a keep rule that covers none of them (rule 144). The frontend's
+#: ``GATE_META`` carries the copy for it.
+HAND_SPARE_TALLY_ID = "hand_spare"
+
+
+def _spared_by_id(result: GateResult) -> str:
+    """The tally id for one protector: its gate, unless it is the injected hand spare."""
+    return HAND_SPARE_TALLY_ID if result.detail == HAND_SPARE_DETAIL else result.gate.value
 
 
 def _fired_gates(explanation_json: str) -> list[str]:

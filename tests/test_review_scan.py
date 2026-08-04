@@ -430,15 +430,17 @@ class TestBuildMovieIndex:
         assert res.status is identity.MatchStatus.MATCHED
 
     async def test_a_sweep_failure_degrades_but_still_matches_by_title(self) -> None:
-        """rule #2: a failed GUID sweep degrades the snapshot (un-executable) rather than
-        silently continuing -- but items still fall through to the title+year backstop."""
+        """rule #2: a failed GUID sweep degrades the snapshot (nothing may be deleted from it)
+        rather than silently continuing -- but items still fall through to the title+year
+        backstop. The reason is written for the operator, who reads it verbatim in the
+        incomplete-scan notice: no "GUID", no "un-executable" (rule 21)."""
         reasons: list[str] = []
         index = await build_movie_index(
             _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
             _FakePlexBrokenSweep(),  # type: ignore[arg-type]
             degrade=reasons.append,
         )
-        assert reasons and "GUID sweep failed" in reasons[0]
+        assert reasons and "couldn't read your Plex libraries" in reasons[0]
         assert index.by_rating_key[100].ids.empty  # nothing enriched
         res = identity.resolve_movie(
             ids=identity.ExternalIds(), title="Example", year=2020, file_basename=None, index=index
@@ -537,7 +539,7 @@ class TestRetiredSpineRows:
             degrade=reasons.append,
         )
         assert 100 in index.by_rating_key
-        assert reasons and "GUID sweep failed" in reasons[0]
+        assert reasons and "couldn't read your Plex libraries" in reasons[0]
 
     async def test_no_plex_configured_retires_nothing(self) -> None:
         """The other silent-empty: nothing swept because nothing was asked."""

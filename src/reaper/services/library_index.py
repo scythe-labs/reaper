@@ -180,8 +180,14 @@ async def build_index(
                 True,
             )
         except PlexError as exc:
+            # Plain language, because this lands verbatim in the incomplete-scan notice on
+            # three screens (rule 21). It read "Plex GUID sweep failed (...): id matching
+            # unavailable, snapshot un-executable" -- three pieces of internal vocabulary and
+            # a raw exception carrying the URL -- which said nothing to the person deciding
+            # what to delete.
             degrade(
-                f"Plex GUID sweep failed ({exc}): id matching unavailable, snapshot un-executable"
+                f"Reaper couldn't read your Plex libraries ({exc}), so nothing in this scan "
+                "could be matched to your libraries and nothing may be deleted from it"
             )
             return {}, False
 

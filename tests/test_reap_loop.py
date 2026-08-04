@@ -302,7 +302,13 @@ class TestBuildPlan:
         snapshot.degraded_reason = "Radarr 4K unreachable"
         await session.flush()
 
-        with pytest.raises(PlanError, match="degraded"):
+        # The refusal reaches the operator as the Reap page's 422 body, so it is checked as
+        # operator copy: the sentence the three incomplete-scan notices lead with, no snapshot
+        # id, and not "degraded", which the docs record as an internal word (rules 21, 144).
+        # The stored reason goes last, so an unterminated one cannot fuse into what follows.
+        with pytest.raises(PlanError, match="came back incomplete, so Reaper won't act on it"):
+            await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
+        with pytest.raises(PlanError, match=r"Radarr 4K unreachable$"):
             await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
     async def test_an_empty_condemned_set_is_refused(self, session: AsyncSession) -> None:

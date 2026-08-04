@@ -288,11 +288,14 @@ describe("adding a tag list", () => {
     await openForm(user, "Add a tag list");
 
     // Visible before a single tag is typed, so the form never has a blank where a control
-    // belongs -- and flat joined buttons, not the pill segmented (the approved mockup).
+    // belongs. It is the shared `Segmented` wearing the mockup's flat chrome, not a second
+    // either-or control: this asserted a `.seg2` of its own, which is exactly what rules 18
+    // and 41 refuse.
     const toggle = await screen.findByRole("group", {
       name: "How many of these tags a title needs",
     });
-    expect(toggle.classList.contains("seg2")).toBe(true);
+    expect(toggle.classList.contains("segmented")).toBe(true);
+    expect(toggle.classList.contains("flat")).toBe(true);
     // Each half reserves its own bold width through `data-label` (the strut in 04-buttons.css),
     // so choosing one bolds it in place instead of widening it and shoving its neighbor
     // sideways out from under the cursor.

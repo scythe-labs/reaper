@@ -300,7 +300,11 @@ describe("a lean keep rule on a list", () => {
     });
 
     expect(await screen.findByText(/On your list Old list/)).toBeInTheDocument();
-    expect(screen.getByText(/lowers the score, up to −20 points/)).toBeInTheDocument();
+    // "by", not "up to": membership is not a number, so this rule pays its whole discount or
+    // none of it. "up to" is this file's word for a ramp, and it was printed on both branches,
+    // describing an all-or-nothing rule as a sliding one.
+    expect(screen.getByText(/lowers the score by −20 points/)).toBeInTheDocument();
+    expect(screen.queryByText(/up to −20 points/)).not.toBeInTheDocument();
   });
 });
 

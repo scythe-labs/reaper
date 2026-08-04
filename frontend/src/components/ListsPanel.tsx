@@ -24,9 +24,10 @@
 // moving between them should not have to learn two layouts (rule 18).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useRef, useState, type ReactNode } from "react";
 
 import { api, type ListConfig, type ListPolicyUse, type ProtectionList } from "../api";
+import { useBackGuard } from "../backnav";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
 
@@ -48,6 +49,18 @@ function titles(n: number): string {
 
 type Tone = "ok" | "warn" | "bad" | "idle";
 type State = ProtectionList["state"];
+
+/** This screen's four states in the app's ONE chip family (`.status-chip`,
+ *  23-queue-chips.css). They were a `.list-state` family of their own re-declaring the same
+ *  token pairs, which rules 18 and 72 refuse: a color meaning "kept" has to move everywhere at
+ *  once. Worn with `.status-chip-wrap`, the family's non-truncating variant, because these
+ *  labels are not in a fixed column here. */
+const STATE_CHIP: Record<Tone, string> = {
+  ok: "status-kept",
+  warn: "status-warn",
+  bad: "status-pressure",
+  idle: "status-quiet",
+};
 
 /** Worst first. A group wears its worst member's state, because a family reported by its best
  *  member is a family that says "Working" while one server's tag list protects nothing. */
@@ -86,12 +99,17 @@ function describe(
     case "working":
       return { label: "Working", tone: "ok", detail: `Protecting ${titles(items)}.` };
     case "stale":
+      // Names its members like `failing` and `never_checked` do. It was the one state that
+      // took `servers` and ignored it, so a family out of date on one server of four said
+      // something was wrong and not which one -- and "which one" is the whole reason a
+      // rolled-up row names anybody.
       return {
         label: "Out of date",
         tone: "warn",
         detail:
           `Still protecting ${titles(items)}, but the last check was too long ago. ` +
-          "Anything added since then is not covered yet.",
+          "Anything added since then is not covered yet." +
+          named,
       };
     case "failing":
       return {
@@ -137,11 +155,18 @@ function serverOf(row: ProtectionList): string {
 function kindBadge(source: ListConfig["source"]): ReactNode {
   if (source === "arr_tag") {
     // One span per half, so each name is centered in its own color instead of riding a
-    // gradient stop that falls near, but not on, the space between them. The space between
-    // the spans survives into the accessible text and is dropped from the flex layout.
+    // gradient stop that falls near, but not on, the space between them.
+    //
+    // The halves are hidden from a reader and the name is said once, in text: the two spans
+    // are flex items, and whether the whitespace between two flex items reaches the
+    // accessibility tree is not something to bet a name on -- a whitespace-only anonymous
+    // item generates no box at all. Said outright, it cannot come out as one invented word,
+    // and the claim does not rest on layout behavior no test here can observe.
     return (
       <span className="kind-badge kind-arr">
-        <span>Sonarr</span> <span>Radarr</span>
+        <span aria-hidden="true">Sonarr</span>
+        <span aria-hidden="true">Radarr</span>
+        <span className="sr-only">Sonarr and Radarr</span>
       </span>
     );
   }
@@ -191,7 +216,7 @@ function ListRow({
         <div className="list-head">
           <span className="jobrow-title list-name">{title}</span>
           {badge}
-          <span className={`list-state list-state-${tone}`}>{label}</span>
+          <span className={`status-chip status-chip-wrap ${STATE_CHIP[tone]}`}>{label}</span>
         </div>
         <div className="jobrow-desc">{detail}</div>
         {children}
@@ -256,9 +281,12 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
         {tags.map((tag) => {
           const n = total(tag);
           return (
+            // One text run, not two flex items. As flex children the tag and its count had
+            // nothing between them at all, so the pill read and COPIED as "reaper-keep412".
+            // A literal space rather than a gap, so the separation is in the text itself and
+            // does not depend on how whitespace between flex items is treated.
             <span key={tag} className="tag-pill">
-              {tag}
-              {n !== null && <b>{n.toLocaleString()}</b>}
+              {tag} {n !== null && <b>{n.toLocaleString()}</b>}
             </span>
           );
         })}
@@ -369,6 +397,17 @@ export function ListsPanel({
   // `null` is closed, `{ list: null }` is Add, `{ list }` is Edit. One piece of state rather
   // than an open flag beside a subject, so the two cannot disagree about what is on screen.
   const [modal, setModal] = useState<{ list: ListConfig | null } | null>(null);
+  // The modal decides when it may be dismissed and mirrors that whole answer here, the
+  // arrangement the service and schedule editors use. Nothing registered here at all once,
+  // so Back fell through to the Settings section frame: the panel navigated, this component
+  // unmounted, and an in-flight save's refusal went with it while the operator walked away
+  // believing the list saved (rule 80).
+  const blockCloseRef = useRef(false);
+  useBackGuard(
+    modal !== null,
+    () => setModal(null),
+    () => !blockCloseRef.current,
+  );
 
   const check = useMutation({
     mutationFn: (target: CheckTarget) => api.syncLists(target === "all" ? {} : { list_id: target }),
@@ -405,14 +444,19 @@ export function ListsPanel({
             polled, so it mounts once with something the operator has not been told yet. */}
         <Notice tone="error">
           Couldn't load your lists, so there is no way to tell here whether they are working.{" "}
+          {/* Says it is retrying while it is. The query's status stays `error` across a
+              refetch -- only `isFetching` moves -- so the press changed nothing on screen
+              until it settled, which reads as a dead button (rule 85's shape: the control
+              reports the state it is in, as the check buttons on the rows do). */}
           <button
             className="ghost sm"
+            disabled={health.isFetching || definitions.isFetching}
             onClick={() => {
               void health.refetch();
               void definitions.refetch();
             }}
           >
-            Try again
+            {health.isFetching || definitions.isFetching ? "Trying…" : "Try again"}
           </button>
         </Notice>
       </div>
@@ -458,6 +502,10 @@ export function ListsPanel({
           // true while the next one runs.
           const detail =
             busy(definition.id) && mine.length === 0 ? "Checking it now." : shown.detail;
+          // Sorted ascending and read at [0], so a family reports its OLDEST check: the row
+          // is a claim about the whole family, and the newest member's stamp would say the
+          // protection is fresher than its weakest part. Same direction as `worst` above,
+          // and stated because reading the stalest of a set looks like an off-by-one.
           const checked = mine
             .map((r) => r.last_checked_at)
             .filter((v): v is string => v !== null)
@@ -509,13 +557,28 @@ export function ListsPanel({
               error={row.error}
               checking={busy("all")}
               onCheck={() => check.mutate("all")}
-              checkError={failedTarget === "all" ? (check.error?.message ?? null) : null}
             />
           );
         })}
       </div>
 
-      {check.data?.plex_error && <Notice tone="warn">{check.data.plex_error}</Notice>}
+      {/* The sink for a failed check of EVERYTHING, whether it was started here or from an
+          orphan row, whose button drives the same "all" target. Every row's own sink compares
+          `failedTarget` against a definition id, which is a number and can never equal "all",
+          and the orphan rows only exist on a migrated install -- so on a normal one this
+          failure had nowhere to land: the button went back to "Check all now", every row kept
+          its stale chip, and nothing said the check had not run (rules 17/36, 42). */}
+      {failedTarget === "all" && (
+        <Notice tone="error">The check didn't run: {check.error?.message}</Notice>
+      )}
+
+      {/* Only while the check it came from is the last thing that happened. `check.data` holds
+          the previous result until the next mutation replaces it, so a Plex warning from one
+          check stayed on screen through an unrelated Edit or Add, reading as though it were
+          about those (rule 85). A check in flight has not answered yet, so it says nothing. */}
+      {!check.isPending && check.data?.plex_error && (
+        <Notice tone="warn">{check.data.plex_error}</Notice>
+      )}
 
       <div className="list-foot">
         <span className="flex-spacer" />
@@ -531,6 +594,7 @@ export function ListsPanel({
         <ListModal
           editing={modal.list}
           onClose={() => setModal(null)}
+          blockCloseRef={blockCloseRef}
           // A saved list is checked on the spot, through the same mutation the row's own
           // button drives: a list is protecting nothing until something reads it, and an
           // operator who has just said what the list is should not have to say "now go and

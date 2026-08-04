@@ -209,6 +209,19 @@ function GateRow({
       </label>
       {meta.help && <p className="help rule-help">{meta.help}</p>}
 
+      {/* A retired gate only reaches this list when the loader could NOT convert it -- the list
+          it names is gone -- and `scan_runner.build_gates` then refuses every scan over it
+          (`ScanConfigError`). The row rendered through the ordinary path with a live-sounding
+          label and no warning, so the one switch that was stopping every scan looked like an
+          ordinary healthy protection. Said beside that switch, which is what fixes it
+          (rules 25, 42). */}
+      {meta.retired && gate.enabled && (
+        <Notice tone="warn" inline>
+          A leftover from an older version, and Reaper won&apos;t scan while it is on. Add its list
+          again on Settings → Lists, or turn this off to stop protecting those titles.
+        </Notice>
+      )}
+
       {gate.enabled && meta.unit === "days" && (
         <div className="rule-control">
           <span>at least</span>

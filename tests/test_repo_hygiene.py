@@ -2376,8 +2376,13 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # Then 137 -> 142, the rest of that screen: a check that would not run (on the row whose button
 # started it, rule 42), a Plex that could not be reached at all so no row can say why, a removal
 # that was refused, and the add/edit form's own save failure and its switched-off warning.
+# Then 141 -> 144, from that screen's UI review: a failed "Check all now", which on an install
+# with no migrated rows had no sink at all and went back to rest saying nothing; the Review
+# page's incomplete-scan line, which was a bare styled span so amber was its only severity
+# signal; and a retired protection still switched on, which refuses every scan while reading as
+# an ordinary healthy one.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 141
+_EXPECTED_NOTICES = 144
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2477,8 +2482,12 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # already `standing` for that reason, and rule 72 for the two that were not.
 # Then 35: About's dev-build banner, a fact about the install that is true on first paint
 # and unchanged for the process's whole life.
+# Then 36: the Review page's incomplete-scan line, which became a `Notice` so its severity is
+# not amber alone. It is the age of the snapshot the queue below is built from, so it is page
+# furniture for as long as that snapshot is the one on hand; the scan that produces it
+# announces itself from `ScanBar`, where the transition actually happens.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 35
+_EXPECTED_STANDING = 36
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")

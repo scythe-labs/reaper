@@ -329,7 +329,10 @@ def _clean_config(source: ListSource, config: dict[str, Any]) -> str:
     # being bounced back for retyping.
     found = re.search(r"ls\d{6,}", str(config.get("list_id", "")))
     if not found:
-        raise ListConfigError("Paste the list's id or URL. An IMDb list id looks like ls005421403.")
+        # An all-zero id of the right shape, not a real one: this is operator-facing copy, and
+        # a real id is somebody's actual list. The modal's own copy of this sentence and the
+        # placeholder beside it spell the same example (rule 144).
+        raise ListConfigError("Paste the list's id or URL. An IMDb list id looks like ls000000000.")
     return json.dumps({"list_id": found.group(0)})
 
 

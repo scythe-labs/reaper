@@ -290,9 +290,33 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
             )
 
     async def test_a_malformed_imdb_list_id_is_refused(self, session: AsyncSession) -> None:
-        with pytest.raises(list_config.ListConfigError, match="looks like ls005421403"):
+        with pytest.raises(list_config.ListConfigError, match="looks like ls000000000"):
             await list_config.create(
                 session, name="Mine", source="imdb", config={"list_id": "watchlist"}
+            )
+
+    def test_the_modal_spells_every_refusal_the_way_this_module_does(self) -> None:
+        """``ListModal.tsx`` says these same sentences before the round trip.
+
+        Two copies of one requirement, which is rule 144's hazard: each side was pinned by its
+        own test, nothing bound the pair, and a one-sided edit left both suites green. The
+        failure message names the other file, because a comment asking a future author to
+        remember the second copy does nothing.
+        """
+        modal = (
+            Path(__file__).resolve().parents[1] / "frontend/src/components/ListModal.tsx"
+        ).read_text(encoding="utf-8")
+        for sentence in (
+            "Give the list a name, so you can pick it out on the Policy screen.",
+            "Say which Plex library to look in.",
+            "Say which collection in that library to read.",
+            "Add at least one tag, spelled as it appears in Sonarr or Radarr.",
+            "Paste the list's id or URL. An IMDb list id looks like ls000000000.",
+        ):
+            assert sentence in modal, (
+                f"services/list_config.py refuses with {sentence!r}, and "
+                "frontend/src/components/ListModal.tsx no longer says it before the round "
+                "trip. Edit both, or drop the browser-side check."
             )
 
 

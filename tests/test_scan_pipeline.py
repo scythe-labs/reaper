@@ -689,7 +689,7 @@ class TestScanPipelineEndToEnd:
         # Loud, and fail-closed: the snapshot says which instance is missing, and the
         # reachable instance's items are all still there.
         assert snapshot.degraded is True
-        assert "radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
+        assert "Radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert set(rows) == {"radarr:1:1", "radarr:1:2", "radarr:1:3"}
 
@@ -978,7 +978,7 @@ class TestAStaleMirrorDegradesTheSnapshot:
         snapshot = await self._scan_with(session, cache_engine)
 
         assert snapshot.degraded is True
-        assert "watch history has not updated recently" in (snapshot.degraded_reason or "")
+        assert "Watch history has not updated recently" in (snapshot.degraded_reason or "")
 
     async def test_a_mirror_that_never_synced_degrades(
         self, session: AsyncSession, cache_engine: AsyncEngine
@@ -991,7 +991,7 @@ class TestAStaleMirrorDegradesTheSnapshot:
         snapshot = await self._scan_with(session, cache_engine)
 
         assert snapshot.degraded is True
-        assert "watch history has not updated recently" in (snapshot.degraded_reason or "")
+        assert "Watch history has not updated recently" in (snapshot.degraded_reason or "")
 
     async def test_a_quiet_library_that_synced_recently_does_not_degrade(
         self, session: AsyncSession, cache_engine: AsyncEngine
@@ -1416,7 +1416,8 @@ class TestARepairedPolicyCannotBeReapedFrom:
             assert "movie policy needs saving again" in reason, reason
 
             async with factory() as s:
-                with pytest.raises(PlanError, match="degraded"):
+                # The refusal is operator copy, and does not use the internal word.
+                with pytest.raises(PlanError, match="came back incomplete"):
                     await build_plan(
                         s,
                         snapshot_id=snapshot.id,

@@ -74,10 +74,12 @@ export function useScanSettled(scanning: boolean, error: string | null = null): 
       // stopped somewhere unknown, and a refetch showing current truth is never wrong, where
       // skipping one can leave a stale number on screen.
       for (const queryKey of SCAN_SETTLED_KEYS) void queryClient.invalidateQueries({ queryKey });
-      // Thirteen caches go stale on this line, which is most of the numbers in the app moving at
-      // once -- and it can be triggered by the scheduler, by another device, or by another tab, so
-      // there is no press to attach a sentence to and no control that changed. An operator using a
-      // reader had no way to learn any of it: the transition is entirely visual (#177).
+      // Every cache in the list above goes stale on this line, which is most of the numbers in
+      // the app moving at once -- and it can be triggered by the scheduler, by another device, or
+      // by another tab, so there is no press to attach a sentence to and no control that changed.
+      // An operator using a reader had no way to learn any of it: the transition is entirely
+      // visual (#177). (It said "Thirteen caches" and the list had grown to fourteen; a count
+      // written in prose beside the list it counts is one that goes stale on the next append.)
       //
       // It says the numbers moved rather than naming a figure, because this hook deliberately does
       // not read the caches it marks stale -- and the refetches have not landed yet, so any count

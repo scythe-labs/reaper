@@ -276,6 +276,62 @@ const SITES: Site[] = [
       "open why panel, shifting every card below it. Unlike .panel-season-name there is no " +
       "branch to split, and truncating instead is what rule 139 forbids outright. #220",
   },
+
+  // ---- Settings, Lists (#475) ------------------------------------------------------------
+  // A whole screen of outside text arrived and registered none of it. Two of these were
+  // genuinely missed rather than merely unregistered: `.jobrow-sched` and `.jobrow-desc` had
+  // no break opportunity at all, and the stylesheet comment beside them named "a Plex
+  // collection's name" as a value it was protecting while granting the wrap to `.list-name`,
+  // which is the operator's own words.
+  {
+    what:
+      "the list's source line: a Plex collection and library name, or a pasted IMDb list id " +
+      "(`sourceHint`). Shared with the Jobs tab's rows",
+    selectors: [".jobrow-sched"],
+    classInTsx: "jobrow-sched",
+    seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
+  },
+  {
+    what:
+      "the row's detail line, which names the Sonarr and Radarr instances in the worst state " +
+      "and carries a service's own refusal. Shared with the Jobs tab's rows",
+    selectors: [".jobrow-desc"],
+    classInTsx: "jobrow-desc",
+    seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
+  },
+  {
+    what: "the list's name, which is the operator's own but may be pasted from anywhere",
+    selectors: [".list-name"],
+    classInTsx: "list-name",
+    seenIn: ["components/ListsPanel.tsx"],
+  },
+  {
+    what: "the upstream refusal from the last check of this list",
+    selectors: [".list-error"],
+    classInTsx: "list-error",
+    seenIn: ["components/ListsPanel.tsx"],
+  },
+  {
+    what: "a tag as it is spelled in Sonarr or Radarr, with its count",
+    selectors: [".tag-pill"],
+    classInTsx: "tag-pill",
+    seenIn: ["components/ListsPanel.tsx"],
+  },
+  {
+    what: "a Sonarr or Radarr instance's display name, in the per-server fold-out",
+    selectors: [".server-grid .srv"],
+    classInTsx: "srv",
+    seenIn: ["components/ListsPanel.tsx"],
+  },
+  {
+    what: "a tag chip in the list editor, spelled on somebody else's keyboard",
+    selectors: [".tag-chip"],
+    classInTsx: "tag-chip",
+    seenIn: ["components/TagsEditor.tsx"],
+    onAFlexRow:
+      "the chip's only sibling to the text is its remove button, whose whole content is one " +
+      "character, so there is nothing there a break opportunity can act on",
+  },
 ];
 
 type Rule = { selectors: string[]; body: string; at: number };
@@ -484,19 +540,23 @@ describe("the stylesheet: text the operator did not choose", () => {
     // Rule 145: a flag-shaped assertion cannot tell a member that complies from one that fell out
     // of the walk, so the size of the walk is pinned by hand. Reconciled against the table above:
     // 10 sites that already carried the fix, 11 from #219, 5 from #220 (one of them exempt),
-    // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for), and `.pl-echo` from
-    // #306, the wrapping restatement that carries the value the exempt control cannot.
-    expect(SITES.length).toBe(28);
+    // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for), `.pl-echo` from
+    // #306, the wrapping restatement that carries the value the exempt control cannot, and 7
+    // from Settings, Lists (#475) -- a screen that arrived carrying a whole population of
+    // outside text and registered none of it, two of them wrapping nowhere at all.
+    expect(SITES.length).toBe(35);
     expect(SITES.filter((s) => s.exempt).length).toBe(2);
-    // And the blocks those 28 sites actually resolve to. Twenty-three sites resolve to one block
+    // And the blocks those sites actually resolve to. Twenty-three of the original sites
+    // resolve to one block
     // each; the other five are `.about-kv dd` (its own, plus a margin under 560px), the requested
     // chip (`.chip`, its own, and the rule it shares with `.lib-chip`), `.lib-chip` (its own and
     // that shared rule again), the unnumbered season (the base and the modifier), and `.pl-root`
     // (its own, plus the stacked-grid margin under 640px) -- and `.pl-select`, which is three:
     // the control standard every `.field-sm` box rides, its own width rule, and the unset tint.
+    // The seven Settings, Lists rows resolve to one block each.
     // If this moves, a selector joined or left a row -- check it was meant to, then update it.
     const blocks = SITES.reduce((n, s) => n + matchesOf(s).length, 0);
-    expect(blocks).toBe(36);
+    expect(blocks).toBe(43);
   });
 });
 

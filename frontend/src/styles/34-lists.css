@@ -5,35 +5,16 @@
 
 /* Settings -> Lists (#475). Rows are the Jobs tab's `.jobrow`, so the two pages that both
    answer "is this working, and when did it last run" read the same. What sits where a job's
-   buttons go is a state chip, in the app's verdict language -- the same four colors the review
-   queue uses, because "this list stopped working" and "this title is condemned" are the same
-   fact at two scales, and a list that is not working is the reason a scan cannot delete
-   anything. A chip rather than a `.badge`: a badge names WHAT a thing is (Plex, Sonarr) and
-   holds still, while this names how it is doing and changes between checks. */
-.list-state {
-  display: inline-block;
-  padding: var(--space-2xs) var(--space-md);
-  border-radius: var(--radius-pill);
-  font-size: var(--text-md);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
-}
-.list-state-ok {
-  color: var(--protect);
-  background: var(--protect-soft);
-}
-.list-state-warn {
-  color: var(--unknown);
-  background: var(--unknown-soft);
-}
-.list-state-bad {
-  color: var(--condemn);
-  background: var(--condemn-soft);
-}
-.list-state-idle {
-  color: var(--abstain);
-  background: var(--surface-2);
-}
+   buttons go is a state chip, in the app's verdict language -- because "this list stopped
+   working" and "this title is condemned" are the same fact at two scales, and a list that is
+   not working is the reason a scan cannot delete anything.
+
+   That chip is the app's ONE chip family, `.status-chip` (23-queue-chips.css), in its
+   non-truncating variant. It was a fourth family here -- `.list-state`, re-declaring the same
+   token pairs the shared tones already carry -- which is what rule 18 refuses. The reason it
+   could not simply reuse the family was real and is fixed at the source: the shared chip
+   truncates for the queue's fixed columns, so it gained `.status-chip-wrap`, and the filled
+   amber this screen needs is now `.status-warn` beside the outlined `.status-look`. */
 
 /* The name and its state chip share a line: the chip is the answer to the question the row
    asks, so it reads as part of the title rather than as a separate column. It wraps, because a
@@ -54,9 +35,8 @@
   margin-top: var(--space-xl);
 }
 
-/* Both of these carry text nobody here typed -- a Plex collection's name, an *arr's refusal --
-   so both wrap rather than running through the box holding them (rule 139). `.jobrow-desc`
-   already caps its width; neither sets `overflow-wrap`. */
+/* The operator's own words for the list. The two lines under it carry text from outside the
+   app too and take their break opportunity with the rest of `.jobrow` in 26-settings.css. */
 .list-name {
   overflow-wrap: anywhere;
 }
@@ -103,14 +83,14 @@
   overflow: hidden;
   color: var(--sonarr-ink);
 }
-/* The whitespace between the two halves in the TSX is there for the accessibility tree, so the
-   badge still reads as two words; a whitespace-only anonymous flex item is not rendered, so it
-   costs the seam nothing. */
-.list-head .kind-arr > span {
+/* The two painted halves are the `aria-hidden` ones; the badge's name is a `.sr-only` sibling,
+   so what a reader says does not depend on whitespace between flex items reaching the
+   accessibility tree. `.sr-only` is out of flow, so it takes no part in the seam. */
+.list-head .kind-arr > span[aria-hidden] {
   padding: var(--space-2xs) var(--space-md);
   background: var(--sonarr);
 }
-.list-head .kind-arr > span + span {
+.list-head .kind-arr > span[aria-hidden] + span[aria-hidden] {
   border-left: 1px solid rgba(0, 0, 0, 0.55);
   background: var(--radarr);
 }
@@ -124,10 +104,11 @@
   gap: var(--space-sm);
   margin-top: var(--space-sm);
 }
+/* `inline-block`, not `inline-flex`: the tag and its count are one text run with a real space
+   between them, so the separation survives into the text the pill reads and copies as. As flex
+   items with a `gap` they had no separator at all and the pill copied as "reaper-keep412". */
 .tag-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-md);
+  display: inline-block;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-pill);
@@ -137,7 +118,9 @@
   /* The tag is the operator's typing, so it wraps rather than widening the row (rule 139). */
   overflow-wrap: anywhere;
 }
+/* The gap the flex `gap` used to supply, on top of the space in the text. */
 .tag-pill b {
+  margin-left: var(--space-xs);
   color: var(--accent-text);
   font-weight: var(--weight-bold);
   font-variant-numeric: tabular-nums;
@@ -158,8 +141,13 @@ details.per-server summary:hover {
 }
 .server-grid {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--space-2xs) 1.1rem;
+  /* `minmax(0, max-content)`, not bare `max-content`: `overflow-wrap: anywhere` on `.srv`
+     below lowers a box's MIN-content contribution and leaves max-content alone, and a
+     `max-content` track is sized from the latter -- so the column grew to the longest
+     unbroken server name and the break this grid asks for never fired (rule 139). The floor
+     is what lets the track shrink far enough to take it. */
+  grid-template-columns: minmax(0, max-content) 1fr;
+  gap: var(--space-2xs) var(--space-3xl);
   margin: var(--space-sm) 0 var(--space-2xs);
   padding-left: var(--space-3xl);
 }
@@ -221,57 +209,124 @@ details.per-server summary:hover {
   flex: 1;
 }
 .pick-card .acts {
-  /* The presets menu (`FilterMenu`, anchorClass "acts") hangs from this row: an inline
-     `.filter-anchor` wrapper around the button would break the card's column. */
-  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
   margin-top: var(--space-sm);
 }
-/* Direct children only: the menu's own rows keep `.filter-mi`'s sizing. */
-.pick-card .acts > button {
-  font-size: var(--text-xs);
-  padding: 0.25rem 0.6rem;
+/* The presets menu hangs from the BUTTON that opens it, not from the row. Anchored on
+   `.acts`, `left: var(--pop-shift, 0px)` measured from the row's left edge, so the menu drew
+   under `Custom` -- the other button in the row -- and the fit pass was handed the row's edge
+   rather than the trigger's, which is the line back to the control rule 138 is about. An
+   inline-flex wrapper is a flex item of the row, so the card's column is unaffected
+   (`FilterMenu`, anchorClass "preset-anchor"). */
+.pick-card .preset-anchor {
+  position: relative;
+  display: inline-flex;
 }
 /* Opens UPWARD. The IMDb card is the picker's last group, flush with the modal's bottom
    edge, and the modal clips on its own scroll boundary (`.modal` overflow-y) -- dropped
-   below the row, the menu opened half out of view. */
-.pick-card .filter-menu {
+   below the row, the menu opened half out of view. Scoped to this card, not every
+   `.pick-card`: it is the only one that opens a menu, and a card added above it would take
+   the flip on trust rather than on the geometry that earns it. */
+.pick-card .preset-anchor .filter-menu {
   top: auto;
   bottom: calc(100% + 6px);
 }
 
-/* The any/all choice in the tag form: a joined two-button group, flat, one hairline between
-   the halves, the active half tinted with the operator's accent. Deliberately not the pill
-   `.segmented` -- the approved mockup settled this shape for the list forms. */
-.seg2 {
-  display: inline-flex;
-  align-self: flex-start;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: var(--bg);
+/* The any/all choice in the tag form is the shared `Segmented` in its flat variant, defined
+   with the rest of that control in 04-buttons.css. Only its place in this form is set here:
+   it follows the tag help, so it takes the gap the boxes above it have. */
+.field-sm .segmented.flat {
   margin-top: var(--space-md);
 }
-.seg2 button {
+
+/* The tag editor (TagsEditor.tsx): removable chips + a free-type box. It lived in
+   15-policy-shell.css beside Policy's keep-tags card; that card is gone, the list modal is
+   the only consumer left, and the comment there still claimed it sat beside a chip shape
+   Policy's rules tables share. */
+.tag-editor {
+  margin-top: var(--space-md);
+}
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  /* `--bg`, the control standard's fill, not `--surface`: this bar's only context is the
+     modal, whose own background IS `--surface`, so the bar disappeared into the panel it
+     sits on while the Name and Collection boxes a few pixels above it read as boxes. `.qty`,
+     the composite this control is modeled on, fills with `--bg` for the same reason
+     (rule 40). */
+  background: var(--bg);
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: var(--protect-soft);
+  color: var(--protect);
+  border-radius: var(--radius-pill);
+  padding: 0.12rem 0.2rem 0.12rem 0.6rem;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  /* A tag is spelled on somebody else's keyboard in Sonarr or Radarr. As a flex item this
+     chip floors at its own min-content, so one long tag painted through the bordered bar
+     with no way to reach the tail (`.modal` is `overflow-x: hidden`). `.tag-pill` and
+     `.inst-chip` are the same chip shape and already take this (rules 139, 72). */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* Sized to --tap-min, which is why the chip's right padding is trimmed above: the button's
+   own hit area now supplies the inset the padding used to. */
+.tag-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-lg);
+  line-height: 1;
+  padding: 0;
+  border-radius: var(--radius-pill);
+}
+.tag-chip button:hover {
+  background: color-mix(in srgb, var(--protect) 18%, transparent);
+}
+/* Qualified by `.tag-editor` to outrank `.field-sm input`, which is a bare one-class-plus-type
+   selector (0,1,1) that dresses EVERY input under it in the standard bordered box. This one tied
+   it and lost on load order alone (15 before 26), so dropping the control into the list modal's
+   `.field-sm` drew a second bordered, `--bg`-filled box around the add box, inside the bar --
+   two nested boxes where the policy card, which has no such ancestor, showed one clean bar.
+   `.qty input[type="number"]` survives the same rule by the same trick, an attribute qualifier
+   instead of an ancestor; the composite control has to carry its own chrome wherever it is put. */
+.tag-editor .tag-chips input {
+  flex: 1;
+  min-width: 6rem;
   border: none;
   background: none;
-  border-radius: 0;
-  padding: var(--space-sm) var(--space-3xl);
-  font-size: var(--text-sm);
-  color: var(--muted);
-  font-weight: var(--weight-medium);
-}
-.seg2 button + button {
-  border-left: 1px solid var(--border-strong);
-}
-.seg2 button:hover:not(.on) {
-  background: var(--hover);
   color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  padding: 0.2rem;
+  outline: none;
 }
-.seg2 button.on {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-weight: var(--weight-semi);
+/* The free-type box has no border of its own, so the ring goes on the box that does --
+   the same composite-control pattern as .qty:focus-within. Without it, taking the input
+   with the keyboard would show nothing at all. */
+.tag-chips:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* And the inner box draws no ring of its own, or focusing it paints two: `.field-sm input:focus`
+   is the other half of the blanket rule above. `.qty :is(input, select):focus` does this. */
+.tag-editor .tag-chips input:focus {
+  outline: none;
 }

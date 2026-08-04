@@ -1285,9 +1285,16 @@ describe("the controls a screen reader has to tell apart", () => {
     });
 
     // Named in the operator's words, not by the `titleCase` fallback. The gate is retired as a
-    // switch, but the server still emits its id -- every hand spare carries it -- so its copy
-    // stays in `GATE_META` and a stored row reads as a sentence rather than as "Whitelisted".
-    expect(await screen.findByRole("switch", { name: "On one of your lists" })).toBeChecked();
+    // switch, but a stored body from before the upgrade still carries its id, so its copy stays
+    // in `GATE_META` and the row reads as a sentence rather than as "Whitelisted".
+    //
+    // And it says what THIS gate meant: tags and the "Never Reap" collection, the lists the
+    // operator curates by hand. The two retired labels were taken from `engine/fields.py` in
+    // source order and landed on the wrong ids, so this one wore the other's words while
+    // `curated_list` -- the IMDb Top 250 -- read "On a list you curate yourself".
+    expect(
+      await screen.findByRole("switch", { name: "On a list you curate yourself" }),
+    ).toBeChecked();
     // The card, its tag boxes and its own copy are gone with the feature.
     expect(screen.queryByText("Spare titles you've tagged")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Add a keep tag")).not.toBeInTheDocument();
