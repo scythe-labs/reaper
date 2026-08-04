@@ -1414,6 +1414,10 @@ class TestARepairedPolicyCannotBeReapedFrom:
             assert snapshot.degraded is True
             reason = snapshot.degraded_reason or ""
             assert "movie policy needs saving again" in reason, reason
+            # The lane is named the way the app spells it, not by its raw media-type id: this
+            # sentence goes verbatim into the incomplete-scan notice, and "tv policy" read as
+            # a typo in the middle of it (rule 21).
+            assert "tv policy" not in reason, reason
 
             async with factory() as s:
                 # The refusal is operator copy, and does not use the internal word.

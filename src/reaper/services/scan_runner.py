@@ -676,7 +676,12 @@ async def _run_scan_locked(
         # safe -- but it is NOT the policy the operator saved, and a run must never
         # execute against one nobody approved. Degrade, so the scan still produces a
         # viewable snapshot and the fix is one visit to the policy page.
-        for label, active in (("movie", active_movie), ("tv", active_tv)):
+        # "TV", not the raw `tv` media-type id: this lands verbatim in the incomplete-scan
+        # notice on three screens, and the app spells it TV everywhere else, so lower case
+        # read as a typo in the middle of a sentence telling the operator to go and fix
+        # something. `api/routes.py`'s simulator sentence already maps its own lane this way
+        # (rules 21, 144).
+        for label, active in (("movie", active_movie), ("TV", active_tv)):
             if not active.repaired:
                 continue
             # Name the part that was recovered, so the operator checks the right thing: a
