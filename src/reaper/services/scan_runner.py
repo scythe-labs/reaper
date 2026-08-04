@@ -42,7 +42,7 @@ from reaper.engine.gates import (
     ServerPopularityGate,
     StreamingNowGate,
 )
-from reaper.engine.policy import PolicyBody
+from reaper.engine.policy import PolicyBody, PolicyRepair, join_and
 from reaper.services import (
     app_settings,
     history_sync,
@@ -99,6 +99,36 @@ def scan_running() -> bool:
     it waits only 5s for (``db.session``) can cost it every source read it made (#325).
     """
     return _scan_running
+
+
+#: What the incomplete-scan notice tells the operator to look at, per repair. This is the
+#: only remedy the degradation names, so a repair with no entry here would send them to the
+#: policy page to check nothing in particular.
+#:
+#: The frontend's twin is ``REPAIR_NOTICES`` in ``frontend/src/components/PolicyEditor.tsx``:
+#: one repair, two sentences, written by two people reading different files (rule 144).
+#: ``tests/test_policy_repairs.py`` walks ``PolicyRepair`` against BOTH and names the file
+#: that is missing a member, so neither can be the one that quietly has no copy.
+#: Each entry is the TARGET alone, so the sentence below supplies one "check" however many
+#: repairs compose ("check your keep rules and the points", never "check X and check Y").
+_REPAIR_CHECKS: dict[PolicyRepair, str] = {
+    PolicyRepair.RESCALED: "the points",
+    PolicyRepair.FELL_BACK: "the values",
+    PolicyRepair.RATING_RULES_RESTORED: "Keep well-rated titles",
+    PolicyRepair.LISTS_MIGRATED: "your keep rules",
+}
+
+
+def _what_to_check(repairs: tuple[PolicyRepair, ...]) -> str:
+    """The remedy clause, naming every repair's target rather than only the first.
+
+    A body can arrive carrying two repairs (lists converted, then weights rescaled), and
+    naming one sends the operator to look at a control that is not the one that moved.
+    Falls back to the generic target for a repair with no entry, so a member added without
+    copy still produces a sentence -- the test above is what stops it staying that way.
+    """
+    named = [_REPAIR_CHECKS[r] for r in repairs if r in _REPAIR_CHECKS]
+    return f"check {join_and(named) if named else 'the values'}"
 
 
 #: Every gate the catalog knows how to build. A gate in a policy with no entry here
@@ -684,17 +714,9 @@ async def _run_scan_locked(
         for label, active in (("movie", active_movie), ("TV", active_tv)):
             if not active.repaired:
                 continue
-            # Name the part that was recovered, so the operator checks the right thing: a
-            # rescale moved their points, the rating recovery put back a protection that
-            # had stopped keeping anything.
-            what = (
-                "check Keep well-rated titles"
-                if active.rating_rules_recovered
-                else "check the points"
-            )
             pre_scan_degradations.append(
                 f"your {label} policy needs saving again before anything can be removed: "
-                f"open the policy page, {what}, and save"
+                f"open the policy page, {_what_to_check(active.repairs)}, and save"
             )
 
         # Same reasoning for the profile's caps and grace: when the stored settings blob was

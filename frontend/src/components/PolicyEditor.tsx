@@ -1040,6 +1040,59 @@ function SeasonAdvisory({ keepLast, scope }: { keepLast: number; scope: "all" | 
 // The workspace.
 // ---------------------------------------------------------------------------
 
+/** What one `PolicyRepair` says, and where the page says it.
+ *
+ *  `where` is a property of the repair, not of the layout: the rescale is about the numbers
+ *  you are ABOUT TO WRITE, so it belongs beside Save, while a body that could not be read at
+ *  all belongs at the top where no scroll position can hide it.
+ *
+ *  Keyed on the server's ids and consulted with a fallback, so an id this file does not know
+ *  still renders a sentence rather than nothing (rule 66). It is only the sentence that can
+ *  be missing: `dirty` counts `repairs` and never reads this map, so an unknown repair still
+ *  raises the savebar. That split is what makes the limbo in #516 unreachable.
+ *
+ *  The backend's twin is `_REPAIR_CHECKS` in `src/reaper/services/scan_runner.py`, which
+ *  writes the same repair into the incomplete-scan notice. One repair, two sentences, in two
+ *  trees (rule 144) -- `tests/test_policy_repairs.py` walks `PolicyRepair` against both and
+ *  names whichever file is missing a member. */
+type RepairNotice = {
+  tone: "error" | "warn";
+  where: "top" | "savebar";
+  text: string;
+};
+
+export const REPAIR_NOTICES: Record<string, RepairNotice> = {
+  fell_back: {
+    tone: "error",
+    where: "top",
+    text: "Your saved policy couldn't be read, so this shows the starting one instead. Nothing has changed on your server. Check the values below, then save to replace it.",
+  },
+  rating_rules_restored: {
+    tone: "warn",
+    where: "top",
+    text: "Keep well-rated titles had stopped keeping anything. Your saved rating is back below, unsaved. Reaper won't remove anything until you check it and save.",
+  },
+  lists_migrated: {
+    tone: "warn",
+    where: "top",
+    text: "Your protected lists moved to Settings → Lists, and the keep rules below now do the protecting. The same titles stay covered. Reaper won't remove anything until you save this.",
+  },
+  rescaled: {
+    tone: "warn",
+    where: "savebar",
+    text: "Your points have been spread to add up to 100. Nothing has changed on your server yet. Each rule keeps the same share it had, so your scores stay where they are. Review and save.",
+  },
+};
+
+/** What an id this build does not know renders as. It says the one thing true of every
+ *  repair, so a server newer than this bundle still tells the operator why the page is
+ *  dirty and what clears it. */
+const UNKNOWN_REPAIR: RepairNotice = {
+  tone: "warn",
+  where: "top",
+  text: "Reaper had to change your saved policy to load it, so what's below is not what's stored. Check it and save.",
+};
+
 const SECTIONS = [
   { id: "flags", label: "What flags a title" },
   { id: "kept", label: "What's always kept" },
@@ -1293,9 +1346,8 @@ export function PolicyEditor({
   // Against `debounced` rather than `draft`, so the sentence cannot lead its own figures by the
   // debounce and flip under a keystroke nothing has simulated yet. Raw JSON.stringify compares
   // canonical forms for the same reason `dirty` below may (rule 39): the draft is re-seeded from
-  // the server's own response after each save. `dirty`'s forced flags are deliberately absent --
-  // `needs_save` and `fell_back` are reasons to show a savebar, never evidence a rule was
-  // changed.
+  // the server's own response after each save. `dirty`'s forced `repairs` term is deliberately
+  // absent here: a repair is a reason to show a savebar, never evidence a rule was changed.
   const simulatedIsEdited = useMemo(
     () =>
       debounced !== null &&
@@ -1426,25 +1478,34 @@ export function PolicyEditor({
     },
   });
 
-  // EVERY load-time recovery forces dirty, because in each case what is on screen is not
-  // what is stored and the savebar has to offer the Save that replaces it. The three are
-  // mutually exclusive server-side (services/profiles.py active_policy): `needs_save` is an
-  // old policy rescaled to the 100-point budget, `fell_back` is a body that could not be
-  // read at all, so this shows the shipped default instead, and `rating_rules_restored` is
-  // a rating bar put back after it stopped keeping anything. Missing the second one left
-  // the only way out of the fallback behind a gate that never opened. Discard cannot clear
-  // any of them, which is right: there is no stored body to go back to that this build can
-  // load, or (for the restored bar) none that still protects what the operator set.
+  // EVERY load-time repair forces dirty, because in each case what is on screen is not what
+  // is stored and the savebar has to offer the Save that replaces it.
+  //
+  // One term for every repair, and it counts rather than naming: a repair kind the server
+  // adds raises the savebar here on the day it ships, before anyone writes copy for it. The
+  // shape this replaced named three of the four, so a body whose list protections had been
+  // converted opened CLEAN -- the page held no Save, while every scan degraded telling the
+  // operator to go and press it (#516). Discard cannot clear it, which is right: the stored
+  // body is the one that does not load.
+  const repairs = useMemo(() => saved?.repairs ?? [], [saved]);
   const dirty = useMemo(
     () =>
       draft !== null &&
       saved !== undefined &&
-      (Boolean(saved.needs_save) ||
-        Boolean(saved.fell_back) ||
-        Boolean(saved.rating_rules_restored) ||
-        JSON.stringify(draft) !== JSON.stringify(saved.body)),
-    [draft, saved],
+      (repairs.length > 0 || JSON.stringify(draft) !== JSON.stringify(saved.body)),
+    [draft, saved, repairs],
   );
+
+  // The repairs split by where they read, resolved through `REPAIR_NOTICES` with the
+  // unknown-id fallback so a server newer than this bundle still says something. Server
+  // order is kept: it is the order the repairs were applied.
+  const repairNotices = useMemo(() => {
+    const resolved = repairs.map((id) => ({ id, notice: REPAIR_NOTICES[id] ?? UNKNOWN_REPAIR }));
+    return {
+      top: resolved.filter((r) => r.notice.where === "top"),
+      savebar: resolved.filter((r) => r.notice.where === "savebar"),
+    };
+  }, [repairs]);
 
   // The preset that was just applied, so the band can say "staged, not saved" until both
   // saves are clean again (or the drafts are discarded).
@@ -1766,23 +1827,21 @@ export function PolicyEditor({
             </DocLink>
           </div>
         </div>
-        {/* A recovery notice renders on the load it explains, so it hangs off the response
-            flag alone and no dirty gate, disclosure or savebar can hide it.
+        {/* A repair notice renders on the load it explains, so it hangs off the response
+            list alone and no dirty gate, disclosure or savebar can hide it.
 
-            `standing` on both, for that same reason: a flag carried by the fetch is the state of
-            the page from its first paint, and the reader meets it above the values it is about. */}
-        {saved?.fell_back && (
-          <Notice tone="error" as="div" standing>
-            Your saved policy couldn't be read, so this shows the starting one instead. Nothing has
-            changed on your server. Check the values below, then save to replace it.
+            `standing` on all of them, for that same reason: a flag carried by the fetch is the
+            state of the page from its first paint, and the reader meets it above the values it
+            is about.
+
+            All of them, in the order the server applied them, so a body that needed two repairs
+            says both. Keyed on the repair id, so nothing here has to be remembered when a repair
+            is added. */}
+        {repairNotices.top.map(({ id, notice }) => (
+          <Notice key={id} tone={notice.tone} as="div" standing>
+            {notice.text}
           </Notice>
-        )}
-        {saved?.rating_rules_restored && (
-          <Notice tone="warn" as="div" standing>
-            Keep well-rated titles had stopped keeping anything. Your saved rating is back below,
-            unsaved. Reaper won't remove anything until you check it and save.
-          </Notice>
-        )}
+        ))}
         {pendingSwitch !== null && (
           <SwitchConfirm
             nonce={switchNonce}
@@ -2483,19 +2542,18 @@ export function PolicyEditor({
                   {policyHeldBecause}.
                 </Notice>
               )}
-              {/* The rescale recovery. Rendered here, beside Save, because it is about
-                  what you are about to write -- and from the response FLAGS, not the
-                  warning list, which is built by re-validating the draft and so can never
-                  carry anything about how the policy loaded. The louder `fell_back`
-                  recovery renders at the top of the page instead, unconditionally, so no
-                  gate can hide it. */}
-              {saved?.needs_save && !saved.fell_back && (
-                <Notice tone="warn" className="budget-notice" as="span">
-                  Your points have been spread to add up to 100. Nothing has changed on your server
-                  yet. Each rule keeps the same share it had, so your scores stay where they are.
-                  Review and save.
+              {/* The repairs that are about what you are ABOUT TO WRITE, so they read beside
+                  Save rather than at the top: today that is the rescale alone (`REPAIR_NOTICES`
+                  carries the placement). From the response's repair list, not the warning list,
+                  which is built by re-validating the draft and so can never carry anything about
+                  how the policy loaded. No guard against the louder `fell_back` is needed: that
+                  one is returned alone (`services/profiles.py`), because nothing of the stored
+                  body survived for a second repair to be about. */}
+              {repairNotices.savebar.map(({ id, notice }) => (
+                <Notice key={id} tone={notice.tone} className="budget-notice" as="span">
+                  {notice.text}
                 </Notice>
-              )}
+              ))}
               {dirty && <PointsBudget builtIn={builtInWeight} yours={yourWeight} />}
             </span>
             <button

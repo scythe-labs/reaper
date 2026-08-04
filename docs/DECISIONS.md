@@ -704,8 +704,37 @@ default, safe only because the ORM carries the Python-side default. `cache.db` s
 
 ## Gate retirement
 
-**Choice: a stored body self-heals on load, and the save boundary only accepts a gate the
-engine can build.**
+**Choice: the upgrade persists the heal where it can, a load-time shim covers what it cannot,
+and the save boundary only accepts a gate the engine can build.**
+
+**A heal that only runs on load can never finish.** A retirement whose replacement changes what
+is stored — the `whitelisted` and `curated_list` gates becoming `on_list` keep rules — was left
+to `convert_list_protections` at load time, with `ActivePolicy.repaired` degrading every scan
+until the operator re-saved. The stored row stays legacy-shaped however many scans they run, so
+the incomplete-scan banner is permanent, and it was permanent beside a policy page whose savebar
+never appeared, because the repair reached the server and not the response (#516). Two lessons,
+and only the second is about the missing field. **A repair that is verdict-preserving belongs in
+the migration**, where it happens once and nobody is asked to approve their own upgrade:
+`d5e6f7a8b9c0` appends the converted body, and the next load finds nothing to repair.
+`RETIRED_GATES` is the other kind and stays on load — it drops a key, so there is nothing to
+persist. **A repair the migration declines is where the shim earns its place**, and the
+conversion declines deliberately: it keeps an enabled gate whose replacement list is missing,
+because an `on_list` rule naming no list reads as a green "checked, did not fire", so persisting
+that output would store a body `build_gates` refuses. The row stays legacy, the shim reports it,
+and the editor is where the operator is told.
+
+Writing it is safe only because the conversion is verdict-preserving: `CustomProtectGate` answers
+an `on_list` match with PROTECT and `decide_verdict` honors it before score or coverage, the same
+branch the retired gates fired into. A repair that could move a title toward deletion would stay
+on load whatever it cost, per rule 65.
+
+The four repairs are one `PolicyRepair` enum rather than four booleans, because each obliges four
+surfaces — `PolicyOut.repairs`, the editor's dirty term, a notice, the scan's remedy clause — and
+a boolean can be wired to three and read correct at each, which is precisely how `lists_migrated`
+shipped. The editor forces dirty on the **length** of the list and takes the copy separately, so a
+repair added later raises a savebar before anyone writes a sentence for it;
+`tests/test_policy_repairs.py` walks the enum against both trees and names the file that is short
+a member.
 
 `UnmanagedGate` was retired under rule 38/117: it shipped enabled by default and could not
 fire. `PolicyBody.RETIRED_GATES` drops it from a stored body on load, which is what keeps

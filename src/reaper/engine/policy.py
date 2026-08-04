@@ -36,6 +36,7 @@ protective number has a floor (``min_votes >= 1``, ``grace_days >= 7``).
 from __future__ import annotations
 
 import copy
+import enum
 import hashlib
 import json
 from typing import Annotated, Any, ClassVar, Literal, Self, assert_never
@@ -994,13 +995,50 @@ class PolicyWarning(Frozen):
     severity: Literal["warn", "danger"]
 
 
-def _join_and(parts: list[str]) -> str:
-    """Join as `"a", "b" and "c"`. The conjunctive twin of `fields._join_or`, kept in the
-    module that needs it rather than reaching across for a private name; both exist because a
-    comma-joined dump is not something an operator reads at a glance."""
+def join_and(parts: list[str]) -> str:
+    """Join as `"a", "b" and "c"`. The conjunctive twin of `fields._join_or`; both exist
+    because a comma-joined dump is not something an operator reads at a glance.
+
+    Public, so a second module needing the same conjunction imports this rather than growing
+    a third copy: `services/scan_runner.py` joins the repair remedies with it."""
     if len(parts) <= 1:
         return parts[0] if parts else ""
     return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+class PolicyRepair(enum.StrEnum):
+    """One way ``active_policy`` had to change a stored body to load it.
+
+    **The set is the declaration every surface derives from**, and that is the whole reason
+    it is an enum rather than four booleans on ``ActivePolicy``. Each repair obliges four
+    things at once: the flag reaches ``PolicyOut``, the editor's savebar forces dirty on it,
+    a notice says which repair happened, and the scan's degradation sentence names what to
+    check. ``lists_migrated`` shipped with the first and skipped the rest, so a stored body
+    from before the lists move degraded every scan with an incomplete-scan banner the
+    operator could not clear: the editor never went dirty, so the page held no Save, and the
+    one exit the degradation names did not exist (#516). A boolean can be forgotten at three
+    of four sites and read correct at each one; a member of this enum cannot, because
+    ``tests/test_policy_repairs.py`` walks it and fails on any member either side lacks copy
+    for (rules 103, 144).
+
+    Adding a shim means adding a member here, then following the test where it fails.
+    """
+
+    RESCALED = "rescaled"
+    """Removal weights rescaled to total 100 (``rebalance``). Their tuning, in new units."""
+
+    FELL_BACK = "fell_back"
+    """Unrepairable, so the body in hand is the SHIPPED DEFAULT. The loudest of the four:
+    these are numbers the operator never chose, and they can be looser than what was saved."""
+
+    RATING_RULES_RESTORED = "rating_rules_restored"
+    """The rating bar was put back from an older saved setting (``recover_rating_rules``).
+    That body loads perfectly well while protecting nothing, which is why it is a repair."""
+
+    LISTS_MIGRATED = "lists_migrated"
+    """List protections re-expressed as ``on_list`` keep rules (``convert_list_protections``).
+    Verdict-preserving by construction, and still not adopted silently, because the stored
+    body says one thing and the body in force says another."""
 
 
 #: Gate keys that stored bodies still carry and the model no longer declares. ``secondary``
@@ -1049,7 +1087,7 @@ def rebalance(raw: object) -> dict[str, Any] | None:
     the remainder toward the larger weights does nothing at all in the equal-weight case).
 
     So a rescaled body is never adopted silently. The caller flags it
-    (``services.profiles.ActivePolicy.rescaled``), which makes ``ActivePolicy.repaired``
+    (``PolicyRepair.RESCALED``), which makes ``profiles.ActivePolicy.repaired``
     true, degrades the scan, and opens the editor on it as an unsaved draft the operator
     reviews and re-saves themselves. ``tests/test_policy.py`` pins both the bound and the
     fact that a verdict near the line can move.
@@ -1103,8 +1141,8 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
     time a profile is saved.
 
     Returns the body with the equivalent IMDb bar synthesized, or ``None`` when there is
-    nothing to recover. The caller flags it (``services.profiles.ActivePolicy
-    .rating_rules_recovered``), which makes ``repaired`` true, degrades the scan, and opens
+    nothing to recover. The caller flags it (``PolicyRepair
+    .RATING_RULES_RESTORED``), which makes ``repaired`` true, degrades the scan, and opens
     the editor on it as an unsaved draft -- never a silent substitution of an operator's
     own safety value (rule 65).
 
@@ -1213,7 +1251,7 @@ def convert_list_protections(
     no rule rather than to a rule naming nothing (rule 25).
 
     Returns the converted body, or ``None`` when nothing is legacy-shaped. The caller
-    flags the conversion (``profiles.ActivePolicy.lists_migrated``), which makes
+    flags the conversion (``PolicyRepair.LISTS_MIGRATED``), which makes
     ``repaired`` true, degrades the scan, and opens the editor on it as an unsaved draft:
     a protection moved between surfaces is a policy edit nobody has saved yet (rule 105).
     Must not raise, for the same reason every shim here must not.
@@ -1631,7 +1669,7 @@ def inspect(
             # spelling of it (rule 144). Distinct labels joined, so a span that ever gains a
             # second field does not silently name one of them.
             field = "protect_conditions"
-            labels = _join_and(
+            labels = join_and(
                 list(dict.fromkeys(f'"{BY_KEY[c.field].label}"' for c in window_blockers))
             )
             many = len(window_blockers) > 1
@@ -1917,7 +1955,7 @@ def inspect(
         contributors, total = window_keeps + lifetime_keeps, combined_total
         scope = "Titles added before your watch history starts won't be flagged for removal."
     if contributors:
-        named = _join_and([f'"{k.name}"' for k in contributors])
+        named = join_and([f'"{k.name}"' for k in contributors])
         many = len(contributors) > 1
         rule_phrase = f"your keep rules {named} take" if many else f"your keep rule {named} takes"
         theirs = "their" if many else "its"

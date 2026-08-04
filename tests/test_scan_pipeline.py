@@ -44,7 +44,7 @@ from reaper.db.session import create_cache_engine, create_engine, create_session
 from reaper.engine.dormancy import history_reach_days
 from reaper.engine.gates import GateId
 from reaper.engine.observation import Known, Unknown
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, PolicyRepair
 from reaper.services import (
     app_settings,
     history_sync,
@@ -1337,7 +1337,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
         cache_engine: AsyncEngine,
         monkeypatch: pytest.MonkeyPatch,
         *,
-        rescaled: bool,
+        repairs: tuple[PolicyRepair, ...],
     ) -> tuple[Any, async_sessionmaker[AsyncSession], AsyncEngine]:
         from types import SimpleNamespace
 
@@ -1364,7 +1364,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
 
         async def fake_policies(session: Any) -> Any:
             return (
-                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default", rescaled=rescaled),
+                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default", repairs),
                 profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
             )
 
@@ -1408,7 +1408,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
         from reaper.services.planner import PlanError, build_plan
 
         snapshot, factory, engine = await self._run(
-            tmp_path, cache_engine, monkeypatch, rescaled=True
+            tmp_path, cache_engine, monkeypatch, repairs=(PolicyRepair.LISTS_MIGRATED,)
         )
         try:
             assert snapshot.degraded is True
@@ -1418,6 +1418,12 @@ class TestARepairedPolicyCannotBeReapedFrom:
             # sentence goes verbatim into the incomplete-scan notice, and "tv policy" read as
             # a typo in the middle of it (rule 21).
             assert "tv policy" not in reason, reason
+            # The remedy names the control that actually moved. This clause was an if/else
+            # over one flag, so a converted list policy was told to "check the points" -- and
+            # no points had moved, so nothing on the page it sent them to matched the
+            # instruction (#516).
+            assert "check your keep rules" in reason, reason
+            assert "check the points" not in reason, reason
 
             async with factory() as s:
                 # The refusal is operator copy, and does not use the internal word.
@@ -1438,9 +1444,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
         some unrelated reason."""
         from reaper.services.planner import build_plan
 
-        snapshot, factory, engine = await self._run(
-            tmp_path, cache_engine, monkeypatch, rescaled=False
-        )
+        snapshot, factory, engine = await self._run(tmp_path, cache_engine, monkeypatch, repairs=())
         try:
             assert snapshot.degraded is False, snapshot.degraded_reason
 

@@ -27,7 +27,12 @@ from reaper.engine.explanation import (
 )
 from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
-from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
+from reaper.engine.policy import (
+    CustomCondemnSpec,
+    GradedKeepSpec,
+    PolicyRepair,
+    RatingRuleSpec,
+)
 from reaper.engine.signals import SignalId
 
 # The why-panel document moved to ``engine.explanation`` so the reap path could run the same
@@ -734,31 +739,21 @@ class PolicyOut(BaseModel):
     ``None`` when the scan did not record it, which the editor renders as not knowing rather
     than as a reach of zero."""
 
-    needs_save: bool = False
-    """This body was rescaled on the way out and is NOT what is stored.
+    repairs: list[PolicyRepair] = []
+    """Every way this body had to be changed to load it, so it is NOT what is stored.
 
-    Set when a policy written before removal weights had to total 100 was rescaled to fit
-    (``policy.rebalance``). Their own tuning, in new units. The editor opens on it dirty,
-    so the operator reviews and saves it rather than discovering it changed underneath
-    them. Nothing is written until they do, so approvals stay valid meanwhile."""
+    One list rather than a boolean per repair, and the editor reads its LENGTH to decide
+    whether to open dirty. That is the fix for the shape this used to have: three booleans,
+    each of which had to be remembered at four sites, and the fourth repair remembered at
+    one. A stored body from before the lists move then degraded every scan while the editor
+    stayed clean, so the page held no Save and the degradation named an exit that was not
+    there (#516). A member added to ``PolicyRepair`` now raises the savebar whether or not
+    anyone wrote copy for it, and ``tests/test_policy_repairs.py`` fails until they do.
 
-    fell_back: bool = False
-    """The stored body could not be repaired, so this is the SHIPPED DEFAULT.
-
-    Louder than ``needs_save``: these are numbers the operator never chose.
-
-    All three recovery flags are fields rather than ``warnings`` entries on purpose. The
-    editor builds its warning list by re-validating the *draft*, so anything attached to
-    this response is never read -- a load-time warning put there is silently dropped."""
-
-    rating_rules_restored: bool = False
-    """The rating bar was restored from an older saved setting
-    (``policy.recover_rating_rules``), so this body is NOT what is stored.
-
-    Its own flag, not ``needs_save``, because the two recoveries read completely
-    differently to an operator: one moved their points into new units, this one put back a
-    protection that had stopped keeping anything. The editor opens on it dirty and says
-    which."""
+    A field rather than a ``warnings`` entry, like the flags before it: the editor builds
+    its warning list by re-validating the *draft*, so anything attached to this response is
+    never read -- a load-time warning put there is silently dropped.
+    """
     warnings: list[PolicyWarningOut]
     """Things that are legal but probably not what you meant. A validator cannot tell
     an IMDb floor of 96 (meaning 9.6) from a Rotten Tomatoes 96 typed into the wrong

@@ -38,6 +38,7 @@ from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     ConditionSpec,
     PolicyBody,
+    PolicyRepair,
     ProfileSettings,
     combine_hashes,
     convert_list_protections,
@@ -155,39 +156,18 @@ class ActivePolicy:
     body: PolicyBody
     name: str
 
-    rescaled: bool = False
-    """This is the operator's own body, rescaled to load (``policy.rebalance``).
+    repairs: tuple[PolicyRepair, ...] = ()
+    """Every way this body had to be changed to load it, in the order they were applied.
 
-    Their tuning survived; only the units moved. The rescale is not exactly
-    score-preserving -- integer rounding can move a score a point or two, enough to cross
-    a condemn line (see ``policy.rebalance``) -- which is why this flag makes ``repaired``
-    true and the editor opens on it as an unsaved draft for them to review and re-save.
+    One field, not four booleans, because each repair obliges four surfaces at once and a
+    boolean can be wired to three of them and read correct at each. ``PolicyRepair`` carries
+    what each member means and the test that walks them.
+
+    Composed, never exclusive: a body needing its rating bar put back AND rescaling arrives
+    carrying both, and one needing its lists converted first carries that too. Order is the
+    order ``active_policy`` applied them, so the operator's notices read in the order the
+    repairs happened.
     """
-
-    fell_back: bool = False
-    """The stored body could not be repaired, so this is the SHIPPED DEFAULT.
-
-    Their tuning did not survive. Louder than ``rescaled`` in the UI, because the numbers
-    on screen are ones they never chose.
-    """
-
-    rating_rules_recovered: bool = False
-    """This is the operator's own body with their rating bar restored
-    (``policy.recover_rating_rules``).
-
-    The bar moved off the RATING_FLOOR gate row with no backfill, so a body written before
-    that move still validates while protecting nothing. Restoring it changes what the scan
-    decides -- titles their bar keeps stop being condemnable -- so it is never adopted
-    silently: this flag makes ``repaired`` true, the scan degrades, and the editor opens on
-    it as an unsaved draft the operator reviews and saves.
-    """
-
-    lists_migrated: bool = False
-    """This is the operator's own body with its list protections re-expressed as ``on_list``
-    keep rules (``policy.convert_list_protections``): the keep tags moved to Settings ->
-    Lists, and the whitelist and curated-list gates became per-list rules. The verdicts are
-    meant to be identical, and it is still never adopted silently -- same contract as the
-    recoveries above: ``repaired``, degraded, opened as a draft to review and save."""
 
     @property
     def repaired(self) -> bool:
@@ -199,7 +179,7 @@ class ActivePolicy:
         the name: an operator's own policy is frequently *called* "default", so the name
         cannot tell the recoveries apart (it silently did not, once).
         """
-        return self.rescaled or self.fell_back or self.rating_rules_recovered or self.lists_migrated
+        return bool(self.repairs)
 
 
 async def active_policy(session: AsyncSession, media_type: str = "movie") -> ActivePolicy:
@@ -245,7 +225,9 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     # forbids (``keep_tags``), so every shim and validation below it must see its output or
     # a merely-legacy body would read as unreadable and fall back to the shipped default --
     # the silent substitution rule 65 forbids. Composed, never raced, like the pair below.
-    lists_migrated = False
+    # Every repair applied on the way to a loadable body, in the order applied. Composed,
+    # so a body needing two of them reports two and the editor says both.
+    repairs: tuple[PolicyRepair, ...] = ()
     if has_legacy_list_protections(raw):
         tag_name, imdb_name, own_names = await _conversion_list_names(session)
         converted = convert_list_protections(
@@ -256,7 +238,7 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
         )
         if converted is not None:
             raw = converted
-            lists_migrated = True
+            repairs = (*repairs, PolicyRepair.LISTS_MIGRATED)
             log.info("policy.lists_migrated", media_type=media_type, name=row.name)
 
     restored = recover_rating_rules(raw)
@@ -271,12 +253,10 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
             log.warning("policy.rating_rules_unrecoverable", media_type=media_type)
         else:
             log.info("policy.rating_rules_recovered", media_type=media_type, name=row.name)
-            return ActivePolicy(
-                body, row.name, rating_rules_recovered=True, lists_migrated=lists_migrated
-            )
+            return ActivePolicy(body, row.name, (*repairs, PolicyRepair.RATING_RULES_RESTORED))
 
     try:
-        return ActivePolicy(PolicyBody.model_validate(raw), row.name, lists_migrated=lists_migrated)
+        return ActivePolicy(PolicyBody.model_validate(raw), row.name, repairs)
     except ValidationError:
         # A body json.loads could not read (`raw` is None), one that decodes to something
         # other than an object, and one that fails validation all land here; none may
@@ -288,8 +268,8 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
         # were rescaled and nothing about the protection that vanished, and saving the draft
         # the editor opens would write the loss back permanently (rules 105 and 65).
         source = restored if isinstance(restored, dict) else raw
-        repaired = rebalance(source) if isinstance(source, dict) else None
-        if repaired is not None:
+        rescaled = rebalance(source) if isinstance(source, dict) else None
+        if rescaled is not None:
             recovered = source is restored
             log.info(
                 "policy.rebalanced",
@@ -297,15 +277,18 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
                 name=row.name,
                 rating_rules_recovered=recovered,
             )
+            if recovered:
+                repairs = (*repairs, PolicyRepair.RATING_RULES_RESTORED)
             return ActivePolicy(
-                PolicyBody.model_validate(repaired),
+                PolicyBody.model_validate(rescaled),
                 row.name,
-                rescaled=True,
-                rating_rules_recovered=recovered,
-                lists_migrated=lists_migrated,
+                (*repairs, PolicyRepair.RESCALED),
             )
         log.warning("policy.unreadable", media_type=media_type, name=row.name)
-        return ActivePolicy(default, "default", fell_back=True)
+        # Nothing of the stored body survives, so the repairs that got partway there are not
+        # reported: the operator is looking at the shipped default, and a notice saying their
+        # lists were converted would be about a body that is no longer on screen.
+        return ActivePolicy(default, "default", (PolicyRepair.FELL_BACK,))
 
 
 async def _conversion_list_names(

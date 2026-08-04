@@ -25,7 +25,7 @@ from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, ProfileSettings
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyRepair, ProfileSettings
 from reaper.ratings import RatingSource
 from reaper.services import profiles
 from reaper.services.profiles import (
@@ -240,9 +240,10 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.fell_back is True
-        assert active.rescaled is False
+        assert active.repairs == (PolicyRepair.FELL_BACK,)
         assert active.repaired is True  # the scan degrades on it
+        # Alone: nothing of the stored body survived for a second repair to be about, and a
+        # notice saying their lists were converted would describe a body that is not on screen.
         assert active.body == DEFAULT_MOVIE_POLICY
         assert active.name == "default"
 
@@ -270,8 +271,7 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.fell_back is False
-        assert active.rescaled is True
+        assert active.repairs == (PolicyRepair.RESCALED,)
         assert active.name == "stored"
         assert sum(s.weight for s in active.body.signals) == 100
 
@@ -292,9 +292,8 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.rating_rules_recovered is True
+        assert active.repairs == (PolicyRepair.RATING_RULES_RESTORED,)
         assert active.repaired is True  # the scan degrades on it
-        assert active.rescaled is False and active.fell_back is False
         assert active.name == "stored"
         assert [(r.source, r.floor, r.min_votes) for r in active.body.keep_rating_rules] == [
             (RatingSource.IMDB, 75, 1000)
@@ -324,9 +323,9 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.rescaled is True
-        assert active.rating_rules_recovered is True  # the bar survived the rebalance
-        assert active.fell_back is False
+        # Both repairs, in the order they were applied: the bar survived the rebalance, and
+        # the operator's notices read in the order the repairs happened.
+        assert active.repairs == (PolicyRepair.RATING_RULES_RESTORED, PolicyRepair.RESCALED)
         assert sum(s.weight for s in active.body.signals) == 100
         assert [(r.source, r.floor, r.min_votes) for r in active.body.keep_rating_rules] == [
             (RatingSource.IMDB, 75, 1000)
@@ -345,7 +344,7 @@ class TestACorruptPolicyBodyNeverRaises:
 
         active = await active_policy(session, "movie")
 
-        assert active.rating_rules_recovered is False
+        assert active.repairs == ()
         assert active.repaired is False
         assert active.body.keep_rating_rules == ()
 
@@ -400,9 +399,8 @@ class TestALegacyListBodyIsConvertedOnLoad:
 
         active = await active_policy(session, "movie")
 
-        assert active.lists_migrated is True
+        assert active.repairs == (PolicyRepair.LISTS_MIGRATED,)
         assert active.repaired is True  # the scan degrades on it
-        assert active.fell_back is False
         assert active.name == "stored"
         # Each enabled gate became a rule naming the CURRENT list of its source -- the
         # operator's own names, resolved from the registry rather than assumed.
@@ -419,7 +417,7 @@ class TestALegacyListBodyIsConvertedOnLoad:
 
         active = await active_policy(session, "movie")
 
-        assert active.lists_migrated is False
+        assert active.repairs == ()
         assert active.repaired is False
         assert active.body == DEFAULT_MOVIE_POLICY
 

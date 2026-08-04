@@ -591,19 +591,24 @@ export interface Policy {
   history_reach_days?: number | null;
   body: PolicyBody;
   warnings: PolicyWarning[];
-  /** This body was repaired on the way out and is NOT what is stored. Set when a policy
-   *  written before removal weights had to total 100 was rescaled to fit. The editor
-   *  opens on it dirty so the operator reviews and saves their own tuning in the new
-   *  units; nothing is written, and approvals stay valid, until they do. */
-  needs_save?: boolean;
-  /** The stored body could not be repaired, so this is the shipped default: numbers the
-   *  operator never chose. Louder than needs_save. */
-  fell_back?: boolean;
-  /** The rating bar was restored from an older saved setting, so this body is NOT what is
-   *  stored. Its own flag rather than needs_save: that one moved points into new units,
-   *  this one put back a protection that had stopped keeping anything. */
-  rating_rules_restored?: boolean;
+  /** Every way this body had to be repaired to load it, so it is NOT what is stored.
+   *
+   *  The editor reads the LENGTH of this to open dirty, and the copy per member separately.
+   *  That split is the point: a repair the server reports raises a savebar whether or not
+   *  anyone wrote a sentence for it, so the operator always has the Save the degraded scan
+   *  is telling them to press. Three booleans lived here before and the fourth repair only
+   *  ever reached the backend, which left a scan degraded with no way out (#516). */
+  repairs?: PolicyRepair[];
 }
+
+/** One way the server had to change a stored policy body to load it.
+ *
+ *  Mirrors `PolicyRepair` in `src/reaper/engine/policy.py`, which is the declaration; a
+ *  member the server adds and this union has not is handled rather than assumed away
+ *  (`REPAIR_NOTICES` in `PolicyEditor.tsx`, rule 66). Widened to `string` on purpose so an
+ *  unknown id is a value TypeScript admits exists, not a cast. */
+export type PolicyRepair =
+  "rescaled" | "fell_back" | "rating_rules_restored" | "lists_migrated" | (string & {});
 
 /** One title the draft would newly flag, for the simulator's "New on the list" block. */
 export interface SimExample {

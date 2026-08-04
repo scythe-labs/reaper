@@ -2387,8 +2387,12 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # page's incomplete-scan line, which was a bare styled span so amber was its only severity
 # signal; and a retired protection still switched on, which refuses every scan while reading as
 # an ordinary healthy one.
+# Then 144 -> 143: the policy editor's three hand-written recovery notices became two renders
+# over `REPAIR_NOTICES`, one per placement, so a repair kind added later gets its sentence from
+# the map instead of a fourth copy of the same JSX (#516). The population shrank; the number of
+# notices an operator can see did not.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 144
+_EXPECTED_NOTICES = 143
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2492,8 +2496,11 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # not amber alone. It is the age of the snapshot the queue below is built from, so it is page
 # furniture for as long as that snapshot is the one on hand; the scan that produces it
 # announces itself from `ScanBar`, where the transition actually happens.
+# Then 36 -> 35: the policy editor's two standing recovery notices became one render over the
+# `top` half of `REPAIR_NOTICES`. Still standing, and for the same reason -- a repair is carried
+# by the fetch, so it is the state of the page from its first paint (#516).
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_STANDING = 36
+_EXPECTED_STANDING = 35
 
 # ``standing`` as a JSX attribute, never as a substring of a class name or a word in prose.
 _STANDING_ATTR = re.compile(r"(?<![\w-])standing(?![\w-])")

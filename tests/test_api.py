@@ -1586,8 +1586,9 @@ class TestPolicyPersistence:
         assert out["name"] == "stale"
         assert sum(s["weight"] for s in out["body"]["signals"]) == 100
         # ...and handed over as an unsaved draft, so nothing is written until they look.
-        assert out["needs_save"] is True
-        assert out["fell_back"] is False
+        # The list is what the editor counts to open dirty, so an empty one here is the
+        # limbo #516 was: a degraded scan pointing at a page holding no Save.
+        assert out["repairs"] == ["rescaled"]
 
     def test_a_stored_policy_we_cannot_repair_falls_back_and_says_so(
         self, client: TestClient, tmp_path: Path
@@ -1613,8 +1614,7 @@ class TestPolicyPersistence:
         out = client.get("/api/policy").json()
 
         assert out["name"] == "default"
-        assert out["fell_back"] is True
-        assert out["needs_save"] is False
+        assert out["repairs"] == ["fell_back"]
 
     def test_a_saved_policy_is_what_loads_next(self, client: TestClient) -> None:
         client.post("/api/policy", json=_policy(condemn_at=55, name="mine"))

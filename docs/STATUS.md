@@ -101,7 +101,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |
 | ORM | **Plain SQLAlchemy, not SQLModel** † |
 | Migrations | **Baseline `22777b2b5015` is frozen going forward** † |
-| Gate retirement | **A stored body self-heals on load** † |
+| Gate retirement | **Persisted by the upgrade where it can be, healed on load where it can't** † |
 | Plex index retirement | **A row dropped only once the sweep has spoken** † |
 
 ## Where the pipeline stands

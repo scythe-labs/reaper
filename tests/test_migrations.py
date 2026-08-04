@@ -44,8 +44,14 @@ from sqlalchemy.orm import Session
 from reaper.config import Settings
 from reaper.db.base import NAMING_CONVENTION
 from reaper.db.models import ListConfig
+from reaper.db.models import Policy as PolicyModel
 from reaper.engine.gates import GateId
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, recover_rating_rules
+from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    PolicyBody,
+    has_legacy_list_protections,
+    recover_rating_rules,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -932,4 +938,228 @@ class TestAListNameIsUniqueWithoutRegardToCase:
         assert self._added(engine) == ["Keepers"]
         with pytest.raises(IntegrityError):
             self._add(engine, "keepers")
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Persisting the list-protection conversion (d5e6f7a8b9c0).
+# ---------------------------------------------------------------------------
+
+_PRIOR_LIST_CONVERSION = "a1b2c3d4e5f7"
+_LIST_CONVERSION = "d5e6f7a8b9c0"
+
+
+def _legacy_list_body() -> dict[str, Any]:
+    """A stored body from before every list protected through its own keep rule: the keep
+    tags on the policy, and both retired list gates enabled. The shape every install that
+    upgrades into the lists release is carrying."""
+    body: dict[str, Any] = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+    body["protect_conditions"] = []
+    body["keep_tags"] = ["reaper-keep"]
+    body["keep_tags_match"] = "any"
+    body["gates"] = [
+        {"gate": "whitelisted", "enabled": True},
+        {"gate": "curated_list", "enabled": True},
+        *body["gates"],
+    ]
+    return body
+
+
+def _only_these_lists(engine: Engine, *sources: str) -> None:
+    """Leave the registry holding exactly these sources, under names an operator might have
+    chosen. The upgrade to the prior revision seeds rows of its own (the tag list, the shipped
+    IMDb list), and the conversion resolves by source and age rather than by spelling, so a
+    case about a MISSING list has to clear them rather than add beside them."""
+    names = {"arr_tag": "My tagged titles", "imdb": "Films worth keeping"}
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM list_config"))
+        for source in sources:
+            conn.execute(
+                text(
+                    "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
+                    " created_at) VALUES (:n, :s, '{}', 1, 0, 1750000000)"
+                ),
+                {"n": names[source], "s": source},
+            )
+
+
+def _seed_policy_of(engine: Engine, media_type: str, body: dict[str, Any]) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                " VALUES (:h, :b, :m, 'mine', 1750000000)"
+            ),
+            {"h": f"seeded-{media_type}", "b": json.dumps(body), "m": media_type},
+        )
+
+
+def _all_policy_rows(engine: Engine) -> list[tuple[int, str, str, str]]:
+    with engine.begin() as conn:
+        return [
+            (int(r[0]), str(r[1]), str(r[2]), str(r[3]))
+            for r in conn.execute(
+                text("SELECT id, media_type, policy_hash, body_json FROM policy ORDER BY id")
+            )
+        ]
+
+
+class TestPersistingTheListConversion:
+    """The conversion used to run on load and never be written back, so ``repaired`` stayed
+    true forever and every scan degraded with a notice the operator could not clear (#516).
+    This writes it once, where an upgrade can carry it.
+
+    Appended, never edited in place: snapshots and approvals point at the parent row by hash
+    (``db.models.Policy`` is append-only by contract).
+    """
+
+    def _upgraded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Config, Engine]:
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _PRIOR_LIST_CONVERSION)
+        return config, create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    def test_a_legacy_body_is_converted_and_the_parent_row_survives(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        after = _all_policy_rows(engine)
+        assert after[0] == before[0], "the parent row was edited; it must be left as saved"
+        assert len(after) == len(before) + 1
+        _, media_type, new_hash, new_body = after[-1]
+        assert media_type == "movie"
+        stored = json.loads(new_body)
+        # Each enabled gate became a rule naming the operator's OWN list name, resolved from
+        # the registry: an `on_list` rule naming a list that does not exist reads as a green
+        # "checked, did not fire", which is the fail-open direction.
+        values = {c["value"] for c in stored["protect_conditions"] if c["field"] == "on_list"}
+        assert values == {"My tagged titles", "Films worth keeping"}
+        assert not {g["gate"] for g in stored["gates"]} & {"whitelisted", "curated_list"}
+        assert "keep_tags" not in stored
+        # It loads, and its hash describes its own content, so nothing reads as stale.
+        assert new_hash == PolicyBody.model_validate_json(new_body).policy_hash()
+        assert new_hash != before[0][2]
+        engine.dispose()
+
+    def test_the_load_shim_then_reports_no_repair_at_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The point of the whole revision. Before it, this body came back
+        ``lists_migrated`` on every load, so every scan degraded and the banner never
+        cleared however many times the operator scanned."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        newest = _all_policy_rows(engine)[-1][3]
+        assert has_legacy_list_protections(json.loads(newest)) is False
+        engine.dispose()
+
+    def test_it_carries_both_media_types(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Movies and TV are tuned separately and BOTH degrade the scan, so converting one
+        leaves the banner exactly as unclearable as before (rule 72)."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        tv = _legacy_list_body()
+        tv["media_type"] = "tv"
+        _seed_policy_of(engine, "tv", tv)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        newest = {r[1]: r[3] for r in _all_policy_rows(engine)}
+        assert set(newest) == {"movie", "tv"}
+        for body_json in newest.values():
+            assert has_legacy_list_protections(json.loads(body_json)) is False
+        engine.dispose()
+
+    def test_it_leaves_a_body_alone_when_the_replacement_list_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal that matters. With no tag list to name, the conversion deliberately
+        KEEPS the enabled ``whitelisted`` row rather than converting it to a rule naming
+        nothing -- so persisting its output would store a body ``build_gates`` refuses to
+        scan. The row stays legacy, the load shim keeps handling it, and the editor is where
+        the operator is told (which it now does, with a Save)."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "imdb")  # no arr_tag list for the keep tags to become
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        assert _all_policy_rows(engine) == before
+        engine.dispose()
+
+    def test_it_is_a_noop_on_a_body_that_is_not_legacy_shaped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every fresh install is this case, and an operator who already saved the converted
+        draft is too. Re-running must not append a row either time."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", json.loads(DEFAULT_MOVIE_POLICY.model_dump_json()))
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        assert _all_policy_rows(engine) == before
+        engine.dispose()
+
+    def test_it_survives_a_database_with_no_policy_at_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A first boot reaches head with an empty policy table. An upgrade that raised here
+        would leave the operator unable to start at all."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        assert _all_policy_rows(engine) == []
+        engine.dispose()
+
+    def test_a_body_that_is_not_json_does_not_fail_the_upgrade(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hand-edited or truncated row must not stop an upgrade whose other revisions
+        have nothing to do with policy bodies. It falls to the load shim, which reports it."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                    " VALUES ('h', 'not json at all', 'movie', 'mine', 1750000000)"
+                )
+            )
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        assert _all_policy_rows(engine) == before
+        engine.dispose()
+
+    def test_the_written_row_reads_back_through_the_orm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``created_at`` is an INTEGER unix timestamp, because raw SQL goes around
+        ``db.types.EpochDateTime``. An ISO string here lands a row every later read raises
+        on, which is a 500 on the first page load after upgrading (b2c3d4e5f6a7 found it)."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        with Session(engine) as session:
+            rows = session.execute(select(PolicyModel).order_by(PolicyModel.id)).scalars().all()
+        assert isinstance(rows[-1].created_at, datetime)
         engine.dispose()

@@ -96,6 +96,7 @@ from reaper.engine.policy import (
     ConditionSpec,
     GateSetting,
     PolicyBody,
+    PolicyRepair,
     ProfileSettings,
     SignalSetting,
     combine_hashes,
@@ -1583,9 +1584,7 @@ def _policy_out(
     requests_app_configured: bool,
     settings: ProfileSettings,
     history_reach_days: float | None = None,
-    needs_save: bool = False,
-    fell_back: bool = False,
-    rating_rules_restored: bool = False,
+    repairs: tuple[PolicyRepair, ...] = (),
 ) -> PolicyOut:
     return PolicyOut(
         policy_hash=body.policy_hash(),
@@ -1601,9 +1600,7 @@ def _policy_out(
                 DEFAULT_TV_POLICY if body.media_type == "tv" else DEFAULT_MOVIE_POLICY
             ).signals
         ],
-        needs_save=needs_save,
-        fell_back=fell_back,
-        rating_rules_restored=rating_rules_restored,
+        repairs=list(repairs),
         body=PolicyIn(
             name=name,
             media_type=body.media_type,
@@ -1642,10 +1639,10 @@ def _policy_out(
             keep_rating_match=body.keep_rating_match,
         ),
         warnings=[
-            # Only draft warnings here. The two LOAD-time recoveries (rescaled /
-            # fell_back) are separate fields, not warnings: the editor renders warnings
-            # from re-validating the DRAFT, so anything attached to the GET response
-            # never reaches the page at all. That was a real silent drop.
+            # Only draft warnings here. The LOAD-time repairs are their own field, not
+            # warnings: the editor renders warnings from re-validating the DRAFT, so
+            # anything attached to the GET response never reaches the page at all. That
+            # was a real silent drop.
             PolicyWarningOut(field=w.field, message=w.message, severity=w.severity)
             # The operator's SAVED settings, not the defaults. Passing ProfileSettings()
             # here made every settings-based warning unreachable: the caps and the
@@ -1693,12 +1690,6 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     async with _sessions(request)() as session:
         active = await active_policy(session, media_type)
         body, name = active.body, active.name
-        # The recoveries read very differently to an operator -- "your policy, in new
-        # units" versus "your policy is gone" versus "a protection was put back" -- so they
-        # are separate flags, never inferred from the name (an operator's own policy is
-        # often called "default").
-        needs_save, fell_back = active.rescaled, active.fell_back
-        rating_rules_restored = active.rating_rules_recovered
         has_requests_app = await _requests_app_configured(session)
         settings = await active_profile_settings(session)
     return _policy_out(
@@ -1707,9 +1698,11 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
         requests_app_configured=has_requests_app,
         settings=settings,
         history_reach_days=await _history_reach_days(request),
-        needs_save=needs_save,
-        fell_back=fell_back,
-        rating_rules_restored=rating_rules_restored,
+        # The repairs read very differently to an operator -- "your policy, in new units"
+        # versus "your policy is gone" versus "a protection was put back" -- so each is its
+        # own `PolicyRepair`, never inferred from the name (an operator's own policy is
+        # often called "default") and never collapsed into one "needs saving" boolean.
+        repairs=active.repairs,
     )
 
 
