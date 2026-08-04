@@ -616,6 +616,10 @@ class Condition:
         elements, so it can never match and the protection reads green forever. Both are
         refused here, at the save boundary, so a stored policy cannot carry a rule that
         matches everything or nothing.
+
+        An ``eq`` target carrying the separator its fact is joined on is the third of the
+        same shape, and the quietest: it reads as an ordinary single value everywhere it
+        renders. See the check itself below.
         """
         value = self.value
         if spec.type is FieldType.BOOL:
@@ -630,6 +634,18 @@ class Condition:
                 # A comma-only list ("," / " , ") survives the strip above but splits to
                 # nothing, which is the same never-matches protection by another spelling.
                 raise ValueError(f'"{spec.label}" needs at least one value to match.')
+            if self.op is Op.EQ and spec.multi and "," in value:
+                # The separator half, reached from the rule end. A multi-valued fact is one
+                # comma-joined string and ``_compare`` splits it back to test membership, so
+                # an ``eq`` target carrying a comma is never an element of its own fact: the
+                # rule saves, hashes, and renders on Policy as a live protection covering
+                # nothing. ``list_config._clean_name`` refuses the separator where the name
+                # is TYPED, which is where an operator can act on it; this is the boundary a
+                # hand-written body or an imported policy comes through (rule 108).
+                raise ValueError(
+                    f'"{spec.label}" can\'t match a value with a comma in it. '
+                    "Reaper separates values with one, so pick a single one."
+                )
         # Numeric field types (days, bytes, count, rating tenths). bool is an int
         # subclass in Python, so it must be rejected explicitly.
         elif isinstance(value, bool) or not isinstance(value, int):
