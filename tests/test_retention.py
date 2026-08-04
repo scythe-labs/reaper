@@ -31,6 +31,7 @@ from reaper.db.models import (
     FirstFlagged,
     ReapRun,
     RunState,
+    SeasonPruneEvidence,
     Snapshot,
     WhitelistEntry,
 )
@@ -76,6 +77,13 @@ async def _snapshot(session: AsyncSession, *, items: int = 0) -> int:
                 created_at=NOW,
             )
         )
+        session.add(
+            SeasonPruneEvidence(
+                snapshot_id=snap.id,
+                group_key=f"sonarr:1:{n}",
+                payload_json="{}",
+            )
+        )
     await session.flush()
     return snap.id
 
@@ -97,6 +105,11 @@ async def _snapshot_ids(factory: async_sessionmaker[AsyncSession]) -> list[int]:
 async def _candidate_count(factory: async_sessionmaker[AsyncSession]) -> int:
     async with factory() as session:
         return int((await session.execute(select(func.count(Candidate.id)))).scalar_one())
+
+
+async def _season_evidence_count(factory: async_sessionmaker[AsyncSession]) -> int:
+    async with factory() as session:
+        return int((await session.execute(select(func.count(SeasonPruneEvidence.id)))).scalar_one())
 
 
 def _bytes_on_disk(data_dir: Path) -> int:
@@ -166,6 +179,23 @@ class TestTheWindow:
         await retention.sweep_old_snapshots(factory, keep=2)
 
         assert await _candidate_count(factory) == 8
+
+    async def test_the_frozen_season_evidence_goes_with_it_too(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The same cascade for the per-show season bundles a scan freezes beside the Facts.
+
+        A second table hanging off ``Snapshot`` and no second sweep: this is the property
+        that lets ``services.retention`` stay one ``DELETE`` (rule 72's sibling sweep, asked
+        of the schema rather than of the code). Without the FK's ``ON DELETE CASCADE`` these
+        rows would outlive every scan that wrote them and grow without bound.
+        """
+        await _seed(factory, 5, items=4)
+        assert await _season_evidence_count(factory) == 20
+
+        await retention.sweep_old_snapshots(factory, keep=2)
+
+        assert await _season_evidence_count(factory) == 8
 
     async def test_the_shipped_window_is_thirty(self) -> None:
         """A promise about disk: at ~4 KB per item per scan this is what the operator pays

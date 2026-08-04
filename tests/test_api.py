@@ -1364,22 +1364,40 @@ class TestTheSimulator:
         assert self._simulate(client, 92)["condemned"] == 0
 
 
-class TestTheSimulatorRefusesToGuess:
-    """The trap this class exists to close.
+class TestASnapshotWithNoFrozenFactsRefusesToGuess:
+    """The trap this class exists to close, and the premise it actually rests on.
 
     The simulator re-decides a snapshot by re-comparing **stored** scores and verdicts
     against new thresholds. That is exact for ``condemn_at`` and ``coverage_floor_bp``.
     It is simply wrong for anything else: change a signal weight or a gate, and every
-    stored score was produced by the *old* ones. The snapshot cannot answer the new
-    question, and no amount of arithmetic over it can.
+    stored score was produced by the *old* ones. A policy editor that let you drag a
+    weight and then showed a confident count would be the single most dangerous screen in
+    the product, because the number would look exactly as authoritative as the true one.
 
-    A policy editor that let you drag a weight and then showed a confident count would
-    be the single most dangerous screen in the product -- the number would look exactly
-    as authoritative as the true one. So the API returns the reason and no numbers.
+    **This fixture's snapshot froze no Facts**, which is what every case below is really
+    driven by: ``api.routes.simulate``'s replay tier needs every governed row to carry a
+    ``facts_json``, so a pre-facts-freeze snapshot falls to the refusal whatever the edit
+    was. That is a real state -- every snapshot taken before the freeze shipped is in it,
+    and it is exactly the state the refusal must survive -- but it is not the same claim as
+    "this edit is unanswerable", and the class used to be named and documented as though it
+    were. ``test_the_premise`` pins the premise so a fixture that later starts freezing
+    Facts fails here rather than quietly turning every case below into a tautology
+    (rules 118, 119).
+
+    Which edits are genuinely unanswerable over a snapshot that DID freeze its evidence is
+    ``tests/test_simulate_hardening.py``'s question, and a gate is no longer one of them.
     """
 
     def _simulate(self, client: TestClient, policy: dict[str, object]) -> dict[str, object]:
         return client.post("/api/policy/simulate", json=policy).json()
+
+    def test_the_premise(self, client: TestClient) -> None:
+        """No row here froze its Facts, so the replay tier is unreachable by construction."""
+        rows = client.get("/api/candidates?verdict=condemn").json()
+        assert rows, "the fixture seeded no candidates, so nothing below is exercised"
+        # A threshold-only edit still answers: it never needed the frozen evidence, which is
+        # what makes the refusals below about the evidence rather than about the route.
+        assert self._simulate(client, _policy())["exact"] is True
 
     def test_changing_a_signal_weight_refuses_to_report_numbers(self, client: TestClient) -> None:
         result = self._simulate(
@@ -1403,6 +1421,40 @@ class TestTheSimulatorRefusesToGuess:
         assert result["examples_newly_condemned"] == []
         assert result["protected_by"] == []
 
+    def test_the_refusal_names_which_one_it_is_on_the_wire(self, client: TestClient) -> None:
+        """The typed half, which is what lets the panel name the control at fault.
+
+        Every test around this one asserts on ``exact`` alone, and ``exact: false`` is the
+        same for all three refusals -- so without this the discriminator could be dropped
+        from the response and nothing here would notice, while the panel silently fell back
+        to the general heading for every cause (#495).
+
+        Driven by the popularity WINDOW, which is the span ``distinct_watchers`` is counted
+        over and so the one gate field a scan reads before it freezes an item's facts. It
+        replaced a keep-tag edit, which stopped gathering differently when the keep tags left
+        the policy body for Settings -> Lists: a list now protects through an ``on_list`` rule
+        reading membership the scan gathered whether or not any rule named it.
+        """
+        widened = [
+            {**gate, "window_days": 180} if gate["gate"] == "server_popularity" else gate
+            for gate in DEFAULT_GATES
+        ]
+        result = self._simulate(client, _policy(gates=widened))
+
+        assert result["exact"] is False
+        assert result["stale_kind"] == "gathers_differently"
+        # Both halves, always: the sentence is what an API reader gets and what the panel
+        # renders, so a typed kind with no words behind it is half a refusal.
+        assert result["stale_reason"]
+
+    def test_an_exact_answer_carries_no_refusal(self, client: TestClient) -> None:
+        """The other direction, so ``stale_kind`` cannot collapse to a constant."""
+        result = self._simulate(client, _policy())
+
+        assert result["exact"] is True
+        assert result["stale_kind"] is None
+        assert result["stale_reason"] is None
+
     def test_the_refusal_says_what_to_do_about_it(self, client: TestClient) -> None:
         """An error the owner cannot act on is only marginally better than a wrong
         answer."""
@@ -1420,9 +1472,10 @@ class TestTheSimulatorRefusesToGuess:
 
         assert "scan" in str(result["stale_reason"]).lower()
 
-    def test_changing_a_gate_also_refuses(self, client: TestClient) -> None:
-        """Gates decide the *verdict*, and the verdict is stored too. Loosening the
-        rating floor would un-protect items the snapshot still records as protected."""
+    def test_moving_a_gate_threshold_refuses_over_this_snapshot(self, client: TestClient) -> None:
+        """Not because a bar edit is unanswerable -- it is answerable, and
+        ``test_simulate_hardening.py`` proves it replays -- but because this snapshot has no
+        evidence to replay over. That is the state every install was in before the freeze."""
         loosened = [
             {"gate": "min_dormancy", "threshold": 1095},
             {"gate": "rating_floor", "threshold": 60},  # was 75
@@ -1432,9 +1485,9 @@ class TestTheSimulatorRefusesToGuess:
 
         assert result["exact"] is False
 
-    def test_disabling_a_protection_refuses(self, client: TestClient) -> None:
+    def test_disabling_a_protection_refuses_over_this_snapshot(self, client: TestClient) -> None:
         """The most dangerous edit of all, and the one most likely to be made while
-        watching the condemned count."""
+        watching the condemned count. Same reason as above: no frozen Facts here."""
         without = [g for g in DEFAULT_GATES if g["gate"] != "rating_floor"]
         result = self._simulate(client, _policy(gates=without))
 

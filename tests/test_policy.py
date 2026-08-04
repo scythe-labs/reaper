@@ -17,9 +17,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from reaper.api.schemas import GateSettingIn
+from reaper.api.schemas import GateSettingIn, PolicyIn
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
@@ -284,11 +284,41 @@ class TestEvidenceHash:
         assert a.evidence_hash() == b.evidence_hash()
         assert a.policy_hash() != b.policy_hash()
 
-    def test_changing_a_season_rule_changes_the_evidence_hash(self) -> None:
-        # keep_last_seasons recomputes the frozen season-pruning guard, so it needs a scan.
-        a = _policy(media_type="tv", keep_last_seasons=2)
-        b = _policy(media_type="tv", keep_last_seasons=4)
-        assert a.evidence_hash() != b.evidence_hash()
+    def test_a_season_rule_keeps_the_evidence_hash(self) -> None:
+        """Every season rule, and every one of them in both directions.
+
+        A season rule recomputes the guard rather than the evidence: the scan freezes what
+        ``plan_series_prune`` reads per show (``db.models.SeasonPruneEvidence``) and the
+        replay re-derives the plan from it, so none of these nine changes what a scan would
+        gather. Swept rather than sampled, because a field left out of
+        ``_EVIDENCE_REPLAYABLE_FIELDS`` fails closed and nothing else here would notice one
+        of the nine still refusing (rule 141: the fixture values are all off the default, so
+        an edit that does nothing cannot pass this).
+        """
+        edits: list[dict[str, object]] = [
+            {"keep_last_seasons": 4},
+            {"keep_first_season": False},
+            {"keep_last_scope": "requested"},
+            {"season_lookahead": 2},
+            {"keep_in_progress": False},
+            {"in_progress_hold_days": 30},
+            {"keep_specials": False},
+            {"protect_incomplete_seasons": False},
+            {"flag_keep_conflicts": False},
+        ]
+        base = _policy(media_type="tv")
+        for edit in edits:
+            edited = _policy(media_type="tv", **edit)
+            field = next(iter(edit))
+            assert edited.evidence_hash() == base.evidence_hash(), (
+                f"{field} still forces a fresh scan. It is replayable off the frozen season "
+                "bundle, so it belongs in PolicyBody._EVIDENCE_REPLAYABLE_FIELDS."
+            )
+            # Still a real edit: it moves the scores, which is what routes it to the replay
+            # rather than to the stored-score tier.
+            assert edited.scoring_hash() != base.scoring_hash(), (
+                f"{field} moved neither hash, so this case proves nothing about either."
+            )
 
 
 class TestSimulatorHashesCoverOnlyBehavior:
@@ -382,28 +412,40 @@ class TestSimulatorHashesCoverOnlyBehavior:
         added so the author has to decide which it is, rather than discovering it on a live
         server the way ``schema_version`` was found. (``name`` is deliberately absent: a
         policy's name lives on the row, not in the hashed body.)
+
+        **Coverage was not enough on its own.** It used to assert only that the sets COVERED
+        the body, which a field listed in two of them satisfies just as well -- and ``gates``
+        was listed twice, so from the moment it became replayable this test would have gone
+        on passing had it been put back. Coverage catches a field nobody classified; only
+        disjointness catches one classified twice, which is the half that matters when a set
+        is being edited rather than extended.
+
+        Disjointness holds over what the simulator does with a field, and only there: a body
+        field either replays off frozen evidence, or needs a fresh scan, or is bookkeeping,
+        and never two of those. ``_POST_SCORE_FIELDS`` is a different question -- which hash
+        a field leaves, not which tier answers it -- so a threshold is legitimately both
+        post-score and replayable, and it takes part in the coverage check alone.
         """
-        known = (
-            PolicyBody._POST_SCORE_FIELDS
-            | PolicyBody._EVIDENCE_REPLAYABLE_FIELDS
-            | PolicyBody._NON_BEHAVIORAL_FIELDS
-        )
-        # Everything else is evidence-bearing: it changes what a scan gathers.
-        evidence_bearing = {
-            "media_type",
-            "keep_last_seasons",
-            "keep_first_season",
-            "keep_last_scope",
-            "season_lookahead",
-            "keep_in_progress",
-            "in_progress_hold_days",
-            "keep_specials",
-            "protect_incomplete_seasons",
-            "flag_keep_conflicts",
-            "gates",
+        exclusive = {
+            "evidence-replayable": PolicyBody._EVIDENCE_REPLAYABLE_FIELDS,
+            "non-behavioral": PolicyBody._NON_BEHAVIORAL_FIELDS,
+            # Everything else is evidence-bearing: it changes what a scan gathers, so the
+            # frozen evidence cannot answer for it and the simulator refuses. Down to one
+            # field: the season rules replay off the frozen prune bundle, and the keep tags
+            # left the body altogether for Settings -> Lists, where a list protects through
+            # an ``on_list`` rule reading membership the scan gathered regardless.
+            "evidence-bearing": frozenset({"media_type"}),
         }
+        for left, right in itertools.combinations(exclusive, 2):
+            overlap = exclusive[left] & exclusive[right]
+            assert not overlap, (
+                f"{sorted(overlap)} is classified as both {left} and {right}. A field has "
+                "exactly one of these roles; two makes this test blind to a change of set."
+            )
+
         actual = set(DEFAULT_TV_POLICY.model_dump(mode="json"))
-        assert actual == known | evidence_bearing, (
+        covered = PolicyBody._POST_SCORE_FIELDS.union(*exclusive.values())
+        assert actual == covered, (
             "A PolicyBody field is unclassified. Decide whether it changes an answer "
             "(leave it out of _NON_BEHAVIORAL_FIELDS) or is bookkeeping (add it), then "
             "list it here."
@@ -3875,3 +3917,85 @@ class TestConvertListProtections:
             has_legacy_list_protections(json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())) is False
         )
         assert has_legacy_list_protections("policy") is False
+
+
+class TestTheTwoPolicyDeclarationsAgree:
+    """``api.schemas.PolicyIn`` and ``engine.policy.PolicyBody`` declare the same numbers
+    twice, and nothing compared them.
+
+    Rule 131: a bound the producer honors and the consumer enforces comes off one
+    declaration, or off two a test keeps in step. These two cannot merge -- ``PolicyIn`` is
+    the wire body and ``PolicyBody`` carries ``schema_version``/``scorer_version`` the browser
+    never sends -- so the test is the seam. ``test_api_type_mirror`` pairs them already and
+    compares field *names* against the browser's copy, which is why a bound present on one
+    side and absent on the other survived it: ``in_progress_hold_days`` and
+    ``season_lookahead`` were ``ge=0`` with no ceiling on both, and the value that reached
+    ``active_progress`` raised ``OverflowError`` out of a scan.
+    """
+
+    @staticmethod
+    def _bounds(model: type[BaseModel]) -> dict[str, list[str]]:
+        """Each shared field's constraint metadata, spelled for comparison.
+
+        ``repr`` rather than the objects themselves so a failure names the numbers. Sorted
+        because ``Field(ge=0, le=5)`` and ``Field(le=5, ge=0)`` are the same constraint.
+        """
+        return {
+            name: sorted(repr(m) for m in field.metadata)
+            for name, field in model.model_fields.items()
+        }
+
+    def test_every_shared_field_carries_the_same_bounds(self) -> None:
+        wire = self._bounds(PolicyIn)
+        engine = self._bounds(PolicyBody)
+        shared = sorted(set(wire) & set(engine))
+
+        # Rules 145 and 147: pin what the walk COLLECTS. A comparison over an empty
+        # intersection, or over a set that quietly stopped containing the numeric fields,
+        # passes while proving nothing -- and this test exists because the previous guard
+        # compared names only. Nineteen, down from twenty when ``keep_tags`` and
+        # ``keep_tags_match`` left the body for Settings -> Lists.
+        assert len(shared) >= 19, f"only {len(shared)} shared fields; the pairing broke"
+        constrained = {name for name in shared if wire[name]}
+        assert {
+            "condemn_at",
+            "coverage_floor_bp",
+            "keep_last_seasons",
+            "season_lookahead",
+            "in_progress_hold_days",
+        } <= constrained, f"a bounded field lost its bounds on the wire: {sorted(constrained)}"
+
+        disagree = [
+            f"{name}: PolicyIn {wire[name]} != PolicyBody {engine[name]}"
+            for name in shared
+            if wire[name] != engine[name]
+        ]
+        assert not disagree, (
+            "these fields are declared with different bounds in the two policy models\n"
+            "(src/reaper/api/schemas.py and src/reaper/engine/policy.py), so the wire\n"
+            "accepts a value the engine rejects or the reverse:\n  " + "\n  ".join(disagree)
+        )
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("in_progress_hold_days", 999_999),
+            ("season_lookahead", 10**9),
+        ],
+    )
+    def test_the_ceiling_refuses_a_value_that_breaks_the_planner(
+        self, field: str, value: int
+    ) -> None:
+        """The two that had no ceiling, at the values that demonstrated why they needed one.
+
+        ``in_progress_hold_days`` reached ``now - timedelta(days=...)`` and raised
+        ``OverflowError``; ``season_lookahead`` reached ``range(lookahead + 1)`` and allocated
+        it per anchor per viewer per show. Both arrive through ``PolicyIn``, so refusing at
+        that boundary is what keeps them out of the scan and out of ``/policy/simulate``.
+        """
+        wire = DEFAULT_TV_POLICY.model_dump(mode="json")
+        # The premise: the payload is accepted before the one field is pushed past its
+        # ceiling, so the raise below is that field's and not a malformed body's.
+        PolicyIn.model_validate(wire)
+        with pytest.raises(ValidationError):
+            PolicyIn.model_validate({**wire, field: value})

@@ -17,9 +17,12 @@ added roughly 24 MB per scan forever.
 
 This trims the table to the newest :data:`KEEP_SNAPSHOTS` and lets the schema do the
 deleting: ``Candidate.snapshot_id`` is ``ondelete="CASCADE"`` and ``db.session`` turns
-SQLite's foreign keys on, so dropping a snapshot row drops its candidates with it. The
-whole foreign-key graph into ``snapshot`` is that cascade plus ``ReapRun``'s ``RESTRICT``,
-and nothing at all points at ``candidate``.
+SQLite's foreign keys on, so dropping a snapshot row drops its candidates with it.
+``SeasonPruneEvidence.snapshot_id`` is a second such cascade, one row per show carrying the
+frozen inputs the policy simulator replays a season rule from. Those two cascades plus
+``ReapRun``'s ``RESTRICT`` are the whole foreign-key graph into ``snapshot``, and nothing at
+all points at ``candidate``. This module needs no code change to sweep a new one, which is
+exactly why the sentence naming the graph has to be edited when one arrives (rule 72).
 
 **What that graph does not show is the reader this module most has to answer to.**
 ``ActionStep.media_key`` is a soft join with no foreign key behind it, and
@@ -80,7 +83,9 @@ log = structlog.get_logger(__name__)
 #: the queue uses, which takes the single newest. The cost is
 #: linear and worth knowing before raising it: at ~4 KB per item per scan, thirty scans of
 #: a six-thousand-item library is about 700 MB, and of a twenty-thousand-item library
-#: about 2.4 GB.
+#: about 2.4 GB. A TV library adds its season bundles on top, ~270 MB over the same window
+#: at a thousand shows on the large measured shape (``docs/LEARNINGS.md``); it rides beside
+#: the figures above rather than replacing them.
 KEEP_SNAPSHOTS = 30
 
 #: Snapshots deleted per transaction. Small on purpose: each one cascades to a whole

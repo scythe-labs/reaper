@@ -10,6 +10,7 @@ route and forces its response model to resolve.
 
 from __future__ import annotations
 
+import enum
 from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -641,12 +642,19 @@ class PolicyIn(BaseModel):
     media_type: str = "movie"
     condemn_at: int = Field(ge=1, le=100)
     coverage_floor_bp: int = Field(default=5000, ge=0, le=10_000)
-    keep_last_seasons: int = Field(default=2, ge=0)
+    # Ceilings, not policy opinions (rule 95). `active_progress` computes
+    # `now - timedelta(days=hold_days)` and `sequential_protections` builds
+    # `range(lookahead + 1)` per anchor per viewer per show, so an unbounded value raises
+    # OverflowError out of a scan and out of `/policy/simulate`, or allocates inside the
+    # event loop. Each ceiling sits far above any real setting, so adding them cannot
+    # invalidate a body an operator already saved. `engine.policy.PolicyBody` declares the
+    # same three, and `test_policy.py` fails when the two stop agreeing (rule 131).
+    keep_last_seasons: int = Field(default=2, ge=0, le=1_000)
     keep_first_season: bool = True
     keep_last_scope: Literal["all", "requested"] = "all"
-    season_lookahead: int = Field(default=0, ge=0)
+    season_lookahead: int = Field(default=0, ge=0, le=1_000)
     keep_in_progress: bool = True
-    in_progress_hold_days: int = Field(default=180, ge=0)
+    in_progress_hold_days: int = Field(default=180, ge=0, le=36_500)
     keep_specials: bool = True
     protect_incomplete_seasons: bool = True
     flag_keep_conflicts: bool = True
@@ -772,6 +780,41 @@ class GateCountOut(BaseModel):
     count: int
 
 
+class SimStale(enum.StrEnum):
+    """Why the simulator would not answer -- as a value, not as a sentence.
+
+    Three refusals with three different remedies, and until this existed the panel showed
+    one paragraph naming every cause at once, so nine season controls, the keep tags and the
+    popularity window shared a sentence that could only be right about one of them. The
+    operator's copy lives in ``PolicySimulator.tsx`` and branches on this; the ``stale_reason``
+    beside it is the same fact as a sentence, for a reader of the API (rule 66: the frontend
+    handles an id it does not know by falling back to that sentence, never by guessing).
+    """
+
+    GATHERS_DIFFERENTLY = "gathers_differently"
+    """The edit moved what a scan would collect -- a keep tag, or the span watching counts
+    over. The frozen evidence answers a different question, and only a scan fixes it."""
+
+    SEASONS_NOT_RECORDED = "seasons_not_recorded"
+    """This snapshot holds no per-show season-prune evidence, holds some it cannot read, or
+    holds some that does not describe the rows being judged.
+
+    Reached only *after* a scan that wrote the table: a snapshot older than it cannot match
+    the re-scoped ``evidence_hash`` either, so it refuses one tier earlier as
+    :attr:`GATHERS_DIFFERENTLY` (``api.routes.simulate`` states the same thing at length).
+    Like every refusal it zeroes the whole lane rather than the season card alone --
+    ``routes._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
+    verdicts would be worse."""
+
+    IN_PROGRESS_NOT_READ = "in_progress_not_read"
+    """The draft holds a season someone is part-way through, over a scan that recorded no
+    episode map to place them in. Two scans leave it unread -- one that ran with the hold off,
+    and one that ran with it on and got no answer from Sonarr for some show -- so the copy
+    states the absence rather than either cause. Turning the hold OFF replays fine: the guard
+    is short-circuited before the missing map is touched, which is why this names the one
+    direction that cannot be answered rather than the whole control."""
+
+
 class SimulationOut(BaseModel):
     """Re-deciding the last snapshot under a candidate policy. Zero API calls.
 
@@ -787,10 +830,15 @@ class SimulationOut(BaseModel):
     anything else**: change a signal weight or a gate and the stored scores were
     produced by the old ones, so every count below would be confidently stale.
 
-    When this is false the counts are zeroed and ``stale_reason`` says why. Reaper
-    would rather show nothing than show a number it cannot stand behind -- a plausible
-    wrong answer is worse than a blank, because the owner acts on it.
+    When this is false the counts are zeroed, ``stale_kind`` says which refusal it is and
+    ``stale_reason`` says the same thing in a sentence. Reaper would rather show nothing than
+    show a number it cannot stand behind -- a plausible wrong answer is worse than a blank,
+    because the owner acts on it.
     """
+
+    stale_kind: SimStale | None = None
+    """Which refusal this is, typed, so the panel can name the control at fault. ``None``
+    exactly when ``exact`` is true."""
 
     stale_reason: str | None = None
 
@@ -807,6 +855,39 @@ class SimulationOut(BaseModel):
     owner actually needs before saving."""
 
     no_longer_condemned: int
+
+    condemned_before: int = 0
+    """How many titles the LAST SCAN flags, so the panel can compare against it directly.
+
+    The scan, not the saved policy: both tiers count it as
+    ``effective_verdict(row, decisions) == "condemn"`` -- the stored verdicts, with live
+    overrides applied. Saving a policy starts a scan rather than being one, so between the
+    save and that scan finishing, or after it fails, the saved policy is not the policy these
+    rows were judged under. ``changed_titles`` below names the same set the same way ("the
+    lane they are in now"), and the panel's sentence follows both.
+
+    Equal to ``condemned - newly_condemned + no_longer_condemned``, which is how the panel
+    used to reconstruct it. That derivation is only sound while both deltas count every way
+    into and out of the removal list, and it printed a confident wrong number the moment one
+    of them did not: ``no_longer_condemned`` missed condemn -> protect, so an outright keep
+    rule put the draft's own count on both sides of a sentence built to contrast them. The
+    server counts the pre-edit lane per row either way, so sending it costs one line per tier
+    and leaves the browser with no server fact to re-derive (rule 144).
+    """
+
+    changed_titles: int = 0
+    """How many titles this draft puts in a different lane than the one they are in now.
+
+    A superset of ``newly_condemned`` + ``no_longer_condemned``, and it exists because those
+    two are blind to the move that prompted it: a protection edit can take a title from
+    spared to not judged without going near the threshold, so both deltas stay at zero while
+    a sixth of the spared set moves, and the panel shows the other rows as absolute counts
+    rather than deltas -- two different outcomes, one indistinguishable screen (#488).
+
+    Zero while the draft differs from the saved policy is the useful case, not the empty one:
+    it is the only form in which the panel can say a rule carries no weight on THIS library,
+    which is a true and load-bearing fact about a protection the operator is considering.
+    """
 
     histogram: list[int]
     """Score distribution in 10-point buckets, so the threshold can be placed against

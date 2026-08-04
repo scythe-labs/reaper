@@ -89,6 +89,11 @@ _NO_PANEL_ROUTE = {
     "season_pruning.PROGRESS_UNMATCHED_REASON": (
         "the third of the same set, same surface and same shape (#472)"
     ),
+    "season_pruning.PROGRESS_SHOW_UNMATCHED_REASON": (
+        "the fourth of the same set, same surface and same shape (#489). The whole-show twin "
+        "of the one above: it is a ProtectedSeason.reason answering 'why kept', never the "
+        "tail of a 'could not check {what}' detail"
+    ),
     "preview.NOT_PROBED_REASON": (
         "the facts a policy probe leaves out. probe_signal answers one route with a number "
         "and a detail string and builds no candidate, stores no Explanation and touches no "

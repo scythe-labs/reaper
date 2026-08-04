@@ -152,10 +152,16 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
     """The frozen evidence for one item: its Facts plus any extra gate results merged into
     its evaluation (the season-pruning guard). Stored as ``Candidate.facts_json``.
 
-    The season guard is frozen alongside because it is computed from Sonarr data the replay
-    cannot re-derive; a change to the season-pruning policy that would move it is caught by
-    the evidence hash (``policy.PolicyBody.evidence_hash``), which forces a fresh scan rather
-    than replaying a stale guard.
+    The season guard is frozen alongside so a stored row can EXPLAIN itself without the
+    show's bundle. It is no longer what a re-decision reads: the scan freezes the plan's
+    inputs per show (``db.models.SeasonPruneEvidence``) and the simulator re-derives the
+    guard from them through ``services.season_evidence.plan_from_frozen``.
+
+    So the hash no longer stands behind this value. The nine season fields are in
+    ``policy.PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``, which means a season edit does not move
+    ``evidence_hash`` and does not force a fresh scan. What refuses instead is
+    ``api.routes._season_guard_replay``, asked of the stored evidence rather than of the
+    policy -- a hash cannot say whether a show's bundle is present and readable.
     """
     return {
         "title": facts.title,

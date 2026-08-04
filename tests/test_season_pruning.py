@@ -33,6 +33,18 @@ from reaper.services.season_pruning import (
 
 GB = 1024**3
 
+#: ``plan_series_prune`` flags that pick the sentence a hold carries without being a hold
+#: themselves, and why each is one. Classified in writing rather than skipped (rule 103),
+#: because "holds nothing" is a claim about the arm rather than permission to stop checking
+#: it: the reason it names still has to be one ``UNANSWERABLE_REASONS`` knows.
+_HOLDS_NOTHING_ALONE = {
+    # The show has no Plex rating key anywhere, so no play was queried and no depth of mirror
+    # can name a viewer's place. It re-words whichever real cause fired. Holding on it would
+    # move every unmatched show off the review queue and onto the Protected page, which #486
+    # declined and `test_a_show_plex_never_matched_at_all_is_left_alone` pins (#489).
+    "progress_show_unmatched",
+}
+
 
 def _season(
     n: int,
@@ -1173,6 +1185,36 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
         )
         assert plan.prunable == [1, 2, 3, 4]
 
+    def test_a_show_that_never_bound_is_not_blamed_on_the_mirror(self) -> None:
+        """#489. A show with no Plex rating key anywhere held every prunable season with "your
+        watch history is too short to tell who is part-way through" -- true, and the one
+        remedy that cannot work: with no address, nobody's place is readable at any depth.
+
+        It still holds exactly the same seasons. Only the sentence moves, which is the whole
+        change: this arm is reporting, not protecting.
+        """
+        common = {
+            "series_title": "Show",
+            "seasons": [_season(n) for n in range(1, 7)],
+            "keep_last": 2,
+            "keep_first_season": False,
+        }
+        unbound = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            progress_established=False,
+            progress_show_unmatched=True,
+        )
+        assert _reasons(unbound)[1] == (
+            "this show is not matched in Plex, so who is part-way through is unknown"
+        )
+        # The premise: without the show-level fact the same call names the mirror, so the
+        # assertion above is reading the new arm and not a coincidence.
+        assert _reasons(
+            plan_series_prune(**common, progress_established=False)  # type: ignore[arg-type]
+        )[1] == ("your watch history is too short to tell who is part-way through")
+        # And it holds the same seasons either way.
+        assert unbound.prunable == []
+
     def test_the_wider_failures_are_named_first(self) -> None:
         """All three unanswerable causes at once. The reason shown is the widest, because its
         remedy is the one that fixes the others as a side effect -- and copy naming the
@@ -1208,23 +1250,35 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
         check that never ran (rules 93, 142).
 
         The causes are discovered from ``plan_series_prune``'s own signature rather than
-        listed, so a fourth is covered the moment it is added: a hand-written list can only
+        listed, so a fifth is covered the moment it is added: a hand-written list can only
         pin the members somebody remembered (rule 145). Each is driven by inverting its
-        default, since ``progress_established`` reads the opposite way from the other two.
+        default, since ``progress_established`` reads the opposite way from the others.
+
+        The fourth arrived exactly this way. ``progress_show_unmatched`` (#489) reddened this
+        test on the commit that added it, before any test written *for* it ran, which is the
+        whole reason the walk discovers rather than lists -- and what it caught was real: the
+        first draft held on it, which moves every unmatched show off the review queue and onto
+        the Protected page, the trade #486 declined.
         """
         causes = {
             name: param.default
             for name, param in signature(plan_series_prune).parameters.items()
             if name.startswith("progress_") and isinstance(param.default, bool)
         }
-        # Reconciled by hand against the module: established, unreadable, seasons_unmatched.
-        assert len(causes) == 3, f"the walk collected {sorted(causes)}"
+        # Reconciled by hand against the module: established, unreadable, seasons_unmatched,
+        # show_unmatched.
+        assert len(causes) == 4, f"the walk collected {sorted(causes)}"
         for name, default in causes.items():
             plan = plan_series_prune(
                 series_title="Show",
                 seasons=[_season(n) for n in range(1, 7)],
                 keep_last=2,
                 keep_first_season=False,
+                # A reporting-only flag holds nothing by itself, so it is driven with the
+                # widest holding cause beside it. Classified rather than skipped (rule 103):
+                # the reason it names still has to be one UNANSWERABLE_REASONS knows, or the
+                # hold it re-words renders green.
+                **({"progress_established": False} if name in _HOLDS_NOTHING_ALONE else {}),
                 **{name: not default},
             )
             assert plan.prunable == [], f"{name} did not hold the seasons"

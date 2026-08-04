@@ -48,7 +48,13 @@ from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
-from reaper.db.models import Candidate, FirstFlagged, SizeSource, Snapshot
+from reaper.db.models import (
+    Candidate,
+    FirstFlagged,
+    SeasonPruneEvidence,
+    SizeSource,
+    Snapshot,
+)
 from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
 from reaper.engine.gates import Evaluation, Facts, Gate, GateResult, evaluate_all
@@ -70,6 +76,7 @@ from reaper.services import (
     list_config,
     lists,
     requested_by,
+    season_evidence,
     season_scan,
     watch_evidence,
     whitelist,
@@ -1063,6 +1070,25 @@ async def scan(
         if verdict == "condemn":
             condemned += 1
             condemned_keys.append(item.media_key)
+
+    # What each show's season plan was decided from, frozen once per show. Every season of a
+    # show carries the same bundle object, so this dedupes to one row per show; without the
+    # dedupe a ten-season show would store it ten times for nothing. Written even for a show
+    # whose every season is kept, which is the show a lowered keep-last makes prunable and
+    # therefore the one the simulator is most often asked about.
+    seen_shows: set[str] = set()
+    for judgment in season_judgments:
+        show = judgment.group_key
+        if show is None or show in seen_shows:
+            continue
+        seen_shows.add(show)
+        session.add(
+            SeasonPruneEvidence(
+                snapshot_id=snapshot.id,
+                group_key=show,
+                payload_json=json.dumps(season_evidence.to_dict(judgment.prune_input)),
+            )
+        )
 
     # Seasons run through the SAME judge: the season-pruning guard is merged in as an
     # extra gate result, so a protected season is protected by a gate exactly as a

@@ -174,6 +174,8 @@ function renderEditor(
     unknown_size_items: 0,
     newly_condemned: 0,
     no_longer_condemned: 0,
+    condemned_before: 0,
+    changed_titles: 0,
     histogram: [],
     examples_newly_condemned: [],
     protected_by: [],
@@ -1719,5 +1721,54 @@ describe("which number control a bound gets", () => {
     const box = await screen.findByLabelText('Where "How low it\'s rated" stops adding points');
     // A suffix, not a picker: there is no unit above IMDb to switch to.
     expect(within(box.closest(".qty") as HTMLElement).queryByRole("combobox")).toBeNull();
+  });
+});
+
+describe("the panel's verdict on an edit it has not simulated yet", () => {
+  // `keepPreviousData` keeps the last answer rendered across a refetch and reports
+  // `status: "success"` throughout, so "is this an edit" (read off the new draft, synchronously
+  // with the query key) and "what did that edit do" (the previous draft's numbers) describe two
+  // different bodies for one round trip. The untouched policy always answers
+  // `changed_titles: 0`, which made the FIRST edit of every session meet a categorical "your
+  // changes do nothing" before anything had scored it. Rule 85.
+  const INERT = "Your changes leave every title as it is.";
+
+  it("does not call an edit inert while the numbers on screen answer the previous draft", async () => {
+    // `apiMock` is module-level, so its call counts carry across this file. Counted from zero
+    // here, or the premise below reads whatever the preceding tests happened to leave.
+    apiMock.simulate.mockClear();
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    // The premise: the mount simulate settled, and it is the inert-shaped answer. Without this
+    // the assertion below would pass on a panel that never rendered a comparison at all.
+    await waitFor(() => expect(apiMock.simulate).toHaveBeenCalledTimes(1));
+    await screen.findByText("Titles that change");
+
+    // The next one never answers. That is the window, held open.
+    apiMock.simulate.mockReturnValue(new Promise(() => {}));
+
+    fireEvent.change(screen.getByLabelText("Put a title on the list once it scores"), {
+      target: { value: "42" },
+    });
+    // Past the 250 ms debounce, so the draft the flag reads has moved and the request it
+    // describes is in flight rather than queued.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    await waitFor(() => expect(apiMock.simulate).toHaveBeenCalledTimes(2));
+
+    expect(screen.queryByText(INERT)).not.toBeInTheDocument();
+  });
+
+  it("says it once the answer describes the draft it is about", async () => {
+    // The other direction, so the test above cannot pass by the sentence being unreachable.
+    renderEditor({ body: body() });
+    await screen.findByText("Movies policy");
+    await screen.findByText("Titles that change");
+
+    fireEvent.change(screen.getByLabelText("Put a title on the list once it scores"), {
+      target: { value: "42" },
+    });
+    expect(await screen.findByText(INERT)).toBeInTheDocument();
   });
 });

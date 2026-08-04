@@ -63,7 +63,13 @@ import {
   type PresetCaps,
   type PresetId,
 } from "./policyPresets";
-import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
+import {
+  APPLIES_ON_NEXT_SCAN,
+  Outcome,
+  RESCAN_HEADING,
+  RESCAN_QUEUED_LEAD,
+  StaleNotice,
+} from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { probeSaid, rampFill, rampStrip, rampUnits } from "./signalRamp";
@@ -1255,12 +1261,45 @@ export function PolicyEditor({
     return () => clearTimeout(id);
   }, [draft, draftedUnmeasured]);
 
-  const { data: simulation, error: simError } = useQuery({
+  const {
+    data: simulation,
+    error: simError,
+    isPlaceholderData,
+  } = useQuery({
     queryKey: ["simulate", debounced],
     queryFn: () => api.simulate(debounced!),
     enabled: debounced !== null,
     placeholderData: keepPreviousData, // keep the last result visible while refetching
   });
+
+  // Is the body those numbers describe actually an edit? The panel simulates on mount, before
+  // anything has been touched, so "no title changes" on its own cannot tell the operator's
+  // inert edit from their untouched policy -- and the second reading would be the panel calling
+  // a rule useless on the evidence of nobody having tried it yet.
+  //
+  // Against `debounced` rather than `draft`, so the sentence cannot lead its own figures by the
+  // debounce and flip under a keystroke nothing has simulated yet. Raw JSON.stringify compares
+  // canonical forms for the same reason `dirty` below may (rule 39): the draft is re-seeded from
+  // the server's own response after each save. `dirty`'s forced flags are deliberately absent --
+  // `needs_save` and `fell_back` are reasons to show a savebar, never evidence a rule was
+  // changed.
+  const simulatedIsEdited = useMemo(
+    () =>
+      debounced !== null &&
+      saved !== undefined &&
+      JSON.stringify(debounced) !== JSON.stringify(saved.body),
+    [debounced, saved],
+  );
+
+  // `debounced` is the body the REQUEST was made from, which is not the body the numbers on
+  // screen came from: `keepPreviousData` keeps the previous answer rendered, `status` reads
+  // "success" throughout, and this memo recomputes in the same commit the query key changes.
+  // So for one round trip -- 305 to 366 ms measured, and `docs/LEARNINGS.md` projects seconds
+  // on a large library -- `edited` described the new draft while `simulation` still answered
+  // the old one. The untouched policy always returns `changed_titles === 0`, so the FIRST edit
+  // of a session met "Your changes leave every title as it is." before anything had scored it.
+  // Rule 85: the claim waits for the answer it is about.
+  const simulationIsSettled = !isPlaceholderData;
 
   // validatePolicy 422s when the policy is *provably* invalid (e.g. a dormancy floor under
   // 5 days); that error is what "you can't save this" means, and it is shown near the controls,
@@ -1984,6 +2023,7 @@ export function PolicyEditor({
                     value={draft.keep_last_seasons}
                     suffix={draft.keep_last_seasons === 1 ? "season" : "seasons"}
                     min={0}
+                    max={1000}
                     width="narrow"
                     ariaLabel="Newest seasons to always keep"
                     // This anchor's block serves two controls, so each takes only the warnings
@@ -2060,6 +2100,10 @@ export function PolicyEditor({
                         value={draft.in_progress_hold_days}
                         suffix="days"
                         min={0}
+                        // Matches `PolicyIn`'s ceiling, so the box clamps instead of the
+                        // save coming back 422 (rule 131). Far past any watch history: 0
+                        // is what "hold forever" is spelled as.
+                        max={36500}
                         width="narrow"
                         ariaLabel="Days without watching before a held place is released"
                         // One anchor, one field, one box: this is the control the warning's
@@ -2082,6 +2126,7 @@ export function PolicyEditor({
                         value={draft.season_lookahead}
                         suffix={draft.season_lookahead === 1 ? "season" : "seasons"}
                         min={0}
+                        max={1000}
                         width="narrow"
                         ariaLabel="Seasons to keep ahead of a mid-binge viewer"
                         onChange={(v) => update({ season_lookahead: Math.max(0, v) })}
@@ -2400,9 +2445,9 @@ export function PolicyEditor({
               {/* What Save will ACTUALLY write, not what is merely dirty: a held-back policy
                   half must not be described as applying on the next scan (PR-7). */}
               {willSavePolicy && willSavePace
-                ? "Policy changes apply on the next scan, which starts by itself after saving. Pace applies immediately."
+                ? `${APPLIES_ON_NEXT_SCAN} Pace applies immediately.`
                 : willSavePolicy
-                  ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. It applies on the next scan, which starts by itself after saving.`
+                  ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. ${APPLIES_ON_NEXT_SCAN}`
                   : willSavePace
                     ? "Pace applies immediately. Changing a limit never affects a run you've already approved."
                     : null}
@@ -2491,7 +2536,12 @@ export function PolicyEditor({
           </div>
         ) : simulation ? (
           simulation.exact ? (
-            <Outcome simulation={simulation} threshold={draft.condemn_at} pace={pace} />
+            <Outcome
+              simulation={simulation}
+              threshold={draft.condemn_at}
+              pace={pace}
+              edited={simulatedIsEdited && simulationIsSettled}
+            />
           ) : (
             <StaleNotice
               scanning={scanning}
@@ -2501,6 +2551,8 @@ export function PolicyEditor({
               onScan={() => startScan.mutate()}
               percent={scanState?.percent ?? 0}
               detail={scanState?.detail ?? ""}
+              staleKind={simulation.stale_kind}
+              staleReason={simulation.stale_reason}
             />
           )
         ) : (
