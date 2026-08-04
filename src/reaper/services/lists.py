@@ -1143,6 +1143,17 @@ IMDB_SLUGS = f"{IMDB_PREFIX}%"
 _LIST_SUFFIX = "-list"
 
 
+def list_slugs(list_id: int) -> str:
+    """The ``LIKE`` pattern matching every stored slug synced for ONE definition.
+
+    A narrower ``family`` for :func:`retire_absent`, for the pass that checks a single row of
+    the Lists screen: that pass produces one definition's slugs, so one definition is the most
+    it may sweep. Anchored at the end with no trailing wildcard, or ``-list1`` would also
+    match ``-list10`` and a sweep of one list would retire another's rows.
+    """
+    return f"%{_LIST_SUFFIX}{list_id}"
+
+
 def list_suffix(list_id: int | None) -> str:
     """The ``-list<id>`` tail every list the operator DEFINED carries.
 

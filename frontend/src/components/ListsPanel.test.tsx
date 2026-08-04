@@ -462,8 +462,8 @@ describe("the row actions", () => {
   });
 
   it("checks one list without touching the others", async () => {
-    // A narrowed pass retires nothing (see `sync_protection_lists`), which is the whole reason
-    // the id is sent rather than the button just re-running everything.
+    // A narrowed pass sweeps only the definition it checked (see `sync_protection_lists`),
+    // which is the whole reason the id is sent rather than the button re-running everything.
     const user = userEvent.setup();
     seed([IMDB_DEF, PLEX_DEF], [WORKING]);
     renderPanel();

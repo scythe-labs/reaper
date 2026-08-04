@@ -195,8 +195,10 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
     reads every *arr and Plex once, and the answer is the whole point of pressing the button,
     so there is nothing useful to show before it lands.
 
-    A narrowed pass never retires anything -- see ``sync_protection_lists``. What that means
-    here: checking one list can never switch another one off.
+    A narrowed pass sweeps only the definition it checked -- see ``sync_protection_lists``.
+    What that means here: checking one list can never switch another one off, and checking a
+    list the operator has just edited stands its superseded rows down, so the count beside it
+    stops adding the old configuration's titles to the new one's.
     """
     app = request.app
     settings: Settings = app.state.settings

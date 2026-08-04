@@ -182,7 +182,89 @@ class TestAnUnreadableRegistryBuildsNothingAndRetiresNothing:
         assert not await memberships(engine, media_type="movie", imdb_id="tt0000005")
 
 
-class TestANarrowedPassNeverRetires:
+class TestANarrowedPassSweepsOnlyTheListItChecked:
+    """It reads one definition's output as the truth about that definition, which is what a
+    pass over one definition knows, and never as the truth about a family.
+
+    Editing a list changes its slug -- a tag list's carries the match mode -- so the row the
+    edit superseded stays enabled under the same definition id. It goes on protecting, which
+    is harmless, and the Lists screen sums both rows into one "Protecting N titles" that is
+    roughly twice the real number, which is not: that count is read while deciding what may be
+    deleted.
+    """
+
+    @staticmethod
+    def _sonarr() -> SonarrSource:
+        return SonarrSource(
+            client=_TaggedSonarr(
+                [{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
+                [
+                    {"title": "A", "tvdbId": 10, "tags": [1]},
+                    {"title": "B", "tvdbId": 11, "tags": [1, 2]},
+                ],
+            ),
+            instance_id=1,
+            name="hd",
+        )
+
+    async def test_checking_an_edited_list_stands_its_old_slug_down(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The Lists screen's own Check now, which is what runs after an edit is saved."""
+        await sync_protection_lists(
+            engine, definitions=[_tag_list(("keep", "gold"), "any")], sonarrs=[self._sonarr()]
+        )
+        assert await _enabled(engine, TAG_SLUG) is True
+
+        tightened = _tag_list(("keep", "gold"), "all")
+        synced = await sync_protection_lists(
+            engine, definitions=[tightened], sonarrs=[self._sonarr()], only=tightened.id
+        )
+
+        assert synced[TAG_SLUG] == "retired"
+        assert await _enabled(engine, TAG_SLUG) is False
+        assert await _enabled(engine, "sonarr-1-keeptags-all-list3") is True
+
+    async def test_a_narrowed_pass_that_produced_nothing_retires_nothing(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Rule 115. A Plex collection checked while Plex is unreachable builds no provider
+        and no slug, so the stored row is still the live protection and the sweep stands
+        down: the alternative unprotects every title on it over a network blip."""
+        await sync_protection_lists(
+            engine, definitions=[_plex_list()], plex_server=_CollectionServer()
+        )
+
+        synced = await sync_protection_lists(
+            engine, definitions=[_plex_list()], plex_server=None, only=2
+        )
+
+        assert synced == {}
+        assert await _enabled(engine, "plex-collection-never-reap-list2") is True
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000001")
+
+    async def test_a_narrowed_pass_whose_sync_failed_retires_nothing(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Rule 115's other half: the slug that was meant to replace the stored row did not
+        land, so the stored row is still what is protecting."""
+        await sync_protection_lists(
+            engine, definitions=[_tag_list(("keep", "gold"), "any")], sonarrs=[self._sonarr()]
+        )
+
+        class _Unreachable(_TaggedSonarr):
+            async def tags(self) -> list[dict[str, object]]:
+                raise RuntimeError("connection refused")
+
+        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        tightened = _tag_list(("keep", "gold"), "all")
+        synced = await sync_protection_lists(
+            engine, definitions=[tightened], sonarrs=[broken], only=tightened.id
+        )
+
+        assert "error" in str(synced["sonarr-1-keeptags-all-list3"])
+        assert await _enabled(engine, TAG_SLUG) is True
+
     async def test_checking_one_list_cannot_switch_another_off(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:

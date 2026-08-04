@@ -2400,9 +2400,11 @@ async def sync_protection_lists(
     scan.
 
     ``only`` narrows the pass to one row of the Lists screen, for its "Check now" button.
-    **A narrowed pass never retires anything**: the sweep disables every stored list of a
-    family that this pass did not produce, so running it over one list's output would switch
-    off every other list in that family.
+    **A narrowed pass never sweeps a FAMILY**: a family sweep disables every stored list the
+    pass did not produce, so running one over a single list's output would switch off every
+    other list in that family. It sweeps that one DEFINITION instead, which is the truth a
+    pass over one definition actually holds: editing a list changes its slug, and the
+    superseded row would otherwise stay enabled under the same definition id.
     """
     synced: dict[str, int | str] = {}
     #: Slugs whose sync raised this pass. A retire sweep reads it and stands down: the list
@@ -2524,8 +2526,9 @@ async def sync_protection_lists(
     # leave a row that keeps protecting from a definition the operator already replaced, so
     # the change they saved never takes effect.
     #
-    # A narrowed pass retires nothing at all: it produced one list's slugs, and a sweep
+    # A narrowed pass sweeps no family at all: it produced one list's slugs, and a sweep
     # reading that as the whole truth about a family would disable every other list in it.
+    # Its own definition it does sweep, below.
     async def _retire(family: str, current: set[str], *, when: bool) -> None:
         """Sweep one family, if its inputs were readable AND its own syncs landed.
 
@@ -2559,6 +2562,27 @@ async def sync_protection_lists(
     # so an empty set here means the operator removed the shipped list, which is exactly
     # the case that has to retire.
     await _retire(lists.IMDB_SLUGS, imdb_slugs, when=True)
+
+    # A narrowed pass sweeps its OWN definition, which is a narrower claim than the four
+    # above rather than an exception to the rule that stops them: those read one family's
+    # whole output as the truth about that family, and this reads one definition's output as
+    # the truth about that definition, which is exactly what a pass over one definition
+    # knows. Editing a list changes its slug -- a tag list's carries the match mode
+    # (``ArrTagRule.slug``) -- so without this the superseded row stays enabled under the
+    # same definition id, and the Lists screen sums both into one "Protecting N titles"
+    # roughly twice the real number until a full pass runs.
+    #
+    # Rule 115 both ways, which is why this is here and not in ``api.lists.edit_list``: the
+    # sweep runs only after the replacing rows actually landed, and a pass that produced no
+    # slug at all (a Plex collection checked while Plex is unreachable) sweeps nothing, since
+    # the stored row is still the live protection until something replaces it.
+    if only is not None and registry_known:
+        produced = keep_tag_slugs | plex_slugs | watchlist_slugs | imdb_slugs
+        if produced and not (produced & failed):
+            for slug in await lists.retire_absent(
+                engine, family=lists.list_slugs(only), current=produced
+            ):
+                synced[slug] = "retired"
     return synced
 
 
