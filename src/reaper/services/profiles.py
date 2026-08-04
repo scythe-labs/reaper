@@ -25,15 +25,18 @@ from dataclasses import dataclass
 import structlog
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
 from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
+from reaper.engine.fields import Op
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
+    ConditionSpec,
     PolicyBody,
     ProfileSettings,
     combine_hashes,
@@ -229,7 +232,7 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     default = DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY
 
     if row is None:
-        return ActivePolicy(default, "default")
+        return ActivePolicy(await _default_with_own_lists(session, default), "default")
 
     try:
         raw = json.loads(row.body_json)
@@ -322,6 +325,41 @@ async def _conversion_list_names(
     imdb = next((str(r.name) for r in rows if r.source == "imdb"), None)
     own = tuple(str(r.name) for r in rows if r.source in ("plex_collection", "plex_watchlist"))
     return tag, imdb, own
+
+
+async def _default_with_own_lists(session: AsyncSession, default: PolicyBody) -> PolicyBody:
+    """The shipped default, plus an outright keep rule for each Plex list the registry holds.
+
+    ``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
+    Plex keep collection arrives by migration instead (``20260803_1900``), so on an install
+    that has never saved a policy nothing pointed a rule at it: the row above returns before
+    ``convert_list_protections`` can run, and the WHITELISTED gate that used to spare its
+    titles is retired. That is a protection which fired on the previous release and cannot
+    fire on this one, with no degradation and no draft to review -- so the rule is put back
+    here rather than announced.
+
+    Additive only. An unreadable registry, or one with nothing of its own, leaves the shipped
+    conditions exactly as they are: this may add cover, never withdraw it.
+    """
+    try:
+        _, _, own = await _conversion_list_names(session)
+    except SQLAlchemyError:
+        log.warning("policy.default_lists_unreadable")
+        return default
+    carried = {
+        str(c.value).strip().casefold()
+        for c in default.protect_conditions
+        if c.field == "on_list" and isinstance(c.value, str)
+    }
+    # Case-folded on both sides, the comparison every reader of a list name makes (rule 88).
+    extra = tuple(
+        ConditionSpec(field="on_list", op=Op.EQ, value=name)
+        for name in dict.fromkeys(own)
+        if name.strip().casefold() not in carried
+    )
+    if not extra:
+        return default
+    return default.model_copy(update={"protect_conditions": default.protect_conditions + extra})
 
 
 async def active_policies(session: AsyncSession) -> tuple[ActivePolicy, ActivePolicy]:

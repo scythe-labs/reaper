@@ -422,6 +422,85 @@ class TestALegacyListBodyIsConvertedOnLoad:
         assert active.body == DEFAULT_MOVIE_POLICY
 
 
+class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
+    """``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
+    Plex keep collection arrives by migration instead, and an install that has never saved a
+    policy returns before ``convert_list_protections`` can run -- so nothing pointed a rule at
+    it, while the WHITELISTED gate that used to spare its titles is retired. A protection that
+    fired on the previous release and cannot fire on this one, silently."""
+
+    @staticmethod
+    async def _seed_plex_collection(session: AsyncSession, name: str = "Never Reap") -> None:
+        session.add(
+            ListConfigModel(
+                name=name,
+                source="plex_collection",
+                config_json=json.dumps({"library": "Films", "collection": name}),
+                enabled=True,
+                built_in=False,
+                created_at=utcnow(),
+            )
+        )
+        await session.commit()
+
+    @pytest.mark.parametrize("media_type", ["movie", "tv"])
+    async def test_a_seeded_collection_is_kept_outright(
+        self, session: AsyncSession, media_type: str
+    ) -> None:
+        await self._seed_plex_collection(session)
+
+        active = await active_policy(session, media_type)
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert "Never Reap" in values
+        # Additive: the shipped conditions are still there, and nothing is flagged, because
+        # putting the rule back removes the loss rather than announcing it.
+        assert {"IMDb Top 250", "Titles you've tagged"} <= values
+        assert active.repaired is False
+        assert active.name == "default"
+
+    async def test_a_watchlist_definition_is_kept_too(self, session: AsyncSession) -> None:
+        """The other source ``_conversion_list_names`` returns as the operator's own."""
+        session.add(
+            ListConfigModel(
+                name="My watchlist",
+                source="plex_watchlist",
+                config_json="{}",
+                enabled=True,
+                built_in=False,
+                created_at=utcnow(),
+            )
+        )
+        await session.commit()
+
+        active = await active_policy(session, "movie")
+
+        assert "My watchlist" in {
+            str(c.value) for c in active.body.protect_conditions if c.field == "on_list"
+        }
+
+    async def test_an_empty_registry_leaves_the_shipped_conditions_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """The helper may only ever ADD cover. With nothing of the operator's own to point
+        at, the default is returned exactly as shipped rather than with its rules rebuilt."""
+        active = await active_policy(session, "movie")
+
+        assert active.body == DEFAULT_MOVIE_POLICY
+
+    async def test_a_collection_the_default_already_names_gains_no_second_rule(
+        self, session: AsyncSession
+    ) -> None:
+        """Case-folded on both sides, the comparison every reader of a list name makes
+        (rule 88), so a duplicate rule cannot arrive by capitalization."""
+        await self._seed_plex_collection(session, name="imdb top 250")
+
+        active = await active_policy(session, "movie")
+
+        values = [str(c.value) for c in active.body.protect_conditions if c.field == "on_list"]
+        assert values == [c.value for c in DEFAULT_MOVIE_POLICY.protect_conditions]
+
+
 class TestInvariantsHoldThroughTheService:
     async def test_a_run_cap_above_the_rolling_cap_is_refused(self, session: AsyncSession) -> None:
         with pytest.raises(ValueError, match="rolling cap"):

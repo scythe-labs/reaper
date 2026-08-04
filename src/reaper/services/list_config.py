@@ -184,6 +184,17 @@ def _clean_name(name: str) -> str:
         raise ListConfigError("Give the list a name, so you can pick it out on the Policy screen.")
     if len(cleaned) > 100:
         raise ListConfigError("That name is too long. Keep it under 100 characters.")
+    if "," in cleaned:
+        # The ``on_list`` fact comma-joins the names holding an item (``lists.on_list_fact``)
+        # and ``fields._compare`` splits it back on commas, so a name carrying one is never an
+        # element of its own fact: the auto-attached keep rule matches nothing while both the
+        # Lists row and the Policy screen render it as an outright protection. The other
+        # direction is worse -- an item on "Kids, Holiday" alone satisfies a rule naming a
+        # different list called "Holiday". Refused here, where they are looking at the box
+        # (rule 108 is the same check for a rule value that strips to nothing).
+        raise ListConfigError(
+            "A list name can't have a comma in it. Reaper separates names with one."
+        )
     return cleaned
 
 

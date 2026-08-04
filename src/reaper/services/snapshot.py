@@ -2421,6 +2421,13 @@ async def sync_protection_lists(
         # this pass refreshes the adopted row in place -- and if its own sync then fails,
         # the membership the legacy row earned is already under the slug that coasts.
         await lists.adopt_legacy(engine, definitions or ())
+        # And the name its keep rule matches, which the legacy row never carried. The coast
+        # above is what makes this load-bearing: an adopted row whose own sync then fails
+        # keeps `rule_name` NULL, so `Membership.matched_by()` falls back to the display name
+        # ("Radarr (HD) tag: reaper-keep") while the rule spells the definition's name -- the
+        # membership is stored, the scan is executable, and it protects nothing. `api/lists.py`
+        # pairs these two calls on both of its paths; this sibling was not swept (rule 72).
+        await lists.sync_rule_names(engine, definitions or ())
     wanted = [d for d in definitions or () if d.enabled and (only is None or d.id == only)]
     for definition in wanted:
         if definition.source is lists.ListSource.IMDB:

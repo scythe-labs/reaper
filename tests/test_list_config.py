@@ -171,6 +171,31 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
                 session, name="   ", source="arr_tag", config={"tags": ["keep"]}
             )
 
+    @pytest.mark.parametrize("name", ["Kids, Holiday", "Keep,Hold", "A, B, C"])
+    async def test_a_list_name_cannot_carry_a_comma(self, session: AsyncSession, name: str) -> None:
+        """A comma is the separator the ``on_list`` fact is joined and split on, so a name
+        holding one is never an element of its own fact.
+
+        The auto-attached keep rule then matches nothing while the Lists row and the Policy
+        screen both render it as an outright protection, and an item on "Kids, Holiday"
+        satisfies a rule naming a different list called "Holiday". Refused at the save
+        boundary, the way rule 108 refuses a rule value that strips to nothing.
+        """
+        with pytest.raises(list_config.ListConfigError, match="can't have a comma"):
+            await list_config.create(
+                session, name=name, source="arr_tag", config={"tags": ["keep"]}
+            )
+
+    async def test_a_rename_cannot_put_a_comma_in_the_name(self, session: AsyncSession) -> None:
+        """The same refusal on the edit path, which is the one an operator reaches by renaming
+        rather than by adding (rule 72's sibling of the check above)."""
+        row = await list_config.create(
+            session, name="Keep", source="arr_tag", config={"tags": ["a"]}
+        )
+
+        with pytest.raises(list_config.ListConfigError, match="can't have a comma"):
+            await list_config.update(session, row.id, name="Keep, Hold")
+
     @pytest.mark.parametrize("second", ["Keep", "keep", "KEEP", "  keep  "])
     async def test_two_lists_cannot_share_a_name(self, session: AsyncSession, second: str) -> None:
         """A rule naming a list has to mean exactly one list, or the protection points at

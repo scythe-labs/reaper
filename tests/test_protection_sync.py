@@ -608,6 +608,33 @@ class TestLegacySlugsAreRehomedOnUpgrade:
         assert await _enabled(engine, TAG_SLUG) is True
         assert await memberships(engine, media_type="tv", tvdb_id=10)
 
+    async def test_a_coasting_adopted_row_is_matched_by_the_name_its_rule_spells(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Membership surviving the failed refresh above is only half of the protection: the
+        keep rule spells the DEFINITION's name, and a legacy row carries no ``rule_name`` at
+        all, so ``matched_by`` falls back to a display name naming the server. The rule then
+        matches nothing while the row reads healthy and the scan stays executable -- every
+        tagged title unprotected, unannounced.
+
+        The scan path pairs ``adopt_legacy`` with ``lists.sync_rule_names`` for that reason,
+        as both of ``api/lists.py``'s paths already did (rule 72). Driven through the failing
+        sync, because that is the branch where the fallback is what answers.
+        """
+        await self._store_legacy_row(engine)
+
+        class _Unreachable(_TaggedSonarr):
+            async def tags(self) -> list[dict[str, object]]:
+                raise RuntimeError("connection refused")
+
+        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[broken])
+
+        held = await memberships(engine, media_type="tv", tvdb_id=10)
+
+        # "Tagged titles", never "Sonarr (hd) tag: keep" -- the spelling `attach_list` wrote.
+        assert [m.matched_by() for m in held] == [_tag_list().name]
+
     async def test_an_unclaimable_legacy_row_retires_once_the_syncs_land(
         self, engine: AsyncEngine
     ) -> None:
