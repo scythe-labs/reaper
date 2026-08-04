@@ -154,7 +154,14 @@
 .tag-chip button:hover {
   background: color-mix(in srgb, var(--protect) 18%, transparent);
 }
-.tag-chips input {
+/* Qualified by `.tag-editor` to outrank `.field-sm input`, which is a bare one-class-plus-type
+   selector (0,1,1) that dresses EVERY input under it in the standard bordered box. This one tied
+   it and lost on load order alone (15 before 26), so dropping the control into the list modal's
+   `.field-sm` drew a second bordered, `--bg`-filled box around the add box, inside the bar --
+   two nested boxes where the policy card, which has no such ancestor, showed one clean bar.
+   `.qty input[type="number"]` survives the same rule by the same trick, an attribute qualifier
+   instead of an ancestor; the composite control has to carry its own chrome wherever it is put. */
+.tag-editor .tag-chips input {
   flex: 1;
   min-width: 6rem;
   border: none;
@@ -171,6 +178,11 @@
 .tag-chips:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+/* And the inner box draws no ring of its own, or focusing it paints two: `.field-sm input:focus`
+   is the other half of the blanket rule above. `.qty :is(input, select):focus` does this. */
+.tag-editor .tag-chips input:focus {
+  outline: none;
 }
 
 .toggle {

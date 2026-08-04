@@ -104,10 +104,13 @@ button.link:hover:not(:disabled) {
    zero-height copy of the label at the bold weight sets the width; the visible text rides above
    it. `visibility: hidden` keeps the strut out of the accessibility tree. Applied to every
    control that bolds when active (queue lane tabs `.tab`, policy toggle `.seg`, the
-   settings/policy rails `.settings-tab`, the docs index `.docs-index-item`); each needs a
-   `data-label` of its visible text, and one without simply keeps the old behavior. */
+   settings/policy rails `.settings-tab`, the docs index `.docs-index-item`, the list form's
+   any/all pair `.seg2 button`); each needs a `data-label` of its visible text, and one without
+   simply keeps the old behavior. `.seg2` is styled in 34-lists.css and struts from here, so the
+   strut has one definition rather than a copy per control (rules 18 and 67). */
 .tab[data-label]::after,
 .seg[data-label]::after,
+.seg2 button[data-label]::after,
 .settings-tab[data-label]::after,
 .docs-index-item[data-label]::after {
   content: attr(data-label);

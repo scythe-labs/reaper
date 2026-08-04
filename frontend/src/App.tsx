@@ -396,12 +396,26 @@ export function ScanFreshness({
   }
   return (
     <p className="scan-freshness muted">
-      Last scanned {date(snapshot.created_at)}, {count(snapshot.item_count)} items
+      Last scanned {date(snapshot.created_at)}, {count(snapshot.item_count)} items.
       {snapshot.degraded && (
-        <span className="freshness-warn">
-          {". "}
-          That scan came back incomplete, so Reaper won't act on it
-        </span>
+        <>
+          {" "}
+          {/* The separating period is OUTSIDE the warn span. Inside it, the character that
+              ends the neutral sentence before it painted amber and semibold, so the line
+              opened on a floating yellow dot a word early. */}
+          <span className="freshness-warn">
+            The last scan came back incomplete.{" "}
+            {/* The only one of the three incomplete-scan notices with no remedy in it, which
+                is why this is the one that grew a link (rule 72). `ScanBar`'s copy renders ON
+                Settings → Jobs, beside the Scan library button, so it would point at itself;
+                `ReapPlan`'s already ends "Fix the source and scan again" on a page whose
+                remedy is the source, not a rescan. Both were read and left as they are. */}
+            <button className="link" onClick={onGoToJobs}>
+              Go to Settings → Jobs
+            </button>{" "}
+            and rescan.
+          </span>
+        </>
       )}
     </p>
   );

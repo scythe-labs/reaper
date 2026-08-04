@@ -304,10 +304,15 @@ describe("the kind badges", () => {
 
     expect(document.querySelector(".kind-badge.kind-imdb")).toHaveTextContent("IMDb");
     expect(document.querySelector(".kind-badge.kind-plex")).toHaveTextContent("Plex");
-    // The two-color gradient pill: one badge for a list read from both *arrs at once.
+    // The two-color pill: one badge for a list read from both *arrs at once.
     const arr = document.querySelector(".kind-badge.kind-arr");
     expect(arr).not.toBeNull();
     expect(arr).toHaveTextContent(/Sonarr.*Radarr/);
+    // A span per half, each carrying its own fill and padding, so the seam lands ON the gap
+    // between the words instead of near it. The space between the halves is layout-inert but
+    // stays in the text: run together the badge announces itself as one invented word.
+    expect(arr?.querySelectorAll(":scope > span")).toHaveLength(2);
+    expect(arr?.textContent).toBe("Sonarr Radarr");
   });
 });
 

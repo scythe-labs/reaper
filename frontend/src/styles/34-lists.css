@@ -87,15 +87,32 @@
 }
 /* Half Sonarr blue, half Radarr gold: a hard split with a thin dark seam, no blend -- the
    seam is the line separating them. One ink for both halves: --sonarr-ink clears WCAG AA on
-   either fill. */
-.kind-arr {
-  background: linear-gradient(
-    90deg,
-    var(--sonarr) 0 calc(50% - 0.5px),
-    rgba(0, 0, 0, 0.55) calc(50% - 0.5px) calc(50% + 0.5px),
-    var(--radarr) calc(50% + 0.5px) 100%
-  );
+   either fill.
+
+   Each name is padded inside its OWN half, rather than both being set as one text run over a
+   50% gradient. A gradient stop lands at the pill's midpoint, and the single space between two
+   words of unequal length does not, so the seam cut through "Sonarr Radarr" a few pixels off
+   the space: the words nearly touched across it while the pill's outer padding stayed wide,
+   which read as three different gaps in one pill. Halves make the three equal by construction.
+   `.list-head` on the selector to outrank `.list-head .kind-badge`'s padding just above, which
+   the halves now carry instead. */
+.list-head .kind-arr {
+  display: inline-flex;
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
   color: var(--sonarr-ink);
+}
+/* The whitespace between the two halves in the TSX is there for the accessibility tree, so the
+   badge still reads as two words; a whitespace-only anonymous flex item is not rendered, so it
+   costs the seam nothing. */
+.list-head .kind-arr > span {
+  padding: var(--space-2xs) var(--space-md);
+  background: var(--sonarr);
+}
+.list-head .kind-arr > span + span {
+  border-left: 1px solid rgba(0, 0, 0, 0.55);
+  background: var(--radarr);
 }
 
 /* A tag row's display pills: neutral, with the count in accent. Distinct from the green

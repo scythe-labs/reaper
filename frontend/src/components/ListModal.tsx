@@ -69,6 +69,10 @@ function MatchToggle({
     <button
       type="button"
       className={match === value ? "on" : ""}
+      // Reserves the chosen half's bold width at either weight, so pressing one does not widen
+      // it and shove the other sideways -- the same strut `.seg` and `.tab` take, defined once
+      // in 04-buttons.css. Without it both halves resized under the cursor on every press.
+      data-label={text}
       aria-pressed={match === value}
       onClick={() => onMatch(value)}
     >

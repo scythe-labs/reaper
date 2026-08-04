@@ -136,7 +136,14 @@ function serverOf(row: ProtectionList): string {
  *  colors. A tag list reads Sonarr and Radarr at once, so its pill is half of each. */
 function kindBadge(source: ListConfig["source"]): ReactNode {
   if (source === "arr_tag") {
-    return <span className="kind-badge kind-arr">Sonarr Radarr</span>;
+    // One span per half, so each name is centered in its own color instead of riding a
+    // gradient stop that falls near, but not on, the space between them. The space between
+    // the spans survives into the accessible text and is dropped from the flex layout.
+    return (
+      <span className="kind-badge kind-arr">
+        <span>Sonarr</span> <span>Radarr</span>
+      </span>
+    );
   }
   if (source === "imdb") return <span className="kind-badge kind-imdb">IMDb</span>;
   return <span className="kind-badge kind-plex">Plex</span>;

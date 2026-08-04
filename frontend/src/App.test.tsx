@@ -122,6 +122,32 @@ describe("ScanFreshness", () => {
     );
     expect(screen.getByText(/came back incomplete/i)).toBeInTheDocument();
   });
+
+  it("routes an incomplete scan to the page that rescans, and keeps the period out of the amber", async () => {
+    const user = userEvent.setup();
+    const onGoToJobs = vi.fn();
+    const { container } = render(
+      <ScanFreshness
+        snapshot={{ ...snapshot, degraded: true }}
+        isPending={false}
+        error={undefined}
+        onGoToJobs={onGoToJobs}
+      />,
+    );
+    // The warning is the only one of the three that names no remedy, so it carries the link.
+    await user.click(screen.getByRole("button", { name: /go to settings → jobs/i }));
+    expect(onGoToJobs).toHaveBeenCalledTimes(1);
+
+    // The amber span opens on its own first word. It used to open on the period ENDING the
+    // neutral sentence before it, which took the warning's color and weight and painted a
+    // floating yellow dot a word ahead of the sentence it belonged to.
+    const warn = container.querySelector(".freshness-warn");
+    expect(warn?.textContent?.trimStart()).toMatch(/^The last scan came back incomplete/);
+    // And the neutral half keeps a period of its own rather than trailing off mid-sentence.
+    expect(container.querySelector(".scan-freshness")?.textContent).toMatch(
+      /items\.\s*The last scan/,
+    );
+  });
 });
 
 describe("ScanLine", () => {

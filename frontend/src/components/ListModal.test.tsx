@@ -249,6 +249,12 @@ describe("adding a tag list", () => {
       name: "How many of these tags a title needs",
     });
     expect(toggle.classList.contains("seg2")).toBe(true);
+    // Each half reserves its own bold width through `data-label` (the strut in 04-buttons.css),
+    // so choosing one bolds it in place instead of widening it and shoving its neighbor
+    // sideways out from under the cursor.
+    for (const half of ["Any of these", "All of these"]) {
+      expect(screen.getByRole("button", { name: half })).toHaveAttribute("data-label", half);
+    }
     expect(screen.getByRole("button", { name: "Any of these" })).toHaveAttribute(
       "aria-pressed",
       "true",
