@@ -53,6 +53,9 @@ type Site = {
   /** Set when this site deliberately does NOT wrap. The string is the reason, and the reason
    *  is what the field is for: an exception nobody wrote down reads as an omission. */
   exempt?: string;
+  /** Set when the break opportunity is granted on a flex or grid CONTAINER rather than on the
+   *  element holding the text. The string says why no sibling in that row is hurt by it. */
+  onAFlexRow?: string;
 };
 
 // Every element known to render text from outside Reaper. Grouped by where the fix came from, so
@@ -216,8 +219,8 @@ const SITES: Site[] = [
   },
   {
     what: "a simulated media title",
-    selectors: [".sim-examples li"],
-    classInTsx: "sim-examples",
+    selectors: [".sim-example-title"],
+    classInTsx: "sim-example-title",
     seenIn: ["components/PolicySimulator.tsx"],
   },
   {
@@ -225,12 +228,16 @@ const SITES: Site[] = [
     selectors: [".lib-card"],
     classInTsx: "lib-card",
     seenIn: ["components/PlexPanel.tsx"],
+    onAFlexRow: "the name's only sibling is the Switch, which holds a size of its own",
   },
   {
     what: "the scan's live line, which names the library or path it is reading right now",
     selectors: [".jobrow-run"],
     classInTsx: "jobrow-run",
     seenIn: ["components/JobStatus.tsx"],
+    onAFlexRow:
+      "the line is a bare text node beside the spinner, so there is no element here to grant " +
+      "it on, and the spinner carries no text to break",
   },
 
   // ---- #220: the five that needed a layout decision ---------------------------------------
@@ -417,6 +424,34 @@ describe("the stylesheet: text the operator did not choose", () => {
     // This is #220's whole shape: a `nowrap` or an ellipsis makes `overflow-wrap` a no-op, so a
     // site can carry the declaration and still paint out of its box.
     expect(undone).toEqual([]);
+  });
+
+  it("grants it on the text, not on the flex row around the text", () => {
+    const misplaced: string[] = [];
+    const stale: string[] = [];
+    for (const site of SITES) {
+      const { grantedAt } = resolve(site);
+      if (grantedAt === null) continue;
+      const block = RULES.find((r) => r.at === grantedAt) as Rule;
+      const display = declaredValue(block.body, "display") ?? "";
+      const isRow = /flex|grid/.test(display);
+      if (isRow && !site.onAFlexRow) {
+        misplaced.push(
+          `${named(site)} -- the break opportunity at ${siteOf(grantedAt)} is on a ` +
+            `\`display: ${display}\` container, so every child inherits it. Move it to the ` +
+            `element holding the text, or say here why no sibling is hurt`,
+        );
+      }
+      if (!isRow && site.onAFlexRow) {
+        stale.push(`${named(site)} is not a flex row now -- drop its \`onAFlexRow\` reason`);
+      }
+    }
+    // `anywhere` counts its break opportunities in min-content sizing, unlike `break-word`, so a
+    // flex item that inherits it has an automatic minimum of one character and the row is free to
+    // squeeze it to that. The simulator's example list is what this cost: the grant sat on the
+    // row, and a title long enough to wrap broke the score beside it into a 6 above a 4.
+    expect(misplaced).toEqual([]);
+    expect(stale).toEqual([]);
   });
 
   it("keeps every recorded exception an exception", () => {
