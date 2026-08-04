@@ -44,6 +44,14 @@ class ListConfigError(ValueError):
     """A refusal the operator should read, in their words. The API maps it to a 4xx."""
 
 
+class ListRegistryUnreadableError(RuntimeError):
+    """A stored definition's body will not parse, so the registry cannot say which lists
+    exist. Raised only for a caller that is about to SYNC (``strict=True``), because that
+    pass retires every list the registry no longer produces: a row read as absent is a
+    protection switched off by a decode error. Rules 65/91 -- a read failure is "unknown",
+    never "nothing configured"."""
+
+
 @dataclass(frozen=True, slots=True)
 class ListDefinition:
     """One definition, decoded, for the code that builds providers from it.
@@ -102,7 +110,7 @@ class ListDefinition:
         return list_id if list_id else "top250"
 
 
-async def definitions(session: AsyncSession) -> list[ListDefinition]:
+async def definitions(session: AsyncSession, *, strict: bool = False) -> list[ListDefinition]:
     """Every definition, decoded, shipped ones included.
 
     Disabled rows are returned too, and deliberately: the sync builds providers only from the
@@ -110,6 +118,12 @@ async def definitions(session: AsyncSession) -> list[ListDefinition]:
     longer produces. A disabled definition that were simply omitted here would be
     indistinguishable from one that never existed -- and its stored membership would go on
     protecting, so the switch on the settings screen would be a switch that does nothing.
+
+    ``strict`` is what a caller about to SYNC passes: an unreadable body then raises
+    :class:`ListRegistryUnreadableError` instead of dropping that row, because dropping it is
+    indistinguishable from a delete and the sweep disables its membership. The screens that
+    only DISPLAY the registry stay tolerant, so a single bad row still renders beside the
+    others rather than 500ing the page an operator would fix it from.
     """
     out: list[ListDefinition] = []
     for row in await all_lists(session):
@@ -117,9 +131,13 @@ async def definitions(session: AsyncSession) -> list[ListDefinition]:
             body = json.loads(row.config_json or "{}")
         except ValueError:
             # Unreadable is not empty. A body that will not parse cannot say which library or
-            # which tags, so no provider is built and the stored membership is left alone
-            # rather than replaced by a sync of a guessed configuration (rule 93).
+            # which tags, so nothing may be synced from a guessed configuration (rule 93) --
+            # and dropping the row instead reads to the sweep as a list the operator deleted,
+            # which disables the membership it is still protecting with. `strict` is what
+            # holds the whole pass still; the tolerant path below only ever displays.
             log.warning("list_config.unreadable", list_id=row.id)
+            if strict:
+                raise ListRegistryUnreadableError(f"list {row.id} has an unreadable body") from None
             continue
         out.append(
             ListDefinition(

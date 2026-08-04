@@ -203,8 +203,16 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
     box: SecretBox = app.state.secret_box
     async with AsyncExitStack() as stack:
         try:
+            # Not a scan: this reads the *arr and Plex and nothing else, so it does not carry
+            # a scan's Tautulli precondition. With it on, an install with Plex linked and no
+            # Tautulli was refused a check of its Plex collection, in words about scans and
+            # watch history (rule 21).
             radarrs, sonarrs, _tautulli, _seerrs, plex = await scan_runner.build_sources(
-                app.state.session_factory, settings, box, stack=stack
+                app.state.session_factory,
+                settings,
+                box,
+                stack=stack,
+                require_scan_sources=False,
             )
         except scan_runner.ScanConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -223,7 +231,18 @@ async def sync_lists(request: Request, body: ListSyncIn) -> ListSyncOut:
                 )
 
         async with app.state.session_factory() as session:
-            definitions = await list_config.definitions(session)
+            try:
+                definitions = await list_config.definitions(session, strict=True)
+            except list_config.ListRegistryUnreadableError:
+                # This pass retires, so a row that will not decode has to stop it rather than
+                # read as one the operator deleted (rules 65/91).
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "One of your lists is saved in a form Reaper can't read, so it didn't "
+                        "check any of them. Open that list, set it up again, and save it."
+                    ),
+                ) from None
 
         synced = await snapshot.sync_protection_lists(
             app.state.cache_engine,

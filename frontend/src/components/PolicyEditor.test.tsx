@@ -1284,7 +1284,10 @@ describe("the controls a screen reader has to tell apart", () => {
       },
     });
 
-    expect(await screen.findByRole("switch", { name: "Whitelisted" })).toBeChecked();
+    // Named in the operator's words, not by the `titleCase` fallback. The gate is retired as a
+    // switch, but the server still emits its id -- every hand spare carries it -- so its copy
+    // stays in `GATE_META` and a stored row reads as a sentence rather than as "Whitelisted".
+    expect(await screen.findByRole("switch", { name: "On one of your lists" })).toBeChecked();
     // The card, its tag boxes and its own copy are gone with the feature.
     expect(screen.queryByText("Spare titles you've tagged")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Add a keep tag")).not.toBeInTheDocument();

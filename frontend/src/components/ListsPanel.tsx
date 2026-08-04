@@ -26,7 +26,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState, type ReactNode } from "react";
 
-import { api, type ListConfig, type ProtectionList } from "../api";
+import { api, type ListConfig, type ListPolicyUse, type ProtectionList } from "../api";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
 
@@ -105,10 +105,19 @@ function describe(
           named,
       };
     case "never_checked":
+      // Branched on the stored count, the way `failing` above is. A rolled-up family takes
+      // its state from its WORST member, and `never_checked` outranks `working`, so adding a
+      // second *arr to a tag list that already holds titles lands here with `items` above
+      // zero -- and the flat sentence then told the operator a live protection was not
+      // protecting, on the screen built to answer exactly that.
       return {
         label: "Not checked yet",
         tone: "idle",
-        detail: `Runs with your next scan. Nothing on it is protected until it does.${named}`,
+        detail:
+          (items > 0
+            ? `Still protecting ${titles(items)} from an earlier check. Anything added since ` +
+              "then is not covered until the next one runs."
+            : "Runs with your next scan. Nothing on it is protected until it does.") + named,
       };
   }
 }
@@ -283,18 +292,33 @@ function PolicyUse({
   // outcome and saying both described one list as doing two things (#510). Policy will not
   // compose the pair any more; a body stored before it could still carry one, and this is
   // what the operator is told about it: the strength that actually acts.
-  const outright = definition.policy_use.some((use) => use.strength === "hard");
-  const sentences = [
-    ...new Set(
-      definition.policy_use
-        .filter((use) => !outright || use.strength === "hard")
-        .map((use) =>
-          use.strength === "hard"
-            ? "Keeps every title on it"
-            : `Leans toward keeping, up to ${use.points ?? 0} points off`,
-        ),
-    ),
-  ];
+  //
+  // WITHIN ONE MEDIA TYPE. Collapsed across both, a list keeping movies outright while only
+  // leaning on TV read "Keeps every title on it" and dropped the lean entirely -- a movie
+  // rule decides nothing about a season, so the operator lost the line saying their shows
+  // on that list are still condemnable, on the screen built to answer that.
+  const acting = (["movie", "tv"] as const).flatMap((mediaType) => {
+    const mine = definition.policy_use.filter((use) => use.media_type === mediaType);
+    const use = mine.find((u) => u.strength === "hard") ?? mine[0];
+    return use ? [{ noun: mediaType === "movie" ? "movie" : "show", use } as const] : [];
+  });
+  const said = (use: ListPolicyUse, noun: "title" | "movie" | "show") => {
+    const plural = noun === "title" ? "titles" : `${noun}s`;
+    return use.strength === "hard"
+      ? `Keeps every ${noun} on it`
+      : `Leans toward keeping ${plural}, up to ${use.points ?? 0} points off`;
+  };
+  // Both types acting the same way is one fact, so it is said once, in the neutral noun.
+  const [forMovies, forShows] = acting;
+  const agree =
+    forMovies !== undefined &&
+    forShows !== undefined &&
+    forMovies.use.strength === forShows.use.strength &&
+    (forMovies.use.points ?? null) === (forShows.use.points ?? null);
+  const sentences =
+    agree && forMovies !== undefined
+      ? [said(forMovies.use, "title")]
+      : acting.map((a) => said(a.use, a.noun));
   if (sentences.length === 0) {
     return (
       <div className="policy-use unused">

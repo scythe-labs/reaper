@@ -39,6 +39,11 @@ export const SCAN_SETTLED_KEYS: string[][] = [
   // second copy of this effect inside `PolicyEditor` instead of here, which is the divergence
   // the paragraph above forbids: the list's whole value is being the single place (#205).
   ["validate"], // the policy editor's warnings, re-derived against the new watch history
+  // A scan refreshes every protection list before it gathers (`snapshot.sync_protection_lists`),
+  // so it moves each one's stored count, its last-checked time, and whether it is failing at
+  // all. Without this a list that just started failing kept its green "Working, protecting N
+  // titles" for as long as the panel stayed mounted, which is the reassuring direction.
+  ["lists"],
 ];
 
 /** Refresh everything that hangs off the snapshot when a scan finishes.

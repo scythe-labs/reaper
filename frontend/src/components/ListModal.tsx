@@ -30,6 +30,11 @@ import { TagsEditor } from "./TagsEditor";
 
 type Source = ListConfig["source"];
 
+/** Which control the "why Add is off" sentence is about, so it can be bound to that control. */
+type BlockedField = "name" | "library" | "collection" | "tags" | "imdb";
+
+const BLOCKED_ID = "list-modal-blocked";
+
 /** What the operator is told each source is, in their words. */
 const SOURCE_NAMES: Record<Source, string> = {
   plex_collection: "Plex collection",
@@ -225,23 +230,40 @@ export function ListModal({
   // What the submit button is waiting on. The server refuses each of these too, in the same
   // words; saying it here means the operator reads it while looking at the empty box rather
   // than after a round trip (the shape `_clean_config`'s docstring describes).
-  const missing = ((): string | null => {
-    if (!name.trim()) return "Give the list a name, so you can pick it out on the Policy screen.";
+  // Which control the sentence is about, so it can be bound to that control rather than only
+  // rendered beside a disabled button. `PolicyRuleEditors` does the same and says why: a
+  // disabled submit is out of the Tab order, so the reason has to live on the box the operator
+  // is standing in or it is announced nowhere at all.
+  const blocked = ((): { on: BlockedField; why: string } | null => {
+    if (!name.trim()) {
+      return {
+        on: "name",
+        why: "Give the list a name, so you can pick it out on the Policy screen.",
+      };
+    }
     if (source === "plex_collection") {
-      if (!library.trim()) return "Say which Plex library to look in.";
-      if (!collection.trim()) return "Say which collection in that library to read.";
+      if (!library.trim()) return { on: "library", why: "Say which Plex library to look in." };
+      if (!collection.trim()) {
+        return { on: "collection", why: "Say which collection in that library to read." };
+      }
       return null;
     }
     if (source === "arr_tag") {
       return tags.length === 0
-        ? "Add at least one tag, spelled as it appears in Sonarr or Radarr."
+        ? { on: "tags", why: "Add at least one tag, spelled as it appears in Sonarr or Radarr." }
         : null;
     }
     if (source === "imdb" && !preset && !imdbId.trim()) {
-      return "Paste the list's id or URL. An IMDb list id looks like ls005421403.";
+      return {
+        on: "imdb",
+        why: "Paste the list's id or URL. An IMDb list id looks like ls005421403.",
+      };
     }
     return null;
   })();
+  const missing = blocked?.why ?? null;
+  /** `aria-describedby` for the one control the blocking sentence is about. */
+  const describedBy = (field: BlockedField) => (blocked?.on === field ? BLOCKED_ID : undefined);
 
   const title =
     view === "picker"
@@ -389,6 +411,7 @@ export function ListModal({
               onChange={(e) => setName(e.target.value)}
               placeholder="Never Reap"
               autoFocus={!editing}
+              aria-describedby={describedBy("name")}
             />
           </label>
 
@@ -411,6 +434,7 @@ export function ListModal({
                     aria-label="Plex library"
                     value={library}
                     onChange={(e) => setLibrary(e.target.value)}
+                    aria-describedby={describedBy("library")}
                   >
                     <option value="">Pick a library…</option>
                     {libraryOptions.map((libraryTitle) => (
@@ -424,6 +448,7 @@ export function ListModal({
                     value={library}
                     onChange={(e) => setLibrary(e.target.value)}
                     placeholder="Movies"
+                    aria-describedby={describedBy("library")}
                   />
                 )}
               </label>
@@ -441,6 +466,7 @@ export function ListModal({
                   value={collection}
                   onChange={(e) => setCollection(e.target.value)}
                   placeholder="Never Reap"
+                  aria-describedby={describedBy("collection")}
                 />
               </label>
               <p className="help">
@@ -460,7 +486,12 @@ export function ListModal({
           {source === "arr_tag" && (
             <div className="field-sm">
               <span className="field-label">Tags</span>
-              <TagsEditor tags={tags} onTags={setTags} addLabel="Add a tag" />
+              <TagsEditor
+                tags={tags}
+                onTags={setTags}
+                addLabel="Add a tag"
+                describedBy={describedBy("tags")}
+              />
               <MatchToggle match={match} onMatch={setMatch} />
               <p className="help">
                 Type each tag exactly as it appears in Sonarr or Radarr. Every connected server is
@@ -481,6 +512,7 @@ export function ListModal({
                   value={imdbId}
                   onChange={(e) => setImdbId(e.target.value)}
                   placeholder="ls0000000, or paste the list's URL"
+                  aria-describedby={describedBy("imdb")}
                 />
               </label>
             ))}
@@ -501,7 +533,7 @@ export function ListModal({
               {save.isPending ? "Saving…" : editing ? "Save" : "Add list"}
             </button>
             {missing && (
-              <span className="help help-warn" id="list-modal-blocked">
+              <span className="help help-warn" id={BLOCKED_ID}>
                 {missing}
               </span>
             )}

@@ -230,27 +230,48 @@ async def refresh_curated_lists(
     try:
         async with session_factory() as session:
             definitions = await list_config.definitions(session)
-        refreshed: dict[str, int] = {}
-        for definition in definitions:
-            if definition.source is not lists.ListSource.IMDB or not definition.enabled:
-                continue
-            provider = lists.ImdbList(
-                variant=definition.imdb_variant,
-                list_id=definition.id,
-                list_name=definition.name,
-            )
-            refreshed[provider.slug] = await lists.sync(
-                cache_engine, provider, mode=lists.ListMode.HARD
-            )
-        log.info("scheduler.lists_refreshed", **refreshed)
-        await _record_run(
-            session_factory, "refresh_curated_lists", ok=True, result="Lists refreshed"
-        )
     except Exception as exc:
         log.warning("scheduler.lists_refresh_failed", error=str(exc))
         await _record_run(
             session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
         )
+        return
+
+    refreshed: dict[str, int] = {}
+    failed: list[str] = []
+    for definition in definitions:
+        if definition.source is not lists.ListSource.IMDB or not definition.enabled:
+            continue
+        provider = lists.ImdbList(
+            variant=definition.imdb_variant,
+            list_id=definition.id,
+            list_name=definition.name,
+        )
+        # Per list, not per pass. `lists.sync` re-raises on a container that has gone missing
+        # with members already stored (rule 27/90), so one list deleted upstream used to end
+        # the loop and leave every list after it unrefreshed for the night. The scan path
+        # swallows per-provider failures for the same reason; the copied loop did not come
+        # with that guard (rule 72). A failed refresh keeps its stored membership either way,
+        # so the loss is freshness, never cover.
+        try:
+            refreshed[provider.slug] = await lists.sync(
+                cache_engine, provider, mode=lists.ListMode.HARD
+            )
+        except Exception as exc:
+            failed.append(provider.slug)
+            log.warning("scheduler.list_refresh_failed", slug=provider.slug, error=str(exc))
+
+    log.info("scheduler.lists_refreshed", **refreshed)
+    if not failed:
+        result = "Lists refreshed"
+    elif not refreshed:
+        result = "Couldn't refresh lists"
+    else:
+        # Only the partial outcome needs the count, and it is the outcome the per-list guard
+        # above creates: before it, one bad list ended the pass and every later one silently
+        # went unrefreshed under the same sentence a total failure prints.
+        result = f"Refreshed {len(refreshed)} lists, {len(failed)} couldn't be checked"
+    await _record_run(session_factory, "refresh_curated_lists", ok=not failed, result=result)
 
 
 async def full_history_sweep(

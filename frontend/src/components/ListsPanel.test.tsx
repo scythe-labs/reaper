@@ -230,6 +230,31 @@ describe("the Lists panel", () => {
     expect(screen.getByText(/Nothing on it is protected until it does\./)).toBeInTheDocument();
   });
 
+  it("says a never-checked family holding titles is still protecting them", async () => {
+    // A rolled-up family takes its state from its WORST member, and `never_checked` outranks
+    // `working` -- so adding a second Radarr to a tag list that already holds titles lands
+    // here with a non-zero count. The flat sentence then told the operator a live protection
+    // was not protecting, which is the one question this screen exists to answer.
+    seed(
+      [TAG_DEF],
+      [
+        tagRow("radarr-1-keeptags-any-list3", { item_count: 40, server: "Radarr (HD)" }),
+        tagRow("radarr-2-keeptags-any-list3", {
+          state: "never_checked",
+          item_count: 0,
+          server: "Radarr (4k)",
+        }),
+      ],
+    );
+    renderPanel();
+
+    expect(await screen.findByText("Not checked yet")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Still protecting 40 titles from an earlier check\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing on it is protected until it does/)).not.toBeInTheDocument();
+  });
+
   it("names where a list points, so two lists are told apart by more than their names", async () => {
     seed([PLEX_DEF], []);
     renderPanel();
@@ -313,9 +338,57 @@ describe("the policy-use line", () => {
     );
     renderPanel();
 
+    // Named for the media type, because only movies carry the rule: `attach_list` writes both,
+    // so one entry means the operator removed the other, and shows on this list have no rule
+    // at all. The neutral noun below is for the case where both types agree.
     expect(
-      await screen.findByText(/Leans toward keeping, up to 15 points off\./),
+      await screen.findByText(/Leans toward keeping movies, up to 15 points off\./),
     ).toBeInTheDocument();
+  });
+
+  it("says both halves when the two policies use the list differently", async () => {
+    // Hard-over-lean is right WITHIN one media type -- an outright rule decides the item, so a
+    // lean beside it changes nothing (#510) -- and wrong across the pair: a movie rule decides
+    // nothing about a season. Collapsed, a list keeping movies outright while only leaning on
+    // TV read "Keeps every title on it" and dropped the lean entirely, on the screen built to
+    // answer whether a list is protecting.
+    seed(
+      [
+        {
+          ...IMDB_DEF,
+          policy_use: [
+            { media_type: "movie", strength: "hard", points: null },
+            { media_type: "tv", strength: "lean", points: 20 },
+          ],
+        },
+      ],
+      [WORKING],
+    );
+    renderPanel();
+
+    expect(await screen.findByText(/Keeps every movie on it\./)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Leans toward keeping shows, up to 20 points off\./),
+    ).toBeInTheDocument();
+  });
+
+  it("says one sentence when both policies use the list the same way", async () => {
+    seed(
+      [
+        {
+          ...IMDB_DEF,
+          policy_use: [
+            { media_type: "movie", strength: "hard", points: null },
+            { media_type: "tv", strength: "hard", points: null },
+          ],
+        },
+      ],
+      [WORKING],
+    );
+    renderPanel();
+
+    expect(await screen.findByText(/Keeps every title on it\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Keeps every movie on it/)).not.toBeInTheDocument();
   });
 
   it("names only the outright rule when a stored body carries both strengths", async () => {
@@ -337,7 +410,7 @@ describe("the policy-use line", () => {
     );
     renderPanel();
 
-    expect(await screen.findByText(/Keeps every title on it\./)).toBeInTheDocument();
+    expect(await screen.findByText(/Keeps every movie on it\./)).toBeInTheDocument();
     expect(screen.queryByText(/Leans toward keeping/)).not.toBeInTheDocument();
   });
 

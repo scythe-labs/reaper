@@ -18,10 +18,14 @@ export function TagsEditor({
   onTags,
   /** The accessible name of the add box. */
   addLabel = "Add a tag",
+  /** The id of a sentence saying why the form will not submit. It lands on the add box,
+   *  because the disabled submit that sentence is about is out of the Tab order. */
+  describedBy,
 }: {
   tags: string[];
   onTags: (t: string[]) => void;
   addLabel?: string;
+  describedBy?: string | undefined;
 }) {
   const [input, setInput] = useState("");
   const add = () => {
@@ -65,6 +69,7 @@ export function TagsEditor({
           // example text inside it and lost even that the moment anything was typed. Same
           // defect #136 fixed on the Plex panel's address pair.
           aria-label={addLabel}
+          aria-describedby={describedBy}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {

@@ -208,10 +208,11 @@ async def build_sources(
     box: SecretBox,
     *,
     stack: AsyncExitStack,
+    require_scan_sources: bool = True,
 ) -> tuple[
     list[snapshot_service.RadarrSource],
     list[snapshot_service.SonarrSource],
-    TautulliClient,
+    TautulliClient | None,
     list[requested_by.SeerrSource],
     PlexClient | None,
 ]:
@@ -231,6 +232,12 @@ async def build_sources(
 
     Every constructed client is entered into the caller's ``stack`` immediately, so
     there is no window in which a raise can leak one (rule 34).
+
+    ``require_scan_sources`` is the SCAN's precondition, and only a scan has it. Refreshing a
+    protection list reads the *arr and Plex and nothing else, so an install with Plex linked
+    and no Tautulli was told its Plex collection could not be checked because "a scan needs a
+    Tautulli instance" -- a requirement of an action the operator did not take (rule 21). With
+    it off, the Tautulli slot comes back ``None`` and every other source is built as usual.
     """
     async with session_factory() as session:
         safety = await app_settings.runtime_safety(session, settings)
@@ -251,7 +258,7 @@ async def build_sources(
     # is the only one. Seerr is multi and is built as a list below, like the *arr.
     tautulli_row = next((r for r in rows if r.kind is InstanceKind.TAUTULLI), None)
 
-    if (not radarr_rows and not sonarr_rows) or tautulli_row is None:
+    if require_scan_sources and ((not radarr_rows and not sonarr_rows) or tautulli_row is None):
         raise ScanConfigError(
             "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
             "Add them in Settings first."
@@ -300,13 +307,17 @@ async def build_sources(
                 library_map=instances.decode_library_map(r.plex_library_map),
             )
         )
-    tautulli = TautulliClient(
-        tautulli_row.base_url,
-        box.decrypt(tautulli_row.api_key_enc),
-        safety=safety,
-        verify=tautulli_row.verify_tls,
-    )
-    await stack.enter_async_context(tautulli)
+    # Only reachable as None with `require_scan_sources` off, where the caller reads no watch
+    # history: the guard above is what makes it non-None for every scan.
+    tautulli: TautulliClient | None = None
+    if tautulli_row is not None:
+        tautulli = TautulliClient(
+            tautulli_row.base_url,
+            box.decrypt(tautulli_row.api_key_enc),
+            safety=safety,
+            verify=tautulli_row.verify_tls,
+        )
+        await stack.enter_async_context(tautulli)
     seerrs: list[requested_by.SeerrSource] = []
     for r in seerr_rows:
         seerr = SeerrClient(
@@ -596,6 +607,14 @@ async def _run_scan_locked(
         radarrs, sonarrs, tautulli, seerrs, plex = await build_sources(
             session_factory, settings, box, stack=stack
         )
+        # `require_scan_sources` defaults on, so this raised above rather than reaching here.
+        # Asserted rather than assumed: a scan without watch history judges dormancy against
+        # nothing, and every score leans on dormancy.
+        if tautulli is None:  # pragma: no cover - the guard in build_sources precedes it
+            raise ScanConfigError(
+                "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
+                "Add them in Settings first."
+            )
 
         async with session_factory() as policy_session:
             active_movie, active_tv = await profiles.active_policies(policy_session)
@@ -617,10 +636,14 @@ async def _run_scan_locked(
             # a query failed. `None` says "unknown", which holds the registry half of the sync
             # still and retires nothing, and the scan degrades so nothing can be deleted under
             # protections it could not confirm.
+            #
+            # A single row whose body will not parse takes the same branch, and for the same
+            # reason: it is absent from the definitions either way, so the sweep would read it
+            # as deleted and disable the membership it is still protecting with.
             list_definitions: list[list_config.ListDefinition] | None
             try:
-                list_definitions = await list_config.definitions(policy_session)
-            except SQLAlchemyError as exc:
+                list_definitions = await list_config.definitions(policy_session, strict=True)
+            except (SQLAlchemyError, list_config.ListRegistryUnreadableError) as exc:
                 list_definitions = None
                 lists_degradation = (
                     "Your protection lists could not be read, so Reaper cannot tell which "

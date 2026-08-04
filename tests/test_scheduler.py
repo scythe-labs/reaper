@@ -9,6 +9,7 @@ is stale, skips the download when it is warm, and never deletes.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from itertools import pairwise
@@ -27,6 +28,7 @@ from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import Instance, InstanceKind
+from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
@@ -511,6 +513,48 @@ class TestUpkeepJobsRecordTheirLastRun:
         assert last is not None
         assert last["ok"] is False
         assert last["result"] == "Couldn't refresh lists"
+
+    async def test_one_failing_list_does_not_take_the_rest_of_the_pass_with_it(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``lists.sync`` re-raises on a container that has gone missing with members already
+        stored (rule 27/90), so with one outer ``try`` the first such list ended the loop and
+        every list after it went unrefreshed for the night, under a Jobs line that named none
+        of them. The scan path guards per provider; the copied loop did not (rule 72)."""
+        async with main_factory() as session:
+            for name in ("Second chart", "Third chart"):
+                session.add(
+                    ListConfigModel(
+                        name=name,
+                        source="imdb",
+                        config_json=json.dumps({"preset": "top250"}),
+                        enabled=True,
+                        built_in=False,
+                        created_at=utcnow(),
+                    )
+                )
+            await session.commit()
+
+        synced: list[str] = []
+
+        async def one_bad(_engine: object, provider: object, **kwargs: object) -> int:
+            slug = str(getattr(provider, "slug", ""))
+            if slug.endswith("-list1"):
+                raise RuntimeError("that list is gone upstream")
+            synced.append(slug)
+            return 250
+
+        monkeypatch.setattr(scheduler.lists, "sync", one_bad)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory)
+
+        assert len(synced) == 2  # the two after the failing one still ran
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Refreshed 2 lists, 1 couldn't be checked"
 
     async def test_a_fresh_skip_still_records_a_run(
         self,

@@ -1395,6 +1395,12 @@ export function PolicyEditor({
       // "unsaved changes" forever.
       setDraft((cur) => (cur && cur.media_type === policy.body.media_type ? policy.body : cur));
       void queryClient.invalidateQueries({ queryKey: ["policy", savedType] });
+      // Settings -> Lists derives each row's "how Policy uses it" line from the active policy
+      // server-side, so a save that softened or removed a list's keep rule changes that answer
+      // with no client-side signal. Global `staleTime` is 30s and focus refetching is off, so
+      // without this the operator edits a rule here, walks back, and reads "Keeps every title
+      // on it" for a list nothing now protects with (rule 79).
+      void queryClient.invalidateQueries({ queryKey: ["lists-configured"] });
       // Apply the saved policy to the review queue by re-scanning in the background. The
       // queue and the simulator read the last snapshot's stored verdicts, which were
       // produced by the OLD policy; a rescan re-scores the library under the new one, and the

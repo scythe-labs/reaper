@@ -165,6 +165,31 @@ class TestRefusingAConfigurationThatCouldNeverMatch:
 
         assert definition.tags == ("Keep",)
 
+    async def test_an_unreadable_body_is_dropped_for_a_reader_and_raises_for_a_sync(
+        self, session: AsyncSession
+    ) -> None:
+        """A row that will not decode must not read to the sync as a row the operator
+        deleted: absent from the definitions, its slug is outside every family's ``current``
+        set, so the retire sweep disables the membership it is still protecting with, with
+        only a log line to say so. ``strict`` routes that to the registry-unreadable state
+        the scan already has, which builds nothing and retires nothing (rules 65/91).
+
+        Tolerant for a reader, because the screen an operator would fix the row from must
+        still render the rows beside it.
+        """
+        row = await list_config.create(
+            session, name="Broken", source="arr_tag", config={"tags": ["a"]}
+        )
+        row.config_json = "{not json"
+        await session.commit()
+
+        readable = await list_config.definitions(session)
+        assert row.id not in {d.id for d in readable}
+        assert {d.name for d in readable} == {"IMDb Top 250", "Titles you've tagged"}
+
+        with pytest.raises(list_config.ListRegistryUnreadableError):
+            await list_config.definitions(session, strict=True)
+
     async def test_a_list_needs_a_name(self, session: AsyncSession) -> None:
         with pytest.raises(list_config.ListConfigError, match="Give the list a name"):
             await list_config.create(

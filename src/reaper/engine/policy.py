@@ -279,11 +279,22 @@ class GradedKeepSpec(Frozen):
         spec = BY_KEY.get(self.field)
         if spec is None:
             raise ValueError(f'Unknown field "{self.field}".')
-        if spec.type is FieldType.TEXT and spec.multi:
+        if spec.key == "on_list":
             # The membership form: flat, so the ramp fields are inert and unvalidated.
+            #
+            # Keyed on the field, not on its SHAPE. `TEXT and multi` also describes `genre`,
+            # which validated, granted the keep, and explained itself as 'on your list
+            # "Comedy"' (#505). Nothing widened -- a keep only ever lowers a score -- but the
+            # operator was told a genre is a list (rule 21). The editor offers this box for
+            # `on_list` alone, so the reachable paths were an imported or restored body and
+            # the API.
             if not (self.value or "").strip():
                 raise ValueError("Say which list this keep rule is about.")
             return self
+        if spec.type is FieldType.TEXT and spec.multi:
+            raise ValueError(
+                f'"{spec.label}" is not a list, so it cannot be graded. Use a protection instead.'
+            )
         if self.value is not None:
             raise ValueError(
                 f'"{spec.label}" is a number, so this rule ramps; it does not take a list name.'

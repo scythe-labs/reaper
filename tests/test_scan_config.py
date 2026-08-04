@@ -123,3 +123,21 @@ class TestBuildSourcesGate:
         with pytest.raises(ScanConfigError):
             async with AsyncExitStack() as stack:
                 await build_sources(factory, settings, box, stack=stack)
+
+    async def test_a_list_check_does_not_carry_the_scan_s_preconditions(
+        self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
+    ) -> None:
+        """Refreshing a protection list reads the *arr and Plex and nothing else, so an
+        install with no Tautulli was refused a check of its Plex collection in words about
+        scans and watch history: a requirement of an action the operator did not take
+        (rule 21). The Tautulli slot comes back None and every other source is built."""
+        factory, settings, box = env
+        await _add(factory, box, InstanceKind.RADARR, "movies")
+
+        async with AsyncExitStack() as stack:
+            radarrs, _sonarrs, tautulli, _seerrs, _plex = await build_sources(
+                factory, settings, box, stack=stack, require_scan_sources=False
+            )
+
+        assert tautulli is None
+        assert len(radarrs) == 1

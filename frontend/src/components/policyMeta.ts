@@ -15,6 +15,10 @@ export type GateMeta = {
   help: string;
   unit?: "days" | "people";
   window?: { label: string; help: string };
+  /** This gate is no longer a switch a policy can carry, but the server still emits its id
+   *  in stored explanations and in the hand-spare injection, so its copy has to stay
+   *  readable. The docs' protections-table guard excludes these: they do not ship today. */
+  retired?: boolean;
 };
 
 export const GATE_META: Record<string, GateMeta> = {
@@ -40,11 +44,26 @@ export const GATE_META: Record<string, GateMeta> = {
     label: "Never touch something playing right now",
     help: "Re-checked in the seconds before any removal, not just at scan time.",
   },
-  // `whitelisted` and `curated_list` were here. Both gates are retired: every list now
-  // protects through an `on_list` keep rule on Policy, and the loader converts a stored body
-  // still carrying either gate (`engine/policy.py convert_list_protections`). A row that
-  // survives conversion -- an enabled gate whose target list is gone -- renders by the
-  // `titleCase` fallback both readers carry, which is rule 66's unknown-id path.
+  // Both gates are RETIRED as switches -- every list now protects through an `on_list` keep
+  // rule, and the loader converts a stored body still carrying either
+  // (`engine/policy.py convert_list_protections`). Their copy stays, because the ids did not
+  // stop being emitted: `api/routes.py` injects `whitelisted` for every hand spare, on both
+  // the replay and the threshold path, and any upgraded install has stored explanations
+  // carrying both. Deleting the entries sent those through `titleCase` and printed
+  // "Whitelisted" and "Curated List" at the operator (rule 21). The backend's own
+  // `_kept_phrase` kept its two for exactly this reason; this is its twin (rules 64, 72).
+  // Rule 66's fallback is for an id the browser has never heard of, not one whose copy was
+  // removed while the server still sends it.
+  whitelisted: {
+    label: "On one of your lists",
+    help: "Kept because it is on a list you keep, or because you spared it by hand.",
+    retired: true,
+  },
+  curated_list: {
+    label: "On a list you curate yourself",
+    help: "Kept because it is on one of the lists you set up on Settings, Lists.",
+    retired: true,
+  },
   data_horizon: {
     // Was "Don't judge what predates your history", promising an outcome this switch does
     // not control. Tautulli can't see plays from before it was installed, and the defense

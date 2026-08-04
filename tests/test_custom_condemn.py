@@ -338,6 +338,22 @@ class TestGradedKeep:
         )
         assert spec.value == "My list"
 
+    def test_only_on_list_is_a_membership_field(self) -> None:
+        """The arm keyed on the field's SHAPE (``TEXT and multi``), which also describes
+        ``genre``: that validated, granted the flat keep, and explained itself as 'on your
+        list "Comedy"' (#505). Keep-only, so nothing widened, but the operator was told a
+        genre is a list (rule 21). The editor offers the box for ``on_list`` alone, so the
+        reachable paths were the API and an imported or restored body."""
+        with pytest.raises(ValidationError, match="not a list"):
+            GradedKeepSpec(
+                name="Comedy stays",
+                field="genre",
+                value="Comedy",
+                max_discount=40,
+                floor=0,
+                saturate_at=1,
+            )
+
     def test_a_numeric_keep_refuses_a_list_name(self) -> None:
         """The other direction: ``value`` means "which list", so a numeric field carrying
         one is a rule whose author meant something the ramp cannot express."""
