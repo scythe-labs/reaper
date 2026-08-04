@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: VirusTotal
+
+# Scan every published release asset with VirusTotal and append the analysis links
+# to the release body, so an operator weighing an unsigned download reads a public
+# verdict without leaving the release page. This is the fourth front against
+# antivirus false positives; packaging/README.md carries the other three.
+#
+# Called from release.yml once the release is published, so it only ever runs for a
+# release cut from main. The nightly dev-build prerelease is never scanned. Not a
+# `release: published` trigger, for the reason submit-winget.yml is not one either:
+# the publish runs under the workflow's own GITHUB_TOKEN, and events an action
+# performs with that token never start another workflow. The dispatch form re-scans
+# a version by hand.
+#
+# The action writes the release body itself only on a real `release` event, which
+# this can never be, so the last step does that half from the action's `analysis`
+# output.
+#
+# One prerequisite nothing in this repository can create: a VT_API_KEY secret, a
+# VirusTotal API key from https://www.virustotal.com/gui/my-apikey (the free tier
+# covers a release). Without it this workflow says so and exits green.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version to scan (CalVer, no leading v)"
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to scan (CalVer, no leading v)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan the release assets
+    runs-on: ubuntu-latest
+    permissions:
+      # The published body is edited in place once the analyses come back.
+      contents: write
+    steps:
+      - name: Check for an API key
+        id: creds
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          if [ -n "${VT_API_KEY}" ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "no VT_API_KEY secret; skipping the VirusTotal scan"
+          fi
+
+      - name: Download the published assets
+        if: steps.creds.outputs.has == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAW_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${RAW_VERSION#v}"
+          # The released bytes, not the build artifacts they came from, so each link
+          # answers for exactly the file an operator downloads.
+          gh release download "${tag}" --repo "${GITHUB_REPOSITORY}" --dir assets
+          ls -l assets
+
+      - name: Upload them to VirusTotal
+        id: vt
+        if: steps.creds.outputs.has == 'true'
+        uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: assets/*
+          # A free key allows four requests a minute, and every asset over 32 MB
+          # costs two of them (one to claim an upload URL, one to send the file).
+          # Two assets a minute stays under that ceiling with all but the installer
+          # over the line.
+          request_rate: 2
+
+      - name: Append the analysis to the release body
+        if: steps.creds.outputs.has == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAW_VERSION: ${{ inputs.version }}
+          # asset path=analysis URL, comma separated.
+          ANALYSIS: ${{ steps.vt.outputs.analysis }}
+        run: |
+          set -euo pipefail
+          tag="v${RAW_VERSION#v}"
+          if [ -z "${ANALYSIS}" ]; then
+            echo "no analyses came back, so there is nothing to append." >&2
+            echo "The glob above matched no downloaded asset; check the step's log." >&2
+            exit 1
+          fi
+          body="$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json body -q .body)"
+          # Cut the block an earlier run left, so a dispatch re-scan replaces its own
+          # links rather than stacking a second list under the first. The marker is
+          # an HTML comment, invisible in the rendered body, and the block is always
+          # last because appending is the only thing that writes it.
+          body="$(printf '%s\n' "${body}" | awk '/<!-- virustotal -->/{exit} {print}')"
+          block=$'<!-- virustotal -->\n'
+          block+=$'🛡 [VirusTotal GitHub Action](https://github.com/crazy-max/ghaction-virustotal) analysis:\n'
+          IFS=',' read -ra entries <<< "${ANALYSIS}"
+          for entry in "${entries[@]}"; do
+            block+="  * [\`$(basename "${entry%%=*}")\`](${entry#*=})"$'\n'
+          done
+          gh release edit "${tag}" --repo "${GITHUB_REPOSITORY}" \
+            --notes "${body}"$'\n\n'"${block}"

@@ -5,7 +5,8 @@ name: Submit to WinGet
 # Tautulli uses). Two effects: `winget install ScytheLabs.Reaper` works, and every
 # release passes Microsoft's own validation and scanning pipeline, which builds the
 # reputation an unsigned installer otherwise lacks. Defender false positives are
-# fought on three fronts: winget presence (this workflow), per-release submission to
+# fought on four fronts: winget presence (this workflow), the VirusTotal links
+# virustotal.yml appends to each release, per-release submission to
 # https://www.microsoft.com/en-us/wdsi/filesubmission (manual), and code signing
 # (not wired yet; packaging/README.md carries what it would take).
 #
