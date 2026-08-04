@@ -296,6 +296,10 @@ BASE = DEFAULT_MOVIE_POLICY
 #: The drag, at the stops an operator actually stops on.
 THRESHOLDS = (1, 30, 50, 58, 70, 85, 95)
 
+#: The scan every draft below is previewed against, judged once. Each fixture writes these
+#: same rows, because what varies across the battery is the request body and not the scan.
+BASE_ROWS = judged_under(BASE)
+
 
 def _without(gate: GateId) -> PolicyBody:
     return BASE.model_copy(update={"gates": tuple(g for g in BASE.gates if g.gate != gate)})
@@ -467,25 +471,54 @@ DRAFTS: list[tuple[str, PolicyBody]] = [
 ]
 
 
-@pytest.fixture(scope="module")
-def bench(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[TestClient, Path]]:
-    """One app over one database, reloaded per draft.
+def _client_over(tmp: Path, *, stored_scores_usable: bool) -> Iterator[TestClient]:
+    """A booted app over a database that already holds the scan this sweep replays.
 
-    A TestClient per permutation spends more time booting FastAPI than simulating; the
-    snapshot is the only thing that has to change, so it is the only thing that does.
+    **Function-scoped, and that is load-bearing** (rule 37). ``conftest``'s ``_hermetic``
+    fixture is autouse at function scope, so a fixture declared at module or session scope
+    is set up outside it: ``Settings`` reads the developer's dotenv, and the lifespan runs
+    the real startup catch-up. This fixture was module-scoped for exactly one commit, and
+    what that bought was a CI run whose test step sat for 71 minutes against the previous
+    commit's 5, downloading a dataset in a job with no route to it.
+
+    The snapshot is written BEFORE the app boots and never touched again while it is up. A
+    second engine writing to the same SQLite file under a live async pool is a lock waiting
+    to happen, and every draft in the battery replays the same stored scan anyway -- only
+    the request body varies -- so there is nothing to rewrite mid-flight.
     """
-    tmp = tmp_path_factory.mktemp("sim-sweep")
+    # The hermetic fixture has to be in effect by now, or this boots against a real dotenv
+    # and a real network. Cheap to assert, and it is the thing that actually went wrong.
+    assert Settings.model_config.get("env_file") is None, (
+        "conftest's _hermetic fixture is not in effect: this fixture must be function-scoped"
+    )
+    tmp.mkdir(parents=True, exist_ok=True)
     settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
+    load_snapshot(tmp, BASE, BASE_ROWS)
+    if not stored_scores_usable:
+        break_scoring_hash(tmp)
     with TestClient(create_app(settings)) as client:
         login(client, settings)
-        yield client, tmp
+        yield client
+
+
+@pytest.fixture
+def stored(tmp_path: Path) -> Iterator[TestClient]:
+    """The tier that re-compares the scores the scan wrote."""
+    yield from _client_over(tmp_path / "stored", stored_scores_usable=True)
+
+
+@pytest.fixture
+def replay(tmp_path: Path) -> Iterator[TestClient]:
+    """The tier that re-runs the engine over the frozen Facts."""
+    yield from _client_over(tmp_path / "replay", stored_scores_usable=False)
 
 
 def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
     """Replace the stored scan with one taken under `policy`."""
+    tmp.mkdir(parents=True, exist_ok=True)
     settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     now = utcnow()
@@ -596,34 +629,25 @@ class TestTheSimulatorAnswersTheSameWhicheverPathItTakes:
     """The panel is reached two ways, and an operator cannot tell which one answered."""
 
     def test_both_tiers_agree_and_the_panel_adds_up(
-        self, name: str, draft: PolicyBody, bench: tuple[TestClient, Path]
+        self, name: str, draft: PolicyBody, stored: TestClient, replay: TestClient
     ) -> None:
-        client, tmp = bench
-        rows = judged_under(BASE)
-        load_snapshot(tmp, BASE, rows)
+        by_score = simulate(stored, draft)
+        assert_panel_adds_up(by_score, len(BASE_ROWS))
 
-        stored = simulate(client, draft)
-        assert_panel_adds_up(stored, len(rows))
-
-        break_scoring_hash(tmp)
-        replayed = simulate(client, draft)
-        assert_panel_adds_up(replayed, len(rows))
+        by_replay = simulate(replay, draft)
+        assert_panel_adds_up(by_replay, len(BASE_ROWS))
 
         for key in NUMBERS:
-            assert stored[key] == replayed[key], (
+            assert by_score[key] == by_replay[key], (
                 f"{name}: the two tiers disagree about {key} -- "
-                f"stored path says {stored[key]}, the replay says {replayed[key]}"
+                f"stored path says {by_score[key]}, the replay says {by_replay[key]}"
             )
 
     def test_the_replay_previews_what_the_next_scan_will_decide(
-        self, name: str, draft: PolicyBody, bench: tuple[TestClient, Path]
+        self, name: str, draft: PolicyBody, replay: TestClient
     ) -> None:
         """The panel's promise, against the scan's own judgment of the same evidence."""
-        client, tmp = bench
-        load_snapshot(tmp, BASE, judged_under(BASE))
-        break_scoring_hash(tmp)
-
-        answer = simulate(client, draft)
+        answer = simulate(replay, draft)
         truth = truth_of(judged_under(draft))
         for key, expected in truth.items():
             assert answer[key] == expected, (
@@ -762,11 +786,9 @@ NEEDS_A_SCAN: list[tuple[str, PolicyBody]] = [
 @pytest.mark.parametrize("name,draft", NEEDS_A_SCAN, ids=[n for n, _ in NEEDS_A_SCAN])
 class TestAnEditTheFrozenEvidenceCannotAnswerIsRefused:
     def test_it_refuses_instead_of_reporting_stale_numbers(
-        self, name: str, draft: PolicyBody, bench: tuple[TestClient, Path]
+        self, name: str, draft: PolicyBody, stored: TestClient
     ) -> None:
-        client, tmp = bench
-        load_snapshot(tmp, BASE, judged_under(BASE))
-        answer = simulate(client, draft)
+        answer = simulate(stored, draft)
         assert answer["exact"] is False, f"{name}: previewed an edit the frozen evidence predates"
         assert answer["stale_reason"], f"{name}: refused without saying why"
 
@@ -780,22 +802,19 @@ class TestTheThresholdBehavesLikeAThresholdThroughTheRoute:
     """
 
     def test_raising_the_threshold_never_grows_the_removal_list(
-        self, bench: tuple[TestClient, Path]
+        self, stored: TestClient, replay: TestClient
     ) -> None:
-        client, tmp = bench
-        load_snapshot(tmp, BASE, judged_under(BASE))
-        stored = [
-            simulate(client, BASE.model_copy(update={"condemn_at": t}))["condemned"]
+        by_score = [
+            simulate(stored, BASE.model_copy(update={"condemn_at": t}))["condemned"]
             for t in THRESHOLDS
         ]
-        break_scoring_hash(tmp)
-        replayed = [
-            simulate(client, BASE.model_copy(update={"condemn_at": t}))["condemned"]
+        by_replay = [
+            simulate(replay, BASE.model_copy(update={"condemn_at": t}))["condemned"]
             for t in THRESHOLDS
         ]
-        assert stored == sorted(stored, reverse=True), stored
-        assert replayed == sorted(replayed, reverse=True), replayed
+        assert by_score == sorted(by_score, reverse=True), by_score
+        assert by_replay == sorted(by_replay, reverse=True), by_replay
         # And the two paths agree at every stop, not merely in shape.
-        assert stored == replayed
+        assert by_score == by_replay
         # A sweep that never crosses anything would satisfy both of the above.
-        assert stored[0] > stored[-1], "the threshold moves nothing across this library"
+        assert by_score[0] > by_score[-1], "the threshold moves nothing across this library"
