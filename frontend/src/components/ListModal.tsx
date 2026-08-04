@@ -222,9 +222,9 @@ export function ListModal({
    *  against a stale row silently reverted a collection someone else had repointed, or tags
    *  they had changed, in another tab (the `cached-value-drives-a-write` shape of #203/#204).
    *
-   *  Compared field by field against the same expressions that seeded each piece of state
-   *  (rule 39: a dirty check compares canonical forms, and these ARE the canonical forms --
-   *  a raw compare against `editing.config` would read a defaulted `match` as an edit). */
+   *  Compared field by field against the same expressions that seeded each piece of state,
+   *  which is what makes these the canonical forms rule 39 asks for: comparing the whole
+   *  stored `config` instead would read a defaulted `match` as an edit on every save. */
   const configDirty =
     source !== (editing?.source ?? source) ||
     preset !== (editing?.config.preset ?? null) ||
@@ -232,7 +232,7 @@ export function ListModal({
     collection !== (editing?.config.collection ?? "") ||
     imdbId !== (editing?.config.list_id ?? "") ||
     match !== (editing?.config.match ?? "any") ||
-    tags.join(" ") !== (editing?.config.tags ?? []).join(" ");
+    JSON.stringify(tags) !== JSON.stringify(editing?.config.tags ?? []);
 
   const save = useMutation({
     mutationFn: async () => {
