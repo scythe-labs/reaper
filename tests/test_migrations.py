@@ -703,6 +703,111 @@ class TestTheArrStyleListsMigration:
         assert _lists_seeded_flag(engine) == "true"
         engine.dispose()
 
+    def test_two_all_policies_naming_different_tags_seed_any(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A union is only the wider read under ANY.
+
+        The legacy keep tags were per policy AND per service, so a movie carrying 'gold' was
+        on the movie policy's keep list whatever the tv policy said. One list replaces both,
+        and ALL membership is ``wanted <= carried``, so carrying the union forward under ALL
+        asks every title for both policies' tags: the movie carrying only 'gold' drops off
+        the list the union was supposed to widen. Both bodies say ``all`` here, which is the
+        only shape that used to keep it.
+        """
+
+        def seed(engine: Engine) -> None:
+            movie = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            movie["keep_tags"] = ["gold"]
+            movie["keep_tags_match"] = "all"
+            tv = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            tv["keep_tags"] = ["silver"]
+            tv["keep_tags_match"] = "all"
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                        " VALUES (:h, :b, :mt, 'default', 1750000000)"
+                    ),
+                    [
+                        {"h": "h-movie", "b": json.dumps(movie), "mt": "movie"},
+                        {"h": "h-tv", "b": json.dumps(tv), "mt": "tv"},
+                    ],
+                )
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        rows = {
+            name: config for name, source, config, _, _ in _list_rows(engine) if source == "arr_tag"
+        }
+        assert json.loads(rows["Titles you've tagged"]) == {
+            "tags": ["gold", "silver"],
+            "match": "any",
+        }
+        engine.dispose()
+
+    def test_two_all_policies_naming_the_same_tags_keep_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other side of the line, and why this is not just "always seed ANY".
+
+        With one set of tags there is nothing for the union to widen, so ALL carries over
+        exactly the membership both policies had. Loosening it here would put titles on a
+        keep list the operator had deliberately narrowed. Spelled differently on each body,
+        because a tag is case-folded everywhere else (rule 88) and Sonarr and Radarr fold it
+        themselves.
+        """
+
+        def seed(engine: Engine) -> None:
+            movie = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            movie["keep_tags"] = ["gold", "Silver"]
+            movie["keep_tags_match"] = "all"
+            tv = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            tv["keep_tags"] = ["silver", "Gold"]
+            tv["keep_tags_match"] = "all"
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                        " VALUES (:h, :b, :mt, 'default', 1750000000)"
+                    ),
+                    [
+                        {"h": "h-movie", "b": json.dumps(movie), "mt": "movie"},
+                        {"h": "h-tv", "b": json.dumps(tv), "mt": "tv"},
+                    ],
+                )
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        rows = {
+            name: config for name, source, config, _, _ in _list_rows(engine) if source == "arr_tag"
+        }
+        assert json.loads(rows["Titles you've tagged"])["match"] == "all"
+        engine.dispose()
+
+    def test_a_single_all_policy_keeps_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One stored policy has no second set to disagree with, so nothing is unioned and
+        its own match mode carries over untouched."""
+
+        def seed(engine: Engine) -> None:
+            movie = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            movie["keep_tags"] = ["gold", "silver"]
+            movie["keep_tags_match"] = "all"
+            _seed_policy(engine, movie)
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        rows = {
+            name: config for name, source, config, _, _ in _list_rows(engine) if source == "arr_tag"
+        }
+        assert json.loads(rows["Titles you've tagged"]) == {
+            "tags": ["gold", "silver"],
+            "match": "all",
+        }
+        engine.dispose()
+
     def test_a_body_with_no_keep_tags_key_seeds_the_shipped_default_tag(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -904,6 +1009,56 @@ class TestAListNameIsUniqueWithoutRegardToCase:
         assert self._added(engine) == ["Keepers", "keepers (2)", "KEEPERS (3)"]
         with pytest.raises(IntegrityError):
             self._add(engine, "KEEPers")
+        engine.dispose()
+
+    def test_the_renamed_row_gets_a_keep_rule_of_its_own(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The suffix takes the renamed row's protection with it, unless the rule follows.
+
+        One rule was covering BOTH rows precisely because ``on_list`` case-folds each side
+        (``engine.fields._compare``), which is the defect this revision exists to close. So
+        suffixing the later row leaves it matching nothing, and the next ``sync_rule_names``
+        rewrites its stored membership to a spelling no rule names: an upgrade would switch a
+        live keep list off in silence.
+
+        Copied, never moved, so the row that kept its name keeps its cover too.
+        """
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers", "keepers")
+        body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        body["protect_conditions"] = [
+            *body["protect_conditions"],
+            {"field": "on_list", "op": "eq", "value": "Keepers"},
+        ]
+        _seed_policy_of(engine, "movie", body)
+
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert self._added(engine) == ["Keepers", "keepers (2)"]
+        stored = json.loads(_all_policy_rows(engine)[-1][3])
+        values = {c["value"] for c in stored["protect_conditions"] if c["field"] == "on_list"}
+        assert "keepers (2)" in values, "the renamed list lost the rule that was keeping it"
+        assert "Keepers" in values, "the row that kept its name lost its rule"
+        engine.dispose()
+
+    def test_a_rename_with_no_rule_naming_it_writes_no_policy_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Append-only means every row written is one a reader has to account for, so a
+        rename nothing was protecting through writes nothing at all."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers", "keepers")
+        _seed_policy_of(engine, "movie", json.loads(DEFAULT_MOVIE_POLICY.model_dump_json()))
+        before = len(_all_policy_rows(engine))
+
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert len(_all_policy_rows(engine)) == before
         engine.dispose()
 
     def test_a_database_with_no_collision_keeps_every_name(

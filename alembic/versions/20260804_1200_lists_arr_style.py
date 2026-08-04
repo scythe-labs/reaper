@@ -6,8 +6,10 @@ Three additive data moves, no schema change:
 * ``source = 'curated'`` rows become ``'imdb'`` with a ``preset`` config, the spelling the
   generalized IMDb provider reads. The operator's name survives.
 * The policy keep tags become a tag list named on Settings -> Lists, seeded from the newest
-  stored policy bodies (both media types, tags unioned -- the wider, keep-safe read). The
-  policy-body half of the same move -- the ``on_list`` rules that make the list act -- is
+  stored policy bodies: both media types, tags unioned, and matched ANY unless the two
+  bodies named the same tags under ALL. A union is only the wider read under ANY, since ALL
+  would ask each title for both policies' tags (see ``_stored_keep_tags``). The policy-body
+  half of the same move -- the ``on_list`` rules that make the list act -- is
   ``engine.policy.convert_list_protections``, which runs on load and is reviewed and saved
   by the operator; this migration only makes sure the list those rules name exists.
 * ``lists_seeded`` is set whenever any definition exists, so ``list_config.ensure_defaults``
@@ -35,10 +37,22 @@ _TAG_LIST_NAME = "Titles you've tagged"
 
 
 def _stored_keep_tags(conn: sa.Connection) -> tuple[list[str], str]:
-    """The keep tags the newest stored policy of each media type carries, unioned, with
-    ``all`` only when every body that spoke said ``all`` -- ``any`` is the wider net. A
-    body that carries no key ran on the shipped default tag."""
+    """The keep tags the newest stored policy of each media type carries, unioned.
+
+    ``all`` survives only when both bodies said ``all`` **and named the same tags**. The
+    legacy keep tags were per policy AND per service: a movie carrying the movie policy's
+    tag was on its keep list whatever the tv policy said. One list replaces both, and under
+    ALL membership is ``wanted <= carried`` (``services.lists.ArrTagRule``), so unioning two
+    DIFFERENT sets under ALL asks every title to carry both policies' tags -- and a movie
+    carrying only the movie tag drops off the list the union was widening. ANY is the only
+    union that cannot withdraw cover from a title one of the two policies was keeping.
+
+    One stored policy on its own is left exactly as it was: there is no second set to
+    disagree with, so its own match mode carries over. A body that carries no key ran on the
+    shipped default tag.
+    """
     tags: list[str] = []
+    per_body: list[frozenset[str]] = []
     matches: list[str] = []
     spoke = False
     for media_type in ("movie", "tv"):
@@ -58,15 +72,23 @@ def _stored_keep_tags(conn: sa.Connection) -> tuple[list[str], str]:
             continue
         spoke = True
         raw = body.get("keep_tags", ["reaper-keep"])
+        own: set[str] = set()
         if isinstance(raw, list):
             for tag in raw:
                 spelled = str(tag).strip()
-                if spelled and spelled.casefold() not in {t.casefold() for t in tags}:
+                if not spelled:
+                    continue
+                own.add(spelled.casefold())
+                if spelled.casefold() not in {t.casefold() for t in tags}:
                     tags.append(spelled)
+        per_body.append(frozenset(own))
         matches.append("all" if body.get("keep_tags_match") == "all" else "any")
     if not spoke:
         tags = ["reaper-keep"]
-    match = "all" if matches and all(m == "all" for m in matches) else "any"
+    # Compared case-folded, the comparison every reader of a tag makes (rule 88) and the
+    # one Sonarr and Radarr themselves make: "Keep" and "keep" are one tag there.
+    agreed = len(set(per_body)) <= 1
+    match = "all" if matches and all(m == "all" for m in matches) and agreed else "any"
     return tags, match
 
 
