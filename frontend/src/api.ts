@@ -637,6 +637,10 @@ export interface Simulation {
   unknown_size_items: number;
   newly_condemned: number;
   no_longer_condemned: number;
+  /** Titles this draft puts in a different lane than the one they are in now. A superset of
+   *  the two deltas above, which cannot see a protection edit moving a title between spared
+   *  and not judged -- the move that made a working panel read as a broken one (#488). */
+  changed_titles: number;
   histogram: number[];
   /** Populated only when exact; empty on a stale refusal, like every count above. */
   examples_newly_condemned: SimExample[];

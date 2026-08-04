@@ -12,8 +12,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import type { Simulation } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
+import { Outcome, RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
 
 function renderNotice(props: Partial<Parameters<typeof StaleNotice>[0]> = {}) {
   return render(
@@ -162,5 +163,97 @@ describe("who is allowed to write the rescan sentences", () => {
       ).toBe(false);
     }
     expect(editor).toContain("RESCAN_QUEUED_LEAD");
+  });
+});
+
+// What the panel says about an edit that legitimately moves nothing (#488).
+//
+// A keep rule redraws the histogram while the two headline numbers cannot move, and an operator
+// read the frozen outcome as a broken preview. The delta rows were correct throughout, which is
+// the trap: they count threshold crossings, and the two rows beside them are absolute totals
+// with no before to read them against, so a protection edit that moves a title from spared to
+// not judged leaves every number on the panel holding still.
+describe("the outcome panel on an edit that changes no title", () => {
+  const BASE: Simulation = {
+    exact: true,
+    stale_kind: null,
+    stale_reason: null,
+    condemned: 412,
+    protected: 388,
+    abstained: 2669,
+    reclaimable_bytes: 2_090_000_000_000,
+    unknown_size_items: 0,
+    newly_condemned: 0,
+    no_longer_condemned: 0,
+    changed_titles: 0,
+    histogram: [180, 402, 611, 688, 590, 430, 292, 168, 78, 30],
+    examples_newly_condemned: [],
+    protected_by: [],
+  };
+
+  const INERT = "Your changes leave every title as it is.";
+
+  function renderOutcome(sim: Partial<Simulation>, edited: boolean) {
+    return render(
+      <Outcome simulation={{ ...BASE, ...sim }} threshold={62} pace={null} edited={edited} />,
+    );
+  }
+
+  /** The count beside the summary row, read through the row rather than by position. */
+  function changed(): string {
+    const row = screen.getByText("Titles that change").parentElement;
+    return row?.querySelector("dd")?.textContent ?? "";
+  }
+
+  it("says so, in place of a comparison between two identical numbers", () => {
+    renderOutcome({ changed_titles: 0 }, true);
+
+    expect(screen.getByText(INERT)).toBeInTheDocument();
+    // The line it replaces, which is the one that read as broken: "Your saved policy flags
+    // 412. This draft flags 412." is a sentence built to contrast two numbers that are equal.
+    expect(screen.queryByText(/This draft flags/)).not.toBeInTheDocument();
+  });
+
+  it("stays quiet until something has actually been edited", () => {
+    // The panel simulates on mount, before anything is touched, so the sentence keyed on the
+    // count alone would open by telling the operator their untouched policy does nothing.
+    renderOutcome({ changed_titles: 0 }, false);
+
+    expect(screen.queryByText(INERT)).not.toBeInTheDocument();
+    expect(screen.getByText(/This draft flags/)).toBeInTheDocument();
+  });
+
+  it("keeps the comparison when titles do move", () => {
+    renderOutcome({ changed_titles: 65 }, true);
+
+    expect(screen.queryByText(INERT)).not.toBeInTheDocument();
+    expect(screen.getByText(/This draft flags/)).toBeInTheDocument();
+  });
+
+  it("counts the moves both deltas are blind to", () => {
+    // The case from #488's thread: a protection edit takes 65 titles from spared to not judged.
+    // Nothing crosses the threshold, so both deltas are correctly zero and both headline numbers
+    // correctly hold. Without the summary row this screen is identical to the one above where
+    // nothing happened at all -- two outcomes, one picture, on the surface whose job is to show
+    // blast radius before saving.
+    renderOutcome(
+      {
+        changed_titles: 65,
+        newly_condemned: 0,
+        no_longer_condemned: 0,
+        protected: 323,
+        abstained: 2734,
+      },
+      true,
+    );
+
+    expect(changed()).toBe("65");
+    expect(screen.getByText("+0")).toBeInTheDocument();
+    expect(screen.getByText("−0")).toBeInTheDocument();
+  });
+
+  it("has no accessibility violations", async () => {
+    const { container } = renderOutcome({ changed_titles: 0 }, true);
+    await expectNoA11yViolations(container);
   });
 });

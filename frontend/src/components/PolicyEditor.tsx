@@ -1344,6 +1344,25 @@ export function PolicyEditor({
     placeholderData: keepPreviousData, // keep the last result visible while refetching
   });
 
+  // Is the body those numbers describe actually an edit? The panel simulates on mount, before
+  // anything has been touched, so "no title changes" on its own cannot tell the operator's
+  // inert edit from their untouched policy -- and the second reading would be the panel calling
+  // a rule useless on the evidence of nobody having tried it yet.
+  //
+  // Against `debounced` rather than `draft`, because that is the body the counts came from: on
+  // `draft` the sentence would lead its own figures by the debounce and change under a
+  // keystroke that had not been simulated. Raw JSON.stringify compares canonical forms for the
+  // same reason `dirty` below may (rule 39): the draft is re-seeded from the server's own
+  // response after each save. `dirty`'s forced flags are deliberately absent -- `needs_save`
+  // and `fell_back` are reasons to show a savebar, never evidence a rule was changed.
+  const simulatedIsEdited = useMemo(
+    () =>
+      debounced !== null &&
+      saved !== undefined &&
+      JSON.stringify(debounced) !== JSON.stringify(saved.body),
+    [debounced, saved],
+  );
+
   // validatePolicy 422s when the policy is *provably* invalid (e.g. a dormancy floor under
   // 5 days); that error is what "you can't save this" means, and it is shown near the controls,
   // not dressed up as a simulation result.
@@ -2607,7 +2626,12 @@ export function PolicyEditor({
           </div>
         ) : simulation ? (
           simulation.exact ? (
-            <Outcome simulation={simulation} threshold={draft.condemn_at} pace={pace} />
+            <Outcome
+              simulation={simulation}
+              threshold={draft.condemn_at}
+              pace={pace}
+              edited={simulatedIsEdited}
+            />
           ) : (
             <StaleNotice
               scanning={scanning}

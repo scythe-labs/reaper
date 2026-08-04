@@ -171,6 +171,7 @@ function renderEditor(
     unknown_size_items: 0,
     newly_condemned: 0,
     no_longer_condemned: 0,
+    changed_titles: 0,
     histogram: [],
     examples_newly_condemned: [],
     protected_by: [],

@@ -1979,6 +1979,7 @@ def _refused(kind: SimStale, media_type: str) -> SimulationOut:
         reclaimable_bytes=0,
         newly_condemned=0,
         no_longer_condemned=0,
+        changed_titles=0,
         histogram=[0] * 10,
     )
 
@@ -2195,6 +2196,7 @@ async def _replay_simulation(
     reclaimable = 0
     unknown_size = 0
     newly = gone = 0
+    changed = 0
     # (row, re-decided score) -- the NEW score, since a weight edit moves it, not the stored one.
     newly_rows: list[tuple[Candidate, int]] = []
     spared_by: Counter[str] = Counter()
@@ -2259,7 +2261,14 @@ async def _replay_simulation(
         # The pre-edit fate is the EFFECTIVE one (override applied), matching the effective "now"
         # verdict below -- so a hand reap's condemnation is never miscounted as a change the
         # POLICY edit caused. The stored verdict alone is pure policy and would misattribute it.
-        was_condemned = effective_verdict(row, decisions) == "condemn"
+        was = effective_verdict(row, decisions)
+        was_condemned = was == "condemn"
+        # Every lane move, not only the two that cross the threshold. This is the path a
+        # protection edit takes, and a protection edit moves titles between protect and
+        # abstain without going near the threshold -- which the two deltas below cannot see
+        # by construction, and the panel's other rows report as absolute counts (#488).
+        if verdict != was:
+            changed += 1
         if verdict == "condemn":
             condemned += 1
             if row.size_bytes is None:
@@ -2290,6 +2299,7 @@ async def _replay_simulation(
         unknown_size_items=unknown_size,
         newly_condemned=newly,
         no_longer_condemned=gone,
+        changed_titles=changed,
         histogram=histogram,
         examples_newly_condemned=[
             SimExampleOut(title=r.title, year=r.year, score=s) for r, s in newly_rows[:5]
@@ -2449,6 +2459,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     reclaimable = 0
     unknown_size = 0
     newly = gone = 0
+    changed = 0
     newly_rows: list[Candidate] = []
     spared_by: Counter[str] = Counter()
 
@@ -2459,7 +2470,12 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             await asyncio.sleep(0)
         histogram[min(row.score // 10, 9)] += 1
 
-        was_condemned = row.verdict == "condemn"
+        # The EFFECTIVE pre-edit fate, read exactly as the replay path reads it, so "titles
+        # that change" means one thing whichever tier answered (rule 72). It was the raw
+        # stored verdict here, which is pure policy: harmless while every override row
+        # returned before this was read, and a trap for the next branch added above them.
+        was = effective_verdict(row, decisions)
+        was_condemned = was == "condemn"
 
         # A hand override wins at any threshold: the owner looked and decided, and the
         # scan honors that decision, so the simulator must too. A spare protects; a
@@ -2493,6 +2509,9 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 # effective fate here.
                 protected += 1
                 spared_by.update(_fired_gates(row.explanation_json))
+            # Nothing added to `changed`: the lane these three arms pick IS `was`. Both read
+            # the override first and fall back to the same stored explanation through
+            # ``condemned``, and neither consults a threshold, so an override row cannot move.
             continue
 
         # A protection always wins, whatever the threshold. Only the score-based
@@ -2500,6 +2519,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         if row.verdict == "protect":
             protected += 1
             spared_by.update(_fired_gates(row.explanation_json))
+            # `was` is the stored verdict on this arm (no override), so protect stays protect.
             continue
 
         # A row with a protection that could not be checked abstains at ANY threshold:
@@ -2508,6 +2528,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         # exactly the plausible wrong answer this route promises to refuse.
         if _has_blocked_protections(row.explanation_json):
             abstained += 1
+            if was != "abstain":
+                changed += 1
             # A stored condemn cannot also carry a blocking protection (decide_verdict
             # abstains on one), so this only fires for a row whose explanation is
             # unreadable -- and if that row was condemned, it genuinely is not any more.
@@ -2526,6 +2548,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             )
             == "condemn"
         )
+        if ("condemn" if now_condemned else "abstain") != was:
+            changed += 1
 
         if now_condemned:
             condemned += 1
@@ -2555,6 +2579,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         unknown_size_items=unknown_size,
         newly_condemned=newly,
         no_longer_condemned=gone,
+        changed_titles=changed,
         histogram=histogram,
         examples_newly_condemned=[
             SimExampleOut(title=r.title, year=r.year, score=r.score) for r in newly_rows[:5]

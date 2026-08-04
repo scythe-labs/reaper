@@ -165,6 +165,22 @@
   margin: var(--space-sm) 0 0;
   font-size: var(--text-md);
 }
+/* The same line, on the edit that moved nothing. Weight rather than a color: this is not a
+   warning and not a result, and the two severity colors both claim more than it means. */
+.sim-inert {
+  font-weight: var(--weight-semi);
+}
+/* The one row that summarizes the other four, so it carries the body color they give up and
+   spans the pair of columns rather than sitting in one of them. Both halves are the same
+   point: a fifth item in a two-column grid otherwise pairs the summary with the first row it
+   summarizes and leaves a hole in the last cell. */
+.sim-delta .sim-changed {
+  grid-column: 1 / -1;
+}
+.sim-delta .sim-changed dt {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
 /* "New on the list": the titles a draft would newly flag, score on the right in the
    condemn color -- the same verdict language as everywhere else. */
 .sim-examples {

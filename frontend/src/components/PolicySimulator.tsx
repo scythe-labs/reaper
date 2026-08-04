@@ -179,10 +179,17 @@ export function Outcome({
   simulation,
   threshold,
   pace,
+  edited,
 }: {
   simulation: Simulation;
   threshold: number;
   pace: ProfileSettings | null;
+  /** Whether the draft these numbers describe differs from the saved policy. The panel
+   *  simulates on mount, before anything has been touched, so this is what separates "your
+   *  edit changed no title" from "you changed nothing" -- and it is computed against the
+   *  DEBOUNCED draft the numbers came from, or the sentence would lead its own figures by
+   *  250 ms and flicker on every keystroke. */
+  edited: boolean;
 }) {
   // The saved policy's count is derivable: what this draft flags, minus what only this
   // draft flags, plus what only the saved one flags.
@@ -205,10 +212,18 @@ export function Outcome({
         </div>
       </div>
 
-      <p className="sim-compare">
-        Your saved policy flags <strong>{count(savedFlags)}</strong>. This draft flags{" "}
-        <strong>{count(simulation.condemned)}</strong>.
-      </p>
+      {/* The comparison line is the one that answers, because on an inert edit it is also the
+          one that reads as broken: two identical numbers in a sentence built to contrast them.
+          A `Notice` would be the wrong shape -- `NoticeTone` is error/warn and the component
+          treats tone as a claim about severity, which this is not. */}
+      {edited && simulation.changed_titles === 0 ? (
+        <p className="sim-compare sim-inert">Your changes leave every title as it is.</p>
+      ) : (
+        <p className="sim-compare">
+          Your saved policy flags <strong>{count(savedFlags)}</strong>. This draft flags{" "}
+          <strong>{count(simulation.condemned)}</strong>.
+        </p>
+      )}
 
       <Histogram buckets={simulation.histogram} threshold={threshold} />
       <p className="help">
@@ -252,6 +267,15 @@ export function Outcome({
       )}
 
       <dl className="sim-delta">
+        {/* First, because it is the only row that summarizes the other four. The two deltas
+            below count threshold crossings alone, and the two after them are absolute counts
+            with no before to read them against, so a protection edit that moved a sixth of
+            the spared set into "not judged" left every number on this panel holding still
+            (#488). */}
+        <div className="sim-changed">
+          <dt>Titles that change</dt>
+          <dd>{count(simulation.changed_titles)}</dd>
+        </div>
         <div>
           <dt>Newly condemned</dt>
           <dd className={simulation.newly_condemned > 0 ? "danger" : ""}>

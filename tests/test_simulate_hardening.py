@@ -304,6 +304,40 @@ def _simulate(client: TestClient, condemn_at: int = 70) -> dict[str, Any]:
     return body
 
 
+class TestBothTiersSendTheChangedCount:
+    """#488: the panel must never have to know which tier answered.
+
+    On the threshold path the count cannot exceed the two deltas: a protection wins at any
+    threshold and a hand override wins at any threshold, so the only lane move left is across
+    the threshold itself. That is precisely why the number is SENT rather than worked out in
+    the browser from the deltas -- the arithmetic that holds here is wrong on the replay path
+    (``TestTheFrozenFactsReplay``), and a browser cannot tell which one it is reading.
+
+    Both expectations are read off ``ROWS``: at 70 the readable unblocked row (``radarr:1:4``)
+    condemns while the stored-condemn row whose explanation will not parse gives its reap up,
+    so one row moves each way. At 99 nothing clears the threshold, so the readable stored
+    condemn (``radarr:1:9``) gives its up as well and both moves are in the same direction.
+    """
+
+    def test_the_threshold_path_counts_both_directions(self, client: TestClient) -> None:
+        result = _simulate(client, condemn_at=70)
+
+        assert result["exact"] is True
+        assert result["changed_titles"] == 2
+        assert result["newly_condemned"] == 1
+        assert result["no_longer_condemned"] == 1
+
+    def test_raising_the_threshold_past_every_score_moves_rows_one_way(
+        self, client: TestClient
+    ) -> None:
+        result = _simulate(client, condemn_at=99)
+
+        assert result["exact"] is True
+        assert result["changed_titles"] == 2
+        assert result["newly_condemned"] == 0
+        assert result["no_longer_condemned"] == 2
+
+
 class TestTheSimulationSurvivesABrokenRow:
     def test_the_route_answers_at_all(self, client: TestClient) -> None:
         """The bug, at its plainest: one legacy row 500ed the preview on every keystroke.
@@ -679,6 +713,27 @@ class TestTheFrozenFactsReplay:
         assert result["condemned"] == 2  # the dormant row and the honored hand reap
         assert result["protected"] == 2  # the keep-list row AND the refused hand reap
         assert result["abstained"] == 0
+
+    def test_it_counts_the_lane_moves_neither_delta_can_see(
+        self, replay_client: TestClient
+    ) -> None:
+        """#488: ``changed_titles`` is a superset of the two deltas, and the gap is the point.
+
+        Read off the fixture rather than off the branches: two rows land in a different lane
+        than the one they are stored in. ``radarr:1:1`` goes abstain -> condemn, which crosses
+        the threshold and so appears in ``newly_condemned``. ``radarr:1:2`` goes abstain ->
+        protect on the keep-list fact, and **no delta on the panel counts that move** -- the
+        rows beside them report ``protected`` and ``abstained`` as absolute totals with no
+        before to read them against. The other two rows carry hand overrides, which pin a lane
+        at any threshold, so they cannot move.
+
+        So the two deltas describe this draft as "+1 / -0" while it moves two titles, and the
+        superset is what separates that screen from one where nothing happened at all.
+        """
+        result = self._replay(replay_client)
+        assert result["changed_titles"] == 2
+        assert result["newly_condemned"] == 1
+        assert result["no_longer_condemned"] == 0
 
 
 class TestSwitchingAProtectionIsPreviewedRatherThanRefused:

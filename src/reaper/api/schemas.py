@@ -851,6 +851,20 @@ class SimulationOut(BaseModel):
 
     no_longer_condemned: int
 
+    changed_titles: int = 0
+    """How many titles this draft puts in a different lane than the one they are in now.
+
+    A superset of ``newly_condemned`` + ``no_longer_condemned``, and it exists because those
+    two are blind to the move that prompted it: a protection edit can take a title from
+    spared to not judged without going near the threshold, so both deltas stay at zero while
+    a sixth of the spared set moves, and the panel shows the other rows as absolute counts
+    rather than deltas -- two different outcomes, one indistinguishable screen (#488).
+
+    Zero while the draft differs from the saved policy is the useful case, not the empty one:
+    it is the only form in which the panel can say a rule carries no weight on THIS library,
+    which is a true and load-bearing fact about a protection the operator is considering.
+    """
+
     histogram: list[int]
     """Score distribution in 10-point buckets, so the threshold can be placed against
     the shape of the library rather than guessed."""
