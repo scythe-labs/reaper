@@ -40,6 +40,7 @@ from reaper.engine.gates import GateId
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
+    SCORER_VERSION,
     PolicyBody,
     ProfileSettings,
     inspect,
@@ -151,6 +152,10 @@ class TestPinnedBaseline:
         regenerate the fixture (scripts/policy_lab_extract.py) in the same change, so the
         diff records exactly what moved. If you did not mean to change scoring, this is
         the bug.
+
+        Asking for the bump is all this test can do; ``policy_lab_extract.rebaseline`` is
+        what enforces it, because only the regeneration step holds the old baseline and the
+        new one at once.
         """
         mismatches = []
         for v in VECTORS:
@@ -167,6 +172,20 @@ class TestPinnedBaseline:
                     f"{v['id']}: baseline {base} -> ({verdict}, {score}, {coverage_bp})"
                 )
         assert not mismatches, "\n".join(mismatches[:10])
+
+    def test_the_fixture_names_the_scorer_its_baselines_were_cut_under(self) -> None:
+        """A stamp nobody reads is a stamp that goes stale, and ``rebaseline``'s refusal
+        reads exactly this one to decide whether the scorer moved since the last cut. A
+        stale stamp makes that refusal answer about the wrong version -- in the permissive
+        direction, since a stamp behind the running constant reads as "already bumped".
+
+        Re-stamp with ``uv run python scripts/policy_lab_extract.py --rebaseline``. It runs
+        with no real library and writes nothing else when no baseline moved.
+        """
+        assert FIX.get("scorer_version") == SCORER_VERSION, (
+            f"fixture was cut under scorer {FIX.get('scorer_version')}, running scorer is "
+            f"{SCORER_VERSION}; re-run scripts/policy_lab_extract.py --rebaseline"
+        )
 
 
 class TestFixtureStaysDeidentified:

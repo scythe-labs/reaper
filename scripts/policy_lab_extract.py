@@ -27,6 +27,11 @@ Usage: ``uv run python scripts/policy_lab_extract.py`` from the repo root.
 the shapes it already holds. That is the mode to use after an intentional engine change:
 it needs no real library, so CI and every contributor can reproduce it, and it prints
 every vector that moved.
+
+It also **refuses** to re-pin a moved baseline while ``SCORER_VERSION`` still reads what the
+fixture was cut under, because that combination leaves plans approved under the old numbers
+executable (rule 113). Bump the constant, or pass ``--unbumped="<why>"`` when nothing an
+operator stored changed meaning. See ``rebaseline``.
 """
 
 from __future__ import annotations
@@ -46,7 +51,11 @@ sys.path.insert(0, str(REPO / "src"))
 
 from tests._policy_lab import judge  # noqa: E402
 
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY  # noqa: E402
+from reaper.engine.policy import (  # noqa: E402
+    DEFAULT_MOVIE_POLICY,
+    DEFAULT_TV_POLICY,
+    SCORER_VERSION,
+)
 from reaper.services.scan_runner import build_gates  # noqa: E402
 
 OUT = REPO / "tests" / "fixtures" / "policy_lab_vectors.json"
@@ -105,7 +114,47 @@ def stored_obs(
     return obs("known", transform(value) if transform is not None else value)
 
 
-def rebaseline() -> None:
+def shown(path: Path) -> str:
+    """A path for the summary line, repo-relative where that is meaningful.
+
+    ``relative_to`` RAISES on a path outside the repo rather than returning the absolute
+    one, and both writers call it *after* the fixture is on disk -- so a run that fully
+    succeeded would end in a traceback and read as a failed regeneration. Only reachable
+    with ``OUT`` redirected, which is what the tests do, and a summary line is never worth
+    a crash.
+    """
+    return str(path.relative_to(REPO) if path.is_relative_to(REPO) else path)
+
+
+def write_fixture(fixture: dict[str, Any]) -> None:
+    """The one place the fixture reaches disk, and the one place the stamp is set.
+
+    Rule 72 asks for the sibling to be swept, and the sibling here is unreachable from a
+    test: the full extract needs a real ``data/reaper.db``, so a stamp set in ``rebaseline``
+    and forgotten in ``main`` would be invisible to the whole suite -- mutation-tested, and
+    it was. Setting it here instead makes that defect unconstructible rather than merely
+    covered, which is the better trade whenever it is available.
+
+    Keep this the only ``OUT.write_text`` in the file; ``test_policy_lab_extract`` pins that,
+    because a second writer would restore the split this exists to remove.
+    """
+    fixture["scorer_version"] = SCORER_VERSION
+    OUT.write_text(json.dumps(fixture, indent=1, sort_keys=True) + "\n")
+
+
+def stamped_scorer(fixture: dict[str, Any]) -> int | None:
+    """The ``SCORER_VERSION`` this fixture's baselines were cut under.
+
+    ``None`` for a fixture written before the stamp existed, and every caller reads that as
+    "cannot tell" rather than as agreement -- ``rebaseline`` refuses on it. An unstamped
+    fixture is exactly the state the refusal cannot reason about, so it is the one it must
+    not wave through.
+    """
+    value = fixture.get("scorer_version")
+    return value if isinstance(value, int) else None
+
+
+def rebaseline(unbumped: str | None = None) -> None:
     """Re-pin the baseline block on the fixture already committed, without a real library.
 
     The vectors are de-identified fact *shapes* and do not change when the engine does;
@@ -113,9 +162,19 @@ def rebaseline() -> None:
     intentional engine change would otherwise be un-re-pinnable by anyone without a real
     ``data/reaper.db`` -- i.e. by CI, and by every contributor who is not the operator.
 
-    Prints one line per vector whose verdict, score or coverage moved, so the change gets
-    reviewed rather than rubber-stamped: a verdict flip in this list is a scoring change
-    and wants SCORER_VERSION bumped with it.
+    **A moved baseline is refused unless the scorer moved with it, or ``unbumped`` says why
+    it need not.** Printing the moved vectors was the whole safeguard, and printing is not a
+    gate: the author regenerated, the suite went green, ``SCORER_VERSION`` stayed put, and
+    every pending approval stayed bound to a ``policy_hash`` computed under arithmetic the
+    running code no longer uses -- so the run on the Reap page executes on scores this build
+    would not produce (rule 113). This function is the one place that can tell, because it
+    holds the old baseline and the new one at once; a test comparing them only knows they
+    disagree.
+
+    ``unbumped`` is the escape hatch, and it is not decoration. A change to a shipped
+    DEFAULT policy moves every baseline here and voids nothing, because no operator's stored
+    body changed; so does a loader shim that rewrites those bodies itself. Both are real, and
+    the reason is written into the fixture beside the stamp so the diff carries it.
     """
     fixture = json.loads(OUT.read_text())
     gate_lists = {
@@ -131,13 +190,48 @@ def rebaseline() -> None:
             print(f"{v['id']}: {v.get('baseline')} -> {fresh}")
             moved += 1
         v["baseline"] = fresh
-    OUT.write_text(json.dumps(fixture, indent=1, sort_keys=True) + "\n")
-    print(f"re-pinned {OUT.relative_to(REPO)}: {moved} of {len(fixture['vectors'])} vectors moved")
+
+    was = stamped_scorer(fixture)
+    scorer_moved = was is not None and was != SCORER_VERSION
+    if moved and not scorer_moved and unbumped is None:
+        sys.exit(
+            f"refusing to re-pin: {moved} baseline(s) moved and SCORER_VERSION is still "
+            f"{SCORER_VERSION}, the version these were cut under. A plan approved under the "
+            "old numbers is bound to a policy_hash this build still computes, so it would "
+            "execute on scores this build would not produce (rule 113). Either bump "
+            "SCORER_VERSION in src/reaper/engine/policy.py and run this again, which voids "
+            "those approvals and asks every operator to re-scan; or, if nothing an operator "
+            "stored changed meaning -- a shipped default moved, or a loader shim already "
+            'rewrites every affected body -- re-run with --unbumped="<why>".'
+        )
+
+    if unbumped is not None:
+        fixture["scorer_note"] = unbumped
+    elif scorer_moved:
+        # The bump supersedes whatever justified the last cut going unbumped.
+        fixture.pop("scorer_note", None)
+    write_fixture(fixture)
+    print(f"re-pinned {shown(OUT)}: {moved} of {len(fixture['vectors'])} vectors moved")
+
+
+def unbumped_reason(argv: list[str]) -> str | None:
+    """``--unbumped=<why>``, or ``None``. An empty reason is refused, not read as absent:
+    the flag exists to make someone state the case, and ``--unbumped=`` states nothing."""
+    for arg in argv:
+        if arg.startswith("--unbumped="):
+            reason = arg.removeprefix("--unbumped=").strip()
+            if not reason:
+                sys.exit(
+                    "--unbumped= needs a reason. Say what invalidated the approvals instead "
+                    "of the scorer bump, in a phrase the next reader can check."
+                )
+            return reason
+    return None
 
 
 def main() -> None:
     if "--rebaseline" in sys.argv[1:]:
-        rebaseline()
+        rebaseline(unbumped_reason(sys.argv[1:]))
         return
 
     rng = random.Random(42)
@@ -390,9 +484,12 @@ def main() -> None:
         "vectors": sample,
         "shows": shows,
     }
-    OUT.write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
+    # ``scorer_version`` is stamped by the writer, not spelled here. No refusal on this path
+    # either: a full extract re-samples different shapes from a live library, so "the
+    # baseline moved" is not a question it can ask.
+    write_fixture(out)
     by_type = Counter(v["media_type"] for v in sample)
-    print(f"wrote {OUT.relative_to(REPO)}: {dict(by_type)} vectors, {len(shows)} show shapes")
+    print(f"wrote {shown(OUT)}: {dict(by_type)} vectors, {len(shows)} show shapes")
 
 
 if __name__ == "__main__":

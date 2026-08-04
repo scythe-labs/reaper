@@ -1,6 +1,7 @@
 {
  "note": "De-identified real library shapes for the policy permutation harness. Regenerate with scripts/policy_lab_extract.py. The baseline block is the engine's own output under the shipped default policies at extraction time.",
  "schema": 1,
+ "scorer_version": 2,
  "shows": [
   {
    "seasons": [
