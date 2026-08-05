@@ -59,7 +59,7 @@ export const understandingPolicy: Doc = {
         title: "Run a scan and let it finish.",
         // "incomplete" is the word the app itself shows (ScanBar, App.tsx). "degraded" is
         // the internal field name, which rules 21 and 25 both bar from operator copy (U-12).
-        text: 'A scan freezes all the evidence, then scores, so a brief timeout can never flip a title’s fate mid-run. If it comes back "incomplete," a source failed and Reaper marked the run unusable on purpose. Fix the source and scan again.',
+        text: 'A scan freezes all the evidence, then scores, so a brief timeout can never flip a title’s fate mid-run. If it comes back "incomplete," a source failed, so Reaper marked the run unusable. Fix the source and scan again.',
       },
       {
         title: 'Read a few "why" panels before touching anything.',
@@ -243,20 +243,36 @@ export const understandingPolicy: Doc = {
 
     h2("Using the simulator", "simulator"),
     p(
-      'The right-hand "What this would do" panel re-decides your last scan under your draft, with zero calls to Sonarr, Radarr, or your history source. It shows how many titles would be removed, how much space that frees, how many titles your edit moves at all, every title’s score against your line, example titles newly flagged, and how this draft differs from the policy you already saved.',
+      'The right-hand "What this would do" panel re-decides your last scan under your draft, with zero calls to Sonarr, Radarr, or your history source. For your draft it shows:',
     ),
+    ul([
+      "how many titles would be removed, and how much space that frees",
+      "how many titles your edit moves at all",
+      "every title’s score against your line",
+      "example titles newly flagged",
+      "how this draft differs from the policy you already saved",
+    ]),
     p(
       "Nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.",
     ),
     p(
-      'An edit can be real and still move nothing, and "Titles that change" is the row that tells you which one you are looking at. The two removal counts only move when a title crosses your line, so a protection can shuffle titles between spared and not judged while every other number holds still. When nothing moves at all the panel says "Your changes leave every title as it is." That is an answer rather than a failure: a protection can carry no weight on your library, which is worth knowing before you decide whether to keep it on.',
+      'An edit can be real and still move nothing. "Titles that change" is the row that tells you which one you are looking at: the two removal counts only move when a title crosses your line, so a protection can shuffle titles between spared and not judged while every other number holds still. When nothing moves at all, the panel says "Your changes leave every title as it is." That is an answer, not a failure: a protection can carry no weight on your library, worth knowing before you keep it on.',
     ),
     p(
-      "**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, a protection's switch and its own numbers, or any TV season rule updates the panel instantly. Some edits still need a fresh scan, and the panel names which one is at fault and offers a Scan now button. A list or how far back watching counts changes what a scan reads. A season rule needs one scan on this version before it can preview, because the panel needs something the older scan never recorded. And keeping seasons someone is partway through needs one whenever the last scan didn't read where anyone had gotten to. An upgrade can ask for a scan too, without you having touched anything. A wrong number that looks live is worse than a blank one.",
+      "**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, a protection's switch and its own numbers, or any TV season rule updates the panel instantly.",
     ),
+    p(
+      "Some edits still need a fresh scan first. The panel names which one and offers a Scan now button:",
+    ),
+    ul([
+      "a list, or how far back watching counts, changes what a scan reads",
+      "a season rule needs one scan on this version before it can preview, because the panel needs something the older scan never recorded",
+      "keeping seasons someone is partway through needs one whenever the last scan didn't read where anyone had gotten to",
+      "an upgrade can ask for a scan on its own, without you having touched anything",
+    ]),
     callout(
       "caution",
-      'You have gone too far when the examples include titles you would keep, or you want to switch off a protection to "find more." Turning off a protection is the most effective way to remove more, and it looks like simplification. That is the warning sign. If a one-step drop nearly doubles the count, stop there.',
+      'You have gone too far when the examples include titles you would keep, or you want to switch off a protection to "find more." Turning off a protection is the most effective way to remove more, and it looks like simplification. If a one-step drop nearly doubles the count, stop there.',
     ),
 
     h2("Recipes", "recipes"),

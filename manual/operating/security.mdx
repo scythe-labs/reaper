@@ -11,7 +11,7 @@ What Reaper actually enforces, and where the edges are.
 
 ## What an API key can do
 
-The instance API key lives in Settings, General. It is deliberately narrow, and narrower on
+The instance API key lives in Settings, General. It is narrow, and narrower on
 writes than on reads.
 
 **It can never:**
@@ -29,10 +29,9 @@ writes than on reads.
 - Edit the policy, and change the run limits and grace.
 
 <Callout tone="caution">
-  **A key can widen what gets condemned.** Editing the policy and the run caps is a write an API
-  key is allowed to make. It cannot spare a title or add one to the whitelist, so a leaked key
-  can point Reaper at more of your library while being unable to protect any of it. Treat the
-  key as a credential that changes what Reaper would delete, and rotate it in Settings, General
+  **A key can widen what gets flagged, never protect a title.** It can edit the policy and the
+  run caps, but it cannot spare a title or add one to the whitelist. So a leaked key points
+  Reaper at more of your library with no way to keep any of it. Rotate it in Settings, General
   if you are unsure.
 </Callout>
 
@@ -59,8 +58,7 @@ Every one of these, together:
 </Steps>
 
 Underneath all of it, the connection Reaper's requests travel through refuses any change unless
-deletion is armed **and** the intent was written to a record first. A new feature travels that
-same road, so it inherits the refusal without asking.
+deletion is armed **and** the intent was written to a record first.
 
 ## Credentials at rest
 
