@@ -209,7 +209,7 @@ export const understandingPolicy: Doc = {
       ],
     ),
     p(
-      "Your lists protect through **keep rules**, below: each list on Settings, Lists acts through a rule here naming it, and a new list starts with a rule that keeps every title on it outright. Removing the list removes its rules with it.",
+      "Your lists protect through **keep rules**, below: each list on Settings, Lists acts through a rule here naming it. A list you add starts with no rule, so it protects nothing until you give it one here, and you choose whether it keeps every title outright or only leans that way. The lists Reaper ships come with a keep-everything rule already. Removing the list removes its rules with it.",
     ),
 
     h3("Pace and limits", "pace"),

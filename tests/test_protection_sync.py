@@ -714,7 +714,8 @@ class TestLegacySlugsAreRehomedOnUpgrade:
 
         held = await memberships(engine, media_type="tv", tvdb_id=10)
 
-        # "Tagged titles", never "Sonarr (hd) tag: keep" -- the spelling `attach_list` wrote.
+        # "Tagged titles", never "Sonarr (hd) tag: keep" -- the spelling an on_list keep rule
+        # names the list by.
         assert [m.matched_by() for m in held] == [_tag_list().name]
 
     async def test_an_unclaimable_legacy_row_retires_once_the_syncs_land(

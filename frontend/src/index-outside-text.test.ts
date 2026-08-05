@@ -293,8 +293,8 @@ const SITES: Site[] = [
   },
   {
     what:
-      "the row's detail line, which names the Sonarr and Radarr instances in the worst state " +
-      "and carries a service's own refusal. Shared with the Jobs tab's rows",
+      "the row's detail line, shared with the Jobs tab's rows, where a job states its own " +
+      "status. On Lists it is now a plain count, so its outside text is the Jobs side",
     selectors: [".jobrow-desc"],
     classInTsx: "jobrow-desc",
     seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
@@ -318,10 +318,23 @@ const SITES: Site[] = [
     seenIn: ["components/ListsPanel.tsx"],
   },
   {
-    what: "a Sonarr or Radarr instance's display name, in the per-server fold-out",
-    selectors: [".server-grid .srv"],
-    classInTsx: "srv",
+    what: "a tag as it is spelled in Sonarr or Radarr, down the side of the counts matrix",
+    selectors: ['.tag-matrix th[scope="row"]'],
+    classInTsx: "tag-matrix",
     seenIn: ["components/ListsPanel.tsx"],
+    exempt:
+      "a matrix cell in an overflow-x:auto box: it is reached by scrolling, not clipped, so " +
+      "nowrap loses no tail. Wrapping crushed the pinned column one glyph per line, which is " +
+      "rule 139's failure by the other road (#475).",
+  },
+  {
+    what: "a Sonarr or Radarr instance's display name, across the top of the counts matrix",
+    selectors: [".tag-matrix thead th"],
+    classInTsx: "tag-matrix",
+    seenIn: ["components/ListsPanel.tsx"],
+    exempt:
+      "same box as the Tag column: the matrix scrolls sideways rather than wrapping its " +
+      "headers, so every server name is reachable and none is truncated (#475).",
   },
   {
     what: "a tag chip in the list editor, spelled on somebody else's keyboard",
@@ -541,11 +554,14 @@ describe("the stylesheet: text the operator did not choose", () => {
     // of the walk, so the size of the walk is pinned by hand. Reconciled against the table above:
     // 10 sites that already carried the fix, 11 from #219, 5 from #220 (one of them exempt),
     // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for), `.pl-echo` from
-    // #306, the wrapping restatement that carries the value the exempt control cannot, and 7
+    // #306, the wrapping restatement that carries the value the exempt control cannot, and 8
     // from Settings, Lists (#475) -- a screen that arrived carrying a whole population of
-    // outside text and registered none of it, two of them wrapping nowhere at all.
-    expect(SITES.length).toBe(35);
-    expect(SITES.filter((s) => s.exempt).length).toBe(2);
+    // outside text and registered none of it. The per-server counts are a matrix now, whose Tag
+    // column and server headers scroll sideways in their box rather than wrap, so two of those 8
+    // are exempt (nowrap, reachable by scroll) where the old comma-joined server name wrapped --
+    // which is what moves the exempt tally from 2 to 4.
+    expect(SITES.length).toBe(36);
+    expect(SITES.filter((s) => s.exempt).length).toBe(4);
     // And the blocks those sites actually resolve to. Twenty-three of the original sites
     // resolve to one block
     // each; the other five are `.about-kv dd` (its own, plus a margin under 560px), the requested
@@ -553,10 +569,10 @@ describe("the stylesheet: text the operator did not choose", () => {
     // that shared rule again), the unnumbered season (the base and the modifier), and `.pl-root`
     // (its own, plus the stacked-grid margin under 640px) -- and `.pl-select`, which is three:
     // the control standard every `.field-sm` box rides, its own width rule, and the unset tint.
-    // The seven Settings, Lists rows resolve to one block each.
+    // The eight Settings, Lists rows resolve to one block each.
     // If this moves, a selector joined or left a row -- check it was meant to, then update it.
     const blocks = SITES.reduce((n, s) => n + matchesOf(s).length, 0);
-    expect(blocks).toBe(43);
+    expect(blocks).toBe(44);
   });
 });
 

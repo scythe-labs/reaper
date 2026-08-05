@@ -2,11 +2,10 @@
 """The keep rules that make a list act, maintained beside the registry.
 
 A list is defined on Settings -> Lists; what it does is an ``on_list`` keep rule on
-Policy naming it. These pin the three maintenance moves and the fail-safe around them:
+Policy naming it. These pin the two maintenance moves and the fail-safe around them:
 
-* adding a list writes a keeps-it-outright rule into BOTH policies, through the editor's
-  own append-only shape, so a pending approval bound to the old hash refuses to execute
-  (rule 113);
+* adding a list writes NO rule -- the operator sets what it does on Policy, so a hand-added
+  list reads "Not used by your policy yet" until they do and is never a silent protection;
 * renaming a list re-spells every rule naming it, both strengths, so a rename never turns
   a live protection into a rule naming nothing (rule 25);
 * deleting a list deletes its rules, and the API route pairs the two so neither can
@@ -90,67 +89,6 @@ async def _policy_count(session: AsyncSession) -> int:
 async def _on_list_rules(session: AsyncSession, media_type: str) -> list[str]:
     active = await profiles.active_policy(session, media_type)
     return [str(c.value) for c in active.body.protect_conditions if c.field == "on_list"]
-
-
-class TestAttach:
-    async def test_attach_adds_one_rule_per_media_type_as_new_rows(
-        self, session: AsyncSession
-    ) -> None:
-        """Append-only, hash moves: the rule lands as a NEW policy row per media type, so
-        a pending approval bound to the previous hash refuses to execute (rule 113)."""
-        await _save_policy(session, DEFAULT_MOVIE_POLICY)
-        await _save_policy(session, DEFAULT_TV_POLICY)
-        before_movie = (await profiles.active_policy(session, "movie")).body.policy_hash()
-
-        await list_rules.attach_list(session, "My new list")
-
-        assert await _policy_count(session) == 4  # two originals, two appended
-        for media_type in ("movie", "tv"):
-            assert "My new list" in await _on_list_rules(session, media_type)
-        after_movie = (await profiles.active_policy(session, "movie")).body.policy_hash()
-        assert after_movie != before_movie
-
-    async def test_attach_does_not_duplicate_an_existing_rule(self, session: AsyncSession) -> None:
-        """Matched case-folded (rule 88): a second rule for one list would double the row
-        on Policy for no change in effect."""
-        await _save_policy(session, DEFAULT_MOVIE_POLICY)
-        await _save_policy(session, DEFAULT_TV_POLICY)
-        await list_rules.attach_list(session, "My new list")
-        rows_after_first = await _policy_count(session)
-
-        await list_rules.attach_list(session, "  MY NEW LIST  ")
-
-        assert await _policy_count(session) == rows_after_first
-        assert (await _on_list_rules(session, "movie")).count("My new list") == 1
-
-    async def test_attach_skips_a_policy_that_needed_repair(self, session: AsyncSession) -> None:
-        """A repaired body is not the one the operator saved, and persisting it plus one
-        rule would adopt the whole repair without their review (rule 65). The other media
-        type's healthy policy still gains its rule."""
-        session.add(
-            PolicyModel(
-                policy_hash="broken",
-                body_json="not json at all",
-                media_type="movie",
-                name="default",
-                created_at=utcnow(),
-            )
-        )
-        await session.commit()
-        await _save_policy(session, DEFAULT_TV_POLICY)
-        assert (await profiles.active_policy(session, "movie")).repaired
-
-        await list_rules.attach_list(session, "My new list")
-
-        # The broken movie row was never written back...
-        movie_rows = [
-            r
-            for r in (await session.execute(select(PolicyModel))).scalars()
-            if r.media_type == "movie"
-        ]
-        assert [r.body_json for r in movie_rows] == ["not json at all"]
-        # ...while the healthy TV policy gained the rule.
-        assert "My new list" in await _on_list_rules(session, "tv")
 
 
 class TestRename:
@@ -300,8 +238,9 @@ class TestUsage:
 
 
 class TestTheRoutesPairTheTwoSurfaces:
-    """The API is what keeps the registry and the policies telling one story: create
-    attaches, rename follows, delete detaches -- each in the same request."""
+    """The API is what keeps the registry and the policies telling one story: create writes
+    no rule, rename follows the rule the operator set, delete detaches -- each in the same
+    request."""
 
     @staticmethod
     def _use_for(client: TestClient, name: str) -> list[dict[str, object]]:
@@ -318,17 +257,35 @@ class TestTheRoutesPairTheTwoSurfaces:
         assert r.status_code == 201, r.text
         return dict(r.json())
 
-    def test_create_attaches_the_rule_and_answers_with_its_use(self, client: TestClient) -> None:
+    @staticmethod
+    def _keep_on_policy(client: TestClient, name: str) -> None:
+        """What the operator does on Policy after adding the list: an outright keep rule
+        naming it, in both policies. Seeded through the real save route so rename and delete
+        act on a rule the policy actually carries, the way they do in the app."""
+        for media_type in ("movie", "tv"):
+            body = client.get("/api/policy", params={"media_type": media_type}).json()["body"]
+            body["protect_conditions"] = [
+                *body["protect_conditions"],
+                {"field": "on_list", "op": Op.EQ.value, "value": name},
+            ]
+            r = client.post("/api/policy", json=body)
+            assert r.status_code == 200, r.text
+
+    def test_create_writes_no_rule_and_reads_unused(self, client: TestClient) -> None:
+        """Adding a list is not a protection the operator did not ask for: it carries no
+        policy use and no policy body names it until they set one."""
         made = self._make(client)
 
-        assert {(u["media_type"], u["strength"]) for u in made["policy_use"]} == {
-            ("movie", "hard"),
-            ("tv", "hard"),
-        }
-        assert self._use_for(client, "Keep") == made["policy_use"]
+        assert made["policy_use"] == []
+        assert self._use_for(client, "Keep") == []
+        for media_type in ("movie", "tv"):
+            body = client.get("/api/policy", params={"media_type": media_type}).json()["body"]
+            values = [c["value"] for c in body["protect_conditions"] if c["field"] == "on_list"]
+            assert "Keep" not in values, media_type
 
     def test_rename_carries_the_rules_to_the_new_name(self, client: TestClient) -> None:
         made = self._make(client)
+        self._keep_on_policy(client, "Keep")
 
         r = client.patch(f"/api/lists/configured/{made['id']}", json={"name": "Keep forever"})
 
@@ -343,6 +300,14 @@ class TestTheRoutesPairTheTwoSurfaces:
 
     def test_delete_detaches_the_rules_with_the_row(self, client: TestClient) -> None:
         made = self._make(client)
+        self._keep_on_policy(client, "Keep")
+        # The rule the delete has to strip is actually in force first, so the assertion
+        # below pins the detach rather than passing on a policy that never named the list.
+        for media_type in ("movie", "tv"):
+            body = client.get("/api/policy", params={"media_type": media_type}).json()["body"]
+            assert "Keep" in [
+                c["value"] for c in body["protect_conditions"] if c["field"] == "on_list"
+            ], media_type
 
         r = client.delete(f"/api/lists/configured/{made['id']}")
 
