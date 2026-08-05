@@ -191,7 +191,14 @@ class TestPinnedBaseline:
 class TestFixtureStaysDeidentified:
     def test_no_identifying_fields_survive_regeneration(self) -> None:
         """The fixture is committed; the golden rule applies to it as to code. Guard the
-        regeneration script against ever re-leaking titles, keys, paths, or hosts."""
+        regeneration script against ever re-leaking titles, keys, paths, or hosts.
+
+        This walks KEYS, plus genre values. It does not inspect a value at an arbitrary key,
+        so it does not cover ``scorer_note``, the one field a human types straight into this
+        file: ``test_policy_lab_extract`` holds that to the charset ``check_reason`` enforces
+        where it is typed. Naming the sibling here because a reader of this test would
+        otherwise take it for the whole guard.
+        """
         raw = FIXTURE.read_text()
         data = json.loads(raw)
         forbidden = {"title", "media_key", "group_key", "rating_key", "host", "path", "user"}

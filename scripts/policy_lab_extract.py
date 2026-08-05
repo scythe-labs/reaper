@@ -28,16 +28,19 @@ the shapes it already holds. That is the mode to use after an intentional engine
 it needs no real library, so CI and every contributor can reproduce it, and it prints
 every vector that moved.
 
-It also **refuses** to re-pin a moved baseline while ``SCORER_VERSION`` still reads what the
+**Both modes refuse** to write a moved baseline while ``SCORER_VERSION`` still reads what the
 fixture was cut under, because that combination leaves plans approved under the old numbers
-executable (rule 113). Bump the constant, or pass ``--unbumped="<why>"`` when nothing an
-operator stored changed meaning. See ``rebaseline``.
+executable (rule 113). Bump the constant, or pass ``--unbumped="<why>"`` when no approval is
+owed a void. The full extract is held to the same bar by re-judging the OLD fixture's vectors
+before it writes the new sample -- see ``guard_the_full_extract`` for why re-sampling does not
+excuse it. ``refuse_unless_the_scorer_moved`` is the interlock both call.
 """
 
 from __future__ import annotations
 
 import json
 import random
+import re
 import sqlite3
 import sys
 from collections import Counter
@@ -143,40 +146,33 @@ def write_fixture(fixture: dict[str, Any]) -> None:
 
 
 def stamped_scorer(fixture: dict[str, Any]) -> int | None:
-    """The ``SCORER_VERSION`` this fixture's baselines were cut under.
+    """The ``SCORER_VERSION`` this fixture's baselines were cut under, or ``None`` when it
+    carries no usable stamp: absent, or present as something that is not a version number.
 
-    ``None`` for a fixture written before the stamp existed, and every caller reads that as
-    "cannot tell" rather than as agreement -- ``rebaseline`` refuses on it. An unstamped
-    fixture is exactly the state the refusal cannot reason about, so it is the one it must
-    not wave through.
+    ``None`` means "cannot tell", which is fail-closed *only where a caller checks it* --
+    ``refuse_unless_the_scorer_moved`` does, and it is the one caller. Note what that does
+    NOT say: an unstamped fixture whose baselines did not move is written and stamped with
+    no refusal at all, which is deliberate, because that is every fixture predating this
+    mechanism on its first re-pin.
+
+    ``bool`` is excluded by hand. ``isinstance(True, int)`` is ``True`` in Python, so a
+    stamp of ``true`` read back as the integer 1 and compared unequal to the running
+    constant -- which this file's refusal reads as "the scorer moved", the fail-open
+    direction. ``0`` and negatives are rejected for the same reason: production declares
+    this field ``ge=1`` (``PolicyBody.scorer_version``) and nothing below 1 is a version.
     """
     value = fixture.get("scorer_version")
-    return value if isinstance(value, int) else None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
 
 
-def rebaseline(unbumped: str | None = None) -> None:
-    """Re-pin the baseline block on the fixture already committed, without a real library.
+def rejudge(fixture: dict[str, Any]) -> int:
+    """Re-pin every vector's baseline in place; return how many moved.
 
-    The vectors are de-identified fact *shapes* and do not change when the engine does;
-    only ``baseline`` (the engine's own output under the shipped defaults) does. An
-    intentional engine change would otherwise be un-re-pinnable by anyone without a real
-    ``data/reaper.db`` -- i.e. by CI, and by every contributor who is not the operator.
-
-    **A moved baseline is refused unless the scorer moved with it, or ``unbumped`` says why
-    it need not.** Printing the moved vectors was the whole safeguard, and printing is not a
-    gate: the author regenerated, the suite went green, ``SCORER_VERSION`` stayed put, and
-    every pending approval stayed bound to a ``policy_hash`` computed under arithmetic the
-    running code no longer uses -- so the run on the Reap page executes on scores this build
-    would not produce (rule 113). This function is the one place that can tell, because it
-    holds the old baseline and the new one at once; a test comparing them only knows they
-    disagree.
-
-    ``unbumped`` is the escape hatch, and it is not decoration. A change to a shipped
-    DEFAULT policy moves every baseline here and voids nothing, because no operator's stored
-    body changed; so does a loader shim that rewrites those bodies itself. Both are real, and
-    the reason is written into the fixture beside the stamp so the diff carries it.
+    Shared by both regeneration paths so the comparison cannot exist on one and not the
+    other, which is exactly the split that let the full extract launder an engine change.
     """
-    fixture = json.loads(OUT.read_text())
     gate_lists = {
         "movie": build_gates(DEFAULT_MOVIE_POLICY),
         "season": build_gates(DEFAULT_TV_POLICY),
@@ -190,49 +186,185 @@ def rebaseline(unbumped: str | None = None) -> None:
             print(f"{v['id']}: {v.get('baseline')} -> {fresh}")
             moved += 1
         v["baseline"] = fresh
+    return moved
 
-    was = stamped_scorer(fixture)
-    scorer_moved = was is not None and was != SCORER_VERSION
+
+def refuse_unless_the_scorer_moved(moved: int, was: int | None, unbumped: str | None) -> None:
+    """The interlock. Exits rather than letting a moved baseline be written under a scorer
+    that stood still.
+
+    Printing the moved vectors was the whole safeguard before this, and printing is not a
+    gate: the author regenerated, the suite went green, ``SCORER_VERSION`` stayed put, and
+    every pending approval stayed bound to a ``policy_hash`` this build still computes -- so
+    the run on the Reap page executes on scores this build would not produce (rule 113).
+    Only a regeneration step can tell, because only it holds the old baseline and the new one
+    at once; a test comparing them knows they disagree and nothing more.
+
+    A stamp AHEAD of the running constant is refused outright, whether or not anything moved.
+    That fixture came from a newer build, and production makes the same call on the same value
+    (``PolicyBody.scorer_version`` is ``le=SCORER_VERSION``: "a body from a newer Reaper is
+    refused, because we genuinely cannot interpret it"). Writing would silently re-stamp it
+    DOWNWARD and destroy the only evidence of where it came from.
+    """
+    if was is not None and was > SCORER_VERSION:
+        sys.exit(
+            f"refusing to re-pin: this fixture was cut under scorer {was} and this build runs "
+            f"{SCORER_VERSION}, so it came from a newer Reaper than the one you are holding. "
+            "Re-pinning would stamp it backwards and lose that. Check out the build that cut "
+            "it, or take the fixture from the branch that matches this one."
+        )
+
+    # Strictly BELOW, not merely different. ``!=`` read a stamp AHEAD of the running
+    # constant as a bump, which is permission. The exit above now rejects that case first,
+    # so the two spellings are equivalent as this function stands -- mutation-tested, and
+    # swapping them back turns nothing red. It stays ``<`` because the equivalence is a
+    # property of that exit, not of this line, and a later edit that softens the exit would
+    # hand the fail-open back with no test to notice.
+    scorer_moved = was is not None and was < SCORER_VERSION
     if moved and not scorer_moved and unbumped is None:
         sys.exit(
             f"refusing to re-pin: {moved} baseline(s) moved and SCORER_VERSION is still "
             f"{SCORER_VERSION}, the version these were cut under. A plan approved under the "
             "old numbers is bound to a policy_hash this build still computes, so it would "
-            "execute on scores this build would not produce (rule 113). Either bump "
-            "SCORER_VERSION in src/reaper/engine/policy.py and run this again, which voids "
-            "those approvals and asks every operator to re-scan; or, if nothing an operator "
-            "stored changed meaning -- a shipped default moved, or a loader shim already "
-            'rewrites every affected body -- re-run with --unbumped="<why>".'
+            "execute on scores this build would not produce (rule 113).\n"
+            "Bump SCORER_VERSION in src/reaper/engine/policy.py and run this again, which "
+            "voids those approvals and asks every operator to re-scan.\n"
+            'Or re-run with --unbumped="<why>" if no approval is owed a void. Real cases, '
+            "all four seen: a shipped DEFAULT policy moved, so no operator's stored body "
+            "changed; a loader shim already rewrites every affected body; a PolicyBody field "
+            "was added or removed, which moves every stored hash on its own; or only the "
+            "harness that judges these vectors changed (tests/_policy_lab.py), so the engine "
+            "did not move at all. A second engine change inside one release is also fine if "
+            "the release already bumped once: this compares against the fixture, not the tag."
         )
 
-    if unbumped is not None:
+
+def rebaseline(unbumped: str | None = None) -> None:
+    """Re-pin the baseline block on the fixture already committed, without a real library.
+
+    The vectors are de-identified fact *shapes* and do not change when the engine does;
+    only ``baseline`` (the engine's own output under the shipped defaults) does. An
+    intentional engine change would otherwise be un-re-pinnable by anyone without a real
+    ``data/reaper.db`` -- i.e. by CI, and by every contributor who is not the operator.
+    """
+    fixture = json.loads(OUT.read_text())
+    if not fixture.get("vectors"):
+        sys.exit(
+            "refusing to re-pin: the fixture carries no vectors, so nothing can be compared "
+            "and a clean run here would mean only that there was nothing to check."
+        )
+
+    was = stamped_scorer(fixture)
+    moved = rejudge(fixture)
+    refuse_unless_the_scorer_moved(moved, was, unbumped)
+
+    # The note explains the last cut whose baselines moved without a bump, so it is only
+    # written and only cleared when baselines actually moved. Recording one on a run that
+    # changed nothing justifies nothing, and clearing one on such a run would drop the
+    # justification for the baselines still sitting in the file.
+    if moved and unbumped is not None:
         fixture["scorer_note"] = unbumped
-    elif scorer_moved:
-        # The bump supersedes whatever justified the last cut going unbumped.
+    elif moved:
         fixture.pop("scorer_note", None)
     write_fixture(fixture)
     print(f"re-pinned {shown(OUT)}: {moved} of {len(fixture['vectors'])} vectors moved")
 
 
-def unbumped_reason(argv: list[str]) -> str | None:
-    """``--unbumped=<why>``, or ``None``. An empty reason is refused, not read as absent:
-    the flag exists to make someone state the case, and ``--unbumped=`` states nothing."""
-    for arg in argv:
-        if arg.startswith("--unbumped="):
-            reason = arg.removeprefix("--unbumped=").strip()
-            if not reason:
-                sys.exit(
-                    "--unbumped= needs a reason. Say what invalidated the approvals instead "
-                    "of the scorer bump, in a phrase the next reader can check."
-                )
-            return reason
-    return None
+#: What a ``--unbumped`` reason may contain. Letters, spaces and light punctuation -- no
+#: digits, no paths, no ``@``. The fixture is committed and the golden rule binds it as it
+#: binds code: never a real title, host, path, username or **stat**. This is the first
+#: free-text field a human types straight into that file, so the charset is where it is
+#: caught, at the boundary, rather than left to a reviewer noticing.
+_REASON_ALLOWED = re.compile(r"^[A-Za-z][A-Za-z_ ,;:'()-]+$")
+
+
+def check_reason(raw: str) -> str:
+    """A stated reason, or exit. ``--unbumped=`` states nothing and ``--unbumped=x`` states
+    barely more, and the flag exists precisely to make someone state the case."""
+    reason = raw.strip()
+    if not reason:
+        sys.exit(
+            "--unbumped needs a reason. Say what invalidated the approvals instead of the "
+            "scorer bump, in a phrase the next reader can check."
+        )
+    if len(reason) < 12 or " " not in reason:
+        sys.exit(
+            f"--unbumped reason {reason!r} is too short to check. Write a phrase, not a "
+            "token: what changed, and why no approval is owed a void."
+        )
+    if not _REASON_ALLOWED.match(reason):
+        sys.exit(
+            f"--unbumped reason {reason!r} carries characters this fixture may not: letters, "
+            "spaces, underscores and , ; : ' ( ) - only. It is committed, so no numbers, "
+            "paths, hosts or titles. Describe the kind of change, never a measurement."
+        )
+    return reason
+
+
+def parse_argv(argv: list[str]) -> tuple[bool, str | None]:
+    """``(rebaseline, unbumped)``. Anything unrecognized exits.
+
+    A near miss used to fall straight through to the full extract: ``--rebaseline=true`` and
+    ``--re-baseline`` both ran the path with no interlock, against a live library, and the
+    refusal's own message asks the author to retype this command line -- which is when a typo
+    happens. Both spellings of the flag are accepted because one of them is how every other
+    CLI works and silently dropping it loses the justification the author believed they gave.
+    """
+    rebaseline_mode = False
+    unbumped: str | None = None
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--rebaseline":
+            rebaseline_mode = True
+        elif arg.startswith("--unbumped="):
+            unbumped = check_reason(arg.removeprefix("--unbumped="))
+        elif arg == "--unbumped":
+            if index + 1 >= len(argv):
+                sys.exit('--unbumped needs a reason: --unbumped="<why>"')
+            index += 1
+            unbumped = check_reason(argv[index])
+        else:
+            sys.exit(
+                f"unrecognized argument {arg!r}.\n"
+                'Usage: policy_lab_extract.py [--rebaseline] [--unbumped="<why>"]\n'
+                "With no flags it re-extracts from a real data/reaper.db."
+            )
+        index += 1
+    return rebaseline_mode, unbumped
+
+
+def guard_the_full_extract(unbumped: str | None) -> None:
+    """Hold the full extract to the same bar as ``--rebaseline``.
+
+    This path used to be exempt, on the reasoning that "a full extract re-samples different
+    shapes from a live library, so 'the baseline moved' is not a question it can ask." That
+    was wrong, and measured: the OLD fixture and its baselines are still on disk when the new
+    one is written, so re-judging *those* vectors under the current engine answers exactly
+    the same question and needs no database. With a ramp change, ``--rebaseline`` refused 338
+    moved baselines while this path wrote all 338 and re-stamped the scorer. Re-sampling makes
+    the NEW vectors incomparable; it says nothing about the old ones.
+
+    It matters more here than there, not less: the only person who can run a full extract is
+    the operator with a real library, who is also the person most likely to be regenerating
+    after an engine change.
+    """
+    if not OUT.exists():
+        return
+    old = json.loads(OUT.read_text())
+    if not old.get("vectors"):
+        return
+    moved = rejudge(old)
+    refuse_unless_the_scorer_moved(moved, stamped_scorer(old), unbumped)
 
 
 def main() -> None:
-    if "--rebaseline" in sys.argv[1:]:
-        rebaseline(unbumped_reason(sys.argv[1:]))
+    rebaseline_mode, unbumped = parse_argv(sys.argv[1:])
+    if rebaseline_mode:
+        rebaseline(unbumped)
         return
+
+    guard_the_full_extract(unbumped)
 
     rng = random.Random(42)
     rdb = sqlite3.connect(f"file:{REPO / 'data' / 'reaper.db'}?mode=ro", uri=True)
