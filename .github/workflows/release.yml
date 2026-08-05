@@ -8,7 +8,7 @@ name: Release
 # the installer to winget (both jobs below, because publishing with the workflow's
 # own token fires no other workflow).
 # The notes are GitHub-generated over the PRs since the previous tag, sectioned by
-# label per .github/release.yml; the first cut ships .github/first-release-notes.md.
+# label per .github/release.yml.
 #
 # The version is year.month.count -- a date names what operators actually ask
 # ("am I on this month's build?"), and the count separates two cuts in one month.
@@ -107,8 +107,15 @@ jobs:
           # The newest released line, for the notes range. Pinned rather than left to
           # GitHub's own pick: the rolling dev-build prerelease tag lives in this same
           # repo, and every release's notes would otherwise rest on GitHub never
-          # choosing it. Empty on the first cut, which ships the curated file below.
+          # choosing it.
           prev="$(git for-each-ref --sort=-v:refname --format='%(refname:short)' --count=1 'refs/tags/v*')"
+          # Only reachable if every v* tag is gone, and generated notes over an
+          # unbounded range would recite every PR since the repository began. Stop
+          # instead: a wrong changelog is published where nobody re-reads it.
+          if [ -z "${prev}" ]; then
+            echo "No v* tag to start the notes from; not cutting a release." >&2
+            exit 1
+          fi
           # The tag lands on the promotion PR's head commit, over on dev. The
           # promotion squash is one commit for a whole release, so notes generated
           # against main's line would list the promotion PR and nothing else; dev's
@@ -146,16 +153,9 @@ jobs:
           fi
           # Draft until the artifacts are attached, so nobody is told about a release
           # that cannot be downloaded yet. gh creates the git tag at publish time.
-          args=(--draft --target "${target}" --title "Reaper ${version}")
-          if [ -n "${prev}" ]; then
-            args+=(--generate-notes --notes-start-tag "${prev}")
-          else
-            # The first cut: generated notes over an unbounded range would recite
-            # every PR since the repository began. The curated summary rides the
-            # repo instead; its header says when it may be deleted.
-            args+=(--notes-file .github/first-release-notes.md)
-          fi
-          gh release create "${tag}" "${args[@]}"
+          gh release create "${tag}" \
+            --draft --target "${target}" --title "Reaper ${version}" \
+            --generate-notes --notes-start-tag "${prev}"
           {
             echo "version=${version}"
             echo "tag=${tag}"

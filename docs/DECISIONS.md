@@ -921,6 +921,7 @@ head commit rather than the squash it became — a commit the promotion recipe i
 keeps connected to `dev`'s line. The two carry the same tree, which the workflow verifies
 through the API rather than assumes (the promotion branch deletes itself at merge, so the
 commit is not in the release checkout; the first cut fell back over exactly that and was
-retargeted by hand). The artifacts still build from the pushed sha. The first cut ships
-`.github/first-release-notes.md`: a generated list spanning the whole history is not release
-notes.
+retargeted by hand). The artifacts still build from the pushed sha. The first cut shipped a
+curated summary instead, since a generated list spanning the whole history is not release
+notes; that file retired once v2026.8.1 gave every later cut a tag to start from, and a cut
+that finds no `v*` tag now stops rather than generating notes over an unbounded range.
