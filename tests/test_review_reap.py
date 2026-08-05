@@ -18,17 +18,18 @@ Nothing here sends a real request: planning is inert, and the executor runs in d
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import json
+from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.db.base import Base
-from reaper.db.models import ActionStep, Candidate, RunState, Snapshot
+from reaper.db.models import ActionStep, Candidate, Instance, InstanceKind, RunState, Snapshot
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import ProfileSettings
 from reaper.services import list_config, whitelist
@@ -55,9 +56,33 @@ def _read_only() -> RuntimeSafety:
     return RuntimeSafety(destructive_enabled=False)
 
 
+async def _seed_instances(session: AsyncSession, media_keys: Iterable[str]) -> None:
+    """Seed the Instance rows a plan resolves each candidate's media_key against.
+
+    A scan only condemns items from instances that exist, so a real plan reads a live row
+    for every candidate, and ``build_plan`` now refuses a snapshot naming an instance that is
+    gone. These tests fabricate candidates directly, so they seed the matching instances.
+    One row per id is enough: the planner keys on the id alone (existence, and a movie's
+    ``add_import_exclusion``), never on the kind, so a shared id across kinds needs one row.
+    """
+    for instance_id in sorted({int(key.split(":")[1]) for key in media_keys}):
+        session.add(
+            Instance(
+                id=instance_id,
+                kind=InstanceKind.RADARR,
+                name=f"i{instance_id}",
+                base_url="https://arr.test",
+                api_key_enc="enc",
+                created_at=utcnow(),
+            )
+        )
+    await session.flush()
+
+
 async def _snapshot(session: AsyncSession, condemned: list[tuple[str, int]]) -> int:
     """A snapshot with a set of condemned movie candidates: (media_key, size_bytes)."""
     now = utcnow()
+    await _seed_instances(session, [media_key for media_key, _ in condemned])
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),
@@ -207,6 +232,7 @@ class TestBulkReapOfAShowGroupKey:
         )
         session.add(snapshot)
         await session.flush()
+        await _seed_instances(session, ["sonarr:1:42:3", "radarr:1:7"])
         session.add(
             Candidate(
                 snapshot_id=snapshot.id,
@@ -328,3 +354,38 @@ class TestCapsCountOnlyWhatWillActuallyBeDeleted:
         assert report.state is RunState.ABORTED
         assert report.aborted_reason is not None
         assert "over your per-run cap" in report.aborted_reason.lower()
+
+
+class TestARemovedRadarrRefusesThePlan:
+    """rule 118: the orphaned-instance guard on the movie path (#471).
+
+    A Radarr removed between the scan and the plan leaves a condemned movie whose
+    per-instance exclusion setting is gone. ``build_plan`` refuses the stale snapshot rather
+    than substitute the historical default into a delete the operator never configured (rule
+    65/91): the movie cannot be deleted through a Radarr that is not there (the executor
+    refuses it at send), and previewing it under a fabricated setting is the honesty problem
+    the guard exists for."""
+
+    async def test_a_movie_whose_radarr_was_removed_refuses_the_plan(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot(session, [("radarr:1:7", 2 * GB)])
+        # The operator deletes that Radarr after the scan froze this snapshot.
+        await session.execute(delete(Instance).where(Instance.id == 1))
+        await session.flush()
+
+        with pytest.raises(PlanError, match="no longer connected"):
+            await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
+
+    async def test_a_present_radarr_freezes_its_real_exclusion_setting(
+        self, session: AsyncSession
+    ) -> None:
+        """The control that proves the guard is not simply always-refuse, and that the body
+        carries the instance's real setting rather than a substituted default. ``_snapshot``
+        seeds the Radarr with the exclusion off (the model default), so the frozen body reads
+        ``False`` -- the value pre-#471 quietly replaced with ``True`` on a miss."""
+        snapshot_id = await _snapshot(session, [("radarr:1:7", 2 * GB)])
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
+
+        steps = await _steps(session, run.id)
+        assert json.loads(steps[0].body_json or "{}")["addImportExclusion"] is False

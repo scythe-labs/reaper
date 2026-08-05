@@ -9,7 +9,7 @@ directly, not just the service.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import ActionStep, Candidate, Snapshot, WhitelistEntry
+from reaper.db.models import ActionStep, Candidate, Instance, InstanceKind, Snapshot, WhitelistEntry
 from reaper.db.session import create_engine, create_session_factory
 from reaper.services import whitelist
 from reaper.services.planner import build_plan
@@ -40,8 +40,31 @@ async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
     await engine.dispose()
 
 
+async def _seed_instances(session: AsyncSession, media_keys: Iterable[str]) -> None:
+    """Seed the Instance rows a plan resolves each candidate's media_key against.
+
+    A scan only condemns items from instances that exist, so a real plan reads a live row for
+    every candidate, and ``build_plan`` refuses a movie whose Radarr is gone. These tests
+    fabricate candidates directly, so they seed the matching instances. One row per id -- the
+    planner keys on the id alone, never the kind.
+    """
+    for instance_id in sorted({int(key.split(":")[1]) for key in media_keys}):
+        session.add(
+            Instance(
+                id=instance_id,
+                kind=InstanceKind.RADARR,
+                name=f"i{instance_id}",
+                base_url="https://arr.test",
+                api_key_enc="enc",
+                created_at=utcnow(),
+            )
+        )
+    await session.flush()
+
+
 async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int]]) -> int:
     now = utcnow()
+    await _seed_instances(session, [media_key for media_key, _ in condemned])
     snapshot = Snapshot(
         created_at=now,
         policy_hash="p" * 64,
