@@ -29,7 +29,7 @@ from reaper.engine.verdict import decide_verdict
 from reaper.services import lists
 from reaper.services.snapshot import RawItem, ScanContext, _reported_size, build_facts
 
-_EMPTY_INDEX = lists.MembershipIndex({}, {}, {})
+_EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
 
 
 def _raw(**overrides: object) -> RawItem:
@@ -140,7 +140,7 @@ class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
             kind=lists.ListKind.WHITELIST,
             rank=None,
         )
-        return lists.MembershipIndex({"tt0000042": ((1, "movie", membership),)}, {}, {})
+        return lists.MembershipIndex({"tt0000042": ((1, "movie", membership),)}, {}, {}, {})
 
     def test_a_movie_whose_only_imdb_id_came_from_plex_is_still_protected(self) -> None:
         facts = _facts(
@@ -400,20 +400,23 @@ class TestARepairedPolicyCannotExecute:
         """``active_policy`` repairs rather than raising, and every caller can still tell
         that it did. A repair that looked identical to a clean load would put the scan on
         an unapproved policy silently, which is the whole risk."""
+        from reaper.engine.policy import PolicyRepair
         from reaper.services.profiles import ActivePolicy
 
         assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine").repaired is False
-        assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine", rescaled=True).repaired is True
-        assert ActivePolicy(DEFAULT_MOVIE_POLICY, "default", fell_back=True).repaired is True
+        # Every member, so a repair added without reaching this property is caught here as
+        # well as by the copy walks in `test_policy_repairs.py`.
+        for repair in PolicyRepair:
+            assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine", (repair,)).repaired is True
 
     def test_the_two_recoveries_are_flags_and_not_read_off_the_name(self) -> None:
         """Regression. These were briefly told apart by ``name != "default"``, which looks
         reasonable and is wrong: an operator's own policy is very often *called* "default",
         so their rescaled policy was reported as unreadable and the editor stopped offering
         to save it. The name carries no such meaning; only the flags do."""
+        from reaper.engine.policy import PolicyRepair
         from reaper.services.profiles import ActivePolicy
 
-        theirs = ActivePolicy(DEFAULT_MOVIE_POLICY, "default", rescaled=True)
+        theirs = ActivePolicy(DEFAULT_MOVIE_POLICY, "default", (PolicyRepair.RESCALED,))
 
-        assert theirs.rescaled is True
-        assert theirs.fell_back is False
+        assert theirs.repairs == (PolicyRepair.RESCALED,)

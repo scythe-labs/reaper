@@ -345,9 +345,17 @@ async def build_plan(
     if snapshot.degraded:
         # A degraded snapshot missed a source or saw the history regress. Planning a
         # deletion from it means acting on a candidate list we already know is wrong.
+        # Reaches the operator as an HTTP 422 body on the Reap page (`api/runs.py`), so it is
+        # written for them: no snapshot id, and not "degraded", the word the docs record as
+        # internal. It is the same sentence the three incomplete-scan notices lead with, which
+        # is the point -- this is the enforcement behind what they say (rules 21, 144).
+        # The reason goes LAST, with nothing after it. `ScanContext.degrade` terminates every
+        # reason it writes, but this reads a stored column, and a row written by anything else
+        # is not covered by that -- put prose after it and an unterminated one fuses into the
+        # sentence following, which is #514 all over again.
         raise PlanError(
-            f"Snapshot {snapshot_id} is degraded ({snapshot.degraded_reason}). "
-            "No plan may be built from it."
+            "That scan came back incomplete, so Reaper won't act on it. Fix the source and "
+            f"scan again. {snapshot.degraded_reason}"
         )
 
     all_condemned = list(
@@ -406,6 +414,11 @@ async def build_plan(
     # checked below, against the final list, for the reason ``_refuse_without_a_canary``
     # gives.
     plannable = measured + held_back if max_unmeasured > 0 else measured
+
+    #: The requested selection after group_key expansion, for the funnel line below. Held
+    #: outside the block because a show-level reap sends ONE key and plans its seasons, so
+    #: the count the caller passed is not the count the plan was narrowed to.
+    selected: set[str] | None = None
 
     if only_media_keys is not None:
         # "Reap just these." Every requested key must be a condemned, non-spared item in
@@ -502,6 +515,7 @@ async def build_plan(
                 "Remove the spare first if you really mean to delete them."
             )
         plannable = [c for c in plannable if c.media_key in requested]
+        selected = requested
 
     # Every narrowing above is done, so this is the exact set the run will act on -- which
     # is the only set the canary rule means anything over (rule 5/30).
@@ -605,4 +619,43 @@ async def build_plan(
         ordinal += 1
 
     await session.flush()
+    # The set narrows four times between the queue and the plan -- overrides, the
+    # measured/held-back split, the requested selection, and items with no delete path --
+    # and only the last of those said anything. "The review queue showed 40 condemned and
+    # my plan has 12 steps" was then unanswerable without re-querying the snapshot by
+    # hand, since the run row stores only `held_back_unknown_size`.
+    #
+    # Every value here is a local already computed above, so the line costs nothing at
+    # INFO. The per-item detail behind the first two is at DEBUG below; the requested
+    # selection has none deliberately, since naming one title out of three hundred would
+    # emit two hundred and ninety-nine lines saying the rest were not picked, and the
+    # operator already knows which one they clicked. The no-delete-path drop names its
+    # item at WARNING above.
+    #
+    # Both requested counts, because they answer different questions and a show-level reap
+    # makes them differ: `requested` is what the caller sent, `selected` is that set after
+    # each group_key expanded to its member seasons, which is the set the plan was actually
+    # narrowed to. Reporting only the first inverts the funnel this line exists to make
+    # readable -- one click on a five-season show read as `requested=1, planned=5` (rule 5/30).
+    log.info(
+        "planner.built",
+        run_id=run.id,
+        snapshot_id=snapshot_id,
+        condemned=len(all_condemned),
+        effective=len(effective),
+        measured=len(measured),
+        held_back=len(held_back),
+        requested=len(only_media_keys) if only_media_keys is not None else None,
+        selected=len(selected) if selected is not None else None,
+        planned=ordinal,
+    )
+    # Named rather than counted, because the operator's question is always about one title.
+    for media_key in sorted({c.media_key for c in all_condemned} - set(effective)):
+        log.debug("planner.dropped", media_key=media_key, reason="spared by hand")
+    for candidate in held_back:
+        log.debug(
+            "planner.dropped" if candidate.media_key not in planned_keys else "planner.admitted",
+            media_key=candidate.media_key,
+            reason="no measured size",
+        )
     return run

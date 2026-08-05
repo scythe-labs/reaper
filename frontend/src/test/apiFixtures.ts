@@ -14,6 +14,7 @@
 // its own value -- these exist so a test that does NOT care never has to think about them.
 import type { QueryClient } from "@tanstack/react-query";
 import type {
+  AuthUser,
   GeneralSettings,
   ProfileSettings,
   ScanStatus,
@@ -105,6 +106,21 @@ export const READY_SETUP: SetupStatus = {
   scan_ready: true,
   reap_ready: true,
   complete: true,
+};
+
+/** An ordinary signed-in admin, for a panel that reads ["me"] on its own.
+ *
+ *  `via_recovery: false` is the shipped default AND the strict one: the Security panel's
+ *  current-password box stays live and required, which is the form every test here was written
+ *  against. A test about the recovery path sets its own user rather than editing this, so
+ *  loosening the gate can never happen by accident in a suite that is about something else. */
+export const SIGNED_IN_USER: AuthUser = {
+  id: 1,
+  username: "owner",
+  provider: "local",
+  email: null,
+  thumb_url: null,
+  via_recovery: false,
 };
 
 /** Put those settings in the cache, fresh, for a tree that reads them on its own and a test that

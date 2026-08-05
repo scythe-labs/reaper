@@ -224,11 +224,23 @@ and a hit inside the earlier tier's merged group is agreement.
 never raises out of a scan.** Rule evaluation errors degrade that item as blocked; a stored
 policy must not be able to crash `score()` or `evaluate_all`.
 
-**108. A text condition value is rejected at the save boundary when it strips to empty.**
-`contains ""` matches every item and lands the rule's full weight library-wide; `in ""` can
-never match and reports as a green "checked, did not fire." Reject `value.strip() == ""` for
-CONTAINS/IN, and reject an IN target whose split yields no elements, so a comma-only list cannot
-pass.
+**108. A text condition value is rejected at the save boundary when it strips to empty, or
+when it carries the separator its fact is joined on.** `contains ""` matches every item and
+lands the rule's full weight library-wide; `in ""` can never match and reports as a green
+"checked, did not fire." Reject `value.strip() == ""` for CONTAINS/IN, and reject an IN target
+whose split yields no elements, so a comma-only list cannot pass.
+
+**The separator half is the same defect reached from the other end, and it starts somewhere a
+condition validator cannot see.** A multi-valued fact is one string with its elements joined by
+a comma (`lists.on_list_fact`), and `fields._compare` splits it back on commas to test
+membership — so a value containing one is never an element of its own fact. Where that value is
+an operator-typed NAME the app later turns into a condition (a list name became an `on_list`
+rule), the refusal belongs on the name, at the boundary that stores it, not on the rule built
+from it: by the time a validator sees the condition the operator is on another screen, and the
+rule reads to every surface as a live protection covering nothing. It fails in both directions
+at once — a list named `Kids, Holiday` protects nothing, and a *different* list named `Holiday`
+silently protects everything on it. So when a stored string will become an element of a joined
+fact, refuse the separator where it is typed, and say so in the operator's words.
 
 ## Clients & HTTP
 

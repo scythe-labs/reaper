@@ -4,8 +4,9 @@ name: Release
 # Cut a CalVer release from main. main is release-only, so every push here IS a
 # release: compute the next vYYYY.M.N, tag it, draft the release, build the
 # binaries and snaps (binaries.yml does that work), push the versioned container
-# image, attach everything, publish, then submit the installer to winget (a job
-# below, because publishing with the workflow's own token fires no other workflow).
+# image, attach everything, publish, then scan the assets with VirusTotal and submit
+# the installer to winget (both jobs below, because publishing with the workflow's
+# own token fires no other workflow).
 # The notes are GitHub-generated over the PRs since the previous tag, sectioned by
 # label per .github/release.yml; the first cut ships .github/first-release-notes.md.
 #
@@ -120,9 +121,15 @@ jobs:
             -q '[.[] | select(.base.ref == "main" and .merged_at != null)][0].head.sha // empty' \
             || true)"
           if [ -n "${target}" ]; then
-            if ! git cat-file -e "${target}^{commit}" 2>/dev/null ||
-               [ "$(git rev-parse "${target}^{tree}")" != "$(git rev-parse "${GITHUB_SHA}^{tree}")" ]; then
-              echo "promotion head ${target} is unknown here or holds a different tree; tagging the pushed sha instead" >&2
+            # The promotion branch auto-deletes at merge, so this commit is normally
+            # absent from the checkout (the first cut fell back over exactly that).
+            # The PR ref keeps it alive server-side, the tree is read from the API,
+            # and `gh release create --target` is a server-side write that needs no
+            # local object.
+            target_tree="$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${target}" \
+              -q .tree.sha 2>/dev/null || true)"
+            if [ "${target_tree}" != "$(git rev-parse "${GITHUB_SHA}^{tree}")" ]; then
+              echo "promotion head ${target} holds a different tree; tagging the pushed sha instead" >&2
               target=""
             fi
           fi
@@ -256,6 +263,21 @@ jobs:
           # failing on the first name that already exists.
           gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber assets/*
           gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+
+  # Scan the published assets and append the analysis links to the release body. A
+  # called job for the same reason winget is one, and it needs the release to exist
+  # with its assets attached, so it waits for publish. It never blocks the release:
+  # by the time it runs, the release is out.
+  virustotal:
+    needs: [cut, publish]
+    # The ceiling for the called workflow, whose scan job asks contents:write to
+    # append its links to the published body.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/virustotal.yml
+    with:
+      version: ${{ needs.cut.outputs.version }}
+    secrets: inherit
 
   # The winget submission is a called job, not a `release: published` trigger over
   # in submit-winget.yml: the publish above runs under this workflow's GITHUB_TOKEN,

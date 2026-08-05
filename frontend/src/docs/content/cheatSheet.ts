@@ -35,11 +35,12 @@ export const cheatSheet: Doc = {
         ["Give every title time to be rewatched", "3 years (min 5 days)"],
         ["Keep what your users actually watch", "3 people, last year"],
         ["Keep well-rated titles", "IMDb 7.5, 1,000 votes"],
-        ["Spare titles you've tagged", "`reaper-keep`"],
-        ["Honor protected lists", "IMDb Top 250"],
         ["Never touch something playing right now", "On"],
         ["Stop if the unwatched time can't be read", "On"],
       ],
+    ),
+    p(
+      'Your lists (Settings, Lists) protect through **keep rules** here: a new list keeps every title on it outright until you soften or remove its rule. Shipped lists: "Titles you\'ve tagged" (the `reaper-keep` tag), and IMDb Top 250.',
     ),
 
     h2("Pace and limits, defaults", "pace"),

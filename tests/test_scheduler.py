@@ -26,12 +26,13 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
-from reaper.db.models import Instance, InstanceKind
+from reaper.db.models import Instance, InstanceKind, ListConfig
 from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
 from reaper.services import app_settings, imdb_dataset, retention, scan_runner, scheduler
 from reaper.services.imdb_dataset import ImdbRatings
+from reaper.services.update_check import UpdateChecker, UpdateStatus
 
 
 @pytest.fixture
@@ -173,6 +174,8 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            settings=settings,
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -183,6 +186,7 @@ class TestTheSchedulerIsUpkeepOnly:
             "refresh_ratings",
             "refresh_curated_lists",
             "full_history_sweep",
+            "check_for_updates",
             # Housekeeping, deliberately absent from the operator's Jobs list: deleting
             # sessions whose window has already closed is not a choice to hand over, and an
             # off switch on it could only ever let the table grow (PR-13). Trimming the
@@ -200,7 +204,12 @@ class TestTheSchedulerIsUpkeepOnly:
             assert (
                 "sync" in job.func.__name__
                 or "refresh" in job.func.__name__
-                or ("sweep" in job.func.__name__)
+                or "sweep" in job.func.__name__
+                # The update check reads one anonymous GitHub URL and writes nothing
+                # anywhere -- no credentials, no client that can mutate, no *arr and no
+                # Plex (`scheduler.check_for_updates`). It earns the fourth verb rather
+                # than being renamed to fit one of the three.
+                or job.func.__name__ == "check_for_updates"
             )
         await engine.dispose()
 
@@ -218,6 +227,8 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            settings=settings,
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -251,6 +262,8 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            settings=settings,
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -299,6 +312,8 @@ class TestTheSchedulerIsUpkeepOnly:
             sweep_dir,
             session_factory=factory,
             secret_box=SecretBox(resolve_secret_key(settings)),
+            settings=settings,
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: False,
         )
@@ -324,6 +339,8 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            settings=settings,
+            update_checker=UpdateChecker(),
             timezone=ZoneInfo("UTC"),
             reap_running=lambda: True,
         )
@@ -468,17 +485,37 @@ class TestUpkeepJobsRecordTheirLastRun:
         async with factory() as session:
             return (await app_settings.get_job_last_runs(session)).get(job_id)
 
+    @staticmethod
+    def _wire_lists(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Settings, SecretBox]:
+        """Stand in for the *arr and Plex clients the pass builds, and hand back its config.
+
+        The job reads every source now, not just the IMDb mirror, so it goes through
+        ``scan_runner.build_sources`` the way the Lists screen's own check does. What each
+        test below is about is the bookkeeping the pass records, so the clients are stubbed
+        and ``sync_protection_lists`` is what carries the outcome.
+        """
+
+        async def no_sources(*args: object, **kwargs: object) -> tuple[object, ...]:
+            return ([], [], None, [], None)
+
+        monkeypatch.setattr(scheduler.scan_runner, "build_sources", no_sources)
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        return settings, SecretBox(resolve_secret_key(settings))
+
     async def test_a_successful_list_refresh_records_ok(
         self,
         cache_engine: AsyncEngine,
         main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        async def fake_sync(*args: object, **kwargs: object) -> int:
-            return 250
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
 
-        monkeypatch.setattr(scheduler.lists, "sync", fake_sync)
-        await scheduler.refresh_curated_lists(cache_engine, main_factory)
+        async def fake_sync(*args: object, **kwargs: object) -> dict[str, int]:
+            return {"imdb-top250-list1": 250}
+
+        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", fake_sync)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last == {"at": last["at"], "ok": True, "result": "Lists refreshed"}  # type: ignore[index]
@@ -487,13 +524,169 @@ class TestUpkeepJobsRecordTheirLastRun:
         self,
         cache_engine: AsyncEngine,
         main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        async def boom(*args: object, **kwargs: object) -> int:
-            raise RuntimeError("source down")
+        """Every list in the pass came back an error, so the line says so outright.
 
-        monkeypatch.setattr(scheduler.lists, "sync", boom)
-        await scheduler.refresh_curated_lists(cache_engine, main_factory)
+        ``sync_protection_lists`` does not raise on a source that is down -- it records the
+        reason per slug and leaves that list's stored membership alone (rule 2) -- so the
+        failure reaches this job as an error VALUE, never as an exception.
+        """
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+
+        async def all_bad(*args: object, **kwargs: object) -> dict[str, str]:
+            return {"imdb-top250-list1": "error: source down"}
+
+        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", all_bad)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
+
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't refresh lists"
+
+    async def test_one_failing_list_is_counted_beside_the_ones_that_worked(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A partial pass names both halves. One list down must not read as a total failure:
+        the two that refreshed really did, and their titles are protected on fresh membership.
+        ``sync_protection_lists`` guards per provider, so one bad list never ends the pass."""
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+
+        async def one_bad(*args: object, **kwargs: object) -> dict[str, int | str]:
+            return {
+                "imdb-top250-list1": "error: that list is gone upstream",
+                "imdb-top250-list2": 250,
+                "plex-collection-never-reap-list3": 12,
+            }
+
+        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", one_bad)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
+
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Refreshed 2 lists, 1 couldn't be checked"
+
+    async def test_a_raise_inside_the_pass_records_not_ok(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A per-list failure arrives as an error VALUE, and several other faults do not.
+
+        ``sync_protection_lists`` re-raises what its own guards do not cover:
+        ``adopt_legacy``, ``sync_rule_names``, ``retire_absent``, and the cache-database
+        faults ``gather_reaped`` re-raises. Nothing else records these rows -- APScheduler has
+        no failure listener wired -- so a raise left the Jobs page showing the last successful
+        night while nothing had refreshed since.
+        """
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+
+        async def boom(*args: object, **kwargs: object) -> dict[str, int]:
+            raise RuntimeError("the cache database is locked")
+
+        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", boom)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
+
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't refresh lists"
+
+    @staticmethod
+    async def _seed_plex_list(factory: async_sessionmaker[AsyncSession]) -> None:
+        """One enabled Plex-sourced definition, which is what a Plex outage leaves unchecked."""
+        async with factory() as session:
+            session.add(
+                ListConfig(
+                    name="Keep these",
+                    source="plex_collection",
+                    config_json='{"library": "Films", "collection": "Keep these"}',
+                    enabled=True,
+                    built_in=False,
+                    created_at=utcnow(),
+                )
+            )
+            await session.commit()
+
+    async def test_a_pass_that_could_not_reach_plex_does_not_record_lists_refreshed(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With no live server no Plex provider is built, so those lists produce no entry at
+        all: not in the failure count, not in the checked count. The job read that as a clean
+        pass and wrote "Lists refreshed" while every Plex list went unchecked.
+
+        The manual check says the same thing through ``plex_error`` and a scan degrades
+        outright, so this row was the third copy of one fact and the only cheerful one
+        (rules 72, 144).
+        """
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+        await self._seed_plex_list(main_factory)
+
+        async def only_the_others(*args: object, **kwargs: object) -> dict[str, int]:
+            return {"imdb-top250-list1": 250}
+
+        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", only_the_others)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
+
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False, "a pass that skipped every Plex list read as a clean one"
+        assert "Plex" in str(last["result"])
+
+    async def test_an_install_with_no_plex_lists_still_records_a_clean_pass(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The control, and why this keys on a Plex-sourced definition EXISTING rather than on
+        Plex being absent. The seeded registry is an IMDb list and a tag list, neither of which
+        needs Plex, so an operator who does not use Plex must still get a green row."""
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+
+        async def fine(*args: object, **kwargs: object) -> dict[str, int]:
+            return {"imdb-top250-list1": 250}
+
+        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", fine)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
+
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "Lists refreshed"
+
+    async def test_a_pass_that_cannot_reach_its_sources_records_not_ok(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A misconfigured install cannot build clients at all, and that is a refusal the job
+        records rather than an exception escaping into the scheduler unrecorded."""
+
+        # Its own stub, not `_wire_lists`: this one is about `build_sources` REFUSING.
+        settings, box = self._wire_lists(monkeypatch, tmp_path)
+
+        async def refuse(*args: object, **kwargs: object) -> tuple[object, ...]:
+            raise scheduler.scan_runner.ScanConfigError("no sources configured")
+
+        monkeypatch.setattr(scheduler.scan_runner, "build_sources", refuse)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
         assert last is not None
@@ -600,6 +793,160 @@ class TestUpkeepJobsRecordTheirLastRun:
         assert last is not None
         assert last["ok"] is False
         assert last["result"] == "Couldn't update history"
+
+
+class TestTheUpdateCheckJob:
+    """The check runs on a schedule now, which is the whole point of the job: before it,
+    ``UpdateChecker.status()`` had one caller -- the About route -- so an install nobody
+    signed in to never checked at all, under a panel saying Reaper checked a few times a
+    day (#464). These pin what each state writes to the Jobs page's last-run line, and
+    that the job asks rather than repeating a cached answer."""
+
+    async def _last(
+        self, factory: async_sessionmaker[AsyncSession], job_id: str
+    ) -> dict[str, object] | None:
+        async with factory() as session:
+            return (await app_settings.get_job_last_runs(session)).get(job_id)
+
+    @staticmethod
+    def _checker(status: UpdateStatus) -> object:
+        """A checker that answers ``status`` from ``refresh`` and counts both doors, so a
+        job rewired to the cache-serving one fails here rather than reporting a six-hour-old
+        answer as a check that just ran."""
+
+        class _Stub:
+            def __init__(self) -> None:
+                self.refreshed = 0
+                self.statused = 0
+
+            async def refresh(self) -> UpdateStatus:
+                self.refreshed += 1
+                return status
+
+            async def status(self) -> UpdateStatus:
+                self.statused += 1
+                return status
+
+        return _Stub()
+
+    async def test_a_newer_release_is_recorded_and_logged_for_a_headless_install(
+        self, main_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The log line is the only place this lands on a server nobody opens, so it is INFO
+        rather than DEBUG.
+
+        Read off a stub logger rather than ``capture_logs``: a module logger that was
+        materialized while ``cache_logger_on_first_use`` was live is permanently deaf to it
+        (conftest's ``_capturable_logs``), and this module's logger is used by half the suite,
+        so the assertion would pass or fail on which tests shared the worker (rule 119/133)."""
+        said: list[str] = []
+
+        class _Recorder:
+            def info(self, event: str, **_kw: object) -> None:
+                said.append(event)
+
+            def warning(self, event: str, **_kw: object) -> None:
+                said.append(event)
+
+        monkeypatch.setattr(scheduler, "log", _Recorder())
+        checker = self._checker(
+            UpdateStatus(
+                channel="release",
+                enabled=True,
+                current="2026.8.1",
+                latest="2026.9.1",
+                update_available=True,
+            )
+        )
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        assert checker.refreshed == 1  # type: ignore[attr-defined]
+        assert checker.statused == 0  # type: ignore[attr-defined]
+        assert "scheduler.update_available" in said
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "Reaper 2026.9.1 is out"
+
+    async def test_being_current_records_a_plain_success(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        checker = self._checker(
+            UpdateStatus(
+                channel="release",
+                enabled=True,
+                current="2026.8.1",
+                latest="2026.8.1",
+                update_available=False,
+            )
+        )
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "You are on the newest release"
+
+    async def test_a_moved_dev_branch_reads_as_the_dev_branch_not_a_release(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A dev build has no release number to name, so the release sentence would print
+        "Reaper dev (def5678) is out" at an operator who is not on the release channel."""
+        checker = self._checker(
+            UpdateStatus(
+                channel="dev",
+                enabled=True,
+                current="dev (abc1234)",
+                latest="dev (def5678)",
+                update_available=True,
+            )
+        )
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["result"] == "The dev branch has moved since this build"
+
+    async def test_an_unanswerable_check_records_a_failure_not_a_green_tick(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Unreachable, rate-limited, or an unorderable version pair: the checker maps all
+        three to unknown, and unknown is not "you are up to date"."""
+        checker = self._checker(UpdateStatus(channel="release", enabled=True, current="2026.8.1"))
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't check for updates"
+
+    async def test_the_off_switch_is_recorded_as_off_never_as_a_check_that_ran(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Rule 55: ``REAPER_UPDATE_CHECK=false`` governs the scheduled path too. The
+        checker answers disabled without sending anything, and the run says so rather than
+        reading as a check that found nothing."""
+        checker = self._checker(UpdateStatus(channel="release", enabled=False, current="2026.8.1"))
+        await scheduler.check_for_updates(checker, main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "Update checks are off"
+
+    async def test_an_unexpected_crash_is_recorded_rather_than_stopping_the_scheduler(
+        self, main_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        class _Boom:
+            async def refresh(self) -> UpdateStatus:
+                raise RuntimeError("something nobody mapped")
+
+        await scheduler.check_for_updates(_Boom(), main_factory)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "check_for_updates")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't check for updates"
 
 
 class TestScheduledScanRecordsOnlyItsFailure:

@@ -28,6 +28,7 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, PendingRollbackError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 
 from reaper.api.runs import _planned_candidates, _run_out
 from reaper.clients.base import IntegrationError
@@ -50,7 +51,7 @@ from reaper.db.models import (
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
 from reaper.services import executor as executor_module
-from reaper.services import whitelist
+from reaper.services import list_config, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -123,6 +124,9 @@ async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int |
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),
+        # Stamped the way a scan stamps it, so the executor's list interlock sees the
+        # registry these tests actually run against rather than an unknown that refuses.
+        list_config_hash=await list_config.current_fingerprint(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(condemned),
@@ -301,7 +305,13 @@ class TestBuildPlan:
         snapshot.degraded_reason = "Radarr 4K unreachable"
         await session.flush()
 
-        with pytest.raises(PlanError, match="degraded"):
+        # The refusal reaches the operator as the Reap page's 422 body, so it is checked as
+        # operator copy: the sentence the three incomplete-scan notices lead with, no snapshot
+        # id, and not "degraded", which the docs record as an internal word (rules 21, 144).
+        # The stored reason goes last, so an unterminated one cannot fuse into what follows.
+        with pytest.raises(PlanError, match="came back incomplete, so Reaper won't act on it"):
+            await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
+        with pytest.raises(PlanError, match=r"Radarr 4K unreachable$"):
             await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
     async def test_an_empty_condemned_set_is_refused(self, session: AsyncSession) -> None:
@@ -1472,6 +1482,39 @@ class TestTheHeldBackNoticeSurvivesTheAllowance:
 
         assert {s.media_key for s in await _steps(session, run.id)} == {"sonarr:1:42:1"}
         assert run.held_back_unknown_size == 1
+
+    async def test_the_funnel_line_counts_the_seasons_a_show_click_selected(
+        self, session: AsyncSession
+    ) -> None:
+        """One click on a show sends one group_key and plans its seasons, so the count the
+        caller sent is not the count the plan was narrowed to. Reporting only the first made
+        `planner.built` read `requested=1, planned=3` -- an inverted funnel on the one line
+        that exists to explain "the queue showed 40 and my plan has 12"."""
+        snapshot_id = await _snapshot_many(
+            session,
+            [
+                ("sonarr:1:42:1", 1 * GB, 801),
+                ("sonarr:1:42:2", 2 * GB, 802),
+                ("sonarr:1:42:3", 3 * GB, 803),
+            ],
+            media_type="season",
+            group_key="sonarr:1:42",
+        )
+
+        with capture_logs() as logs:
+            run = await build_plan(
+                session,
+                snapshot_id=snapshot_id,
+                approved_by="admin",
+                only_media_keys={"sonarr:1:42"},
+                max_unmeasured=0,
+            )
+
+        built = next(line for line in logs if line["event"] == "planner.built")
+        assert built["requested"] == 1  # what the click sent
+        assert built["selected"] == 3  # what it expanded to, which is what was narrowed on
+        # `planned` counts items, where a season carries several steps.
+        assert built["planned"] == len({s.media_key for s in await _steps(session, run.id)}) == 3
 
     async def test_a_show_with_no_measurable_season_says_which_show(
         self, session: AsyncSession
@@ -2653,6 +2696,9 @@ async def _snapshot_many(
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),
+        # Stamped the way a scan stamps it, so the executor's list interlock sees the
+        # registry these tests actually run against rather than an unknown that refuses.
+        list_config_hash=await list_config.current_fingerprint(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(items),
@@ -3375,6 +3421,102 @@ class TestAPolicyEditVoidsAPendingPlan:
         report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
 
         assert report.state is RunState.COMPLETED
+
+
+class TestAListEditVoidsAPendingPlan:
+    """The same hole one layer out, opened by moving the keep tags off the policy body.
+
+    They used to be ``keep_tags`` ON the body, so retagging moved ``policy_hash`` and the
+    interlock above refused. They are a list on Settings, Lists now, and a config-only edit
+    (retag it, repoint it at another Plex collection) rewrites no policy rule at all: every
+    body stays byte for byte the same, so both hashes above still match. The per-item
+    interlocks never re-read membership either, so an operator who narrowed a keep list
+    after approving a plan would come back and delete the titles it had been keeping.
+
+    ``Snapshot.list_config_hash`` is what closes it, and until this it had exactly one
+    reader: the simulator's preview panel.
+    """
+
+    @staticmethod
+    async def _retag(session: AsyncSession) -> None:
+        """Change what one list matches, and nothing else. No policy row is written."""
+        rows = await list_config.all_lists(session)
+        tag_list = next((r for r in rows if r.source == "arr_tag"), None)
+        assert tag_list is not None, "the seeded registry has no tag list to retag"
+        await list_config.update(
+            session, tag_list.id, config={"tags": ["a-different-tag"], "match": "any"}
+        )
+
+    async def test_a_plan_under_the_lists_in_force_still_runs(self, session: AsyncSession) -> None:
+        """The control: nothing edited, so nothing is refused."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+        assert report.state is RunState.COMPLETED
+
+    async def test_retagging_a_list_after_approval_refuses_the_run(
+        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The edit that moves neither hash above, so this is the single variable."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        policy_before = await live_policy_hash(session)
+        await self._retag(session)
+        assert await live_policy_hash(session) == policy_before, (
+            "the retag moved the policy hash, so this test would pass with the list "
+            "interlock deleted (rule 118)"
+        )
+        await session.commit()
+
+        radarr = FakeRadarr()
+        with pytest.raises(ExecutionError, match="protection lists changed"):
+            await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
+        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
+
+    async def test_the_dry_run_proves_the_same_refusal(self, session: AsyncSession) -> None:
+        """Or the operator meets the refusal only after typing the confirmation phrase."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        await self._retag(session)
+
+        executor = Executor(session, safety=_read_only(), settings=ProfileSettings(), dry_run=True)
+        with pytest.raises(ExecutionError, match="protection lists changed"):
+            await executor.execute(run.id)
+
+    async def test_a_snapshot_that_never_recorded_its_lists_refuses(
+        self, session: AsyncSession
+    ) -> None:
+        """The pre-upgrade shape, and a scan that degraded for a registry it could not read.
+        Both stamp ``None``, which is unknown and never "no lists" (rules 93, 104): a plan
+        built under lists nobody can name is exactly what must not execute."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        snapshot = await session.get(Snapshot, snapshot_id)
+        assert snapshot is not None
+        snapshot.list_config_hash = None
+        await session.flush()
+
+        with pytest.raises(ExecutionError, match="protection lists changed"):
+            await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+    async def test_a_registry_unreadable_at_execute_refuses(self, session: AsyncSession) -> None:
+        """The live side unknown. Both sides are driven to ``None`` at once, because that is
+        the pairing an equality test reads as agreement and lets through."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        snapshot = await session.get(Snapshot, snapshot_id)
+        assert snapshot is not None
+        snapshot.list_config_hash = None
+        rows = await list_config.all_lists(session)
+        rows[0].config_json = "{not json"
+        await session.flush()
+
+        with pytest.raises(ExecutionError, match="protection lists changed"):
+            await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
 
 
 # ---------------------------------------------------------------------------
@@ -4737,6 +4879,59 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                 assert stored.state is RunState.ABORTED
                 assert stored.aborted_reason == "the run stopped early"
                 assert stored.finished_at is not None
+        finally:
+            await engine.dispose()
+
+    async def test_a_revive_failure_is_not_reported_as_a_rollback_failure(
+        self, tmp_path: Path
+    ) -> None:
+        """Each call in the recovery pair names itself in the log (#343).
+
+        ``rollback()`` is what makes the session usable again; ``_revive()`` only repopulates
+        the rows that read afterwards. They shared one ``except``, so a ``_revive`` fault was
+        logged as ``reap.journal_rollback_failed`` -- naming the one call that had just
+        returned, on the path whose log is what gets read after a run wedges (#327).
+
+        Driven at ``_commit_journal`` directly: reaching this pair through a real run needs a
+        fault that breaks a SELECT while leaving a rollback working, and none has been shown
+        (WAL readers do not block on a writer). The handler is live either way, and an
+        unreachable branch with no test is one refactor from silently gone (rule 118).
+        """
+        engine, factory = await _fresh_engine(tmp_path)
+        try:
+            async with factory() as session:
+                executor = Executor(
+                    session, safety=_armed(), settings=ProfileSettings(), dry_run=False
+                )
+
+                rolled_back = False
+                real_rollback = session.rollback
+
+                async def rollback_that_works() -> None:
+                    nonlocal rolled_back
+                    rolled_back = True
+                    await real_rollback()
+
+                async def commit_that_fails() -> None:
+                    raise RuntimeError("the write lock is held")
+
+                async def revive_that_fails() -> None:
+                    raise RuntimeError("the select could not run")
+
+                session.commit = commit_that_fails  # type: ignore[method-assign]
+                session.rollback = rollback_that_works  # type: ignore[method-assign]
+                executor._revive = revive_that_fails  # type: ignore[method-assign]
+
+                with capture_logs() as logs:
+                    wrote = await executor._commit_journal(what="a step", write=[])
+
+                assert wrote is False
+                assert rolled_back, "the rollback must have run and returned for this to be it"
+                events = [entry["event"] for entry in logs]
+                assert "reap.journal_revive_failed" in events
+                assert "reap.journal_rollback_failed" not in events, (
+                    "the rollback worked, so blaming it points the reader at the wrong call"
+                )
         finally:
             await engine.dispose()
 

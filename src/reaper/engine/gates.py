@@ -61,6 +61,13 @@ _UNSET: Absent = Absent(source="unset")
 
 class GateId(enum.StrEnum):
     WHITELISTED = "whitelisted"
+    """Retired as a gate: list membership now protects through the operator's own keep
+    rules (the ``on_list`` field), one rule per list, either strength. Unlike the two
+    retirements below this one WAS a live protection, so it is not in
+    ``PolicyBody.RETIRED_GATES`` -- silently dropping it would withdraw cover. The
+    ``convert_list_protections`` shim rewrites a stored body's gate row into the
+    equivalent ``on_list`` rules instead. Kept so stored explanations still decode."""
+
     STREAMING_NOW = "streaming_now"
     RATING_FLOOR = "rating_floor"
     SERVER_POPULARITY = "server_popularity"
@@ -71,6 +78,10 @@ class GateId(enum.StrEnum):
     built still decodes; ``scan_runner.GATE_TYPES`` refuses to build it."""
 
     CURATED_LIST = "curated_list"
+    """Retired as a gate, same conversion as WHITELISTED: an IMDb list now protects
+    through an ``on_list`` keep rule naming it, so its strength is the operator's choice
+    per list rather than one switch over every list at once."""
+
     DATA_HORIZON = "data_horizon"
 
     UNMANAGED = "unmanaged"
@@ -104,11 +115,9 @@ class GateId(enum.StrEnum):
 #: forgetting this list fails a test rather than quietly making the gate unauthorable.
 POLICY_AUTHORABLE_GATES: frozenset[GateId] = frozenset(
     {
-        GateId.WHITELISTED,
         GateId.STREAMING_NOW,
         GateId.RATING_FLOOR,
         GateId.SERVER_POPULARITY,
-        GateId.CURATED_LIST,
         GateId.DATA_HORIZON,
         GateId.MIN_DORMANCY,
     }
@@ -163,6 +172,34 @@ class GateResult:
     from the detail text (rule 142) -- the wording test it replaced,
     ``detail.startswith("could not check")``, never matched the one message it existed
     for, because that message opens with the watcher count.
+    """
+
+    unestablishable: bool = False
+    """Only meaningful on a ``blocked`` result: this check never ran, as against one that ran
+    and left its answer to the operator.
+
+    Set by the season guard alone (``services.season_scan.guard_result``), the one producer
+    whose blocked results are not all of a kind, and read by ``WhyPanel.keepRuleConflict``.
+    A keep-rule conflict made the comparison and found the rule fighting the evidence, which
+    is a decision waiting for a person ("Needs a look"). The same guard on a show Plex never
+    resolved asked nobody: with no rating key anywhere there is no place in the show to read,
+    so it is Limbo, and the four Plex-dependent gates beside it already say why. ``blocked``
+    is true of both, so it cannot be what tells them apart.
+
+    It also covers the guard's third shape, a season PROTECTED because the check could not be
+    answered (``season_pruning.ProtectedSeason.unestablishable``). That one rides in
+    ``protections_unknown`` too and was kept out of the panel's conflict branch only by the
+    verdict being ``protect`` with a non-empty fired list -- true today, and nothing
+    structural held it (see that function's own note about a row slipping through).
+
+    ``False`` on every other producer, where nothing reads it: an ordinary gate's blocked
+    result has one shape and needs no discriminator (the same scoping ``defers_to_owner``
+    carries, for the same reason).
+
+    Three-state on the wire, two here (rule 142): ``GateOutcomeOut.unestablishable`` carries
+    ``None`` for a row frozen before the flag, since nothing in such a row says which shape
+    it is. The panel reads that ``None`` as "not this", which is how those rows already
+    render.
     """
 
     @property
@@ -262,7 +299,13 @@ class Facts:
     is_streaming_now: Observation[bool]
     is_managed: Observation[bool]
     in_curated_list: Observation[str]
+    """The IMDb-kind lists holding this item, comma-joined. Superseded by ``on_lists``,
+    which every current reader uses; still populated so a replayed stored snapshot and the
+    retired ``curated_list`` gate's stored explanations keep their meaning."""
     is_whitelisted: Observation[bool]
+    """Whether any list the operator curates by hand (a tag list, a collection, the
+    watchlist) holds this item. The ``whitelisted`` field reads it; the gate that did is
+    retired."""
 
     # --- fields authorable in custom rules (the weighting feature) --------------------
     # Given fail-safe defaults so the non-production Facts builders (backtest
@@ -276,6 +319,12 @@ class Facts:
 
     genres: Observation[str] = _UNSET
     """The *arr's genres, comma-joined. ``Absent`` when the payload carries none."""
+
+    on_lists: Observation[str] = _UNSET
+    """Every protection list holding this item, comma-joined by the operator's names for
+    them, whatever each list's source -- the ``on_list`` field's input. Defaulted like the
+    fields above; a stored snapshot predating it thaws as un-checkable, never as "on no
+    list" (rule 104)."""
 
     release_age_days: Observation[float] = _UNSET
     """Days since the title's release. Derived (age composes with dormancy); ``Absent``
@@ -686,41 +735,13 @@ class ServerPopularityGate:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class WhitelistGate:
-    """A tag in Sonarr/Radarr, or membership of a Plex collection.
-
-    Deliberately reuses interfaces the owner already has: a `reaper-keep` tag, or a
-    "Never Reap" collection curated in the Plex app -- editable from a phone, with
-    no new screen to learn.
-    """
-
-    config: GateConfig
-    id: GateId = GateId.WHITELISTED
-
-    def evaluate(self, facts: Facts) -> GateResult:
-        if blocked := _blocked(self.id, facts.is_whitelisted, "the whitelist"):
-            return blocked
-        listed = facts.is_whitelisted
-        if isinstance(listed, Known) and listed.value:
-            return GateResult(self.id, PROTECT, detail="on your keep list, never reaped")
-        return GateResult(self.id, ABSTAIN, detail="Not on your keep list.")
-
-
-@dataclass(frozen=True, slots=True)
-class CuratedListGate:
-    """Membership of a protected list -- the IMDb Top 250, and anything else."""
-
-    config: GateConfig
-    id: GateId = GateId.CURATED_LIST
-
-    def evaluate(self, facts: Facts) -> GateResult:
-        if blocked := _blocked(self.id, facts.in_curated_list, "curated lists"):
-            return blocked
-        member = facts.in_curated_list
-        if isinstance(member, Known) and member.value:
-            return GateResult(self.id, PROTECT, detail=f"on a protected list: {member.value}")
-        return GateResult(self.id, ABSTAIN, detail="Not on any protected list.")
+# A `WhitelistGate` (keep tags, the "Never Reap" collection) and a `CuratedListGate` (the
+# IMDb Top 250) lived here. Both were live protections, so unlike the two gates deleted for
+# never firing they were not simply retired: every list -- tag, collection, watchlist, IMDb
+# -- now protects through the operator's own keep rules on the ``on_list`` field, evaluated
+# by ``fields.CustomProtectGate``, so each list's strength is a per-list choice on Policy.
+# ``policy.convert_list_protections`` rewrites a stored body's gate rows into the equivalent
+# rules, and their `GateId`s survive above so a stored explanation still decodes.
 
 
 @dataclass(frozen=True, slots=True)
@@ -919,7 +940,6 @@ def evaluate_all(gates: Sequence[Gate], facts: Facts) -> Evaluation:
 __all__ = [
     "ABSTAIN",
     "PROTECT",
-    "CuratedListGate",
     "DataHorizonGate",
     "Evaluation",
     "Facts",
@@ -933,6 +953,5 @@ __all__ = [
     "RatingRule",
     "ServerPopularityGate",
     "StreamingNowGate",
-    "WhitelistGate",
     "evaluate_all",
 ]

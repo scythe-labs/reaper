@@ -35,6 +35,11 @@ on:
     branches: [main, dev]
   pull_request:
 
+# The default for every job here: read the tree, touch nothing else. The one job
+# that publishes (docker) declares its own packages: write on top.
+permissions:
+  contents: read
+
 # A second push to a branch makes the first one's verdict irrelevant: the only sha anyone
 # acts on is the tip. Grouping by ref and cancelling the older run means a burst of pushes
 # to dev costs one run instead of one per commit, and hands the runner to the push that
@@ -198,9 +203,12 @@ jobs:
       # `disable_search` with an explicit file: the upload sends the report this job made,
       # never whatever else the workspace happens to hold.
       #
-      # The token is named although nothing sets it. This repository is public and the
-      # Codecov app is installed, so uploads from Actions are accepted without one; naming
-      # it means adding the secret later is a settings change and not a workflow edit.
+      # `CODECOV_TOKEN` has to exist for any of this to land. Codecov refuses a tokenless
+      # upload for a commit on a protected branch, and `dev` and `main` are both protected,
+      # so without the secret every upload is rejected with "Token required because branch
+      # is protected". Pull request runs off a branch in this repository were rejected the
+      # same way, so a green pull request is no evidence the upload worked. The step passes
+      # either way, which leaves a badge reading "unknown" as the only symptom.
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:

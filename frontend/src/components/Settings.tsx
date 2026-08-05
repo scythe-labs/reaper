@@ -53,6 +53,7 @@ import {
   collapseStaleReads,
 } from "./StaleReadNotice";
 import { Switch } from "./Switch";
+import { ListsPanel } from "./ListsPanel";
 import { Notice } from "./Notice";
 import { SwitchConfirm } from "./SwitchConfirm";
 
@@ -64,6 +65,7 @@ export type Panel =
   | "general"
   | "services"
   | "plex"
+  | "lists"
   | "jobs"
   | "notifications"
   | "security"
@@ -71,13 +73,14 @@ export type Panel =
   | "logs"
   | "about";
 
-/** The nine sections, in rail order. Exported for the one test that owns the hand-written label
+/** The ten sections, in rail order. Exported for the one test that owns the hand-written label
  *  table this must agree with (SettingsNav.test.tsx), so a section added here fails there naming
  *  what to do rather than as an unexplained label mismatch (rules 103, 144). */
 export const PANELS: { id: Panel; label: string }[] = [
   { id: "general", label: "General" },
   { id: "services", label: "Services" },
   { id: "plex", label: "Plex" },
+  { id: "lists", label: "Lists" },
   { id: "jobs", label: "Jobs" },
   { id: "notifications", label: "Notifications" },
   { id: "security", label: "Security" },
@@ -1563,9 +1566,15 @@ function UpdateCell({
   onSeeChanges: () => void;
 }) {
   const { data, isPending } = status;
+  // The two no-answer shapes read the same (see above), so the sentence is written once:
+  // one operator claim in two places is two chances to drift (rule 144). "Later" is the
+  // scheduled check (Settings, Jobs), which is what makes the promise real -- before it
+  // existed nothing retried on a server nobody opened (#464).
+  const noAnswer = (
+    <span className="muted">Couldn't check for updates. Reaper will try again later.</span>
+  );
   if (isPending) return <span className="muted">Checking for updates…</span>;
-  if (!data)
-    return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
+  if (!data) return noAnswer;
   if (!data.enabled)
     return (
       <span className="muted">
@@ -1573,8 +1582,7 @@ function UpdateCell({
         from launcher.conf in Reaper's data folder, or from your environment, to turn them back on.
       </span>
     );
-  if (data.update_available === null)
-    return <span className="muted">Couldn't check for updates. Reaper will try again later.</span>;
+  if (data.update_available === null) return noAnswer;
   if (!data.update_available)
     return (
       <span>
@@ -1603,8 +1611,13 @@ function UpdateCell({
         See what changed
       </button>
       <br />
+      {/* Points at the schedule rather than naming one: the operator can change the cron
+          or turn the job off, so a sentence saying "daily" is wrong the moment they do
+          (rule 86). This used to say "Reaper checks a few times a day" while nothing
+          checked on its own at all (#464, rule 25). */}
       <span className="muted">
-        Reaper checks a few times a day and never sends anything about your library.
+        Reaper checks on a schedule you can change in Jobs, and never sends anything about your
+        library.
       </span>
     </>
   );
@@ -1687,6 +1700,12 @@ function ChangesModal({
 
 const SCAN_ID = "scheduled_scan";
 
+/** The one upkeep job whose result a DIFFERENT query already renders: the About row, the
+ *  version pill and the account chip's light all read `["update"]`. Named here so the row can
+ *  refresh that query when the job finishes. The job LIST is still the server's (rule 66);
+ *  this is a behavior hook on one id, like `SCAN_ID` above. */
+const UPDATE_CHECK_ID = "check_for_updates";
+
 interface JobMeta {
   title: string;
   desc: string;
@@ -1700,27 +1719,34 @@ interface JobMeta {
 const JOB_META: Record<string, JobMeta> = {
   [SCAN_ID]: {
     title: "Update library and apply policy",
-    desc: "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read. It only reads, and can't remove a thing.",
-    modalDesc:
-      "Reaper can scan on its own to keep the queue fresh. It still only reads. You approve every deletion by hand.",
+    desc: "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read.",
+    modalDesc: "Reaper can scan on its own to keep the queue fresh.",
   },
   refresh_ratings: {
     title: "Refresh IMDb ratings",
     desc: "Downloads the latest IMDb ratings so scores use current numbers.",
     offWarning:
-      "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old, because past that a scan comes back incomplete and can't remove anything until they're refreshed.",
+      "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old.",
   },
   refresh_curated_lists: {
-    title: "Refresh curated lists",
-    desc: "Re-pulls the protection lists Reaper ships with, like the IMDb Top 250, so nothing on them gets flagged.",
+    // The job id is a stored schedule key and predates the registry, so it keeps its old
+    // spelling; what it refreshes is every list on Settings -> Lists, whatever its source
+    // (scheduler.refresh_curated_lists).
+    title: "Refresh your lists",
+    desc: "Re-checks every list on Settings, Lists, so a tag or a collection you edited starts protecting without waiting for a scan.",
     offWarning:
-      "This only affects the standalone daily refresh. Every scan already re-pulls these lists on its own, and they're only used during a scan, so turning this off changes little for anyone who scans.",
+      "This only affects the standalone daily refresh. Every scan already re-checks your lists, and you can check one on Settings, Lists.",
   },
   full_history_sweep: {
     title: "Full watch-history update",
-    desc: 'Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught before "never watched" turns wrong.',
+    desc: "Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught.",
     offWarning:
-      "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught, so \"never watched\" can drift out of date.",
+      "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught.",
+  },
+  check_for_updates: {
+    title: "Check for updates",
+    desc: "Asks GitHub whether a newer Reaper is available.",
+    offWarning: "With this off, Reaper only checks when you open it.",
   },
 };
 
@@ -1979,6 +2005,20 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
     job.last_result !== null ? { ok: job.last_ok !== false, text: job.last_result } : null,
   );
 
+  // A finished update check has replaced the answer `["update"]` holds, and that query is
+  // half an hour stale-free (updateStatus.ts) with nothing else to invalidate it -- so the
+  // row would flash "Reaper 2026.9.2 is out" while the version pill, the About row and the
+  // chip light all went on asserting the answer it just replaced (rule 79). Keyed on the same
+  // running -> done edge the flash watches, so it fires when the ANSWER changed rather than
+  // when the button was pressed.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !job.running && job.id === UPDATE_CHECK_ID) {
+      void queryClient.invalidateQueries({ queryKey: ["update"] });
+    }
+    wasRunning.current = job.running;
+  }, [job.running, job.id, queryClient]);
+
   return (
     <div className="jobrow">
       <div className="jobrow-main">
@@ -2105,10 +2145,18 @@ function LeavingSoonRow({
     );
   }
 
-  const { enabled, last } = ls.data;
+  const { enabled, last, last_skip: skip } = ls.data;
   // The row is still the best answer there is, so it renders -- and says it could not be
   // confirmed, above everything in the row the failed read could have changed.
   const stale = <StaleReadSlot plan={plan} slot="the shelf status" inline />;
+  // A scan that skipped the shelf writes no pass, so this row re-read the last COMPLETED
+  // pass and answered for the scan with its green dot, its timestamp and its counts -- under
+  // a line reading "Runs after every scan". `after_scan` records the skip separately; prefer
+  // it only while it is actually newer, so a pass that later completes wins on its own
+  // timestamp with nothing to clear. Every clause of this is ScanRow's treatment of a
+  // scheduled scan that crashed and wrote no snapshot, at its sibling (rule 72).
+  const currentSkip =
+    skip && (!last || new Date(skip.at).getTime() > new Date(last.at).getTime()) ? skip : null;
 
   if (!enabled) {
     return (
@@ -2146,16 +2194,20 @@ function LeavingSoonRow({
         <JobStatus
           running={running}
           runningLabel="Updating…"
-          lastRunAt={last?.at ?? null}
-          lastOk={last ? last.ok : null}
-          lastResult={last?.result ?? null}
+          lastRunAt={currentSkip ? currentSkip.at : (last?.at ?? null)}
+          lastOk={currentSkip ? false : last ? last.ok : null}
+          lastResult={currentSkip ? currentSkip.result : (last?.result ?? null)}
           flash={flash}
         />
         {last && (
+          // The counts survive a skip, because a skipped pass wrote nothing: the shelf still
+          // holds what the last completed pass put there, and these are the only true numbers
+          // anyone has. Past tense is the whole correction -- they stop reading as the outcome
+          // of the most recent scan, which is the one thing about them that stopped being true.
           <div className="jobrow-meta">
             <strong>{count(last.movies)}</strong> movie{last.movies === 1 ? "" : "s"} and{" "}
-            <strong>{count(last.seasons)}</strong> season{last.seasons === 1 ? "" : "s"} on the
-            shelves
+            <strong>{count(last.seasons)}</strong> season{last.seasons === 1 ? "" : "s"}{" "}
+            {currentSkip ? "were on the shelves at the last update" : "on the shelves"}
           </div>
         )}
         <div className="jobrow-sched">Runs after every scan</div>
@@ -2575,10 +2627,25 @@ function AdminPasswordForm({
   const [pw, setPw] = useState("");
   const [confirm, setConfirm] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+
+  // Did a recovery code open this session? That is the one case the server takes a new
+  // password without the current one, because a forgotten password is what recovery mode is
+  // FOR -- demanding it here left the operator signed in and still locked out (#433).
+  //
+  // Rule 17/36 wants the unknown and failed states answered explicitly, and they are: `?? false`
+  // is the strict answer, not a placeholder. A session this form cannot read is treated exactly
+  // like an ordinary one, so the current-password box stays live and required. It reads the same
+  // ["me"] entry `App` resolved before anything under it could mount, so in practice there is no
+  // pending state to pass through. And the server re-reads the session's own mark on the request
+  // either way: this can only relax what the FORM asks for, never what the API allows.
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: api.me, retry: false });
+  const viaRecovery = me?.via_recovery ?? false;
+  const skipCurrent = needed || viaRecovery;
+
   const save = useMutation({
     // Only the new password is sent: the confirm field exists so a typo can't lock the
     // operator out of the key that arms deletion, and it never leaves the browser.
-    mutationFn: () => api.setAdminPassword(pw, needed ? undefined : current),
+    mutationFn: () => api.setAdminPassword(pw, skipCurrent ? undefined : current),
     onSuccess: () => {
       setCurrent("");
       setPw("");
@@ -2590,15 +2657,29 @@ function AdminPasswordForm({
       // hear -- the one asymmetry the comment below is careful about, reached another way.
       announce("Password saved.");
       void queryClient.invalidateQueries({ queryKey: ["safety"] });
+      // The server spends the recovery mark in the same transaction as the new hash, so this
+      // session is an ordinary one from here on. Re-read it, or the current-password box would
+      // stay grayed out over a session that no longer excuses it and the next change would fail
+      // at the API instead of at the form.
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
     },
-    // No onError: a failure renders from `save.error` as an error notice, never in `msg`.
-    // This password is what confirms turning deletion on, so "saved" and "wrong password"
-    // must not look alike here.
+    onError: () => {
+      // Deliberately NOT the mirror of onSuccess: nothing is written to `msg`, because a
+      // failure renders from `save.error` as an error notice and this password is what
+      // confirms turning deletion on -- "saved" and "wrong password" must never look alike.
+      //
+      // The re-read is the whole point. A second tab mounted before the mark was spent holds
+      // `via_recovery: true` in a cache that nothing refetches (`main.tsx` sets
+      // `refetchOnWindowFocus: false`), so its box stays parked and empty while the server
+      // refuses every submit: a form with no way out but a reload. Re-reading here turns the
+      // refusal into the state that explains it, with the current-password box live again.
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 
   const tooShort = pw.length > 0 && pw.length < MIN_ADMIN_PASSWORD;
   const mismatch = confirm.length > 0 && confirm !== pw;
-  const needCurrent = !needed && current.length === 0;
+  const needCurrent = !skipCurrent && current.length === 0;
   const valid =
     pw.length >= MIN_ADMIN_PASSWORD && confirm.length > 0 && confirm === pw && !needCurrent;
 
@@ -2675,7 +2756,9 @@ function AdminPasswordForm({
         <p className="help">
           {needed
             ? "Choose something long, and keep it somewhere safe."
-            : "Changing it needs the current password first."}
+            : viaRecovery
+              ? "You can set a new one without the old password."
+              : "Changing it needs the current password first."}
         </p>
       </div>
       <div className="pw-col">
@@ -2688,19 +2771,29 @@ function AdminPasswordForm({
           }}
         >
           {/* The current password proves who you are; a divider sets it apart from the new
-              one below. First-time setup has no current password, so neither is shown. */}
+              one below. First-time setup has no current password, so neither is shown.
+
+              A recovery session keeps the box on screen but parks it: disabled and dimmed,
+              the way an option behind a switch reads (`.set-row.dim`, rule 18). Hiding it
+              instead would leave an operator who has used this form before wondering which
+              form they were looking at, and the one line under it is the answer to the
+              question the empty box asks. */}
           {!needed && (
             <>
-              <label className="field-sm">
+              <label className={viaRecovery ? "field-sm dim" : "field-sm"}>
                 <span className="field-label">Current password</span>
                 <input
                   type="password"
-                  value={current}
+                  value={viaRecovery ? "" : current}
                   onChange={onEdit(setCurrent)}
+                  disabled={viaRecovery}
                   autoComplete="current-password"
                   maxLength={128}
                   aria-describedby={errorOwner === "current" ? PASSWORD_ERROR_ID : undefined}
                 />
+                {viaRecovery && (
+                  <span className="help">Not needed. A recovery code signed you in.</span>
+                )}
               </label>
               <hr className="pw-sep" />
             </>
@@ -2818,7 +2911,15 @@ export function SecurityPanel({
 
 // --- shell -----------------------------------------------------------------
 
-export function Settings({ initialPanel }: { initialPanel?: Panel | undefined }) {
+export function Settings({
+  initialPanel,
+  onGoToPolicy,
+}: {
+  initialPanel?: Panel | undefined;
+  /** Jump to the Policy screen's keep-rules section, for the Lists rows' policy-use links.
+   *  Optional the way `SafetyBanner`'s jump is: tests mount Settings without a navigator. */
+  onGoToPolicy?: (() => void) | undefined;
+}) {
   const [panel, setPanel] = useState<Panel>(initialPanel ?? "general");
   // General's save bar can hold six unsaved fields at once, and switching section unmounts the
   // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
@@ -2864,6 +2965,12 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
     // one is open. A draft added to the panel BEHIND the modal would need to report.
     services: false,
     plex: plexDirty,
+    // Same shape as services: a list's drafts live in `ListModal`, inside a `ModalShell`, so
+    // the rail cannot be reached while one is open. This said the panel was read-only and
+    // "a list is still configured where it always was" -- both untrue as of the Lists screen,
+    // which is now the one place a list IS defined, and the next author to add an inline edit
+    // here would have read that and left this entry alone (rule 146).
+    lists: false,
     // Same shape as services: the job editor (`ScheduleModal`) is a `ModalShell` too.
     jobs: false,
     notifications: webhookDirty,
@@ -2966,6 +3073,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
         {panel === "general" && <GeneralPanel onDirtyChange={setGeneralDirty} />}
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel onDirtyChange={setPlexDirty} />}
+        {panel === "lists" && <ListsPanel onGoToPolicy={onGoToPolicy} />}
         {panel === "jobs" && <JobsPanel onGoToPlex={() => switchPanel("plex")} />}
         {panel === "notifications" && <NotificationsPanel onDirtyChange={setWebhookDirty} />}
         {panel === "security" && <SecurityPanel onDirtyChange={setSecurityDirty} />}

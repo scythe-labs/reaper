@@ -21,11 +21,50 @@ import os
 import sys
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from reaper import __version__
 
 _TRUE = {"1", "true", "yes", "on"}
 _SHORT = 7
+
+InstallKind = Literal["container", "snap", "desktop", "source"]
+
+#: A container runtime plants one of these in the filesystem root of everything it
+#: starts -- Docker the first, Podman the second. Neither exists on a host install.
+_CONTAINER_MARKERS = (Path("/.dockerenv"), Path("/run/.containerenv"))
+
+
+def frozen_bundle() -> Path | None:
+    """The unpacked PyInstaller bundle, or ``None`` when this is not a frozen build.
+
+    The one reading of ``sys._MEIPASS`` in the codebase (rule 104): `install_root`,
+    `install_kind` and `launcher._bundle_root` are three questions off this one fact.
+    """
+    root = getattr(sys, "_MEIPASS", None)
+    return Path(root) if root else None
+
+
+def install_kind() -> InstallKind:
+    """Which of the four shipped shapes is running, for the boot log.
+
+    Each branch reads a signal only that shape sets: a frozen bundle is one of the
+    double-clicked desktop builds, ``REAPER_HOME`` is the snap (``snapcraft.yaml``
+    sets it to ``$SNAP`` and no other shape sets it, which
+    `launcher.reads_launcher_conf` relies on for the same reason), and a container
+    runtime plants a marker file. **Anything unrecognized reports ``source``**, which
+    is the shape with the fewest promises attached rather than a guess at a fifth.
+
+    Support reads this before anything else: the four shapes keep their data in four
+    places, take their configuration by four routes, and fail differently.
+    """
+    if frozen_bundle() is not None:
+        return "desktop"
+    if os.environ.get("REAPER_HOME", "").strip():
+        return "snap"
+    if any(marker.exists() for marker in _CONTAINER_MARKERS):
+        return "container"
+    return "source"
 
 
 def install_root() -> Path | None:
@@ -37,8 +76,7 @@ def install_root() -> Path | None:
     named = os.environ.get("REAPER_HOME", "").strip()
     if named:
         return Path(named)
-    bundle = getattr(sys, "_MEIPASS", None)
-    return Path(bundle) if bundle else None
+    return frozen_bundle()
 
 
 def build_version() -> str:

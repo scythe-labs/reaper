@@ -14,6 +14,9 @@ import { useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from "r
 export interface Unit {
   label: string;
   factor: number; // how many base units one of these is (GB -> 1e9 bytes)
+  /** The word for exactly one of these, where the unit inflects at all. Omitted by the size
+   *  units, which do not: "1 GB" is already right and "1 GBs" would not be. */
+  singular?: string;
 }
 
 // Decimal, matching every other place a rule says GB (presets, coercion, rule
@@ -25,11 +28,19 @@ export const SIZE_UNITS: Unit[] = [
 ];
 
 export const TIME_UNITS: Unit[] = [
-  { label: "days", factor: 1 },
-  { label: "weeks", factor: 7 },
-  { label: "months", factor: 30 },
-  { label: "years", factor: 365 },
+  { label: "days", factor: 1, singular: "day" },
+  { label: "weeks", factor: 7, singular: "week" },
+  { label: "months", factor: 30, singular: "month" },
+  { label: "years", factor: 365, singular: "year" },
 ];
+
+/** How a unit is WORDED beside a given quantity, as against `label`, which is its name and
+ *  its stored value. A dormancy floor of 365 days is drawn by `bestUnit` below as exactly 1
+ *  of the largest unit it clears, so "1 years" was not an edge case but the shape every round
+ *  policy default takes: 365, 30, 7 (#415). */
+function wordedFor(unit: Unit, quantity: number): string {
+  return quantity === 1 && unit.singular ? unit.singular : unit.label;
+}
 
 /** The friendliest unit to show a base value in: the largest one where the value is still
  *  at least 1 of them (500 GB stays GB; 14 days becomes 2 weeks). Falls back to the first. */
@@ -276,9 +287,15 @@ export function QuantityInput({
           setUnit(next); // keep the same real value, just show it in the new unit
         }}
       >
+        {/* Worded from the drawn value, so the closed box reads "1 year" and not "1 years". A
+            native select has only one string per option -- what it shows closed IS the selected
+            option's text -- so the whole list inflects together and the open list reads
+            "day, week, month, year" beside a 1. That is the coherent half of the choice:
+            inflecting the selected one alone would leave the list mixed. The `value` stays the
+            plural `label`, so what the change handler matches on never moves. */}
         {units.map((u) => (
           <option key={u.label} value={u.label}>
-            {u.label}
+            {wordedFor(u, Number(shown))}
           </option>
         ))}
       </select>

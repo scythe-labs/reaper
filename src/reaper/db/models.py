@@ -212,6 +212,17 @@ class AuthSession(Base):
     last_seen_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     user_agent: Mapped[str | None] = mapped_column(String(300), default=None)
 
+    # This session was opened by redeeming a recovery code, so its holder proved host
+    # access but not knowledge of the admin password. It is what lets Settings -> Security
+    # set a new password without the current one: an operator who has forgotten it has
+    # nothing to type there, and recovery exists for exactly that. Spent on first use --
+    # ``api.settings.set_admin_password`` clears the mark in the same transaction that
+    # writes the new hash, so the elevated permission never outlives the reset it was for.
+    # server_default so the additive migration can ADD this NOT NULL column to an existing
+    # populated table (SQLite requires a default), and every session predating it backfills
+    # to "false", which is the fail-closed reading: still needs the current password.
+    via_recovery: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+
     user: Mapped[AppUser] = relationship(back_populates="sessions")
 
 
@@ -369,12 +380,29 @@ class Snapshot(Base):
 
     evidence_hash: Mapped[str | None] = mapped_column(String(64), default=None)
     """The policy fields that decide what evidence the scan gathers and freezes: the
-    popularity window, the keep-tags, the season-pruning guard, the media type. Two
+    popularity window and the media type. The keep-tags were here until the tags a title
+    carries became gathered evidence (``Facts.on_lists``), and the season-pruning guard
+    until the scan began freezing its inputs per show; ``PolicyBody.evidence_hash`` is the
+    one place that set is declared, so read it there rather than trusting this list. Two
     policies sharing this produce the same frozen Facts for every item, so the simulator
     may replay the real engine over ``Candidate.facts_json`` and get an exact verdict for
     any change *outside* these fields (weights, rating bars, custom rules). When it
     differs, the frozen evidence is stale and a fresh scan is required. See
     ``PolicyBody.evidence_hash``."""
+
+    list_config_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    """The protection lists this scan gathered membership from
+    (``services.list_config.fingerprint``). The lists are not policy, so the hash above
+    cannot carry them, and every tier of the simulator reads evidence derived from them --
+    the replay through the frozen ``Facts.on_lists``, the threshold path through the stored
+    verdict that fact produced. When it differs from the registry as it stands now, the
+    operator changed which titles their keep rules protect and the panel refuses instead of
+    reporting numbers that predate the change (#512).
+
+    ``None`` on a snapshot written before this column, and read as *unknown* rather than as
+    "no lists" (rule 104): it matches no fingerprint, so the panel refuses until the next
+    scan. That is the same one-scan cost ``PolicyBody.evidence_hash`` documents, and it
+    heals the same way."""
 
     horizon_at: Mapped[UtcTimestamp]
     """The earliest watch history we hold. Persisted, not computed: media older than
@@ -607,6 +635,59 @@ class Candidate(Base):
     created_at: Mapped[UtcTimestamp]
 
 
+class SeasonPruneEvidence(Base):
+    """What one show's season plan was decided from, frozen with the snapshot.
+
+    ``Candidate.facts_json`` freezes the season guard's *output* -- a ``GateResult`` saying
+    which seasons were kept and why. That is enough to explain the scan and not enough to
+    re-decide it: ``season_pruning.plan_series_prune``'s inputs are per-show (Sonarr's season
+    statistics, who is part-way through, each season's watcher count and the bound on it) and
+    never reached ``Facts``, which carries only ``season_rank``, ``size_bytes`` and the
+    season's own counts. So every season rule blanked the policy simulator, on the densest
+    card in the editor (#491).
+
+    One row per show per snapshot, keyed by the show key every one of its seasons carries
+    (``sonarr:{instance}:{series}``, ``whitelist.show_key`` of any season's media_key). Per
+    show rather than per season deliberately: the bundle IS per show, and copying it onto
+    each season row would multiply the frozen-evidence cost of a TV library by its seasons
+    per show for nothing (``docs/LEARNINGS.md``, "What a frozen snapshot actually costs").
+
+    Swept with its snapshot: ``services.retention`` deletes ``Snapshot`` rows and the FK
+    below cascades, exactly as ``Candidate`` does.
+    """
+
+    __tablename__ = "season_prune_evidence"
+    __table_args__ = (UniqueConstraint("snapshot_id", "group_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshot.id", ondelete="CASCADE"))
+
+    group_key: Mapped[str] = mapped_column(String(100))
+    """The show key, shared by every season of the show and equal to ``Candidate.group_key``
+    for those rows.
+
+    Carries no index of its own: the only read is ``routes._season_payloads``' ``WHERE
+    snapshot_id = ?``, which the unique constraint above already covers on its leading column,
+    and nothing filters a show key across snapshots. A second B-tree here would be written
+    once per show per scan to serve nobody, in the table whose per-row cost the paragraph
+    above is about."""
+
+    payload_json: Mapped[str] = mapped_column(Text)
+    """``services.season_evidence.to_dict`` of the show's ``SeasonPruneInput``.
+
+    **O(viewers x seasons)**, since three of its members are per-user-per-season maps: measured
+    at 1,743 B for a five-season show with five viewers and 8,987 B for a ten-season show with
+    25 viewers, so ~270 MB across the retention window for a thousand shows on the larger shape
+    (``docs/LEARNINGS.md``, "What frozen season evidence costs"). Growth is bounded by the same
+    30-snapshot sweep as everything else here.
+
+    A snapshot with no row for a show is the honest "unknown": the simulator refuses the
+    season card rather than replaying a partial bundle, and the next scan records one (rule
+    104's thaw). A snapshot taken before this table existed is covered twice over, since the
+    same change re-scoped ``PolicyBody.evidence_hash`` and it therefore refuses every edit
+    until it is re-scanned."""
+
+
 class FirstFlagged(Base):
     """When an item was *first* condemned, ever.
 
@@ -775,6 +856,64 @@ class AppSetting(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value_json: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[UtcTimestamp]
+
+
+class ListConfig(Base):
+    """A protection list the operator authored, or one Reaper ships with.
+
+    **Definition here, membership in the cache.** ``protection_list`` and
+    ``protection_list_item`` hold what each list currently contains, and they are excluded
+    from Alembic and from backups on purpose: they mirror somebody else's data and the next
+    sync rebuilds them. A list the operator *named and pointed at something* is not
+    rebuildable from anything, so it lives in this database, is migrated, and is backed up.
+    Storing it beside the membership would mean a restore drops every list they configured
+    and the next scan reaps what those lists were protecting.
+
+    **The id is stable across every edit.** A derived list is identified by a slug carrying
+    the settings that produced it, so changing a setting mints a new slug and strands the old
+    row still protecting from a rule the operator already replaced -- which is the whole
+    reason ``lists.retire_absent`` exists. A row here keeps its id, so an edit is an UPDATE
+    and there is nothing to retire.
+    """
+
+    __tablename__ = "list_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    name: Mapped[str] = mapped_column(String(100, collation="NOCASE"), unique=True)
+    """The operator's own name, and what a policy rule names to use this list.
+
+    Unique, because a rule naming a list has to mean exactly one list. Two rows answering to
+    one name would make a protection point at whichever was written last, which is a
+    protection that silently changes what it covers.
+
+    **Unique WITHOUT REGARD TO CASE**, because that is how every reader compares it: rule 88
+    case-folds both sides of a name match, so "Never Reap" and "never reap" are two rows here
+    and one list to `services.list_rules` and to the ``on_list`` field. They shared a single
+    keep rule, and deleting either one stripped the rule from the policy and stopped the
+    other protecting, untouched and unannounced (#508). The collation is what makes the
+    stored constraint agree with the comparison; `list_config._clean_name` refuses the
+    collision first, so the operator reads a sentence rather than a failed write.
+    """
+
+    source: Mapped[str] = mapped_column(String(32))
+    """Which kind of thing this reads: a Plex collection, an *arr tag rule, a curated list.
+    See ``services.lists.ListSource``."""
+
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    """That source's own settings -- which collection in which library, which tags and
+    whether they match ANY or ALL. JSON because each source needs different keys."""
+
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    """Off keeps the row and its name, so a list switched off comes back with its rules
+    intact. Deleting is a separate verb and is the operator's to choose."""
+
+    built_in: Mapped[bool] = mapped_column(Boolean, default=False)
+    """Ships with Reaper (the IMDb Top 250). Editable and switchable, never deletable: the
+    default policy carries a keep rule naming it, and copy may only reference a mechanism
+    that is wired (rule 25)."""
+
+    created_at: Mapped[UtcTimestamp]
 
 
 class RunState(enum.StrEnum):

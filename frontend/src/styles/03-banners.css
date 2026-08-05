@@ -46,8 +46,22 @@
 }
 .banner-safe,
 .banner-armed,
+.banner-recovery,
 .banner-unknown {
   color: var(--text);
+}
+/* Recovery mode: deletion is held off, and the operator cannot clear it from the UI. The
+   shared amber, not a fourth tone -- `--unknown` is this stylesheet's one "attention, and
+   not the normal state" ink (rule 18), and the sentence carries the difference between not
+   being able to look and having deliberately opened a door. Green would be wrong for the
+   same reason it is wrong on `.banner-unknown`: this is a state to leave, not to rest in. */
+.banner-recovery {
+  background: var(--unknown-soft);
+  border-color: color-mix(in srgb, var(--unknown) 45%, transparent);
+}
+.banner-recovery .banner-dot {
+  background: var(--unknown);
+  color: var(--unknown);
 }
 /* The fallback tone when the safety regime can't be read at all (the health fetch failed).
    Amber, like every other "we could not look" state -- it must never read as "safe". */

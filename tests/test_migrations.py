@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,14 +34,24 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     inspect,
+    select,
     text,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from reaper.config import Settings
 from reaper.db.base import NAMING_CONVENTION
+from reaper.db.models import ListConfig
+from reaper.db.models import Policy as PolicyModel
 from reaper.engine.gates import GateId
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, recover_rating_rules
+from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    PolicyBody,
+    has_legacy_list_protections,
+    recover_rating_rules,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -536,3 +547,774 @@ def test_the_migration_reads_a_recoverable_bar_exactly_as_the_shim_does() -> Non
     assert not disagreed, "the migration's copy of the trigger has drifted:\n" + "\n".join(
         disagreed
     )
+
+
+def test_the_seeded_keep_collection_is_readable_through_the_orm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seeded "Never Reap" definition loads, rather than 500ing every read of the table.
+
+    ``list_config.created_at`` is an ``EpochDateTime``: an INTEGER unix timestamp whose read
+    side calls ``datetime.fromtimestamp`` on whatever is stored. A raw ``INSERT`` binds a
+    datetime around that type and lands an ISO string, which SQLite stores happily and the ORM
+    then raises ``TypeError: 'str' object cannot be interpreted as an integer`` on -- so the
+    Lists screen sat on "Loading your lists…" forever and the route 500ed, on the first page
+    load after upgrading. Found by driving a real install, which is the only place the two
+    writers meet: the shipped list's row goes through the ORM and was fine, so the mismatch
+    needed a database holding a row from each.
+
+    This asserts the READ, not the stored shape, because the read is what broke.
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    with Session(engine) as session:
+        rows = session.execute(select(ListConfig)).scalars().all()
+
+    # The Arr-style migration behind the seed adds the tag list AND the IMDb list beside
+    # it: it sets the seeded flag, so it must leave every list the default policy's keep
+    # rules name, or a fresh install boots with a rule naming a list that does not exist
+    # (found by driving one). See TestTheArrStyleListsMigration for the rest.
+    assert [r.name for r in rows] == ["Never Reap", "Titles you've tagged", "IMDb Top 250"]
+    assert isinstance(rows[0].created_at, datetime)
+    assert rows[0].source == "plex_collection"
+    # The library it points at is the one the code used to hardcode, so the first scan after
+    # an upgrade reads exactly the collection the operator already had (#483 is the screen
+    # that lets them change it, not a silent re-pointing).
+    assert json.loads(rows[0].config_json) == {"library": "Movies", "collection": "Never Reap"}
+    assert isinstance(rows[1].created_at, datetime)
+
+    engine.dispose()
+
+
+# The Arr-style lists migration and the revision just before it (the "Never Reap" seed).
+_PRIOR_ARR_STYLE = "b2c3d4e5f6a7"
+_ARR_STYLE = "c3d4e5f6a7b8"
+
+
+def _list_rows(engine: Engine) -> list[tuple[str, str, str, int, int]]:
+    with engine.begin() as conn:
+        return [
+            (str(r[0]), str(r[1]), str(r[2]), int(r[3]), int(r[4]))
+            for r in conn.execute(
+                text("SELECT name, source, config_json, enabled, built_in FROM list_config")
+            )
+        ]
+
+
+def _lists_seeded_flag(engine: Engine) -> str | None:
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT value_json FROM app_setting WHERE key = 'lists_seeded'")
+        ).one_or_none()
+    return None if row is None else str(row[0])
+
+
+class TestTheArrStyleListsMigration:
+    """Every list is Arr-style: 'curated' rows respell as 'imdb', the policy keep tags
+    become a tag list on Settings -> Lists, and the seed flag is set so ``ensure_defaults``
+    never adds a second shipped copy beside an upgraded install's own rows."""
+
+    def _upgraded(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        seed: Any = None,
+    ) -> Engine:
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _PRIOR_ARR_STYLE)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        if seed is not None:
+            seed(engine)
+        command.upgrade(config, _ARR_STYLE)
+        return engine
+
+    @staticmethod
+    def _seed_curated_row(engine: Engine) -> None:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO list_config "
+                    "(name, source, config_json, enabled, built_in, created_at) "
+                    "VALUES ('IMDb Top 250', 'curated', :config, 0, 1, 1750000000)"
+                ),
+                {"config": json.dumps({"list": "imdb-top-250"})},
+            )
+
+    def test_a_curated_row_respells_as_imdb_and_keeps_its_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = self._upgraded(tmp_path, monkeypatch, seed=self._seed_curated_row)
+
+        rows = {name: (source, config) for name, source, config, _, _ in _list_rows(engine)}
+
+        assert rows["IMDb Top 250"][0] == "imdb"
+        assert json.loads(rows["IMDb Top 250"][1]) == {"preset": "top250"}
+        engine.dispose()
+
+    def test_every_row_comes_out_enabled_and_not_built_in(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The Protecting switch and the built-in lock left the UI, so a disabled or
+        locked row would render with no control that can change it."""
+        engine = self._upgraded(tmp_path, monkeypatch, seed=self._seed_curated_row)
+
+        for name, _source, _config, enabled, built_in in _list_rows(engine):
+            assert enabled == 1, name
+            assert built_in == 0, name
+        engine.dispose()
+
+    def test_the_stored_keep_tags_become_the_tag_list(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The operator's own tags, both media types unioned, ``all`` only when every body
+        that spoke said ``all`` -- ``any`` is the wider net, which is the keep direction."""
+
+        def seed(engine: Engine) -> None:
+            movie = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            movie["keep_tags"] = ["Keep-This", "gold"]
+            movie["keep_tags_match"] = "all"
+            tv = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            tv["keep_tags"] = ["gold", "silver"]
+            tv["keep_tags_match"] = "any"
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                        " VALUES (:h, :b, :mt, 'default', 1750000000)"
+                    ),
+                    [
+                        {"h": "h-movie", "b": json.dumps(movie), "mt": "movie"},
+                        {"h": "h-tv", "b": json.dumps(tv), "mt": "tv"},
+                    ],
+                )
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        rows = {
+            name: config for name, source, config, _, _ in _list_rows(engine) if source == "arr_tag"
+        }
+        assert json.loads(rows["Titles you've tagged"]) == {
+            "tags": ["Keep-This", "gold", "silver"],
+            "match": "any",
+        }
+        assert _lists_seeded_flag(engine) == "true"
+        engine.dispose()
+
+    def test_two_all_policies_naming_different_tags_seed_any(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A union is only the wider read under ANY.
+
+        The legacy keep tags were per policy AND per service, so a movie carrying 'gold' was
+        on the movie policy's keep list whatever the tv policy said. One list replaces both,
+        and ALL membership is ``wanted <= carried``, so carrying the union forward under ALL
+        asks every title for both policies' tags: the movie carrying only 'gold' drops off
+        the list the union was supposed to widen. Both bodies say ``all`` here, which is the
+        only shape that used to keep it.
+        """
+
+        def seed(engine: Engine) -> None:
+            movie = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            movie["keep_tags"] = ["gold"]
+            movie["keep_tags_match"] = "all"
+            tv = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            tv["keep_tags"] = ["silver"]
+            tv["keep_tags_match"] = "all"
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                        " VALUES (:h, :b, :mt, 'default', 1750000000)"
+                    ),
+                    [
+                        {"h": "h-movie", "b": json.dumps(movie), "mt": "movie"},
+                        {"h": "h-tv", "b": json.dumps(tv), "mt": "tv"},
+                    ],
+                )
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        rows = {
+            name: config for name, source, config, _, _ in _list_rows(engine) if source == "arr_tag"
+        }
+        assert json.loads(rows["Titles you've tagged"]) == {
+            "tags": ["gold", "silver"],
+            "match": "any",
+        }
+        engine.dispose()
+
+    def test_two_all_policies_naming_the_same_tags_keep_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other side of the line, and why this is not just "always seed ANY".
+
+        With one set of tags there is nothing for the union to widen, so ALL carries over
+        exactly the membership both policies had. Loosening it here would put titles on a
+        keep list the operator had deliberately narrowed. Spelled differently on each body,
+        because a tag is case-folded everywhere else (rule 88) and Sonarr and Radarr fold it
+        themselves.
+        """
+
+        def seed(engine: Engine) -> None:
+            movie = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            movie["keep_tags"] = ["gold", "Silver"]
+            movie["keep_tags_match"] = "all"
+            tv = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            tv["keep_tags"] = ["silver", "Gold"]
+            tv["keep_tags_match"] = "all"
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                        " VALUES (:h, :b, :mt, 'default', 1750000000)"
+                    ),
+                    [
+                        {"h": "h-movie", "b": json.dumps(movie), "mt": "movie"},
+                        {"h": "h-tv", "b": json.dumps(tv), "mt": "tv"},
+                    ],
+                )
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        rows = {
+            name: config for name, source, config, _, _ in _list_rows(engine) if source == "arr_tag"
+        }
+        assert json.loads(rows["Titles you've tagged"])["match"] == "all"
+        engine.dispose()
+
+    def test_a_single_all_policy_keeps_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One stored policy has no second set to disagree with, so nothing is unioned and
+        its own match mode carries over untouched."""
+
+        def seed(engine: Engine) -> None:
+            movie = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+            movie["keep_tags"] = ["gold", "silver"]
+            movie["keep_tags_match"] = "all"
+            _seed_policy(engine, movie)
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        rows = {
+            name: config for name, source, config, _, _ in _list_rows(engine) if source == "arr_tag"
+        }
+        assert json.loads(rows["Titles you've tagged"]) == {
+            "tags": ["gold", "silver"],
+            "match": "all",
+        }
+        engine.dispose()
+
+    def test_a_body_with_no_keep_tags_key_seeds_the_shipped_default_tag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A body that carries no key ran on the shipped default tag, so it had a live
+        protection to carry over; seeding nothing would withdraw it."""
+
+        def seed(engine: Engine) -> None:
+            _seed_policy(engine, json.loads(DEFAULT_MOVIE_POLICY.model_dump_json()))
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        rows = {
+            name: config for name, source, config, _, _ in _list_rows(engine) if source == "arr_tag"
+        }
+        assert json.loads(rows["Titles you've tagged"]) == {
+            "tags": ["reaper-keep"],
+            "match": "any",
+        }
+        engine.dispose()
+
+    def test_an_existing_tag_list_is_not_duplicated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An install from this branch's earlier builds already defined its tag list;
+        seeding a second would make one protection two rows with two names."""
+
+        def seed(engine: Engine) -> None:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO list_config "
+                        "(name, source, config_json, enabled, built_in, created_at) "
+                        "VALUES ('Mine', 'arr_tag', :config, 1, 0, 1750000000)"
+                    ),
+                    {"config": json.dumps({"tags": ["mine"], "match": "any"})},
+                )
+
+        engine = self._upgraded(tmp_path, monkeypatch, seed=seed)
+
+        tag_rows = [r for r in _list_rows(engine) if r[1] == "arr_tag"]
+        assert [r[0] for r in tag_rows] == ["Mine"]
+        assert _lists_seeded_flag(engine) == "true"
+        engine.dispose()
+
+    def test_the_flag_is_set_so_ensure_defaults_stands_down(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Any install with state to carry gets the flag; the first read after the upgrade
+        must keep the operator's rows as the whole registry rather than add shipped copies."""
+        engine = self._upgraded(tmp_path, monkeypatch, seed=self._seed_curated_row)
+
+        assert _lists_seeded_flag(engine) == "true"
+        engine.dispose()
+
+
+# The list_config shape heal and the revision just before it.
+_ARR_STYLE_HEAD = "c3d4e5f6a7b8"
+_LIST_CONFIG_HEAL = "d4e5f6a7b8c9"
+
+
+class TestTheListConfigShapeHeal:
+    """``add_list_config`` first created ``created_at`` as DATETIME with server defaults on
+    three columns; the migration is corrected in place, so only a database created in that
+    window still carries the old shape. The heal rebuilds it to the model's, keeping rows."""
+
+    @staticmethod
+    def _regress_to_the_old_shape(engine: Engine) -> None:
+        """The table exactly as the earlier spelling created it, with one stored row."""
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE list_config"))
+            conn.execute(
+                text(
+                    "CREATE TABLE list_config ("
+                    " id INTEGER NOT NULL PRIMARY KEY,"
+                    " name VARCHAR(100) NOT NULL,"
+                    " source VARCHAR(32) NOT NULL,"
+                    " config_json TEXT NOT NULL DEFAULT '{}',"
+                    " enabled BOOLEAN NOT NULL DEFAULT 1,"
+                    " built_in BOOLEAN NOT NULL DEFAULT 0,"
+                    " created_at DATETIME NOT NULL,"
+                    " CONSTRAINT uq_list_config_name UNIQUE (name))"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO list_config "
+                    "(name, source, config_json, enabled, built_in, created_at) "
+                    "VALUES ('Mine', 'arr_tag', :config, 1, 0, 1750000000)"
+                ),
+                {"config": json.dumps({"tags": ["keep"], "match": "any"})},
+            )
+
+    def test_an_in_window_database_is_reshaped_and_its_rows_survive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _ARR_STYLE_HEAD)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._regress_to_the_old_shape(engine)
+
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+
+        columns = {c["name"]: c for c in inspect(engine).get_columns("list_config")}
+        assert isinstance(columns["created_at"]["type"], Integer)
+        for name in ("config_json", "enabled", "built_in"):
+            assert columns[name]["default"] is None, name
+        # The row came through, and the ORM reads it: the whole reason the type matters.
+        with Session(engine) as session:
+            [row] = session.execute(select(ListConfig)).scalars().all()
+        assert row.name == "Mine"
+        assert isinstance(row.created_at, datetime)
+        engine.dispose()
+
+    def test_a_corrected_database_is_left_untouched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every fresh install takes the guard's other arm: nothing to rebuild, and the
+        shape at head is already the model's -- which is also what keeps ``alembic check``
+        green in CI."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+        columns = {c["name"]: c for c in inspect(engine).get_columns("list_config")}
+        assert isinstance(columns["created_at"]["type"], Integer)
+        for name in ("config_json", "enabled", "built_in"):
+            assert columns[name]["default"] is None, name
+        engine.dispose()
+
+
+# The case-insensitive name constraint and the revision just before it.
+_NAME_NOCASE = "e5f6a7b8c9d0"
+
+
+class TestAListNameIsUniqueWithoutRegardToCase:
+    """``list_config.name`` was unique byte for byte while every reader case-folds it, so two
+    rows differing only in case answered to one keep rule: the second never got a rule of its
+    own, and deleting either one took that rule away and stopped the other protecting (#508).
+
+    The collation is what makes the stored constraint compare the way the code does. A
+    database that already holds a collision has to upgrade rather than refuse to boot, which
+    is the whole reason the disambiguation runs before the rebuild.
+
+    Every name here is one the migrations do not seed, so what these assert on is what the
+    test put there.
+    """
+
+    @staticmethod
+    def _added(engine: Engine) -> list[str]:
+        """The names this test added, in insert order. The seeded definitions are skipped by
+        their id: every row here is inserted with the fixed stamp below."""
+        with engine.begin() as conn:
+            return [
+                str(r.name)
+                for r in conn.execute(
+                    text("SELECT name FROM list_config WHERE created_at = 1750000000 ORDER BY id")
+                )
+            ]
+
+    @staticmethod
+    def _add(engine: Engine, *names: str) -> None:
+        with engine.begin() as conn:
+            for name in names:
+                conn.execute(
+                    text(
+                        "INSERT INTO list_config "
+                        "(name, source, config_json, enabled, built_in, created_at) "
+                        "VALUES (:name, 'arr_tag', :config, 1, 0, 1750000000)"
+                    ),
+                    {"name": name, "config": json.dumps({"tags": ["keep"], "match": "any"})},
+                )
+
+    def test_the_constraint_refuses_a_name_differing_only_in_case(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+        self._add(engine, "Keepers")
+        with pytest.raises(IntegrityError):
+            self._add(engine, "keepers")
+
+        engine.dispose()
+
+    def test_a_database_already_holding_a_collision_upgrades(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both rows survive, the older keeps its spelling, and the constraint lands. Refusing
+        the upgrade instead would leave the operator unable to boot at all, which is a worse
+        answer than a list that has to be renamed."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers", "keepers", "KEEPERS")
+
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert self._added(engine) == ["Keepers", "keepers (2)", "KEEPERS (3)"]
+        with pytest.raises(IntegrityError):
+            self._add(engine, "KEEPers")
+        engine.dispose()
+
+    def test_the_renamed_row_gets_a_keep_rule_of_its_own(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The suffix takes the renamed row's protection with it, unless the rule follows.
+
+        One rule was covering BOTH rows precisely because ``on_list`` case-folds each side
+        (``engine.fields._compare``), which is the defect this revision exists to close. So
+        suffixing the later row leaves it matching nothing, and the next ``sync_rule_names``
+        rewrites its stored membership to a spelling no rule names: an upgrade would switch a
+        live keep list off in silence.
+
+        Copied, never moved, so the row that kept its name keeps its cover too.
+        """
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers", "keepers")
+        body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        body["protect_conditions"] = [
+            *body["protect_conditions"],
+            {"field": "on_list", "op": "eq", "value": "Keepers"},
+        ]
+        _seed_policy_of(engine, "movie", body)
+
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert self._added(engine) == ["Keepers", "keepers (2)"]
+        stored = json.loads(_all_policy_rows(engine)[-1][3])
+        values = {c["value"] for c in stored["protect_conditions"] if c["field"] == "on_list"}
+        assert "keepers (2)" in values, "the renamed list lost the rule that was keeping it"
+        assert "Keepers" in values, "the row that kept its name lost its rule"
+        engine.dispose()
+
+    def test_a_rename_with_no_rule_naming_it_writes_no_policy_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Append-only means every row written is one a reader has to account for, so a
+        rename nothing was protecting through writes nothing at all."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers", "keepers")
+        _seed_policy_of(engine, "movie", json.loads(DEFAULT_MOVIE_POLICY.model_dump_json()))
+        before = len(_all_policy_rows(engine))
+
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert len(_all_policy_rows(engine)) == before
+        engine.dispose()
+
+    def test_a_database_with_no_collision_keeps_every_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The ordinary upgrade renames nothing. A migration that suffixed a name it did not
+        have to would withdraw the keep rule naming it."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _LIST_CONFIG_HEAL)
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers", "Kids", "Awards")
+
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert self._added(engine) == ["Keepers", "Kids", "Awards"]
+        engine.dispose()
+
+    def test_running_it_again_on_a_converted_database_changes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The guard reads the stored DDL, because SQLite reflection does not report a
+        collation: ``get_columns`` gives the type and nothing about how it compares. Replayed
+        by stamping back and upgrading again, the shape a re-run actually takes."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        self._add(engine, "Keepers")
+
+        command.stamp(config, _LIST_CONFIG_HEAL)
+        command.upgrade(config, _NAME_NOCASE)
+
+        assert self._added(engine) == ["Keepers"]
+        with pytest.raises(IntegrityError):
+            self._add(engine, "keepers")
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Persisting the list-protection conversion (d5e6f7a8b9c0).
+# ---------------------------------------------------------------------------
+
+_PRIOR_LIST_CONVERSION = "a1b2c3d4e5f7"
+_LIST_CONVERSION = "d5e6f7a8b9c0"
+
+
+def _legacy_list_body() -> dict[str, Any]:
+    """A stored body from before every list protected through its own keep rule: the keep
+    tags on the policy, and both retired list gates enabled. The shape every install that
+    upgrades into the lists release is carrying."""
+    body: dict[str, Any] = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+    body["protect_conditions"] = []
+    body["keep_tags"] = ["reaper-keep"]
+    body["keep_tags_match"] = "any"
+    body["gates"] = [
+        {"gate": "whitelisted", "enabled": True},
+        {"gate": "curated_list", "enabled": True},
+        *body["gates"],
+    ]
+    return body
+
+
+def _only_these_lists(engine: Engine, *sources: str) -> None:
+    """Leave the registry holding exactly these sources, under names an operator might have
+    chosen. The upgrade to the prior revision seeds rows of its own (the tag list, the shipped
+    IMDb list), and the conversion resolves by source and age rather than by spelling, so a
+    case about a MISSING list has to clear them rather than add beside them."""
+    names = {"arr_tag": "My tagged titles", "imdb": "Films worth keeping"}
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM list_config"))
+        for source in sources:
+            conn.execute(
+                text(
+                    "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
+                    " created_at) VALUES (:n, :s, '{}', 1, 0, 1750000000)"
+                ),
+                {"n": names[source], "s": source},
+            )
+
+
+def _seed_policy_of(engine: Engine, media_type: str, body: dict[str, Any]) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                " VALUES (:h, :b, :m, 'mine', 1750000000)"
+            ),
+            {"h": f"seeded-{media_type}", "b": json.dumps(body), "m": media_type},
+        )
+
+
+def _all_policy_rows(engine: Engine) -> list[tuple[int, str, str, str]]:
+    with engine.begin() as conn:
+        return [
+            (int(r[0]), str(r[1]), str(r[2]), str(r[3]))
+            for r in conn.execute(
+                text("SELECT id, media_type, policy_hash, body_json FROM policy ORDER BY id")
+            )
+        ]
+
+
+class TestPersistingTheListConversion:
+    """The conversion used to run on load and never be written back, so ``repaired`` stayed
+    true forever and every scan degraded with a notice the operator could not clear (#516).
+    This writes it once, where an upgrade can carry it.
+
+    Appended, never edited in place: snapshots and approvals point at the parent row by hash
+    (``db.models.Policy`` is append-only by contract).
+    """
+
+    def _upgraded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Config, Engine]:
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, _PRIOR_LIST_CONVERSION)
+        return config, create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    def test_a_legacy_body_is_converted_and_the_parent_row_survives(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        after = _all_policy_rows(engine)
+        assert after[0] == before[0], "the parent row was edited; it must be left as saved"
+        assert len(after) == len(before) + 1
+        _, media_type, new_hash, new_body = after[-1]
+        assert media_type == "movie"
+        stored = json.loads(new_body)
+        # Each enabled gate became a rule naming the operator's OWN list name, resolved from
+        # the registry: an `on_list` rule naming a list that does not exist reads as a green
+        # "checked, did not fire", which is the fail-open direction.
+        values = {c["value"] for c in stored["protect_conditions"] if c["field"] == "on_list"}
+        assert values == {"My tagged titles", "Films worth keeping"}
+        assert not {g["gate"] for g in stored["gates"]} & {"whitelisted", "curated_list"}
+        assert "keep_tags" not in stored
+        # It loads, and its hash describes its own content, so nothing reads as stale.
+        assert new_hash == PolicyBody.model_validate_json(new_body).policy_hash()
+        assert new_hash != before[0][2]
+        engine.dispose()
+
+    def test_the_load_shim_then_reports_no_repair_at_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The point of the whole revision. Before it, this body came back
+        ``lists_migrated`` on every load, so every scan degraded and the banner never
+        cleared however many times the operator scanned."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        newest = _all_policy_rows(engine)[-1][3]
+        assert has_legacy_list_protections(json.loads(newest)) is False
+        engine.dispose()
+
+    def test_it_carries_both_media_types(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Movies and TV are tuned separately and BOTH degrade the scan, so converting one
+        leaves the banner exactly as unclearable as before (rule 72)."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        tv = _legacy_list_body()
+        tv["media_type"] = "tv"
+        _seed_policy_of(engine, "tv", tv)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        newest = {r[1]: r[3] for r in _all_policy_rows(engine)}
+        assert set(newest) == {"movie", "tv"}
+        for body_json in newest.values():
+            assert has_legacy_list_protections(json.loads(body_json)) is False
+        engine.dispose()
+
+    def test_it_leaves_a_body_alone_when_the_replacement_list_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal that matters. With no tag list to name, the conversion deliberately
+        KEEPS the enabled ``whitelisted`` row rather than converting it to a rule naming
+        nothing -- so persisting its output would store a body ``build_gates`` refuses to
+        scan. The row stays legacy, the load shim keeps handling it, and the editor is where
+        the operator is told (which it now does, with a Save)."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "imdb")  # no arr_tag list for the keep tags to become
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        assert _all_policy_rows(engine) == before
+        engine.dispose()
+
+    def test_it_is_a_noop_on_a_body_that_is_not_legacy_shaped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every fresh install is this case, and an operator who already saved the converted
+        draft is too. Re-running must not append a row either time."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", json.loads(DEFAULT_MOVIE_POLICY.model_dump_json()))
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        assert _all_policy_rows(engine) == before
+        engine.dispose()
+
+    def test_it_survives_a_database_with_no_policy_at_all(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A first boot reaches head with an empty policy table. An upgrade that raised here
+        would leave the operator unable to start at all."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        assert _all_policy_rows(engine) == []
+        engine.dispose()
+
+    def test_a_body_that_is_not_json_does_not_fail_the_upgrade(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hand-edited or truncated row must not stop an upgrade whose other revisions
+        have nothing to do with policy bodies. It falls to the load shim, which reports it."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                    " VALUES ('h', 'not json at all', 'movie', 'mine', 1750000000)"
+                )
+            )
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        assert _all_policy_rows(engine) == before
+        engine.dispose()
+
+    def test_the_written_row_reads_back_through_the_orm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``created_at`` is an INTEGER unix timestamp, because raw SQL goes around
+        ``db.types.EpochDateTime``. An ISO string here lands a row every later read raises
+        on, which is a 500 on the first page load after upgrading (b2c3d4e5f6a7 found it)."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        with Session(engine) as session:
+            rows = session.execute(select(PolicyModel).order_by(PolicyModel.id)).scalars().all()
+        assert isinstance(rows[-1].created_at, datetime)
+        engine.dispose()

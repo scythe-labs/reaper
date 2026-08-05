@@ -35,12 +35,12 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any
 
 import structlog
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 from reaper.aio import gather_reaped, reap
 from reaper.clients.arr import RadarrClient
@@ -48,7 +48,13 @@ from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
-from reaper.db.models import Candidate, FirstFlagged, SizeSource, Snapshot
+from reaper.db.models import (
+    Candidate,
+    FirstFlagged,
+    SeasonPruneEvidence,
+    SizeSource,
+    Snapshot,
+)
 from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
 from reaper.engine.gates import Evaluation, Facts, Gate, GateResult, evaluate_all
@@ -67,8 +73,10 @@ from reaper.ratings import Rating, RatingSource, from_radarr, merge_by_source
 from reaper.services import (
     history_sync,
     library_index,
+    list_config,
     lists,
     requested_by,
+    season_evidence,
     season_scan,
     watch_evidence,
     whitelist,
@@ -153,7 +161,22 @@ class ScanContext:
 
     def degrade(self, reason: str) -> None:
         log.warning("snapshot.degraded", reason=reason)
-        self.degraded_reasons.append(reason)
+        # Made a SENTENCE here, the one point every reason passes through -- the ~18 call
+        # sites, `build_index`'s callback, and the caller's `extra_degrade_reasons` alike.
+        #
+        # Terminated, because the reasons are joined into one operator-facing string and every
+        # notice rendering it writes more prose directly after, so an unterminated fragment
+        # fuses into the sentence that follows: the incomplete-scan notice read "... could not
+        # be matched to your libraries You can still look at it" (#514).
+        #
+        # And capitalized, because terminating them turned a "; "-joined LIST into a run of
+        # sentences, and all but the seven that carry a lane prefix start lower case: the
+        # notice then read "... what is playing right now. radarr 'Main' unreachable." -- a
+        # lower-case sentence after a full stop, with the product's name mis-spelled against
+        # every other surface. Only the first character is touched, so an id or a quoted name
+        # that starts a reason keeps its own spelling.
+        said = reason if reason.endswith((".", "!", "?")) else f"{reason}."
+        self.degraded_reasons.append(said[:1].upper() + said[1:])
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,15 +427,20 @@ def build_facts(
     # A keep-list row stored under imdb alone -- what a legacy-agent Plex library yields for
     # a "Never Reap" collection -- must still protect it. Matching on one id kind alone fails
     # open on the deletion path.
+    #
+    # Every listing of a merged bind, or the single key of a normal one -- derived once
+    # here and read again by the streaming veto below (rule 104). A "Never Reap" entry no
+    # agent ever matched is stored under its Plex key alone, so without this the operator
+    # can put a title on the list and watch Reaper condemn it.
+    plex_keys = item.merged_rating_keys or ((rating_key,) if rating_key else ())
     memberships = membership_index.lookup(
         media_type="movie",
         imdb_id=item.imdb_id or item.plex_imdb_id,
         tmdb_id=item.tmdb_id,
+        plex_rating_keys=plex_keys,
     )
-    hard = [m for m in memberships if m.mode is lists.ListMode.HARD]
-
-    whitelists = [m for m in hard if m.is_whitelist]
-    curated_lists = [m for m in hard if not m.is_whitelist]
+    whitelists = [m for m in memberships if m.is_whitelist]
+    curated_lists = [m for m in memberships if not m.is_whitelist]
 
     curated: Observation[str] = (
         Known(value=", ".join(m.describe() for m in curated_lists), source="lists")
@@ -423,6 +451,9 @@ def build_facts(
         value=bool(whitelists) or item.media_key in whitelisted,
         source=whitelists[0].display_name if whitelists else "lists",
     )
+    # Every list, by the name its keep rule spells -- the `on_list` field's input, derived
+    # in `lists.on_list_fact` for both fact builders at once.
+    on_lists = lists.on_list_fact(memberships)
 
     # --- streaming right now ------------------------------------------------
     streaming: Observation[bool]
@@ -433,7 +464,7 @@ def build_facts(
     else:
         # A merged bind covers several listings of one file; someone streaming ANY of
         # them is streaming this very file, so the veto checks every key in the group.
-        watch_keys = item.merged_rating_keys or ((rating_key,) if rating_key else ())
+        watch_keys = plex_keys
         if not watch_keys:
             # No key to match a session against, so this was never checked. It used to land
             # as a definite Known(False) -- "nobody is watching this" -- on the very items
@@ -478,6 +509,7 @@ def build_facts(
         is_managed=Known(value=True, source="radarr"),  # it came FROM radarr
         in_curated_list=curated,
         is_whitelisted=is_whitelisted,
+        on_lists=on_lists,
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
         # --- fields authorable in custom rules ---------------------------------
@@ -553,6 +585,7 @@ async def scan(
     extra_degrade_reasons: Sequence[str] | None = None,
     on_progress: ProgressFn | None = None,
     allowed_sections: set[int] | None = None,
+    list_config_hash: str | None = None,
 ) -> Snapshot:
     """Gather, freeze, judge, persist. Read-only throughout.
 
@@ -870,10 +903,18 @@ async def scan(
         # each Candidate's facts_json without a re-scan (services.snapshot._judge_item freezes
         # them). Movie first, TV second, exactly like the other combined hashes.
         evidence_hash=combine_hashes(movie_policy.evidence_hash(), tv_policy.evidence_hash()),
+        # The lists this scan gathered membership from. Not a policy field and so not in the
+        # hash above, which is the whole reason it is recorded separately: a retagged or
+        # renamed list changes what every `on_list` rule protects without moving one byte of
+        # any policy body. `None` when the registry could not be read -- fail-closed, and the
+        # scan is degraded and un-plannable in that case anyway.
+        list_config_hash=list_config_hash,
         horizon_at=context.horizon,
         item_count=len(items) + len(season_judgments),
         degraded=context.degraded,
-        degraded_reason="; ".join(context.degraded_reasons) or None,
+        # A space, not "; ": `degrade` terminates every reason, so these are whole sentences
+        # now and a semicolon between them would read "...this scan.; radarr 'x' unreachable".
+        degraded_reason=" ".join(context.degraded_reasons) or None,
     )
     session.add(snapshot)
     await session.flush()
@@ -1053,6 +1094,25 @@ async def scan(
         if verdict == "condemn":
             condemned += 1
             condemned_keys.append(item.media_key)
+
+    # What each show's season plan was decided from, frozen once per show. Every season of a
+    # show carries the same bundle object, so this dedupes to one row per show; without the
+    # dedupe a ten-season show would store it ten times for nothing. Written even for a show
+    # whose every season is kept, which is the show a lowered keep-last makes prunable and
+    # therefore the one the simulator is most often asked about.
+    seen_shows: set[str] = set()
+    for judgment in season_judgments:
+        show = judgment.group_key
+        if show is None or show in seen_shows:
+            continue
+        seen_shows.add(show)
+        session.add(
+            SeasonPruneEvidence(
+                snapshot_id=snapshot.id,
+                group_key=show,
+                payload_json=json.dumps(season_evidence.to_dict(judgment.prune_input)),
+            )
+        )
 
     # Seasons run through the SAME judge: the season-pruning guard is merged in as an
     # extra gate result, so a protected season is protected by a gate exactly as a
@@ -1678,11 +1738,16 @@ def _explain(
             # It decides nothing about a hand reap. It used to -- and the write is worth
             # keeping for the chip alone, because a legacy row genuinely cannot tell the two
             # shapes apart and must not be made to assert either.
+            # ``unestablishable`` rides beside it on the same terms and for the same reason:
+            # written on every entry so a row frozen by THIS version says which shape it is,
+            # where a row frozen before it says nothing and the panel reads that as the shape
+            # those rows already had (a keep-rule conflict).
             "protections_unknown": [
                 {
                     "gate": r.gate.value,
                     "detail": r.detail,
                     "defers_to_owner": r.defers_to_owner,
+                    "unestablishable": r.unestablishable,
                 }
                 for r in evaluation.could_not_be_checked
             ],
@@ -2283,17 +2348,11 @@ async def _fold_merged_watch_stats(
 async def sync_protection_lists(
     engine: AsyncEngine,
     *,
+    definitions: Sequence[list_config.ListDefinition] | None = (),
+    only: int | None = None,
     radarrs: Sequence[RadarrSource] = (),
     sonarrs: Sequence[season_scan.SonarrSource] = (),
-    movie_keep_tags: tuple[str, ...] = ("reaper-keep",),
-    movie_keep_match: str = "any",
-    tv_keep_tags: tuple[str, ...] = ("reaper-keep",),
-    tv_keep_match: str = "any",
-    keep_tags_trusted: bool = True,
     plex_server: object | None = None,
-    section_name: str = "Movies",
-    collection_name: str = "Never Reap",
-    include_top_250: bool = True,
 ) -> dict[str, int | str]:
     """Refresh every protection list, **before a scan reads them.**
 
@@ -2304,12 +2363,14 @@ async def sync_protection_lists(
     does not protect. A whitelist that quietly fails open is the worst kind of bug this
     tool can have.
 
-    Three sources, each optional and each failing *soft*:
-
-    * **IMDb Top 250** -- no auth, always available. A curated hard-gate list: its
-      membership protects outright, so an empty one must fail closed.
-    * **``reaper-keep`` tag** -- one per Radarr instance. A whitelist.
-    * **"Never Reap" Plex collection** -- curated in the Plex app itself. A whitelist.
+    **Every list comes from ``definitions``**, the registry the operator edits on
+    Settings -> Lists -- the keep tags included, which used to arrive as policy
+    parameters here and are a tag list like any other now. The registry replaced three
+    hardcoded parameters, and the Plex one was a live bug: the keep collection was read
+    out of a library hardcoded to ``"Movies"``, so an operator whose movie library is
+    called anything else had their "Never Reap" collection silently never read, and --
+    a failed sync of it degrading the scan -- could not reap at all (#483). A definition
+    names the library, so there is nothing left to guess.
 
     A provider that finds nothing is not an error (the owner may not have made the tag
     or collection yet). A provider that *fails* is recorded against its slug and does not
@@ -2320,20 +2381,36 @@ async def sync_protection_lists(
     rather than emptying it.
 
     This pass also **retires** the lists the current configuration no longer produces
-    (``lists.retire_absent``), because the slug of a derived list changes when its setting
-    does: without that, tightening "match ANY" to "match ALL" writes a new list while the
-    old one keeps protecting everything it ever matched.
+    (``lists.retire_absent``), because a stored list outlives the setting that made it:
+    tightening "match ANY" to "match ALL" changes the slug, and so does switching a list
+    off or deleting it. Without the sweep the old row sits there enabled, still protecting
+    from a definition the operator has already replaced, and the change they saved never
+    takes effect.
 
-    Retiring is a durable protection-DISABLING write, so each family is retired only when
-    the configuration it is judged against was actually readable (rule 115). The Plex
-    family needs a live ``plex_server``; the keep-tag family needs ``keep_tags_trusted``,
-    which the caller sets false when the keep tags in hand are not the ones the operator
-    saved (``profiles.ActivePolicy.fell_back``). That case skips the keep-tag sync AND its
-    retire, because the slug does not carry the tag names: syncing shipped defaults would
-    overwrite the operator's own list under their own slug, and retiring would switch the
-    rest off, both during a scan Reaper has already declared un-executable.
+    Retiring is a durable protection-DISABLING write, so a family is retired only when the
+    configuration it is judged against was actually readable, and only when the lists that
+    replace it actually synced (rule 115). Both Plex families need a live ``plex_server``.
+
+    ``definitions`` is three-state, and the third state is the one that matters: ``None``
+    means the registry could not be READ, which is not the same fact as an operator having no
+    lists (rule 1, rule 93). An empty tuple builds no providers and retires everything the
+    registry no longer produces, which is correct when the answer is genuinely "none"; doing
+    that on a failed read would disable every list on the install because a table was briefly
+    unavailable. So ``None`` builds nothing AND retires nothing, and the caller degrades the
+    scan.
+
+    ``only`` narrows the pass to one row of the Lists screen, for its "Check now" button.
+    **A narrowed pass never sweeps a FAMILY**: a family sweep disables every stored list the
+    pass did not produce, so running one over a single list's output would switch off every
+    other list in that family. It sweeps that one DEFINITION instead, which is the truth a
+    pass over one definition actually holds: editing a list changes its slug, and the
+    superseded row would otherwise stay enabled under the same definition id.
     """
     synced: dict[str, int | str] = {}
+    #: Slugs whose sync raised this pass. A retire sweep reads it and stands down: the list
+    #: that was meant to replace the stored one did not land, so the stored one is still the
+    #: live protection, and disabling it would withdraw cover on a transient failure.
+    failed: set[str] = set()
 
     async def _run(provider: lists.ListProvider, *, kind: lists.ListKind) -> None:
         try:
@@ -2342,6 +2419,7 @@ async def sync_protection_lists(
             )
         except Exception as exc:
             synced[provider.slug] = f"error: {exc}"
+            failed.add(provider.slug)
             log.warning("lists.sync_failed", slug=provider.slug, error=str(exc))
 
     # Every provider reads a different service, and each one already fails soft on its
@@ -2351,64 +2429,90 @@ async def sync_protection_lists(
     # db/session.py) queues the brief overlapping writes -- each provider's write is a
     # few hundred rows, far inside that budget.
     runs: list[Coroutine[Any, Any, None]] = []
-    if include_top_250:
-        runs.append(_run(lists.ImdbTop250(), kind=lists.ListKind.CURATED))
 
-    # The keep-list, configurable per media type: movies read the owner's Radarr keep-tags,
-    # TV reads their Sonarr keep-tags, each matched ANY/ALL. A title carrying a keep-tag is
-    # spared outright. Empty tag list -> nothing synced (the protection simply does not fire).
-    # Each instance is its OWN list (the instance id is part of the slug): with a shared
-    # slug, two same-service instances would take turns erasing each other's keep-tagged
-    # titles, since a sync atomically replaces its slug's whole membership.
-    movie_match: Literal["any", "all"] = "all" if movie_keep_match == "all" else "any"
-    tv_match: Literal["any", "all"] = "all" if tv_keep_match == "all" else "any"
-    # Every keep-tag slug this configuration produces, collected as the providers are built.
-    # The retire pass below reads it as the whole truth about that family, which is why it is
-    # built from the *arr rows and the policy alone: both are local settings, so a briefly
-    # unreachable instance is still in this list and its keep-list is never retired over a
-    # network blip. Empty tags mean no provider AND no slug, which is exactly the case that
-    # has to retire -- an emptied tag list otherwise leaves the whole stored keep-list in force.
-    #
-    # Under a fallen-back policy the whole family is left ALONE -- not synced, not retired.
-    # The slug carries the service, the instance and the match mode, but NOT the tag names,
-    # so syncing Reaper's default tags writes into the very slug the operator's tags own. If
-    # the default tag happens to exist in that *arr and tags nothing, ``fetch`` returns a
-    # genuine empty, no ContainerMissingError fires, and ``lists.sync``'s atomic swap wipes
-    # their stored membership. Holding back only the retire write does not prevent that; not
-    # running the sync does. The stored lists stay exactly as the operator's last good scan
-    # left them, which is the keep direction, and the scan is degraded and un-plannable
-    # anyway (rule 115).
+    # Every slug this configuration produces, per family, collected as the providers are
+    # built. Each retire sweep below reads its own set as the whole truth about that family.
+    imdb_slugs: set[str] = set()
+    plex_slugs: set[str] = set()
+    watchlist_slugs: set[str] = set()
     keep_tag_slugs: set[str] = set()
-    for radarr in radarrs:
-        if movie_keep_tags and keep_tags_trusted:
-            movie_rule = lists.ArrTagRule(
-                radarr.client,
-                tuple(movie_keep_tags),
-                movie_match,
-                instance_id=radarr.instance_id,
-                instance_name=radarr.name,
-            )
-            keep_tag_slugs.add(movie_rule.slug)
-            runs.append(_run(movie_rule, kind=lists.ListKind.WHITELIST))
-    for sonarr in sonarrs:
-        if tv_keep_tags and keep_tags_trusted:
-            tv_rule = lists.ArrTagRule(
-                sonarr.client,
-                tuple(tv_keep_tags),
-                tv_match,
-                instance_id=sonarr.instance_id,
-                instance_name=sonarr.name,
-            )
-            keep_tag_slugs.add(tv_rule.slug)
-            runs.append(_run(tv_rule, kind=lists.ListKind.WHITELIST))
 
-    collection_slug: str | None = None
-    if plex_server is not None:
-        collection = lists.PlexCollection(
-            server=plex_server, section_name=section_name, collection_name=collection_name
-        )
-        collection_slug = collection.slug
-        runs.append(_run(collection, kind=lists.ListKind.WHITELIST))
+    # A deleted definition builds no provider, which is what puts its slug outside the
+    # `current` set below and retires it: without the sweep the stored membership would stay
+    # enabled and the list would go on protecting after being removed (rule 25).
+    #: Whether the registry was readable at all. See the docstring: unreadable retires nothing.
+    registry_known = definitions is not None
+    if registry_known:
+        # Rows stored before their definition existed take the definition's slug first, so
+        # this pass refreshes the adopted row in place -- and if its own sync then fails,
+        # the membership the legacy row earned is already under the slug that coasts.
+        await lists.adopt_legacy(engine, definitions or ())
+        # And the name its keep rule matches, which the legacy row never carried. The coast
+        # above is what makes this load-bearing: an adopted row whose own sync then fails
+        # keeps `rule_name` NULL, so `Membership.matched_by()` falls back to the display name
+        # ("Radarr (HD) tag: reaper-keep") while the rule spells the definition's name -- the
+        # membership is stored, the scan is executable, and it protects nothing. `api/lists.py`
+        # pairs these two calls on both of its paths; this sibling was not swept (rule 72).
+        await lists.sync_rule_names(engine, definitions or ())
+    wanted = [d for d in definitions or () if d.enabled and (only is None or d.id == only)]
+    for definition in wanted:
+        if definition.source is lists.ListSource.IMDB:
+            imdb = lists.ImdbList(
+                variant=definition.imdb_variant, list_id=definition.id, list_name=definition.name
+            )
+            imdb_slugs.add(imdb.slug)
+            runs.append(_run(imdb, kind=lists.ListKind.CURATED))
+        elif definition.source is lists.ListSource.PLEX_WATCHLIST:
+            # Account data, but read through the connected server's client: the stored
+            # token IS the account credential (see lists.PlexWatchlist). No live server,
+            # no provider, and the watchlist retire below stands down the same way.
+            if plex_server is None:
+                continue
+            watchlist = lists.PlexWatchlist(
+                server=plex_server, list_id=definition.id, list_name=definition.name
+            )
+            watchlist_slugs.add(watchlist.slug)
+            runs.append(_run(watchlist, kind=lists.ListKind.WHITELIST))
+        elif definition.source is lists.ListSource.PLEX_COLLECTION:
+            # No live server, no provider and no slug -- and the Plex retire below stands
+            # down for the same reason, so an unreachable Plex leaves the stored keep
+            # collection exactly as the last good sync left it.
+            library = str(definition.config.get("library", "")).strip()
+            collection = str(definition.config.get("collection", "")).strip()
+            if plex_server is None or not library or not collection:
+                continue
+            plex_list = lists.PlexCollection(
+                server=plex_server,
+                section_name=library,
+                collection_name=collection,
+                list_id=definition.id,
+                list_name=definition.name,
+            )
+            plex_slugs.add(plex_list.slug)
+            runs.append(_run(plex_list, kind=lists.ListKind.WHITELIST))
+        elif definition.source is lists.ListSource.ARR_TAG:
+            # One list to the operator, one stored row per *arr instance: a tag is a thing
+            # each server knows about separately, and a shared slug would have each
+            # instance's sync atomically erase the other's members (see `ArrTagRule`).
+            if not definition.tags:
+                continue
+            # Every connected *arr, both kinds: a tag list the operator defined is about the
+            # tag, not about which server happens to hold the title, and a movie and a show
+            # carrying it are the same instruction. The policy keep tags below are the ones
+            # split by media type, because the policy itself is per media type.
+            everywhere: list[RadarrSource | season_scan.SonarrSource] = [*radarrs, *sonarrs]
+            for source in everywhere:
+                tag_list = lists.ArrTagRule(
+                    source.client,
+                    definition.tags,
+                    definition.match,
+                    instance_id=source.instance_id,
+                    instance_name=source.name,
+                    list_id=definition.id,
+                    list_name=definition.name,
+                )
+                keep_tag_slugs.add(tag_list.slug)
+                runs.append(_run(tag_list, kind=lists.ListKind.WHITELIST))
 
     # gather_reaped, not bare gather: _run swallows every per-provider failure, so only
     # something unexpected (a cache-database fault) can raise here -- and when it does,
@@ -2418,30 +2522,67 @@ async def sync_protection_lists(
 
     # Retire the lists this configuration no longer produces. A stored list outlives the
     # setting that made it: flipping the keep-tag match, clearing the tags, renaming the
-    # collection or deleting an instance all leave a row that keeps protecting from a rule
-    # the operator already replaced, so the tightening they saved never takes effect.
-    # Slugs whose sync FAILED are in these sets and are never retired -- the atomic swap
-    # kept their membership and it is still the right list, just stale.
+    # collection, deleting an instance, and switching a list off on the Lists screen all
+    # leave a row that keeps protecting from a definition the operator already replaced, so
+    # the change they saved never takes effect.
     #
-    # The keep-tag family only when the tags and match mode came from the policy the
-    # operator saved. Under a fallen-back policy they are Reaper's defaults, so retiring
-    # "everything this configuration no longer produces" would disable every keep list they
-    # DID configure -- and the scan holding that policy is already degraded, so it is the
-    # last moment to be writing protection off. Nothing was synced there either (see above),
-    # so ``keep_tag_slugs`` is empty and retiring against it would disable the lot.
-    if keep_tags_trusted:
-        for slug in await lists.retire_absent(
-            engine, family=lists.KEEP_TAG_SLUGS, current=keep_tag_slugs
-        ):
+    # A narrowed pass sweeps no family at all: it produced one list's slugs, and a sweep
+    # reading that as the whole truth about a family would disable every other list in it.
+    # Its own definition it does sweep, below.
+    async def _retire(family: str, current: set[str], *, when: bool) -> None:
+        """Sweep one family, if its inputs were readable AND its own syncs landed.
+
+        Rule 115's second half, which the caller cannot express on its own: a slug whose sync
+        FAILED is in ``current``, so the sweep would leave it alone -- but the row it is meant
+        to replace is not, and disabling that one on the strength of a sync that did not land
+        withdraws the only membership still protecting anything. The stored copy is the live
+        protection until something actually replaces it.
+        """
+        if only is not None or not when or not registry_known:
+            return
+        if current & failed:
+            log.info("lists.retire_skipped", family=family, failed=sorted(current & failed))
+            return
+        for slug in await lists.retire_absent(engine, family=family, current=current):
             synced[slug] = "retired"
-    # The Plex family only when Plex actually answered. With no server there is no provider
-    # and no slug, and retiring on that would unprotect every title on the "Never Reap"
-    # collection because Plex was briefly unreachable.
-    if plex_server is not None and collection_slug is not None:
-        for slug in await lists.retire_absent(
-            engine, family=lists.PLEX_COLLECTION_SLUGS, current={collection_slug}
-        ):
-            synced[slug] = "retired"
+
+    # The tag family's `current` set is built from the definitions and the *arr rows alone
+    # -- both local settings -- so a briefly unreachable instance is still in it and its
+    # list is never retired over a network blip. It also carries the legacy no-definition
+    # slugs the policy keep tags wrote before the upgrade, which is what re-homes them: the
+    # definition-driven sync lands, the old spelling drops out of `current`, and the sweep
+    # stands the old rows down.
+    await _retire(lists.KEEP_TAG_SLUGS, keep_tag_slugs, when=True)
+    # The Plex families only when Plex actually answered. With no server there is no
+    # provider and no slug, and retiring on that would unprotect every title on the
+    # operator's keep collection because Plex was briefly unreachable.
+    await _retire(lists.PLEX_COLLECTION_SLUGS, plex_slugs, when=plex_server is not None)
+    await _retire(lists.PLEX_WATCHLIST_SLUGS, watchlist_slugs, when=plex_server is not None)
+    # The IMDb family needs nothing to be reachable: it is built from the registry alone,
+    # so an empty set here means the operator removed the shipped list, which is exactly
+    # the case that has to retire.
+    await _retire(lists.IMDB_SLUGS, imdb_slugs, when=True)
+
+    # A narrowed pass sweeps its OWN definition, which is a narrower claim than the four
+    # above rather than an exception to the rule that stops them: those read one family's
+    # whole output as the truth about that family, and this reads one definition's output as
+    # the truth about that definition, which is exactly what a pass over one definition
+    # knows. Editing a list changes its slug -- a tag list's carries the match mode
+    # (``ArrTagRule.slug``) -- so without this the superseded row stays enabled under the
+    # same definition id, and the Lists screen sums both into one "Protecting N titles"
+    # roughly twice the real number until a full pass runs.
+    #
+    # Rule 115 both ways, which is why this is here and not in ``api.lists.edit_list``: the
+    # sweep runs only after the replacing rows actually landed, and a pass that produced no
+    # slug at all (a Plex collection checked while Plex is unreachable) sweeps nothing, since
+    # the stored row is still the live protection until something replaces it.
+    if only is not None and registry_known:
+        produced = keep_tag_slugs | plex_slugs | watchlist_slugs | imdb_slugs
+        if produced and not (produced & failed):
+            for slug in await lists.retire_absent(
+                engine, family=lists.list_slugs(only), current=produced
+            ):
+                synced[slug] = "retired"
     return synced
 
 
@@ -2493,6 +2634,23 @@ async def protection_sync_degradations(
       protecting from its stored copy; its staleness bound is a separate policy, not here.
     * **No record of a successful sync at all** (whitelist only, members present but no
       ``last_synced_at``): recency cannot be confirmed, so it is not assumed.
+
+    A fourth case is not a failed sync at all: a keep list this pass **did not check**, so it
+    never reaches ``synced`` and none of the three above can see it. Unlinking Plex is the way
+    in -- ``DELETE /api/settings/plex`` drops only the server row, the collection and watchlist
+    definitions stay enabled, and with no live server no provider is built for either. The
+    stored membership goes on protecting and goes on aging, with nothing bounding it, so a keep
+    list that has been unreadable for months reads exactly like one checked minutes ago. That
+    is the same unprotected window the recency bound above exists for, reached without an
+    error, so it is bounded the same way and by the same constant, over the stored rows rather
+    than over this pass's output.
+
+    **Keyed on a stored row, never on a definition**, which is what keeps a Plex-less install
+    off it: a row is written only by a sync that actually ran (``lists.sync``, and
+    ``_record_sync_error`` on the failing path), so the seeded Plex collection on an install
+    that has never linked Plex has no row and cannot degrade anything. Disabled rows are
+    skipped for the reason they always are: ``retire_absent`` disables a superseded slug and
+    keeps its members, so it reads as populated while protecting nothing.
     """
     await lists.ensure_schema(engine)
     reasons: list[str] = []
@@ -2504,7 +2662,8 @@ async def protection_sync_degradations(
             row = (
                 await conn.execute(
                     text(
-                        "SELECT mode, kind, last_synced_at FROM protection_list WHERE slug = :slug"
+                        "SELECT mode, kind, last_synced_at, display_name "
+                        "FROM protection_list WHERE slug = :slug"
                     ),
                     {"slug": slug},
                 )
@@ -2512,6 +2671,13 @@ async def protection_sync_degradations(
             mode = row[0] if row is not None else None
             kind = row[1] if row is not None else None
             last_synced_at = row[2] if row is not None else None
+            # What the operator calls this list, for the sentences below. They reach the scan
+            # banner and the reap page verbatim, and a slug is internal vocabulary that rule 21
+            # keeps out of operator copy -- it carries a match mode, an instance id and now a
+            # definition id, none of which name anything the reader can go and fix. The slug
+            # stays as the fallback for a list that failed before it was ever stored, which is
+            # the one case where no display name exists yet.
+            named = str(row[3]) if row is not None and row[3] else slug
             # Only a HARD-mode list feeds a PROTECT gate, so only it can fail *open* when its
             # stored copy is empty. A SOFT list merely feeds a scoring nudge, and losing that
             # never unprotects a kept title. A missing row (never synced even once) is treated
@@ -2542,8 +2708,9 @@ async def protection_sync_degradations(
                 # IMDb Top 250 whose first sync never landed). Either way a scan would reap
                 # the titles the list exists to protect, so degrade regardless of kind.
                 reasons.append(
-                    f"protection list '{slug}' failed to sync and its stored copy is empty: "
-                    "a scan must not reap titles the list would have protected"
+                    f"the protection list '{named}' failed to check and nothing is stored "
+                    "for it, so it is protecting nothing: a scan must not delete titles that "
+                    "list would have kept"
                 )
                 continue
             # Members exist, so the stored copy still protects. Recency, though, is a keep-list
@@ -2557,15 +2724,63 @@ async def protection_sync_degradations(
             last_success = from_epoch(last_synced_at)
             if last_success is None:
                 reasons.append(
-                    f"protection list '{slug}' failed to sync, and Reaper has no record of "
-                    "it ever syncing successfully. Titles on it may be unprotected, so "
-                    "nothing may be deleted from this scan"
+                    f"the protection list '{named}' failed to check, and Reaper has no "
+                    "record of it ever checking successfully. Titles on it may not be "
+                    "protected, so nothing may be deleted from this scan"
                 )
             elif now - last_success > WHITELIST_STALE_AFTER:
                 hours = int(WHITELIST_STALE_AFTER.total_seconds() // 3600)
                 reasons.append(
-                    f"protection list '{slug}' failed to sync and its stored copy is more "
-                    f"than {hours} hours old. Titles added to it since then are "
-                    "unprotected, so nothing may be deleted from this scan"
+                    f"the protection list '{named}' failed to check and the stored copy is "
+                    f"more than {hours} hours old. Anything added to it since then is not "
+                    "protected, so nothing may be deleted from this scan"
                 )
+        reasons += await _unchecked_keep_list_degradations(conn, synced, now=now)
+    return reasons
+
+
+async def _unchecked_keep_list_degradations(
+    conn: AsyncConnection, synced: Mapping[str, int | str], *, now: datetime
+) -> list[str]:
+    """Keep lists this pass never checked at all, past the same recency bound.
+
+    The loop above walks ``synced``, so it can only see a list that was checked and failed.
+    A list nothing built a provider for is absent from it entirely and coasts on its stored
+    membership forever. See :func:`protection_sync_degradations` for why the row, not the
+    definition, is the key.
+
+    Whitelist only, matching the recency rule above: a curated external list churns slowly
+    and keeps protecting from its stored copy, and bounding that is a separate policy.
+    """
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT slug, mode, kind, last_synced_at, display_name "
+                "FROM protection_list WHERE enabled = 1"
+            )
+        )
+    ).all()
+    hours = int(WHITELIST_STALE_AFTER.total_seconds() // 3600)
+    reasons: list[str] = []
+    for row in rows:
+        if str(row.slug) in synced:
+            continue  # checked this pass; the walk above already had its say
+        if str(row.mode) != lists.ListMode.HARD.value:
+            continue
+        if str(row.kind) != lists.ListKind.WHITELIST.value:
+            continue
+        named = str(row.display_name) if row.display_name else str(row.slug)
+        last_success = from_epoch(row.last_synced_at)
+        if last_success is None:
+            reasons.append(
+                f"the protection list '{named}' was not checked, and Reaper has no record "
+                "of it ever checking successfully. Titles on it may not be protected, so "
+                "nothing may be deleted from this scan"
+            )
+        elif now - last_success > WHITELIST_STALE_AFTER:
+            reasons.append(
+                f"the protection list '{named}' was not checked and the stored copy is more "
+                f"than {hours} hours old. Anything added to it since then is not protected, "
+                "so nothing may be deleted from this scan"
+            )
     return reasons

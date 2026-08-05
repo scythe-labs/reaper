@@ -72,6 +72,14 @@ LEAVING_SOON_UNARMED_KEY = "leaving_soon_unarmed"
 #: false only for a real per-library problem, which is what the dot and the short
 #: ``result`` line should reflect.
 LEAVING_SOON_LAST_KEY = "leaving_soon_last"
+#: The last shelf pass that did NOT complete -- ``{"at": iso, "result": str}``. Written only
+#: by ``leaving_soon.after_scan``, whose skips (an untrustworthy scan, an unreachable Plex, a
+#: surprise) all return before the pass reaches the row above, so a scan that never touched
+#: the shelf used to leave the previous pass's green dot and counts standing as the answer.
+#: Read alongside that row and preferred only while it is NEWER, exactly as ScanRow prefers
+#: ``job_last_run:scheduled_scan`` over a stale snapshot -- so a pass that later completes wins
+#: on its own timestamp and nothing has to clear this.
+LEAVING_SOON_LAST_SKIP_KEY = "leaving_soon_last_skip"
 #: The Plex libraries Reaper may touch, as last synced from the server:
 #: ``[{"key": int, "title": str, "kind": "movie"|"show", "enabled": bool}]``. Only video
 #: libraries are stored; the enabled flags survive a re-sync.
@@ -163,6 +171,17 @@ async def _set(session: AsyncSession, key: str, value: Any) -> None:
 # --- deletion enabled ------------------------------------------------------
 
 
+async def lists_seeded(session: AsyncSession) -> bool:
+    """Whether the default protection lists were ever created. A flag rather than "any rows
+    exist": an operator who deletes the shipped lists means it, and reseeding on the next
+    read would resurrect a protection they removed (rule 1's shape for a seed)."""
+    return bool(await _get(session, "lists_seeded", False))
+
+
+async def set_lists_seeded(session: AsyncSession) -> None:
+    await _set(session, "lists_seeded", True)
+
+
 async def destructive_enabled(session: AsyncSession, settings: Settings) -> bool:
     """Whether deletion is currently on.
 
@@ -184,10 +203,16 @@ async def set_destructive_enabled(session: AsyncSession, *, enabled: bool) -> No
 
 async def runtime_safety(session: AsyncSession, settings: Settings) -> RuntimeSafety:
     """The current deletion permission. The one place that assembles it, so every caller
-    agrees on whether Reaper may delete right now."""
+    agrees on whether Reaper may delete right now.
+
+    ``recovery_mode`` comes straight from the environment rather than the database, because
+    it is the one input here that must answer for THIS process: recovery is armed by a
+    restart, so the boot that armed it is exactly the boot that must hold deletion off.
+    """
     return RuntimeSafety(
         destructive_enabled=await destructive_enabled(session, settings),
         allow_leaving_soon_unarmed=await leaving_soon_unarmed(session, settings),
+        recovery_mode=settings.recovery,
     )
 
 
@@ -661,6 +686,16 @@ async def set_leaving_soon_last(
             "result": result,
         },
     )
+
+
+async def get_leaving_soon_last_skip(session: AsyncSession) -> dict[str, Any] | None:
+    """The last scan that finished without updating the shelf, and why in one clause."""
+    value = await _get(session, LEAVING_SOON_LAST_SKIP_KEY, default=None)
+    return dict(value) if isinstance(value, dict) else None
+
+
+async def set_leaving_soon_last_skip(session: AsyncSession, *, at: str, result: str) -> None:
+    await _set(session, LEAVING_SOON_LAST_SKIP_KEY, {"at": at, "result": result})
 
 
 # --- Plex libraries ----------------------------------------------------------

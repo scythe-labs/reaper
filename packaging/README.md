@@ -14,7 +14,17 @@ map, plus the pieces that need a human once.
 
 The Unraid route is the container: Community Applications carries the template (the
 submitted repository is this one, so the listing reads `contrib/unraid/my-Reaper.xml`),
-and it points at the GHCR image above.
+and it points at the GHCR image above. **One entry covers both channels.** Installing opens
+a picker: a Default row that pulls `<Repository>` as written (`:latest`), then one row per
+`<Branch>`, showing its `<Tag>` beside its `<TagDescription>`. The selected tag replaces the
+one on `<Repository>`, so every channel gets a `<Branch>`, including the one the repository
+already names: CA expands that branch like any other, and it is the only row that can carry
+a description of the release channel. `test_the_unraid_template_offers_every_channel_it_declares`
+holds that, and holds the invented `<DefaultTagDescription>` out (docs/LEARNINGS.md).
+
+The picker reaches an operator through the app feed, which is rebuilt on Community
+Applications' own schedule, so a template change shows up hours after it lands on `dev`, not
+on merge.
 
 Releases are CalVer (`vYYYY.M.N`), cut automatically by `release.yml` on every push to
 `main`, once ci.yml's gate reports green on that sha. Dev builds are the rolling `dev-build` prerelease, refreshed nightly by
@@ -64,13 +74,23 @@ puts it back; the Windows exe is windowed, so nothing else shows a double-click
 worked. `REAPER_TRAY=false` turns the icon off — on macOS that leaves the app with
 no visible presence at all, and quitting means Activity Monitor.
 
-**Configuration.** A double-clicked app receives no environment variables, so the
-launcher reads `launcher.conf` from the data folder (written as a commented template on
-first run): `~/Library/Application Support/Reaper/` on macOS, `%LOCALAPPDATA%\Reaper` on
-Windows. `REAPER_PORT`, `REAPER_HOST`, `REAPER_LAUNCH_BROWSER`, `REAPER_UPDATE_CHECK`,
-`REAPER_TRAY`, and `REAPER_DOCK_ICON` belong there; real environment variables still
-win. The desktop builds also show a Desktop app group in Settings, General, which edits
-the tray and Dock icon keys in this file and applies them at the next start.
+**Configuration.** An install nobody can hand an environment variable to reads
+`launcher.conf` from the data folder (written as a commented template on first run):
+`~/Library/Application Support/Reaper/` on macOS, `%LOCALAPPDATA%\Reaper` on Windows,
+`/var/snap/scythe-labs-reaper/common` on the snap. The snap qualifies for its own reason:
+snapd starts it at boot and `snapcraft.yaml` declares no configure hook, so `snap set`
+reaches nothing. `launcher.reads_launcher_conf` is the one place that decides, and the
+container is deliberately outside it. Any `REAPER_`-prefixed key is honored; the template
+offers `REAPER_PORT`, `REAPER_HOST`, `REAPER_LAUNCH_BROWSER`, `REAPER_UPDATE_CHECK`,
+`REAPER_TRAY`, `REAPER_DOCK_ICON`, and `REAPER_RECOVERY`. Real environment variables still
+win. The desktop builds also show a Desktop app group in Settings, General, which edits the
+tray and Dock icon keys in this file and applies them at the next start.
+
+**Getting back in.** `REAPER_RECOVERY=true` mints a single-use sign-in code at the next
+start and writes it to `recovery.txt` beside the conf, because these builds have no console
+for the banner to print to. `reaper-admin` is not in them at all, so recovery mode is the
+whole route, and the session it opens may set a new admin password without the old one.
+Deletion is held off while the flag is set. Operator steps: `manual/operating/locked-out.mdx`.
 
 **Reaching it from other machines.** The server binds all interfaces (the same
 `0.0.0.0` default as the container); `127.0.0.1` is only the URL the local browser
@@ -99,10 +119,16 @@ the secret the workflows build and attach the snap but skip the store, green.
 `submit-winget.yml` opens the version PR on every release, using the `WINGET_TOKEN`
 secret (a PAT with `public_repo` scope). Without the secret it skips, green.
 
+**VirusTotal.** Mint a key at <https://www.virustotal.com/gui/my-apikey> and store it
+as the `VT_API_KEY` secret. `virustotal.yml` then scans every published asset on every
+release. The free tier covers a release: it allows four requests a minute, and the
+workflow sends two assets a minute because an asset over 32 MB costs two requests.
+Without the secret it skips, green.
+
 ## Antivirus false positives, and what is wired
 
 Unsigned Windows installers start with zero reputation, so some scanners flag them.
-Three remedies, in order of effect:
+Four remedies, in order of effect:
 
 1. **Code signing — not wired yet.** It needs a paid identity before any workflow can
    use it: for Windows an Azure Trusted Signing account (or an EV certificate) and a
@@ -117,3 +143,8 @@ Three remedies, in order of effect:
    submit the installer at
    <https://www.microsoft.com/en-us/wdsi/filesubmission> as a false positive;
    Microsoft typically clears verdicts within days, retroactively for everyone.
+4. **VirusTotal links in the release body — wired.** One analysis link per published
+   asset, appended to the release notes, so an operator who hits a warning reads every
+   engine's verdict on the exact file they downloaded instead of taking one vendor's
+   word. It clears no flag; it is the evidence a flag gets confirmed or dismissed
+   against, and it is also how *we* find out a release is being flagged at all.

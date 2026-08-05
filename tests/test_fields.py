@@ -347,9 +347,9 @@ class TestAnExplanationSaysWhatItFound:
 
     def test_a_boolean_uses_the_words_the_owner_uses(self) -> None:
         cond = Condition(field="whitelisted", op=Op.EQ, value=True)
-        assert evaluate(cond, _facts()).detail == "Not on your keep list"
+        assert evaluate(cond, _facts()).detail == "Not on any list you curate yourself"
         kept = _facts(is_whitelisted=Known(value=True, source="plex"))
-        assert evaluate(cond, kept).detail == "On your keep list"
+        assert evaluate(cond, kept).detail == "On a list you curate yourself"
 
     def test_a_days_field_is_spelled_the_way_the_signals_spell_it(self) -> None:
         """One panel showing "900 days" beside "2 years, 5 months" reads as two
@@ -571,6 +571,57 @@ class TestValueTypesAreValidatedAtTheBoundary:
     def test_a_well_typed_condition_still_validates(self) -> None:
         Condition(field="size_bytes", op=Op.GTE, value=500).validate_for(Lane.PROTECT)
         Condition(field="genre", op=Op.CONTAINS, value="horror").validate_for(Lane.PROTECT)
+
+
+class TestARuleThatCouldNeverMatchIsRefusedAtSave:
+    """Rule 108's three spellings of the same defect, all refused by
+    ``Condition._validate_value_type``.
+
+    Each one saves, hashes, and renders on Policy as an ordinary live protection while
+    covering nothing, which is the state this codebase treats as worse than no rule at
+    all: the operator counts on it. The loud sibling (``contains ""``, which matches the
+    ENTIRE library) is here too, because one check refuses both directions.
+    """
+
+    def test_an_empty_text_value_is_refused(self) -> None:
+        """``contains ""`` is ``"" in anything``, so a condemn rule written that way puts
+        its full weight on every item whose text fact is Known."""
+        with pytest.raises(ValueError, match="needs a value"):
+            Condition(field="genre", op=Op.CONTAINS, value="").validate_for(Lane.CONDEMN)
+
+    def test_a_whitespace_only_text_value_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="needs a value"):
+            Condition(field="genre", op=Op.CONTAINS, value="   ").validate_for(Lane.CONDEMN)
+
+    def test_a_comma_only_in_list_is_refused(self) -> None:
+        """It survives the strip above and splits to no elements, so it can never match."""
+        with pytest.raises(ValueError, match="at least one value"):
+            Condition(field="genre", op=Op.IN, value=" , ").validate_for(Lane.PROTECT)
+
+    def test_an_eq_target_carrying_the_separator_is_refused_on_a_multi_field(self) -> None:
+        """The quietest of the three. ``on_lists`` is one comma-joined string and
+        ``_compare`` splits it back to test membership, so a list named "Kids, Holiday"
+        is never an element of its own fact -- the keep rule reads live and keeps nothing.
+        ``list_config._clean_name`` refuses the comma where the name is typed; this is the
+        boundary a hand-written or imported policy body arrives through."""
+        with pytest.raises(ValueError, match="comma"):
+            Condition(field="on_list", op=Op.EQ, value="Kids, Holiday").validate_for(Lane.PROTECT)
+
+    def test_the_same_refusal_covers_the_other_multi_field(self) -> None:
+        """``genre`` is the multi field on BOTH lanes, so the refusal is not on_list's alone."""
+        with pytest.raises(ValueError, match="comma"):
+            Condition(field="genre", op=Op.EQ, value="Anime, Comedy").validate_for(Lane.CONDEMN)
+
+    def test_a_comma_is_still_fine_where_the_fact_is_not_joined_on_one(self) -> None:
+        """``quality`` is the single-valued text field, compared whole, so a comma inside it
+        is an ordinary character rather than a separator that would strand the rule."""
+        Condition(field="quality", op=Op.EQ, value="Bluray-1080p, Remux").validate_for(Lane.PROTECT)
+
+    def test_a_comma_is_still_fine_where_it_is_the_separator_doing_its_job(self) -> None:
+        """``in`` splits its target on commas by design; only ``eq`` reads the whole string
+        as one element."""
+        Condition(field="on_list", op=Op.IN, value="Kids, Holiday").validate_for(Lane.PROTECT)
+        Condition(field="on_list", op=Op.EQ, value="Holiday").validate_for(Lane.PROTECT)
 
 
 class TestABadStoredValueDegradesInsteadOfCrashing:

@@ -10,7 +10,7 @@
 // A scan is read-only: it reads from the *arr and Tautulli, scores, and writes rows to
 // Reaper's own database. GuardedTransport would refuse a mutating call even if one were tried.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type ScheduledJob, type Snapshot } from "../api";
@@ -120,6 +120,10 @@ export function ScanRow({
     freeable: number;
     unknownSize: number;
   } | null>(null);
+  /** Whether the `["snapshot"]` refetch that the finish edge triggers has been seen to
+   *  finish, however it finished. Declared beside `before` because it bounds the same
+   *  window; read where `supersededSnapshot` is computed. */
+  const [snapshotReadSettled, setSnapshotReadSettled] = useState(false);
 
   // The totals from the scan that just ended, captured on the running -> not-running edge so
   // the new ones have something to be read against. The refresh that edge also triggers is
@@ -129,6 +133,9 @@ export function ScanRow({
   // invalidation elsewhere in the same tick leaves in place while its refetch is in flight.
   useEffect(() => {
     if (wasScanning.current && !scanning) {
+      // A fresh window opens here, so the "the read has settled" latch that bounds it below
+      // starts closed: the refetch this edge triggers has not been seen to finish yet.
+      setSnapshotReadSettled(false);
       const previous = queryClient.getQueryData<Snapshot>(["snapshot"]);
       setBefore(
         previous
@@ -171,6 +178,35 @@ export function ScanRow({
   const delta =
     before && snapshot && snapshot.id !== before.id ? scanDelta(before, snapshot) : null;
 
+  // The snapshot in hand is not the last scan's, so nothing on this row may speak for it. Two
+  // windows: a scan is running, and the moment after one ends, where `useScanSettled`'s refetch
+  // of `["snapshot"]` is still out and `before` still holds the id that is on screen -- the same
+  // fact `delta` waits on above. A run that ended in an error wrote no snapshot, so the one in
+  // hand is still the newest and still speaks for itself.
+  //
+  // `snapshotReadSettled` is what BOUNDS the second window. `before` is cleared only when the
+  // NEXT scan starts, so on id-equality alone the window never closed if the refetch never
+  // landed with a new id -- and `JobsPanel`'s query is `retry: false`, so one dropped request
+  // does exactly that. The row then went on rendering that snapshot's item and condemned
+  // counts while withholding its "incomplete" verdict, for the life of the mount, which is
+  // the reassuring direction to fail in.
+  //
+  // Keyed on the refetch COMPLETING rather than on one being in flight: between the status
+  // going idle and `useScanSettled`'s invalidation actually starting a fetch, nothing is in
+  // flight, and treating that as settled would paint the previous scan's verdict for a tick
+  // as though it were this one's. So the window holds until a fetch has been seen to finish,
+  // whether it finished with a new snapshot or with an error.
+  const refetchingSnapshot = useIsFetching({ queryKey: ["snapshot"] }) > 0;
+  const wasRefetchingSnapshot = useRef(false);
+  useEffect(() => {
+    if (wasRefetchingSnapshot.current && !refetchingSnapshot) setSnapshotReadSettled(true);
+    wasRefetchingSnapshot.current = refetchingSnapshot;
+  }, [refetchingSnapshot]);
+
+  const supersededSnapshot =
+    scanning ||
+    (before !== null && !status?.error && snapshot?.id === before.id && !snapshotReadSettled);
+
   // The scan's live phase, shown in the shared status slot while it runs.
   const runLabel = status
     ? `${phaseLabel(status.phase)}${status.detail ? `, ${status.detail}` : ""}${
@@ -184,6 +220,24 @@ export function ScanRow({
     scanning,
     status?.error ? null : { ok: true, text: "Queue refreshed" },
   );
+
+  // A degraded scan is not an error, so it takes the success flash above -- and that flash
+  // fires on the finish edge, where the snapshot in hand is still the PREVIOUS scan's, so it
+  // cannot speak to how this one came back. The notice that can is `standing`, which announces
+  // nothing by design, so "Queue refreshed" was the only thing a screen-reader user was told
+  // about a scan Reaper will not act on (rules 85, 72). Said here instead: when the fresh
+  // snapshot has landed, the row is speaking for it again, and the verdict is finally known.
+  //
+  // Once per snapshot, and only after a finish this mount watched (`before`), so navigating
+  // onto an already-degraded snapshot announces nothing -- the same restraint `useJobFlash`
+  // keeps about a job that finished before the page loaded.
+  const announcedIncompleteFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (supersededSnapshot || before === null || !snapshot?.degraded) return;
+    if (announcedIncompleteFor.current === snapshot.id) return;
+    announcedIncompleteFor.current = snapshot.id;
+    announce("That scan came back incomplete. Reaper won't act on it.");
+  }, [supersededSnapshot, before, snapshot?.degraded, snapshot?.id]);
 
   // A scheduled scan that crashed outright writes no snapshot, so it is recorded separately
   // (job id "scheduled_scan", see get_schedule) instead of being silently invisible here.
@@ -266,12 +320,24 @@ export function ScanRow({
 
         {/* `standing`, same route one step later: `useScanSettled` invalidates `["snapshot"]` on
             the running-to-idle edge it sees through that same 15s poll, so a scheduled scan
-            finishing incomplete draws this with no press either. */}
-        {snapshot?.degraded && (
+            finishing incomplete draws this with no press either.
+
+            Held while that snapshot is superseded, which is this notice specifically and not the
+            two others carrying the same claim (rule 72). It renders inside the running scan's own
+            row, under its progress bar, where "This scan" reads as the one in flight -- and the
+            operator starting a rescan has already answered it. The other two sit on pages with no
+            scan in view and stay: `ReapPlan`'s is why Build is disabled over that snapshot, and
+            `App.tsx`'s freshness line is the age of the queue rendered below it, both still true
+            for as long as that snapshot is the one on hand. */}
+        {snapshot?.degraded && !supersededSnapshot && (
           <Notice tone="warn" standing>
-            <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason} You can
-            still look at it, but Reaper won't act on it. A scan that missed a source could show a
-            list that looks complete when it isn't.
+            {/* What it means before why it happened. The consequence clause was dropped from
+                here and from the Review page's line, leaving `ReapPlan` the only one of the
+                three still saying it, and whether the operator saw it at all then depended on
+                which source had failed: only `library_index`'s reasons carry "Nothing may be
+                deleted from this scan" in their own text (rules 21, 72, 144). */}
+            <strong>This scan came back incomplete.</strong> Reaper won&apos;t act on it.{" "}
+            {snapshot.degraded_reason}
           </Notice>
         )}
       </div>

@@ -33,7 +33,7 @@ dependencies = [
     "apscheduler>=3.11.3,<4.0.0",
     "tzlocal>=5.0",              # imported directly (app_settings host-zone detection), not only via apscheduler
     # Secrets & auth
-    "cryptography>=49.0.0",      # Fernet, for API keys at rest
+    "cryptography>=50.0.0",      # Fernet, for API keys at rest; 50.0.0 fixes CVE-2026-69247
     "pwdlib[argon2]>=0.3.0",     # NOT passlib (dead since 2020-10-08)
     # Observability
     "structlog>=26.1.0",
@@ -156,3 +156,11 @@ markers = [
 [tool.coverage.run]
 source = ["src/reaper"]
 branch = true
+# SQLAlchemy's async bridge runs the body of every session-using coroutine inside a
+# greenlet, and coverage does not trace one unless it is named here. Without it the
+# report was blind to most route and service bodies -- it recorded a line carrying an
+# `await` and dropped its neighbors, so `record_password_failure` read as unreached in
+# all four password gates that in fact have tests asserting the exact 403 each one
+# raises. It understated the suite by 2.8 points and, worse, made the codecov patch
+# gate unusable: a genuinely untested line was indistinguishable from an artifact.
+concurrency = ["thread", "greenlet"]

@@ -45,9 +45,11 @@ export function manualPath(doc: Doc): string {
  *  place. Code spans are left alone: MDX does not interpolate inside them, and escaping there
  *  would put a backslash on the operator's screen. */
 function escapeText(text: string): string {
+  // The backslash is in the class so a literal one cannot pair with the next character
+  // as an MDX escape; one pass keeps the escaping characters from re-escaping each other.
   return text
     .split(/(`[^`]*`)/g)
-    .map((part) => (part.startsWith("`") ? part : part.replace(/[{}<>]/g, (c) => `\\${c}`)))
+    .map((part) => (part.startsWith("`") ? part : part.replace(/[\\{}<>]/g, (c) => `\\${c}`)))
     .join("");
 }
 
@@ -74,11 +76,44 @@ function wrap(open: string, body: string, close: string): string {
   return `${open}\n\n${body}\n\n${close}`;
 }
 
+/** One table cell. A pipe would end the column, so it is escaped.
+ *
+ *  Outside a code span that is all it takes, because `escapeText` has already doubled every
+ *  backslash and the inline parser undoes exactly that. Inside one it is not: a row is split
+ *  into cells BEFORE code spans are parsed, the splitter consumes one backslash and the code
+ *  span keeps the rest verbatim, so a run of `c` backslashes written before a pipe arrives
+ *  intact only while `c` is even. An odd run leaves the pipe unescaped, and the row silently
+ *  becomes two columns.
+ *
+ *  No encoding renders an odd run — `c` and `c + 2` are the neighbors GFM can spell, never
+ *  `c + 1` — so this refuses the cell instead of publishing a table that lost a column. Same
+ *  call `manualPath` makes on an unmapped group: reject over invent.
+ *
+ *  CodeQL reads the `replace` below as the sanitizer and reports the backslash it leaves alone
+ *  (`js/incomplete-sanitization`, dismissed as a false positive). The backslash was escaped one
+ *  call earlier, by `escapeText`; escaping it again here is not the missing half of that pass
+ *  but a second one, measured against remark-gfm as 14 of 18 round-trips broken. The query also
+ *  assumes untrusted input, and every cell here is typed doc content compiled into the app. */
+function cell(text: string): string {
+  for (const part of text.split(/(`[^`]*`)/g)) {
+    if (!part.startsWith("`")) continue;
+    for (const match of part.matchAll(/(\\*)\|/g)) {
+      if ((match[1] ?? "").length % 2 === 1) {
+        throw new Error(
+          `Table cell ${JSON.stringify(text)} has a code span with an odd run of backslashes ` +
+            "before a pipe. A GFM table cannot carry that: the row would split into two " +
+            "columns. Reword the cell, or move the pipe out of the code span.",
+        );
+      }
+    }
+  }
+  return escapeText(text).replace(/\|/g, "\\|");
+}
+
 function tableToMdx(b: TableBlock): string {
   // A markdown table stays greppable and diffable, which a JSON prop would not. `hi` marks the
   // shipped-default column, and markdown has no column emphasis, so it lands on that header
   // cell: the same fact the app paints, in the one place markdown can carry it.
-  const cell = (text: string) => escapeText(text).replace(/\|/g, "\\|");
   const head = b.head.map((h, i) => (i === b.hi ? `**${cell(h)}**` : cell(h)));
   const rows = b.rows.map((r) => `| ${b.head.map((_, i) => cell(r[i] ?? "")).join(" | ")} |`);
   return [`| ${head.join(" | ")} |`, `| ${b.head.map(() => "---").join(" | ")} |`, ...rows].join(

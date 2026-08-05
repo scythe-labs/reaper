@@ -396,12 +396,43 @@ export function ScanFreshness({
   }
   return (
     <p className="scan-freshness muted">
-      Last scanned {date(snapshot.created_at)}, {count(snapshot.item_count)} items
+      Last scanned {date(snapshot.created_at)}, {count(snapshot.item_count)} items.
       {snapshot.degraded && (
-        <span className="freshness-warn">
-          {". "}
-          That scan came back incomplete, so Reaper won't act on it
-        </span>
+        <>
+          {" "}
+          {/* The separating period is OUTSIDE the notice. Inside it, the character that
+              ends the neutral sentence before it painted amber and semibold, so the line
+              opened on a floating yellow dot a word early.
+
+              The shared `Notice`, not a bare styled span: it carries the visually-hidden
+              "Warning: " lead, so severity is not amber alone. As a span this read as
+              ordinary muted text to anyone not seeing the color, on the page where
+              approvals are made (rules 18, 72).
+
+              It says what the incomplete scan MEANS before it says what to do. The
+              consequence clause was dropped here and in `ScanBar`, leaving `ReapPlan` the
+              only one of the three still carrying it -- on the page an operator reaches
+              last, while this line sits above the queue they are approving from. Whether it
+              appeared at all had also become a matter of which source failed, since only
+              `library_index`'s reasons bake it into their own text (rule 144).
+
+              `standing`, and silent, because this is the age of the snapshot the queue below
+              is built from: it is on the page for as long as that snapshot is the one on
+              hand, not a reply to anything the operator pressed. The scan that produces it
+              announces itself from `ScanBar`, which is where the transition happens. */}
+          <Notice as="span" tone="warn" standing className="freshness-warn">
+            The last scan came back incomplete, so Reaper won&apos;t act on it.{" "}
+            {/* The only one of the three with no remedy in it, which is why this is the one
+                that grew a link (rule 72). `ScanBar`'s copy renders ON Settings → Jobs,
+                beside the Scan library button, so it would point at itself; `ReapPlan`'s
+                already ends "Fix the source and scan again" on a page whose remedy is the
+                source, not a rescan. Both were read and left as they are. */}
+            <button className="link" onClick={onGoToJobs}>
+              Go to Settings → Jobs
+            </button>{" "}
+            and rescan.
+          </Notice>
+        </>
       )}
     </p>
   );
@@ -1043,6 +1074,8 @@ function Dashboard({ user }: { user: AuthUser }) {
             <Settings
               key={settingsFocus?.nonce ?? "settings"}
               initialPanel={settingsFocus?.panel}
+              // The Lists rows' policy-use links land on the keep-rules card's section.
+              onGoToPolicy={() => goToPolicySection("kept")}
             />
           )}
         </Suspense>

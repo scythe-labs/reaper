@@ -165,6 +165,28 @@
   margin: var(--space-sm) 0 0;
   font-size: var(--text-md);
 }
+/* The same line, on the edit that moved nothing. Weight rather than a color: this is not a
+   warning and not a result, and the two severity colors both claim more than it means. */
+.sim-inert {
+  font-weight: var(--weight-semi);
+}
+/* The one row that summarizes the other four, so it carries the body color they give up and
+   spans the pair of columns rather than sitting in one of them. Both halves are the same
+   point: a fifth item in a two-column grid otherwise pairs the summary with the first row it
+   summarizes and leaves a hole in the last cell. */
+.sim-delta .sim-changed {
+  grid-column: 1 / -1;
+  /* Packed, not spread. The four rows below inherit `space-between` and read fine because a
+     column is narrow; across both columns it parks the count a whole panel-width from the
+     label it belongs to, and the one row meant to be read at a glance is the one that makes
+     you scan for its number. */
+  justify-content: start;
+  gap: var(--space-md);
+}
+.sim-delta .sim-changed dt {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
 /* "New on the list": the titles a draft would newly flag, score on the right in the
    condemn color -- the same verdict language as everywhere else. */
 .sim-examples {
@@ -179,12 +201,16 @@
   gap: var(--space-lg);
   padding: 0.22rem 0;
   border-bottom: 1px solid var(--border);
-  /* The title is a media title from the server (rule 139); the score beside it is app text
-     short enough that inheriting this changes nothing about it. */
-  overflow-wrap: anywhere;
 }
 .sim-examples li:last-child {
   border-bottom: none;
+}
+/* The break opportunity rule 139 owes a server-supplied title, granted on the title itself and
+   not on the flex row around it. `anywhere` counts its break opportunities in min-content
+   sizing, so a flex item inheriting it has a minimum of one character, and the row squeezed the
+   score down to that: a title long enough to wrap broke "64" into a 6 above a 4. */
+.sim-example-title {
+  overflow-wrap: anywhere;
 }
 .sim-example-score {
   font-variant-numeric: tabular-nums;

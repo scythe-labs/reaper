@@ -9,6 +9,8 @@ sidebar_position: 3
 Open the **Apps** tab, search for **Reaper**, and install it. Community Applications carries
 the template.
 
+Installing asks which channel you want. Take **Default**, which follows releases.
+
 Not in the search results yet? The same template lives in the repository. Copy
 `contrib/unraid/my-Reaper.xml` to:
 
@@ -35,9 +37,15 @@ Reaper needs no access to your media shares, so leave them unmapped.
 
 ## The dev channel
 
-To run the dev channel, install the **Reaper-Dev** entry instead. It defaults to port 8421 and
-its own appdata folder, so the two run side by side. Dev builds change often. Releases are the
+To run the dev channel, pick **dev** when you install. Dev builds change often. Releases are the
 steadier channel.
+
+The channel is only offered while installing. To move an install you already have, edit the
+container and change the tag at the end of the **Repository** field from `:latest` to `:dev`.
+
+Want both at once? Install Reaper a second time, pick **dev**, and give that one its own name,
+port, and appdata folder. Two containers sharing one appdata folder share one database, so the
+folder is the one you must not leave at its default.
 
 ## Next
 

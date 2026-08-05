@@ -21,8 +21,8 @@ Two downloads on [the releases page](https://github.com/scythe-labs/reaper/relea
 | `dev-build` | the `dev` branch, refreshed nightly, for testing what is coming. |
 
 To run the dev channel, download the same two files from the `dev-build` prerelease on the
-releases page and install them the same way. Dev builds change often. Releases are the
-steadier channel.
+releases page and install them the same way. Dev builds change often. Releases is the
+safer channel.
 
 ## First launch
 
@@ -31,9 +31,9 @@ tray icon is the app while it runs: right-click it for **Open Reaper** and **Qui
 Closing the browser tab leaves the server running; Quit is what stops it.
 
 <Callout tone="note">
-  **Windows may warn before the first run.** The installer is not code-signed yet, so
+  **Windows may warn before the first run.** The installer is not code-signed, so
   SmartScreen can show "Windows protected your PC". Choose **More info**, then **Run anyway**.
-  The firewall asks once too; allow access if other machines should reach Reaper.
+  The firewall asks once aswell; allow access if other machines should reach Reaper.
 </Callout>
 
 ## Where the data lives
@@ -44,10 +44,11 @@ Updates and reinstalls leave the folder alone.
 
 ## Settings
 
-A double-clicked app receives no environment variables, so Reaper reads `launcher.conf` from
-the data folder instead. The first run writes it as a commented template: the port, the
-listening address, the browser launch, the update check, and the tray icon each have a line.
-The tray icon also has a switch in the app, under Settings, General, Desktop app.
+Reaper reads `launcher.conf` from the data folder instead. The first run writes it as a commented 
+template: the port, the listening address, the browser launch, the update check, the tray icon, and 
+recovery mode each have a line. The tray icon also has a switch in the app, under Settings, General,
+Desktop app. Recovery mode is how you get back in if you cannot sign in, covered in
+[Not getting locked out](/operating/locked-out).
 
 ## Reaching it from other machines
 

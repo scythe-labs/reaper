@@ -39,6 +39,24 @@ export const SCAN_SETTLED_KEYS: string[][] = [
   // second copy of this effect inside `PolicyEditor` instead of here, which is the divergence
   // the paragraph above forbids: the list's whole value is being the single place (#205).
   ["validate"], // the policy editor's warnings, re-derived against the new watch history
+  // A scan refreshes every protection list before it gathers (`snapshot.sync_protection_lists`),
+  // so it moves each one's stored count, its last-checked time, and whether it is failing at
+  // all. Without this a list that just started failing kept its green "Working, protecting N
+  // titles" for as long as the panel stayed mounted, which is the reassuring direction.
+  ["lists"],
+  // A scan pushes the Plex "Leaving Soon" shelves before it returns
+  // (`scan_runner._run_scan_locked` -> `leaving_soon.after_scan`, progress band 95-99, so still
+  // inside the running window this hook watches), which moves the pass's counts, its timestamp
+  // and its result line. Only the Jobs row's own "Update now" invalidated this, and with
+  // `staleTime: 30_000` and no focus refetch the row kept the PREVIOUS pass's "N movies and M
+  // seasons on the shelves" under a heading reading "Runs after every scan".
+  ["leaving-soon-settings"], // the Jobs shelf row, and Plex's shelf status line
+  // A scan syncs watch history and records what it could not read
+  // (`Snapshot.watch_blind_items`), which are both numbers `/settings/watch-evidence` returns.
+  // The sentence built from them names the last scan outright ("The last scan couldn't read the
+  // plays for N items"), so a stale read here attributes an older count to a scan that has just
+  // finished with a different one.
+  ["watch-evidence"], // Plex's recorded-watch-history line
 ];
 
 /** Refresh everything that hangs off the snapshot when a scan finishes.
@@ -69,10 +87,12 @@ export function useScanSettled(scanning: boolean, error: string | null = null): 
       // stopped somewhere unknown, and a refetch showing current truth is never wrong, where
       // skipping one can leave a stale number on screen.
       for (const queryKey of SCAN_SETTLED_KEYS) void queryClient.invalidateQueries({ queryKey });
-      // Thirteen caches go stale on this line, which is most of the numbers in the app moving at
-      // once -- and it can be triggered by the scheduler, by another device, or by another tab, so
-      // there is no press to attach a sentence to and no control that changed. An operator using a
-      // reader had no way to learn any of it: the transition is entirely visual (#177).
+      // Every cache in the list above goes stale on this line, which is most of the numbers in
+      // the app moving at once -- and it can be triggered by the scheduler, by another device, or
+      // by another tab, so there is no press to attach a sentence to and no control that changed.
+      // An operator using a reader had no way to learn any of it: the transition is entirely
+      // visual (#177). (It said "Thirteen caches" and the list had grown to fourteen; a count
+      // written in prose beside the list it counts is one that goes stale on the next append.)
       //
       // It says the numbers moved rather than naming a figure, because this hook deliberately does
       // not read the caches it marks stale -- and the refetches have not landed yet, so any count

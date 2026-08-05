@@ -35,11 +35,12 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from reaper.clients.sonarr_stats import SeasonStats
-from reaper.engine.fields import BY_KEY, Lane, Op
+from reaper.engine.fields import BY_KEY, Condition, Lane, Op
 from reaper.engine.gates import GateId
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
+    SCORER_VERSION,
     PolicyBody,
     ProfileSettings,
     inspect,
@@ -54,6 +55,8 @@ from tests._policy_lab import (
     VERDICT_RANK,
     degraded,
     judge,
+    lane_gates,
+    lane_policy,
     load_fixture,
     with_watchers_window,
 )
@@ -151,28 +154,71 @@ class TestPinnedBaseline:
         regenerate the fixture (scripts/policy_lab_extract.py) in the same change, so the
         diff records exactly what moved. If you did not mean to change scoring, this is
         the bug.
+
+        Asking for the bump is all this test can do; ``policy_lab_extract.rebaseline`` is
+        what enforces it, because only the regeneration step holds the old baseline and the
+        new one at once.
         """
+        self._check("baseline", default_policy, default_gates)
+
+    def test_every_vector_reproduces_its_baseline_under_the_operator_authored_lanes(
+        self,
+    ) -> None:
+        """The same trip-wire, under a policy that actually uses the custom condemn and
+        graded keep lanes. Both shipped defaults leave them empty, so nothing here reached
+        ``signals.evaluate_custom`` or ``signals.evaluate_keep``: inverting the keep lane's
+        ``Unknown`` arm from fail-closed to fail-open moved no pinned number, and nothing
+        asked anyone to bump ``SCORER_VERSION`` for it (rule 113).
+
+        ``lane_policy`` is the shipped body with three rules added, judged through the same
+        production pipeline -- not a second scorer (rule 3/22).
+        """
+        self._check("lane_baseline", lane_policy, lane_gates)
+
+    @staticmethod
+    def _check(key: str, policy_for: object, gates_for: object) -> None:
         mismatches = []
         for v in VECTORS:
             verdict, score, coverage_bp, _, _ = judge(
-                v, default_policy(v["media_type"]), default_gates(v["media_type"])
+                v,
+                policy_for(v["media_type"]),  # type: ignore[operator]
+                gates_for(v["media_type"]),  # type: ignore[operator]
             )
-            base = v["baseline"]
+            base = v[key]
             if (verdict, score, coverage_bp) != (
                 base["verdict"],
                 base["score"],
                 base["coverage_bp"],
             ):
-                mismatches.append(
-                    f"{v['id']}: baseline {base} -> ({verdict}, {score}, {coverage_bp})"
-                )
+                mismatches.append(f"{v['id']} {key}: {base} -> ({verdict}, {score}, {coverage_bp})")
         assert not mismatches, "\n".join(mismatches[:10])
+
+    def test_the_fixture_names_the_scorer_its_baselines_were_cut_under(self) -> None:
+        """A stamp nobody reads is a stamp that goes stale, and ``rebaseline``'s refusal
+        reads exactly this one to decide whether the scorer moved since the last cut. A
+        stale stamp makes that refusal answer about the wrong version -- in the permissive
+        direction, since a stamp behind the running constant reads as "already bumped".
+
+        Re-stamp with ``uv run python scripts/policy_lab_extract.py --rebaseline``. It runs
+        with no real library and writes nothing else when no baseline moved.
+        """
+        assert FIX.get("scorer_version") == SCORER_VERSION, (
+            f"fixture was cut under scorer {FIX.get('scorer_version')}, running scorer is "
+            f"{SCORER_VERSION}; re-run scripts/policy_lab_extract.py --rebaseline"
+        )
 
 
 class TestFixtureStaysDeidentified:
     def test_no_identifying_fields_survive_regeneration(self) -> None:
         """The fixture is committed; the golden rule applies to it as to code. Guard the
-        regeneration script against ever re-leaking titles, keys, paths, or hosts."""
+        regeneration script against ever re-leaking titles, keys, paths, or hosts.
+
+        This walks KEYS, plus genre values. It does not inspect a value at an arbitrary key,
+        so it does not cover ``scorer_note``, the one field a human types straight into this
+        file: ``test_policy_lab_extract`` holds that to the charset ``check_reason`` enforces
+        where it is typed. Naming the sibling here because a reader of this test would
+        otherwise take it for the whole guard.
+        """
         raw = FIXTURE.read_text()
         data = json.loads(raw)
         forbidden = {"title", "media_key", "group_key", "rating_key", "host", "path", "user"}
@@ -346,6 +392,25 @@ NUMERIC_VALUES = {
 }
 
 
+def _saveable(key: str, op: Op, value: object) -> bool:
+    """Whether the save boundary would accept this condition at all.
+
+    ``mutated`` round-trips every policy through ``model_validate``, so a value the API
+    refuses fails these tests as a ValidationError rather than as the invariant they are
+    about. Asked of the production validator rather than re-derived here (rule 119).
+
+    It removes exactly one pairing today: the comma-bearing genre, which is in the pool to
+    exercise ``in``'s split and can never match under ``eq``, because a multi-valued fact is
+    one comma-joined string that ``_compare`` splits back (rule 108's separator half).
+    """
+    lane = Lane.PROTECT if Lane.PROTECT in BY_KEY[key].lanes else Lane.CONDEMN
+    try:
+        Condition(field=key, op=op, value=value).validate_for(lane)  # type: ignore[arg-type]
+    except ValueError:
+        return False
+    return True
+
+
 def values_for(key: str, op: Op) -> list:
     spec = BY_KEY[key]
     if key in NUMERIC_VALUES:
@@ -357,8 +422,12 @@ def values_for(key: str, op: Op) -> list:
     else:
         pool = ["x"]
     if op in (Op.IN, Op.CONTAINS):
-        return [v for v in pool if isinstance(v, str)]
-    return pool
+        pool = [v for v in pool if isinstance(v, str)]
+    keep = [v for v in pool if _saveable(key, op, v)]
+    # A pairing whose whole pool is unsaveable would sweep nothing while still reading as a
+    # green parametrized case, which is the silent-empty-walk rule 145 is about.
+    assert keep, f"every {key} value is refused for {op.value}, so this op sweeps nothing"
+    return keep
 
 
 class TestProtectConditions:
@@ -371,9 +440,15 @@ class TestProtectConditions:
             baseline = {v["id"]: judge(v, policy, default_gates(media_type))[0] for v in pool}
             for op in spec.ops:
                 for value in values_for(key, op):
+                    # ADDED beside the shipped rules, never in their place: the default
+                    # policies carry the two on_list rules now, and replacing the list
+                    # would test a policy that also withdrew a protection.
                     with_condition = mutated(
                         policy,
-                        protect_conditions=[{"field": key, "op": op.value, "value": value}],
+                        protect_conditions=[
+                            *(c.model_dump(mode="json") for c in policy.protect_conditions),
+                            {"field": key, "op": op.value, "value": value},
+                        ],
                     )
                     gates = build_gates(with_condition)
                     for v in pool:
@@ -1020,8 +1095,9 @@ class TestPolicyHash:
             "in_progress_hold_days": policy.in_progress_hold_days + 1,
             "keep_specials": not policy.keep_specials,
             "flag_keep_conflicts": not policy.flag_keep_conflicts,
-            "keep_tags": ["another-tag"],
-            "keep_tags_match": "all",
+            # The keep tags left the body for Settings -> Lists; a list acts through an
+            # on_list rule, whose respelling is the edit that must move both hashes.
+            "protect_conditions": [{"field": "on_list", "op": "eq", "value": "another-list"}],
             # A reallocation, not a bump: the total is pinned at 100, so the only weight
             # edit an operator can make is moving points between signals.
             "signals": balanced(

@@ -21,7 +21,7 @@ Last verified against the code: 2026-08-02.
 | **M0** Skeleton — uv, ruff, mypy strict, Alembic, Docker, CI | ✅ done |
 | **M1** Auth + clients — Plex OAuth + owner check, Tautulli, Sonarr, Radarr, Seerr | ✅ done |
 | **M2a** IMDb ratings dataset | ✅ done |
-| **M2b** Curated lists (IMDb Top 250, *arr tags, Plex collections) | ✅ done |
+| **M2b** Protection lists — Arr-style registry, act through on_list rules | ✅ done |
 | **M3a** Scoring engine — gates, signals, observations | ✅ done |
 | **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | 🟡 see open 1 |
 | **M3c** Backtest — replay against the operator's own watch history | 🟡 see open 2 |
@@ -95,12 +95,13 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Setup readiness | **Scanning and reaping are two readinesses, reported apart** † |
 | Adding a service | **Connect, test, then map** — Save waits on a pass and one mapped folder |
 | Plex library list | **Synced when the server is linked**, never left for the operator to press |
+| Protection lists | **Defined on Settings, checked and re-scanned on save**, nightly too; by id |
 | Versioning | **CalVer `vYYYY.M.N`, tagged by CI on every push to `main`** † |
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |
 | ORM | **Plain SQLAlchemy, not SQLModel** † |
 | Migrations | **Baseline `22777b2b5015` is frozen going forward** † |
-| Gate retirement | **A stored body self-heals on load** † |
+| Gate retirement | **Persisted by the upgrade where it can be, healed on load where it can't** † |
 | Plex index retirement | **A row dropped only once the sweep has spoken** † |
 
 ## Where the pipeline stands

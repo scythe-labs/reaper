@@ -1007,6 +1007,50 @@ describe("the verdict headline", () => {
     expect(screen.getByText("Limbo")).toBeInTheDocument();
     expect(screen.getByText(/not confident enough to judge/i)).toBeInTheDocument();
   });
+
+  it("does not read a mid-binge check that never ran as a conflict (#486)", () => {
+    // A show Plex never resolved: no season carries a rating key, so the guard answered
+    // "is anyone part-way through this" having asked nobody. Both details are verbatim
+    // producer output -- `season_scan.guard_result`'s unestablishable arm and
+    // `engine.gates._blocked` -- and they carry the SAME cause on purpose, which is what
+    // makes them one box (rule 119).
+    //
+    // Without the typed flag this row satisfied `keepRuleConflict`, and the headline offered
+    // to settle a comparison nobody attempted: "Reaper couldn't check who watched these
+    // seasons, so it left the call to you."
+    const cause = "Plex has not matched this season";
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "abstain",
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_unknown: [
+            {
+              gate: "season_progression",
+              detail: `could not check who is part-way through it: ${cause}`,
+              defers_to_owner: false,
+              unestablishable: true,
+            },
+            {
+              gate: "min_dormancy",
+              detail: `could not check when it was last watched: ${cause}`,
+              defers_to_owner: false,
+              unestablishable: false,
+            },
+          ],
+        },
+      }),
+    );
+    expect(screen.getByText("Limbo")).toBeInTheDocument();
+    expect(screen.queryByText("Needs a look")).not.toBeInTheDocument();
+    expect(screen.queryByText(/left the call to you/i)).not.toBeInTheDocument();
+    // One cause, stated once, with the guard's check joining the list beside the gate that
+    // failed for the same reason.
+    expect(screen.getByText("This season couldn't be found in Plex.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Couldn't check: who's part-way through it and when it was last watched."),
+    ).toBeVisible();
+  });
 });
 
 describe("the season footer's own-vs-show decision", () => {
@@ -1287,9 +1331,7 @@ describe("what a signal row was measured against", () => {
     await user.click(row);
 
     expect(
-      screen.getByText(
-        "Pays nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0. " + "This one added 0.",
-      ),
+      screen.getByText("Added 0 of 10 points. Nothing at IMDb 6.0 or above, all 10 at IMDb 0.0."),
     ).toBeVisible();
     expect(row).toHaveAttribute("aria-expanded", "true");
   });
@@ -1312,11 +1354,11 @@ describe("what a signal row was measured against", () => {
     show(detail([signal({ id: "low_rating", detail: "IMDb 6.4", state: "argues_keep" })]));
 
     expect(screen.queryByRole("button", { name: /IMDb 6.4/ })).toBeNull();
-    expect(screen.queryByText(/Pays nothing/)).toBeNull();
+    expect(screen.queryByText(/Nothing at IMDb/)).toBeNull();
   });
 
   it("says nothing for a reason it could not read", () => {
-    // There is a line, but nothing was compared to it. "This one added 0" would describe
+    // There is a line, but nothing was compared to it. "Added 0 of 10 points" would describe
     // arithmetic that never ran, on the one row state that must stay distinct from a zero.
     show(
       detail([

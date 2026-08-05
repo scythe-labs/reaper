@@ -74,6 +74,11 @@ describe("the About update row", () => {
 
     expect(await screen.findByText("Update available")).toBeInTheDocument(); // the pill
     expect(await screen.findByText(/Reaper 2026\.9\.1 is out/)).toBeInTheDocument();
+    // The sentence beneath points at the schedule that now drives the check (the
+    // `check_for_updates` job), and names no cadence of its own, because the operator can
+    // change the cron or turn it off (rule 86). It read "Reaper checks a few times a day"
+    // while nothing checked on its own at all (#464, rule 25).
+    expect(screen.getByText(/checks on a schedule you can change in Jobs/)).toBeInTheDocument();
 
     await person.click(screen.getByRole("button", { name: "See what changed" }));
     const dialog = await screen.findByRole("dialog", { name: "What changed" });

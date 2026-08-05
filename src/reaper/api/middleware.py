@@ -48,14 +48,35 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import time
 
+import structlog
 from starlette.requests import Request
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
 
 from reaper.auth.proxy import client_ip
 from reaper.auth.ratelimit import Throttle
 from reaper.auth.sessions import resolve_session_from_cookies
+
+log = structlog.get_logger(__name__)
+
+
+def _refused(request: Request, path: str, status: int, gate: str) -> None:
+    """Say which gate turned a request away, at DEBUG.
+
+    Two gates answer an indistinguishable 403 -- a blocked CSRF check and an API key
+    that is valid but fenced off this route -- and two answer an indistinguishable 401,
+    a wrong key and no session at all. Each of the four has a different fix, and
+    nothing else records which one fired: uvicorn's access log does not propagate to
+    the root logger, so it reaches neither the Logs tab nor the file the operator
+    downloads, and the response body is gone the moment the caller drops it.
+
+    The address and the path, never the presented key or any prefix of it, and never a
+    cookie value (rule 13).
+    """
+    log.debug("auth.refused", gate=gate, status=status, path=path, client=client_ip(request))
+
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -359,6 +380,50 @@ class AuthGuard:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
+    async def _traced(self, scope: Scope, receive: Receive, send: Send, path: str) -> None:
+        """Run the request, then say what it was and how it ended, at DEBUG.
+
+        Reaper's own request line, because uvicorn's does not reach the operator: its
+        ``uvicorn.access`` logger does not propagate to the root logger the ring handler
+        sits on, so a downloaded log carries no HTTP lines at all. Emitting our own also
+        keeps it on the level switch, where turning Debug on for a reproduction is the
+        point -- an access line per request at INFO would bury the decision lines the
+        Logs tab exists for.
+
+        Only the path, never the query string: an operator's own routes carry no
+        credentials, but this is the one place a future one would leak (rule 13).
+
+        The Logs tab's own poll is not traced. It reads the same bounded ring this
+        writes to, on a 2s timer, so tracing it spends the operator's history on the
+        act of watching it: with Debug on and a reap running, the poll and the 1 Hz
+        status reads together turn the ring over in well under an hour, during exactly
+        the operation Debug was turned on for. The read alone is skipped. Changing the
+        level and downloading the log are operator actions and stay traced.
+        """
+        if scope["method"] == "GET" and path == "/api/logs":
+            await self.app(scope, receive, send)
+            return
+
+        started = time.monotonic()
+        status = 0
+
+        async def watched(message: Message) -> None:
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = int(message["status"])
+            await send(message)
+
+        try:
+            await self.app(scope, receive, watched)
+        finally:
+            log.debug(
+                "http.request",
+                method=scope["method"],
+                path=path,
+                status=status or None,
+                duration_ms=round((time.monotonic() - started) * 1000),
+            )
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         scope_type: str = scope["type"]
         if scope_type == "lifespan":
@@ -393,11 +458,12 @@ class AuthGuard:
             return
 
         if scope["method"] not in _SAFE_METHODS and not _csrf_ok(request):
+            _refused(request, path, 403, "csrf")
             await _reject(send, 403, "This request was blocked by Reaper's CSRF protection.")
             return
 
         if _is_open(path):
-            await self.app(scope, receive, send)
+            await self._traced(scope, receive, send, path)
             return
 
         factory = request.app.state.session_factory
@@ -406,10 +472,11 @@ class AuthGuard:
             await session.commit()  # persist the throttled last_seen bump / expiry prune
 
         if user is None:
+            _refused(request, path, 401, "no_session")
             await _reject(send, 401, "Not authenticated.")
             return
 
-        await self.app(scope, receive, send)
+        await self._traced(scope, receive, send, path)
 
     async def _handle_api_key(
         self,
@@ -429,6 +496,7 @@ class AuthGuard:
         """
         throttle_key = f"api-key:{client_ip(request)}"
         if api_key_throttle.retry_after(throttle_key) > 0:
+            _refused(request, path, 429, "api_key_throttled")
             await _reject(
                 send, 429, "Too many bad API keys from this address. Wait a moment and try again."
             )
@@ -437,13 +505,26 @@ class AuthGuard:
         digest: bytes | None = getattr(request.app.state, "api_key_digest", None)
         provided_digest = hashlib.sha256(provided.encode("utf-8")).digest()
         if digest is None or not hmac.compare_digest(provided_digest, digest):
-            api_key_throttle.record_failure(throttle_key)
+            locked_for = api_key_throttle.record_failure(throttle_key)
+            # The lockout crossing is a warning, matching its sibling on the local-login
+            # path (`api.auth.auth.local_locked_out`): repeated bad keys against an
+            # internet-facing install is something the operator should see without having
+            # turned anything on. The individual failures stay at DEBUG.
+            if locked_for > 0:
+                log.warning(
+                    "auth.api_key_locked_out",
+                    client=client_ip(request),
+                    retry_after=round(locked_for),
+                )
+            else:
+                _refused(request, path, 401, "api_key_invalid")
             await _reject(send, 401, "That API key is not valid.")
             return
         api_key_throttle.record_success(throttle_key)
 
         if not _api_key_allowed(scope["method"], path):
+            _refused(request, path, 403, "api_key_not_allowed_here")
             await _reject(send, 403, api_key_refusal_detail(scope["method"]))
             return
 
-        await self.app(scope, receive, send)
+        await self._traced(scope, receive, send, path)

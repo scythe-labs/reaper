@@ -277,6 +277,17 @@ export interface GateOutcome {
    *  against a shape the server does not emit -- never the case to branch on, and never the
    *  case to test against. Both read as "names neither shape", never as `false`. */
   defers_to_owner?: boolean | null;
+  /** Whether this block is a check that never ran, as against one that ran and left its
+   *  answer to the owner. Both are blocked and both abstain, so the list they arrive in
+   *  cannot tell them apart, and `keepRuleConflict` needs to: a keep-rule conflict is a
+   *  decision waiting for a person, while the same guard on a show Plex never resolved
+   *  asked nobody and belongs with the four Plex-dependent gates beside it.
+   *
+   *  `null` is a row scanned before the flag shipped, and reads as "not this" -- before it,
+   *  the only season guard result reaching `protections_unknown` on an abstaining item was
+   *  a conflict, so the legacy reading is the correct one. Arrives as `null` rather than
+   *  absent for the reason `defers_to_owner` records above. */
+  unestablishable?: boolean | null;
 }
 
 /** How the item was tied to its Plex library entry. The panel stays quiet on "matched" and
@@ -486,6 +497,10 @@ export type CustomCondemn =
 export interface GradedKeep {
   name: string;
   field: string;
+  /** For a membership field (`on_list`): which list, by name. That keep is FLAT -- on the
+   *  list takes the full `max_discount`, off it takes none -- so the ramp fields are inert
+   *  (send floor 0, saturate_at 1). Null or absent for every numeric field. */
+  value?: string | null;
   max_discount: number;
   floor: number;
   saturate_at: number;
@@ -525,8 +540,6 @@ export interface PolicyBody {
   protect_conditions: Condition[];
   custom_condemn: CustomCondemn[];
   graded_keeps: GradedKeep[];
-  keep_tags: string[];
-  keep_tags_match: "any" | "all";
   keep_rating_rules: RatingRule[];
   keep_rating_match: "any" | "all";
 }
@@ -578,19 +591,24 @@ export interface Policy {
   history_reach_days?: number | null;
   body: PolicyBody;
   warnings: PolicyWarning[];
-  /** This body was repaired on the way out and is NOT what is stored. Set when a policy
-   *  written before removal weights had to total 100 was rescaled to fit. The editor
-   *  opens on it dirty so the operator reviews and saves their own tuning in the new
-   *  units; nothing is written, and approvals stay valid, until they do. */
-  needs_save?: boolean;
-  /** The stored body could not be repaired, so this is the shipped default: numbers the
-   *  operator never chose. Louder than needs_save. */
-  fell_back?: boolean;
-  /** The rating bar was restored from an older saved setting, so this body is NOT what is
-   *  stored. Its own flag rather than needs_save: that one moved points into new units,
-   *  this one put back a protection that had stopped keeping anything. */
-  rating_rules_restored?: boolean;
+  /** Every way this body had to be repaired to load it, so it is NOT what is stored.
+   *
+   *  The editor reads the LENGTH of this to open dirty, and the copy per member separately.
+   *  That split is the point: a repair the server reports raises a savebar whether or not
+   *  anyone wrote a sentence for it, so the operator always has the Save the degraded scan
+   *  is telling them to press. Three booleans lived here before and the fourth repair only
+   *  ever reached the backend, which left a scan degraded with no way out (#516). */
+  repairs?: PolicyRepair[];
 }
+
+/** One way the server had to change a stored policy body to load it.
+ *
+ *  Mirrors `PolicyRepair` in `src/reaper/engine/policy.py`, which is the declaration; a
+ *  member the server adds and this union has not is handled rather than assumed away
+ *  (`REPAIR_NOTICES` in `PolicyEditor.tsx`, rule 66). Widened to `string` on purpose so an
+ *  unknown id is a value TypeScript admits exists, not a cast. */
+export type PolicyRepair =
+  "rescaled" | "fell_back" | "rating_rules_restored" | "lists_migrated" | (string & {});
 
 /** One title the draft would newly flag, for the simulator's "New on the list" block. */
 export interface SimExample {
@@ -605,11 +623,18 @@ export interface GateCount {
   count: number;
 }
 
+/** Why the simulator would not answer. Mirrors `api.schemas.SimStale`, and the panel
+ *  branches on it for the heading; an id this build does not know falls back to
+ *  `stale_reason`, which is the same fact as a sentence and always populated. */
+export type SimStale = "gathers_differently" | "seasons_not_recorded" | "in_progress_not_read";
+
 export interface Simulation {
   /** Whether these numbers actually answer the question that was asked. False when the
    *  candidate policy changed a weight or a gate, in which case the stored scores were
    *  produced by a different policy and every count below is zeroed. */
   exact: boolean;
+  /** Which refusal this is. Null exactly when `exact`. */
+  stale_kind: SimStale | null;
   stale_reason: string | null;
   condemned: number;
   protected: number;
@@ -619,6 +644,18 @@ export interface Simulation {
   unknown_size_items: number;
   newly_condemned: number;
   no_longer_condemned: number;
+  /** How many titles the LAST SCAN flags -- the stored verdicts with overrides applied, which
+   *  is what the panel's compare line names. Not the saved policy: saving starts a scan rather
+   *  than being one, so the two differ until it finishes and keep differing if it fails. The
+   *  panel used to reconstruct this from the two deltas above, which is sound only while both
+   *  count every way into and out of the removal list -- and it printed the draft's own count
+   *  on both sides of the compare line the moment `no_longer_condemned` missed condemn ->
+   *  protect. The server counts it per row regardless. */
+  condemned_before: number;
+  /** Titles this draft puts in a different lane than the one they are in now. A superset of
+   *  the two deltas above, which cannot see a protection edit moving a title between spared
+   *  and not judged -- the move that made a working panel read as a broken one (#488). */
+  changed_titles: number;
   histogram: number[];
   /** Populated only when exact; empty on a stale refusal, like every count above. */
   examples_newly_condemned: SimExample[];
@@ -774,6 +811,102 @@ export interface SignalCount {
  *  too. Those items sit on both sides of the executor's before/after count, so its gate
  *  cannot see them. No file on disk is affected either way.
  */
+/** One protection list, and whether it is still protecting anything.
+ *
+ *  `state` is decided on the server so this screen and the degraded-scan notice cannot tell
+ *  the operator two different stories about the same failed check (rule 144). `item_count`
+ *  is what the stored copy still covers: a `failing` list above zero went on protecting
+ *  those titles, because a failed refresh leaves the previous membership in place.
+ *
+ *  `name` comes from Plex or an *arr, so a surface rendering it wraps (rule 139).
+ */
+export interface ProtectionList {
+  /** The stable key rows are keyed on. Never shown: a display name can collide (rule 63). */
+  slug: string;
+  name: string;
+  /** Which family this belongs to. The panel groups on it: one protection, not one row per
+   *  *arr instance. Never derived in the component -- the slug spellings live server-side. */
+  source: "arr_tag" | "plex_collection" | "plex_watchlist" | "imdb";
+  state: "working" | "stale" | "failing" | "never_checked";
+  item_count: number;
+  /** When the last check that actually landed was. Null when none ever has. */
+  last_checked_at: string | null;
+  /** What the last failed check said, from the service that refused. Null when none did. */
+  error: string | null;
+  /** Which `ListConfig` this membership was synced for, so the panel can put Edit and Check
+   *  now on the row without working out from a slug which definition made it. Several rows
+   *  share one id (a tag list is synced once per *arr instance); it is null for a row stored
+   *  before its definition existed, which the next successful check re-homes. Derived on the
+   *  server, beside the slug spellings -- never parsed here (rule 63). */
+  list_id: number | null;
+  /** A tag list's per-tag counts from the last good check, by the operator's own spelling of
+   *  each tag. Null for every other source, and for a row that has not synced since the
+   *  counts started being recorded: unknown, never zero. */
+  tags: Record<string, number> | null;
+  /** Which *arr instance a tag list's row was read from, for the per-server counts. The
+   *  operator named the instance on Settings; null for every other source. */
+  server: string | null;
+}
+
+/** The settings one list source needs. A union in practice, kept as one optional-field shape
+ *  because that is what crosses the wire and what `list_config._clean_config` validates: it
+ *  reads only the keys its own source defines and refuses a shape that could never match.
+ *
+ *  A type alias rather than an interface, so it stays out of the wire-type mirror's walk --
+ *  the server side is a bare `dict[str, Any]` for the same reason the validation is per
+ *  source rather than per model. */
+export type ListConfigBody = {
+  /** `plex_collection`: which library to look in, and which collection inside it. */
+  library?: string;
+  collection?: string;
+  /** `arr_tag`: the tag spellings, and whether a title needs any of them or all of them. */
+  tags?: string[];
+  match?: "any" | "all";
+  /** `imdb`: a shipped chart's key ("top250", "popular")... */
+  preset?: string;
+  /** ...or a public list's id. The server accepts a pasted URL and keeps the id inside it. */
+  list_id?: string;
+};
+
+/** One keep rule naming a list, for the row's "how Policy uses it" line. Empty `policy_use`
+ *  means no rule does, which the screen renders as a warning: a defined list that protects
+ *  nothing. */
+export interface ListPolicyUse {
+  media_type: "movie" | "tv";
+  strength: "hard" | "lean";
+  /** The lean's discount. Null for a hard rule, which keeps outright. */
+  points: number | null;
+}
+
+/** One list DEFINITION: what the operator named and where it points.
+ *
+ *  The other half of `ProtectionList`, which is what that definition is currently protecting.
+ *  They are two tables on purpose -- a definition lives in `reaper.db` and is not rebuildable
+ *  from anything, membership is a mirror of somebody else's data in the cache -- and they are
+ *  joined on `ProtectionList.list_id`. A definition exists from the moment it is saved; its
+ *  membership does not exist until a sync has run, so a new list has a row here and none there.
+ */
+export interface ListConfig {
+  id: number;
+  /** The operator's own words, so a surface rendering it wraps (rule 139). */
+  name: string;
+  source: "arr_tag" | "plex_collection" | "plex_watchlist" | "imdb";
+  config: ListConfigBody;
+  /** How the policies use this list right now: one entry per keep rule naming it. */
+  policy_use: ListPolicyUse[];
+}
+
+/** What one "Check now" did. Each failed list's own error is on its row, which the screen
+ *  refetches, so this is only what the button says when it settles. */
+export interface ListSyncResult {
+  /** Stored rows whose check landed. A tag list across two *arr counts twice. */
+  checked: number;
+  failed: number;
+  /** Set when Plex could not be reached at all, so no collection row carries an error
+   *  explaining why it was not checked. Null when Plex answered or none is linked. */
+  plex_error: string | null;
+}
+
 export interface PlexTrash {
   /** False when no Plex server is linked, in which case nothing purges. */
   configured: boolean;
@@ -863,6 +996,16 @@ export interface LeavingSoonSettings {
      *  problem, never merely because it ran in preview (unarmed). */
     ok: boolean;
     /** A short plain-language summary of the last sync. */
+    result: string;
+  } | null;
+  /** A scan that finished without updating the shelf, and why. Reported beside `last`
+   *  rather than replacing it: a skipped pass writes nothing to Plex, so the last completed
+   *  pass's counts are still what is on the shelf. Nothing clears this, so the reader
+   *  prefers it only while it is newer than `last` -- exactly how `ScanRow` treats a
+   *  scheduled scan that crashed. */
+  last_skip: {
+    at: string;
+    /** Why, in one clause: it trails the exact time on the row's last-run line. */
     result: string;
   } | null;
 }
@@ -1136,6 +1279,11 @@ export interface AuthUser {
   provider: string;
   email: string | null;
   thumb_url: string | null;
+  /** This session was opened with a recovery code, so Settings, Security accepts a new
+   *  admin password without the current one. False on every ordinary sign-in. Read it
+   *  only to LOOSEN a requirement, never to grant anything: the server decides, and it
+   *  re-checks the session's own mark on the request. */
+  via_recovery: boolean;
 }
 
 export interface AuthContext {
@@ -1317,6 +1465,11 @@ export interface Schedule {
 export interface Safety {
   destructive_enabled: boolean;
   has_password: boolean;
+  /** REAPER_RECOVERY is armed on the server. It holds `destructive_enabled` false however
+   *  the stored switch is set, and the arm route refuses while it is on, so the banner says
+   *  this rather than plain read-only: the operator is otherwise sent to a switch that
+   *  cannot help them. Only a restart with the flag off clears it. */
+  recovery_mode: boolean;
   note: string | null;
 }
 
@@ -1835,6 +1988,22 @@ export const api = {
     request<PersonDetail>(`/api/fairness/people/${encodeURIComponent(identity)}`),
   reapBreakdown: () => request<ReapBreakdown>("/api/reap/breakdown"),
   plexTrash: () => request<PlexTrash>("/api/reap/plex-trash"),
+  /** What each list is currently protecting. Membership, from the cache. */
+  lists: () => request<ProtectionList[]>("/api/lists"),
+  /** What each list IS. Definitions, from `reaper.db`. Joined to the above on `list_id`. */
+  listConfigs: () => request<ListConfig[]>("/api/lists/configured"),
+  addList: (name: string, source: ListConfig["source"], config: ListConfigBody) =>
+    post<ListConfig>("/api/lists/configured", { name, source, config }),
+  /** An edit. Both fields optional and omitted means "leave it" (rule 1). */
+  editList: (id: number, body: { name?: string; config?: ListConfigBody }) =>
+    request<ListConfig>(`/api/lists/configured/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  removeList: (id: number) => del<void>(`/api/lists/configured/${id}`),
+  /** Check lists now: one definition, or (with none named) all of them. The same pass a
+   *  scan runs. Slow by nature -- it reads every *arr and Plex once. */
+  syncLists: (target: { list_id?: number } = {}) => post<ListSyncResult>("/api/lists/sync", target),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
   // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.

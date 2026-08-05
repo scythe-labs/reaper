@@ -67,6 +67,9 @@ ALIAS = {
     # names this one for what it is rather than for which direction it travels, because the
     # editor reads it as a result and never posts it.
     "PolicyProbeResult": "PolicyProbeOut",
+    # What one "Check now" on Settings -> Lists did. Same shape as the entry above: the
+    # browser names it for what it is, and never posts it.
+    "ListSyncResult": "ListSyncOut",
 }
 
 #: Browser types with no server declaration to mirror, classified rather than silenced
@@ -93,8 +96,15 @@ CLIENT_ONLY = {
 # separately instead of one being derived from the other.
 # Both +1 again for the desktop build's Settings group: `DesktopSettings` pairs with
 # `DesktopSettingsOut` on the suffix rule.
-EXPECTED_INTERFACES = 87
-EXPECTED_PAIRS = 84
+# Both +1 again for Settings -> Lists (#475): `ProtectionList` pairs with `ProtectionListOut`
+# on the same suffix rule.
+# Both +2 again for the rest of that screen: `ListConfig` (the list DEFINITIONS the operator
+# edits) pairs with `ListConfigOut` on the suffix rule, and `ListSyncResult` with `ListSyncOut`
+# through the ALIAS entry above. The third new name, `ListConfigBody`, is a type alias rather
+# than an interface and is counted by neither walk -- the same case the `PolicyProbe` note
+# above describes, and the reason these two numbers are reconciled against the tree separately.
+EXPECTED_INTERFACES = 91
+EXPECTED_PAIRS = 88
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
@@ -397,3 +407,62 @@ class TestTheTwoCopiesAgree:
             "every listing of a merged bind). Edit frontend/src/api.ts to match, or record a "
             "deliberate difference in this file:\n  " + "\n  ".join(drifted)
         )
+
+
+class TestEverySimulatorRefusalReachesThePanel:
+    """The refusal vocabulary crosses two boundaries, and only one of them is type-checked.
+
+    ``api.schemas.SimStale`` is what the route sends. The browser mirrors it as a string
+    union in ``api.ts``, and ``PolicySimulator.tsx`` gives each member a heading through a
+    ``Record<SimStale, string>`` -- which ``tsc`` already keeps complete, so a member missing
+    a heading cannot compile. What nothing checks is the step before it: a member added on
+    the server and never added to the union. TypeScript is perfectly happy with a union that
+    is missing a value it will be handed at runtime, and the panel would then fall back to
+    the general heading for a refusal that has its own remedy.
+
+    The class above compares field NAMES between paired models and cannot see this: the two
+    sides agree that ``stale_kind`` exists, and disagree about what may be in it.
+
+    Bounded per rule 147: this reads the union however it is spaced, but only while it is
+    spelled as quoted literals in one ``export type SimStale = ...`` declaration. The count
+    is pinned against the enum so a declaration this matcher stops finding fails loudly
+    rather than silently matching nothing.
+    """
+
+    UNION = re.compile(r"export type SimStale\s*=\s*([^;]+);")
+
+    def _declared(self) -> set[str]:
+        found = self.UNION.search(API_TS.read_text(encoding="utf-8"))
+        assert found is not None, (
+            "frontend/src/api.ts no longer declares `export type SimStale` as one statement, "
+            "so this guard is reading nothing. Re-point it at the new spelling."
+        )
+        return set(re.findall(r'"([^"]+)"', found.group(1)))
+
+    def test_the_browser_knows_every_refusal_the_server_can_send(self) -> None:
+        from reaper.api.schemas import SimStale
+
+        server = {member.value for member in SimStale}
+        assert self._declared() == server, (
+            "api.schemas.SimStale and frontend/src/api.ts's SimStale union disagree. A "
+            "refusal the browser does not know falls back to the general 'needs a fresh "
+            "scan' heading, which names the wrong remedy. Add it to the union, and "
+            "PolicySimulator.tsx's STALE_HEADINGS (tsc requires it once the union moves)."
+        )
+
+    def test_the_panel_gives_each_one_a_heading(self) -> None:
+        """The `Record<SimStale, string>` is the real guard; this pins that it still exists.
+
+        A future author swapping the record for a lookup with a default would take the
+        compile-time completeness away without anything failing, which is the shape rule 118
+        is about: the guard would be gone and its proof would still read green.
+        """
+        panel = (REPO / "frontend" / "src" / "components" / "PolicySimulator.tsx").read_text(
+            encoding="utf-8"
+        )
+        assert "const STALE_HEADINGS: Record<SimStale, string>" in panel, (
+            "PolicySimulator.tsx no longer types its refusal headings as "
+            "Record<SimStale, string>, so tsc has stopped requiring one per refusal."
+        )
+        for value in self._declared():
+            assert f"{value}:" in panel, f"{value} has no heading in STALE_HEADINGS"

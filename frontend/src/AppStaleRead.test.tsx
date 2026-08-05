@@ -83,6 +83,7 @@ const USER: AuthUser = {
   provider: "local",
   email: null,
   thumb_url: null,
+  via_recovery: false,
 };
 
 /** A configured install: a password set, everything wired, and scanned once -- which is what

@@ -79,4 +79,31 @@ describe("MDX escaping", () => {
     };
     expect(docToMdx(doc)).toContain("| x \\| y |");
   });
+
+  const tableDoc = (cellText: string) => ({
+    ...(armingDoc as NonNullable<typeof armingDoc>),
+    body: [{ kind: "table" as const, head: ["A"], rows: [[cellText]] }],
+  });
+
+  // A code span is the one place `escapeText` leaves a backslash alone, on purpose: MDX does not
+  // interpolate there and an escape would land on the operator's screen. A table cell then adds
+  // the pipe's escape on top, and the two only compose while the run before the pipe is even —
+  // the row is split into cells before the code span is parsed, and the splitter takes exactly
+  // one backslash. The counts below are measured against remark-gfm, not reasoned from the spec.
+  it("carries an even run of backslashes before a pipe in a code span", () => {
+    expect(docToMdx(tableDoc("`a|b`"))).toContain("| `a\\|b` |");
+    expect(docToMdx(tableDoc("`a\\\\|b`"))).toContain("| `a\\\\\\|b` |");
+  });
+
+  it("refuses an odd run, which GFM cannot spell and which splits the row in two", () => {
+    // Emitted today as `a\\|b`, which the splitter reads as an escaped backslash followed by a
+    // bare pipe: two columns in a one-column table, published without a word.
+    expect(() => docToMdx(tableDoc("`a\\|b`"))).toThrow(/odd run of backslashes/);
+    expect(() => docToMdx(tableDoc("`a\\\\\\|b`"))).toThrow(/odd run of backslashes/);
+  });
+
+  it("leaves a backslash alone where no pipe follows it in the span", () => {
+    expect(docToMdx(tableDoc("`a\\b`"))).toContain("| `a\\b` |");
+    expect(docToMdx(tableDoc("back \\ slash"))).toContain("| back \\\\ slash |");
+  });
 });

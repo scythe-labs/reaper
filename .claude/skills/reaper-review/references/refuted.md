@@ -208,6 +208,12 @@ The two sections after the index are **not** refutations. Read their headings be
 | `src/reaper/engine/dormancy.py:reference_instant` — none-does-not-actually-keep-the-file | Both dormancy gates fail closed on a non-`Known` input via `gates._blocked`, which returns a blocked ABSTAIN, and `decide_verdict` keeps the file on `blocked`. The docstring's "blocks both dormancy gates and abstains" is exact — note the mechanism is blocked-abstain, NOT PROTECT. | `40c20e0` |
 | `docs/LEARNINGS.md` — measurement-instrument-is-unsound | The zero-across-every-stored-row measurement targets exactly the population whose behavior changes (matched item + missing `added_at`), and that state is genuinely reachable: `identity.Resolution.bound` sets `rating_key` and `plex_item` together, so the state requires a spine row carrying a key and no date. The `explanation_json` cross-check covers the rows `facts_json` is sparse on. (The docstring citing the *combined* row count for a movie-lane-only claim was a real finding, fixed at `a5381e5`.) | `40c20e0` |
 | `docs/STATUS.md` — not-updated-for-a-behavior-change | No line in `STATUS.md` describes either lane's thaw, and the file's own rule is that closed work leaves it. Nothing there is now wrong. | `40c20e0` |
+| `src/reaper/api/routes.py:_season_guard_replay` — membership-checked-against-the-payload-not-the-plan | Fixed rather than refuted, and recorded so the shape is not re-raised: the check is now `set(plan.prunable) | {p.season_number for p in plan.protected}`, the set `guard_result` answers from. Both sets are policy-independent in their membership (`on_disk` decides who is in the union), so the union is the same under any draft. Closes #501. | `c18755c` |
+| `src/reaper/api/routes.py:simulate` — two-paths-answer-one-question | Issue #493, closed `Reviewed/Invalid` with timings in its thread and recorded here because a closed issue is read by nobody. Tier 1 is 275 ms of interaction latency avoided on a lane tier 2 answers exactly; the season lane's extra cost is ~0.13 ms/show, decode 0.4% of the request. The current two-tier shape stands and `tests/test_verdict_agreement.py` stays load-bearing. | `c18755c` |
+| `src/reaper/services/season_evidence.py` — freeze-aborts-or-silently-skips-a-scan | The write runs inside the scan's own session, deduped on `judgment.group_key`, and `to_dict` emits nothing `json.dumps` refuses. Rows are swept by the FK cascade with `PRAGMA foreign_keys=ON`. No freeze failure can degrade a scan that would otherwise complete, and none can drop one show while keeping the rest. | `c18755c` |
+| `src/reaper/services/season_evidence.py:missing_episode_map` — the-escape-hatch-previews-more-deletion-than-a-scan | An empty map makes `_anchor_positions` return a SUPERSET of the episode-precise answer, so `seq_protected` grows, `prunable` shrinks and `protected` grows. Rule 143 checked: the only protection defined over `prunable` is `_detect_conflicts`, and a larger `protected` means the seasons still in `prunable` draw MORE conflicts. Divergence is whole-lane and keep-direction (rule 31). | `c18755c` |
+| `src/reaper/api/routes.py:simulate` — a-field-the-spa-reads-arrives-undefined | All three `SimulationOut(...)` sites set `condemned_before` and `changed_titles` explicitly, and no route sets `response_model_exclude_unset`, so pydantic serializes the defaults regardless. `changed_titles` is a true superset of both deltas: every `newly`/`gone` increment sits inside a branch that also increments `changed`, checked arm by arm on both tiers. | `c18755c` |
+| `frontend/src/components/PolicySimulator.tsx:STALE_HEADINGS` — an-unknown-refusal-renders-blank | `(staleKind && STALE_HEADINGS[staleKind]) ?? STALE_HEADINGS.gathers_differently` resolves `null`, `undefined` and an unknown id alike to the general heading, and `staleReason ?? <generic>` always renders a paragraph. Driven by a test passing a future id. Rule 142 swept: no consumer in either tree branches on the retired sentence's wording. | `c18755c` |
 | `frontend/src/components/ScalesPanel.tsx:opener` — group-jump-seeds-a-term-that-matches-nothing | The premise that season rows carry no year is false: `season_scan.py:1901` sets `year=show_year` and `snapshot.py:1466` writes it (real snapshot: every season row carried both, none with a null `year` or `group_title`). So a seeded `"<show> <year>"` splits to stem + year and the second arm (`Candidate.year == year AND matches(stem)`) hits every season through `group_title`. A show with no year falls back to the plain-text arm. Same mechanism for a single-season item, whose Scales row takes `group_title or title` (`fairness.py:1173`). | `77a0c82` |
 | `frontend/src/components/ReviewQueue.tsx:ReviewQueue` — seeded-search-fires-two-queries | The term seeds `useState` for BOTH `searchInput` and `search` (`:1407-1408`) and `search` is in the key (`:1547`), so the mount fires one filtered request. The debounce effect then sets the identical trimmed value and React bails. No unfiltered paint of the whole lane. | `77a0c82` |
 | `frontend/src/components/ReviewQueue.tsx:ReviewQueue` — mount-seed-untrimmed-vs-effect-trimmed | Mount seeds `search` untrimmed while the effect trims, but the only producer is `titleWithYear`, which trims before returning. The two values are equal for every reachable input, so no query differs. | `77a0c82` |
@@ -246,6 +252,32 @@ The two sections after the index are **not** refutations. Read their headings be
 | `src/reaper/services/executor.py:_finalize_plex` — runs-on-a-dead-session | It reads no ORM state at all, only the plain `_affected_sections`, `_deleted_by_section`, `_section_pre_counts` and `_section_titles`, so a dead session cannot reach its three interlocks. | `bbb6315` |
 | `src/reaper/api/runs.py:execute_run` — stale-run-serialized-into-a-response | No production caller holds `run` past `execute()`. The dry-run route never enters the `finally`'s `not dry_run` branch, and the execute route's session is closed immediately after; `GET /runs/{id}` and `GET /runs` use fresh request sessions. | `bbb6315` |
 | `src/reaper/services/executor.py` — journalled-british-spelling | Not a diff finding: 47 instances across `src/`, `frontend/` and `docs/` predate this change and there are zero of the American spelling, so the new identifiers are the consistent choice. A repo-wide sweep, if anyone wants one. | `bbb6315` |
+| `src/reaper/services/season_evidence.py:from_dict` — codec-loses-a-field-on-the-round-trip | All 15 `SeasonPruneInput` fields and all 6 `SeasonStats` fields survive. Every int-keyed map is `str()` on the way out and `int()` on the way back, including both nested ones (`progress_by_user`, `last_play_by_user`); the `None` / `{}` three-state is preserved on the one field that has it; `size_on_disk=None` stays `None` rather than becoming `0`; tuples become lists the planner re-`set`s. Two import-time drift guards (`_KEYS`, `_SEASON_FIELDS`) fail the process on a field added later, and `_SEASON_FIELDS` is the sharper one because a `SeasonStats` field WITH a default would otherwise thaw as that default in silence. | `221b92d` |
+| `src/reaper/services/season_evidence.py:_epoch` — truncation-expires-a-viewer-the-scan-kept | Only `now` carries sub-second precision: `last_watched_by_user` and `last_play_by_user` come from `from_epoch` over integer mirror epochs. Flooring `now` moves `active_progress`'s cutoff *earlier*, which keeps a viewer the scan expired rather than the reverse (rule 31). The scan itself never round-trips the codec — it plans from the in-memory `SeasonPruneInput`. | `221b92d` |
+| `src/reaper/engine/policy.py:PolicyBody.evidence_hash` — season-fields-leaving-the-hash-reach-a-deletion | `evidence_hash` is read at exactly one site in `src/` (`routes.simulate`). The nine season fields stay in `scoring_hash` and in `policy_hash`, so a season edit always moves the hash rule 113 enforces at execute time, and can never land on tier 1's stored-verdict path. | `221b92d` |
+| `src/reaper/services/season_scan.py:_judge_series` — removing-the-fully-kept-skip-narrows-scan-protection | `_protection_reason` evaluates incomplete / airing / first-season / keep-last *before* `seq_protected`, so a show the offline pass found fully protected stays fully protected whatever the newly-read episode map says. The scan's own plan is argument-for-argument identical to the pre-change inline call. | `221b92d` |
+| `alembic/versions/20260803_1200_add_season_prune_evidence.py` — migration-not-additive-or-not-chained | `down_revision` is the current single head (`f708192a3b4c`), the upgrade is a pure `create_table`, and `alembic upgrade head` from the frozen baseline produces a schema matching `Base.metadata.create_all`. The FK cascade is pinned by `test_retention.py::test_the_frozen_season_evidence_goes_with_it_too`. | `221b92d` |
+| `src/reaper/api/schemas.py:SimStale` — a-refusal-the-panel-has-no-branch-for | The enum has three members, `STALE_HEADINGS` is a `Record<SimStale, string>` so a gap is a tsc error, and `test_the_browser_knows_every_refusal_the_server_can_send` pins the union against the enum. An id the build does not know falls back to the general heading and still renders the server's sentence, which is covered by a test passing a future id. | `221b92d` |
+| `docs/STATUS.md` — not-updated-for-a-behavior-change | No STATUS line describes the simulator's refusal scope, so none is now wrong. The two sibling simulator PRs (#487, #490) did not touch it either. | `221b92d` |
+| `src/reaper/services/lists.py:PlexWatchlist` — empty-read-wipes-the-stored-membership | No trigger. Unlike `ArrTagRule` / `PlexCollection` there is no missing-container state and no floor, but plexapi's `fetchItems` pages to `totalSize` and raises on auth failure, so the only empty this can see is a genuine one. "The operator cleared their watchlist" is the case the class docstring accepts deliberately. | `f74c0c8` |
+| `src/reaper/services/snapshot.py:build_facts` — dropping-the-hard-mode-membership-filter | No-op. Nothing in `src/` ever writes `mode='soft'`; `_run` passes `mode=ListMode.HARD` unconditionally, so the filter selects everything it is given. | `f74c0c8` |
+| `src/reaper/services/lists.py:IMDB_PRESETS` — a-truncated-mirror-shrinks-the-protection | A custom `ls…` list floors at 1 where the Top 250 floors at 200, but a partial JSON array from a single non-paged GET is not a reachable state: the body parses or it does not. | `f74c0c8` |
+| `src/reaper/services/season_scan.py:build_season_facts` — a-defaulted-memberships-argument-makes-on-lists-absent | Latent, not live. The only production caller (`_judge_series`) passes it; the default `()` is reachable from tests alone. | `f74c0c8` |
+| `src/reaper/services/list_rules.py:rename_list` — a-repaired-policy-strands-rules-on-the-old-name | Self-healing. While `lists_migrated` is the repair, `convert_list_protections` re-resolves every rule target from the live registry on each load, so the rules follow the rename anyway. The other repair arms (`rescaled`, `rating_rules_recovered`) cannot coexist with a body already carrying `on_list` rules. | `f74c0c8` |
+| `src/reaper/services/list_config.py:_refuse_name_twice` — non-ascii-case-variants-share-one-keep-rule | SQLite's `func.lower` and the `NOCASE` collation are both ASCII-only where Python's `casefold` is not, so two non-ASCII case-variant names can coexist. Real, and no plausible operator trigger; rule 88's ASCII path is intact. | `f74c0c8` |
+| `src/reaper/services/list_rules.py:_save` — appending-a-policy-row-whose-hash-already-exists | `Policy.policy_hash` is indexed, not unique, and the docstring states that reverting appends a duplicate hash on purpose. | `f74c0c8` |
+| `src/reaper/services/snapshot.py:sync_protection_lists` — a-keep-tag-retire-fires-when-an-arr-is-unreachable | `build_sources` constructs clients from DB rows without connecting, so an unreachable instance still contributes its slug to `keep_tag_slugs`; `_retire`'s `current & failed` guard then stands the sweep down when the sync itself raised (rule 115). | `f74c0c8` |
+| `src/reaper/engine/policy.py:convert_list_protections` — the-whitelisted-gate-is-stripped-with-no-collection-list | Migration `20260803_1900` seeds a `plex_collection` row into a table `20260803_1800` created empty in the same chain, so `own` is non-empty on every real upgrade. The name-collision early return is unreachable outside a branch-dev database. | `f74c0c8` |
+| `frontend/src/components/ListsPanel.tsx:ago` — a-naive-timestamp-read-as-local-time | `ListHealth.last_success` goes through `clock.from_epoch`, which returns `datetime.fromtimestamp(seconds, tz=UTC)`, so the wire carries an offset. | `f74c0c8` |
+| `frontend/src/components/ListsPanel.tsx:libraries` — a-disabled-query-renders-loading-copy-forever | `usePlexLibraries({enabled: view === "form" && source === "plex_collection"})` is read under exactly that condition, so `isPending` is never displayed on the off branch. | `f74c0c8` |
+| `frontend/src/components/ListModal.tsx:removeList` — a-204-body-parsed-as-json | `parseBody` short-circuits on 204 before `response.text()`, so `del<void>` returns undefined cleanly. | `f74c0c8` |
+| `frontend/src/components/ListModal.tsx:invalidate` — a-policy-invalidation-that-misses-a-media-type | react-query matches by key prefix, so invalidating `["policy"]` covers `["policy", "movie"]` and `["policy", "tv"]` both. | `f74c0c8` |
+| `frontend/src/components/PolicyRuleEditors.tsx:KeepRulesEditor` — an-always-disabled-vocabulary-query | `on_list` is a PROTECT-lane field with no `media_types` restriction, so it is always in the served vocabulary and the query is never disabled. | `f74c0c8` |
+| `src/reaper/api/routes.py:simulate` — an-on-list-rule-crashes-the-policy-probe | The probe is signal-only (`kind: "signal"`, one call site at `PolicyEditor.tsx:928`), so a PROTECT-lane field never reaches `preview._bare_facts`. | `f74c0c8` |
+| `alembic/versions/20260804_1400_list_name_unique_nocase.py:_disambiguate` — a-rename-withdraws-the-later-row-s-cover | It does, but `list_config` is created by this same PR, so the only reachable population is a tester who ran an intermediate branch build. Not a defect against any released install. **Superseded at `PR #492`: fixed anyway rather than left declined, because the fix is a verdict-preserving rule copy and the branch-window population is exactly the testers running on real data.** A later pass raised it again from the other end (`sync_rule_names` rewriting membership to a spelling no rule names), which is what a row refuted on population alone invites; read this line before re-refuting one. | `f74c0c8` |
+| `alembic/versions/20260804_1300_heal_list_config_shape.py` — a-batch-recreate-drops-the-unique-constraint | Refuted by dumping the final DDL: `name VARCHAR(100) COLLATE "NOCASE" NOT NULL` with `CONSTRAINT uq_list_config_name UNIQUE (name)` intact. | `f74c0c8` |
+| `frontend/src/components/ListsPanel.tsx:check` — two-rows-checking-concurrently | A row-scoped check leaves other rows' buttons live, but a narrowed pass sweeps only the definition it checked, on a slug pattern anchored to that definition's id (`lists.list_slugs`), so two concurrent checks act on disjoint rows and neither can switch the other's protection off. Re-argued at `PR #492`: the original reason was that `only=` retires nothing at all, which stopped being true when the narrowed pass gained its own sweep. | `f74c0c8` |
+| `src/reaper/services/list_rules.py:rename_list` — stranded-rules-after-a-degradation-directed-save | The `f74c0c8` refutation above holds and `b35858a` strengthened it: `convert_list_protections` re-resolves rule targets via `_conversion_list_names` (`profiles.py:295`) on every load including the editor-draft GET, so a draft saved after a rename already spells the new name; migration `d5e6f7a8b9c0` persists the conversion at upgrade, shrinking the repaired window to the declined corner; `RESCALED` / `RATING_RULES_RESTORED` bodies cannot coexist with stored `on_list` rules. The residual `FELL_BACK` corner is not opened by the skip — writing a rename through the fallback is the rule-65 substitution the skip forbids, and the scan is degraded for that whole window. | `b35858a` |
 
 ## Carried over with NO evidence — unverified, not refuted
 
@@ -427,3 +459,74 @@ misleading variant (`few_watchers` reading "all 20 points at 0 watchers" beside 
 recorded") is unreachable: `distinct_watchers` is only ever `Known` or `Unknown`, never `Absent`.
 Pinned at `aba0c95`. The residual was taken: the guard's comment now states its real reason and
 says why `not_applicable` keeps the sentence.
+
+**`clients/base.py:_trace` — `status=None` cannot distinguish a guard refusal from a timeout, so
+a blocked DELETE reads as one that may have landed.** The mechanism is real and the conclusion is
+not. `SafetyViolationError` is a `RuntimeError` (base.py:120) and matches neither `except` in
+`_mutate`, so the `finally` does log `mutation=True status=None`. But the operator is never left
+holding that ambiguity: the only three `_mutate` call sites reach it from inside the executor's
+try at `executor.py:2012`, whose `except SafetyViolationError` records the step FAILED with "the
+transport guard blocked the delete" and logs `reap.item_failed` at WARNING, where a timeout takes
+the `IntegrationError` arm one line up. The disambiguating line is louder than the DEBUG trace,
+not absent. The trigger is also a can't-happen tripwire by construction: the execute route hands
+ONE `RuntimeSafety` snapshot to both the guard and the executor. Do not "fix" this by narrowing
+what escapes `_mutate` — letting it pass both arms is what lets the executor turn it into a clean
+failed item. Pinned at `e4bfa18`. One residual half was real and taken separately: `_send`
+assigns `status` once outside its redirect loop, so a 302 followed by a failing hop traced a
+stale `status=302`; that is cosmetic, unreachable for mutations (`_mutate` refuses redirects),
+and needs three consecutive transport failures behind `@transient_retry` to reach at all.
+
+**`api/auth.py:recover` — the lockout sweep missed the recovery endpoint, leaving the only
+lockout counter in the tree that crosses silently.** The premise is false. `recover_throttle.
+record_failure(ip_key)` is reachable only inside `if not await redeem_recovery_token(...)`, and
+all three of that function's False returns already log at WARNING first: `recovery.rejected` with
+"unknown token", "token already used", and "token expired" (`auth/recovery.py:242/245/248`). A
+token-guessing flood therefore emits a WARNING per attempt before the counter is touched, which
+is louder than the proposed fix, and `/api/auth/recover` also carries a DEBUG `http.request` line
+per attempt. The census behind the candidate was miscounted too: five `record_failure` sites, of
+which four warn. Routing it through `record_password_failure` would emit `auth.password_rejected`
+on a lane that has no password. Pinned at `e4bfa18`. Noted but not raised: `_rate_limited` /
+`RateLimiter` (`ratelimit.py:154`) logs nothing on refusal, which is a closer sibling than
+recovery is if anyone wants to sweep this class properly.
+
+**`services/planner.py:build_plan` — `planner.admitted` is decided against `planned_keys`, which
+predates the step-expansion loop, so an item can be logged admitted and skipped in one run.** The
+divergence is real in the abstract and unreachable in production. Reproducing it needs a
+hand-built Candidate with a three-part `sonarr:{inst}:{series}` media_key, which nothing writes:
+`Candidate` is constructed in one place (`snapshot.py:1463`) from either the movie path
+(`radarr:{inst}:{id}`) or `season_scan.season_media_key`, which always emits four parts. The
+three-part string exists only as a `group_key` and as a display-lookup key, and
+`effective_condemned` only ever returns rows keyed by `media_key`. The `else` branch at
+`planner.py:593` is defensive code for a series-delete path that does not exist. The proposed fix
+was also a no-op: both DEBUG loops are ALREADY below the step-expansion loop. Recomputing
+`planned_keys` after it is NOT a safe local edit — the same set feeds `admitted`/`omitted`, the
+abort-not-truncate refusal, and `held_back_unknown_size`, all decided before the ReapRun row is
+created. Pinned at `e4bfa18`.
+
+**`tests/test_override_truth.py:_overrides` — the `since(0)` length baseline is defeated by ring
+saturation, so the negative test passes while the forbidden line was emitted.** Refuted AS
+STATED: the stated repro does not reproduce. With the no-op DELETE made to log anyway, the test
+went red running alone, running the candidate's own saturation recipe, and under a full
+`-n auto` suite (1 failed, 3432 passed). The DELETE moves the window by exactly one line, so the
+baseline is only defeated when an override line occupies the window's single oldest slot as it is
+sampled — swept at pad=0/1/5/60/300/495/498 (caught) versus pad=499 (missed), one offset in the
+sweep. Pinned at `e4bfa18`. The narrower real defect was taken: the helper now takes a
+`last_seq()` cursor, since a one-line race that can allow a forbidden line is still worth closing
+and the three positive tests carried it as a false failure.
+
+**`services/season_scan.py:season_watch_stats` — the two `continue`s that drop a viewer's
+progress row leave the mid-binge hold unfired, so a season somebody is half way through reads as
+Absent (#470).** Traced end to end; the season comes out protected, both branches. The finding
+read one query and the control is in another: `user_season_progress` comes from the `progress`
+read (which filters `media_index IS NOT NULL`, then drops these two cases), but
+`_progress_by_user` **anchors** on `user_season_keys`, which comes from the `pairs` read — no
+`media_index` filter at all, so `pairs` is a strict superset on `(user, key)`. A viewer whose
+position was dropped is therefore still present as a touch, records as `None` ("position unknown"
+rather than absent), and `_anchor_positions` fails closed on `watched is None`, holding the anchor
+season and the one after it. Both `max_ep is None` and `max_unknown > max_ep` produce
+`{'7': {3: None}}` → `prunable [1, 2]`, seasons 3 and 4 held. Pinned at `eb1b60b`. What the pass
+was right about is that nothing pinned the invariant: it lives in a query neither branch sits
+next to, and narrowing `pairs` to match `progress` would delete the protection while reading as a
+tidy-up. Now asserted end to end in
+`test_season_scan.py::test_a_dropped_position_holds_the_season_rather_than_clearing_it` (#485),
+which goes red under exactly that mutation.

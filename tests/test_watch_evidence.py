@@ -327,7 +327,7 @@ class TestRecallAndForget:
 # checking that should not have to visit two files to see it.
 # ---------------------------------------------------------------------------
 
-_EMPTY_INDEX = lists.MembershipIndex({}, {}, {})
+_EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
 # Recent on purpose. A re-added file carries a FRESH arrival date, so this is exactly the
 # value that would let the builder measure a confident, tiny dormancy off the one input
 # that still looks readable when the plays behind it are not.

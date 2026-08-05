@@ -125,6 +125,42 @@ button.link:hover:not(:disabled) {
   min-width: 5.25rem;
   text-align: center;
 }
+/* The `flat` variant (Segmented `variant="flat"`): one bordered box split by a hairline, the
+   chosen half tinted with the operator's accent, which is the shape the approved mockup
+   settled for the list forms. It arrived as a second control (`MatchToggle` + `.seg2`)
+   reproducing this file's semantics and strut; a variant keeps the look and leaves one
+   either-or control (rules 18, 41). Every declaration here overrides the pill track above it,
+   so the two never half-apply. */
+.segmented.flat {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg);
+}
+.segmented.flat .seg {
+  border-radius: 0;
+  padding: var(--space-sm) var(--space-3xl);
+  font-size: var(--text-sm);
+}
+.segmented.flat .seg + .seg {
+  border-left: 1px solid var(--border-strong);
+}
+.segmented.flat .seg:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+/* Both the resting and the hovered active half, because the pill's own two rules set a
+   `--surface` fill and a raised shadow that read as a floating pill inside this flat box. */
+.segmented.flat .seg.active,
+.segmented.flat .seg.active:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: none;
+}
 /* A pill track is a flex row, and a flex item floors at its own min-content, so the track
    itself cannot get narrower than its labels laid end to end however narrow the screen is:
    the lane switcher held 300px and the preset picker 304px at every viewport, and both ran

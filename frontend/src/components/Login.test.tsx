@@ -207,10 +207,15 @@ describe("the Plex sign-in popup", () => {
 });
 
 describe("the recovery card", () => {
-  it("sends a locked-out operator to the console, which is the only place the code is", async () => {
+  it("names both places the code is, and the log is not one of them", async () => {
     // mint_recovery_token prints its banner rather than logging it, deliberately, so the
     // code never reaches the in-app Logs tab or the files that tab downloads. The card used
     // to say "to its log", which sent people to Settings -> Logs to find nothing (U-11).
+    //
+    // The file is the half this test was missing: the console is not a channel at all on a
+    // windowed Windows build or a Finder-launched .app, so naming it alone left the operators
+    // who most need this screen with nowhere to look (#433). Both are asserted, because a card
+    // naming one of two is exactly as wrong for half the install base as naming neither.
     window.history.pushState({}, "", "/recover");
     const queryClient = testQueryClient();
     render(
@@ -219,9 +224,13 @@ describe("the recovery card", () => {
       </QueryClientProvider>,
     );
 
-    const note = await screen.findByText(/Reaper printed a recovery code/);
+    const note = await screen.findByText(/The code is in/);
+    expect(note.textContent).toContain("recovery.txt");
     expect(note.textContent).toContain("console output");
     expect(note.textContent).not.toContain("to its log");
+    // The promise this screen makes about where it lands the operator. It was false until the
+    // session carried a recovery mark, so it is pinned rather than left to read as decoration.
+    expect(note.textContent).toContain("without the old one");
     window.history.pushState({}, "", "/");
   });
 
@@ -238,7 +247,7 @@ describe("the recovery card", () => {
       </QueryClientProvider>,
     );
 
-    await screen.findByText(/Reaper printed a recovery code/);
+    await screen.findByText(/The code is in/);
     await expectNoA11yViolations(document.body, { pageLevel: true });
     window.history.pushState({}, "", "/");
   });

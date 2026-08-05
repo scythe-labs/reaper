@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from platform import python_version
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -17,6 +19,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
 from reaper.api import tags as api_tags
@@ -25,6 +30,7 @@ from reaper.api.backup import router as backup_router
 from reaper.api.breakdown import router as breakdown_router
 from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
+from reaper.api.lists import router as lists_router
 from reaper.api.logs import router as logs_router
 from reaper.api.middleware import (
     CSRF_HEADER,
@@ -47,8 +53,9 @@ from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
-from reaper.auth.recovery import mint_recovery_token, recovery_base_url
-from reaper.buildinfo import build_version, install_root
+from reaper.auth.recovery import clear_recovery_file, mint_recovery_token, recovery_base_url
+from reaper.auth.sessions import clear_recovery_marks
+from reaper.buildinfo import build_version, install_kind, install_root, is_release, short_commit
 from reaper.config import (
     Settings,
     get_settings,
@@ -56,7 +63,13 @@ from reaper.config import (
     parse_instance_seeds,
 )
 from reaper.crypto import SecretBox
-from reaper.db.session import create_cache_engine, create_engine, create_session_factory
+from reaper.db.models import Instance, InstanceKind, PlexServer
+from reaper.db.session import (
+    create_cache_engine,
+    create_engine,
+    create_session_factory,
+    journal_mode,
+)
 from reaper.logging import configure_logging
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import app_settings
@@ -98,6 +111,47 @@ def _report_background_failure(task: asyncio.Task[Any]) -> None:
         log.warning("startup.background_task_failed", task=task.get_name(), error=str(exc))
 
 
+async def _schema_revision(session: AsyncSession) -> str | None:
+    """The Alembic revision this database sits at, for the boot log.
+
+    Nothing else in the app reads it outside backup and restore, so "which schema is
+    this install on, and did the upgrade run" has no answer today -- migrations are
+    applied by a different process (the container entrypoint, or `launcher._migrate`)
+    whose output never reaches the log file the operator downloads. ``None`` is a
+    database built straight from the models, which is what a test carries.
+    """
+    try:
+        result = await session.execute(text("SELECT version_num FROM alembic_version"))
+    except OperationalError:
+        return None
+    row = result.first()
+    return str(row[0]) if row and row[0] else None
+
+
+async def _integration_inventory(
+    session: AsyncSession, box: SecretBox, settings: Settings
+) -> dict[str, int | bool]:
+    """What this install is wired to, as counts and flags.
+
+    Never a base URL, a name, or a key: an instance's address is one of the two places
+    a credential can hide (rule 13), and the count is what answers "why is my second
+    Radarr missing from this scan". Disabled instances are excluded, because the scan
+    excludes them too and a total that disagrees with the scan is worse than no total.
+    """
+    rows = await session.execute(
+        select(Instance.kind, func.count())
+        .where(Instance.enabled.is_(True))
+        .group_by(Instance.kind)
+    )
+    inventory: dict[str, int | bool] = {str(kind.value): count for kind, count in rows.all()}
+    for kind in InstanceKind:
+        inventory.setdefault(str(kind.value), 0)
+    plex = await session.execute(select(func.count()).select_from(PlexServer))
+    inventory["plex_linked"] = plex.scalar_one() > 0
+    inventory["discord"] = await app_settings.has_discord_webhook(session, box, settings)
+    return inventory
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
@@ -130,10 +184,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # and never exported to the process environment.
         await seed_instances(session, parse_instance_seeds(load_raw_env(settings)), box)
 
+        # Before the mint, and on every boot whichever way the flag is set: a recovery
+        # session's elevated permission lasts one uptime and no longer. `spend_recovery_mark`
+        # only fires when the operator actually resets the password, so one who signs in with
+        # a code and changes nothing would otherwise keep it for the session's full 30 days,
+        # past the restart the manual gives as the last step of getting back in.
+        demoted = await clear_recovery_marks(session)
+        if demoted:
+            log.info("auth.recovery_marks_cleared", sessions=demoted)
+
         if settings.recovery:
             await mint_recovery_token(
-                session, base_url=recovery_base_url(settings.host, settings.port)
+                session,
+                base_url=recovery_base_url(settings.host, settings.port),
+                data_dir=settings.data_dir,
             )
+            # Recovery mode is a door that opens for anyone who can reach the host, so this
+            # is the last boot on which Reaper should also be able to delete media.
+            # `RuntimeSafety.destructive_allowed` already holds it off for the life of this
+            # process; writing the stored switch off as well is what makes the state survive
+            # the restart that turns recovery back off. Otherwise an install that was armed
+            # before the lockout would come back armed the moment the operator "finished",
+            # with the change they never made. Re-arming is one password away, deliberately.
+            # Restore does the same thing for the same reason (`restore._force_destructive_off`).
+            await app_settings.set_destructive_enabled(session, enabled=False)
+        else:
+            # Recovery is off, so any recovery.txt left in the data folder is a spent or
+            # expired code. Sweeping it here is what makes "set REAPER_RECOVERY=false and
+            # restart" actually tidy up, rather than leaving a stale secret beside the
+            # database for whoever looks next.
+            clear_recovery_file(settings.data_dir)
 
         # Warn loudly if Plex OAuth is the only way in: a plex.tv outage, a
         # revoked token, or a rebuilt server would then lock the owner out of
@@ -141,9 +221,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if await count_local_admins(session) == 0:
             log.warning(
                 "auth.no_local_admin",
+                # Settings first, because it is the only one of the two that exists on
+                # every install: the desktop bundles ship no ``reaper-admin`` (rule 25).
                 detail=(
                     "No local admin exists. If Plex sign-in fails you will be locked out. "
-                    "Create a fallback with: reaper-admin create-admin --username admin"
+                    "Set an admin password in Settings, Security, or on Docker and snap "
+                    "run: reaper-admin create-admin --username admin"
                 ),
             )
 
@@ -166,18 +249,72 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.api_key_digest = (
             hashlib.sha256(api_key.encode("utf-8")).digest() if api_key else None
         )
-        if await app_settings.proxy_trust_enabled(session, settings):
-            app.state.trusted_proxies = parse_proxy_networks(
-                await app_settings.get_trusted_proxies(session, settings)
-            )
-        else:
-            app.state.trusted_proxies = ()
+        proxy_trust = await app_settings.proxy_trust_enabled(session, settings)
+        offered = await app_settings.get_trusted_proxies(session, settings) if proxy_trust else []
+        app.state.trusted_proxies = parse_proxy_networks(offered) if proxy_trust else ()
+        revision = await _schema_revision(session)
+        integrations = await _integration_inventory(session, box, settings)
         await session.commit()
 
     log.info(
         "reaper.started",
         version=build_version(),
+        channel="release" if is_release() else "dev",
+        commit=short_commit(),
         destructive_actions_enabled=safety.destructive_allowed,
+    )
+    # The install fingerprint, at INFO and not DEBUG: this is the first thing support asks
+    # for, and an operator should not have to turn anything on to already have it in the log
+    # they are about to send. The four shapes keep their data in four places and take their
+    # configuration by four different routes, so "which one is this" comes before every other
+    # question -- and `log_level_from` answers the one that blocks all the others, since a
+    # stored level silently outranks REAPER_LOG_LEVEL and DEBUG is how anything else is chased.
+    log.info(
+        "reaper.install",
+        install=install_kind(),
+        platform=sys.platform,
+        python=python_version(),
+        data_dir=str(settings.data_dir),
+        log_level=logbuffer.level_name(),
+        log_level_from="settings" if stored_level else "environment",
+        host=settings.host,
+        port=settings.port,
+    )
+    # Counts and flags only, never a base URL or a key: those carry credentials (rule 13).
+    log.info("reaper.integrations", **integrations)
+    # Offered against accepted, because `parse_proxy_networks` drops an entry it cannot parse
+    # and carries on. Only the env-seeded path can hold a typo -- the settings route validates
+    # and refuses -- and that is the declarative deployment with no UI to tell. Silently
+    # dropping one is how a reverse-proxied install ends up keying every lockout and rate
+    # limit on the proxy's own address instead of the caller's (rule 101).
+    log.info(
+        "reaper.proxy_trust",
+        enabled=proxy_trust,
+        offered=len(offered),
+        accepted=len(app.state.trusted_proxies),
+    )
+    # The cache read is caught and reaper.db's is not, deliberately. `cache.db` is disposable
+    # by contract (`create_cache_engine`) and is rebuilt by the next sync, so a cache file that
+    # cannot be opened -- truncated by an unclean shutdown, or owned by another uid after a
+    # container's user changed -- must not stop the app from starting. This line is the first
+    # thing in the boot to open it, so without the catch a diagnostic would be the one thing
+    # standing between the operator and a UI they could have deleted the file from.
+    try:
+        cache_mode = await journal_mode(cache_engine)
+    except SQLAlchemyError:
+        cache_mode = "unreadable"
+        log.warning(
+            "db.cache_unreadable",
+            detail=(
+                "Reaper cannot read its cache database. Nothing is lost: stop Reaper, delete "
+                "cache.db from the data folder, and start it again to rebuild it."
+            ),
+        )
+    log.info(
+        "db.ready",
+        revision=revision,
+        journal_mode=await journal_mode(engine),
+        cache_journal_mode=cache_mode,
     )
     if safety.destructive_allowed:
         # A warning, deliberately: this is the one line an operator whose .env still says
@@ -205,12 +342,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scheduler_tz = ZoneInfo(await app_settings.get_timezone(session, settings))
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance_schedules = await app_settings.get_maintenance_schedules(session)
+    # The zone every timed job resolved to, whichever of the three layers won. A cron set
+    # for 2 AM firing at the wrong hour is the symptom; this is the cause, and a typo'd
+    # REAPER_TIMEZONE otherwise falls through to the host zone with no trace.
+    log.info("scheduler.timezone", timezone=str(scheduler_tz))
 
     scheduler = build_scheduler(
         cache_engine,
         settings.data_dir,
         session_factory=factory,
         secret_box=box,
+        settings=settings,
+        # The app's own checker, so the nightly check and the About route share one cache.
+        update_checker=app.state.update_checker,
         timezone=scheduler_tz,
         # A reap's live flag lives on app state, which the scheduler has no handle on. Passed
         # as a predicate rather than read at wiring time so the snapshot sweep asks the
@@ -254,10 +398,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 data_dir=settings.data_dir,
                 session_factory=factory,
                 secret_box=box,
+                settings=settings,
+                update_checker=app.state.update_checker,
                 timezone=scheduler_tz,
             )
         except (ValueError, KeyError):
             log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)
+
+    # Every registered job with its next firing, after the stored schedules have been
+    # applied so this is the table that will actually run. Without it "why did my nightly
+    # scan stop" has no answer: a job that was never scheduled and one whose stored cron was
+    # skipped as malformed look identical, and the resolved zone is what a cron firing at
+    # the wrong hour turns on. One line per job, about six.
+    for job in scheduler.get_jobs():
+        log.info(
+            "scheduler.job",
+            job=job.id,
+            trigger=str(job.trigger),
+            next_run=job.next_run_time.isoformat() if job.next_run_time else None,
+        )
+    if not scan_cron:
+        log.info(
+            "scheduler.no_scan_scheduled",
+            detail="No automatic scan is scheduled. Reaper only scans when you ask it to.",
+        )
 
     catch_up = asyncio.create_task(catch_up_on_startup(cache_engine, settings.data_dir))
     catch_up.add_done_callback(_report_background_failure)
@@ -361,8 +525,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None,
     )
     app.state.settings = settings
-    # One instance for the app's lifetime, so its hours-long answer cache is shared
-    # across requests. Lazy: it fetches nothing until the About surface first asks.
+    # One instance for the app's lifetime, so its hours-long answer cache is shared across
+    # requests -- and with the nightly `check_for_updates` job, which is handed this same
+    # instance so its ask leaves the answer ready for the next page load. Lazy: nothing is
+    # fetched until the job fires or a surface asks.
     app.state.update_checker = UpdateChecker()
 
     @app.exception_handler(RequestValidationError)
@@ -586,6 +752,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(breakdown_router)
     app.include_router(plex_trash_router)
     app.include_router(leaving_soon_router)
+    app.include_router(lists_router)
     app.include_router(logs_router)
 
     # The gate. Every /api route above requires a session and passes a CSRF check,

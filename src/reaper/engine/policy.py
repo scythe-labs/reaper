@@ -36,6 +36,7 @@ protective number has a floor (``min_votes >= 1``, ``grace_days >= 7``).
 from __future__ import annotations
 
 import copy
+import enum
 import hashlib
 import json
 from typing import Annotated, Any, ClassVar, Literal, Self, assert_never
@@ -46,6 +47,7 @@ from reaper.clock import humanize_days, humanize_window
 from reaper.engine.fields import (
     BY_KEY,
     Condition,
+    FieldType,
     Lane,
     Op,
     ReachSpan,
@@ -71,6 +73,14 @@ SCORER_VERSION = 2
 """Bumped when the SCORER changes meaning, not when the schema gains a field.
 Both are inside the policy hash: an item scored under a different scorer was not
 approved under this one.
+
+Adding evidence changes what a scan gathers, and the body cannot express that: a new
+``Facts`` field, signal or gate leaves a stored body hashing exactly as it did, so a plan
+already approved executes on evidence gathered without it (rule 113). Bumping here is one
+answer; a loader shim that rewrites every affected body is the other, since that edit moves
+those hashes itself. ``tests/test_scorer_surface.py`` records the declarations against this
+number and fails when one moves and the other does not, so the choice is made rather than
+missed -- which is what it was until that file existed.
 
 Deliberately plain ``int`` and not ``Literal``. Pinning the field to a single literal
 means the *next* bump makes every stored body fail ``model_validate_json``, and the one
@@ -260,6 +270,11 @@ class GradedKeepSpec(Frozen):
 
     name: str = Field(min_length=1, max_length=60)
     field: str
+    value: str | None = Field(default=None, max_length=200)
+    """For a membership field (``on_list``): which list, by name. That keep is FLAT, not a
+    ramp -- on the list takes the full ``max_discount``, off it takes none, and a
+    membership that could not be read takes the full one, fail-closed like every keep.
+    ``None`` for every numeric field, whose ramp is below."""
     max_discount: int = Field(ge=1, le=100)
     """Points to subtract at full strength. ``ge=1`` -- "off" is expressed by omitting the rule."""
     floor: int = Field(ge=0)
@@ -270,13 +285,33 @@ class GradedKeepSpec(Frozen):
 
     @model_validator(mode="after")
     def _valid_keep(self) -> Self:
+        spec = BY_KEY.get(self.field)
+        if spec is None:
+            raise ValueError(f'Unknown field "{self.field}".')
+        if spec.key == "on_list":
+            # The membership form: flat, so the ramp fields are inert and unvalidated.
+            #
+            # Keyed on the field, not on its SHAPE. `TEXT and multi` also describes `genre`,
+            # which validated, granted the keep, and explained itself as 'on your list
+            # "Comedy"' (#505). Nothing widened -- a keep only ever lowers a score -- but the
+            # operator was told a genre is a list (rule 21). The editor offers this box for
+            # `on_list` alone, so the reachable paths were an imported or restored body and
+            # the API.
+            if not (self.value or "").strip():
+                raise ValueError("Say which list this keep rule is about.")
+            return self
+        if spec.type is FieldType.TEXT and spec.multi:
+            raise ValueError(
+                f'"{spec.label}" is not a list, so it cannot be graded. Use a protection instead.'
+            )
+        if self.value is not None:
+            raise ValueError(
+                f'"{spec.label}" is a number, so this rule ramps; it does not take a list name.'
+            )
         if self.floor >= self.saturate_at:
             raise ValueError(
                 f"floor ({self.floor}) must be below saturate_at ({self.saturate_at})."
             )
-        spec = BY_KEY.get(self.field)
-        if spec is None:
-            raise ValueError(f'Unknown field "{self.field}".')
         if Op.GTE not in spec.ops:
             raise ValueError(
                 f'"{spec.label}" is not a number, so it cannot be graded. Use a protection instead.'
@@ -392,13 +427,14 @@ class PolicyBody(Frozen):
         untrustworthy. Degrading on this would make the first scan after an upgrade
         un-plannable for every install, over a protection that was never doing anything.
 
-        It moves all three hashes, not just ``policy_hash``. ``policy_hash`` voids a plan
-        approved before the upgrade and asks for a re-scan (rule 113). ``scoring_hash`` and
-        ``evidence_hash`` move too, because ``gates`` is excluded from neither
-        ``_POST_SCORE_FIELDS`` nor ``_EVIDENCE_REPLAYABLE_FIELDS`` -- so the policy simulator
-        misses both its exact tier and its frozen-facts replay tier and withholds every number
-        until that re-scan. That is the honest outcome: the stored policy really is not the one
-        now in force, even though every verdict it produces is identical.
+        It moves ``policy_hash``, which voids a plan approved before the upgrade and asks for
+        a re-scan (rule 113), and ``scoring_hash``, since ``gates`` is not in
+        ``_POST_SCORE_FIELDS`` -- so the simulator loses its stored-score tier. It does NOT
+        move ``evidence_hash`` any more: ``gates`` reaches that hash only through
+        ``_gathering_evidence``, and no retired gate is the popularity gate, so the window is
+        unchanged and the frozen-facts replay answers. The first Policy page after such an
+        upgrade therefore shows numbers rather than a blank, which is the honest outcome and
+        the reverse of what this paragraph said while the whole list sat in the hash.
 
         What it must NOT do is let a surface blame the operator for it. The simulator's stale
         notice once opened "You changed what the scan reads" at an install that had changed
@@ -422,12 +458,18 @@ class PolicyBody(Frozen):
     points (5000 = 50%). Below it the item abstains rather than being judged on
     fragments. Guards against condemning an item we can barely see."""
 
-    keep_last_seasons: int = Field(default=2, ge=0)
+    keep_last_seasons: int = Field(default=2, ge=0, le=1_000)
     """Season pruning: the N most recent seasons of a show are protected outright,
     whatever they score. Movies ignore this. A hard floor, not a weight -- ``0`` means
     "keep no season on age alone" (the other guards and the score still apply); it does
     NOT mean "unlimited", which is the Janitorr footgun the whole policy module avoids.
-    See ``services.season_pruning``."""
+    See ``services.season_pruning``.
+
+    The ceiling is arithmetic hygiene rather than a policy opinion, and the same on all
+    three season numbers here: it sits far above any real setting, so it cannot invalidate
+    a stored body. ``api.schemas.PolicyIn`` declares it too, and
+    ``tests/test_policy.py::TestTheTwoPolicyDeclarationsAgree`` fails when the two drift
+    (rules 95 and 131)."""
 
     keep_first_season: bool = True
     """Season pruning: protect the first content-bearing season of every show, so a
@@ -439,17 +481,21 @@ class PolicyBody(Frozen):
     requested (``requested``). Fail-closed: under ``requested``, when we cannot tell whether a
     show was requested, the floor still applies -- Unknown counts as "might be requested"."""
 
-    season_lookahead: int = Field(default=0, ge=0)
+    season_lookahead: int = Field(default=0, ge=0, le=1_000)
     """How many seasons BEYOND a viewer's current position to also protect while they binge.
     ``0`` protects exactly the season they are mid-way through, or the next one if they have
-    finished the current. Replaces the old hardcoded look-ahead. Movies ignore it."""
+    finished the current. Replaces the old hardcoded look-ahead. Movies ignore it.
+
+    ``season_pruning.sequential_protections`` builds ``range(lookahead + 1)`` once per anchor
+    per viewer per show, so the ceiling is what keeps an unbounded draft from allocating
+    inside the event loop that serves ``/policy/simulate``."""
 
     keep_in_progress: bool = True
     """Season pruning: protect the season a viewer is partway through (and the next one,
     once they finish it) -- the sequential-progression guard in ``services.season_pruning``.
     On by default; turning it off removes that guard entirely. Movies ignore it."""
 
-    in_progress_hold_days: int = Field(default=180, ge=0)
+    in_progress_hold_days: int = Field(default=180, ge=0, le=36_500)
     """How long a viewer's place in a show is held after their last watch of that show.
     Past this many days without watching, the show counts as abandoned by that viewer and
     their half-finished season no longer protects anything. ``0`` holds forever. A viewer
@@ -460,7 +506,11 @@ class PolicyBody(Frozen):
     it past how far the mirror reaches (``0`` included, which no finite mirror can cover)
     makes the claim unsupportable: ``gates.progress_is_establishable``
     then holds every season on disk rather than letting an unseeable viewer read as an
-    absent one."""
+    absent one.
+
+    ``season_pruning.active_progress`` computes ``now - timedelta(days=hold_days)``, which
+    raises ``OverflowError`` before any of that once the value runs past what a ``datetime``
+    can hold. The ceiling is 100 years, which no mirror reaches and ``0`` already covers."""
 
     keep_specials: bool = True
     """Season pruning: never remove specials (Season 0). On by default. When off, specials
@@ -496,14 +546,11 @@ class PolicyBody(Frozen):
     score, fail-closed. A softer companion to a hard protect condition; it lowers a score
     but never vetoes, and missing data keeps the file. See GradedKeepSpec."""
 
-    keep_tags: tuple[str, ...] = ("reaper-keep",)
-    """The *arr tags that spare a title outright -- the configurable form of "honor your keep
-    list". A title carrying one of these (or all of them, per ``keep_tags_match``) is kept
-    whatever it scores. Read at scan time and synced into the whitelist before scoring. Movies
-    read Radarr tags, TV reads Sonarr tags, so the two policies carry their own."""
-
-    keep_tags_match: Literal["any", "all"] = "any"
-    """Whether a title needs ANY of ``keep_tags`` (the usual case) or ALL of them to be kept."""
+    # ``keep_tags`` / ``keep_tags_match`` lived here: the *arr tags that spared a title,
+    # configured on Policy while every other list lived on Settings -> Lists. They are a
+    # LIST now -- defined once, on Lists, protecting through an ``on_list`` keep rule like
+    # every other list -- and ``convert_list_protections`` carries a stored body's tags
+    # into that shape on load.
 
     keep_rating_rules: tuple[RatingRuleSpec, ...] = ()
     """The per-source bars behind "Keep well-rated titles" (the RATING_FLOOR gate). A title
@@ -617,6 +664,7 @@ class PolicyBody(Frozen):
                 name=k.name,
                 max_discount=k.max_discount,
                 field=k.field,
+                value=k.value,
                 floor=k.floor,
                 saturate_at=k.saturate_at,
                 direction=k.direction,
@@ -723,12 +771,28 @@ class PolicyBody(Frozen):
     #: frozen Facts. Everything ELSE is folded into the evidence hash, deliberately -- an
     #: allow-list, not a deny-list, so a field nobody remembered to classify defaults to
     #: "needs a fresh scan" (safe) rather than a stale replay (a plausible wrong preview).
-    #: Notably ``gates`` is NOT here: the popularity gate's window changes the frozen
-    #: watcher counts, so any gate edit re-scans -- a conservative, correct choice.
+    #: ``gates`` is here, but only ever through ``_gathering_evidence`` below: a gate decides
+    #: what to make of an item, and every fact it reads is gathered whether or not it is
+    #: enabled. The one exception is the popularity window, which is the span
+    #: ``distinct_watchers`` is counted over, so it is folded back in as its own key.
     #: ``scorer_version`` belongs here for the same reason the weights do: a replay runs the
     #: CURRENT ``score``/``evaluate_all``/``decide_verdict`` over the frozen Facts, so a new
     #: scorer's answer is reproduced exactly. It stays in ``scoring_hash``, which is what
     #: routes a scorer bump to the replay instead of to the stale stored scores.
+    #:
+    #: **The nine season fields are here, and they are the one entry not answered by
+    #: ``facts_json`` alone.** A season's guard result is decided per SHOW, from Sonarr's
+    #: season statistics and who is part-way through it -- inputs that never reached ``Facts``
+    #: -- so freezing the guard's output was enough to explain a scan and never enough to
+    #: re-decide one. The scan now freezes those inputs too
+    #: (``db.models.SeasonPruneEvidence``) and the replay re-derives the plan through the same
+    #: ``season_evidence.plan_from_frozen`` the scan used. What that buys is a hash that no
+    #: longer refuses a season rule; what it does NOT buy is an answer for a snapshot with no
+    #: bundle, or for turning the mid-binge hold on over a scan that never read Sonarr's
+    #: episode lists. Neither is a hash question -- a hash cannot say WHY it mismatched
+    #: (``docs/LEARNINGS.md`` §13) -- so both are asked of the stored evidence itself in
+    #: ``api.routes._season_guard_replay``, which is what lets the panel name the one control at
+    #: fault instead of blanking nine.
     _EVIDENCE_REPLAYABLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "condemn_at",
@@ -740,8 +804,47 @@ class PolicyBody(Frozen):
             "keep_rating_rules",
             "keep_rating_match",
             "protect_conditions",
+            "gates",
+            "keep_last_seasons",
+            "keep_first_season",
+            "keep_last_scope",
+            "season_lookahead",
+            "keep_in_progress",
+            "in_progress_hold_days",
+            "keep_specials",
+            "protect_incomplete_seasons",
+            "flag_keep_conflicts",
         }
     )
+
+    #: Every field of a gate row, split by whether a scan can read it BEFORE it freezes an
+    #: item's Facts. ``window_days`` is the one that can: it is the span
+    #: ``snapshot._watch_stats`` counts ``distinct_watchers`` over. The others reach the scan
+    #: only through ``scan_runner.build_gates``, which the replay calls itself, over facts
+    #: that were gathered whether or not the gate asking for them was switched on.
+    #:
+    #: ``enabled`` is in the judging half and also feeds ``popularity_window_days``, which is
+    #: not a contradiction: what it selects there is a *window*, and the window is the only
+    #: thing the gather phase ever learns from this list.
+    #:
+    #: Split by name rather than by hashing the row, so a gate field added later lands in
+    #: neither set and ``test_policy.py``'s drift guard fails until someone classifies it. A
+    #: new gathering field defaulting quietly into the judging half would put a confident
+    #: wrong preview in front of an operator, which is the failure the three tiers exist to
+    #: prevent (rule 103).
+    _GATHERING_GATE_FIELDS: ClassVar[frozenset[str]] = frozenset({"window_days"})
+    _JUDGING_GATE_FIELDS: ClassVar[frozenset[str]] = frozenset({"gate", "enabled", "threshold"})
+
+    def _gathering_evidence(self) -> dict[str, object]:
+        """What ``gates`` tells a scan before it freezes anything.
+
+        One number, and it already carries the enabled flag it depends on: a disabled
+        popularity gate falls back to the 365-day default, so switching that gate off counts
+        the same watchers over the same span and the replay stays exact. Switching it ON at
+        any other window moves this number, which is the whole point -- the frozen count was
+        taken over a span the edited policy no longer asks for.
+        """
+        return {"popularity_window_days": self.popularity_window_days()}
 
     def evidence_hash(self) -> str:
         """Identifies what a scan under this policy would GATHER and FREEZE per item.
@@ -752,20 +855,54 @@ class PolicyBody(Frozen):
         ``decide_verdict`` under the edited policy, exact for any change to the replayable
         fields (weights, rating bars, custom rules, protect conditions, thresholds).
 
-        When it differs, the edit changed the evidence itself -- the popularity window, a
-        keep-tag, a season-pruning rule, the media type -- so the frozen Facts are stale and
-        a real scan is required. The set of replayable fields is an allow-list, so an
-        unclassified field falls into this hash and forces the safe, honest fresh scan.
+        When it differs, the edit changed the evidence itself -- the popularity window, the
+        media type -- so the frozen Facts are stale and a real scan is required.
+        The set of replayable fields is an allow-list, so an unclassified field falls into
+        this hash and forces the safe, honest fresh scan.
+
+        A season rule used to be on that list and no longer is: the scan freezes its plan's
+        inputs per show now (``db.models.SeasonPruneEvidence``), so the replay re-derives the
+        guard rather than reading a stale one. What a matching hash therefore promises about
+        a TV row is narrower than it looks -- it says the FACTS replay, not that the show's
+        bundle is present, readable, and describes that season.
+        ``api.routes._season_guard_replay`` asks the evidence that second question, because a
+        hash cannot answer it: two policies that gather identically can still disagree about
+        stored evidence, which is a fact about the snapshot and not about the policy.
+
+        Moving those nine fields out of here changed the formula, so this is another instance
+        of the one-scan cost below: no snapshot written by an earlier build can match it, and
+        until the next scan every edit refuses. The season-specific refusals therefore describe
+        the state *after* that scan, never the upgrade.
 
         The allow-list is the right default and it has one sharp edge: a field that is pure
         bookkeeping falls in here too and forces a rescan that can never help. That is what
         ``schema_version`` did, permanently (see ``_NON_BEHAVIORAL_FIELDS``). Classify a new
-        field into one of the three sets when you add it."""
+        field into one of the three sets when you add it.
+
+        **Turning a protection on or off is a judging edit, not a gathering one.** The fact
+        every gate reads is gathered unconditionally -- no fact builder branches on a gate's
+        enabled flag -- so the scan freezes the same bytes either way and the replay answers
+        exactly. Folding the whole ``gates`` list in here spent that exactness on nothing:
+        the rating bars were already replayable while the switch above them was not, so
+        moving the bar previewed instantly and unticking the box it sat in blanked the panel
+        and asked for a scan. Only ``_gathering_evidence`` survives from the list now.
+
+        **Changing what this hash covers costs every stored snapshot one scan.** A snapshot
+        records the hash its own scan computed (``services.snapshot``), so one written by an
+        earlier build cannot match this formula whatever the operator does, and until the next
+        scan a weight or bar edit refuses where it used to replay. It heals on that scan and
+        the notice's "run a scan, then this becomes exact again" is true throughout, which is
+        the whole difference from ``schema_version``: that one could never be scanned away,
+        because each scan wrote the stale value back. Verified on a live install before
+        landing: a stored snapshot whose ``policy_hash`` and ``scoring_hash`` both still
+        matched, and whose evidence hash could not. Weigh that one-scan window against the
+        edit being bought whenever this set moves again."""
         payload = {
             k: v
             for k, v in self.model_dump(mode="json").items()
             if k not in self._EVIDENCE_REPLAYABLE_FIELDS and k not in self._NON_BEHAVIORAL_FIELDS
         }
+        payload |= self._gathering_evidence()
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
@@ -866,13 +1003,50 @@ class PolicyWarning(Frozen):
     severity: Literal["warn", "danger"]
 
 
-def _join_and(parts: list[str]) -> str:
-    """Join as `"a", "b" and "c"`. The conjunctive twin of `fields._join_or`, kept in the
-    module that needs it rather than reaching across for a private name; both exist because a
-    comma-joined dump is not something an operator reads at a glance."""
+def join_and(parts: list[str]) -> str:
+    """Join as `"a", "b" and "c"`. The conjunctive twin of `fields._join_or`; both exist
+    because a comma-joined dump is not something an operator reads at a glance.
+
+    Public, so a second module needing the same conjunction imports this rather than growing
+    a third copy: `services/scan_runner.py` joins the repair remedies with it."""
     if len(parts) <= 1:
         return parts[0] if parts else ""
     return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+class PolicyRepair(enum.StrEnum):
+    """One way ``active_policy`` had to change a stored body to load it.
+
+    **The set is the declaration every surface derives from**, and that is the whole reason
+    it is an enum rather than four booleans on ``ActivePolicy``. Each repair obliges four
+    things at once: the flag reaches ``PolicyOut``, the editor's savebar forces dirty on it,
+    a notice says which repair happened, and the scan's degradation sentence names what to
+    check. ``lists_migrated`` shipped with the first and skipped the rest, so a stored body
+    from before the lists move degraded every scan with an incomplete-scan banner the
+    operator could not clear: the editor never went dirty, so the page held no Save, and the
+    one exit the degradation names did not exist (#516). A boolean can be forgotten at three
+    of four sites and read correct at each one; a member of this enum cannot, because
+    ``tests/test_policy_repairs.py`` walks it and fails on any member either side lacks copy
+    for (rules 103, 144).
+
+    Adding a shim means adding a member here, then following the test where it fails.
+    """
+
+    RESCALED = "rescaled"
+    """Removal weights rescaled to total 100 (``rebalance``). Their tuning, in new units."""
+
+    FELL_BACK = "fell_back"
+    """Unrepairable, so the body in hand is the SHIPPED DEFAULT. The loudest of the four:
+    these are numbers the operator never chose, and they can be looser than what was saved."""
+
+    RATING_RULES_RESTORED = "rating_rules_restored"
+    """The rating bar was put back from an older saved setting (``recover_rating_rules``).
+    That body loads perfectly well while protecting nothing, which is why it is a repair."""
+
+    LISTS_MIGRATED = "lists_migrated"
+    """List protections re-expressed as ``on_list`` keep rules (``convert_list_protections``).
+    Verdict-preserving by construction, and still not adopted silently, because the stored
+    body says one thing and the body in force says another."""
 
 
 #: Gate keys that stored bodies still carry and the model no longer declares. ``secondary``
@@ -921,7 +1095,7 @@ def rebalance(raw: object) -> dict[str, Any] | None:
     the remainder toward the larger weights does nothing at all in the equal-weight case).
 
     So a rescaled body is never adopted silently. The caller flags it
-    (``services.profiles.ActivePolicy.rescaled``), which makes ``ActivePolicy.repaired``
+    (``PolicyRepair.RESCALED``), which makes ``profiles.ActivePolicy.repaired``
     true, degrades the scan, and opens the editor on it as an unsaved draft the operator
     reviews and re-saves themselves. ``tests/test_policy.py`` pins both the bound and the
     fact that a verdict near the line can move.
@@ -975,8 +1149,8 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
     time a profile is saved.
 
     Returns the body with the equivalent IMDb bar synthesized, or ``None`` when there is
-    nothing to recover. The caller flags it (``services.profiles.ActivePolicy
-    .rating_rules_recovered``), which makes ``repaired`` true, degrades the scan, and opens
+    nothing to recover. The caller flags it (``PolicyRepair
+    .RATING_RULES_RESTORED``), which makes ``repaired`` true, degrades the scan, and opens
     the editor on it as an unsaved draft -- never a silent substitution of an operator's
     own safety value (rule 65).
 
@@ -1027,6 +1201,138 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
         body["schema_version"] = SCHEMA_VERSION
         return body
     return None
+
+
+#: The two gate ids ``convert_list_protections`` rewrites. Spelled once: the strip and the
+#: conversion must agree on membership, or a body could lose a gate without gaining its rule.
+_LEGACY_LIST_GATES = ("whitelisted", "curated_list")
+
+
+def has_legacy_list_protections(raw: object) -> bool:
+    """Whether ``convert_list_protections`` would fire on this body. Exposed so callers can
+    decide whether resolving the target list names (a database read) is worth it, against
+    the same trigger the conversion itself uses."""
+    if not isinstance(raw, dict):
+        return False
+    if "keep_tags" in raw or "keep_tags_match" in raw:
+        return True
+    gates = raw.get("gates")
+    if isinstance(gates, list) and any(
+        isinstance(g, dict) and g.get("gate") in _LEGACY_LIST_GATES for g in gates
+    ):
+        return True
+    conditions = raw.get("protect_conditions")
+    return isinstance(conditions, list) and any(
+        isinstance(c, dict) and c.get("field") == "on_curated_list" for c in conditions
+    )
+
+
+def convert_list_protections(
+    raw: object,
+    *,
+    tag_list_name: str | None,
+    imdb_list_name: str | None,
+    collection_list_names: tuple[str, ...] = (),
+) -> dict[str, Any] | None:
+    """A stored body from before every list protected through its own keep rule.
+
+    Three legacy shapes, converted together because they were saved together:
+
+    * ``keep_tags`` / ``keep_tags_match`` -- the *arr tags configured on Policy. The
+      upgrade migration turns them into a list on Settings -> Lists; this rewrites the
+      body's half: the keys leave (``Frozen`` forbids them), and an ENABLED ``whitelisted``
+      gate becomes a keeps-it-outright ``on_list`` rule naming that list. A disabled gate
+      converts to no rule -- the operator had the protection off, and the Lists screen now
+      says "not used by your policy" where the switch used to be.
+    * the ``whitelisted`` and ``curated_list`` gate rows leave the body. Both gates are
+      retired (``gates.GateId``), and unlike ``RETIRED_GATES`` they were LIVE protections,
+      so each enabled one converts to the equivalent rule rather than being dropped --
+      dropping alone would silently withdraw cover, the failure this codebase exists to
+      avoid.
+    * ``on_curated_list`` rules re-spell as ``on_list``: the field was renamed when it
+      widened from the shipped lists to every list. The value is kept -- it is the list's
+      name either way.
+
+    ``tag_list_name`` / ``imdb_list_name`` are the CURRENT names of the registry rows the
+    new rules must point at; the caller reads them from the database because the operator
+    may have renamed either. ``None`` means no such list exists, and that half converts to
+    no rule rather than to a rule naming nothing (rule 25).
+
+    Returns the converted body, or ``None`` when nothing is legacy-shaped. The caller
+    flags the conversion (``PolicyRepair.LISTS_MIGRATED``), which makes
+    ``repaired`` true, degrades the scan, and opens the editor on it as an unsaved draft:
+    a protection moved between surfaces is a policy edit nobody has saved yet (rule 105).
+    Must not raise, for the same reason every shim here must not.
+    """
+    if not has_legacy_list_protections(raw):
+        return None
+    assert isinstance(raw, dict)  # has_legacy_list_protections refused everything else
+    gates = raw.get("gates")
+    gate_rows = [g for g in gates if isinstance(g, dict)] if isinstance(gates, list) else []
+    legacy_gates = {
+        str(g.get("gate")): bool(g.get("enabled", True))
+        for g in gate_rows
+        if g.get("gate") in _LEGACY_LIST_GATES
+    }
+
+    body = copy.deepcopy(raw)
+    tags = body.pop("keep_tags", None)
+    body.pop("keep_tags_match", None)
+
+    # An explicit empty tag list is an operator who cleared it, and converts to no rule
+    # (rule 1). A body carrying no key at all ran on the shipped default tag, so it had a
+    # live protection to carry over.
+    had_tags = not isinstance(tags, list) or any(str(t).strip() for t in tags)
+
+    new_rules: list[dict[str, Any]] = []
+    if legacy_gates.get("whitelisted"):
+        # The gate covered every list the operator curates by hand -- the keep tags AND
+        # the Plex collection and watchlist definitions -- so each existing one gets its
+        # own rule, or an upgrade would quietly withdraw the collections' cover.
+        if had_tags and tag_list_name:
+            new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": tag_list_name})
+        for name in collection_list_names:
+            new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": name})
+    if legacy_gates.get("curated_list") and imdb_list_name:
+        new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": imdb_list_name})
+
+    def converts(gate_id: str) -> bool:
+        """Whether this gate row may leave the body. A disabled row always may, and an
+        enabled one only once its replacement rule exists: stripping an enabled gate whose
+        target list is missing would withdraw a live protection with nothing in its place,
+        so the row stays and ``build_gates`` refuses the scan loudly instead (rule 38)."""
+        if not legacy_gates.get(gate_id):
+            return True
+        if gate_id == "whitelisted":
+            return not had_tags or tag_list_name is not None
+        return imdb_list_name is not None
+
+    if isinstance(gates, list):
+        body["gates"] = [
+            g
+            for g in body["gates"]
+            if not (
+                isinstance(g, dict)
+                and g.get("gate") in _LEGACY_LIST_GATES
+                and converts(str(g.get("gate")))
+            )
+        ]
+    for row in body.get("protect_conditions") or []:
+        if isinstance(row, dict) and row.get("field") == "on_curated_list":
+            row["field"] = "on_list"
+
+    if new_rules:
+        rows = body.get("protect_conditions")
+        if not isinstance(rows, list):
+            rows = []
+        spelled = {
+            str(r.get("value", "")).strip().casefold()
+            for r in rows
+            if isinstance(r, dict) and r.get("field") == "on_list"
+        }
+        rows.extend(r for r in new_rules if str(r["value"]).strip().casefold() not in spelled)
+        body["protect_conditions"] = rows
+    return body
 
 
 def _protect_blocks_on_reach(cond: ConditionSpec) -> ReachSpan | None:
@@ -1371,7 +1677,7 @@ def inspect(
             # spelling of it (rule 144). Distinct labels joined, so a span that ever gains a
             # second field does not silently name one of them.
             field = "protect_conditions"
-            labels = _join_and(
+            labels = join_and(
                 list(dict.fromkeys(f'"{BY_KEY[c.field].label}"' for c in window_blockers))
             )
             many = len(window_blockers) > 1
@@ -1657,7 +1963,7 @@ def inspect(
         contributors, total = window_keeps + lifetime_keeps, combined_total
         scope = "Titles added before your watch history starts won't be flagged for removal."
     if contributors:
-        named = _join_and([f'"{k.name}"' for k in contributors])
+        named = join_and([f'"{k.name}"' for k in contributors])
         many = len(contributors) > 1
         rule_phrase = f"your keep rules {named} take" if many else f"your keep rule {named} takes"
         theirs = "their" if many else "its"
@@ -2064,14 +2370,29 @@ def inspect(
     return warnings
 
 
+#: The names of the two lists a fresh install is seeded with (``list_config``), spelled
+#: here because the default policies' keep rules below name them and the engine must not
+#: import the service layer. ``convert_list_protections`` also reads them, so an upgraded
+#: body's rules and a fresh install's point at the same rows.
+DEFAULT_TAG_LIST_NAME = "Titles you've tagged"
+DEFAULT_IMDB_LIST_NAME = "IMDb Top 250"
+
+#: The keep rules a fresh install starts with: the seeded lists keep their titles
+#: outright, the protection level the retired WHITELISTED and CURATED_LIST gates gave the
+#: same sources. Softening one to a lean, or removing it, is a per-list choice on Policy.
+DEFAULT_LIST_CONDITIONS: tuple[ConditionSpec, ...] = (
+    ConditionSpec(field="on_list", op=Op.EQ, value=DEFAULT_TAG_LIST_NAME),
+    ConditionSpec(field="on_list", op=Op.EQ, value=DEFAULT_IMDB_LIST_NAME),
+)
+
+
 DEFAULT_MOVIE_POLICY = PolicyBody(
     media_type="movie",
     condemn_at=70,
+    protect_conditions=DEFAULT_LIST_CONDITIONS,
     gates=(
-        GateSetting(gate=GateId.WHITELISTED),
         GateSetting(gate=GateId.STREAMING_NOW),
         GateSetting(gate=GateId.DATA_HORIZON),
-        GateSetting(gate=GateId.CURATED_LIST),
         # THE MOST IMPORTANT GATE. Nothing under three years dormant may be deleted at
         # all, whatever else it scores. The measured rewatch rate decays slowly after the
         # first year and its tail never reaches zero (docs/SIGNALS.md, "There is no
@@ -2130,6 +2451,7 @@ DEFAULT_TV_POLICY = PolicyBody(
     keep_last_seasons=2,
     keep_first_season=True,
     # The same protections as movies -- a TV season is kept for the same reasons a film is.
+    protect_conditions=DEFAULT_LIST_CONDITIONS,
     gates=DEFAULT_MOVIE_POLICY.gates,
     signals=(
         SignalSetting(signal=SignalId.UNWATCHED, weight=60, saturate_at=1825, floor=365),

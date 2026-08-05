@@ -465,6 +465,11 @@ export function ReapPlan({
                   <span className="muted">
                     {date(r.approved_at)}, {runState(r.state)}
                     {open && ", open above"}
+                    {/* The stored reason, under the state it explains, in the step table's
+                        `.step-why` box. Its only surface: the report panel is dry-run state
+                        and the reap sheet reads the in-memory status, so a reload leaves
+                        "stopped" and nothing else (#342). */}
+                    {r.aborted_reason && <span className="step-why">{r.aborted_reason}</span>}
                   </span>
                 </li>
               );

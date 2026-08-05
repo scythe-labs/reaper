@@ -102,14 +102,11 @@ the evenings to build it.
 
 A large share of this codebase was written with AI assistance. I direct that work, read
 what comes back, and decide what ships. The architecture, the safety model, and the
-standard for what is good enough here are mine. The engineering rules the project
-follows grew out of exactly this: they are the written-down result of reviewing that
-output and finding every way it went wrong.
+standard for what is good enough here are mine.
 
-You are trusting this program with files you cannot get back, so how it was made is your
-business. Safety is the top priority here, and the design decisions that come out of it
-are deliberate. If one of them is wrong, or could be better, reach out. I read what lands
-here and can answer for it, and a well-argued disagreement is welcome and is often right.
+You are trusting this program with files you cannot get back. Safety is the top priority here,
+and the design decisions that come out of it are deliberate. If one of them is wrong, or could
+be better, reach out. A well-argued disagreement is welcome.
 
 ## Contributing
 

@@ -246,7 +246,7 @@
 /* The name EDITS this instance and the ✕ FORGETS it: two different outcomes, flush against
    each other, so both have to reach --tap-min or a thumb aimed at one lands on the other. The
    same rule `.fchip-body` / `.fchip-x` states for the identical pill in the queue's filter bar,
-   and `.tag-chip button` for the keep-tag chips. All the chrome lives on the chip around these,
+   and `.tag-chip button` for the list modal's tag chips (34-lists.css). All the chrome lives on the chip around these,
    so they are bare hit areas: the control standard's box would draw a second border inside the
    pill. */
 .inst-chip .chip-edit,

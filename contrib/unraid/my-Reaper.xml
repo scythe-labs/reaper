@@ -2,21 +2,50 @@
 <!--
   SPDX-License-Identifier: AGPL-3.0-or-later
 
-  Unraid container template for the stable channel. Installed through Community
-  Applications (this repository is submitted there), or by hand: copy to the Unraid
-  server at /boot/config/plugins/dockerMan/templates-user/my-Reaper.xml and add
-  the container from Docker > Add Container.
+  Unraid container template. Installed through Community Applications (this
+  repository is submitted there), or by hand: copy to the Unraid server at
+  /boot/config/plugins/dockerMan/templates-user/my-Reaper.xml and add the
+  container from Docker > Add Container.
 
   The package is public, so the pull needs no login.
 
-  The :latest tag follows releases. The Reaper-Dev template beside this one follows
-  the dev branch for testers; the two run side by side, which is why that one
-  defaults to port 8421 and its own appdata folder.
+  One entry, two channels. Community Applications reads the <Branch> entries and
+  offers a "Choose A Branch To Install" table: a Default row that installs
+  <Repository> as written, then one row per <Branch>, each showing its <Tag>
+  beside its <TagDescription>. The selected tag REPLACES the one on <Repository>
+  rather than appending to it (include/exec.php builds `$masterRepository[0] . ":"
+  . $branch['Tag']`), so the channel is named once, here, as that element's tag.
+
+  The repository's own tag gets a <Branch> too. CA does not drop a branch for
+  matching it: the one branch exec.php skips is a <Branch> that spells <Tag>
+  twice, and 539 templates in the live feed list their repository's tag exactly
+  this way. Drop that row and the release channel keeps only CA's Default row,
+  whose text is hardcoded in include/helpers.php ("Install Using The Template's
+  Default Tag") and which no field in this file can describe.
+
+  Every element here is one CA reads. A plausible-looking invention is not inert:
+  <DefaultTagDescription> shipped in this file and rendered nowhere, because that
+  name appears in no CA source file. docs/LEARNINGS.md carries both measurements.
+
+  :latest and :dev are the only two tags that outlive a week in the registry
+  (.github/workflows/registry-retention.yml sweeps the rest), so they are the
+  only two an operator can be offered here.
+
+  <Registry> is a link a person clicks, not something the pull uses, so it points
+  at the package's GitHub page rather than at the registry host.
 -->
 <Container version="2">
   <Name>Reaper</Name>
   <Repository>ghcr.io/scythe-labs/reaper:latest</Repository>
-  <Registry>https://ghcr.io/scythe-labs/reaper</Registry>
+  <Registry>https://github.com/scythe-labs/reaper/pkgs/container/reaper</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Follows releases. Use this one.</TagDescription>
+  </Branch>
+  <Branch>
+    <Tag>dev</Tag>
+    <TagDescription>Follows daily development, for testing what is coming. Back up your data folder first: a dev build can upgrade the database past what a release build reads, so moving back needs that backup.</TagDescription>
+  </Branch>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>bash</Shell>
@@ -26,6 +55,8 @@
   <Overview>Reaper finds media nobody watches, explains why it thinks each item is expendable, and removes it safely through Sonarr and Radarr. It reads watch history from Tautulli and requests from Seerr, and it refreshes Plex when it is done.
 
 Deletion is off until you turn it on. Until then Reaper can only scan, score and explain, so you can run it for weeks and just read the results. It never touches your files directly: everything goes through Sonarr and Radarr, so this container needs no access to your media shares.
+
+Installing asks which channel you want. Releases are the steadier one. The dev channel follows daily development and changes often.
 
 Ownership of the data folder is handled for you. The container fixes it on start and then drops to the user set by PUID and PGID (default 99 and 100, Unraid's nobody:users), so you do not need to chown anything first.
 
@@ -45,8 +76,8 @@ Locked out? Open this container's console and run: reaper-admin reset-password -
   <DonateText/>
   <DonateLink/>
   <Requires/>
-  <Config Name="WebUI port" Target="8420" Default="8420" Mode="tcp" Description="The port you reach Reaper's web interface on." Type="Port" Display="always" Required="true" Mask="false">8420</Config>
-  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/reaper" Mode="rw" Description="Reaper's database, its encryption key, and the cached data it scans. Back this folder up. Its ownership is fixed automatically on start, so you do not need to chown it." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/reaper</Config>
+  <Config Name="WebUI port" Target="8420" Default="8420" Mode="tcp" Description="The port you reach Reaper's web interface on. Running a second copy beside this one? Give that one a different port here." Type="Port" Display="always" Required="true" Mask="false">8420</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/reaper" Mode="rw" Description="Reaper's database, its encryption key, and the cached data it scans. Back this folder up. Its ownership is fixed automatically on start, so you do not need to chown it. Running a second copy beside this one? Give that one its own folder here." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/reaper</Config>
   <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="The user id Reaper runs as. The container fixes the data folder to this user on start, then drops to it before opening the database. The default 99 is Unraid's nobody, so your appdata stays owned the usual way." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="The group id Reaper runs as, paired with PUID. The default 100 is Unraid's users group." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
   <Config Name="Allow deletion" Target="REAPER_DESTRUCTIVE_ACTIONS_ENABLED" Default="false" Mode="" Description="The starting state for deletion, used on the first run only. Leave it false. After the first run Reaper remembers your choice and this field is ignored: you turn deletion on in the web interface under Policy, which asks for your password. Set it true only if you want a fresh install to come up ready to delete." Type="Variable" Display="always" Required="false" Mask="false">false</Config>

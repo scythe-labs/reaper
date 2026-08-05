@@ -37,6 +37,7 @@ from typing import Any, NamedTuple
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from reaper.api.routes import (
@@ -46,11 +47,11 @@ from reaper.api.routes import (
     _policy_out,
     _to_body,
 )
-from reaper.api.schemas import GateSettingIn, PolicyIn, SignalSettingIn
+from reaper.api.schemas import ConditionIn, GateSettingIn, PolicyIn, SignalSettingIn
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import Candidate, Snapshot, WhitelistEntry
+from reaper.db.models import Candidate, ListConfig, Snapshot, WhitelistEntry
 from reaper.engine import facts_codec
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Absent, Known
@@ -67,12 +68,15 @@ from reaper.engine.policy import (
 from reaper.main import create_app
 
 from ._auth import login
+from ._lists import seeded_fingerprint
 
 #: The draft policy every simulation below is run under. Its scoring hash has to be the one
 #: the fixture snapshot was "scored" with, or the route refuses to re-decide at all -- so
-#: the gates and signals here and in ``_fixture_scoring_hash`` are the same list.
+#: the gates and signals here and in ``_fixture_scoring_hash`` are the same list. The
+#: ``whitelisted`` gate is retired (list membership protects through ``on_list`` keep rules
+#: now), so it appears in stored EXPLANATIONS below but never in a draft: the save boundary
+#: refuses it, which ``test_a_retired_gate_is_refused_at_the_save_boundary`` pins.
 GATES: list[dict[str, Any]] = [
-    {"gate": "whitelisted"},
     {"gate": "min_dormancy", "threshold": 1095},
     {"gate": "rating_floor", "threshold": 75},
 ]
@@ -251,6 +255,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -260,6 +267,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                 DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
             ),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=len(ROWS),
             degraded=False,
@@ -302,6 +310,40 @@ def _simulate(client: TestClient, condemn_at: int = 70) -> dict[str, Any]:
     assert response.status_code == 200, response.text
     body: dict[str, Any] = response.json()
     return body
+
+
+class TestBothTiersSendTheChangedCount:
+    """#488: the panel must never have to know which tier answered.
+
+    On the threshold path the count cannot exceed the two deltas: a protection wins at any
+    threshold and a hand override wins at any threshold, so the only lane move left is across
+    the threshold itself. That is precisely why the number is SENT rather than worked out in
+    the browser from the deltas -- the arithmetic that holds here is wrong on the replay path
+    (``TestTheFrozenFactsReplay``), and a browser cannot tell which one it is reading.
+
+    Both expectations are read off ``ROWS``: at 70 the readable unblocked row (``radarr:1:4``)
+    condemns while the stored-condemn row whose explanation will not parse gives its reap up,
+    so one row moves each way. At 99 nothing clears the threshold, so the readable stored
+    condemn (``radarr:1:9``) gives its up as well and both moves are in the same direction.
+    """
+
+    def test_the_threshold_path_counts_both_directions(self, client: TestClient) -> None:
+        result = _simulate(client, condemn_at=70)
+
+        assert result["exact"] is True
+        assert result["changed_titles"] == 2
+        assert result["newly_condemned"] == 1
+        assert result["no_longer_condemned"] == 1
+
+    def test_raising_the_threshold_past_every_score_moves_rows_one_way(
+        self, client: TestClient
+    ) -> None:
+        result = _simulate(client, condemn_at=99)
+
+        assert result["exact"] is True
+        assert result["changed_titles"] == 2
+        assert result["newly_condemned"] == 0
+        assert result["no_longer_condemned"] == 2
 
 
 class TestTheSimulationSurvivesABrokenRow:
@@ -454,11 +496,19 @@ def test_the_draft_policy_matches_the_fixture(client: TestClient) -> None:
 def test_the_fixture_gates_and_signals_are_the_wire_shapes() -> None:
     """The two lists are dicts on the wire, so a typo in one is a 422, not a bad hash."""
     assert [GateSettingIn.model_validate(g).gate for g in GATES] == [
-        "whitelisted",
         "min_dormancy",
         "rating_floor",
     ]
     assert [SignalSettingIn.model_validate(s).weight for s in SIGNALS] == [100]
+
+
+def test_a_retired_gate_is_refused_at_the_save_boundary() -> None:
+    """A draft naming ``whitelisted`` is operator input asking for a protection that no
+    longer exists as a gate, so the boundary says so. A STORED body naming it converts on
+    load instead (``policy.convert_list_protections``); refusing the stored copy would take
+    the install offline, and dropping the draft silently would hide the typo."""
+    with pytest.raises(ValueError, match="whitelisted"):
+        GateSettingIn.model_validate({"gate": "whitelisted"})
 
 
 # ---------------------------------------------------------------------------
@@ -478,12 +528,16 @@ REPLAY_GATES: list[dict[str, Any]] = [*GATES, {"gate": "streaming_now"}]
 
 #: The draft the replay fixture is built for: the wire payload, the domain body it becomes,
 #: and the evidence hash that body would gather under. Built through the route's own
-#: ``_to_body`` so the fixture cannot drift from what the request produces.
+#: ``_to_body`` so the fixture cannot drift from what the request produces. The keep list
+#: protects through the operator's own rule now -- the ``whitelisted`` FIELD, since the gate
+#: of that name is retired -- so the draft carries the rule the fixture's keep-list row
+#: needs to stay held.
 REPLAY_PAYLOAD = PolicyIn(
     condemn_at=70,
     coverage_floor_bp=0,
     gates=[GateSettingIn.model_validate(g) for g in REPLAY_GATES],
     signals=[SignalSettingIn.model_validate(s) for s in SIGNALS],
+    protect_conditions=[ConditionIn(field="whitelisted", op="eq", value=True)],
 )
 REPLAY_BODY = _to_body(REPLAY_PAYLOAD)
 
@@ -524,6 +578,9 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     rows = {
@@ -542,6 +599,7 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
             evidence_hash=combine_hashes(
                 REPLAY_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
             ),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=len(rows) + 2,
             degraded=False,
@@ -655,8 +713,8 @@ class TestTheFrozenFactsReplay:
         assert result["condemned"] == 2
         assert result["reclaimable_bytes"] == 2 * SIZE
         assert result["protected_by"] == [
+            {"gate": "custom", "count": 1},
             {"gate": "streaming_now", "count": 1},
-            {"gate": "whitelisted", "count": 1},
         ]
 
     def test_a_hand_reap_the_engine_cannot_honor_is_not_previewed_as_a_deletion(
@@ -679,6 +737,201 @@ class TestTheFrozenFactsReplay:
         assert result["condemned"] == 2  # the dormant row and the honored hand reap
         assert result["protected"] == 2  # the keep-list row AND the refused hand reap
         assert result["abstained"] == 0
+
+    def test_it_counts_the_lane_moves_neither_delta_can_see(
+        self, replay_client: TestClient
+    ) -> None:
+        """#488: ``changed_titles`` is a superset of the two deltas, and the gap is the point.
+
+        Read off the fixture rather than off the branches: two rows land in a different lane
+        than the one they are stored in. ``radarr:1:1`` goes abstain -> condemn, which crosses
+        the threshold and so appears in ``newly_condemned``. ``radarr:1:2`` goes abstain ->
+        protect on the keep-list fact, and **no delta on the panel counts that move** -- the
+        rows beside them report ``protected`` and ``abstained`` as absolute totals with no
+        before to read them against. The other two rows carry hand overrides, which pin a lane
+        at any threshold, so they cannot move.
+
+        So the two deltas describe this draft as "+1 / -0" while it moves two titles, and the
+        superset is what separates that screen from one where nothing happened at all.
+        """
+        result = self._replay(replay_client)
+        assert result["changed_titles"] == 2
+        assert result["newly_condemned"] == 1
+        assert result["no_longer_condemned"] == 0
+
+
+@pytest.fixture
+def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A snapshot of stored condemns, two of which the draft's protections now keep.
+
+    The scenario an operator reported: they add an outright keep, most of the removal list
+    leaves it, and both deltas read zero. Every row here is stored ``condemn`` with no hand
+    override, so ``was`` is condemn for all three and the only thing that moves them is the
+    draft's own protections firing on the frozen facts.
+    """
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
+
+    now = utcnow()
+    # Two ways out of the removal list and one row that stays on it, so the count cannot come
+    # out right by counting a single protection, or by counting every row.
+    rows = {
+        "radarr:1:1": _facts(is_whitelisted=Known(value=True, source="test")),
+        "radarr:1:2": _facts(is_streaming_now=Known(value=True, source="test")),
+        "radarr:1:3": _facts(),
+    }
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=combine_hashes(
+                DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
+            ),
+            scoring_hash="b" * 64,
+            evidence_hash=combine_hashes(
+                REPLAY_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
+            ),
+            list_config_hash=list_hash,
+            horizon_at=now,
+            item_count=len(rows),
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        for index, (media_key, facts) in enumerate(rows.items(), start=1):
+            session.add(
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key=media_key,
+                    title=f"Example Movie {index}",
+                    media_type="movie",
+                    size_bytes=SIZE,
+                    verdict="condemn",
+                    score=95,
+                    coverage_bp=10_000,
+                    explanation_json=_healthy(),
+                    facts_json=json.dumps(facts_codec.facts_to_dict(facts)),
+                    created_at=now,
+                )
+            )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestATitleAProtectionRescuesLeavesTheRemovalList:
+    """A title going condemn -> protect is one the operator no longer has to review.
+
+    ``no_longer_condemned`` was counted in the replay's abstain arm alone, so it meant
+    condemn -> **abstain** and nothing else. A protection edit is the one that takes a title
+    straight from condemn to protect, which is also the edit the delta exists to describe, so
+    the panel answered an outright keep rule with -0 and a compare line that put the draft's
+    own count on both sides of a sentence built to contrast it.
+
+    Expectations are read off the fixture: ``radarr:1:1`` is kept by the keep list and
+    ``radarr:1:2`` by the streaming stop, both from stored condemn; ``radarr:1:3`` has nothing
+    to keep it and stays condemned.
+    """
+
+    def _replay(self, client: TestClient) -> dict[str, Any]:
+        response = client.post("/api/policy/simulate", json=REPLAY_PAYLOAD.model_dump())
+        assert response.status_code == 200, response.text
+        body: dict[str, Any] = response.json()
+        assert body["exact"] is True, body.get("stale_reason")
+        return body
+
+    def test_the_rescued_titles_land_in_the_protected_lane(
+        self, keep_rule_client: TestClient
+    ) -> None:
+        """The premise. Without this the delta assertion could pass on rows that never moved."""
+        result = self._replay(keep_rule_client)
+        assert result["condemned"] == 1
+        assert result["protected"] == 2
+        assert result["abstained"] == 0
+
+    def test_both_are_counted_as_no_longer_condemned(self, keep_rule_client: TestClient) -> None:
+        result = self._replay(keep_rule_client)
+        assert result["no_longer_condemned"] == 2
+        assert result["newly_condemned"] == 0
+        assert result["changed_titles"] == 2
+
+    def test_the_saved_policy_count_is_sent_rather_than_derived(
+        self, keep_rule_client: TestClient
+    ) -> None:
+        """Rule 144: the panel is told what the saved policy flags, never left to rebuild it.
+
+        The identity is asserted alongside the value because the browser used to depend on it
+        and could not check it: a delta that misses a direction breaks the derivation while
+        every number it is built from still reads as a plausible count.
+        """
+        result = self._replay(keep_rule_client)
+        assert result["condemned_before"] == 3
+        assert result["condemned_before"] == (
+            result["condemned"] - result["newly_condemned"] + result["no_longer_condemned"]
+        )
+
+
+class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
+    """The edit an operator makes most often on this page, answered off the last scan.
+
+    Toggling a protection used to fall to the refusal: the whole ``gates`` list sat in the
+    evidence hash, so unticking a box blanked every number and asked for a scan, while the
+    rating *bar* inside that same box previewed instantly. The frozen Facts were always good
+    enough for both -- a gate reads them, it does not decide what gets gathered.
+    """
+
+    @staticmethod
+    def _draft_with_dormancy_off() -> dict[str, Any]:
+        gates = [dict(g) for g in REPLAY_GATES]
+        for gate in gates:
+            if gate["gate"] == "min_dormancy":
+                gate["enabled"] = False
+        payload = REPLAY_PAYLOAD.model_copy(
+            update={"gates": [GateSettingIn.model_validate(g) for g in gates]}
+        )
+        return payload.model_dump()  # type: ignore[no-any-return]
+
+    def test_the_panel_answers_instead_of_asking_for_a_scan(
+        self, replay_client: TestClient
+    ) -> None:
+        response = replay_client.post("/api/policy/simulate", json=self._draft_with_dormancy_off())
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["exact"] is True, body.get("stale_reason")
+        # An answer, not the refusal's all-zero shape.
+        assert sum(int(n) for n in body["histogram"]) == 4
+
+    def test_the_draft_still_needs_a_scan_when_it_moves_the_popularity_window(
+        self, replay_client: TestClient
+    ) -> None:
+        """The exclusion that survives, from the route rather than from the hash alone.
+
+        The watcher counts on those rows were counted over one span; a draft asking about a
+        different one gets the honest blank, because no arithmetic over the frozen numbers
+        can answer it.
+        """
+        gates = [
+            *(dict(g) for g in REPLAY_GATES),
+            {"gate": "server_popularity", "threshold": 3, "window_days": 30},
+        ]
+        payload = REPLAY_PAYLOAD.model_copy(
+            update={"gates": [GateSettingIn.model_validate(g) for g in gates]}
+        )
+
+        response = replay_client.post("/api/policy/simulate", json=payload.model_dump())
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["exact"] is False
+        assert body["condemned"] == 0
+        assert "scan" in body["stale_reason"].lower()
 
 
 class TestTheWireRoundTripPreservesBothHashes:
@@ -723,6 +976,9 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -737,6 +993,7 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
             evidence_hash=combine_hashes(
                 STORED_OLD_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
             ),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=1,
             degraded=False,
@@ -854,6 +1111,9 @@ def _reach_client(
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     # Encoded by production's own codec rather than transcribed (rule 119); only the
@@ -875,6 +1135,7 @@ def _reach_client(
             evidence_hash=combine_hashes(
                 REACH_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
             ),
+            list_config_hash=list_hash,
             horizon_at=now - timedelta(days=horizon_days),
             item_count=1,
             degraded=False,
@@ -940,3 +1201,271 @@ class TestTheReplayKnowsHowFarTheStoredHistoryReached:
         evidence against something the scan did not see, so the row's own value wins."""
         for client in _reach_client(tmp_path, horizon_days=800, frozen_reach=90.0):
             assert self._condemned(client) == 0
+
+
+# ---------------------------------------------------------------------------
+# What spared a hand-spared row
+# ---------------------------------------------------------------------------
+
+
+#: Rows for the attribution fixture: a hand spare over a row that ALSO cleared a protection.
+#: The middle row is the double-count case -- spared by hand and on the keep list, which is
+#: one gate reported twice, once from the stored explanation and once from the hand spare.
+SPARED_ROWS: tuple[tuple[str, str, str], ...] = (
+    (
+        "radarr:9:1",
+        _healthy(
+            protections_fired=[
+                {"gate": "rating_floor", "detail": "well rated: 8.0 on IMDb from 250,000 votes"}
+            ]
+        ),
+        "the rating floor would have kept it on its own, and the owner spared it as well",
+    ),
+    (
+        "radarr:9:2",
+        _healthy(
+            protections_fired=[{"gate": "whitelisted", "detail": "on your keep list, never reaped"}]
+        ),
+        "on the keep list AND spared by hand: one gate, reported by two routes",
+    ),
+)
+
+
+@pytest.fixture
+def spared_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A snapshot whose every row carries a hand spare, on the stored-score tier."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
+
+    now = utcnow()
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=combine_hashes(
+                DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
+            ),
+            scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
+            horizon_at=now,
+            item_count=len(SPARED_ROWS),
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        for index, (media_key, explanation, _why) in enumerate(SPARED_ROWS, start=1):
+            session.add(
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key=media_key,
+                    title=f"Example Movie {index}",
+                    media_type="movie",
+                    size_bytes=SIZE,
+                    verdict="protect",
+                    score=95,
+                    coverage_bp=10_000,
+                    explanation_json=explanation,
+                    created_at=now,
+                )
+            )
+            session.add(
+                WhitelistEntry(
+                    media_key=media_key,
+                    title=f"Example Movie {index}",
+                    decision="spare",
+                    created_at=now,
+                )
+            )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestAHandSpareIsOneProtectionAmongTheRest:
+    """The spared-by tally credits every protection that fired, not the hand spare alone.
+
+    The stored-score tier used to answer a hand-spared row with ``["whitelisted"]`` and throw
+    the row's other protections away, while the replay tier counts them all -- so making ANY
+    scoring edit, which is what moves the route from the first tier to the second, jumped the
+    "why titles were spared" list by whatever those discarded protections came to, beside a
+    headline count and byte total that correctly did not move at all. An edit appears to
+    change which protections fired, when a graded keep cannot change that: it is subtracted
+    after normalization, and the verdict reads protection before it ever reads the score.
+
+    The two tiers are separate fixtures because they need different stored hashes, so this
+    pins the tier that was wrong against the answer the other one already gave.
+    """
+
+    def _tally(self, client: TestClient) -> dict[str, int]:
+        response = client.post(
+            "/api/policy/simulate",
+            json={
+                "condemn_at": 70,
+                "coverage_floor_bp": 0,
+                "gates": GATES,
+                "signals": SIGNALS,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body: dict[str, Any] = response.json()
+        assert body["exact"] is True, body.get("stale_reason")
+        return {g["gate"]: g["count"] for g in body["protected_by"]}
+
+    def test_the_other_protection_on_a_spared_row_is_still_named(
+        self, spared_client: TestClient
+    ) -> None:
+        """The bug, at its plainest. Both rows are spared by hand, so the hand-spare id is
+        owed 2; the first row also cleared the rating floor, which used to vanish from the
+        tally entirely because the hand spare was counted in its place.
+
+        The hand spare tallies under its OWN id, not under ``whitelisted``. It rode in on the
+        retired gate's id, and the simulator names a tally row by that id's copy -- so on a
+        fresh install, where no gate emits ``whitelisted`` at all, every hand spare was
+        reported to the operator as membership of a list (rule 144).
+
+        The second row's stored ``whitelisted`` explanation is now its own entry beside the
+        hand spare, where the two used to collapse into one. That is the split doing its job:
+        the list is still holding that title, and the operator also spared it by hand.
+        """
+        assert self._tally(spared_client) == {
+            "hand_spare": 2,
+            "rating_floor": 1,
+            "whitelisted": 1,
+        }
+
+    def test_a_row_spared_by_hand_and_on_the_keep_list_counts_once(
+        self, spared_client: TestClient
+    ) -> None:
+        """A gate spares a row once. The second row reports its stored ``whitelisted``
+        explanation and is also spared by hand, and a tally that added both would claim more
+        spared titles than the fixture has rows -- so the fix that restores the other
+        protections must not restore this one twice.
+
+        The two are separate rows now, which is the point: one says what a list is holding,
+        the other says what the operator did by hand.
+        """
+        tally = self._tally(spared_client)
+        assert tally["hand_spare"] == len(SPARED_ROWS)
+
+
+class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
+    """The protection lists are not policy, and every tier reads evidence derived from them.
+
+    While the keep tags lived on the policy body they sat inside ``PolicyBody.evidence_hash``,
+    so retagging them made the panel ask for a scan. Moving membership into gathered evidence
+    (``Facts.on_lists``) moved them out from under that hash and put nothing back: an operator
+    could retag, repoint or rename a list and the panel went on reporting the membership the
+    scan froze, labeled exact (#512). ``Snapshot.list_config_hash`` is what put it back.
+
+    **The operator action here is a tag edit that leaves the name alone**, and the choice is
+    what makes these proofs rather than coincidences. Adding a list attaches a keep rule and
+    renaming one rewrites the rules that spell it (``api.lists``), so both edit the stored
+    policies -- and the route mixes the OTHER media type's stored policy into every hash it
+    compares (``_combined``), so either action refuses through the policy hash whether this
+    interlock exists or not. Verified by deleting the interlock: the add-a-list and rename
+    versions of these tests stayed green, which is rule 118's undiscriminating test exactly.
+    Changing only ``config`` touches no policy, so the fingerprint is the single variable.
+
+    Both tiers are driven, because the refusal sits above the split and each goes stale by its
+    own route -- the replay through the frozen fact, the threshold path through the stored
+    verdict that fact produced. Gating tier 2 alone would leave the identical wrong number
+    reachable by moving a threshold, which is the edit this page exists for (rule 72).
+    """
+
+    @staticmethod
+    def _retag_a_list(client: TestClient) -> None:
+        """Change what one list matches, and nothing else. No policy is touched."""
+        listed = client.get("/api/lists/configured").json()
+        tag_list = next((row for row in listed if row["source"] == "arr_tag"), None)
+        assert tag_list is not None, "the fixture's registry has no tag list to retag"
+
+        patched = client.patch(
+            f"/api/lists/configured/{tag_list['id']}",
+            json={"config": {"tags": ["a-different-tag"], "match": "any"}},
+        )
+        assert patched.status_code == 200, patched.text
+
+    def test_the_threshold_path_refuses_once_the_lists_move(self, client: TestClient) -> None:
+        before = _simulate(client, 40)
+        assert before["exact"] is True, before.get("stale_reason")
+
+        self._retag_a_list(client)
+
+        after = _simulate(client, 40)
+        assert after["exact"] is False, "previewed a threshold against pre-edit list membership"
+        assert after["condemned"] == 0
+        assert "scan" in after["stale_reason"].lower()
+
+    def test_the_replay_refuses_once_the_lists_move(self, replay_client: TestClient) -> None:
+        draft = REPLAY_PAYLOAD.model_dump()
+        before = replay_client.post("/api/policy/simulate", json=draft).json()
+        assert before["exact"] is True, before.get("stale_reason")
+
+        self._retag_a_list(replay_client)
+
+        after = replay_client.post("/api/policy/simulate", json=draft).json()
+        assert after["exact"] is False, "replayed a scoring edit against pre-edit list membership"
+        assert after["condemned"] == 0
+        assert "scan" in after["stale_reason"].lower()
+
+    def test_a_snapshot_that_never_recorded_its_lists_refuses(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The pre-upgrade shape: ``None`` reads as unknown, never as "no lists" (rule 104).
+
+        Driven by clearing the recorded value rather than by building a second fixture, so
+        what is pinned is the NULL itself and not some other difference between two
+        snapshots. ``tmp_path`` is the one the ``client`` fixture built this database in --
+        pytest hands the same directory to a fixture and the test that asks for it.
+        """
+        assert _simulate(client, 40)["exact"] is True
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            session.execute(sa_update(Snapshot).values(list_config_hash=None))
+            session.commit()
+        engine.dispose()
+
+        after = _simulate(client, 40)
+        assert after["exact"] is False, "answered off a snapshot that cannot say its lists"
+        assert "scan" in after["stale_reason"].lower()
+
+    def test_two_unknowns_are_not_a_match(self, client: TestClient, tmp_path: Path) -> None:
+        """Both sides ``None`` is the pairing an equality test reads as agreement.
+
+        ``None`` means "unknown" on each side and they are different unknowns: the snapshot's
+        is a scan that degraded for a registry it could not read, and the live one is a
+        registry that cannot be read right now. Comparing them answered "exact" off a scan
+        that had itself given up on the lists, which is the one case where the frozen
+        membership is least trustworthy (rules 93, 104).
+
+        Both sides are driven to ``None`` at once, because either alone already refuses
+        through the inequality and would leave this green with the fix removed (rule 118).
+        """
+        assert _simulate(client, 40)["exact"] is True
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            session.execute(sa_update(Snapshot).values(list_config_hash=None))
+            # A body that will not parse makes `definitions(strict=True)` raise, which is
+            # what `current_fingerprint` answers `None` to. The row stays in the table, so
+            # this is the live registry being unreadable rather than being empty.
+            session.execute(
+                sa_update(ListConfig)
+                .where(ListConfig.source == "arr_tag")
+                .values(config_json="{not json")
+            )
+            session.commit()
+        engine.dispose()
+
+        after = _simulate(client, 40)
+        assert after["exact"] is False, "previewed as exact with neither side able to say"
+        assert "scan" in after["stale_reason"].lower()

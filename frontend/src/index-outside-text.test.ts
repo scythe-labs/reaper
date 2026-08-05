@@ -53,6 +53,9 @@ type Site = {
   /** Set when this site deliberately does NOT wrap. The string is the reason, and the reason
    *  is what the field is for: an exception nobody wrote down reads as an omission. */
   exempt?: string;
+  /** Set when the break opportunity is granted on a flex or grid CONTAINER rather than on the
+   *  element holding the text. The string says why no sibling in that row is hurt by it. */
+  onAFlexRow?: string;
 };
 
 // Every element known to render text from outside Reaper. Grouped by where the fix came from, so
@@ -216,8 +219,8 @@ const SITES: Site[] = [
   },
   {
     what: "a simulated media title",
-    selectors: [".sim-examples li"],
-    classInTsx: "sim-examples",
+    selectors: [".sim-example-title"],
+    classInTsx: "sim-example-title",
     seenIn: ["components/PolicySimulator.tsx"],
   },
   {
@@ -225,12 +228,16 @@ const SITES: Site[] = [
     selectors: [".lib-card"],
     classInTsx: "lib-card",
     seenIn: ["components/PlexPanel.tsx"],
+    onAFlexRow: "the name's only sibling is the Switch, which holds a size of its own",
   },
   {
     what: "the scan's live line, which names the library or path it is reading right now",
     selectors: [".jobrow-run"],
     classInTsx: "jobrow-run",
     seenIn: ["components/JobStatus.tsx"],
+    onAFlexRow:
+      "the line is a bare text node beside the spinner, so there is no element here to grant " +
+      "it on, and the spinner carries no text to break",
   },
 
   // ---- #220: the five that needed a layout decision ---------------------------------------
@@ -268,6 +275,62 @@ const SITES: Site[] = [
       "the row height wins: wrapping grew the row taller when the list narrowed to seat the " +
       "open why panel, shifting every card below it. Unlike .panel-season-name there is no " +
       "branch to split, and truncating instead is what rule 139 forbids outright. #220",
+  },
+
+  // ---- Settings, Lists (#475) ------------------------------------------------------------
+  // A whole screen of outside text arrived and registered none of it. Two of these were
+  // genuinely missed rather than merely unregistered: `.jobrow-sched` and `.jobrow-desc` had
+  // no break opportunity at all, and the stylesheet comment beside them named "a Plex
+  // collection's name" as a value it was protecting while granting the wrap to `.list-name`,
+  // which is the operator's own words.
+  {
+    what:
+      "the list's source line: a Plex collection and library name, or a pasted IMDb list id " +
+      "(`sourceHint`). Shared with the Jobs tab's rows",
+    selectors: [".jobrow-sched"],
+    classInTsx: "jobrow-sched",
+    seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
+  },
+  {
+    what:
+      "the row's detail line, which names the Sonarr and Radarr instances in the worst state " +
+      "and carries a service's own refusal. Shared with the Jobs tab's rows",
+    selectors: [".jobrow-desc"],
+    classInTsx: "jobrow-desc",
+    seenIn: ["components/ListsPanel.tsx", "components/Settings.tsx"],
+  },
+  {
+    what: "the list's name, which is the operator's own but may be pasted from anywhere",
+    selectors: [".list-name"],
+    classInTsx: "list-name",
+    seenIn: ["components/ListsPanel.tsx"],
+  },
+  {
+    what: "the upstream refusal from the last check of this list",
+    selectors: [".list-error"],
+    classInTsx: "list-error",
+    seenIn: ["components/ListsPanel.tsx"],
+  },
+  {
+    what: "a tag as it is spelled in Sonarr or Radarr, with its count",
+    selectors: [".tag-pill"],
+    classInTsx: "tag-pill",
+    seenIn: ["components/ListsPanel.tsx"],
+  },
+  {
+    what: "a Sonarr or Radarr instance's display name, in the per-server fold-out",
+    selectors: [".server-grid .srv"],
+    classInTsx: "srv",
+    seenIn: ["components/ListsPanel.tsx"],
+  },
+  {
+    what: "a tag chip in the list editor, spelled on somebody else's keyboard",
+    selectors: [".tag-chip"],
+    classInTsx: "tag-chip",
+    seenIn: ["components/TagsEditor.tsx"],
+    onAFlexRow:
+      "the chip's only sibling to the text is its remove button, whose whole content is one " +
+      "character, so there is nothing there a break opportunity can act on",
   },
 ];
 
@@ -419,6 +482,34 @@ describe("the stylesheet: text the operator did not choose", () => {
     expect(undone).toEqual([]);
   });
 
+  it("grants it on the text, not on the flex row around the text", () => {
+    const misplaced: string[] = [];
+    const stale: string[] = [];
+    for (const site of SITES) {
+      const { grantedAt } = resolve(site);
+      if (grantedAt === null) continue;
+      const block = RULES.find((r) => r.at === grantedAt) as Rule;
+      const display = declaredValue(block.body, "display") ?? "";
+      const isRow = /flex|grid/.test(display);
+      if (isRow && !site.onAFlexRow) {
+        misplaced.push(
+          `${named(site)} -- the break opportunity at ${siteOf(grantedAt)} is on a ` +
+            `\`display: ${display}\` container, so every child inherits it. Move it to the ` +
+            `element holding the text, or say here why no sibling is hurt`,
+        );
+      }
+      if (!isRow && site.onAFlexRow) {
+        stale.push(`${named(site)} is not a flex row now -- drop its \`onAFlexRow\` reason`);
+      }
+    }
+    // `anywhere` counts its break opportunities in min-content sizing, unlike `break-word`, so a
+    // flex item that inherits it has an automatic minimum of one character and the row is free to
+    // squeeze it to that. The simulator's example list is what this cost: the grant sat on the
+    // row, and a title long enough to wrap broke the score beside it into a 6 above a 4.
+    expect(misplaced).toEqual([]);
+    expect(stale).toEqual([]);
+  });
+
   it("keeps every recorded exception an exception", () => {
     const stale: string[] = [];
     for (const site of SITES.filter((s) => s.exempt)) {
@@ -449,19 +540,23 @@ describe("the stylesheet: text the operator did not choose", () => {
     // Rule 145: a flag-shaped assertion cannot tell a member that complies from one that fell out
     // of the walk, so the size of the walk is pinned by hand. Reconciled against the table above:
     // 10 sites that already carried the fix, 11 from #219, 5 from #220 (one of them exempt),
-    // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for), and `.pl-echo` from
-    // #306, the wrapping restatement that carries the value the exempt control cannot.
-    expect(SITES.length).toBe(28);
+    // `.pl-select` from #250 (exempt: the shape rule 139 has no remedy for), `.pl-echo` from
+    // #306, the wrapping restatement that carries the value the exempt control cannot, and 7
+    // from Settings, Lists (#475) -- a screen that arrived carrying a whole population of
+    // outside text and registered none of it, two of them wrapping nowhere at all.
+    expect(SITES.length).toBe(35);
     expect(SITES.filter((s) => s.exempt).length).toBe(2);
-    // And the blocks those 28 sites actually resolve to. Twenty-three sites resolve to one block
+    // And the blocks those sites actually resolve to. Twenty-three of the original sites
+    // resolve to one block
     // each; the other five are `.about-kv dd` (its own, plus a margin under 560px), the requested
     // chip (`.chip`, its own, and the rule it shares with `.lib-chip`), `.lib-chip` (its own and
     // that shared rule again), the unnumbered season (the base and the modifier), and `.pl-root`
     // (its own, plus the stacked-grid margin under 640px) -- and `.pl-select`, which is three:
     // the control standard every `.field-sm` box rides, its own width rule, and the unset tint.
+    // The seven Settings, Lists rows resolve to one block each.
     // If this moves, a selector joined or left a row -- check it was meant to, then update it.
     const blocks = SITES.reduce((n, s) => n + matchesOf(s).length, 0);
-    expect(blocks).toBe(36);
+    expect(blocks).toBe(43);
   });
 });
 

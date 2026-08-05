@@ -255,7 +255,12 @@ describe("the protections tables", () => {
   it.each(tables.map((t) => [t.docId, t.table] as const))(
     "%s lists every protection, and only real ones",
     (docId, table) => {
-      const known = Object.values(GATE_META).map((m) => m.label);
+      // A retired gate keeps its copy so a stored explanation still reads in plain language,
+      // but it is not a protection that ships, so a table listing one would be rule 25's
+      // failure in the other direction.
+      const known = Object.values(GATE_META)
+        .filter((m) => !m.retired)
+        .map((m) => m.label);
       const listed = table.rows.map((r) => r[0] ?? "");
 
       expect(

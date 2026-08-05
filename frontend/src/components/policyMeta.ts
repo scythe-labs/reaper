@@ -15,6 +15,11 @@ export type GateMeta = {
   help: string;
   unit?: "days" | "people";
   window?: { label: string; help: string };
+  /** No switch a policy can carry sits behind this id -- either a retired gate, or a
+   *  pseudo-id the API tallies under (`hand_spare`) -- but the server still emits it, in
+   *  stored explanations and in the simulator's spared-by counts, so its copy has to stay
+   *  readable. The docs' protections-table guard excludes these: they do not ship today. */
+  retired?: boolean;
 };
 
 export const GATE_META: Record<string, GateMeta> = {
@@ -40,13 +45,38 @@ export const GATE_META: Record<string, GateMeta> = {
     label: "Never touch something playing right now",
     help: "Re-checked in the seconds before any removal, not just at scan time.",
   },
+  // Both gates are RETIRED as switches -- every list now protects through an `on_list` keep
+  // rule, and the loader converts a stored body still carrying either
+  // (`engine/policy.py convert_list_protections`). Their copy stays, because the ids did not
+  // stop being emitted: any upgraded install has stored explanations carrying both. Deleting
+  // the entries sent those through `titleCase` and printed "Whitelisted" and "Curated List"
+  // at the operator (rule 21). The backend's own `_kept_phrase` kept its two for exactly this
+  // reason; this is its twin (rules 64, 72). Rule 66's fallback is for an id the browser has
+  // never heard of, not one whose copy was removed while the server still sends it.
+  //
+  // Each label says what THAT gate meant, taken from the field it read. An earlier pass took
+  // the two labels from `engine/fields.py` in source order and landed them on the wrong ids,
+  // so a title kept by the IMDb Top 250 -- the one list the operator demonstrably did not
+  // curate -- reported "On a list you curate yourself" (rule 21).
   whitelisted: {
-    label: "Spare titles you've tagged",
-    help: "A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scores. (A ‘Never Reap’ Plex collection is honored too.)",
+    label: "On a list you curate yourself",
+    help: "Kept because it is on a tag list, a Plex collection, or your watchlist.",
+    retired: true,
   },
   curated_list: {
-    label: "Honor protected lists",
-    help: "Right now this is the IMDb Top 250. Anything on it is kept.",
+    label: "On a protected list",
+    help: "Kept because it is on a ready-made list Reaper syncs, like the IMDb Top 250.",
+    retired: true,
+  },
+  // Not a gate: `api/routes.py` gives a hand spare its own id when it tallies what spared a
+  // title, so the simulator names it as the hand spare it is. It rode in on `whitelisted`
+  // once, which on a fresh install -- where no gate emits that id at all -- made "Why titles
+  // were spared" report every hand spare as list membership, and an operator reading that
+  // can soften a list's keep rule believing it covers them (rule 144).
+  hand_spare: {
+    label: "Spared by hand",
+    help: "You spared these titles yourself, so the scan left them alone.",
+    retired: true,
   },
   data_horizon: {
     // Was "Don't judge what predates your history", promising an outcome this switch does

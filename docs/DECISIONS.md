@@ -144,7 +144,19 @@ row above: both are overrulable now, so the encoding decides what the panel says
 may do (rule 143). Only the blanket hold carries the flag; a season an actually-visible viewer
 holds stays a definite keep. `season_scan.gather`'s own `in_progress_hold_days` default moved 0 →
 180 to match the policy's, since 0 is a value no shipped policy has and every test omitting it was
-exercising that unbounded claim (rule 141). Below that the count is a *lower bound*, so an outcome
+exercising that unbounded claim (rule 141). **There are three causes now, not one**, and they
+share the encoding above because they are one question with three answers missing: the reach
+(`progress_established`), a season whose plays stopped being readable (`progress_unreadable`,
+`watch_evidence`), and a season with no Plex rating key at all this scan
+(`progress_seasons_unmatched`, **#472 closed**). Each names its own remedy, since one sentence
+for three would send the operator to the wrong place — more history, repair at the source, fix
+the match. The third is **scoped to a show that did bind to Plex**, and that boundary is the part
+to preserve: the harm needs a *mix*, where the seasons that resolved carry fully readable facts
+and condemn at full confidence on a viewer the missing ones hid, so one duplicate "Season 3" in
+Plex put the season a viewer had just finished season 3 for onto the reap list. Where the show
+itself never bound, every season already takes Unknown from its own branch and abstains, so
+widening the hold there moves a whole population of unmatched shows out of the review queue and
+protects nothing further. Below that the count is a *lower bound*, so an outcome
 a deeper mirror could overturn reports "could not check" instead: the gate and a protect rule
 block, the signal withholds its pressure and lets coverage fall, a keep takes its full discount.
 An outcome the bound already earns still fires — a count that clears "at least N" stays clear
@@ -692,8 +704,37 @@ default, safe only because the ORM carries the Python-side default. `cache.db` s
 
 ## Gate retirement
 
-**Choice: a stored body self-heals on load, and the save boundary only accepts a gate the
-engine can build.**
+**Choice: the upgrade persists the heal where it can, a load-time shim covers what it cannot,
+and the save boundary only accepts a gate the engine can build.**
+
+**A heal that only runs on load can never finish.** A retirement whose replacement changes what
+is stored — the `whitelisted` and `curated_list` gates becoming `on_list` keep rules — was left
+to `convert_list_protections` at load time, with `ActivePolicy.repaired` degrading every scan
+until the operator re-saved. The stored row stays legacy-shaped however many scans they run, so
+the incomplete-scan banner is permanent, and it was permanent beside a policy page whose savebar
+never appeared, because the repair reached the server and not the response (#516). Two lessons,
+and only the second is about the missing field. **A repair that is verdict-preserving belongs in
+the migration**, where it happens once and nobody is asked to approve their own upgrade:
+`d5e6f7a8b9c0` appends the converted body, and the next load finds nothing to repair.
+`RETIRED_GATES` is the other kind and stays on load — it drops a key, so there is nothing to
+persist. **A repair the migration declines is where the shim earns its place**, and the
+conversion declines deliberately: it keeps an enabled gate whose replacement list is missing,
+because an `on_list` rule naming no list reads as a green "checked, did not fire", so persisting
+that output would store a body `build_gates` refuses. The row stays legacy, the shim reports it,
+and the editor is where the operator is told.
+
+Writing it is safe only because the conversion is verdict-preserving: `CustomProtectGate` answers
+an `on_list` match with PROTECT and `decide_verdict` honors it before score or coverage, the same
+branch the retired gates fired into. A repair that could move a title toward deletion would stay
+on load whatever it cost, per rule 65.
+
+The four repairs are one `PolicyRepair` enum rather than four booleans, because each obliges four
+surfaces — `PolicyOut.repairs`, the editor's dirty term, a notice, the scan's remedy clause — and
+a boolean can be wired to three and read correct at each, which is precisely how `lists_migrated`
+shipped. The editor forces dirty on the **length** of the list and takes the copy separately, so a
+repair added later raises a savebar before anyone writes a sentence for it;
+`tests/test_policy_repairs.py` walks the enum against both trees and names the file that is short
+a member.
 
 `UnmanagedGate` was retired under rule 38/117: it shipped enabled by default and could not
 fire. `PolicyBody.RETIRED_GATES` drops it from a stored body on load, which is what keeps
@@ -710,9 +751,16 @@ store a gate no scan could build. `POLICY_AUTHORABLE_GATES` (in `engine/gates.py
 against `GATE_TYPES`) is what the boundary now checks, and a wire-schema refusal reaches the
 operator without pydantic's `Value error,` prefix.
 
-Retiring a gate moves `scoring_hash` and `evidence_hash` as well as `policy_hash`, so the first
-Policy page after an upgrade shows the simulator's "needs a fresh scan" state with no numbers;
-that notice states the condition instead of telling the operator they changed something.
+Retiring a gate moves `scoring_hash` and `policy_hash`. It no longer moves `evidence_hash`,
+which now folds in `popularity_window_days()` rather than the whole `gates` list, so the first
+Policy page after an upgrade replays the last scan's frozen evidence without the retired gate
+and shows real numbers. That is exact: the gate stopped being built, and every fact the rest of
+them read was frozen either way. Retiring `SERVER_POPULARITY` specifically would still refuse,
+because the window it carries is the span the frozen watcher counts were taken over.
+
+The simulator's stale notice can still appear at an operator who changed nothing — any upgrade
+that adds a field to the hashed body leaves the recorded hash unmatchable until the next scan —
+so it goes on stating the condition rather than telling them they changed something.
 
 `GateId.UNMANAGED` and the four surfaces that decode a stored explanation stay
 (`STRUCTURAL_GATES`, the chip phrase, the why-panel line, and `WhyPanel.tsx`'s `CHECK_COPY`
@@ -869,7 +917,10 @@ prerelease is replaced nightly and never enters winget or the snap stable channe
 The notes are GitHub's own generation, sectioned by label through `.github/release.yml`, over
 the pull requests between the previous tag and this one. That range only exists on `dev`: the
 promotion squash is one commit for a whole release, so the tag points at the promotion PR's
-head commit rather than the squash it became. The two carry the same tree, which the workflow
-verifies rather than assumes, and the artifacts still build from the pushed sha. The first cut
-ships `.github/first-release-notes.md`: a generated list spanning the whole history is not
-release notes.
+head commit rather than the squash it became — a commit the promotion recipe in `CLAUDE.md`
+keeps connected to `dev`'s line. The two carry the same tree, which the workflow verifies
+through the API rather than assumes (the promotion branch deletes itself at merge, so the
+commit is not in the release checkout; the first cut fell back over exactly that and was
+retargeted by hand). The artifacts still build from the pushed sha. The first cut ships
+`.github/first-release-notes.md`: a generated list spanning the whole history is not release
+notes.

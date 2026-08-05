@@ -49,9 +49,9 @@ import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
 import { CardOpen } from "./CardOpen";
+import { FilterMenu } from "./FilterMenu";
 import { ReapConfirm } from "./ReapConfirm";
 import { KeptByShowNote, OverrideControls, OverrideMark } from "./OverrideControls";
-import { usePopoverShift } from "./popoverFit";
 import {
   CaretIcon,
   CheckIcon,
@@ -203,50 +203,6 @@ function FilterChip({
         ✕
       </button>
     </span>
-  );
-}
-
-/** Both filter popovers -- the ＋ Filter menu and a chip's value picker -- in one component, so
- *  neither can drift from the other.
- *
- *  The menu is absolutely positioned inside its `.filter-anchor`, which is what keeps it glued to
- *  its control as the page scrolls. Left-aligned to that anchor it ran clean off the right edge of
- *  a phone screen -- the ＋ Filter button sits at the end of the toolbar row, and a wrapped chip
- *  can land there too -- so `usePopoverShift` slides it back (see `popoverFit.ts`). */
-function FilterMenu({
-  id,
-  label,
-  children,
-}: {
-  /** Pointed at by its trigger's `aria-controls`, which is the only thing tying the two
-   *  together: the popover is a sibling of the button, not a descendant. */
-  id: string;
-  /** Names the menu for a screen reader, and heads it for everyone else. */
-  label: string;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLUListElement>(null);
-  const shift = usePopoverShift(ref, "filter-anchor");
-
-  // A plain list behind a disclosure, deliberately: this took `role="menu"` and `role="listbox"`
-  // from a prop, and implemented neither one's keyboard contract -- no arrow keys, no roving
-  // focus, no `aria-activedescendant`, and every option a separate Tab stop, which is not the
-  // listbox pattern at all. A listbox is ANNOUNCED as an arrow-key widget, so the roles were
-  // telling an operator to press keys that did nothing. App's UserMenu records the same defect
-  // being fixed the same way, and PolicyRuleEditors' combobox shows what keeping the role costs.
-  return (
-    <ul
-      ref={ref}
-      id={id}
-      className="filter-menu"
-      aria-label={label}
-      style={{ "--pop-shift": `${shift}px` } as CSSProperties}
-    >
-      <li className="filter-menu-head" aria-hidden="true">
-        {label}
-      </li>
-      {children}
-    </ul>
   );
 }
 

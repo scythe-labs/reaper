@@ -122,6 +122,38 @@ describe("ScanFreshness", () => {
     );
     expect(screen.getByText(/came back incomplete/i)).toBeInTheDocument();
   });
+
+  it("routes an incomplete scan to the page that rescans, and keeps the period out of the amber", async () => {
+    const user = userEvent.setup();
+    const onGoToJobs = vi.fn();
+    const { container } = render(
+      <ScanFreshness
+        snapshot={{ ...snapshot, degraded: true }}
+        isPending={false}
+        error={undefined}
+        onGoToJobs={onGoToJobs}
+      />,
+    );
+    // The warning is the only one of the three that names no remedy, so it carries the link.
+    await user.click(screen.getByRole("button", { name: /go to settings → jobs/i }));
+    expect(onGoToJobs).toHaveBeenCalledTimes(1);
+
+    // The amber span opens on its own first word. It used to open on the period ENDING the
+    // neutral sentence before it, which took the warning's color and weight and painted a
+    // floating yellow dot a word ahead of the sentence it belonged to.
+    // "Warning: " first, which is `Notice`'s visually-hidden severity lead: this was a bare
+    // styled span, so amber was the only thing carrying severity, on the page approvals are
+    // made from (rules 18, 72). Then the sentence, and it says what an incomplete scan MEANS
+    // before it says where to go.
+    const warn = container.querySelector(".freshness-warn");
+    expect(warn?.textContent?.trimStart()).toMatch(
+      /^Warning: The last scan came back incomplete, so Reaper won't act on it\./,
+    );
+    // And the neutral half keeps a period of its own rather than trailing off mid-sentence.
+    expect(container.querySelector(".scan-freshness")?.textContent).toMatch(
+      /items\.\s*Warning: The last scan/,
+    );
+  });
 });
 
 describe("ScanLine", () => {
@@ -155,6 +187,7 @@ const user: AuthUser = {
   provider: "local",
   email: null,
   thumb_url: null,
+  via_recovery: false,
 };
 
 function renderMenu(onGoToAbout: () => void = () => {}) {
@@ -234,7 +267,12 @@ describe("UserMenu", () => {
   });
 });
 
-const SAFETY: Safety = { destructive_enabled: false, has_password: true, note: null };
+const SAFETY: Safety = {
+  destructive_enabled: false,
+  has_password: true,
+  recovery_mode: false,
+  note: null,
+};
 
 function renderNav(view: "review" | "reap" = "review") {
   return render(

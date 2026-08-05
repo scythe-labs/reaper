@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from reaper.aio import gather_reaped
@@ -32,7 +33,6 @@ from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind, PlexServer, Snapshot
 from reaper.engine.gates import (
-    CuratedListGate,
     DataHorizonGate,
     Gate,
     GateConfig,
@@ -41,14 +41,14 @@ from reaper.engine.gates import (
     RatingFloorGate,
     ServerPopularityGate,
     StreamingNowGate,
-    WhitelistGate,
 )
-from reaper.engine.policy import PolicyBody
+from reaper.engine.policy import PolicyBody, PolicyRepair, join_and
 from reaper.services import (
     app_settings,
     history_sync,
     instances,
     leaving_soon,
+    list_config,
     profiles,
     requested_by,
 )
@@ -101,15 +101,43 @@ def scan_running() -> bool:
     return _scan_running
 
 
+#: What the incomplete-scan notice tells the operator to look at, per repair. This is the
+#: only remedy the degradation names, so a repair with no entry here would send them to the
+#: policy page to check nothing in particular.
+#:
+#: The frontend's twin is ``REPAIR_NOTICES`` in ``frontend/src/components/PolicyEditor.tsx``:
+#: one repair, two sentences, written by two people reading different files (rule 144).
+#: ``tests/test_policy_repairs.py`` walks ``PolicyRepair`` against BOTH and names the file
+#: that is missing a member, so neither can be the one that quietly has no copy.
+#: Each entry is the TARGET alone, so the sentence below supplies one "check" however many
+#: repairs compose ("check your keep rules and the points", never "check X and check Y").
+_REPAIR_CHECKS: dict[PolicyRepair, str] = {
+    PolicyRepair.RESCALED: "the points",
+    PolicyRepair.FELL_BACK: "the values",
+    PolicyRepair.RATING_RULES_RESTORED: "Keep well-rated titles",
+    PolicyRepair.LISTS_MIGRATED: "your keep rules",
+}
+
+
+def _what_to_check(repairs: tuple[PolicyRepair, ...]) -> str:
+    """The remedy clause, naming every repair's target rather than only the first.
+
+    A body can arrive carrying two repairs (lists converted, then weights rescaled), and
+    naming one sends the operator to look at a control that is not the one that moved.
+    Falls back to the generic target for a repair with no entry, so a member added without
+    copy still produces a sentence -- the test above is what stops it staying that way.
+    """
+    named = [_REPAIR_CHECKS[r] for r in repairs if r in _REPAIR_CHECKS]
+    return f"check {join_and(named) if named else 'the values'}"
+
+
 #: Every gate the catalog knows how to build. A gate in a policy with no entry here
 #: would be a protection that silently does not fire, so the builder raises instead.
 #: RATING_FLOOR is absent on purpose: it takes a set of per-source bars from the policy
 #: rather than a single GateConfig, so ``build_gates`` constructs it explicitly.
 GATE_TYPES: dict[GateId, type] = {
-    GateId.WHITELISTED: WhitelistGate,
     GateId.STREAMING_NOW: StreamingNowGate,
     GateId.SERVER_POPULARITY: ServerPopularityGate,
-    GateId.CURATED_LIST: CuratedListGate,
     GateId.DATA_HORIZON: DataHorizonGate,
     GateId.MIN_DORMANCY: MinDormancyGate,
 }
@@ -210,10 +238,11 @@ async def build_sources(
     box: SecretBox,
     *,
     stack: AsyncExitStack,
+    require_scan_sources: bool = True,
 ) -> tuple[
     list[snapshot_service.RadarrSource],
     list[snapshot_service.SonarrSource],
-    TautulliClient,
+    TautulliClient | None,
     list[requested_by.SeerrSource],
     PlexClient | None,
 ]:
@@ -233,6 +262,12 @@ async def build_sources(
 
     Every constructed client is entered into the caller's ``stack`` immediately, so
     there is no window in which a raise can leak one (rule 34).
+
+    ``require_scan_sources`` is the SCAN's precondition, and only a scan has it. Refreshing a
+    protection list reads the *arr and Plex and nothing else, so an install with Plex linked
+    and no Tautulli was told its Plex collection could not be checked because "a scan needs a
+    Tautulli instance" -- a requirement of an action the operator did not take (rule 21). With
+    it off, the Tautulli slot comes back ``None`` and every other source is built as usual.
     """
     async with session_factory() as session:
         safety = await app_settings.runtime_safety(session, settings)
@@ -253,7 +288,7 @@ async def build_sources(
     # is the only one. Seerr is multi and is built as a list below, like the *arr.
     tautulli_row = next((r for r in rows if r.kind is InstanceKind.TAUTULLI), None)
 
-    if (not radarr_rows and not sonarr_rows) or tautulli_row is None:
+    if require_scan_sources and ((not radarr_rows and not sonarr_rows) or tautulli_row is None):
         raise ScanConfigError(
             "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
             "Add them in Settings first."
@@ -302,13 +337,17 @@ async def build_sources(
                 library_map=instances.decode_library_map(r.plex_library_map),
             )
         )
-    tautulli = TautulliClient(
-        tautulli_row.base_url,
-        box.decrypt(tautulli_row.api_key_enc),
-        safety=safety,
-        verify=tautulli_row.verify_tls,
-    )
-    await stack.enter_async_context(tautulli)
+    # Only reachable as None with `require_scan_sources` off, where the caller reads no watch
+    # history: the guard above is what makes it non-None for every scan.
+    tautulli: TautulliClient | None = None
+    if tautulli_row is not None:
+        tautulli = TautulliClient(
+            tautulli_row.base_url,
+            box.decrypt(tautulli_row.api_key_enc),
+            safety=safety,
+            verify=tautulli_row.verify_tls,
+        )
+        await stack.enter_async_context(tautulli)
     seerrs: list[requested_by.SeerrSource] = []
     for r in seerr_rows:
         seerr = SeerrClient(
@@ -586,6 +625,9 @@ async def _run_scan_locked(
     scan_started = time.monotonic()
     history_ms = 0
     lists_ms = 0
+    #: Set when the list registry could not be read. Collected here rather than appended
+    #: inside the session block, so it joins `pre_scan_degradations` with the others below.
+    lists_degradation: str | None = None
 
     async with AsyncExitStack() as stack:
         # Sources are constructed INSIDE the stack scope, and build_sources enters each
@@ -595,6 +637,14 @@ async def _run_scan_locked(
         radarrs, sonarrs, tautulli, seerrs, plex = await build_sources(
             session_factory, settings, box, stack=stack
         )
+        # `require_scan_sources` defaults on, so this raised above rather than reaching here.
+        # Asserted rather than assumed: a scan without watch history judges dormancy against
+        # nothing, and every score leans on dormancy.
+        if tautulli is None:  # pragma: no cover - the guard in build_sources precedes it
+            raise ScanConfigError(
+                "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
+                "Add them in Settings first."
+            )
 
         async with session_factory() as policy_session:
             active_movie, active_tv = await profiles.active_policies(policy_session)
@@ -606,6 +656,36 @@ async def _run_scan_locked(
             active_profile = await profiles.active_profile(policy_session)
             profile_settings = active_profile.settings
             allowed_sections, scope_degradation = await _allowed_sections(policy_session)
+            # The lists the operator defined on Settings -> Lists. Read here, with the policy,
+            # because both are settings the scan freezes at its start: a list added while a
+            # scan is running belongs to the next one, not to this half-gathered evidence.
+            #
+            # A read FAILURE is not "no lists configured" (rules 65/91). Every keep collection
+            # and every curated list comes from this table, so an empty answer would sync none
+            # of them and retire the lot -- withdrawing every one of those protections because
+            # a query failed. `None` says "unknown", which holds the registry half of the sync
+            # still and retires nothing, and the scan degrades so nothing can be deleted under
+            # protections it could not confirm.
+            #
+            # A single row whose body will not parse takes the same branch, and for the same
+            # reason: it is absent from the definitions either way, so the sweep would read it
+            # as deleted and disable the membership it is still protecting with.
+            list_definitions: list[list_config.ListDefinition] | None
+            try:
+                list_definitions = await list_config.definitions(policy_session, strict=True)
+            except (SQLAlchemyError, list_config.ListRegistryUnreadableError) as exc:
+                list_definitions = None
+                # The exception text stays in the log and out of the sentence. A
+                # SQLAlchemyError stringifies to the whole failing statement and
+                # `ListRegistryUnreadableError` to a row id, and this line is rendered
+                # verbatim in the incomplete-scan notice on three screens (rule 21).
+                # Neither names anything the reader can go and fix, and the fixed sentence
+                # already says what to do about it.
+                log.warning("scan.lists_unreadable", error=str(exc))
+                lists_degradation = (
+                    "Your protection lists could not be read, so Reaper cannot tell which "
+                    "lists should be keeping titles safe"
+                )
         movie_gates = build_gates(movie_policy)
         tv_gates = build_gates(tv_policy)
 
@@ -622,26 +702,39 @@ async def _run_scan_locked(
         if scope_degradation:
             pre_scan_degradations.append(scope_degradation)
 
+        # The list registry was unreadable, so none of the lists it defines were refreshed
+        # and none were retired. Whatever they were protecting is unconfirmed, which is the
+        # keep direction for the stored copies and an un-executable scan for this run.
+        if lists_degradation:
+            pre_scan_degradations.append(lists_degradation)
+
         # A stored policy that no longer validated was repaired to load it (profiles
         # .ActivePolicy.repaired). The rescale cannot move a score, so scanning on it is
         # safe -- but it is NOT the policy the operator saved, and a run must never
         # execute against one nobody approved. Degrade, so the scan still produces a
         # viewable snapshot and the fix is one visit to the policy page.
-        for label, active in (("movie", active_movie), ("tv", active_tv)):
-            if not active.repaired:
-                continue
-            # Name the part that was recovered, so the operator checks the right thing: a
-            # rescale moved their points, the rating recovery put back a protection that
-            # had stopped keeping anything.
-            what = (
-                "check Keep well-rated titles"
-                if active.rating_rules_recovered
-                else "check the points"
-            )
-            pre_scan_degradations.append(
-                f"your {label} policy needs saving again before anything can be removed: "
-                f"open the policy page, {what}, and save"
-            )
+        # "TV", not the raw `tv` media-type id: this lands verbatim in the incomplete-scan
+        # notice on three screens, and the app spells it TV everywhere else, so lower case
+        # read as a typo in the middle of a sentence telling the operator to go and fix
+        # something. `api/routes.py`'s simulator sentence already maps its own lane this way
+        # (rules 21, 144).
+        for label, active in (("movie", active_movie), ("TV", active_tv)):
+            if active.repairs:
+                pre_scan_degradations.append(
+                    f"your {label} policy needs saving again before anything can be removed: "
+                    f"open the policy page, {_what_to_check(active.repairs)}, and save"
+                )
+            # A different fault under the same `repaired` flag, and it needs a different
+            # sentence: nothing was repaired and saving fixes nothing. The registry could not
+            # be read while the shipped default was assembled, so this scan is judging with no
+            # keep rule naming the operator's own Plex lists -- and the scan's own registry
+            # read can succeed on a transient error, which is what let it run clean (rule 65).
+            elif active.lists_unreadable:
+                pre_scan_degradations.append(
+                    f"your protection lists could not be read while the {label} policy was "
+                    "worked out, so this scan ran without them and nothing may be removed "
+                    "from it. Run another scan"
+                )
 
         # Same reasoning for the profile's caps and grace: when the stored settings blob was
         # unreadable, the run is holding the shipped defaults, which can be LOOSER than what
@@ -685,25 +778,29 @@ async def _run_scan_locked(
         # and so does failing to read the user list at all).
         pre_scan_degradations += await _keep_history_degradations(tautulli)
 
-        # Refresh the protection lists BEFORE scoring reads them, or a "Never Reap"
-        # collection and the IMDb Top 250 are silently empty and protect nothing.
+        # Refresh the protection lists BEFORE scoring reads them, or every list the
+        # operator defined is silently empty and protects nothing.
         emit(Progress("lists", 0, 0, "refreshing protection lists"))
 
         # Plex is optional (a movie-only deployment runs without it), but a *configured*
         # Plex that is briefly unreachable must degrade, not crash the whole scan the way an
         # uncaught PlexError from connect() would. Critically it must fail CLOSED: with no
-        # live server the "Never Reap" collection cannot refresh, so we skip it (the atomic
-        # swap keeps any prior membership) AND degrade, so a reap cannot run against a
-        # keep-list that could not be confirmed.
+        # live server no Plex-sourced list can refresh, so each is skipped (the atomic swap
+        # keeps any prior membership) AND degrade, so a reap cannot run against a keep-list
+        # that could not be confirmed.
         plex_server: object | None = None
         if plex is not None:
             try:
                 plex_server = await plex.connect()
             except PlexError as exc:
                 plex_server = None
+                # Named by source, never by collection: the collection is the operator's to
+                # name (#483) and a watchlist list has no collection at all, so spelling one
+                # hardcoded title here claimed a list they may not have and hid the others
+                # that went unrefreshed beside it (rules 21, 144).
                 pre_scan_degradations.append(
-                    f"Plex unreachable: {exc}. The 'Never Reap' collection could not be "
-                    "refreshed, so no reap may run against a keep-list we could not confirm"
+                    f"Plex could not be reached: {exc}. The lists Reaper reads from Plex "
+                    "were not refreshed, so nothing may be deleted from this scan"
                 )
         # Reaper's own Plex server id, read off the connection we already opened (no extra
         # round-trip). It lets the requested-by map skip a portal synced to a DIFFERENT Plex,
@@ -726,21 +823,9 @@ async def _run_scan_locked(
         synced, requested, request_index = await gather_reaped(
             snapshot_service.sync_protection_lists(
                 cache_engine,
+                definitions=list_definitions,
                 radarrs=radarrs,
                 sonarrs=sonarrs,
-                movie_keep_tags=movie_policy.keep_tags,
-                movie_keep_match=movie_policy.keep_tags_match,
-                tv_keep_tags=tv_policy.keep_tags,
-                tv_keep_match=tv_policy.keep_tags_match,
-                # Whether those four values are the operator's own. Only a FALLEN-BACK
-                # policy replaces them with Reaper's defaults: the other two repaired arms
-                # (rescaled, rating rules recovered) hand back the operator's own body with
-                # keep_tags and keep_tags_match untouched, so gating on the broader
-                # ``repaired`` would stop syncing lists that were never in doubt. False here
-                # holds back the keep-tag sync AND its retire, because the slug does not
-                # carry the tag names, so a sync of the defaults would overwrite the
-                # operator's own membership under their own slug (rule 115).
-                keep_tags_trusted=not (active_movie.fell_back or active_tv.fell_back),
                 plex_server=plex_server,
             ),
             # Who requested what: each candidate's "requested by", and the review queue's
@@ -786,6 +871,13 @@ async def _run_scan_locked(
             extra_degrade_reasons=pre_scan_degradations,
             on_progress=on_progress,
             allowed_sections=allowed_sections,
+            # Off the definitions this scan actually synced against, never a second read:
+            # a list edited between the two would otherwise be recorded as the configuration
+            # a membership was gathered under when it was not. `None` when they could not be
+            # read at all, which the branch above already degraded the scan for.
+            list_config_hash=(
+                None if list_definitions is None else list_config.fingerprint(list_definitions)
+            ),
         )
         gather_ms = round((time.monotonic() - gather_started) * 1000)
         commit_started = time.monotonic()

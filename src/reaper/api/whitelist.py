@@ -16,6 +16,7 @@ file to being *judged* by the policy again; it re-enters the review queue as a c
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -28,6 +29,8 @@ from reaper.services import retention, whitelist
 from reaper.services.condemned import reap_is_effective
 from reaper.services.profiles import active_profile_settings
 from reaper.services.snapshot import record_first_flagged_bulk
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=[api_tags.REVIEW])
 
@@ -181,11 +184,37 @@ async def list_whitelist(request: Request) -> list[WhitelistEntryOut]:
         return [_out(e) for e in await whitelist.list_spared(session)]
 
 
+def _log_override(
+    media_key: str, decision: str, *, prior: str | None, spare_days: int | None
+) -> None:
+    """Record a hand decision, at INFO.
+
+    The operator's own overrides were the one action in the app that left no trace.
+    Setting one at least leaves a `WhitelistEntry` row, but `remove_override` DELETEs
+    that row and `_sync_grace_clocks` wipes the grace clock in the same call, so after
+    an un-spare nothing anywhere records that the spare ever existed. "This was spared
+    last month and Reaper deleted it" had no answer.
+
+    INFO rather than DEBUG: this is the highest-stakes thing a person does by hand here,
+    it happens a few times a session, and nobody turns Debug on before making a decision
+    they later want explained. `prior` is what makes the line a transition rather than a
+    snapshot.
+    """
+    log.info(
+        "whitelist.override",
+        media_key=media_key,
+        decision=decision,
+        prior=prior,
+        spare_days=spare_days,
+    )
+
+
 @router.post("/whitelist")
 async def spare_item(request: Request, payload: SpareIn) -> WhitelistEntryOut:
     """Spare an item so it is never reaped -- the common-case shorthand for an override."""
     async with _sessions(request)() as session:
         title = await _resolve_title(session, payload.media_key)
+        prior = await whitelist.override_for(session, payload.media_key)
         entry = await whitelist.spare(
             session,
             media_key=payload.media_key,
@@ -196,6 +225,7 @@ async def spare_item(request: Request, payload: SpareIn) -> WhitelistEntryOut:
         await _sync_grace_clocks(session, payload.media_key)
         out = _out(entry)
         await session.commit()
+        _log_override(payload.media_key, "spare", prior=prior, spare_days=payload.spare_days)
         return out
 
 
@@ -208,6 +238,7 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
     """
     async with _sessions(request)() as session:
         title = await _resolve_title(session, payload.media_key)
+        prior = await whitelist.override_for(session, payload.media_key)
         entry = await whitelist.set_override(
             session,
             media_key=payload.media_key,
@@ -219,6 +250,9 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
         await _sync_grace_clocks(session, payload.media_key)
         out = _out(entry)
         await session.commit()
+        _log_override(
+            payload.media_key, payload.decision, prior=prior, spare_days=payload.spare_days
+        )
         return out
 
 
@@ -231,6 +265,8 @@ async def unspare_item(request: Request, media_key: str) -> dict[str, bool]:
         removed = await whitelist.remove_override(session, media_key=media_key)
         await _sync_grace_clocks(session, media_key, cleared_spare=prior == "spare")
         await session.commit()
+    if removed:
+        _log_override(media_key, "cleared", prior=prior, spare_days=None)
     return {"removed": removed}
 
 
@@ -242,4 +278,6 @@ async def clear_override(request: Request, media_key: str) -> dict[str, bool]:
         removed = await whitelist.remove_override(session, media_key=media_key)
         await _sync_grace_clocks(session, media_key, cleared_spare=prior == "spare")
         await session.commit()
+    if removed:
+        _log_override(media_key, "cleared", prior=prior, spare_days=None)
     return {"removed": removed}

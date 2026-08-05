@@ -19,10 +19,21 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from reaper.engine.fields import Op
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Unknown
-from reaper.engine.policy import PolicyBody
-from reaper.engine.signals import SignalConfig
+from reaper.engine.policy import (
+    DEFAULT_IMDB_LIST_NAME,
+    DEFAULT_MOVIE_POLICY,
+    DEFAULT_TAG_LIST_NAME,
+    DEFAULT_TV_POLICY,
+    BooleanCondemnSpec,
+    GradedCondemnSpec,
+    GradedKeepSpec,
+    PolicyBody,
+    SignalSetting,
+)
+from reaper.engine.signals import SignalConfig, SignalId
 from reaper.ratings import Rating, RatingSource
 from reaper.services.scan_runner import build_gates
 from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
@@ -58,6 +69,10 @@ DEGRADABLE = (
     "quality",
     "requested",
     "show_ended",
+    # Observable since the fixture started carrying an arrival date. The sweep's whole
+    # claim is that degrading ANY fact cannot condemn, so a fact it does not degrade is
+    # outside the claim (rule 132).
+    "days_since_added",
 )
 
 VERDICT_RANK = {"protect": 0, "abstain": 1, "condemn": 2}
@@ -66,6 +81,17 @@ VERDICT_RANK = {"protect": 0, "abstain": 1, "condemn": 2}
 def load_fixture() -> dict[str, Any]:
     with FIXTURE.open() as f:
         return json.load(f)
+
+
+def reach_of(vectors: Any) -> float:
+    """The mirror reach implied by a given set of vectors.
+
+    Split out from ``mirror_reach_days`` because the reach is a property of the SAMPLE, and
+    reading it off whatever fixture happens to be on disk is how a regeneration bakes the
+    previous sample's reach into the new one's baselines. ``policy_lab_extract`` judges the
+    vectors it is about to write, so it passes this in rather than inheriting the cache.
+    """
+    return max((day for v in vectors for day in v.get("play_recency_days", ())), default=0.0)
 
 
 @lru_cache(maxsize=1)
@@ -82,10 +108,7 @@ def mirror_reach_days() -> float:
     omitted it would pin a baseline of 440 un-checkable rows and stop exercising the gate
     at all (rule 132 -- infrastructure may not imply coverage it does not have).
     """
-    return max(
-        (day for v in load_fixture()["vectors"] for day in v.get("play_recency_days", ())),
-        default=0.0,
-    )
+    return reach_of(load_fixture()["vectors"])
 
 
 def to_observation(name: str, obs: dict[str, Any]) -> Known[Any] | Absent | Unknown:
@@ -98,6 +121,30 @@ def to_observation(name: str, obs: dict[str, Any]) -> Known[Any] | Absent | Unkn
     if state == "absent":
         return Absent(source="lab")
     return Unknown(reason="recorded as unobservable", source="lab")
+
+
+def _on_lists_from(f: dict[str, Any]) -> Known[str] | Absent | Unknown:
+    """Synthesize ``Facts.on_lists`` from the fixture's two recorded list facts.
+
+    The fixture predates ``on_lists`` and records list membership as the booleans the
+    retired gates read (``is_whitelisted``, ``in_curated_list``). Production now derives
+    the membership NAMES from the same lists those facts came from, and the shipped
+    policies protect through ``on_list`` rules naming the two seeded defaults -- so the
+    recorded facts are carried into those names, the same move ``_ratings_from`` makes
+    for the rating gate. An unknown on either source is an unknown membership: the old
+    gates blocked on it, and the ``on_list`` rules must keep doing so."""
+    whitelisted = f["is_whitelisted"]
+    curated = f["in_curated_list"]
+    if whitelisted["state"] == "unknown" or curated["state"] == "unknown":
+        return Unknown(reason="recorded as unobservable", source="lab")
+    names: list[str] = []
+    if whitelisted["state"] == "known" and whitelisted["value"]:
+        names.append(DEFAULT_TAG_LIST_NAME)
+    if curated["state"] == "known" and str(curated.get("value") or "").strip():
+        names.append(DEFAULT_IMDB_LIST_NAME)
+    if names:
+        return Known(value=", ".join(names), source="lab")
+    return Absent(source="lab")
 
 
 def _ratings_from(f: dict[str, Any]) -> tuple[Rating, ...]:
@@ -123,7 +170,7 @@ def _ratings_from(f: dict[str, Any]) -> tuple[Rating, ...]:
     )
 
 
-def to_facts(vector: dict[str, Any]) -> Facts:
+def to_facts(vector: dict[str, Any], *, reach: float | None = None) -> Facts:
     f = vector["facts"]
     return Facts(
         title="item",
@@ -142,12 +189,15 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         is_managed=to_observation("is_managed", f["is_managed"]),
         in_curated_list=to_observation("in_curated_list", f["in_curated_list"]),
         is_whitelisted=to_observation("is_whitelisted", f["is_whitelisted"]),
+        on_lists=_on_lists_from(f),
         requested=to_observation("requested", f["requested"]),
         genres=to_observation("genres", f["genres"]),
         release_age_days=to_observation("release_age_days", f["release_age_days"]),
         quality=to_observation("quality", f["quality"]),
         show_ended=to_observation("show_ended", f["show_ended"]),
-        history_reach_days=Known(value=mirror_reach_days(), source="lab"),
+        history_reach_days=Known(
+            value=mirror_reach_days() if reach is None else reach, source="lab"
+        ),
         # Stated, and stated Unknown, which is the one honest reading here (rule 35). The
         # span an all-time count needs is how long the item has been on the server, and
         # unlike the reach above that is NOT recoverable in the safe direction. The oldest
@@ -156,29 +206,18 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         # count the real scan would have refused -- the opposite of ``mirror_reach_days``,
         # where understating the reach only ever blocks more.
         #
-        # What that costs, measured over all 440 vectors, because rule 132 forbids
-        # implying coverage the fixture does not have. ``test_policy_permutations`` DOES
-        # author rules on this field -- ``TestProtectConditions`` sweeps every PROTECT-lane
-        # key and ``NUMERIC_VALUES`` lists ``watchers_all_time`` -- and half the outcome
-        # matrix is now unreachable for it:
+        # The regeneration that comment asked for. The scan had frozen an arrival date for
+        # every candidate all along; the extractor simply never carried it, so the lab
+        # forced this Unknown and every all-time-watcher rule collapsed against the reach
+        # bound -- a graded keep sat at the maximum discount for all 440 vectors, which
+        # would have stayed green with the ramp broken outright.
         #
-        #   graded keep    -> {40.0: 440}: every vector at the maximum discount, so
-        #                     "a keep never raises a score" holds trivially and would stay
-        #                     green if the ramp broke outright. The unbounded twin still
-        #                     spreads: ``recent_watchers`` gives four discount values under
-        #                     the sweep's own ``saturate_at`` (the field's largest
-        #                     ``NUMERIC_VALUES`` entry, 3), and six at the 5 used here, so
-        #                     the collapse is the reach bound and not the spec.
-        #   protect gte 1  -> 415 matched, 25 blocked, 0 checked-and-did-not-fire
-        #   protect lte 5  -> 268 blocked, 172 checked-and-did-not-fire, 0 matched
-        #
-        # The two surviving arms are exactly the outcomes ``_survives_more_history`` lets
-        # through as already earned; the two a deeper mirror could overturn are all
-        # blocked. That is the guard working, not a bug, but the sweep no longer exercises
-        # the ramp or either overturnable arm for this field. Closing it properly needs an
-        # arrival date in the fixture, which is a regeneration
-        # (``scripts/policy_lab_extract.py``), not a default.
-        days_since_added=Unknown(reason="the lab fixture records no arrival date", source="lab"),
+        # ``.get`` rather than ``[...]``: a vector written before the field is Unknown, not
+        # a KeyError (rule 104), and Unknown is the keep direction here.
+        days_since_added=to_observation(
+            "days_since_added",
+            f.get("days_since_added") or {"state": "unknown"},
+        ),
         ratings=_ratings_from(f),
     )
 
@@ -188,11 +227,13 @@ def guard_result(vector: dict[str, Any]) -> GateResult | None:
 
     ``"unknown"`` models ONE of the blocked shapes ``season_scan.guard_result`` can emit:
     the keep-rule conflict whose comparison was made and lost, which sets
-    ``defers_to_owner``. The refused shapes -- a kept season nobody could read, and a
-    comparison the watch mirror is too short to settle -- have no vector here, because
-    nothing in the policy sweep varies them. They reach the same verdict as this one (no
-    block holds a hand reap) and differ in the chip the operator is shown. Both are pinned
-    directly in ``tests/test_season_scan.py`` and ``tests/test_review_chips.py``.
+    ``defers_to_owner``. Three have no vector here, because nothing in the policy sweep
+    varies what they turn on -- the refused conflicts (a kept season nobody could read, and
+    a comparison the watch mirror is too short to settle) turn on the mirror, and the
+    unestablishable arm on whether the show bound to Plex at all. All three reach the same
+    verdict as this one (no block holds a hand reap) and differ in what the operator is
+    shown. Each is pinned directly in ``tests/test_season_scan.py`` and
+    ``tests/test_review_chips.py``.
     ``tests/test_override_truth.py`` covers the stored-row path and carries only the
     unreadable-kept shape, not the shortfall one -- and cannot tell them apart anyway, since
     both encode as ``defers_to_owner: False`` once frozen (rule 132: this helper must not
@@ -214,12 +255,96 @@ def guard_result(vector: dict[str, Any]) -> GateResult | None:
     return GateResult(GateId.SEASON_PROGRESSION, ABSTAIN, detail="prunable")
 
 
+@lru_cache(maxsize=2)
+def lane_policy(media_type: str) -> PolicyBody:
+    """The shipped default, re-pointed so the OPERATOR-AUTHORED lanes actually run.
+
+    Both shipped defaults carry ``custom_condemn: ()`` and ``graded_keeps: ()``, so every
+    vector judged under them leaves ``signals.evaluate_custom`` and ``signals.evaluate_keep``
+    untouched. That is a hole in the scorer-invalidation gates rather than in the suite:
+    inverting ``evaluate_keep``'s ``Unknown`` arm -- the keep lane's fail-closed direction
+    turned fail-open -- moved no pinned baseline, so nothing asked anyone to bump
+    ``SCORER_VERSION`` and an upgrade could change what an operator's own rules mean while
+    every plan on the Reap page stayed approved (rule 113).
+
+    So the fixture pins a second baseline under this policy, and ``TestPinnedBaseline``
+    checks both. Not a lookalike scorer: it is the shipped body with three rules added, run
+    through the same ``judge``.
+
+    The four are chosen so that every ARM of both evaluators is reached, not merely the
+    happy one. A rule whose field is Known on all 440 vectors pins the ramp and leaves the
+    fail-closed branches as dead as they were -- measured: a keep on ``watchers_all_time``
+    alone caught the ramp being halved and did NOT catch ``evaluate_keep``'s ``Unknown`` arm
+    being inverted, which is the single mutation this whole exercise started from.
+
+    * a BOOLEAN condemn on ``requested``, which the extractor now carries from the frozen
+      facts instead of pinning to unknown, so both the matched and unmatched forks fire;
+    * a GRADED condemn on ``imdb_rating``, whose recorded states are 424 Known, 6 Absent
+      and 10 Unknown, so ``evaluate_custom`` runs its ramp, its "none recorded" arm, and
+      its unreadable arm;
+    * a GRADED KEEP on ``watchers_all_time``, the case the ``GradedKeepSpec`` docstring
+      names as the point of the feature, and now spread across real discounts rather than
+      pinned at the maximum, because the fixture carries an arrival date again;
+    * a GRADED KEEP on ``imdb_votes``, same three-state spread, which is what reaches
+      ``evaluate_keep``'s fail-closed maximum on an input it could not read.
+
+    Removal weights must total exactly 100 (``PolicyBody._weights_total_one_hundred``), so
+    the two condemn rules are funded by taking points off ``unwatched`` rather than by
+    adding to the total, which would renormalize every other signal and move the DEFAULT
+    baseline too -- the one thing this must not touch.
+    """
+    base = DEFAULT_MOVIE_POLICY if media_type == "movie" else DEFAULT_TV_POLICY
+    funded = tuple(
+        SignalSetting(
+            signal=s.signal, weight=s.weight - 15, saturate_at=s.saturate_at, floor=s.floor
+        )
+        if s.signal is SignalId.UNWATCHED
+        else s
+        for s in base.signals
+    )
+    return base.model_copy(
+        update={
+            "signals": funded,
+            "custom_condemn": (
+                BooleanCondemnSpec(
+                    name="Nobody asked for it", field="requested", op=Op.EQ, value=False, weight=5
+                ),
+                GradedCondemnSpec(
+                    name="Poorly rated", field="imdb_rating", weight=10, saturate_at=80, floor=0
+                ),
+            ),
+            "graded_keeps": (
+                GradedKeepSpec(
+                    name="Plenty of people watched it",
+                    field="watchers_all_time",
+                    max_discount=40,
+                    floor=0,
+                    saturate_at=5,
+                ),
+                GradedKeepSpec(
+                    name="Well voted on",
+                    field="imdb_votes",
+                    max_discount=15,
+                    floor=0,
+                    saturate_at=50_000,
+                ),
+            ),
+        }
+    )
+
+
+@lru_cache(maxsize=2)
+def lane_gates(media_type: str) -> list[Any]:
+    return build_gates(lane_policy(media_type))
+
+
 def judge(
     vector: dict[str, Any],
     policy: PolicyBody,
     gates: list[Any] | None = None,
     *,
     facts: Facts | None = None,
+    reach: float | None = None,
 ) -> tuple[str, int, int, Evaluation, Any]:
     """Judge one vector with the SCAN's own pipeline: ``snapshot.judge_facts``.
 
@@ -240,7 +365,7 @@ def judge(
     if gates is None:
         gates = build_gates(policy)
     if facts is None:
-        facts = to_facts(vector)
+        facts = to_facts(vector, reach=reach)
     extra: list[GateResult] = []
     if vector.get("override") == "spare":
         # In a real scan a hand spare is on the keep list, so the whitelist gate fires from

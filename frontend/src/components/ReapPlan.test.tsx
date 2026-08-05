@@ -262,6 +262,23 @@ describe("the plan the page is showing", () => {
     expect(container.querySelector(".step-why")).toBeNull();
   });
 
+  it("says why a stopped run stopped, on the row that outlives the report", async () => {
+    // The durable reason's only surface. The report panel is dry-run state and the reap
+    // sheet reads the in-memory status, so a reload leaves this row holding it alone (#342).
+    const reason = "Over the size cap for one run. Nothing was sent.";
+    apiMock.runs.mockResolvedValue([{ ...run, state: "aborted", aborted_reason: reason }]);
+    const { container } = await buildPlan();
+    const history = container.querySelector(".run-history") as HTMLElement;
+    expect(within(history).getByText(reason)).toBeInTheDocument();
+  });
+
+  it("leaves a reason off a history row that did not stop", async () => {
+    // The other direction, so the assertion above cannot pass by drawing one on every row.
+    const { container } = await buildPlan();
+    const history = container.querySelector(".run-history") as HTMLElement;
+    expect(history.querySelector(".step-why")).toBeNull();
+  });
+
   it("stops offering Execute once the run it shows has been spent", async () => {
     // The plan is read through the cache, not captured: a run that has since completed
     // must not keep a live Execute over it (B-15).

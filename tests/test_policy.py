@@ -17,9 +17,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from reaper.api.schemas import GateSettingIn
+from reaper.api.schemas import GateSettingIn, PolicyIn
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
@@ -34,7 +34,9 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import (
+    DEFAULT_IMDB_LIST_NAME,
     DEFAULT_MOVIE_POLICY,
+    DEFAULT_TAG_LIST_NAME,
     DEFAULT_TV_POLICY,
     SCHEMA_VERSION,
     SCORER_VERSION,
@@ -48,6 +50,8 @@ from reaper.engine.policy import (
     ProfileSettings,
     RatingRuleSpec,
     SignalSetting,
+    convert_list_protections,
+    has_legacy_list_protections,
     inspect,
     rebalance,
     recover_rating_rules,
@@ -55,7 +59,7 @@ from reaper.engine.policy import (
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
-from reaper.services.scan_runner import GATE_TYPES, build_gates
+from reaper.services.scan_runner import GATE_TYPES, ScanConfigError, build_gates
 from reaper.services.season_pruning import SeasonStats, plan_series_prune
 
 #: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
@@ -200,17 +204,121 @@ class TestEvidenceHash:
         )
         assert a.evidence_hash() != b.evidence_hash()
 
-    def test_changing_keep_tags_changes_the_evidence_hash(self) -> None:
-        # The whitelist is re-synced from the *arr at scan time, so a new keep-tag needs a scan.
-        a = _policy(keep_tags=("reaper-keep",))
-        b = _policy(keep_tags=("keep-this",))
-        assert a.evidence_hash() != b.evidence_hash()
+    def test_switching_a_protection_off_keeps_the_evidence_hash(self) -> None:
+        """A gate decides what to make of an item; it does not decide what gets gathered.
 
-    def test_changing_a_season_rule_changes_the_evidence_hash(self) -> None:
-        # keep_last_seasons recomputes the frozen season-pruning guard, so it needs a scan.
-        a = _policy(media_type="tv", keep_last_seasons=2)
-        b = _policy(media_type="tv", keep_last_seasons=4)
-        assert a.evidence_hash() != b.evidence_hash()
+        Every fact a gate reads is frozen whether or not the gate is switched on -- no fact
+        builder branches on the gate list -- so the replay answers a toggle exactly. This is
+        the edit an operator makes most often on this page, and it used to blank the panel.
+        """
+        a = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),))
+        b = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095, enabled=False),))
+        assert a.scoring_hash() != b.scoring_hash()  # it changes the answer
+        assert a.evidence_hash() == b.evidence_hash()  # ...off the same frozen bytes
+
+    def test_moving_a_protection_threshold_keeps_the_evidence_hash(self) -> None:
+        # Dormancy is measured from the item's own dates, never from the floor it is
+        # compared against, so moving the floor re-reads nothing.
+        a = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),))
+        b = _policy(gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=30),))
+        assert a.scoring_hash() != b.scoring_hash()
+        assert a.evidence_hash() == b.evidence_hash()
+
+    def test_switching_the_popularity_gate_off_keeps_the_evidence_hash(self) -> None:
+        """The one gate whose settings reach the gather phase, in the direction that is
+        still exact: a disabled popularity gate leaves the window at the 365-day default, so
+        the watcher counts already frozen were counted over exactly that span."""
+        a = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365),)
+        )
+        b = _policy(
+            gates=(
+                GateSetting(
+                    gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365, enabled=False
+                ),
+            )
+        )
+        assert a.evidence_hash() == b.evidence_hash()
+
+    def test_switching_the_popularity_gate_on_at_a_new_window_changes_it(self) -> None:
+        """And the direction that is not. A gate disabled at scan time was counted over the
+        365-day fallback; enabling it at 90 asks a question of a count nobody took, so this
+        has to fall through to the refusal however cheap a replay would be."""
+        off = _policy(
+            gates=(
+                GateSetting(
+                    gate=GateId.SERVER_POPULARITY, threshold=3, window_days=90, enabled=False
+                ),
+            )
+        )
+        on = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=90),)
+        )
+        assert off.evidence_hash() != on.evidence_hash()
+
+    def test_every_gate_field_is_classified_as_gathering_or_judging(self) -> None:
+        """Rule 103's drift guard, and the reason the split is written out by name.
+
+        A gate field added later would otherwise fall silently into the judging half and be
+        replayed off frozen bytes that never covered it -- a confident wrong preview, which
+        is worse than the blank panel this change removes. Classify the new field into one
+        of the two sets, and if it is a gathering one, fold it into ``_gathering_evidence``.
+        """
+        declared = PolicyBody._GATHERING_GATE_FIELDS | PolicyBody._JUDGING_GATE_FIELDS
+        actual = set(GateSetting.model_fields)
+
+        assert actual == declared, (
+            f"GateSetting fields changed: {actual ^ declared}. Classify each into "
+            "PolicyBody._GATHERING_GATE_FIELDS or _JUDGING_GATE_FIELDS, and fold any "
+            "gathering one into PolicyBody._gathering_evidence()."
+        )
+
+    def test_an_on_list_rule_previews_without_a_scan_but_still_voids_an_approval(self) -> None:
+        """The keep tags left the body for Settings -> Lists, and a list now protects
+        through an ``on_list`` rule reading the frozen ``Facts.on_lists``. That makes the
+        rule REPLAYABLE -- the membership was gathered whether or not any rule named it --
+        so the evidence hash holds still. The policy hash must still move: a plan approved
+        before the rule was added targets files the new rule keeps (rule 113)."""
+        a = _policy(protect_conditions=(ConditionSpec(field="on_list", op=Op.EQ, value="A"),))
+        b = _policy(protect_conditions=(ConditionSpec(field="on_list", op=Op.EQ, value="B"),))
+        assert a.evidence_hash() == b.evidence_hash()
+        assert a.policy_hash() != b.policy_hash()
+
+    def test_a_season_rule_keeps_the_evidence_hash(self) -> None:
+        """Every season rule, and every one of them in both directions.
+
+        A season rule recomputes the guard rather than the evidence: the scan freezes what
+        ``plan_series_prune`` reads per show (``db.models.SeasonPruneEvidence``) and the
+        replay re-derives the plan from it, so none of these nine changes what a scan would
+        gather. Swept rather than sampled, because a field left out of
+        ``_EVIDENCE_REPLAYABLE_FIELDS`` fails closed and nothing else here would notice one
+        of the nine still refusing (rule 141: the fixture values are all off the default, so
+        an edit that does nothing cannot pass this).
+        """
+        edits: list[dict[str, object]] = [
+            {"keep_last_seasons": 4},
+            {"keep_first_season": False},
+            {"keep_last_scope": "requested"},
+            {"season_lookahead": 2},
+            {"keep_in_progress": False},
+            {"in_progress_hold_days": 30},
+            {"keep_specials": False},
+            {"protect_incomplete_seasons": False},
+            {"flag_keep_conflicts": False},
+        ]
+        base = _policy(media_type="tv")
+        for edit in edits:
+            edited = _policy(media_type="tv", **edit)
+            field = next(iter(edit))
+            assert edited.evidence_hash() == base.evidence_hash(), (
+                f"{field} still forces a fresh scan. It is replayable off the frozen season "
+                "bundle, so it belongs in PolicyBody._EVIDENCE_REPLAYABLE_FIELDS."
+            )
+            # Still a real edit: it moves the scores, which is what routes it to the replay
+            # rather than to the stored-score tier.
+            assert edited.scoring_hash() != base.scoring_hash(), (
+                f"{field} moved neither hash, so this case proves nothing about either."
+            )
 
 
 class TestSimulatorHashesCoverOnlyBehavior:
@@ -304,30 +412,40 @@ class TestSimulatorHashesCoverOnlyBehavior:
         added so the author has to decide which it is, rather than discovering it on a live
         server the way ``schema_version`` was found. (``name`` is deliberately absent: a
         policy's name lives on the row, not in the hashed body.)
+
+        **Coverage was not enough on its own.** It used to assert only that the sets COVERED
+        the body, which a field listed in two of them satisfies just as well -- and ``gates``
+        was listed twice, so from the moment it became replayable this test would have gone
+        on passing had it been put back. Coverage catches a field nobody classified; only
+        disjointness catches one classified twice, which is the half that matters when a set
+        is being edited rather than extended.
+
+        Disjointness holds over what the simulator does with a field, and only there: a body
+        field either replays off frozen evidence, or needs a fresh scan, or is bookkeeping,
+        and never two of those. ``_POST_SCORE_FIELDS`` is a different question -- which hash
+        a field leaves, not which tier answers it -- so a threshold is legitimately both
+        post-score and replayable, and it takes part in the coverage check alone.
         """
-        known = (
-            PolicyBody._POST_SCORE_FIELDS
-            | PolicyBody._EVIDENCE_REPLAYABLE_FIELDS
-            | PolicyBody._NON_BEHAVIORAL_FIELDS
-        )
-        # Everything else is evidence-bearing: it changes what a scan gathers.
-        evidence_bearing = {
-            "media_type",
-            "keep_last_seasons",
-            "keep_first_season",
-            "keep_last_scope",
-            "season_lookahead",
-            "keep_in_progress",
-            "in_progress_hold_days",
-            "keep_specials",
-            "protect_incomplete_seasons",
-            "flag_keep_conflicts",
-            "gates",
-            "keep_tags",
-            "keep_tags_match",
+        exclusive = {
+            "evidence-replayable": PolicyBody._EVIDENCE_REPLAYABLE_FIELDS,
+            "non-behavioral": PolicyBody._NON_BEHAVIORAL_FIELDS,
+            # Everything else is evidence-bearing: it changes what a scan gathers, so the
+            # frozen evidence cannot answer for it and the simulator refuses. Down to one
+            # field: the season rules replay off the frozen prune bundle, and the keep tags
+            # left the body altogether for Settings -> Lists, where a list protects through
+            # an ``on_list`` rule reading membership the scan gathered regardless.
+            "evidence-bearing": frozenset({"media_type"}),
         }
+        for left, right in itertools.combinations(exclusive, 2):
+            overlap = exclusive[left] & exclusive[right]
+            assert not overlap, (
+                f"{sorted(overlap)} is classified as both {left} and {right}. A field has "
+                "exactly one of these roles; two makes this test blind to a change of set."
+            )
+
         actual = set(DEFAULT_TV_POLICY.model_dump(mode="json"))
-        assert actual == known | evidence_bearing, (
+        covered = PolicyBody._POST_SCORE_FIELDS.union(*exclusive.values())
+        assert actual == covered, (
             "A PolicyBody field is unclassified. Decide whether it changes an answer "
             "(leave it out of _NON_BEHAVIORAL_FIELDS) or is bookkeeping (add it), then "
             "list it here."
@@ -545,16 +663,25 @@ class TestDefaultPolicy:
         assert DEFAULT_MOVIE_POLICY.policy_hash()
 
     def test_the_shipped_default_protects_before_it_condemns(self) -> None:
-        """Every protection the owner asked for is on by default."""
+        """Every protection the owner asked for is on by default. List membership arrives
+        as the two shipped ``on_list`` keep rules rather than as gates: one names the tag
+        list, one the IMDb list, both keeping outright, and their names are the ones
+        ``list_config.ensure_defaults`` seeds -- a rule naming a list that does not exist
+        would render as a live protection covering nothing (rule 25)."""
         enabled = {g.gate for g in DEFAULT_MOVIE_POLICY.gates if g.enabled}
 
-        assert GateId.WHITELISTED in enabled
         assert GateId.STREAMING_NOW in enabled
         assert GateId.RATING_FLOOR in enabled
         assert GateId.SERVER_POPULARITY in enabled
         assert GateId.DATA_HORIZON in enabled
-        assert GateId.CURATED_LIST in enabled
         assert GateId.MIN_DORMANCY in enabled
+
+        for body in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY):
+            on_list = [c for c in body.protect_conditions if c.field == "on_list"]
+            assert {str(c.value) for c in on_list} == {
+                DEFAULT_TAG_LIST_NAME,
+                DEFAULT_IMDB_LIST_NAME,
+            }, body.media_type
 
     def test_no_shipped_protection_is_one_that_cannot_fire(self) -> None:
         """Rule 38/117, as a standing check rather than a one-off. Every gate a default
@@ -578,13 +705,27 @@ class TestDefaultPolicy:
 
         ``OTHERS_WATCHING`` was exactly that gap -- retired before ``UNMANAGED``, refused by
         ``build_gates``, and missing from the first version of the set.
+
+        Two retirements are handled the other way, and that is deliberate: ``whitelisted``
+        and ``curated_list`` WERE live protections, so ``convert_list_protections`` rewrites
+        a stored body's row into the equivalent ``on_list`` rule rather than dropping it --
+        putting them in ``RETIRED_GATES`` would silently withdraw cover. The set equality
+        below is what forces a future retirement to pick one of the two mechanisms.
         """
+        converted = {GateId.WHITELISTED, GateId.CURATED_LIST}
         unbuildable = set(GateId) - _BUILDABLE_GATES - _ENGINE_ONLY_GATES
 
-        assert unbuildable == PolicyBody.RETIRED_GATES, (
-            f"not declared retired: {unbuildable - PolicyBody.RETIRED_GATES}; "
+        assert unbuildable == PolicyBody.RETIRED_GATES | converted, (
+            f"neither declared retired nor converted by the shim: "
+            f"{unbuildable - PolicyBody.RETIRED_GATES - converted}; "
             f"declared retired but buildable: {PolicyBody.RETIRED_GATES - unbuildable}"
         )
+        assert not PolicyBody.RETIRED_GATES & converted
+        # ...and the shim really does fire on a stored body naming either one.
+        for gate in sorted(converted):
+            stored = DEFAULT_MOVIE_POLICY.model_dump(mode="json")
+            stored["gates"] = [{"gate": gate.value, "enabled": True}, *stored["gates"]]
+            assert has_legacy_list_protections(stored), gate
 
     def test_the_save_boundary_allows_exactly_what_the_builder_can_build(self) -> None:
         """Rule 131: the producer and the consumer of this bound read one declaration.
@@ -3612,3 +3753,249 @@ class TestTheGradedKeepRemedyReadsAsASentence:
         assert self._said(self._keep("recent_watchers", 40, condemn_at=condemn_at)).endswith(
             f"Wait for it to build up, or {remedy}"
         )
+
+
+class TestConvertListProtections:
+    """The load shim for a body from before every list protected through its own keep rule.
+
+    Three legacy shapes leave together because they were saved together: ``keep_tags`` and
+    its match mode, the ``whitelisted``/``curated_list`` gate rows, and rules spelled
+    ``on_curated_list``. Each ENABLED gate was a LIVE protection, so it converts to the
+    equivalent ``on_list`` rule rather than being dropped -- dropping alone would silently
+    withdraw cover, and a target list that cannot be resolved keeps its row so the scan
+    refuses loudly instead (rule 38).
+    """
+
+    @staticmethod
+    def _legacy(**over: object) -> dict[str, object]:
+        body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        body["protect_conditions"] = []
+        body["keep_tags"] = ["reaper-keep"]
+        body["keep_tags_match"] = "any"
+        body["gates"] = [
+            {"gate": "whitelisted", "enabled": True},
+            {"gate": "curated_list", "enabled": True},
+            *body["gates"],
+        ]
+        body.update(over)
+        return body
+
+    @staticmethod
+    def _convert(
+        raw: object,
+        *,
+        tag: str | None = "Tagged",
+        imdb: str | None = "Top",
+        collections: tuple[str, ...] = (),
+    ) -> dict[str, object] | None:
+        return convert_list_protections(
+            raw,
+            tag_list_name=tag,
+            imdb_list_name=imdb,
+            collection_list_names=collections,
+        )
+
+    def test_every_curated_by_hand_list_gets_its_own_rule(self) -> None:
+        """The whitelisted gate covered the Plex collection and watchlist definitions as
+        much as the keep tags, so each existing one converts to its own rule -- or an
+        upgrade would quietly withdraw the collections' cover (rule 118 for the new arm)."""
+        converted = self._convert(self._legacy(), collections=("Never Reap", "My watchlist"))
+        assert converted is not None
+        assert self._rules(converted) == ["Tagged", "Never Reap", "My watchlist", "Top"]
+        assert "whitelisted" not in self._gate_ids(converted)
+
+    @staticmethod
+    def _rules(body: dict[str, object]) -> list[str]:
+        return [
+            str(c["value"])
+            for c in body.get("protect_conditions") or []  # type: ignore[union-attr]
+            if isinstance(c, dict) and c.get("field") == "on_list"
+        ]
+
+    @staticmethod
+    def _gate_ids(body: dict[str, object]) -> set[str]:
+        return {str(g.get("gate")) for g in body.get("gates") or [] if isinstance(g, dict)}  # type: ignore[union-attr]
+
+    def test_enabled_gates_become_rules_and_the_keys_leave(self) -> None:
+        converted = self._convert(self._legacy())
+
+        assert converted is not None
+        assert "keep_tags" not in converted and "keep_tags_match" not in converted
+        assert self._rules(converted) == ["Tagged", "Top"]
+        assert not self._gate_ids(converted) & {"whitelisted", "curated_list"}
+        # ...and the whole result still loads.
+        assert PolicyBody.model_validate(converted)
+
+    def test_a_disabled_gate_converts_to_no_rule_and_still_leaves(self) -> None:
+        """The operator had the protection off; the Lists screen now says "not used by
+        your policy" where the switch used to be."""
+        legacy = self._legacy()
+        for gate in legacy["gates"]:  # type: ignore[union-attr]
+            if gate["gate"] in ("whitelisted", "curated_list"):
+                gate["enabled"] = False
+
+        converted = self._convert(legacy)
+
+        assert converted is not None
+        assert self._rules(converted) == []
+        assert not self._gate_ids(converted) & {"whitelisted", "curated_list"}
+
+    def test_an_explicitly_empty_keep_tag_list_converts_to_no_tag_rule(self) -> None:
+        """Rule 1: an operator who cleared their tags had no live tag protection to carry
+        over. The curated gate's rule still lands."""
+        converted = self._convert(self._legacy(keep_tags=[]))
+
+        assert converted is not None
+        assert self._rules(converted) == ["Top"]
+
+    def test_an_enabled_gate_with_no_target_list_keeps_its_row(self) -> None:
+        """Stripping an enabled gate whose replacement cannot be named would withdraw a
+        live protection with nothing in its place. The row stays, and ``build_gates``
+        refuses the scan on it rather than silently skipping (rule 38)."""
+        converted = self._convert(self._legacy(), tag=None, imdb=None)
+
+        assert converted is not None
+        assert self._rules(converted) == []
+        assert {"whitelisted", "curated_list"} <= self._gate_ids(converted)
+        with pytest.raises(ScanConfigError, match="whitelisted"):
+            build_gates(PolicyBody.model_validate(converted))
+
+    def test_on_curated_list_rules_respell_as_on_list(self) -> None:
+        legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        legacy["protect_conditions"] = [
+            {"field": "on_curated_list", "op": "eq", "value": "Awards Shortlist"}
+        ]
+
+        converted = self._convert(legacy)
+
+        assert converted is not None
+        assert self._rules(converted) == ["Awards Shortlist"]
+        assert PolicyBody.model_validate(converted)
+
+    def test_a_rule_already_naming_the_list_is_not_doubled(self) -> None:
+        """Matched case-folded (rule 88): a body that already carries the rule the gate
+        would convert to gains nothing beside it."""
+        legacy = self._legacy(
+            protect_conditions=[{"field": "on_list", "op": "eq", "value": "  tagged "}]
+        )
+
+        converted = self._convert(legacy)
+
+        assert converted is not None
+        assert self._rules(converted) == ["  tagged ", "Top"]
+
+    def test_it_is_idempotent_on_a_converted_body(self) -> None:
+        converted = self._convert(self._legacy())
+        assert converted is not None
+
+        assert self._convert(converted) is None
+        assert (
+            convert_list_protections(
+                json.loads(DEFAULT_MOVIE_POLICY.model_dump_json()),
+                tag_list_name="Tagged",
+                imdb_list_name="Top",
+            )
+            is None
+        )
+
+    @pytest.mark.parametrize("raw", [None, "policy", 7, ["keep_tags"]])
+    def test_anything_but_an_object_converts_to_nothing(self, raw: object) -> None:
+        assert self._convert(raw) is None
+
+    def test_the_trigger_matches_the_conversion(self) -> None:
+        """``has_legacy_list_protections`` is what callers use to decide whether resolving
+        the list names is worth a database read, so it must fire exactly when the
+        conversion would."""
+        assert has_legacy_list_protections(self._legacy()) is True
+        assert (
+            has_legacy_list_protections(
+                {"protect_conditions": [{"field": "on_curated_list", "op": "eq", "value": "A"}]}
+            )
+            is True
+        )
+        assert (
+            has_legacy_list_protections(json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())) is False
+        )
+        assert has_legacy_list_protections("policy") is False
+
+
+class TestTheTwoPolicyDeclarationsAgree:
+    """``api.schemas.PolicyIn`` and ``engine.policy.PolicyBody`` declare the same numbers
+    twice, and nothing compared them.
+
+    Rule 131: a bound the producer honors and the consumer enforces comes off one
+    declaration, or off two a test keeps in step. These two cannot merge -- ``PolicyIn`` is
+    the wire body and ``PolicyBody`` carries ``schema_version``/``scorer_version`` the browser
+    never sends -- so the test is the seam. ``test_api_type_mirror`` pairs them already and
+    compares field *names* against the browser's copy, which is why a bound present on one
+    side and absent on the other survived it: ``in_progress_hold_days`` and
+    ``season_lookahead`` were ``ge=0`` with no ceiling on both, and the value that reached
+    ``active_progress`` raised ``OverflowError`` out of a scan.
+    """
+
+    @staticmethod
+    def _bounds(model: type[BaseModel]) -> dict[str, list[str]]:
+        """Each shared field's constraint metadata, spelled for comparison.
+
+        ``repr`` rather than the objects themselves so a failure names the numbers. Sorted
+        because ``Field(ge=0, le=5)`` and ``Field(le=5, ge=0)`` are the same constraint.
+        """
+        return {
+            name: sorted(repr(m) for m in field.metadata)
+            for name, field in model.model_fields.items()
+        }
+
+    def test_every_shared_field_carries_the_same_bounds(self) -> None:
+        wire = self._bounds(PolicyIn)
+        engine = self._bounds(PolicyBody)
+        shared = sorted(set(wire) & set(engine))
+
+        # Rules 145 and 147: pin what the walk COLLECTS. A comparison over an empty
+        # intersection, or over a set that quietly stopped containing the numeric fields,
+        # passes while proving nothing -- and this test exists because the previous guard
+        # compared names only. Nineteen, down from twenty when ``keep_tags`` and
+        # ``keep_tags_match`` left the body for Settings -> Lists.
+        assert len(shared) >= 19, f"only {len(shared)} shared fields; the pairing broke"
+        constrained = {name for name in shared if wire[name]}
+        assert {
+            "condemn_at",
+            "coverage_floor_bp",
+            "keep_last_seasons",
+            "season_lookahead",
+            "in_progress_hold_days",
+        } <= constrained, f"a bounded field lost its bounds on the wire: {sorted(constrained)}"
+
+        disagree = [
+            f"{name}: PolicyIn {wire[name]} != PolicyBody {engine[name]}"
+            for name in shared
+            if wire[name] != engine[name]
+        ]
+        assert not disagree, (
+            "these fields are declared with different bounds in the two policy models\n"
+            "(src/reaper/api/schemas.py and src/reaper/engine/policy.py), so the wire\n"
+            "accepts a value the engine rejects or the reverse:\n  " + "\n  ".join(disagree)
+        )
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("in_progress_hold_days", 999_999),
+            ("season_lookahead", 10**9),
+        ],
+    )
+    def test_the_ceiling_refuses_a_value_that_breaks_the_planner(
+        self, field: str, value: int
+    ) -> None:
+        """The two that had no ceiling, at the values that demonstrated why they needed one.
+
+        ``in_progress_hold_days`` reached ``now - timedelta(days=...)`` and raised
+        ``OverflowError``; ``season_lookahead`` reached ``range(lookahead + 1)`` and allocated
+        it per anchor per viewer per show. Both arrive through ``PolicyIn``, so refusing at
+        that boundary is what keeps them out of the scan and out of ``/policy/simulate``.
+        """
+        wire = DEFAULT_TV_POLICY.model_dump(mode="json")
+        # The premise: the payload is accepted before the one field is pushed past its
+        # ceiling, so the raise below is that field's and not a malformed body's.
+        PolicyIn.model_validate(wire)
+        with pytest.raises(ValidationError):
+            PolicyIn.model_validate({**wire, field: value})

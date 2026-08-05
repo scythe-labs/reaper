@@ -12,8 +12,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import type { Simulation } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { RESCAN_HEADING, RESCAN_QUEUED_LEAD, StaleNotice } from "./PolicySimulator";
+import {
+  APPLIES_ON_NEXT_SCAN,
+  Outcome,
+  RESCAN_HEADING,
+  RESCAN_QUEUED_LEAD,
+  StaleNotice,
+} from "./PolicySimulator";
 
 function renderNotice(props: Partial<Parameters<typeof StaleNotice>[0]> = {}) {
   return render(
@@ -25,6 +32,8 @@ function renderNotice(props: Partial<Parameters<typeof StaleNotice>[0]> = {}) {
       onScan={() => {}}
       percent={40}
       detail="Scoring"
+      staleKind="gathers_differently"
+      staleReason="This policy doesn't match the last scan. Scan to apply it."
       {...props}
     />,
   );
@@ -72,6 +81,64 @@ describe("the wait the simulator shows while a rescan runs", () => {
   });
 });
 
+describe("what the panel says when it will not answer", () => {
+  // Nine season controls, the keep tags and the popularity window used to share one
+  // paragraph naming every cause at once, so the sentence could only be right about one of
+  // them (#495). Each refusal now carries its own remedy, and the operator has to be able to
+  // tell them apart at a glance -- which is the whole reason the server sends a typed kind
+  // rather than only a sentence.
+  const cases = [
+    ["gathers_differently", "Needs a fresh scan"],
+    ["seasons_not_recorded", "Your season rules need a fresh scan"],
+    // Names the control, not a cause: the episode map is also unread after a scan that ran
+    // WITH the hold on and got no answer from Sonarr, so "turning that on" was false for
+    // that operator (`tests/test_scan_pipeline.py` drives both producers).
+    ["in_progress_not_read", "Your partway-through rule needs a fresh scan"],
+  ] as const;
+
+  it("gives each refusal its own heading", () => {
+    const seen = new Set<string>();
+    for (const [kind, heading] of cases) {
+      const view = renderNotice({ scanning: false, staleKind: kind });
+      expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+      seen.add(heading);
+      view.unmount();
+    }
+    // Three distinct headings, not one string reached three ways: a lookup that fell back
+    // to the general heading for every kind would satisfy the assertions above one at a
+    // time and tell the operator to fix the wrong thing.
+    expect(seen.size).toBe(cases.length);
+  });
+
+  it("renders the server's sentence rather than a copy of its own", () => {
+    // The reason lives in api/routes.py alone. It used to live in both, and the copy the
+    // operator actually read was the one in this file -- so the sentence that was reviewed
+    // and the sentence that shipped were different strings (rule 144).
+    renderNotice({
+      scanning: false,
+      staleKind: "seasons_not_recorded",
+      staleReason: "A sentence only the server could have written.",
+    });
+
+    expect(screen.getByText("A sentence only the server could have written.")).toBeInTheDocument();
+  });
+
+  it("still says something when the server sends a kind this build does not know", () => {
+    // Rule 66: an unknown id falls back, it never guesses. An older browser against a newer
+    // server gets the general heading and the server's own sentence, which is always sent.
+    renderNotice({
+      scanning: false,
+      staleKind: "a_refusal_from_the_future" as never,
+      staleReason: "Something changed that this scan cannot answer for.",
+    });
+
+    expect(screen.getByRole("heading", { name: "Needs a fresh scan" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Something changed that this scan cannot answer for."),
+    ).toBeInTheDocument();
+  });
+});
+
 // Rule 144, as a guard rather than a comment asking the next author to remember. The panel shows
 // these sentences and `PolicyEditor` says them, from two different files -- which is exactly the
 // arrangement where a reworded heading leaves the spoken copy behind, and each file's own tests
@@ -88,11 +155,17 @@ describe("who is allowed to write the rescan sentences", () => {
     const panel = read("PolicySimulator.tsx");
     expect(panel).toContain(`export const RESCAN_HEADING = "${RESCAN_HEADING}"`);
     expect(panel).toContain(`"${RESCAN_QUEUED_LEAD}"`);
+    // The savebar's sentence, now that this panel shows it too. The savebar is at the foot of
+    // the left column and this panel is the right one, so a reword reaching only one of them
+    // leaves two answers to "when does this take effect" on one screen.
+    expect(panel).toContain("export const APPLIES_ON_NEXT_SCAN");
+    expect(panel).toContain(`"${APPLIES_ON_NEXT_SCAN}"`);
 
     const editor = read("PolicyEditor.tsx");
     for (const [name, sentence] of [
       ["RESCAN_HEADING", RESCAN_HEADING],
       ["RESCAN_QUEUED_LEAD", RESCAN_QUEUED_LEAD],
+      ["APPLIES_ON_NEXT_SCAN", APPLIES_ON_NEXT_SCAN],
     ] as const) {
       expect(
         editor.includes(sentence),
@@ -102,5 +175,133 @@ describe("who is allowed to write the rescan sentences", () => {
       ).toBe(false);
     }
     expect(editor).toContain("RESCAN_QUEUED_LEAD");
+    expect(editor).toContain("APPLIES_ON_NEXT_SCAN");
+  });
+});
+
+// What the panel says about an edit that legitimately moves nothing (#488).
+//
+// A keep rule redraws the histogram while the two headline numbers cannot move, and an operator
+// read the frozen outcome as a broken preview. The delta rows were correct throughout, which is
+// the trap: they count threshold crossings, and the two rows beside them are absolute totals
+// with no before to read them against, so a protection edit that moves a title from spared to
+// not judged leaves every number on the panel holding still.
+describe("the outcome panel on an edit that changes no title", () => {
+  const BASE: Simulation = {
+    exact: true,
+    stale_kind: null,
+    stale_reason: null,
+    condemned: 412,
+    protected: 388,
+    abstained: 2669,
+    reclaimable_bytes: 2_090_000_000_000,
+    unknown_size_items: 0,
+    newly_condemned: 0,
+    no_longer_condemned: 0,
+    condemned_before: 412,
+    changed_titles: 0,
+    histogram: [180, 402, 611, 688, 590, 430, 292, 168, 78, 30],
+    examples_newly_condemned: [],
+    protected_by: [],
+  };
+
+  const INERT = "Your changes leave every title as it is.";
+
+  function renderOutcome(sim: Partial<Simulation>, edited: boolean) {
+    return render(
+      <Outcome simulation={{ ...BASE, ...sim }} threshold={62} pace={null} edited={edited} />,
+    );
+  }
+
+  /** The count beside the summary row, read through the row rather than by position. */
+  function changed(): string {
+    const row = screen.getByText("Titles that change").parentElement;
+    return row?.querySelector("dd")?.textContent ?? "";
+  }
+
+  it("says so, in place of a comparison between two identical numbers", () => {
+    renderOutcome({ changed_titles: 0 }, true);
+
+    expect(screen.getByText(INERT)).toBeInTheDocument();
+    // The line it replaces, which is the one that read as broken: "Your last scan flags
+    // 412. This draft flags 412." is a sentence built to contrast two numbers that are equal.
+    expect(screen.queryByText(/This draft flags/)).not.toBeInTheDocument();
+  });
+
+  it("compares nothing at all until something has been edited", () => {
+    // The panel simulates on mount, before anything is touched. The inert sentence keyed on
+    // the count alone would open by telling the operator their untouched policy does nothing;
+    // the comparison keyed on nothing at all opened by contrasting a number with itself
+    // ("Your last scan flags 412. This draft flags 412."). With no draft there is no
+    // comparison to draw, and the headline above already says what the policy flags.
+    renderOutcome({ changed_titles: 0 }, false);
+
+    expect(screen.queryByText(INERT)).not.toBeInTheDocument();
+    expect(screen.queryByText(/This draft flags/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your last scan flags/)).not.toBeInTheDocument();
+    // And says nothing about a scan either, for the same reason: there is no save pending
+    // for one to follow, and these numbers already describe the scan that has run.
+    expect(screen.queryByText(APPLIES_ON_NEXT_SCAN)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["a draft that moves titles", 65],
+    ["a draft that moves none", 0],
+  ])("says a scan applies it, on %s", (_case, changed_titles) => {
+    // The panel previews a keep rule exactly, off frozen evidence, so it answers instead of
+    // asking for a scan -- and an operator who watched these numbers move had nothing here
+    // telling them the list they review had not moved with them until a scan re-scored it.
+    // Both branches, because an inert edit still saves and still starts a scan (rule 118).
+    renderOutcome({ changed_titles }, true);
+
+    expect(screen.getByText(APPLIES_ON_NEXT_SCAN)).toBeInTheDocument();
+  });
+
+  it("reads the last scan's count off the server rather than off the two deltas", () => {
+    // The fixture is deliberately inconsistent: it is the payload the server sent while
+    // `no_longer_condemned` was broken, where the old derivation
+    // (condemned - newly + gone) collapsed to the draft's own 14 and printed it on both
+    // sides of the sentence. A delta bug must not be able to reach this line again.
+    renderOutcome(
+      { condemned: 14, condemned_before: 281, newly_condemned: 0, changed_titles: 813 },
+      true,
+    );
+
+    const line = screen.getByText(/This draft flags/);
+    expect(line).toHaveTextContent("Your last scan flags 281. This draft flags 14.");
+  });
+
+  it("keeps the comparison when titles do move", () => {
+    renderOutcome({ changed_titles: 65 }, true);
+
+    expect(screen.queryByText(INERT)).not.toBeInTheDocument();
+    expect(screen.getByText(/This draft flags/)).toBeInTheDocument();
+  });
+
+  it("counts the moves both deltas are blind to", () => {
+    // The case from #488's thread: a protection edit takes 65 titles from spared to not judged.
+    // Nothing crosses the threshold, so both deltas are correctly zero and both headline numbers
+    // correctly hold. Without the summary row this screen is identical to the one above where
+    // nothing happened at all -- two outcomes, one picture, on the surface whose job is to show
+    // blast radius before saving.
+    renderOutcome(
+      {
+        changed_titles: 65,
+        newly_condemned: 0,
+        no_longer_condemned: 0,
+        protected: 323,
+        abstained: 2734,
+      },
+      true,
+    );
+
+    expect(changed()).toBe("65");
+    expect(screen.getByText("+0")).toBeInTheDocument();
+    expect(screen.getByText("−0")).toBeInTheDocument();
+  });
+
+  it("has no accessibility violations", async () => {
+    const { container } = renderOutcome({ changed_titles: 0 }, true);
+    await expectNoA11yViolations(container);
   });
 });

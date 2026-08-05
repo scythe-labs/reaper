@@ -10,8 +10,9 @@ route and forces its response model to resolve.
 
 from __future__ import annotations
 
+import enum
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -26,7 +27,12 @@ from reaper.engine.explanation import (
 )
 from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
-from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
+from reaper.engine.policy import (
+    CustomCondemnSpec,
+    GradedKeepSpec,
+    PolicyRepair,
+    RatingRuleSpec,
+)
 from reaper.engine.signals import SignalId
 
 # The why-panel document moved to ``engine.explanation`` so the reap path could run the same
@@ -641,12 +647,19 @@ class PolicyIn(BaseModel):
     media_type: str = "movie"
     condemn_at: int = Field(ge=1, le=100)
     coverage_floor_bp: int = Field(default=5000, ge=0, le=10_000)
-    keep_last_seasons: int = Field(default=2, ge=0)
+    # Ceilings, not policy opinions (rule 95). `active_progress` computes
+    # `now - timedelta(days=hold_days)` and `sequential_protections` builds
+    # `range(lookahead + 1)` per anchor per viewer per show, so an unbounded value raises
+    # OverflowError out of a scan and out of `/policy/simulate`, or allocates inside the
+    # event loop. Each ceiling sits far above any real setting, so adding them cannot
+    # invalidate a body an operator already saved. `engine.policy.PolicyBody` declares the
+    # same three, and `test_policy.py` fails when the two stop agreeing (rule 131).
+    keep_last_seasons: int = Field(default=2, ge=0, le=1_000)
     keep_first_season: bool = True
     keep_last_scope: Literal["all", "requested"] = "all"
-    season_lookahead: int = Field(default=0, ge=0)
+    season_lookahead: int = Field(default=0, ge=0, le=1_000)
     keep_in_progress: bool = True
-    in_progress_hold_days: int = Field(default=180, ge=0)
+    in_progress_hold_days: int = Field(default=180, ge=0, le=36_500)
     keep_specials: bool = True
     protect_incomplete_seasons: bool = True
     flag_keep_conflicts: bool = True
@@ -657,8 +670,6 @@ class PolicyIn(BaseModel):
     # validation runs on the wire and the two cannot drift.
     custom_condemn: list[CustomCondemnSpec] = Field(default_factory=list)
     graded_keeps: list[GradedKeepSpec] = Field(default_factory=list)
-    keep_tags: list[str] = Field(default_factory=lambda: ["reaper-keep"])
-    keep_tags_match: Literal["any", "all"] = "any"
     # The engine spec is reused directly (like custom_condemn/graded_keeps) so its
     # per-source vote-floor validation runs on the wire.
     keep_rating_rules: list[RatingRuleSpec] = Field(default_factory=list)
@@ -728,31 +739,21 @@ class PolicyOut(BaseModel):
     ``None`` when the scan did not record it, which the editor renders as not knowing rather
     than as a reach of zero."""
 
-    needs_save: bool = False
-    """This body was rescaled on the way out and is NOT what is stored.
+    repairs: list[PolicyRepair] = []
+    """Every way this body had to be changed to load it, so it is NOT what is stored.
 
-    Set when a policy written before removal weights had to total 100 was rescaled to fit
-    (``policy.rebalance``). Their own tuning, in new units. The editor opens on it dirty,
-    so the operator reviews and saves it rather than discovering it changed underneath
-    them. Nothing is written until they do, so approvals stay valid meanwhile."""
+    One list rather than a boolean per repair, and the editor reads its LENGTH to decide
+    whether to open dirty. That is the fix for the shape this used to have: three booleans,
+    each of which had to be remembered at four sites, and the fourth repair remembered at
+    one. A stored body from before the lists move then degraded every scan while the editor
+    stayed clean, so the page held no Save and the degradation named an exit that was not
+    there (#516). A member added to ``PolicyRepair`` now raises the savebar whether or not
+    anyone wrote copy for it, and ``tests/test_policy_repairs.py`` fails until they do.
 
-    fell_back: bool = False
-    """The stored body could not be repaired, so this is the SHIPPED DEFAULT.
-
-    Louder than ``needs_save``: these are numbers the operator never chose.
-
-    All three recovery flags are fields rather than ``warnings`` entries on purpose. The
-    editor builds its warning list by re-validating the *draft*, so anything attached to
-    this response is never read -- a load-time warning put there is silently dropped."""
-
-    rating_rules_restored: bool = False
-    """The rating bar was restored from an older saved setting
-    (``policy.recover_rating_rules``), so this body is NOT what is stored.
-
-    Its own flag, not ``needs_save``, because the two recoveries read completely
-    differently to an operator: one moved their points into new units, this one put back a
-    protection that had stopped keeping anything. The editor opens on it dirty and says
-    which."""
+    A field rather than a ``warnings`` entry, like the flags before it: the editor builds
+    its warning list by re-validating the *draft*, so anything attached to this response is
+    never read -- a load-time warning put there is silently dropped.
+    """
     warnings: list[PolicyWarningOut]
     """Things that are legal but probably not what you meant. A validator cannot tell
     an IMDb floor of 96 (meaning 9.6) from a Rotten Tomatoes 96 typed into the wrong
@@ -774,6 +775,45 @@ class GateCountOut(BaseModel):
     count: int
 
 
+class SimStale(enum.StrEnum):
+    """Why the simulator would not answer -- as a value, not as a sentence.
+
+    Three refusals with three different remedies, and until this existed the panel showed
+    one paragraph naming every cause at once, so nine season controls, the protection lists
+    and the popularity window shared a sentence that could only be right about one of them. The
+    operator's copy lives in ``PolicySimulator.tsx`` and branches on this; the ``stale_reason``
+    beside it is the same fact as a sentence, for a reader of the API (rule 66: the frontend
+    handles an id it does not know by falling back to that sentence, never by guessing).
+    """
+
+    GATHERS_DIFFERENTLY = "gathers_differently"
+    """What a scan would collect no longer matches what this one did -- the span watching
+    counts over, or the protection lists an ``on_list`` rule reads. The frozen evidence
+    answers a different question, and only a scan fixes it.
+
+    The lists reach this without any policy edit at all, which is why the sentence says the
+    numbers do not match the last scan rather than naming something the operator changed."""
+
+    SEASONS_NOT_RECORDED = "seasons_not_recorded"
+    """This snapshot holds no per-show season-prune evidence, holds some it cannot read, or
+    holds some that does not describe the rows being judged.
+
+    Reached only *after* a scan that wrote the table: a snapshot older than it cannot match
+    the re-scoped ``evidence_hash`` either, so it refuses one tier earlier as
+    :attr:`GATHERS_DIFFERENTLY` (``api.routes.simulate`` states the same thing at length).
+    Like every refusal it zeroes the whole lane rather than the season card alone --
+    ``routes._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
+    verdicts would be worse."""
+
+    IN_PROGRESS_NOT_READ = "in_progress_not_read"
+    """The draft holds a season someone is part-way through, over a scan that recorded no
+    episode map to place them in. Two scans leave it unread -- one that ran with the hold off,
+    and one that ran with it on and got no answer from Sonarr for some show -- so the copy
+    states the absence rather than either cause. Turning the hold OFF replays fine: the guard
+    is short-circuited before the missing map is touched, which is why this names the one
+    direction that cannot be answered rather than the whole control."""
+
+
 class SimulationOut(BaseModel):
     """Re-deciding the last snapshot under a candidate policy. Zero API calls.
 
@@ -789,10 +829,15 @@ class SimulationOut(BaseModel):
     anything else**: change a signal weight or a gate and the stored scores were
     produced by the old ones, so every count below would be confidently stale.
 
-    When this is false the counts are zeroed and ``stale_reason`` says why. Reaper
-    would rather show nothing than show a number it cannot stand behind -- a plausible
-    wrong answer is worse than a blank, because the owner acts on it.
+    When this is false the counts are zeroed, ``stale_kind`` says which refusal it is and
+    ``stale_reason`` says the same thing in a sentence. Reaper would rather show nothing than
+    show a number it cannot stand behind -- a plausible wrong answer is worse than a blank,
+    because the owner acts on it.
     """
+
+    stale_kind: SimStale | None = None
+    """Which refusal this is, typed, so the panel can name the control at fault. ``None``
+    exactly when ``exact`` is true."""
 
     stale_reason: str | None = None
 
@@ -809,6 +854,39 @@ class SimulationOut(BaseModel):
     owner actually needs before saving."""
 
     no_longer_condemned: int
+
+    condemned_before: int = 0
+    """How many titles the LAST SCAN flags, so the panel can compare against it directly.
+
+    The scan, not the saved policy: both tiers count it as
+    ``effective_verdict(row, decisions) == "condemn"`` -- the stored verdicts, with live
+    overrides applied. Saving a policy starts a scan rather than being one, so between the
+    save and that scan finishing, or after it fails, the saved policy is not the policy these
+    rows were judged under. ``changed_titles`` below names the same set the same way ("the
+    lane they are in now"), and the panel's sentence follows both.
+
+    Equal to ``condemned - newly_condemned + no_longer_condemned``, which is how the panel
+    used to reconstruct it. That derivation is only sound while both deltas count every way
+    into and out of the removal list, and it printed a confident wrong number the moment one
+    of them did not: ``no_longer_condemned`` missed condemn -> protect, so an outright keep
+    rule put the draft's own count on both sides of a sentence built to contrast them. The
+    server counts the pre-edit lane per row either way, so sending it costs one line per tier
+    and leaves the browser with no server fact to re-derive (rule 144).
+    """
+
+    changed_titles: int = 0
+    """How many titles this draft puts in a different lane than the one they are in now.
+
+    A superset of ``newly_condemned`` + ``no_longer_condemned``, and it exists because those
+    two are blind to the move that prompted it: a protection edit can take a title from
+    spared to not judged without going near the threshold, so both deltas stay at zero while
+    a sixth of the spared set moves, and the panel shows the other rows as absolute counts
+    rather than deltas -- two different outcomes, one indistinguishable screen (#488).
+
+    Zero while the draft differs from the saved policy is the useful case, not the empty one:
+    it is the only form in which the panel can say a rule carries no weight on THIS library,
+    which is a true and load-bearing fact about a protection the operator is considering.
+    """
 
     histogram: list[int]
     """Score distribution in 10-point buckets, so the threshold can be placed against
@@ -1226,3 +1304,126 @@ class UpdateOut(BaseModel):
     url: str | None
     checked_at: datetime | None
     changes: list[ReleaseChangeOut]
+
+
+class ProtectionListOut(BaseModel):
+    """One protection list, for the Lists screen. Read-only.
+
+    ``name`` is the provider's own display name, which is what the operator configured it
+    from ("Sonarr tag: reaper-keep", 'Plex collection: "Never Reap"'). It arrives from Plex
+    or an *arr, so a surface rendering it wraps rather than truncates (rule 139).
+
+    ``state`` is ``lists.ListHealth``, derived server-side so this screen and the degraded
+    scan notice cannot disagree about what a failed check means (rule 144). ``item_count``
+    is what the stored copy still protects: a ``failing`` list with members above zero went
+    on covering them, because a failed refresh leaves the previous membership in place.
+    """
+
+    slug: str
+    """The stable key rows are listed by. Not shown; a display name can collide (rule 63)."""
+
+    name: str
+    source: Literal["arr_tag", "plex_collection", "plex_watchlist", "imdb"]
+    """Which family this belongs to, so the screen can group rather than print one row per
+    *arr instance. Two Radarrs and two Sonarrs already make four rows for the single
+    protection "titles I tagged reaper-keep", and every instance added multiplies them."""
+
+    state: Literal["working", "stale", "failing", "never_checked"]
+    item_count: int
+    last_checked_at: datetime | None
+    """When the last SUCCESSFUL check landed. Null when none ever has."""
+
+    error: str | None
+    """What the last failed check said, verbatim from the service that refused."""
+
+    list_id: int | None
+    """Which ``ListConfig`` this membership was synced for, so the screen can render one row
+    per definition and put Edit and Check now on it. Several rows share one id -- a tag list
+    is synced once per *arr instance -- and it is null for a row stored before its
+    definition existed, which the next successful check re-homes. Derived from the slug in
+    ``lists.list_id_of``, beside the spellings, never parsed in the browser (rule 63)."""
+
+    tags: dict[str, int] | None = None
+    """A tag list's per-tag counts from the last good check, by the operator's spelling of
+    each tag. Null for every other source, and for a row that has not synced since the
+    counts started being recorded -- unknown, never zero."""
+
+    server: str | None = None
+    """Which *arr instance a tag list's row was read from, for the per-server counts. The
+    operator named the instance on Settings; null for every other source."""
+
+
+class ListConfigIn(BaseModel):
+    """A list the operator is adding or editing.
+
+    ``config`` is the source's own settings and is validated per source at the service
+    boundary (``services.list_config``), because each source needs different keys and a
+    shape that could never match anything is refused while the operator is looking at the
+    box that is empty.
+    """
+
+    name: str = Field(min_length=1, max_length=100)
+    source: Literal["arr_tag", "plex_collection", "plex_watchlist", "imdb"]
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ListConfigPatch(BaseModel):
+    """An edit. Every field optional: omitted means "leave it", which is why none default
+    to a value (rule 1 -- an omitted field and an explicit one are different requests)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    config: dict[str, Any] | None = None
+
+
+class ListSyncIn(BaseModel):
+    """Which lists to check now. Omitted means all of them."""
+
+    list_id: int | None = Field(default=None, ge=1)
+
+
+class ListSyncOut(BaseModel):
+    """What one check-now pass did."""
+
+    checked: int
+    """Lists whose check landed. Stored rows, so one tag list across two *arr counts twice."""
+
+    failed: int
+    """Lists whose check failed. Each one's own error is on its row, which the screen
+    refetches; this is only what the button says when it settles."""
+
+    plex_error: str | None
+    """Set when Plex could not be reached, so its collections were not checked at all and no
+    row carries an error explaining why. Null when Plex answered or none is linked."""
+
+
+class ListPolicyUseOut(BaseModel):
+    """One keep rule naming a list, summarized for the Lists screen's "how Policy uses
+    it" line."""
+
+    media_type: Literal["movie", "tv"]
+    strength: Literal["hard", "lean"]
+    points: int | None = None
+    """The lean's discount. Null for a hard rule, which keeps outright."""
+
+
+class ListConfigOut(BaseModel):
+    """A list definition: what the operator named it and where it points.
+
+    The DEFINITION, not the membership. ``ProtectionListOut`` above is the other half --
+    what that definition is currently protecting -- and the two are joined in the browser
+    on ``list_id`` rather than merged here: a definition exists from the moment it is
+    saved, and its membership does not exist until a sync has run.
+    """
+
+    id: int
+    name: str
+    """The operator's own words. Free text, so a surface rendering it wraps (rule 139)."""
+
+    source: Literal["arr_tag", "plex_collection", "plex_watchlist", "imdb"]
+    config: dict[str, Any]
+    """The source's own settings, shaped per source by ``list_config._clean_config``."""
+
+    policy_use: list[ListPolicyUseOut] = Field(default_factory=list)
+    """How the policies use this list right now: one entry per keep rule naming it
+    (``services.list_rules.usage``). Empty means no rule does, which the screen renders as
+    a warning -- a defined list that protects nothing."""

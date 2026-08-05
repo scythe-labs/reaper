@@ -48,6 +48,16 @@ def main() -> int:
             sys.stderr.write(f"reaper: cleared {swept} leftover backup/restore temp entries\n")
     except Exception as exc:  # housekeeping must never stop boot
         sys.stderr.write(f"reaper: could not sweep leftover temp entries: {exc}\n")
+    # And a staged restore nobody can reach any more. Its token only ever lived in the browser
+    # that uploaded it, so one still here at boot can never be armed or canceled -- it is a
+    # whole database plus the key material that decrypts it, kept forever (#388). Unarmed only:
+    # an armed staging is what the next few lines are for, and this runs before them so the
+    # ordering says which is which. Non-fatal for the same reason the sweep above is.
+    try:
+        if restore.clear_unarmed_staging(settings):
+            sys.stderr.write("reaper: cleared a staged restore that was never confirmed\n")
+    except Exception as exc:  # housekeeping must never stop boot
+        sys.stderr.write(f"reaper: could not clear the unconfirmed restore: {exc}\n")
     try:
         restore.apply_pending_restore(settings)
     except Exception as exc:  # any swap failure must stop boot, not serve a half-restore

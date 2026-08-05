@@ -16,6 +16,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from structlog.testing import capture_logs
 
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -270,6 +271,49 @@ class TestReleaseChannel:
         assert len(httpx2_mock.calls) == 1
 
     @pytest.mark.usefixtures("_release_build")
+    async def test_refresh_asks_through_a_fresh_cache_and_status_still_holds_it(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The scheduled job and Run now take ``refresh``, which must ask even when the
+        cache is warm: a check somebody scheduled that answered out of a six-hour-old
+        cache would record "ran just now" over a stale answer (#464). The route's
+        ``status`` keeps the TTL, so a page load never turns into a fresh call, and the
+        answer ``refresh`` stores is what that page load then reads."""
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.8.1"}])
+        )
+        clock = [0.0]
+        checker = UpdateChecker(clock=lambda: clock[0])
+
+        await checker.status()
+        assert len(httpx2_mock.calls) == 1
+
+        # Well inside the six-hour hold, where `status` would serve the cache.
+        clock[0] = 60.0
+        await checker.refresh()
+        assert len(httpx2_mock.calls) == 2
+
+        # And the forced answer re-armed the hold rather than leaving it expired.
+        await checker.status()
+        assert len(httpx2_mock.calls) == 2
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_refresh_sends_nothing_while_the_check_is_off(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule 55: the off switch governs every path that runs the job, and the job's
+        path is this one. An off check that still asked from a timer would be the one
+        request an operator explicitly turned off, made on a schedule they never see."""
+        monkeypatch.setenv("REAPER_UPDATE_CHECK", "false")
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(200, json=[{"tag_name": "v2026.9.1"}])
+        )
+        status = await UpdateChecker().refresh()
+        assert status.enabled is False
+        assert status.update_available is None
+        assert len(httpx2_mock.calls) == 0
+
+    @pytest.mark.usefixtures("_release_build")
     async def test_a_configured_repo_is_asked_and_a_malformed_one_is_not(
         self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -288,6 +332,93 @@ class TestReleaseChannel:
         )
         await UpdateChecker().status()
         assert len(upstream.calls) == 1
+
+
+class TestDebugNarration:
+    """Every call says which of the three things it did, at DEBUG.
+
+    The check is demand-driven and cached for hours, so "is it checking at all?" has
+    no other answer: an idle server with nobody on the About surface makes no request
+    and, without these lines, leaves no trace either way.
+    """
+
+    @staticmethod
+    def _mine(logs: list[dict[str, object]]) -> list[dict[str, object]]:
+        return [entry for entry in logs if str(entry["event"]).startswith("update_check.")]
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_an_ask_is_narrated_before_and_after_the_call(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """Before as well as after: an ``asking`` with no ``answered`` beside it is
+        the only shape a hung GitHub call takes in the log."""
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(200, json=[_release("v2026.9.1")])
+        )
+        with capture_logs() as logs:
+            await UpdateChecker().status()
+
+        asked, answered = self._mine(logs)
+        assert asked["event"] == "update_check.asking"
+        assert asked["log_level"] == "debug"
+        assert asked["repo"] == DEFAULT_REPO
+        assert asked["channel"] == "release"
+        assert asked["current"] == "2026.8.1"
+        assert answered["event"] == "update_check.answered"
+        assert answered["log_level"] == "debug"
+        assert answered["latest"] == "2026.9.1"
+        assert answered["update_available"] is True
+        assert answered["next_ask_in"] == 6 * 3600
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_a_held_answer_says_so_and_how_long_it_holds(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """A quiet check and a cached one look identical from outside the process."""
+        httpx2_mock.get(_RELEASES).mock(
+            return_value=httpx.Response(200, json=[_release("v2026.9.1")])
+        )
+        clock = [0.0]
+        checker = UpdateChecker(clock=lambda: clock[0])
+        await checker.status()
+
+        clock[0] = 2 * 3600.0
+        with capture_logs() as logs:
+            await checker.status()
+
+        (held,) = self._mine(logs)
+        assert held["event"] == "update_check.cached"
+        assert held["log_level"] == "debug"
+        assert held["latest"] == "2026.9.1"
+        assert held["held_for"] == 4 * 3600
+        assert len(httpx2_mock.calls) == 1
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_a_failed_ask_names_the_shorter_retry(self, httpx2_mock: respx.Router) -> None:
+        """The retry pause is the number an operator watching a failure wants, and
+        the INFO failure line does not carry it."""
+        httpx2_mock.get(_RELEASES).mock(return_value=httpx.Response(500))
+        with capture_logs() as logs:
+            await UpdateChecker().status()
+
+        answered = self._mine(logs)[-1]
+        assert answered["event"] == "update_check.answered"
+        assert answered["latest"] is None
+        assert answered["update_available"] is None
+        assert answered["next_ask_in"] == 15 * 60
+
+    @pytest.mark.usefixtures("_release_build")
+    async def test_the_off_switch_is_narrated_rather_than_silent(
+        self, httpx2_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("REAPER_UPDATE_CHECK", "false")
+        with capture_logs() as logs:
+            await UpdateChecker().status()
+
+        (off,) = self._mine(logs)
+        assert off["event"] == "update_check.disabled"
+        assert off["log_level"] == "debug"
+        assert len(httpx2_mock.calls) == 0
 
 
 class TestDevChannel:

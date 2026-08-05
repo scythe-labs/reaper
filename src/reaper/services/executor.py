@@ -123,10 +123,11 @@ from reaper.db.models import (
     ReapRun,
     RunState,
     SizeSource,
+    Snapshot,
     StepState,
 )
 from reaper.engine.policy import ProfileSettings
-from reaper.services import whitelist
+from reaper.services import list_config, whitelist
 from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
 from reaper.services.profiles import live_policy_hash
@@ -997,6 +998,34 @@ class Executor:
                 "date and nothing was deleted. Run a new scan, then review and plan again."
             )
 
+        # -- interlock 1, third half: the protection lists must still be the ones scanned ----
+        # The two hashes above cannot see a list edit. A keep list is not policy -- retagging
+        # one, repointing it at another Plex collection, or switching it off changes which
+        # titles the `on_list` rules protect while every policy body stays byte for byte the
+        # same -- and the per-item interlocks below never re-read membership, so an operator
+        # who narrows a keep list after approving a plan would come back and delete the very
+        # titles it had been keeping. Before this branch the same knob was `keep_tags` ON the
+        # policy body, so the policy hash moved and this refused; moving it to the registry
+        # took that cover away with it (rule 140: the same value, re-qualified).
+        #
+        # `None` on EITHER side refuses and the two are never compared: the snapshot's is a
+        # scan that degraded for a registry it could not read, the live one is a registry that
+        # cannot be read right now, and they are different unknowns (rules 93, 104). A
+        # snapshot predating the column carries `None` too, and a plan built under lists
+        # nobody can name is exactly what must not execute.
+        #
+        # Checked in the dry run too, so the simulation proves the same refusal.
+        # `api.routes.simulate` makes the same three-way test for the preview panel.
+        snapshot = await self._session.get(Snapshot, run.snapshot_id)
+        live_lists = await list_config.current_fingerprint(self._session)
+        stored_lists = snapshot.list_config_hash if snapshot is not None else None
+        if stored_lists is None or live_lists is None or stored_lists != live_lists:
+            raise ExecutionError(
+                "Your protection lists changed after this plan was approved, so the plan is "
+                "out of date and nothing was deleted. Run a new scan, then review and plan "
+                "again."
+            )
+
         # Group every step by the item it belongs to, keeping every planned item that
         # actually carries an irreversible delete step. An item is one delete unit -- a
         # movie's single call, or a season's unmonitor -> verify -> delete triple -- and
@@ -1227,9 +1256,19 @@ class Executor:
                 break
             try:
                 await self._session.rollback()
-                await self._revive()
             except Exception as exc:
                 log.error("reap.journal_rollback_failed", what=what, error=str(exc))
+                break
+            try:
+                await self._revive()
+            except Exception as exc:
+                # Its own handler purely so the log names the call that failed. Sharing the
+                # rollback's meant a `_revive` fault was reported as `journal_rollback_failed`,
+                # naming the one call that had just returned -- on the deletion path, where
+                # that line is what someone reads to work out why a run wedged (#343).
+                # Still breaks: the rollback expired every row, and a run that walks on
+                # without them is not a trade to make here.
+                log.error("reap.journal_revive_failed", what=what, error=str(exc))
                 break
         # The write that would have recorded the trouble is itself the write that failed, so
         # the log is the only place this fact can still be put.

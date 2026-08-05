@@ -122,7 +122,44 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 class TestTheSettingsRoutes:
     def test_defaults_read_off_and_never_updated(self, client: TestClient) -> None:
         body = client.get("/api/settings/leaving-soon").json()
-        assert body == {"enabled": False, "allow_unarmed": False, "last": None}
+        assert body == {
+            "enabled": False,
+            "allow_unarmed": False,
+            "last": None,
+            "last_skip": None,
+        }
+
+    async def test_a_scan_that_skipped_the_shelf_reaches_the_row(
+        self, client: TestClient, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Both records ride together, because the row needs both to say anything useful:
+        the skip is what happened last, and the completed pass is where the counts still on
+        the shelf came from. Reported side by side rather than resolved here -- the reader
+        prefers the newer one, the way ``ScanRow`` does for a scan that crashed."""
+        async with factory() as session:
+            await app_settings.set_leaving_soon_last(
+                session,
+                at="2026-08-03T02:00:00+00:00",
+                movies=280,
+                seasons=311,
+                applied=True,
+                ok=True,
+                result="4 added, 1 cleared",
+            )
+            await app_settings.set_leaving_soon_last_skip(
+                session, at="2026-08-04T20:06:00+00:00", result="Reaper couldn't reach Plex"
+            )
+            await session.commit()
+
+        body = client.get("/api/settings/leaving-soon").json()
+
+        assert body["last_skip"] == {
+            "at": "2026-08-04T20:06:00+00:00",
+            "result": "Reaper couldn't reach Plex",
+        }
+        # The completed pass survives the skip. Overwriting it would take the shelf's only
+        # true counts down with a pass that wrote nothing to Plex.
+        assert (body["last"]["movies"], body["last"]["seasons"]) == (280, 311)
 
     def test_the_switches_flip_and_stick(self, client: TestClient) -> None:
         body = client.put(

@@ -8,45 +8,36 @@
 // they get one settable end and not two. A fixture invented here instead would prove the
 // sentence renders and nothing about whether it is true.
 import { describe, expect, it } from "vitest";
-import {
-  rampEnds,
-  rampFill,
-  rampSentence,
-  rampStrip,
-  rampUnits,
-  rowRampSentence,
-} from "./signalRamp";
+import { rampEnds, rampFill, rampScale, rampStrip, rampUnits, rowRampSentence } from "./signalRamp";
 
 describe("what a signal's ramp says", () => {
   it("reads downward for a signal measured on a shortfall", () => {
-    // low_rating ships weight 10, saturate_at 60, floor 0. Measured: 6.0 pays nothing, 5.5
-    // pays 0.83, 0.0 pays the lot.
-    expect(rampSentence("low_rating", 0, 60, 10)).toBe(
-      "Pays nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0.",
+    // low_rating ships weight 10, saturate_at 60, floor 0. Measured: 6.0 adds nothing, 5.5
+    // adds 0.83, 0.0 adds the lot.
+    expect(rampScale("low_rating", 0, 60, 10)).toBe(
+      "Nothing at IMDb 6.0 or above, all 10 at IMDb 0.0.",
     );
   });
 
   it("reads upward for a signal measured on the value itself", () => {
-    // unwatched ships weight 70, floor 365, saturate_at 1825. Measured: 365 pays nothing,
-    // 1095 pays 35, 1825 pays 70.
-    expect(rampSentence("unwatched", 365, 1825, 70)).toBe(
-      "Pays nothing until 1 year, and all 70 points at 5 years.",
-    );
+    // unwatched ships weight 70, floor 365, saturate_at 1825. Measured: 365 adds nothing,
+    // 1095 adds 35, 1825 adds 70.
+    expect(rampScale("unwatched", 365, 1825, 70)).toBe("Nothing until 1 year, all 70 at 5 years.");
   });
 
   it("counts people down, because fewer watchers is more pressure", () => {
-    expect(rampSentence("few_watchers", 0, 3, 20)).toBe(
-      "Pays nothing at 3 watchers or above, and all 20 points at 0 watchers.",
+    expect(rampScale("few_watchers", 0, 3, 20)).toBe(
+      "Nothing at 3 watchers or above, all 20 at 0 watchers.",
     );
   });
 
-  it("refuses to claim a season pays nothing when the shipped floor sits under the first one", () => {
+  it("refuses to claim a season adds nothing when the shipped floor sits under the first one", () => {
     // season_rank ships floor 0 against a rank that starts at 1, so measured against
     // `evaluate_signal` the NEWEST season on disk already earns 2.5 of its 15 points.
-    // "Pays nothing until the newest season" would be false about every season there is,
-    // and false in the reassuring direction, which is the one that has to be caught.
-    expect(rampSentence("season_rank", 0, 6, 15)).toBe(
-      "Pays something from the newest season on, and all 15 points at the 6th-newest season.",
+    // "Nothing until the newest season" would be false about every season there is, and
+    // false in the reassuring direction, which is the one that has to be caught.
+    expect(rampScale("season_rank", 0, 6, 15)).toBe(
+      "Even the newest season adds something, all 15 at the 6th-newest season.",
     );
   });
 
@@ -54,41 +45,39 @@ describe("what a signal's ramp says", () => {
     // Nothing caps the far bound: `saturate_at` is `ge=1` with no ceiling and the box passes
     // only a `min`, so 21 saves and has to be worded. The last two digits decide the suffix,
     // because 11-13 take "th" where 21-23 do not.
-    expect(rampSentence("season_rank", 2, 21, 15)).toContain("the 21st-newest season");
-    expect(rampSentence("season_rank", 2, 22, 15)).toContain("the 22nd-newest season");
-    expect(rampSentence("season_rank", 2, 23, 15)).toContain("the 23rd-newest season");
-    expect(rampSentence("season_rank", 2, 13, 15)).toContain("the 13th-newest season");
-    expect(rampSentence("season_rank", 2, 11, 15)).toContain("the 11th-newest season");
+    expect(rampScale("season_rank", 2, 21, 15)).toContain("the 21st-newest season");
+    expect(rampScale("season_rank", 2, 22, 15)).toContain("the 22nd-newest season");
+    expect(rampScale("season_rank", 2, 23, 15)).toContain("the 23rd-newest season");
+    expect(rampScale("season_rank", 2, 13, 15)).toContain("the 13th-newest season");
+    expect(rampScale("season_rank", 2, 11, 15)).toContain("the 11th-newest season");
   });
 
-  it("says 'pays nothing until' once the floor is inside the seasons that exist", () => {
+  it("says 'nothing until' once the floor is inside the seasons that exist", () => {
     // Raise the floor to a rank a real season can hold and the ordinary sentence is true
     // again, so the branch above is about the shipped default and not about the signal.
-    expect(rampSentence("season_rank", 2, 6, 15)).toBe(
-      "Pays nothing until the second-newest season, and all 15 points at the 6th-newest season.",
+    expect(rampScale("season_rank", 2, 6, 15)).toBe(
+      "Nothing until the second-newest season, all 15 at the 6th-newest season.",
     );
   });
 
   it("gives a shortfall signal the same line for every pair with the same gap", () => {
     // The engine scores these three identically -- the fraction works out to depend on
     // `saturate_at - floor` alone -- so the operator must be shown one number, not two.
-    const said = rampSentence("low_rating", 0, 60, 10);
-    expect(rampSentence("low_rating", 10, 70, 10)).toBe(said);
-    expect(rampSentence("low_rating", 40, 100, 10)).toBe(said);
+    const said = rampScale("low_rating", 0, 60, 10);
+    expect(rampScale("low_rating", 10, 70, 10)).toBe(said);
+    expect(rampScale("low_rating", 40, 100, 10)).toBe(said);
   });
 
   it("keeps the two ends of a direct signal apart", () => {
     // The same check in the other direction: here the pair does NOT collapse, and a UI that
     // offered one box would be dropping a control the engine honors.
-    expect(rampSentence("unwatched", 365, 1825, 70)).not.toBe(
-      rampSentence("unwatched", 0, 1460, 70),
-    );
+    expect(rampScale("unwatched", 365, 1825, 70)).not.toBe(rampScale("unwatched", 0, 1460, 70));
   });
 
   it("says nothing at all about a rule it does not know", () => {
     // A rule of the operator's own. It states its own range in the rule editor, and this
     // module inventing one would put a ramp on a yes/no rule that has none.
-    expect(rampSentence("my own rule", 0, 60, 10)).toBeNull();
+    expect(rampScale("my own rule", 0, 60, 10)).toBeNull();
     expect(rampUnits("my own rule")).toBeNull();
     expect(rampEnds("my own rule", 0, 60)).toBeNull();
   });
@@ -96,28 +85,37 @@ describe("what a signal's ramp says", () => {
   it("says nothing about a row the scan never recorded a line for", () => {
     // Null arrives from two places -- a boolean rule, and a row frozen before the fields
     // shipped -- and neither may be guessed into a line.
-    expect(rampSentence("low_rating", null, null, 10)).toBeNull();
-    expect(rampSentence("low_rating", 0, null, 10)).toBeNull();
-    expect(rampSentence("low_rating", null, 60, 10)).toBeNull();
-    expect(rampSentence("low_rating", undefined, undefined, 10)).toBeNull();
+    expect(rampScale("low_rating", null, null, 10)).toBeNull();
+    expect(rampScale("low_rating", 0, null, 10)).toBeNull();
+    expect(rampScale("low_rating", null, 60, 10)).toBeNull();
+    expect(rampScale("low_rating", undefined, undefined, 10)).toBeNull();
   });
 });
 
 describe("what a panel row adds to that", () => {
-  it("states the points the engine recorded, never its own arithmetic", () => {
+  it("leads with the result, because that is what the row was opened to ask", () => {
     expect(rowRampSentence("low_rating", 0, 60, 10, 0)).toBe(
-      "Pays nothing at IMDb 6.0 or above, and all 10 points at IMDb 0.0. This one added 0.",
+      "Added 0 of 10 points. Nothing at IMDb 6.0 or above, all 10 at IMDb 0.0.",
+    );
+  });
+
+  it("states the points the engine recorded, never its own arithmetic", () => {
+    // The result clause is the FIRST thing on the line, so a reader who stops after one
+    // sentence has the answer. Pinned on the whole string, not with `toContain`: a clause
+    // that drifted to the end would still be contained.
+    expect(rowRampSentence("unwatched", 365, 1825, 70, 70)).toBe(
+      "Added 70 of 70 points. Nothing until 1 year, all 70 at 5 years.",
     );
   });
 
   it("says 'less than 1' rather than rounding a real contribution away to zero", () => {
     // 0.83 is what an IMDb 5.5 earns against a 10-point rule. Printing "0" beside a bar
     // with red in it would read as a broken bar.
-    expect(rowRampSentence("low_rating", 0, 60, 10, 0.83)).toContain("This one added less than 1.");
+    expect(rowRampSentence("low_rating", 0, 60, 10, 0.83)).toContain("Added less than 1 of 10");
   });
 
   it("rounds a whole contribution to the number the row's own column shows", () => {
-    expect(rowRampSentence("unwatched", 365, 1825, 70, 35)).toContain("This one added 35.");
+    expect(rowRampSentence("unwatched", 365, 1825, 70, 35)).toContain("Added 35 of 70 points.");
   });
 
   it("stays silent wherever the ramp is", () => {
@@ -214,5 +212,39 @@ describe("where the fill reaches full strength", () => {
     // the same 3650 track is 20% of the track and (20-10)/90 = 11.11% into the fill.
     expect(rampStrip("unwatched", 365, 730)!.deepAt).toBe(20);
     expect(rampFill(rampStrip("unwatched", 365, 730)!)).toContain("var(--condemn) 11.11%");
+  });
+});
+
+// SIZE is the one signal whose BOUND and whose FACT are in different units, and this entry
+// had both wrong in the same direction. `engine/signals.py:_branch_signal` rescales
+// `size_bytes` to gigabytes before ramping it, so the stored `floor`/`saturate_at` the engine
+// compares against are GB. This module read them as bytes, so a 20 GB floor stored as
+// 20000000000 was ramped against a value that tops out in the low thousands: the signal paid
+// 0 at every file size that can exist, while its weight stayed in the score denominator, and
+// nothing on the page said so (#417).
+describe("the size signal's bounds are gigabytes, and its fact is not", () => {
+  it("words a stored bound as the gigabytes the engine ramps it as", () => {
+    expect(rampScale("size", 20, 80, 20)).toBe("Nothing until 20 GB, all 20 at 80 GB.");
+  });
+
+  it("draws the strip against a track in the same unit as the bounds", () => {
+    // 200 GB of track, so an 80 GB far end sits at 40% of it. Against a byte-denominated
+    // `probeMax` the same bound clamped to 0% and the strip drew nothing at all.
+    expect(rampStrip("size", 20, 80)!.deepAt).toBe(40);
+  });
+
+  it("sends the probe a size in bytes, because the fact is not in the bound's unit", () => {
+    // `preview.READS` maps SIZE to `size_bytes` and `probe_signal` puts the value straight
+    // into that field, where the same /1e9 rescale then runs. So the bound travels as GB and
+    // the value it is measured against travels as bytes.
+    expect(rampUnits("size")?.probeValue?.(50)).toBe(50e9);
+  });
+
+  it("leaves every other signal's probe value in the unit its bounds are in", () => {
+    // The other direction, so the conversion above cannot spread to a signal that reads its
+    // fact and its bounds in one unit (rule 72's sweep, stated as a test).
+    for (const id of ["unwatched", "few_watchers", "low_rating", "season_rank"]) {
+      expect(rampUnits(id)?.probeValue).toBeUndefined();
+    }
   });
 });

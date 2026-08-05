@@ -8,6 +8,7 @@ display fields (poster, blurb, requested-by, show grouping) captured at scan tim
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
+from reaper.api.routes import _split_search_year
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -554,3 +556,29 @@ class TestSearchIsLiteralText:
         # and exactly one title here has it.
         assert self._found(client, "%") == {"Example 100% Complete"}
         assert self._found(client, "_") == set()
+
+
+class TestSplitSearchYear:
+    """The trailing-year split stays linear in the term, and keeps its readings.
+
+    The separator run ahead of the year used to live in the pattern as ``[\\s,·-]*``, which
+    backtracks quadratically when the term is mostly whitespace -- a string an operator can
+    paste into search (CodeQL alert 11). The run is stripped in code now, and the flood case
+    pins the complexity: quadratic needs minutes on that input where linear needs
+    microseconds, so the bound sits a thousandfold above one and far under the other.
+    """
+
+    def test_the_readings_survive_the_rewrite(self) -> None:
+        # The spellings the app itself prints beside a title, and the bare-adjacent form.
+        assert _split_search_year("Example Delta 2049") == ("Example Delta", 2049)
+        assert _split_search_year("Example Delta (2049)") == ("Example Delta", 2049)
+        assert _split_search_year("Example Delta, 2049") == ("Example Delta", 2049)
+        assert _split_search_year("2049") == ("", 2049)
+        assert _split_search_year("(2049)") == ("", 2049)
+        assert _split_search_year("Example Delta") == ("Example Delta", None)
+
+    def test_a_whitespace_flood_returns_at_once(self) -> None:
+        flood = "\t" * 100_000
+        started = time.perf_counter()
+        assert _split_search_year(flood) == (flood, None)
+        assert time.perf_counter() - started < 1.0

@@ -20,7 +20,7 @@ import enum
 import json
 import re
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -64,6 +64,7 @@ from reaper.api.schemas import (
     SeasonShapeOut,
     SignalSettingIn,
     SimExampleOut,
+    SimStale,
     SimulationOut,
     SnapshotOut,
     UpdateOut,
@@ -73,7 +74,15 @@ from reaper.api.schemas import (
 from reaper.buildinfo import build_version
 from reaper.clock import utcnow
 from reaper.config import Settings
-from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, PlexServer, Snapshot
+from reaper.db.models import (
+    Candidate,
+    FirstFlagged,
+    Instance,
+    InstanceKind,
+    PlexServer,
+    SeasonPruneEvidence,
+    Snapshot,
+)
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import history_reach_days
@@ -87,6 +96,7 @@ from reaper.engine.policy import (
     ConditionSpec,
     GateSetting,
     PolicyBody,
+    PolicyRepair,
     ProfileSettings,
     SignalSetting,
     combine_hashes,
@@ -95,7 +105,14 @@ from reaper.engine.policy import (
 from reaper.engine.preview import UnprobableSignalError, probe_signal
 from reaper.engine.signals import SignalConfig
 from reaper.engine.verdict import decide_verdict
-from reaper.services import app_settings, backup, whitelist
+from reaper.services import (
+    app_settings,
+    backup,
+    list_config,
+    season_evidence,
+    season_scan,
+    whitelist,
+)
 from reaper.services.condemned import (
     MATCH_UNREADABLE,
     effective_condemned,
@@ -111,6 +128,7 @@ from reaper.services.display_meta import parse_ratings_json
 from reaper.services.history_sync import horizon
 from reaper.services.planner import MediaRef, PlanError
 from reaper.services.profiles import active_policy, active_policy_row, active_profile_settings
+from reaper.services.season_pruning import SeriesPrunePlan
 from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
 from reaper.services.update_check import UpdateChecker
 
@@ -222,8 +240,10 @@ async def season_shape(request: Request) -> SeasonShapeOut:
 # whatever separator someone typed between it and the title. The queue prints the year in its own
 # span beside the title ("Freaky Tales 2025"), Scales prints it the same way, and the operator
 # reads one string and types it back -- so the year has to be understood, not matched literally
-# against a title column that never held it.
-_TRAILING_YEAR = re.compile(r"[\s,·-]*\(?(?P<year>(?:1[89]|20|21)\d{2})\)?\s*$")
+# against a title column that never held it. The separator run ahead of the year is
+# stripped in code below rather than matched here: a `[\s,·-]*` prefix made the search
+# quadratic on a term that is mostly whitespace (CodeQL alert 11).
+_TRAILING_YEAR = re.compile(r"(?P<year>(?:1[89]|20|21)\d{2})\)?\s*$")
 
 
 def _split_search_year(term: str) -> tuple[str, int | None]:
@@ -236,7 +256,12 @@ def _split_search_year(term: str) -> tuple[str, int | None]:
     match = _TRAILING_YEAR.search(term)
     if match is None:
         return term, None
-    return term[: match.start()].strip(), int(match["year"])
+    stem = term[: match.start()]
+    if stem.endswith("("):
+        stem = stem[:-1]
+    while stem and (stem[-1].isspace() or stem[-1] in ",·-"):
+        stem = stem[:-1]
+    return stem.strip(), int(match["year"])
 
 
 def _like_literal(text_: str) -> str:
@@ -1493,8 +1518,6 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             # Already engine specs (BooleanCondemnSpec / GradedCondemnSpec) -- passed through.
             custom_condemn=tuple(payload.custom_condemn),
             graded_keeps=tuple(payload.graded_keeps),
-            keep_tags=tuple(t.strip() for t in payload.keep_tags if t.strip()),
-            keep_tags_match=payload.keep_tags_match,
             # Already engine specs (RatingRuleSpec) -- passed through, validated on the wire.
             keep_rating_rules=tuple(payload.keep_rating_rules),
             keep_rating_match=payload.keep_rating_match,
@@ -1561,9 +1584,7 @@ def _policy_out(
     requests_app_configured: bool,
     settings: ProfileSettings,
     history_reach_days: float | None = None,
-    needs_save: bool = False,
-    fell_back: bool = False,
-    rating_rules_restored: bool = False,
+    repairs: tuple[PolicyRepair, ...] = (),
 ) -> PolicyOut:
     return PolicyOut(
         policy_hash=body.policy_hash(),
@@ -1579,9 +1600,7 @@ def _policy_out(
                 DEFAULT_TV_POLICY if body.media_type == "tv" else DEFAULT_MOVIE_POLICY
             ).signals
         ],
-        needs_save=needs_save,
-        fell_back=fell_back,
-        rating_rules_restored=rating_rules_restored,
+        repairs=list(repairs),
         body=PolicyIn(
             name=name,
             media_type=body.media_type,
@@ -1616,16 +1635,14 @@ def _policy_out(
             ],
             custom_condemn=list(body.custom_condemn),
             graded_keeps=list(body.graded_keeps),
-            keep_tags=list(body.keep_tags),
-            keep_tags_match=body.keep_tags_match,
             keep_rating_rules=list(body.keep_rating_rules),
             keep_rating_match=body.keep_rating_match,
         ),
         warnings=[
-            # Only draft warnings here. The two LOAD-time recoveries (rescaled /
-            # fell_back) are separate fields, not warnings: the editor renders warnings
-            # from re-validating the DRAFT, so anything attached to the GET response
-            # never reaches the page at all. That was a real silent drop.
+            # Only draft warnings here. The LOAD-time repairs are their own field, not
+            # warnings: the editor renders warnings from re-validating the DRAFT, so
+            # anything attached to the GET response never reaches the page at all. That
+            # was a real silent drop.
             PolicyWarningOut(field=w.field, message=w.message, severity=w.severity)
             # The operator's SAVED settings, not the defaults. Passing ProfileSettings()
             # here made every settings-based warning unreachable: the caps and the
@@ -1673,12 +1690,6 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     async with _sessions(request)() as session:
         active = await active_policy(session, media_type)
         body, name = active.body, active.name
-        # The recoveries read very differently to an operator -- "your policy, in new
-        # units" versus "your policy is gone" versus "a protection was put back" -- so they
-        # are separate flags, never inferred from the name (an operator's own policy is
-        # often called "default").
-        needs_save, fell_back = active.rescaled, active.fell_back
-        rating_rules_restored = active.rating_rules_recovered
         has_requests_app = await _requests_app_configured(session)
         settings = await active_profile_settings(session)
     return _policy_out(
@@ -1687,9 +1698,11 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
         requests_app_configured=has_requests_app,
         settings=settings,
         history_reach_days=await _history_reach_days(request),
-        needs_save=needs_save,
-        fell_back=fell_back,
-        rating_rules_restored=rating_rules_restored,
+        # The repairs read very differently to an operator -- "your policy, in new units"
+        # versus "your policy is gone" versus "a protection was put back" -- so each is its
+        # own `PolicyRepair`, never inferred from the name (an operator's own policy is
+        # often called "default") and never collapsed into one "needs saving" boolean.
+        repairs=active.repairs,
     )
 
 
@@ -1911,12 +1924,207 @@ def _replayed_evidence(row: Candidate) -> dict[str, Any]:
     }
 
 
+def _refused(kind: SimStale, media_type: str) -> SimulationOut:
+    """No numbers, and the reason -- typed for the panel, and said once in words.
+
+    The sentence lives here and the panel renders it, supplying only the heading beside it.
+    It used to live in both, one copy per side, "kept in step" by a comment and by nothing
+    else -- and the operator never saw this one at all, so the copy that was read and the copy
+    that was reviewed were different strings. Rule 144: the way to keep two statements of one
+    fact agreeing is to have one of them.
+
+    The panel keeps one sentence of its own, reached only when ``stale_reason`` is null, which
+    a build older than this route can produce. It is deliberately generic for that reason: it
+    is the one case where the browser cannot know what happened.
+
+    Every sentence states the condition, never who caused it. An upgrade that adds a field to
+    the hashed body leaves the recorded hash unmatchable until the next scan, so "you changed"
+    can be false for an operator who changed nothing.
+    """
+    lane = "movies" if media_type == "movie" else "TV"
+    reasons = {
+        # States the condition and stops there. Naming the cause was wrong more often than
+        # it helped: a hash mismatch cannot say WHICH field moved, and after any upgrade that
+        # re-scopes the hash it has moved for nobody -- so the old sentence told an operator
+        # who had changed nothing that their keep tags read differently.
+        SimStale.GATHERS_DIFFERENTLY: (
+            f"Your {lane} policy doesn't match the last scan, so these numbers can't be "
+            "worked out from it. Run a scan to apply it, then this becomes exact again."
+        ),
+        SimStale.SEASONS_NOT_RECORDED: (
+            "The last scan didn't record what your season rules need, so there are no numbers "
+            "to show. Run a scan, then this becomes exact again."
+        ),
+        # One scan shape produces this now: the guard was off, so the episode lists were never
+        # asked for. A scan that asked and got no answer from Sonarr replays off the empty map
+        # it planned from and reaches no refusal at all (#500, `season_evidence`). The sentence
+        # still states what the scan lacks rather than the switch, like the two above it: the
+        # remedy is a scan, and the only other way out is turning a protection off.
+        SimStale.IN_PROGRESS_NOT_READ: (
+            "The last scan didn't read where anyone had gotten to in each show, so there are "
+            "no numbers to show. Run a scan, then this becomes exact again."
+        ),
+    }
+    return SimulationOut(
+        exact=False,
+        stale_kind=kind,
+        stale_reason=reasons[kind],
+        condemned=0,
+        protected=0,
+        abstained=0,
+        reclaimable_bytes=0,
+        newly_condemned=0,
+        no_longer_condemned=0,
+        condemned_before=0,
+        changed_titles=0,
+        histogram=[0] * 10,
+    )
+
+
+class _SeasonEvidenceMissingError(Exception):
+    """A season row cannot be re-decided exactly, so the whole lane refuses.
+
+    Whole-lane rather than per-show on purpose: the panel's headline is a count over every
+    governed row, and a replay that answered for most shows and quietly held the rest at
+    their scan-time verdict would put a confident number on screen that no scan will ever
+    produce. There is no partial answer to give (``docs/LEARNINGS.md`` §8).
+    """
+
+    def __init__(self, kind: SimStale) -> None:
+        super().__init__(kind.value)
+        self.kind = kind
+
+
+async def _season_payloads(session: AsyncSession, *, snapshot_id: int) -> dict[str, str]:
+    """Every show's frozen prune inputs for this snapshot, still JSON, keyed by show key.
+
+    One query, and no decoding: :class:`_SeasonReplay` thaws a show the first time a row asks
+    about it. Thawing all of them here was the same total work whenever every show has a row
+    in the lane, and it was all of it in one uninterrupted block -- measured at 0.21 ms per
+    show for a ten-season show with 25 viewers, so ~205 ms on a thousand shows, in front of a
+    request that arrives on a 250 ms debounce while a control is being dragged
+    (``docs/LEARNINGS.md``, "What frozen season evidence costs"). Decoding inside the row loop
+    spreads it across the yields that loop already takes, skips a show no candidate row asks
+    about, and lets a refusal fire on the first row instead of after the whole library is
+    decoded (#502).
+    """
+    return dict(
+        (
+            await session.execute(
+                select(SeasonPruneEvidence.group_key, SeasonPruneEvidence.payload_json).where(
+                    SeasonPruneEvidence.snapshot_id == snapshot_id
+                )
+            )
+        )
+        .tuples()
+        .all()
+    )
+
+
+class _SeasonReplay:
+    """One show's frozen evidence and the plan derived from it, thawed on first use.
+
+    Built per simulate request and discarded with it, so a memoized plan can never be served
+    under a different draft. Memoized per SHOW because the plan is a property of the show:
+    deriving it per row would re-sort the seasons and re-run the keep-rule conflict detector
+    once for every season of that show, over a lane whose rows outnumber its shows several
+    times over (#493 measured the movie lane's replay at 275 ms for 3,468 rows).
+
+    Every refusal here is fail-closed and takes the whole lane with it: the panel's headline
+    is a count over every governed row, and answering for most shows while holding the rest at
+    their scan-time verdict would put a number on screen that no scan will ever produce
+    (``docs/LEARNINGS.md`` §8). A show with no payload and a payload that will not decode get
+    the same refusal, because the operator's remedy is the same one -- scan again -- and
+    because a bundle that half-parses is exactly what must not be replayed from (rule 96).
+    """
+
+    def __init__(
+        self, payloads: Mapping[str, str], *, policy: season_evidence.SeasonPolicy
+    ) -> None:
+        self._payloads = payloads
+        self._policy = policy
+        self._derived: dict[str, tuple[season_evidence.SeasonPruneInput, SeriesPrunePlan]] = {}
+
+    def for_show(self, show: str) -> tuple[season_evidence.SeasonPruneInput, SeriesPrunePlan]:
+        cached = self._derived.get(show)
+        if cached is not None:
+            return cached
+        payload = self._payloads.get(show)
+        if payload is None:
+            raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
+        try:
+            bundle = season_evidence.from_dict(json.loads(payload))
+        # OSError and OverflowError are here for one reason: `from_epoch` ends in
+        # `datetime.fromtimestamp`, which raises OSError (errno 84) rather than ValueError
+        # for an epoch outside the platform's range. Listing only the tuple `from_dict`'s
+        # docstring named would have turned a corrupt timestamp into a 500 on a route whose
+        # whole contract is to refuse cleanly.
+        except (ValueError, TypeError, KeyError, AttributeError, OSError, OverflowError):
+            log.warning("simulate.season_bundle_unreadable", group_key=show)
+            raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED) from None
+        if season_evidence.missing_episode_map(bundle, policy=self._policy):
+            raise _SeasonEvidenceMissingError(SimStale.IN_PROGRESS_NOT_READ)
+        derived = (bundle, season_evidence.plan_from_frozen(bundle, policy=self._policy))
+        self._derived[show] = derived
+        return derived
+
+
+def _season_guard_replay(
+    row: Candidate, frozen: Sequence[GateResult], *, seasons: _SeasonReplay
+) -> list[GateResult]:
+    """This season's frozen gate results, with the season guard re-derived under the draft.
+
+    Replaced **in place**, never appended: ``judge_facts`` reads the extras in order and the
+    hand spare is inserted ahead of them, so moving the guard's position would change which
+    protection the panel names first.
+
+    Fail-closed on everything it cannot answer, exactly as :class:`_SeasonReplay` is. A
+    media_key that will not parse, a season the plan never decided, and a row whose frozen
+    extras carry no season guard at all are three ways of not knowing, and each raises rather
+    than letting the row through on the ordinary gates alone -- which would drop a whole
+    protection lane and preview deletions the scan holds.
+    """
+    show = whitelist.show_key(row.media_key)
+    if show is None:
+        raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
+    try:
+        season = MediaRef.parse(row.media_key).season
+    except PlanError:
+        season = None
+    if season is None:
+        raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
+
+    bundle, plan = seasons.for_show(show)
+    # The plan has to have DECIDED this season, and a payload that decodes does not establish
+    # that. `guard_result` answers a season the plan never saw with its terminal arm: a clean
+    # ABSTAIN reading "checked: prunable by the keep-last / keep-first season rules". The row
+    # then replays with the whole season-protection lane silently absent, condemnable on score
+    # alone, under `exact: true` -- the one shape where missing evidence produces a preview
+    # rather than a refusal, which is the direction the prime directive forbids.
+    #
+    # Asked of the plan, not of the payload's season list. The plan is the set `guard_result`
+    # answers from and it is the smaller one: `plan_series_prune` keeps only content-bearing
+    # seasons, so a bundle listing a season with no episode file passed a list check and still
+    # reached the terminal arm (#501). The two agree only while `_judge_series` writes no
+    # Candidate row for a fileless season, which is an invariant held in another module.
+    if season not in set(plan.prunable) | {p.season_number for p in plan.protected}:
+        raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
+
+    replayed = season_scan.guard_result(
+        plan, season, progress_unknown_reason=bundle.progress_unknown_reason
+    )
+    if not any(r.gate is GateId.SEASON_PROGRESSION for r in frozen):
+        raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
+    return [replayed if r.gate is GateId.SEASON_PROGRESSION else r for r in frozen]
+
+
 async def _replay_simulation(
     rows: list[Candidate],
     policy: PolicyBody,
     decisions: dict[str, str],
     *,
     reach_days: int | None,
+    season_payloads: Mapping[str, str] | None,
 ) -> SimulationOut:
     """Re-decide the governed rows by replaying the REAL engine over each row's frozen Facts.
 
@@ -1971,12 +2179,22 @@ async def _replay_simulation(
     custom = policy.custom_signal_configs()
     keeps = policy.keep_configs()
     window = policy.popularity_window_days()
+    # Built from the DRAFT, so each season plan is re-derived under the operator's edit rather
+    # than under the one the scan ran with. One thaw and one plan per show, reused by that
+    # show's season rows and discarded with the request.
+    seasons = (
+        _SeasonReplay(season_payloads, policy=season_evidence.SeasonPolicy.from_body(policy))
+        if season_payloads is not None
+        else None
+    )
 
     histogram = [0] * 10
     condemned = protected = abstained = 0
     reclaimable = 0
     unknown_size = 0
     newly = gone = 0
+    before = 0
+    changed = 0
     # (row, re-decided score) -- the NEW score, since a weight edit moves it, not the stored one.
     newly_rows: list[tuple[Candidate, int]] = []
     spared_by: Counter[str] = Counter()
@@ -1992,11 +2210,20 @@ async def _replay_simulation(
             )
         override = whitelist.effective_override(row.media_key, decisions)
 
+        # The season guard rides in `extra`, frozen by the scan -- and for a TV row it is
+        # re-derived here from the show's frozen plan inputs, so a season rule moves the panel
+        # instead of blanking it (#491). `None` is the movie lane, which has no season guard.
+        replayed_extra = (
+            _season_guard_replay(row, extra, seasons=seasons)
+            if seasons is not None
+            else list(extra)
+        )
+
         # A hand spare enters as an extra PROTECT so the simulator applies it LIVE -- the stored
         # verdict is pure policy now, so the override is re-applied here, never read off the row.
-        # The frozen season guard rides in `extra`. The reap override is carried into
-        # effective_fate, which honors it only past the cautious cases.
-        merged_extra = list(extra)
+        # The reap override is carried into effective_fate, which honors it only past the
+        # cautious cases.
+        merged_extra = replayed_extra
         if override == "spare":
             merged_extra.insert(
                 0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL)
@@ -2032,7 +2259,25 @@ async def _replay_simulation(
         # The pre-edit fate is the EFFECTIVE one (override applied), matching the effective "now"
         # verdict below -- so a hand reap's condemnation is never miscounted as a change the
         # POLICY edit caused. The stored verdict alone is pure policy and would misattribute it.
-        was_condemned = effective_verdict(row, decisions) == "condemn"
+        was = effective_verdict(row, decisions)
+        was_condemned = was == "condemn"
+        if was_condemned:
+            before += 1
+        # `changed` counts every lane move, not only the two that cross the threshold: a
+        # protection edit moves titles between protect and abstain without going near it,
+        # which the two deltas cannot see by construction, and the panel's other rows report
+        # as absolute counts (#488).
+        #
+        # Both deltas read off `was` and `verdict` alone, so each counts every way into and
+        # out of the removal list. `gone` was counted in the abstain arm below, which made it
+        # condemn -> abstain only: an outright keep takes a condemned title straight to
+        # protect, so a rule that emptied most of the removal list reported -0.
+        if verdict != was:
+            changed += 1
+            if verdict == "condemn":
+                newly += 1
+            elif was_condemned:
+                gone += 1
         if verdict == "condemn":
             condemned += 1
             if row.size_bytes is None:
@@ -2040,15 +2285,15 @@ async def _replay_simulation(
             else:
                 reclaimable += row.size_bytes
             if not was_condemned:
-                newly += 1
                 newly_rows.append((row, score_value))
         elif verdict == "protect":
             protected += 1
-            spared_by.update(r.gate.value for r in judged.evaluation.protectors)
+            # A set for the same reason the threshold path's spare branch uses one: a row
+            # both hand-spared and keep-list tagged carries the injected WHITELISTED and
+            # the gate's own, and a gate spares a row once.
+            spared_by.update(_spared_by_id(r) for r in judged.evaluation.protectors)
         else:
             abstained += 1
-            if was_condemned:
-                gone += 1
 
     newly_rows.sort(key=lambda rs: rs[1], reverse=True)
     return SimulationOut(
@@ -2060,6 +2305,8 @@ async def _replay_simulation(
         unknown_size_items=unknown_size,
         newly_condemned=newly,
         no_longer_condemned=gone,
+        condemned_before=before,
+        changed_titles=changed,
         histogram=histogram,
         examples_newly_condemned=[
             SimExampleOut(title=r.title, year=r.year, score=s) for r, s in newly_rows[:5]
@@ -2090,13 +2337,39 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
        ``score``/``evaluate_all``/``decide_verdict`` over ``Candidate.facts_json`` under the
        edited policy (``_replay_simulation``). Exact for every field in
        ``PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``: a weight, a rating bar, a custom condemn
-       rule, a graded keep, or a protect condition. Still zero API calls.
-    3. Otherwise the edit changed what a scan would *gather* (a watch window, a keep tag, a
-       season rule, any gate) -- the frozen evidence is stale, so it **returns nothing but
-       the reason**. A plausible wrong answer is worse than a blank: the owner acts on it.
+       rule, a graded keep, a protect condition, a protection switched on or off, or any of
+       the nine season rules. Still zero API calls.
+    3. Otherwise the edit changed what a scan would *gather* (the popularity window) -- the
+       frozen evidence is stale, so it **returns nothing but the reason**. A plausible wrong
+       answer is worse than a blank: the owner acts on it.
 
     Tier 2 needs a snapshot that actually froze its evidence: a pre-facts-freeze snapshot
     has a null ``evidence_hash`` or rows with no ``facts_json``, and falls to tier 3.
+
+    **One refusal sits above all three**, because it is not about the policy at all: the
+    protection lists decide which titles an ``on_list`` rule keeps, they are not policy
+    fields, and both tiers read evidence derived from them. So a registry that no longer
+    fingerprints the way the snapshot recorded refuses outright (``list_config.fingerprint``,
+    #512), whatever the edit was -- including no edit at all, which is the case where the
+    operator has changed a list and the panel would otherwise restate pre-edit numbers.
+
+    **The TV lane has a second precondition the hash cannot express.** A season's guard is
+    re-derived from a per-show bundle the scan freezes beside the Facts
+    (``db.models.SeasonPruneEvidence``), and two policies that gather identically can still
+    disagree about whether that bundle is there and describes the row. A draft holding the
+    mid-binge seasons over a scan that ran with the hold off is the same shape: the policy
+    gathers the same things, and Sonarr's episode lists were never asked for, so there is
+    nothing to place a viewer in. A scan that asked and got no answer is not that state -- it
+    planned from the empty map, and a replay off the same map returns what it decided (#500).
+    Both questions are asked of the stored evidence in ``_SeasonReplay``, and each refuses
+    with its own ``SimStale`` so the panel names the control at fault (#491, #495).
+
+    **This is not the state an upgrading install is in**, which is worth saying because the
+    obvious reading is wrong. Moving the season fields out of ``evidence_hash`` changed the
+    formula, so a snapshot recorded by an earlier build cannot match it whatever the operator
+    does, and lands on tier 3 for *any* edit until the next scan -- the one-scan cost
+    ``PolicyBody.evidence_hash`` documents. The season-specific refusals cover a bundle that
+    is missing, unreadable, or short **after** that scan, not the upgrade itself.
 
     Two kinds of row are never re-decided on score: a row with a protection that could
     not be checked stays abstained at any threshold (the scan refuses to condemn on
@@ -2161,53 +2434,68 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         )
         decisions = await whitelist.overrides(session)
 
+        # Above the tier split, because BOTH tiers below read evidence derived from list
+        # membership: the replay through the frozen `Facts.on_lists`, the threshold path
+        # through the stored verdict that fact produced. The lists are not policy, so no hash
+        # either tier compares can notice that the operator retagged, renamed, repointed or
+        # switched one off -- and the panel would report the membership the scan froze while
+        # calling it exact (#512).
+        #
+        # Either side being `None` refuses on its own, and neither is compared to the other:
+        # a snapshot predating the column has one, a scan that degraded for an unreadable
+        # registry stamped one (`scan_runner`), and `current_fingerprint` returns one when the
+        # registry cannot be read right now. `None` is "unknown" on both sides, never "no
+        # lists" (rules 93, 104) -- so an equality test alone answered "exact" for two
+        # unknowns, which is the one pairing where both scans were degraded.
+        current = await list_config.current_fingerprint(session)
+        if (
+            snapshot.list_config_hash is None
+            or current is None
+            or snapshot.list_config_hash != current
+        ):
+            return _refused(SimStale.GATHERS_DIFFERENTLY, body.media_type)
+
         # Three tiers of re-decide, most exact first:
         #  1. Scoring behavior unchanged -> re-compare the STORED score against the new
         #     thresholds. Exact and cheapest (below).
         #  2. Scoring changed but the EVIDENCE is unchanged, and every governed row froze its
         #     Facts -> replay the real engine over those Facts. Exact for weight/rating/custom
         #     edits, still zero API calls.
-        #  3. Otherwise the edit changed what the scan gathers (a window, a keep-tag, a
-        #     season rule) -> the frozen evidence is stale, so refuse rather than guess.
+        #  3. Otherwise the edit changed what the scan gathers (the popularity window)
+        #     -> the frozen evidence is stale, so refuse rather than guess.
         if snapshot.scoring_hash != _combined(PolicyBody.scoring_hash):
             replayable = snapshot.evidence_hash and snapshot.evidence_hash == _combined(
                 PolicyBody.evidence_hash
             )
             if replayable and rows and all(r.facts_json for r in rows):
-                return await _replay_simulation(
-                    list(rows),
-                    body,
-                    decisions,
-                    # From the snapshot's own two stored instants, so a row frozen before
-                    # the reach was a fact replays on the reach that scan actually had.
-                    reach_days=history_reach_days(snapshot.horizon_at, now=snapshot.created_at),
-                )
-            kind = "movies" if body.media_type == "movie" else "TV"
-            return SimulationOut(
-                exact=False,
-                # States the condition, not who caused it. An upgrade that retires a gate moves
-                # both hashes exactly as an edit does (``engine.policy.RETIRED_GATES``), so
-                # "you changed" can be false. Kept in step with the frontend's own copy in
-                # ``PolicySimulator.tsx``, which is what the operator actually reads.
-                stale_reason=(
-                    "This policy doesn't match the last scan: a protection, a watch window, a "
-                    f"keep tag, or a season rule reads differently from your {kind} policy now. "
-                    "Run a scan to apply it, then this becomes exact again."
-                ),
-                condemned=0,
-                protected=0,
-                abstained=0,
-                reclaimable_bytes=0,
-                newly_condemned=0,
-                no_longer_condemned=0,
-                histogram=[0] * 10,
-            )
+                try:
+                    # Only the TV lane carries a season guard, so only it reads the frozen
+                    # bundles. A movie replay passes None and skips the whole re-derivation.
+                    payloads = (
+                        await _season_payloads(session, snapshot_id=snapshot.id)
+                        if target == "season"
+                        else None
+                    )
+                    return await _replay_simulation(
+                        list(rows),
+                        body,
+                        decisions,
+                        # From the snapshot's own two stored instants, so a row frozen before
+                        # the reach was a fact replays on the reach that scan actually had.
+                        reach_days=history_reach_days(snapshot.horizon_at, now=snapshot.created_at),
+                        season_payloads=payloads,
+                    )
+                except _SeasonEvidenceMissingError as missing:
+                    return _refused(missing.kind, body.media_type)
+            return _refused(SimStale.GATHERS_DIFFERENTLY, body.media_type)
 
     histogram = [0] * 10
     condemned = protected = abstained = 0
     reclaimable = 0
     unknown_size = 0
     newly = gone = 0
+    before = 0
+    changed = 0
     newly_rows: list[Candidate] = []
     spared_by: Counter[str] = Counter()
 
@@ -2218,7 +2506,14 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             await asyncio.sleep(0)
         histogram[min(row.score // 10, 9)] += 1
 
-        was_condemned = row.verdict == "condemn"
+        # The EFFECTIVE pre-edit fate, read exactly as the replay path reads it, so "titles
+        # that change" means one thing whichever tier answered (rule 72). It was the raw
+        # stored verdict here, which is pure policy: harmless while every override row
+        # returned before this was read, and a trap for the next branch added above them.
+        was = effective_verdict(row, decisions)
+        was_condemned = was == "condemn"
+        if was_condemned:
+            before += 1
 
         # A hand override wins at any threshold: the owner looked and decided, and the
         # scan honors that decision, so the simulator must too. A spare protects; a
@@ -2229,7 +2524,16 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         if override is not None:
             if override == "spare":
                 protected += 1
-                spared_by.update(["whitelisted"])
+                # Credit every protection that fired, not the hand spare alone. The replay
+                # path counts them all (``_replay_simulation``, which injects the spare
+                # ALONGSIDE the gate results), so crediting one here made the "why titles
+                # were spared" tally jump the moment any scoring edit moved the route to
+                # that path -- one protection per hand-spared row that had also earned it,
+                # appearing as an effect of an edit that cannot change which gates fire,
+                # beside a headline count that correctly held still.
+                # A set because a row both hand-spared and keep-list tagged fires
+                # WHITELISTED twice, and a gate spares a row once.
+                spared_by.update({*_fired_gates(row.explanation_json), HAND_SPARE_TALLY_ID})
             elif reap_is_effective(row):
                 condemned += 1
                 if row.size_bytes is None:
@@ -2243,6 +2547,9 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 # effective fate here.
                 protected += 1
                 spared_by.update(_fired_gates(row.explanation_json))
+            # Nothing added to `changed`: the lane these three arms pick IS `was`. Both read
+            # the override first and fall back to the same stored explanation through
+            # ``condemned``, and neither consults a threshold, so an override row cannot move.
             continue
 
         # A protection always wins, whatever the threshold. Only the score-based
@@ -2250,6 +2557,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         if row.verdict == "protect":
             protected += 1
             spared_by.update(_fired_gates(row.explanation_json))
+            # `was` is the stored verdict on this arm (no override), so protect stays protect.
             continue
 
         # A row with a protection that could not be checked abstains at ANY threshold:
@@ -2258,6 +2566,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         # exactly the plausible wrong answer this route promises to refuse.
         if _has_blocked_protections(row.explanation_json):
             abstained += 1
+            if was != "abstain":
+                changed += 1
             # A stored condemn cannot also carry a blocking protection (decide_verdict
             # abstains on one), so this only fires for a row whose explanation is
             # unreadable -- and if that row was condemned, it genuinely is not any more.
@@ -2276,6 +2586,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             )
             == "condemn"
         )
+        if ("condemn" if now_condemned else "abstain") != was:
+            changed += 1
 
         if now_condemned:
             condemned += 1
@@ -2305,6 +2617,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         unknown_size_items=unknown_size,
         newly_condemned=newly,
         no_longer_condemned=gone,
+        condemned_before=before,
+        changed_titles=changed,
         histogram=histogram,
         examples_newly_condemned=[
             SimExampleOut(title=r.title, year=r.year, score=r.score) for r in newly_rows[:5]
@@ -2314,6 +2628,21 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             for gate, n in sorted(spared_by.items(), key=lambda kv: (-kv[1], kv[0]))
         ],
     )
+
+
+#: The spared-by tally's id for a hand spare. Not a gate: the replay path injects the spare as
+#: a WHITELISTED protector so ``judge_facts`` applies it live, and the threshold path adds it
+#: beside the gates that fired. Tallying it under ``whitelisted`` reported every hand spare as
+#: list membership -- and on a fresh install, where ``WhitelistGate`` is retired and no gate
+#: emits that id at all, "Why titles were spared" was hand spares wearing a list's name, which
+#: invites softening a keep rule that covers none of them (rule 144). The frontend's
+#: ``GATE_META`` carries the copy for it.
+HAND_SPARE_TALLY_ID = "hand_spare"
+
+
+def _spared_by_id(result: GateResult) -> str:
+    """The tally id for one protector: its gate, unless it is the injected hand spare."""
+    return HAND_SPARE_TALLY_ID if result.detail == HAND_SPARE_DETAIL else result.gate.value
 
 
 def _fired_gates(explanation_json: str) -> list[str]:

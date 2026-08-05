@@ -30,6 +30,7 @@ from reaper.engine.gates import (
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
+from reaper.services.scheduler import SCHEDULABLE_JOB_IDS
 
 REPO = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
@@ -948,8 +949,10 @@ def _repo_text_files() -> list[tuple[Path, str]]:
 # carries no ``--factory``.
 _UVICORN_LAUNCH = re.compile(r"uvicorn[\"',\s]+reaper\.main:create_app\b")
 
-#: The shipped ``CMD``, ``scripts/dev-local.sh``, ``README.md``, ``.claude/launch.json`` and
-#: ``.claude/skills/verify/SKILL.md``. Pinned because "every launch carries the flag" is only
+#: The shipped ``CMD``, ``scripts/dev-local.sh``, ``CONTRIBUTING.md``, ``.claude/launch.json``
+#: and ``.claude/skills/verify/SKILL.md``. It said ``README.md`` for the third, which carries no
+#: uvicorn line at all -- the count was right and the file named was not, which is the drift a
+#: pinned count cannot see (#389). Pinned because "every launch carries the flag" is only
 #: worth as much as the walk that finds them: the flag assertion below cannot distinguish a
 #: launch that complies from one this matcher no longer sees, and both read as green (rule 145).
 _EXPECTED_LAUNCHES = 5
@@ -1002,6 +1005,58 @@ def test_every_uvicorn_launch_disables_proxy_headers() -> None:
     assert not missing, (
         "every uvicorn launch must pass --no-proxy-headers, or the forwarded headers it\n"
         "rewrites decide peer trust one layer above reaper.auth.proxy:\n" + "\n".join(missing)
+    )
+
+
+#: Where each uvicorn launch gets its preflight. The Dockerfile's ``CMD`` is exec'd by the
+#: entrypoint, which preflights; every other launch preflights in its own file.
+_PREFLIGHT_SOURCE = {
+    "Dockerfile": "docker-entrypoint.sh",
+    "scripts/dev-local.sh": "scripts/dev-local.sh",
+    "CONTRIBUTING.md": "CONTRIBUTING.md",
+    ".claude/skills/verify/SKILL.md": ".claude/skills/verify/SKILL.md",
+}
+
+#: The one launch that still does not, pinned so the gap cannot grow back quietly. It is a
+#: launcher config that spawns a single executable from ``runtimeArgs``, so adding a step means
+#: changing its shape rather than its arguments, and that is the repository owner's call and not
+#: this test's (#389).
+_PREFLIGHT_GAP = {".claude/launch.json"}
+
+
+def test_every_uvicorn_launch_runs_preflight() -> None:
+    """Rule 127: ``preflight``'s docstring says EVERY way of starting Reaper runs it.
+
+    Nothing enforced that, and three developer recipes did not -- ``CONTRIBUTING.md``,
+    ``.claude/skills/verify/SKILL.md`` and ``.claude/launch.json``. It is the shape that goes
+    wrong quietly, because preflight is what applies a staged restore: a launch that skips it
+    does not fail, it just never finishes the operator's restore, and the banner asks for a
+    restart that cannot complete however many times it is given one (#381, #389).
+
+    Every shipped path was and is fine. This binds the developer ones, and any launch added
+    later by an author who never read the docstring, which is what prose cannot do.
+
+    The membership assertion comes first for rule 145's reason: a "names preflight" check
+    cannot tell a launch that complies from one this walk no longer sees, and both read green.
+    """
+    texts = {str(path.relative_to(REPO)): text for path, text in _repo_text_files()}
+    found = {str(path.relative_to(REPO)) for path, _, _ in _uvicorn_launches()}
+    assert found == set(_PREFLIGHT_SOURCE) | _PREFLIGHT_GAP, (
+        "the set of files launching uvicorn moved:\n"
+        f"  found:    {sorted(found)}\n"
+        f"  expected: {sorted(set(_PREFLIGHT_SOURCE) | _PREFLIGHT_GAP)}\n\n"
+        "If you ADDED a launch, run `python -m reaper.preflight` before it and name its\n"
+        "source in _PREFLIGHT_SOURCE. A launch that skips preflight silently never applies\n"
+        "a staged restore."
+    )
+    missing = [
+        f"{launch} -> preflight expected in {source}"
+        for launch, source in _PREFLIGHT_SOURCE.items()
+        if "reaper.preflight" not in texts.get(source, "")
+    ]
+    assert not missing, (
+        "every uvicorn launch runs `python -m reaper.preflight` first, before migrations,\n"
+        "or a restore staged in the UI is never applied:\n" + "\n".join(missing)
     )
 
 
@@ -1162,6 +1217,99 @@ def test_the_unraid_profile_is_shaped_the_way_the_submission_scanner_reads_it() 
     assert profile is not None and (profile.text or "").strip(), (
         f"{_CA_PROFILE} needs a non-empty <Profile> child holding the repository description; "
         "the submission is blocked without one."
+    )
+
+
+# The Unraid container template offers its two channels as <Branch> entries, which Community
+# Applications renders as a dropdown and substitutes into <Repository>. Two things about that
+# arrangement break quietly, so both are pinned here.
+_UNRAID_TEMPLATES = REPO / "contrib" / "unraid"
+_RETENTION = REPO / ".github" / "workflows" / "registry-retention.yml"
+# One entry, not one per channel: a second template file is the split this replaced coming back.
+_UNRAID_TEMPLATE_COUNT = 1
+
+
+def test_the_unraid_template_offers_every_channel_it_declares() -> None:
+    """Every channel the picker offers is a ``<Branch>``, described in a field CA reads.
+
+    Community Applications expands one install row per ``<Branch>``, showing its ``<Tag>``
+    beside its ``<TagDescription>``, above a Default row that installs ``<Repository>`` as
+    written. The only branch ``include/exec.php`` skips is one that spells ``<Tag>`` twice
+    inside a single ``<Branch>``; a tag matching ``<Repository>``'s is expanded like any other,
+    and 539 templates in the live app feed list theirs that way.
+
+    Both halves of that were once believed backwards, and this test enforced the belief. The
+    release channel lost its ``<Branch>`` and was described by an invented
+    ``<DefaultTagDescription>``, a name no file in the Community Applications source reads: the
+    Default row's text is hardcoded in ``include/helpers.php``, so the release channel shipped
+    with no description at all. An invented element parses, installs, and renders nothing.
+
+    So the repository's own tag carries a ``<Branch>`` like every other channel, that invented
+    field stays gone, and the tags are read off the registry retention job rather than copied
+    into a literal here: everything outside its protected set is swept after a week, so offering
+    a tag from outside it hands the operator a channel whose image stops resolving (rule 25).
+    """
+    templates = sorted(_UNRAID_TEMPLATES.glob("*.xml"))
+    assert len(templates) == _UNRAID_TEMPLATE_COUNT, (
+        f"expected {_UNRAID_TEMPLATE_COUNT} Unraid template in contrib/unraid, found "
+        f"{[p.name for p in templates]}. The channels are <Branch> entries in the one "
+        "template, so a second file is a second store listing for the same app."
+    )
+    root = ET.parse(templates[0]).getroot()  # noqa: S314 - a committed file, not input
+    repository = (root.findtext("Repository") or "").strip()
+    assert repository, f"{templates[0].name} needs a <Repository>"
+
+    branches = root.findall("Branch")
+    assert branches, (
+        f"{templates[0].name} declares no <Branch>, so the install page offers no channel "
+        "choice. Either restore them or drop this guard with the feature."
+    )
+    tags = [(b.findtext("Tag") or "").strip() for b in branches]
+    assert all(tags), f"{templates[0].name} has a <Branch> with an empty <Tag>: {tags}"
+    assert len(set(tags)) == len(tags), f"{templates[0].name} declares a tag twice: {tags}"
+    for branch, tag in zip(branches, tags, strict=True):
+        assert (branch.findtext("TagDescription") or "").strip(), (
+            f"the {tag} branch has no <TagDescription>, so its dropdown row is blank"
+        )
+
+    # CA splits the repository on its FIRST colon, so a registry port ("host:5000/org/app")
+    # would be read as the tag and the image name mangled. ghcr.io carries no port; this pins
+    # that, because the failure would otherwise surface as a broken pull.
+    assert repository.count(":") == 1, (
+        f"<Repository> is {repository}, which does not hold exactly one colon. Community "
+        "Applications splits on the first one to separate image from tag, so a registry port "
+        "here is read as the tag."
+    )
+    image, default_tag = repository.split(":")
+    assert "/" not in default_tag, (
+        f"the colon in <Repository> ({repository}) sits in the host or path, not before a tag"
+    )
+    assert default_tag in tags, (
+        f"{default_tag!r}, the tag on <Repository> ({repository}), has no <Branch>. Community "
+        "Applications expands it like any other branch, and without one the release channel's "
+        "only row is CA's Default row, whose text is hardcoded in include/helpers.php and which "
+        "no field in the template can describe."
+    )
+    assert root.find("DefaultTagDescription") is None, (
+        f"{templates[0].name} declares <DefaultTagDescription>, which no file in the Community "
+        "Applications source reads: the Default row's text is hardcoded in include/helpers.php. "
+        f"Describe {default_tag!r} in its own <Branch>/<TagDescription> instead."
+    )
+    assert image, f"<Repository> ({repository}) has no image path before its tag"
+
+    # Every channel the operator can reach: the default plus one per branch.
+    offered = {default_tag, *tags}
+    protected = _RETENTION.read_text(encoding="utf-8")
+    match = re.search(r"protected_tags\s*=\s*\{([^}]*)\}", protected)
+    assert match, (
+        f"{_RETENTION.name} no longer spells its keep set as `protected_tags = {{...}}`; this "
+        "guard reads that line to know which tags outlive a week."
+    )
+    kept = set(re.findall(r'"([^"]+)"', match.group(1)))
+    assert offered <= kept, (
+        f"the template offers {sorted(offered - kept)}, which {_RETENTION.name} does not "
+        f"protect (it keeps {sorted(kept)}). That tag is deleted a week after it is pushed, so "
+        "the channel breaks on the next pull that finds no cached layers."
     )
 
 
@@ -1455,6 +1603,95 @@ def test_the_manual_sites_typescript_deferral_still_has_a_reason() -> None:
     )
 
 
+#: The advisory-fixed versions the manual site pins by hand. ``serialize-javascript`` 7.0.5
+#: clears GHSA-5c6j-r48x-rmvq (code injection through a spoofed ``RegExp.flags`` or
+#: ``Date.prototype.toISOString``) and GHSA-qj8w-gfj5-8c6v (CPU exhaustion on an array-like);
+#: ``uuid`` 11.1.1 clears GHSA-w5hq-g745-h8pq.
+_WEBSITE_OVERRIDES = {"serialize-javascript": "7.0.7", "uuid": "11.1.1"}
+
+#: Why the pin has to be written by hand: each dependent declares a range that excludes its own
+#: fix, so no semver-compatible upgrade exists and Dependabot raises an alert it cannot propose
+#: a pull request for. Read as ``(dependent, dependency): declared range``, from the lockfile
+#: rather than from upstream's repository, because node_modules is not committed and the
+#: declaration is the only handle the suite has on somebody else's package.
+#:
+#: Each entry dies a different way. The two webpack plugins are the majors Docusaurus 3.10.2
+#: pins; ``copy-webpack-plugin`` 14 and ``css-minimizer-webpack-plugin`` 8 already take
+#: ``^7.0.3``, so a Docusaurus release that moves to them ends those two. ``sockjs`` 0.3.24 is
+#: the newest there is and still wants ``uuid@^8``, so that one ends when
+#: ``webpack-dev-server`` 6 arrives, having dropped ``sockjs`` for ``ws`` outright.
+_WEBSITE_OVERRIDE_CAUSES = {
+    ("copy-webpack-plugin", "serialize-javascript"): "^6.0.0",
+    ("css-minimizer-webpack-plugin", "serialize-javascript"): "^6.0.1",
+    ("sockjs", "uuid"): "^8.3.2",
+}
+
+
+def test_the_manual_sites_advisory_pins_still_have_a_reason() -> None:
+    """An override that outlives its cause is a version nobody updates any more.
+
+    ``website/package.json`` pins two transitive packages past the range their dependents ask
+    for, because the fixed release sits in a major those dependents exclude. That is a fact
+    about somebody else's package, it stops being true without anyone here doing anything, and
+    ``package.json`` has no comment syntax to say so. This is what notices.
+
+    Neither advisory is reachable in this tree, so the pins are hygiene rather than a fix:
+    ``copy-webpack-plugin`` reaches ``serialize-javascript`` only for a pattern carrying
+    ``transform`` or ``transformAll`` and the site's static-directory copy carries neither,
+    ``css-minimizer-webpack-plugin`` serializes build configuration whose one file-derived
+    member is a string that cannot reach the vulnerable branch, and ``sockjs`` calls
+    ``uuid.v4()`` with no ``buf`` while the advisory needs ``buf`` on v3, v5 or v6. They are
+    held anyway, because an open alert nobody can action is one everybody learns to scroll
+    past, and the next reader cannot tell it apart from one that matters.
+
+    When it fails, re-read the dependent named in the message. If its new range admits the
+    fixed major, drop that package from ``overrides`` in ``website/package.json`` and let the
+    ordinary resolution take it. If it does not, move the constant above to the range you just
+    read and leave the pin alone.
+    """
+    manifest = json.loads((REPO / "website" / "package.json").read_text(encoding="utf-8"))
+    assert manifest.get("overrides") == _WEBSITE_OVERRIDES, (
+        f"website/package.json overrides are now {manifest.get('overrides')!r},\n"
+        f"expected {_WEBSITE_OVERRIDES!r}. These pin advisory fixes that no dependent's range\n"
+        "admits; if you moved one, move this constant with it, and if you dropped one, the\n"
+        "test below tells you whether its cause is actually gone."
+    )
+
+    lock = json.loads(WEBSITE_LOCK.read_text(encoding="utf-8"))
+    packages = lock.get("packages", {})
+
+    for name, pinned in _WEBSITE_OVERRIDES.items():
+        entries = [meta for path, meta in packages.items() if path.endswith(f"node_modules/{name}")]
+        assert len(entries) == 1, (
+            f"expected exactly one locked {name}, found {len(entries)}. An override resolves a\n"
+            "tree to a single copy, so a second one means the pin stopped applying to part of\n"
+            "it; fix this walk before trusting the assertion below."
+        )
+        assert entries[0].get("version") == pinned, (
+            f"website/package-lock.json resolves {name} to {entries[0].get('version')!r},\n"
+            f"but package.json pins {pinned!r}. The override was edited without reinstalling:\n"
+            "run `npm install` in website/ and commit the lockfile it writes."
+        )
+
+    for (dependent, dependency), declared in _WEBSITE_OVERRIDE_CAUSES.items():
+        entries = [
+            meta for path, meta in packages.items() if path.endswith(f"node_modules/{dependent}")
+        ]
+        assert len(entries) == 1, (
+            f"expected exactly one locked {dependent}, found {len(entries)}. The lockfile's\n"
+            "shape changed; fix this walk before trusting the assertion below."
+        )
+        current = (entries[0].get("dependencies") or {}).get(dependency)
+        assert current == declared, (
+            f"{dependent} now asks for {dependency} {current!r}, was {declared!r} when the\n"
+            f"{dependency} override was written.\n\n"
+            f"If the new range admits {_WEBSITE_OVERRIDES[dependency]!r}, the block is gone:\n"
+            f"drop {dependency!r} from `overrides` in website/package.json, reinstall, and\n"
+            "commit the lockfile. If it still excludes the fix, update the constant above and\n"
+            "leave the pin alone."
+        )
+
+
 def _accepted_title_types() -> set[str]:
     """The Conventional Commit types ``pr-validation.yml`` lets a pull request title carry."""
     workflow = yaml.safe_load(PR_TITLE_WORKFLOW.read_text(encoding="utf-8"))
@@ -1503,6 +1740,92 @@ def test_a_dependabot_pull_request_arrives_shaped_like_every_other_one() -> None
     assert not problems, "dependabot.yml opens pull requests that do not fit here:\n" + "\n".join(
         problems
     )
+
+
+CODEQL_WORKFLOW = REPO / ".github" / "workflows" / "codeql.yml"
+
+#: Each language CodeQL analyzes, against the tree it is there for. Three cover the five names
+#: the old settings page listed: ``javascript-typescript`` and ``typescript`` are aliases of
+#: ``javascript`` in the action's own ``src/languages/builtin.json``, so the UI was naming one
+#: extractor three times.
+#:
+#: The tree is half the pin and the reason this is not just a spelling check. A language whose
+#: tree moved is analyzing nothing, and an empty analysis is reported as a clean one — the same
+#: shape as a walk that silently collects no members (rule 145).
+_CODEQL_LANGUAGES = {
+    "actions": ".github/workflows",
+    "javascript-typescript": "frontend/src",
+    "python": "src/reaper",
+}
+
+#: What ``codeql.yml`` declines to scan, which is ``ci.yml``'s prose lane written in glob rather
+#: than in a shell ``case``. The two spellings cannot be diffed, so they are pinned instead and
+#: the failure below names the other file (rule 144).
+_CODEQL_PATHS_IGNORE = ["docs/**", ".claude/**", "**/*.md"]
+
+
+def test_the_codeql_analysis_still_covers_every_tree() -> None:
+    """Code scanning is configuration, so it is held like the rest of it.
+
+    This moved out of a settings page precisely because a settings page has no diff: deselecting
+    a language there stops analyzing a tree, and it looks exactly like a quiet week. Here it is
+    a deleted line, and this is what makes it a red test as well.
+
+    Four facts, each of which fails silently rather than loudly if it drifts. The languages and
+    the trees they point at, because an extractor aimed at a moved directory reports no findings
+    the same way a clean tree does. The absence of a ``queries:`` override, because adding the
+    extended suite is a decision about triage load and not a tuning knob to reach for quietly.
+    ``category``, because without it each upload replaces the last and only the language that
+    finished last keeps its results. And ``paths-ignore``, which is safe only while CodeQL is not
+    a required check: a skipped workflow publishes no check run, so requiring one that a
+    prose-only pull request never runs strands it forever.
+    """
+    workflow = yaml.safe_load(CODEQL_WORKFLOW.read_text(encoding="utf-8"))
+
+    matrix = workflow["jobs"]["analyze"]["strategy"]["matrix"]["language"]
+    assert set(matrix) == set(_CODEQL_LANGUAGES), (
+        f"codeql.yml analyzes {sorted(matrix)}, expected {sorted(_CODEQL_LANGUAGES)}.\n"
+        "Dropping one stops analyzing a whole tree and reports it as clean. If a language was\n"
+        "added or genuinely retired, move the mapping above with it."
+    )
+    for language, tree in _CODEQL_LANGUAGES.items():
+        assert (REPO / tree).exists(), (
+            f"codeql.yml analyzes {language!r} for {tree}, which is not in this checkout any\n"
+            "more. An extractor pointed at a directory that moved finds nothing, and nothing\n"
+            "is what a clean tree looks like. Repoint the mapping above at the new path."
+        )
+
+    steps = workflow["jobs"]["analyze"]["steps"]
+    init = [s for s in steps if "codeql-action/init" in (s.get("uses") or "")]
+    analyze = [s for s in steps if "codeql-action/analyze" in (s.get("uses") or "")]
+    assert len(init) == 1 and len(analyze) == 1, (
+        f"expected one init and one analyze step, found {len(init)} and {len(analyze)}.\n"
+        "The workflow's shape changed; fix this walk before trusting the assertions below."
+    )
+
+    assert "queries" not in (init[0].get("with") or {}), (
+        "codeql.yml now sets `queries:`, so it is no longer running the `default` suite that\n"
+        "default setup ran. The extended `security-and-quality` suite was declined against a\n"
+        "measured ratio, not a preference: of eleven alerts this repository fixed seven and\n"
+        "dismissed four. Re-read that ratio in the Security tab and, if it still holds, take\n"
+        "the line back out."
+    )
+
+    assert (analyze[0].get("with") or {}).get("category") == "/language:${{ matrix.language }}", (
+        "codeql.yml's analyze step lost its per-language `category`. Without one, each upload\n"
+        "is read as replacing the last, and every language but the slowest appears to have\n"
+        "found nothing."
+    )
+
+    for trigger in ("push", "pull_request"):
+        declared = workflow[True][trigger]["paths-ignore"]
+        assert declared == _CODEQL_PATHS_IGNORE, (
+            f"codeql.yml's {trigger} paths-ignore is {declared}, expected "
+            f"{_CODEQL_PATHS_IGNORE}.\n"
+            "This is .github/workflows/ci.yml's prose lane (`docs/*|.claude/*|*.md` in its\n"
+            "`changes` job) written as globs. Move both together, and remember the list is\n"
+            "safe only while CodeQL is not a required status check."
+        )
 
 
 #: Both spellings of "which Node major" in this checkout: the image's ``FROM node:24-alpine``
@@ -1562,6 +1885,9 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
     )
 
 
+BINARIES_WORKFLOW = REPO / ".github" / "workflows" / "binaries.yml"
+
+
 def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
     """A hand dispatch of binaries.yml on a branch may build and boot-probe, never publish.
 
@@ -1572,11 +1898,78 @@ def test_binaries_publish_is_gated_to_the_dev_ref() -> None:
     with unmerged branch code described as dev until the next nightly. The gate is one
     line of shell the header's promise depends on (rule 7/24), so its presence is pinned.
     """
-    text = (REPO / ".github" / "workflows" / "binaries.yml").read_text(encoding="utf-8")
+    text = BINARIES_WORKFLOW.read_text(encoding="utf-8")
     assert '"${GITHUB_REF}" != "refs/heads/dev"' in text, (
         "binaries.yml's Decide step no longer refuses to publish from a non-dev ref:\n"
         "a branch dispatch with publish ticked would replace the dev-build prerelease,\n"
         "the snap edge channel, and the ghcr :dev image with unmerged branch code."
+    )
+
+
+#: ``plan`` and the four jobs it fans out to. Pinned because the reconciliation below is
+#: vacuously true against a walk that stopped finding jobs (rule 145): a publisher renamed
+#: out of the scan is missing from the check and from its own count at the same time.
+_EXPECTED_BINARIES_JOBS = 5
+
+
+def test_every_nightly_publisher_gates_the_release_that_records_the_night() -> None:
+    """The nightly's memory of "this sha is built" is only written when every target shipped.
+
+    ``plan`` skips a whole scheduled run when the ``dev-build`` prerelease already targets
+    dev's tip, and ``publish-dev`` is what moves that target. So the release doubles as the
+    record of a finished night, and every job that publishes for one has to be a ``needs``
+    of it: a target that failed must leave the sha unrecorded, or the next nightly reads the
+    night as done and skips the retry (#457). ``docker-arm64`` was not a ``needs``, so a
+    failed arm64 image was recorded as built and ``:dev`` kept serving an arm64 layer older
+    than its amd64 half until dev moved again.
+
+    A publisher is any job gated on the publish decision, wherever it reads it: ``snap``
+    checks it on the step that pushes to the store, ``docker-arm64`` on the job. The parsed
+    job is searched rather than the file text, so neither placement can hide one (rule 147).
+
+    The second assertion is what makes the first safe. Adding a ``needs`` means ``publish-dev``
+    now skips whenever that job skips, which is harmless only while ``docker-arm64`` cannot
+    skip on its own: its ``if`` also reads ``build``, and that is redundant purely because
+    ``plan`` never clears ``build`` without clearing ``publish`` in the same breath. Split
+    those two assignments and a no-op night would stop refreshing the prerelease.
+    """
+    workflow = yaml.safe_load(BINARIES_WORKFLOW.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    assert len(jobs) == _EXPECTED_BINARIES_JOBS, (
+        f"expected {_EXPECTED_BINARIES_JOBS} jobs in binaries.yml, found {len(jobs)}: "
+        f"{sorted(jobs)}\n\nIf you ADDED one, bump the number so the scan below covers it.\n"
+        "If you did not, a job was renamed and dropped out of the publisher walk."
+    )
+
+    publishers = {
+        name
+        for name, job in jobs.items()
+        if name not in {"plan", "publish-dev"}
+        and "needs.plan.outputs.publish" in yaml.safe_dump(job)
+    }
+    assert publishers, (
+        "no job in binaries.yml reads needs.plan.outputs.publish any more, so this test\n"
+        "proves nothing. Either the publish decision was renamed, or the jobs that act on\n"
+        "it were, and the walk above now returns an empty set that trivially passes."
+    )
+    recorded = set(jobs["publish-dev"]["needs"])
+    assert publishers <= recorded, (
+        f"binaries.yml publishes from {sorted(publishers - recorded)} without publish-dev\n"
+        "depending on it, so a night where that target fails still moves the dev-build\n"
+        "release onto the sha. plan reads the release to decide whether dev has moved, so\n"
+        "the next nightly counts the night as done and never retries the failed target.\n"
+        "Add the job to publish-dev's `needs` (#457)."
+    )
+
+    decide = next(s for s in jobs["plan"]["steps"] if s.get("id") == "decide")
+    clears_build = [line for line in decide["run"].splitlines() if "build=false" in line]
+    assert clears_build and all("publish=false" in line for line in clears_build), (
+        "binaries.yml's Decide step turns off `build` without turning off `publish` in the\n"
+        "same statement:\n" + "\n".join(f"  {line.strip()}" for line in clears_build) + "\n\n"
+        "publish-dev needs docker-arm64, and docker-arm64's `if` also reads `build`. While\n"
+        "those two are cleared together that extra condition is redundant and the two jobs\n"
+        "skip as one. Split them and a build=false night skips docker-arm64 while publish\n"
+        "stays true, which skips publish-dev with it and strands the prerelease."
     )
 
 
@@ -1984,8 +2377,22 @@ def test_live_docs_do_not_restate_the_numbered_rules() -> None:
 # have refreshed is still on screen (and its Seerr twin), and a Plex library list whose SYNC
 # failed -- three states that each used to render as a positive claim about a service or a
 # server nobody reached.
+# Then 136 -> 137: Settings -> Lists, whose unreadable answer is a positive claim about every
+# protection list at once if it stays silent (#475).
+# Then 137 -> 142, the rest of that screen: a check that would not run (on the row whose button
+# started it, rule 42), a Plex that could not be reached at all so no row can say why, a removal
+# that was refused, and the add/edit form's own save failure and its switched-off warning.
+# Then 141 -> 144, from that screen's UI review: a failed "Check all now", which on an install
+# with no migrated rows had no sink at all and went back to rest saying nothing; the Review
+# page's incomplete-scan line, which was a bare styled span so amber was its only severity
+# signal; and a retired protection still switched on, which refuses every scan while reading as
+# an ordinary healthy one.
+# Then 144 -> 143: the policy editor's three hand-written recovery notices became two renders
+# over `REPAIR_NOTICES`, one per placement, so a repair kind added later gets its sentence from
+# the map instead of a fourth copy of the same JSX (#516). The population shrank; the number of
+# notices an operator can see did not.
 # Re-derive it by running the test, never by arithmetic on this comment.
-_EXPECTED_NOTICES = 136
+_EXPECTED_NOTICES = 143
 
 
 def _shipped_tsx() -> list[Path]:
@@ -2085,6 +2492,13 @@ def test_every_notice_goes_through_the_one_component_that_announces_it() -> None
 # already `standing` for that reason, and rule 72 for the two that were not.
 # Then 35: About's dev-build banner, a fact about the install that is true on first paint
 # and unchanged for the process's whole life.
+# Then 36: the Review page's incomplete-scan line, which became a `Notice` so its severity is
+# not amber alone. It is the age of the snapshot the queue below is built from, so it is page
+# furniture for as long as that snapshot is the one on hand; the scan that produces it
+# announces itself from `ScanBar`, where the transition actually happens.
+# Then 36 -> 35: the policy editor's two standing recovery notices became one render over the
+# `top` half of `REPAIR_NOTICES`. Still standing, and for the same reason -- a repair is carried
+# by the fetch, so it is the state of the page from its first paint (#516).
 # Re-derive it by running the test, never by arithmetic on this comment.
 _EXPECTED_STANDING = 35
 
@@ -2238,6 +2652,19 @@ _QUERY_FAILURE_HANDLES = {
     "frontend/src/App.tsx": 8,
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
+    # Whether each protection list is still protecting anything (#475). Undivided on purpose,
+    # like the safety reads above: this screen exists so an operator can tell a list that
+    # stopped working from one that is simply not on a title's side, so an unreadable answer
+    # must say it could not tell them. Keeping a previous good answer on screen would state
+    # that the lists are fine at the one moment nobody knows whether they are, and that is the
+    # direction a keep list fails in. Both arms are pinned in `ListsPanel.test.tsx`.
+    #
+    # 1 -> 2 when the screen gained the list DEFINITIONS beside the membership. Same question
+    # asked of the second read, and it is the read that decides whether a row exists at all:
+    # failing it silently would render a page with no rows and an Add button, which reads as
+    # "you have no lists" to an operator who has several. Both reads share one failure branch
+    # for that reason, and each is driven into it on its own in the tests.
+    "frontend/src/components/ListsPanel.tsx": 2,
     "frontend/src/components/LogsPanel.tsx": 1,
     # 5 -> 6 when the library list moved to ``usePlexLibraries``. No branch here changed: the
     # panel's JSX is untouched, and the extra handle is the walk seeing the bag's two members
@@ -2245,7 +2672,7 @@ _QUERY_FAILURE_HANDLES = {
     # the population is the thing this pins.
     "frontend/src/components/PlexPanel.tsx": 6,
     "frontend/src/components/PolicyEditor.tsx": 4,
-    "frontend/src/components/PolicyRuleEditors.tsx": 2,
+    "frontend/src/components/PolicyRuleEditors.tsx": 3,
     "frontend/src/components/ReapBreakdown.tsx": 2,
     "frontend/src/components/ReapConfirm.tsx": 2,
     # 4th: the pre-flight read that says what would turn a real run away (#383). Deliberately
@@ -2544,7 +2971,11 @@ def test_the_reload_advice_population_is_pinned_per_file() -> None:
 # Every ``<select>`` the app ships, counted by the scan below rather than believed. The two the
 # count once carried past were #147's library pickers, which shipped nameless; they have names
 # now, and the number is here so a twentieth that does not cannot hide behind them (rule 145).
-_EXPECTED_SELECTS = 21
+# +1 for the Plex library picker on Settings -> Lists: the field #483 was about, which stops
+# being a name Reaper guesses and becomes one the operator picks off their own server. +1 for
+# `PolicyRuleEditors`'s ListNameSelect, the picker an `on_list` keep rule names its list from --
+# a rule that matches on the name, so it is a picker rather than a box (rule 108's separator half).
+_EXPECTED_SELECTS = 23
 
 
 def _without_line_comments(chunk: str) -> str:
@@ -2724,7 +3155,11 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # something. Pinned separately from the audited count because they are DIFFERENT sets, and a file
 # that drops out of the walk is otherwise missing from both halves while the two numbers agree
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
-_EXPECTED_RENDERING_TEST_FILES = 48
+# +1 for `ListModal.test.tsx`, the add/edit form on Settings -> Lists, which is a screen of its
+# own and carries its own audit rather than being covered by the panel that opens it.
+# +1 for `JobsShelfSkip.test.tsx`, which mounts the Jobs panel to drive the shelf row's
+# skipped-scan branch and audits that branch, since the row draws copy no other test renders.
+_EXPECTED_RENDERING_TEST_FILES = 53
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -3035,7 +3470,7 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     144 is about exactly that pair: deriving three copies makes the fourth MORE dangerous, not
     less, because the derived ones are demonstrably right and vouch for a consistency nobody
     checked. It fails in the reassuring direction too, since a reader told a signal is worth
-    10 points and not told it pays none of them above IMDb 6.0 concludes the wrong thing about
+    10 points and not told it adds none of them above IMDb 6.0 concludes the wrong thing about
     their own library.
 
     So the figures are held against the shipped policies here rather than by a comment asking
@@ -3079,6 +3514,64 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
         + "\n".join(missing)
         + "\nThe signal card, the strip and the why-panel row all derive this from the "
         "policy; this table is hand-written, so it is the copy that drifts (rule 144). "
-        "Update the 'What it pays' column, and re-read frontend/src/components/signalRamp.ts "
+        "Update the 'What it adds' column, and re-read frontend/src/components/signalRamp.ts "
         "so the manual and the app word the same bound the same way."
+    )
+
+
+_SETTINGS_TSX = FRONTEND_SRC / "components" / "Settings.tsx"
+#: ``JOB_META`` read as the whole declaration up to the ``};`` that closes it, then picked
+#: apart inside, rather than anchored on a delimiter one spelling happens to put there
+#: (rule 147): a key may be a bare identifier or the computed ``[SCAN_ID]``, and both are
+#: ordinary here.
+_JOB_META_BLOCK = re.compile(r"const JOB_META: Record<string, JobMeta> = \{(.*?)\n\};", re.DOTALL)
+_JOB_META_KEY = re.compile(r'^  (?:\[(\w+)\]|"?(\w+)"?):\s*\{', re.MULTILINE)
+_SCAN_ID_CONST = re.compile(r'const SCAN_ID = "([\w]+)";')
+#: Every entry carries exactly one ``title:``, so counting them counts the population the key
+#: matcher is supposed to collect. A flag-shaped assertion cannot tell an entry that complies
+#: from one this parser stopped seeing -- both read green (rule 145/147).
+_JOB_META_TITLE = re.compile(r"^    title:", re.MULTILINE)
+
+
+def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
+    """A job the server schedules renders on the Jobs page with a title a person wrote.
+
+    The list itself is the server's (rule 66): ``JobsPanel`` maps over the response, so a job
+    added in ``scheduler.DEFAULT_MAINTENANCE_CRONS`` appears with no frontend edit at all --
+    and ``jobMeta``'s fallback then prints the raw id as its title, so the operator reads
+    "check_for_updates" where every neighbor reads a sentence, with no description and no
+    off-warning under the switch that turns it off. Nothing failed when the nightly update
+    check was added (#464), which is why this is a test and not a note: the fallback exists
+    for the type checker, not as a shipping state.
+
+    Both directions. A stale entry for a job that no longer exists is dead copy nobody will
+    ever see, and it is the half a hand-maintained map keeps longest.
+    """
+    source = _SETTINGS_TSX.read_text(encoding="utf-8")
+    block_match = _JOB_META_BLOCK.search(source)
+    assert block_match, "parsed no JOB_META declaration out of Settings.tsx -- the matcher is stale"
+    block = block_match.group(1)
+
+    scan_id = _SCAN_ID_CONST.search(source)
+    assert scan_id, "parsed no SCAN_ID constant out of Settings.tsx -- the matcher is stale"
+    constants = {"SCAN_ID": scan_id.group(1)}
+
+    keys = {
+        constants[computed] if computed else literal
+        for computed, literal in _JOB_META_KEY.findall(block)
+    }
+    entries = len(_JOB_META_TITLE.findall(block))
+    assert len(keys) == entries, (
+        f"JOB_META holds {entries} entries but this test collected {len(keys)} keys. "
+        "The key matcher missed a spelling -- fix it before trusting the comparison below, "
+        "which cannot tell an entry that complies from one it never saw (rule 147)."
+    )
+
+    assert keys == set(SCHEDULABLE_JOB_IDS), (
+        "frontend/src/components/Settings.tsx's JOB_META and the jobs the server schedules "
+        "disagree.\n"
+        f"  scheduled with no copy: {sorted(set(SCHEDULABLE_JOB_IDS) - keys) or 'none'}\n"
+        f"  copy for no such job:   {sorted(keys - set(SCHEDULABLE_JOB_IDS)) or 'none'}\n"
+        "Add the title/desc/offWarning to JOB_META, or drop the stale entry. The off-warning "
+        "states what stops happening when the job is off (rule 55)."
     )

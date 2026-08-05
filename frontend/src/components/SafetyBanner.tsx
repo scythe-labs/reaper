@@ -58,6 +58,26 @@ export function SafetyBanner({ onGoToDeletion }: { onGoToDeletion?: () => void }
     );
   }
 
+  // Before the read-only branch, because recovery mode reports `destructive_enabled: false`
+  // too and would otherwise be told as plain read-only -- which sends the operator to a
+  // switch that refuses them (the arm route answers 409 while recovery is on). It is also
+  // the only one of the three states with something left to DO, so it says what.
+  //
+  // No link to Policy, Deletion here, deliberately: rule 25 the other way round. Offering the
+  // control that cannot help is worse than offering none, and the thing that does help is a
+  // file on the host plus a restart, which no button in this app can reach.
+  if (data.recovery_mode) {
+    return (
+      <div className="banner banner-recovery">
+        <span className="banner-dot" aria-hidden="true" />
+        <span>
+          <strong>Recovery mode is on.</strong> Deletion is held off. Turn it off and restart once
+          you're back in.
+        </span>
+      </div>
+    );
+  }
+
   if (!data.destructive_enabled) {
     return (
       <div className="banner banner-safe">

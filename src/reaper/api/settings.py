@@ -34,11 +34,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper import launcher
 from reaper.api import tags as api_tags
-from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin_password
+from reaper.api.auth import (
+    _busy_hashing,
+    _client_ip,
+    _throttled,
+    _verify_admin_password,
+    record_password_failure,
+)
 from reaper.api.schemas import NO_PLEX_FORWARD, PlexStartIn
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
-from reaper.auth.sessions import resolve_session_from_cookies
+from reaper.auth.sessions import (
+    resolve_session_from_cookies,
+    session_via_recovery,
+    spend_recovery_mark,
+)
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.plextv import PlexConnection, PlexTvClient, connection_identity
@@ -387,10 +397,31 @@ class LeavingSoonLastOut(BaseModel):
     result: str
 
 
+class LeavingSoonLastSkipOut(BaseModel):
+    """A scan that finished without updating the shelf.
+
+    Reported beside ``last`` rather than replacing it, because a skipped pass writes
+    nothing to Plex: the shelf still holds what the last completed pass put there, and
+    those counts are the only true ones anybody has. What is no longer true is that they
+    are the outcome of the most recent scan, which is what this says.
+    """
+
+    at: str
+    #: Why, in one clause, because the Jobs row trails it after the exact time.
+    result: str
+
+
 class LeavingSoonSettingsOut(BaseModel):
     enabled: bool
     allow_unarmed: bool
     last: LeavingSoonLastOut | None = None
+    #: Present whenever a skip has ever been recorded. It is the READER that decides
+    #: whether it still governs, by preferring it only while it is newer than ``last`` --
+    #: nothing clears it, so a pass that later completes wins on its own timestamp. Same
+    #: arrangement as the scan's crash record (``ScheduledJob.last_ok``), and the reason
+    #: this is not resolved server-side is that both fields are already on the wire and a
+    #: second, disagreeing answer to "which is current" is worth less than one.
+    last_skip: LeavingSoonLastSkipOut | None = None
 
 
 class LeavingSoonSettingsIn(BaseModel):
@@ -432,6 +463,11 @@ class SafetyOut(BaseModel):
     """Whether Reaper may delete right now."""
     has_password: bool
     """Whether an admin password has been set. Turning deletion on requires one."""
+    recovery_mode: bool = False
+    """Whether REAPER_RECOVERY is armed on this process. It holds ``destructive_enabled``
+    false however the stored switch is set, and the banner says so in its own tone: an
+    operator told only "read-only" would go to Policy, Deletion and find a switch that
+    refuses (rule 53, for a state rather than a limit)."""
     note: str | None = None
 
 
@@ -446,8 +482,9 @@ class SafetyIn(BaseModel):
 class AdminPasswordIn(BaseModel):
     password: str = Field(max_length=128)
     current_password: str | None = Field(default=None, max_length=128)
-    """Required when a password already exists. A borrowed signed-in session must not
-    be able to swap the arming credential without knowing it."""
+    """Required when a password already exists, unless a recovery code opened this session.
+    A borrowed signed-in session must not be able to swap the arming credential without
+    knowing it; a recovery session is the one that already proved host access instead."""
 
 
 class NotificationsOut(BaseModel):
@@ -1272,8 +1309,7 @@ async def reset_watch_evidence(
         _throttled(password_throttle, *keys)
         ok = await _verify_admin_password(session, payload.password or "")
         if not ok:
-            for key in keys:
-                password_throttle.record_failure(key)
+            record_password_failure(password_throttle, keys, gate="forget_watch_record")
             raise HTTPException(403, "That password didn't match. The record was kept.")
         for key in keys:
             password_throttle.record_success(key)
@@ -1345,9 +1381,16 @@ async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list
 
 async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> LeavingSoonSettingsOut:
     last = await app_settings.get_leaving_soon_last(session)
+    skip = await app_settings.get_leaving_soon_last_skip(session)
     return LeavingSoonSettingsOut(
         enabled=await app_settings.leaving_soon_enabled(session),
         allow_unarmed=await app_settings.leaving_soon_unarmed(session, settings),
+        last_skip=LeavingSoonLastSkipOut(
+            at=str(skip.get("at", "")),
+            result=str(skip.get("result", "")),
+        )
+        if skip
+        else None,
         last=LeavingSoonLastOut(
             at=str(last.get("at", "")),
             movies=int(last.get("movies", 0)),
@@ -1486,6 +1529,8 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 data_dir=_settings(request).data_dir,
                 session_factory=_factory(request),
                 secret_box=_box(request),
+                settings=_settings(request),
+                update_checker=request.app.state.update_checker,
                 timezone=job_tz,
             )
         except ValueError as exc:
@@ -1508,8 +1553,9 @@ async def run_job(request: Request, job_id: str) -> dict[str, str]:
 
     A scheduled job is nudged to fire immediately; one the owner turned off is run once
     without turning its schedule back on. Either way the schedule is left as it was. These
-    are read-only upkeep jobs (refreshing ratings and lists, sweeping watch history) -- none
-    can delete anything. The library scan is deliberately absent: it runs through
+    are read-only upkeep jobs (refreshing ratings and lists, sweeping watch history, asking
+    GitHub whether a newer Reaper exists) -- none can delete anything. The library scan is
+    deliberately absent: it runs through
     ``/api/scan/start`` as a polled background job so the UI can show progress.
     """
     if job_id not in MAINTENANCE_JOB_IDS:
@@ -1521,6 +1567,8 @@ async def run_job(request: Request, job_id: str) -> dict[str, str]:
         data_dir=_settings(request).data_dir,
         session_factory=_factory(request),
         secret_box=_box(request),
+        settings=_settings(request),
+        update_checker=request.app.state.update_checker,
     )
     log.info("jobs.run_now", job=job_id)
     return {"status": "started", "job": job_id}
@@ -1535,6 +1583,7 @@ async def _safety_out(session: AsyncSession, safety: RuntimeSafety) -> SafetyOut
     return SafetyOut(
         destructive_enabled=safety.destructive_allowed,
         has_password=await admin_password.has_password(session),
+        recovery_mode=safety.recovery_mode,
         note=safety.why_blocked(),
     )
 
@@ -1562,6 +1611,16 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     keys = (f"ip:{_client_ip(request)}", "account:safety-arm")
     async with _factory(request)() as session:
         if payload.enabled:
+            # Refused before the password is even looked at, because no password makes this
+            # allowed: `RuntimeSafety.destructive_allowed` holds deletion off for the whole
+            # life of a recovery-mode process, so accepting the flip would write a stored
+            # `true` the app then ignores and the banner contradicts. Answering here is what
+            # keeps the switch and the state one thing.
+            if _settings(request).recovery:
+                raise HTTPException(
+                    409,
+                    "Recovery mode is on, so deletion stays off. Turn it off and restart first.",
+                )
             if not await admin_password.has_password(session):
                 raise HTTPException(
                     400,
@@ -1570,8 +1629,7 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
             _throttled(password_throttle, *keys)
             ok = await _verify_admin_password(session, payload.password or "")
             if not ok:
-                for key in keys:
-                    password_throttle.record_failure(key)
+                record_password_failure(password_throttle, keys, gate="arm_deletion")
                 raise HTTPException(403, "That password didn't match. Deletion stays off.")
             for key in keys:
                 password_throttle.record_success(key)
@@ -1592,6 +1650,15 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
     signed-in session; changing an existing one also requires the current password, so a
     borrowed session or an unattended tab cannot quietly swap the arming credential.
     Verify and hash both run behind the login's lockout and Argon2 concurrency gate.
+
+    **One session is excused from the current password: one opened with a recovery code.**
+    A forgotten password is what recovery mode is for, so demanding it here left the
+    operator signed in and still locked out of the only credential that arms deletion,
+    with no way forward on a desktop build (#433). The excusal grants nothing new: minting
+    that code took host access, and anyone holding host access can rewrite the hash in
+    ``reaper.db`` directly. It is spent immediately -- ``spend_recovery_mark`` runs in the
+    same transaction as the new hash, so a second change from that session asks for the
+    password like any other, and the mark cannot outlive the reset it was for.
     """
     keys = (f"ip:{_client_ip(request)}", "account:admin-password")
     async with _factory(request)() as session:
@@ -1601,12 +1668,12 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
         # stale cookie under the other name would be the one spared here while the live
         # session was revoked, signing the operator out of the very tab they were in.
         _, keep = await resolve_session_from_cookies(session, request.cookies)
-        if await admin_password.has_password(session):
+        via_recovery = await session_via_recovery(session, keep)
+        if await admin_password.has_password(session) and not via_recovery:
             _throttled(password_throttle, *keys)
             ok = await _verify_admin_password(session, payload.current_password or "")
             if not ok:
-                for key in keys:
-                    password_throttle.record_failure(key)
+                record_password_failure(password_throttle, keys, gate="change_password")
                 raise HTTPException(403, "The current password didn't match. Nothing was changed.")
             for key in keys:
                 password_throttle.record_success(key)
@@ -1621,8 +1688,13 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
             raise HTTPException(422, str(exc)) from exc
         finally:
             argon2_gate.release()
+        # After set_password, so a refused password (too short) leaves the mark intact and
+        # the operator can try again -- rule 125's shape, for the permission rather than
+        # the code. set_password already revoked every OTHER session for this admin.
+        if via_recovery:
+            await spend_recovery_mark(session, keep)
         await session.commit()
-    log.info("safety.admin_password_set", username=username)
+    log.info("safety.admin_password_set", username=username, via_recovery=via_recovery)
     return {"ok": True}
 
 
@@ -1826,6 +1898,7 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
         session_factory=_factory(request),
         cache_engine=request.app.state.cache_engine,
         secret_box=_box(request),
+        update_checker=request.app.state.update_checker,
         data_dir=_settings(request).data_dir,
         scan_cron=scan_cron,
         maintenance=maintenance,

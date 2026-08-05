@@ -32,9 +32,17 @@ snap logs scythe-labs-reaper
 
 ## Where the data lives
 
-`/var/snap/scythe-labs-reaper/common` holds the database and the encryption keys. Back up
-`reaper.db`, `secret.key`, and `secret.salt`, covered in [Back this up](/operating/backups).
-Refreshes leave the folder alone.
+`/var/snap/scythe-labs-reaper/common` holds the database, the encryption keys, and
+`launcher.conf`. Back up `reaper.db`, `secret.key`, and `secret.salt`, covered in
+[Back this up](/operating/backups). Refreshes leave the folder alone.
+
+## Settings
+
+Reaper reads `launcher.conf` from the data folder. The first run writes it as a commented
+template: the port, the listening address, the browser launch, the update check, and recovery
+mode each have a line. Edit it with `sudo`, then `sudo snap restart scythe-labs-reaper`.
+Recovery mode is how you get back in if you cannot sign in, covered in
+[Not getting locked out](/operating/locked-out).
 
 ## Reaching it from other machines
 

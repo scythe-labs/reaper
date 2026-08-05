@@ -22,6 +22,7 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from reaper import logbuffer
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -50,9 +51,11 @@ from reaper.services import retention
 from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
+from ._lists import seeded_fingerprint
 
+# No "whitelisted" row: the gate is retired (list membership protects through ``on_list``
+# keep rules), and the save boundary refuses it -- test_simulate_hardening pins that.
 DEFAULT_GATES = [
-    {"gate": "whitelisted"},
     {"gate": "min_dormancy", "threshold": 1095},
     {"gate": "rating_floor", "threshold": 75},
     {"gate": "server_popularity", "threshold": 3},
@@ -133,6 +136,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -140,6 +146,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=4,
             degraded=False,
@@ -534,6 +541,9 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -541,6 +551,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=4,
             degraded=False,
@@ -677,6 +688,9 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     )
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    # What a scan records about the lists it gathered membership under: without it the
+    # simulator refuses, which is right for a snapshot that cannot say and useless here.
+    list_hash = seeded_fingerprint(settings)
 
     now = utcnow()
     with Session(engine) as session:
@@ -684,6 +698,7 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
             created_at=now,
             policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
+            list_config_hash=list_hash,
             horizon_at=now,
             item_count=1,
             degraded=False,
@@ -763,6 +778,60 @@ class TestExecuteGates:
         resp = armed_client.post(f"/api/runs/{run['id']}/stop")
         assert resp.status_code == 409
         assert "not currently running" in resp.json()["detail"].lower()
+
+    def test_a_reap_refused_because_one_is_running_says_so_in_the_log(
+        self, armed_client: TestClient
+    ) -> None:
+        """The refusal an operator hits by pressing Reap in a second tab.
+
+        It is raised before the slot is claimed, so it never reaches the handler that logs
+        every other synchronous refusal, and the operator dismisses a toast the server kept
+        no record of. Asserted against the ring, because that is what a downloaded log holds.
+        """
+        from reaper.api.runs import _reap_status
+
+        run = armed_client.post("/api/runs").json()
+        # The production accessor, which creates the status lazily: a hand-built one would
+        # not be the object the route reads (rule 119).
+        status = _reap_status(armed_client.app)  # type: ignore[arg-type]
+        status.running = True
+        status.run_id = run["id"]
+        before = logbuffer.RING.last_seq()
+        try:
+            resp = armed_client.post(
+                f"/api/runs/{run['id']}/execute",
+                json={"confirmation_phrase": run["confirmation_phrase"]},
+            )
+        finally:
+            status.running = False
+            status.run_id = None
+
+        assert resp.status_code == 409
+        refusals = [
+            line
+            for line in logbuffer.RING.since(before, limit=logbuffer.RING_SIZE)
+            if "reap.refused" in line.text
+        ]
+        assert len(refusals) == 1
+        assert "409" in refusals[0].text
+
+    def test_a_stop_refused_because_the_run_ended_says_so_in_the_log(
+        self, armed_client: TestClient
+    ) -> None:
+        """The sibling of the refusal above (rule 72): the success path logged and the
+        refusal did not, so "I pressed Stop and it kept going" left the same nothing."""
+        run = armed_client.post("/api/runs").json()
+        before = logbuffer.RING.last_seq()
+
+        resp = armed_client.post(f"/api/runs/{run['id']}/stop")
+
+        assert resp.status_code == 409
+        refusals = [
+            line
+            for line in logbuffer.RING.since(before, limit=logbuffer.RING_SIZE)
+            if "reap.stop_refused" in line.text
+        ]
+        assert len(refusals) == 1
 
     def test_a_non_http_failure_starting_a_reap_releases_the_slot(
         self, armed_client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -1308,22 +1377,40 @@ class TestTheSimulator:
         assert self._simulate(client, 92)["condemned"] == 0
 
 
-class TestTheSimulatorRefusesToGuess:
-    """The trap this class exists to close.
+class TestASnapshotWithNoFrozenFactsRefusesToGuess:
+    """The trap this class exists to close, and the premise it actually rests on.
 
     The simulator re-decides a snapshot by re-comparing **stored** scores and verdicts
     against new thresholds. That is exact for ``condemn_at`` and ``coverage_floor_bp``.
     It is simply wrong for anything else: change a signal weight or a gate, and every
-    stored score was produced by the *old* ones. The snapshot cannot answer the new
-    question, and no amount of arithmetic over it can.
+    stored score was produced by the *old* ones. A policy editor that let you drag a
+    weight and then showed a confident count would be the single most dangerous screen in
+    the product, because the number would look exactly as authoritative as the true one.
 
-    A policy editor that let you drag a weight and then showed a confident count would
-    be the single most dangerous screen in the product -- the number would look exactly
-    as authoritative as the true one. So the API returns the reason and no numbers.
+    **This fixture's snapshot froze no Facts**, which is what every case below is really
+    driven by: ``api.routes.simulate``'s replay tier needs every governed row to carry a
+    ``facts_json``, so a pre-facts-freeze snapshot falls to the refusal whatever the edit
+    was. That is a real state -- every snapshot taken before the freeze shipped is in it,
+    and it is exactly the state the refusal must survive -- but it is not the same claim as
+    "this edit is unanswerable", and the class used to be named and documented as though it
+    were. ``test_the_premise`` pins the premise so a fixture that later starts freezing
+    Facts fails here rather than quietly turning every case below into a tautology
+    (rules 118, 119).
+
+    Which edits are genuinely unanswerable over a snapshot that DID freeze its evidence is
+    ``tests/test_simulate_hardening.py``'s question, and a gate is no longer one of them.
     """
 
     def _simulate(self, client: TestClient, policy: dict[str, object]) -> dict[str, object]:
         return client.post("/api/policy/simulate", json=policy).json()
+
+    def test_the_premise(self, client: TestClient) -> None:
+        """No row here froze its Facts, so the replay tier is unreachable by construction."""
+        rows = client.get("/api/candidates?verdict=condemn").json()
+        assert rows, "the fixture seeded no candidates, so nothing below is exercised"
+        # A threshold-only edit still answers: it never needed the frozen evidence, which is
+        # what makes the refusals below about the evidence rather than about the route.
+        assert self._simulate(client, _policy())["exact"] is True
 
     def test_changing_a_signal_weight_refuses_to_report_numbers(self, client: TestClient) -> None:
         result = self._simulate(
@@ -1347,6 +1434,40 @@ class TestTheSimulatorRefusesToGuess:
         assert result["examples_newly_condemned"] == []
         assert result["protected_by"] == []
 
+    def test_the_refusal_names_which_one_it_is_on_the_wire(self, client: TestClient) -> None:
+        """The typed half, which is what lets the panel name the control at fault.
+
+        Every test around this one asserts on ``exact`` alone, and ``exact: false`` is the
+        same for all three refusals -- so without this the discriminator could be dropped
+        from the response and nothing here would notice, while the panel silently fell back
+        to the general heading for every cause (#495).
+
+        Driven by the popularity WINDOW, which is the span ``distinct_watchers`` is counted
+        over and so the one gate field a scan reads before it freezes an item's facts. It
+        replaced a keep-tag edit, which stopped gathering differently when the keep tags left
+        the policy body for Settings -> Lists: a list now protects through an ``on_list`` rule
+        reading membership the scan gathered whether or not any rule named it.
+        """
+        widened = [
+            {**gate, "window_days": 180} if gate["gate"] == "server_popularity" else gate
+            for gate in DEFAULT_GATES
+        ]
+        result = self._simulate(client, _policy(gates=widened))
+
+        assert result["exact"] is False
+        assert result["stale_kind"] == "gathers_differently"
+        # Both halves, always: the sentence is what an API reader gets and what the panel
+        # renders, so a typed kind with no words behind it is half a refusal.
+        assert result["stale_reason"]
+
+    def test_an_exact_answer_carries_no_refusal(self, client: TestClient) -> None:
+        """The other direction, so ``stale_kind`` cannot collapse to a constant."""
+        result = self._simulate(client, _policy())
+
+        assert result["exact"] is True
+        assert result["stale_kind"] is None
+        assert result["stale_reason"] is None
+
     def test_the_refusal_says_what_to_do_about_it(self, client: TestClient) -> None:
         """An error the owner cannot act on is only marginally better than a wrong
         answer."""
@@ -1364,11 +1485,11 @@ class TestTheSimulatorRefusesToGuess:
 
         assert "scan" in str(result["stale_reason"]).lower()
 
-    def test_changing_a_gate_also_refuses(self, client: TestClient) -> None:
-        """Gates decide the *verdict*, and the verdict is stored too. Loosening the
-        rating floor would un-protect items the snapshot still records as protected."""
+    def test_moving_a_gate_threshold_refuses_over_this_snapshot(self, client: TestClient) -> None:
+        """Not because a bar edit is unanswerable -- it is answerable, and
+        ``test_simulate_hardening.py`` proves it replays -- but because this snapshot has no
+        evidence to replay over. That is the state every install was in before the freeze."""
         loosened = [
-            {"gate": "whitelisted"},
             {"gate": "min_dormancy", "threshold": 1095},
             {"gate": "rating_floor", "threshold": 60},  # was 75
             {"gate": "server_popularity", "threshold": 3},
@@ -1377,9 +1498,9 @@ class TestTheSimulatorRefusesToGuess:
 
         assert result["exact"] is False
 
-    def test_disabling_a_protection_refuses(self, client: TestClient) -> None:
+    def test_disabling_a_protection_refuses_over_this_snapshot(self, client: TestClient) -> None:
         """The most dangerous edit of all, and the one most likely to be made while
-        watching the condemned count."""
+        watching the condemned count. Same reason as above: no frozen Facts here."""
         without = [g for g in DEFAULT_GATES if g["gate"] != "rating_floor"]
         result = self._simulate(client, _policy(gates=without))
 
@@ -1465,8 +1586,9 @@ class TestPolicyPersistence:
         assert out["name"] == "stale"
         assert sum(s["weight"] for s in out["body"]["signals"]) == 100
         # ...and handed over as an unsaved draft, so nothing is written until they look.
-        assert out["needs_save"] is True
-        assert out["fell_back"] is False
+        # The list is what the editor counts to open dirty, so an empty one here is the
+        # limbo #516 was: a degraded scan pointing at a page holding no Save.
+        assert out["repairs"] == ["rescaled"]
 
     def test_a_stored_policy_we_cannot_repair_falls_back_and_says_so(
         self, client: TestClient, tmp_path: Path
@@ -1492,8 +1614,7 @@ class TestPolicyPersistence:
         out = client.get("/api/policy").json()
 
         assert out["name"] == "default"
-        assert out["fell_back"] is True
-        assert out["needs_save"] is False
+        assert out["repairs"] == ["fell_back"]
 
     def test_a_saved_policy_is_what_loads_next(self, client: TestClient) -> None:
         client.post("/api/policy", json=_policy(condemn_at=55, name="mine"))

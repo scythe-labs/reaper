@@ -81,9 +81,14 @@ uv pip install -e ".[dev]"
 
 cp .env.example .env.local      # no key needed; one is generated on first boot
 
+python -m reaper.preflight    # applies a staged restore, checks the data dir is writable
 alembic upgrade head
 uvicorn reaper.main:create_app --factory --no-proxy-headers --reload --port 8420
 ```
+
+Preflight runs first, and before migrations, exactly as `docker-entrypoint.sh` orders them.
+Skip it and a restore staged in the UI is never applied, so the banner asks for a restart
+that cannot finish however many times it is given one (#381).
 
 The web interface is a separate dev server that proxies to it:
 

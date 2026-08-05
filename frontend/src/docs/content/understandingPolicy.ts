@@ -76,8 +76,13 @@ export const understandingPolicy: Doc = {
     ]),
 
     h2("What's in a policy", "in-a-policy"),
+    // "which starts by itself" is the same fact as `APPLIES_ON_NEXT_SCAN`
+    // (components/PolicySimulator.tsx), the sentence the savebar and the simulator both show.
+    // Kept as its own wording because this paragraph names which controls sit in that half,
+    // and left saying only "take effect on the next scan" it read as a chore the operator has
+    // to remember to start (rule 144).
     p(
-      "A policy has two halves. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan. The limits on how much one run may remove, and how long a title shows as leaving (caps and grace), take effect immediately. Movies and TV are two separate policies, tuned on their own.",
+      "A policy has two halves. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan, which starts by itself when you save. The limits on how much one run may remove, and how long a title shows as leaving (caps and grace), take effect immediately. Movies and TV are two separate policies, tuned on their own.",
     ),
 
     h3("Your starting point", "starting-point"),
@@ -98,7 +103,7 @@ export const understandingPolicy: Doc = {
       2,
     ),
     p(
-      "A starting point only sets the line, the point mix, and those caps. It never changes your protections, keep tags, rating bars, or TV season rules.",
+      "A starting point only sets the line, the point mix, and those caps. It never changes your protections, keep rules, rating bars, or TV season rules.",
     ),
 
     h3("The flag threshold", "threshold"),
@@ -110,15 +115,15 @@ export const understandingPolicy: Doc = {
     p(
       "Each signal pushes the score up by up to its number of points. The default mix differs for movies and TV.",
     ),
-    // The "What it pays" column is the fourth copy of a sentence the app now states three
+    // The "What it adds" column is the fourth copy of a sentence the app now states three
     // other ways: the two bound boxes on the signal card, the strip drawn under them, and the
     // why-panel row that reports what a title scored. Generating those three and leaving this
     // one is exactly the trap rule 144 describes, and it fails in the reassuring direction: a
-    // reader is told a signal is worth 10 points with nothing saying it pays none of them
+    // reader is told a signal is worth 10 points with nothing saying it adds none of them
     // above IMDb 6.0. `tests/test_repo_hygiene.py` holds these figures against the shipped
     // policies by name, because a comment asking the next author to remember does nothing.
     table(
-      ["Signal", "What it means", "What it pays", "Movie points", "TV points"],
+      ["Signal", "What it means", "What it adds", "Movie points", "TV points"],
       [
         // Not "time since anyone last played it": `engine/dormancy.py` measures from the
         // last play, or from the day the file arrived when there has never been one, or
@@ -192,11 +197,6 @@ export const understandingPolicy: Doc = {
           "IMDb 7.5, at least 1,000 votes",
         ],
         [
-          "Spare titles you've tagged",
-          "Anything with your keep tag",
-          "Tag `reaper-keep`, plus a Never Reap collection",
-        ],
-        [
           "Never touch something playing right now",
           "Anything being watched at that moment",
           "On, re-checked live",
@@ -206,8 +206,10 @@ export const understandingPolicy: Doc = {
         // abstain (see `components/policyMeta.ts`). The row has to say what it keeps,
         // because the sentence above this table promises every row keeps something.
         ["Stop if the unwatched time can't be read", "Anything Reaper couldn't measure", "On"],
-        ["Honor protected lists", "Titles on a curated list", "On (IMDb Top 250)"],
       ],
+    ),
+    p(
+      "Your lists protect through **keep rules**, below: each list on Settings, Lists acts through a rule here naming it, and a new list starts with a rule that keeps every title on it outright. Removing the list removes its rules with it.",
     ),
 
     h3("Pace and limits", "pace"),
@@ -241,13 +243,16 @@ export const understandingPolicy: Doc = {
 
     h2("Using the simulator", "simulator"),
     p(
-      'The right-hand "What this would do" panel re-decides your last scan under your draft, with zero calls to Sonarr, Radarr, or your history source. It shows how many titles would be removed, how much space that frees, every title’s score against your line, example titles newly flagged, and how this draft differs from the policy you already saved.',
+      'The right-hand "What this would do" panel re-decides your last scan under your draft, with zero calls to Sonarr, Radarr, or your history source. It shows how many titles would be removed, how much space that frees, how many titles your edit moves at all, every title’s score against your line, example titles newly flagged, and how this draft differs from the policy you already saved.',
     ),
     p(
       "Nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.",
     ),
     p(
-      '**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection\'s switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. An upgrade that retires a protection can say it too, without you having touched anything. A wrong number that looks live is worse than a blank one.',
+      'An edit can be real and still move nothing, and "Titles that change" is the row that tells you which one you are looking at. The two removal counts only move when a title crosses your line, so a protection can shuffle titles between spared and not judged while every other number holds still. When nothing moves at all the panel says "Your changes leave every title as it is." That is an answer rather than a failure: a protection can carry no weight on your library, which is worth knowing before you decide whether to keep it on.',
+    ),
+    p(
+      "**The panel is live for the numbers.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, one of your own rules, a protection's switch and its own numbers, or any TV season rule updates the panel instantly. Some edits still need a fresh scan, and the panel names which one is at fault and offers a Scan now button. A list or how far back watching counts changes what a scan reads. A season rule needs one scan on this version before it can preview, because the panel needs something the older scan never recorded. And keeping seasons someone is partway through needs one whenever the last scan didn't read where anyone had gotten to. An upgrade can ask for a scan too, without you having touched anything. A wrong number that looks live is worse than a blank one.",
     ),
     callout(
       "caution",

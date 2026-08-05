@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The settings shell has two forms of the same navigation: a rail of nine tabs on a wide screen,
+// The settings shell has two forms of the same navigation: a rail of ten tabs on a wide screen,
 // one picker below NARROW_SCREEN_QUERY. jsdom has no `matchMedia`, so `useMediaQuery` reports
 // false and every other suite in this tree exercises the rail; the picker is only reachable with
 // the query stubbed, which is what these do. Only one of the two is ever rendered, so each test
@@ -13,6 +13,7 @@ import {
   DEFAULT_GENERAL,
   DEFAULT_UPDATE,
   DEFAULT_WATCH_EVIDENCE,
+  SIGNED_IN_USER,
   seedSettings,
 } from "../test/apiFixtures";
 import { fill } from "../test/forms";
@@ -44,12 +45,19 @@ const { apiMock } = vi.hoisted(() => ({
     plexUnlink: vi.fn(),
     plexLinkStart: vi.fn(),
     plexLinkPoll: vi.fn(),
+    // Lists renders on every panel switch this file drives, so its read is answered here
+    // too. Rule 135: an omitted key is `undefined`, which React Query files as a failed
+    // read, and the panel would render its error branch with nothing saying so.
+    lists: vi.fn(),
     notifications: vi.fn(),
     setWebhook: vi.fn(),
     testWebhook: vi.fn(),
     clearWebhook: vi.fn(),
     // Security and Backup hold drafts inside a child component, so both trees mount here too.
     setAdminPassword: vi.fn(),
+    // Security's password form reads ["me"] for the recovery mark that excuses the current
+    // password. Rule 135: answer it, or the form renders its strict branch off a failed read.
+    me: vi.fn(),
     backupInfo: vi.fn(),
     restorePrepare: vi.fn(),
     restoreConfirm: vi.fn(),
@@ -70,6 +78,7 @@ const PANELS = [
   "General",
   "Services",
   "Plex",
+  "Lists",
   "Jobs",
   "Notifications",
   "Security",
@@ -118,6 +127,7 @@ beforeEach(() => {
   });
   apiMock.plexResources.mockResolvedValue({ source: "plex.tv", servers: [] });
   apiMock.plexLibraries.mockResolvedValue([]);
+  apiMock.lists.mockResolvedValue([]);
   apiMock.watchEvidence.mockResolvedValue(DEFAULT_WATCH_EVIDENCE);
   apiMock.leavingSoonSettings.mockResolvedValue({
     enabled: false,
@@ -126,6 +136,7 @@ beforeEach(() => {
   });
   apiMock.notifications.mockResolvedValue({ has_webhook: false });
   apiMock.setAdminPassword.mockResolvedValue({ ok: true });
+  apiMock.me.mockResolvedValue(SIGNED_IN_USER);
   apiMock.backupInfo.mockResolvedValue({
     reaper_db_bytes: 1024,
     last_backup_at: null,
@@ -166,7 +177,7 @@ function renderSettings(
 }
 
 describe("the settings section navigation", () => {
-  // The rail is the only way between the nine settings sections, and it states which one is open
+  // The rail is the only way between the ten settings sections, and it states which one is open
   // rather than only coloring it. An operator who cannot hear that is somewhere in Settings with
   // no way to tell where.
   it("has no accessibility violations", async () => {
@@ -182,7 +193,7 @@ describe("the settings section navigation", () => {
   });
 
   it("mirrors the section list declared in Settings.tsx", () => {
-    // One set, two hand copies: this table and `PANELS` in Settings.tsx. A tenth section used to
+    // One set, two hand copies: this table and `PANELS` in Settings.tsx. A new section used to
     // fail only here, on the labels, which reads as a rail bug -- while the thing that actually
     // needed doing was classifying the new section in the switch guard, and the suite went green
     // again the moment a label was appended (#156). `dirtyPanels` is a total record now, so the
