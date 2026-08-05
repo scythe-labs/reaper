@@ -33,6 +33,16 @@ today, because a migration that guesses is worse than one that declines:
 The shim stays for what this cannot reach: a restored backup, a hand-edited body, a database
 that never passed through this revision.
 
+**Corrected after it shipped in v2026.8.2, and the correction is to WHICH list it names, never
+to the schema.** It resolved the tag and IMDb lists by age, and age is the operator's to change:
+delete the tag list this converts and the *arr-tag list they added for something else becomes
+the oldest of its source, so this wrote that list's name into their policy permanently. It now
+asks ``policy.conversion_list_names``, which identifies each row by what it holds. A database
+that has already run this revision does not run it again, so an install that upgraded into the
+window keeps the wrong rule -- visible on Policy as an ordinary keep rule and removable there,
+which is why it is left alone rather than healed by a later revision that would have to guess
+whether the rule was invented or re-tagged (#526).
+
 Revision ID: d5e6f7a8b9c0
 Revises: a1b2c3d4e5f7
 Create Date: 2026-08-04 17:00:00.000000
@@ -53,15 +63,14 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def _list_names(conn: sa.Connection) -> tuple[str | None, str | None, tuple[str, ...]]:
-    """The registry names the converted rules must point at, resolved the way
-    ``services.profiles._conversion_list_names`` resolves them: by source and by age, never by
-    spelling, because every one of these names is the operator's to change."""
-    rows = conn.execute(sa.text("SELECT source, name FROM list_config ORDER BY id")).fetchall()
-    tag = next((str(r[1]) for r in rows if r[0] == "arr_tag"), None)
-    imdb = next((str(r[1]) for r in rows if r[0] == "imdb"), None)
-    own = tuple(str(r[1]) for r in rows if r[0] in ("plex_collection", "plex_watchlist"))
-    return tag, imdb, own
+def _list_rows(conn: sa.Connection) -> list[tuple[str, str, str | None]]:
+    """Every registry row as ``policy.conversion_list_names`` takes them, oldest first. That
+    function decides WHICH row answers each half of the conversion, here and on the load path
+    alike (rule 104)."""
+    rows = conn.execute(
+        sa.text("SELECT source, name, config_json FROM list_config ORDER BY id")
+    ).fetchall()
+    return [(str(r[0]), str(r[1]), r[2]) for r in rows]
 
 
 def upgrade() -> None:
@@ -69,12 +78,14 @@ def upgrade() -> None:
     # upgrade whose other revisions are unrelated to policy bodies.
     from reaper.engine.policy import (
         PolicyBody,
+        conversion_list_names,
         convert_list_protections,
         has_legacy_list_protections,
+        legacy_keep_tags,
     )
 
     conn = op.get_bind()
-    tag_name, imdb_name, own_names = _list_names(conn)
+    rows = _list_rows(conn)
     now = int(datetime.now(UTC).timestamp())
 
     for media_type in ("movie", "tv"):
@@ -91,6 +102,11 @@ def upgrade() -> None:
         if not has_legacy_list_protections(raw):
             continue
         try:
+            # Resolved per media type, because which list answers the tag half depends on the
+            # tags THIS body was protecting on, and the two policies are tuned separately.
+            tag_name, imdb_name, own_names = conversion_list_names(
+                rows, keep_tags=legacy_keep_tags(raw)
+            )
             converted = convert_list_protections(
                 raw,
                 tag_list_name=tag_name,

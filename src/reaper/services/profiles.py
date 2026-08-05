@@ -41,8 +41,10 @@ from reaper.engine.policy import (
     PolicyRepair,
     ProfileSettings,
     combine_hashes,
+    conversion_list_names,
     convert_list_protections,
     has_legacy_list_protections,
+    legacy_keep_tags,
     rebalance,
     recover_rating_rules,
 )
@@ -242,7 +244,9 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     # so a body needing two of them reports two and the editor says both.
     repairs: tuple[PolicyRepair, ...] = ()
     if has_legacy_list_protections(raw):
-        tag_name, imdb_name, own_names = await _conversion_list_names(session)
+        tag_name, imdb_name, own_names = await _conversion_list_names(
+            session, keep_tags=legacy_keep_tags(raw)
+        )
         converted = convert_list_protections(
             raw,
             tag_list_name=tag_name,
@@ -306,21 +310,25 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
 
 async def _conversion_list_names(
     session: AsyncSession,
+    *,
+    keep_tags: tuple[str, ...],
 ) -> tuple[str | None, str | None, tuple[str, ...]]:
-    """The current names of the lists ``convert_list_protections``'s rules must point at:
-    the tag list the keep tags became, and the shipped IMDb list. Resolved by source and
-    age rather than by spelling -- the upgrade migration's rows are the oldest of their
-    source, and both names are the operator's to change. ``None`` means no such list, and
-    the shim then leaves that half's gate in place rather than converting it away."""
+    """The registry rows ``convert_list_protections`` must point its rules at, read from the
+    database and selected by ``policy.conversion_list_names`` -- which owns WHICH row answers
+    each half, so the load path here and the upgrade migration cannot answer it differently
+    (rule 104)."""
     rows = (
         await session.execute(
-            select(ListConfigModel.source, ListConfigModel.name).order_by(ListConfigModel.id)
+            select(
+                ListConfigModel.source,
+                ListConfigModel.name,
+                ListConfigModel.config_json,
+            ).order_by(ListConfigModel.id)
         )
     ).all()
-    tag = next((str(r.name) for r in rows if r.source == "arr_tag"), None)
-    imdb = next((str(r.name) for r in rows if r.source == "imdb"), None)
-    own = tuple(str(r.name) for r in rows if r.source in ("plex_collection", "plex_watchlist"))
-    return tag, imdb, own
+    return conversion_list_names(
+        [(str(r.source), str(r.name), r.config_json) for r in rows], keep_tags=keep_tags
+    )
 
 
 async def _default_with_own_lists(
@@ -348,7 +356,9 @@ async def _default_with_own_lists(
     the operator's keep collection.
     """
     try:
-        _, _, own = await _conversion_list_names(session)
+        # No tags to resolve against: there is no stored body here, so nothing was ever
+        # protecting on tags. Only the Plex half is read, and it is asked for by name.
+        _, _, own = await _conversion_list_names(session, keep_tags=())
     except SQLAlchemyError:
         log.warning("policy.default_lists_unreadable")
         return default, True
