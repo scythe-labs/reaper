@@ -998,6 +998,16 @@ export interface LeavingSoonSettings {
     /** A short plain-language summary of the last sync. */
     result: string;
   } | null;
+  /** A scan that finished without updating the shelf, and why. Reported beside `last`
+   *  rather than replacing it: a skipped pass writes nothing to Plex, so the last completed
+   *  pass's counts are still what is on the shelf. Nothing clears this, so the reader
+   *  prefers it only while it is newer than `last` -- exactly how `ScanRow` treats a
+   *  scheduled scan that crashed. */
+  last_skip: {
+    at: string;
+    /** Why, in one clause: it trails the exact time on the row's last-run line. */
+    result: string;
+  } | null;
 }
 
 export interface PlexResourceConnection {

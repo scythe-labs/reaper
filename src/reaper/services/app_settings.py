@@ -72,6 +72,14 @@ LEAVING_SOON_UNARMED_KEY = "leaving_soon_unarmed"
 #: false only for a real per-library problem, which is what the dot and the short
 #: ``result`` line should reflect.
 LEAVING_SOON_LAST_KEY = "leaving_soon_last"
+#: The last shelf pass that did NOT complete -- ``{"at": iso, "result": str}``. Written only
+#: by ``leaving_soon.after_scan``, whose skips (an untrustworthy scan, an unreachable Plex, a
+#: surprise) all return before the pass reaches the row above, so a scan that never touched
+#: the shelf used to leave the previous pass's green dot and counts standing as the answer.
+#: Read alongside that row and preferred only while it is NEWER, exactly as ScanRow prefers
+#: ``job_last_run:scheduled_scan`` over a stale snapshot -- so a pass that later completes wins
+#: on its own timestamp and nothing has to clear this.
+LEAVING_SOON_LAST_SKIP_KEY = "leaving_soon_last_skip"
 #: The Plex libraries Reaper may touch, as last synced from the server:
 #: ``[{"key": int, "title": str, "kind": "movie"|"show", "enabled": bool}]``. Only video
 #: libraries are stored; the enabled flags survive a re-sync.
@@ -678,6 +686,16 @@ async def set_leaving_soon_last(
             "result": result,
         },
     )
+
+
+async def get_leaving_soon_last_skip(session: AsyncSession) -> dict[str, Any] | None:
+    """The last scan that finished without updating the shelf, and why in one clause."""
+    value = await _get(session, LEAVING_SOON_LAST_SKIP_KEY, default=None)
+    return dict(value) if isinstance(value, dict) else None
+
+
+async def set_leaving_soon_last_skip(session: AsyncSession, *, at: str, result: str) -> None:
+    await _set(session, LEAVING_SOON_LAST_SKIP_KEY, {"at": at, "result": result})
 
 
 # --- Plex libraries ----------------------------------------------------------

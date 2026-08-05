@@ -2145,10 +2145,18 @@ function LeavingSoonRow({
     );
   }
 
-  const { enabled, last } = ls.data;
+  const { enabled, last, last_skip: skip } = ls.data;
   // The row is still the best answer there is, so it renders -- and says it could not be
   // confirmed, above everything in the row the failed read could have changed.
   const stale = <StaleReadSlot plan={plan} slot="the shelf status" inline />;
+  // A scan that skipped the shelf writes no pass, so this row re-read the last COMPLETED
+  // pass and answered for the scan with its green dot, its timestamp and its counts -- under
+  // a line reading "Runs after every scan". `after_scan` records the skip separately; prefer
+  // it only while it is actually newer, so a pass that later completes wins on its own
+  // timestamp with nothing to clear. Every clause of this is ScanRow's treatment of a
+  // scheduled scan that crashed and wrote no snapshot, at its sibling (rule 72).
+  const currentSkip =
+    skip && (!last || new Date(skip.at).getTime() > new Date(last.at).getTime()) ? skip : null;
 
   if (!enabled) {
     return (
@@ -2186,16 +2194,20 @@ function LeavingSoonRow({
         <JobStatus
           running={running}
           runningLabel="Updating…"
-          lastRunAt={last?.at ?? null}
-          lastOk={last ? last.ok : null}
-          lastResult={last?.result ?? null}
+          lastRunAt={currentSkip ? currentSkip.at : (last?.at ?? null)}
+          lastOk={currentSkip ? false : last ? last.ok : null}
+          lastResult={currentSkip ? currentSkip.result : (last?.result ?? null)}
           flash={flash}
         />
         {last && (
+          // The counts survive a skip, because a skipped pass wrote nothing: the shelf still
+          // holds what the last completed pass put there, and these are the only true numbers
+          // anyone has. Past tense is the whole correction -- they stop reading as the outcome
+          // of the most recent scan, which is the one thing about them that stopped being true.
           <div className="jobrow-meta">
             <strong>{count(last.movies)}</strong> movie{last.movies === 1 ? "" : "s"} and{" "}
-            <strong>{count(last.seasons)}</strong> season{last.seasons === 1 ? "" : "s"} on the
-            shelves
+            <strong>{count(last.seasons)}</strong> season{last.seasons === 1 ? "" : "s"}{" "}
+            {currentSkip ? "were on the shelves at the last update" : "on the shelves"}
           </div>
         )}
         <div className="jobrow-sched">Runs after every scan</div>

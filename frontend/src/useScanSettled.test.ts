@@ -47,16 +47,22 @@ describe("useScanSettled", () => {
     // The whole list, so a surface added to it later is covered by this test rather than
     // discovered missing by an operator reading a stale number.
     expect(invalidated).toEqual(SCAN_SETTLED_KEYS.map((k) => JSON.stringify(k)));
-    // Two keys named outright, because the assertion above cannot reach a key that is missing
-    // from the list: it compares the list to itself, so it pins the ORDER and the firing, and
-    // reads green for a surface nobody added (rule 141). These are the two whose absence has
-    // actually happened.
+    // Keys named outright, because the assertion above cannot reach a key that is missing from
+    // the list: it compares the list to itself, so it pins the ORDER and the firing, and reads
+    // green for a surface nobody added (rule 141). Every one of these has actually been absent.
     //
     // The Reap page's ledger is the one this batch exists for.
     expect(invalidated).toContain(JSON.stringify(["reap-breakdown"]));
     // The policy editor's warnings, refreshed from a second copy of this effect inside
     // `PolicyEditor` while this list claimed to be the single place (#205).
     expect(invalidated).toContain(JSON.stringify(["validate"]));
+    // The Jobs page's shelf row, which a scan updates on its way out and which only its own
+    // "Update now" used to refresh -- so the counts under "Runs after every scan" were the
+    // previous pass's for as long as the panel stayed mounted.
+    expect(invalidated).toContain(JSON.stringify(["leaving-soon-settings"]));
+    // Plex's recorded-watch-history line, whose sentence names the last scan while quoting a
+    // number a scan is what moves.
+    expect(invalidated).toContain(JSON.stringify(["watch-evidence"]));
   });
 
   it("does nothing on a mount that arrives after the scan already ended", () => {
@@ -80,9 +86,11 @@ describe("useScanSettled", () => {
 });
 
 describe("what a background scan tells an operator using a screen reader", () => {
-  // Thirteen caches go stale at once here, which is most of the numbers in the app moving -- and
-  // the trigger can be the scheduler, another device, or another tab, so there is no press to
-  // hang a sentence on and no control that changed. The transition was entirely visual (#177).
+  // Every cache in `SCAN_SETTLED_KEYS` goes stale at once here, which is most of the numbers in
+  // the app moving -- and the trigger can be the scheduler, another device, or another tab, so
+  // there is no press to hang a sentence on and no control that changed. The transition was
+  // entirely visual (#177). (It said "Thirteen caches" and the list had grown to sixteen; a count
+  // written in prose beside the list it counts goes stale on the next append.)
   const spoken = () =>
     [...document.querySelectorAll('[aria-live="polite"]')].map((n) => n.textContent).join("");
 
