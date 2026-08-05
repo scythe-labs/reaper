@@ -15,8 +15,10 @@ What the fixture contains, and deliberately nothing more:
 * genre names replaced by frequency-ranked tokens (``Genre01``), rare quality names
   collapsed to ``Other``;
 * per-show season shapes as ``(season_number, watchers)`` pairs;
-* a pinned baseline: every vector judged under the SHIPPED default policies, so the
-  harness can detect any change in engine behavior against real shapes.
+* two pinned baselines per vector: ``baseline`` under the SHIPPED default policies, and
+  ``lane_baseline`` under ``tests._policy_lab.lane_policy``, which adds the custom condemn
+  and graded keep rules the defaults leave empty -- so a change to the operator-authored
+  lanes moves a pinned number too, rather than moving nothing at all.
 
 No titles, ids, media keys, paths, hosts, or usernames -- the golden rule applies to
 fixtures exactly as it does to code.
@@ -39,6 +41,7 @@ excuse it. ``refuse_unless_the_scorer_moved`` is the interlock both call.
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import sqlite3
@@ -52,7 +55,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "src"))
 
-from tests._policy_lab import judge  # noqa: E402
+from tests._policy_lab import judge, lane_gates, lane_policy, reach_of  # noqa: E402
 
 from reaper.engine.policy import (  # noqa: E402
     DEFAULT_MOVIE_POLICY,
@@ -64,6 +67,14 @@ from reaper.services.scan_runner import build_gates  # noqa: E402
 OUT = REPO / "tests" / "fixtures" / "policy_lab_vectors.json"
 TARGET_PER_TYPE = 220
 TARGET_SHOWS = 100
+
+#: Where the real library lives, honoring the same env var the app does
+#: (``launcher.py``). A worktree has no ``data/`` of its own, so the extract could only be
+#: run from the main checkout -- and the alternative, symlinking ``data`` into the worktree,
+#: is a directory-shaped entry that ``.gitignore``'s ``/data/`` does not match, so it shows
+#: up untracked and one ``git add -A`` from being committed. Both databases are opened
+#: read-only.
+DATA_DIR = Path(os.environ.get("REAPER_DATA_DIR", "").strip() or (REPO / "data"))
 
 
 def round_votes(votes: int) -> int:
@@ -167,25 +178,62 @@ def stamped_scorer(fixture: dict[str, Any]) -> int | None:
     return value
 
 
+#: The two baselines every vector carries, and the policy each is judged under. ``baseline``
+#: is the shipped default; ``lane_baseline`` is ``_policy_lab.lane_policy``, which adds the
+#: operator-authored rules the defaults leave empty, so ``evaluate_custom`` and
+#: ``evaluate_keep`` are pinned by something. Declared as one table because both writers and
+#: the permutation test all walk it, and a second baseline added on one path only would be
+#: the ``scorer_version`` split all over again (rule 72).
+BASELINES: tuple[tuple[str, Any, Any], ...] = (
+    ("baseline", lambda mt: DEFAULT_MOVIE_POLICY if mt == "movie" else DEFAULT_TV_POLICY, None),
+    ("lane_baseline", lane_policy, lane_gates),
+)
+
+
 def rejudge(fixture: dict[str, Any]) -> int:
-    """Re-pin every vector's baseline in place; return how many moved.
+    """Re-pin every vector's baselines in place; return how many moved.
 
     Shared by both regeneration paths so the comparison cannot exist on one and not the
     other, which is exactly the split that let the full extract launder an engine change.
     """
-    gate_lists = {
+    default_gates = {
         "movie": build_gates(DEFAULT_MOVIE_POLICY),
         "season": build_gates(DEFAULT_TV_POLICY),
     }
+    # The reach of the sample being judged, not of whatever fixture is on disk. The lab
+    # derives ``history_reach_days`` from the oldest play across the vectors, cached at
+    # module level off ``load_fixture()`` -- so a full extract judged its new sample against
+    # the PREVIOUS fixture's reach and wrote that as ground truth, then the permutation test
+    # recomputed with the new one and disagreed. Exactly what ``judge``'s docstring warns a
+    # generator can do: a lab that disagrees with the scan does not fail, it records the
+    # disagreement. Pre-existing, and it surfaced the first time anyone ran a full extract
+    # after the reach was introduced -- the two samples differ by eighteen days.
+    reach = reach_of(fixture["vectors"])
     moved = 0
+    first_pinned = 0
     for v in fixture["vectors"]:
-        policy = DEFAULT_MOVIE_POLICY if v["media_type"] == "movie" else DEFAULT_TV_POLICY
-        verdict, score_value, coverage_bp = judge(v, policy, gate_lists[v["media_type"]])[:3]
-        fresh = {"verdict": verdict, "score": score_value, "coverage_bp": coverage_bp}
-        if fresh != v.get("baseline"):
-            print(f"{v['id']}: {v.get('baseline')} -> {fresh}")
-            moved += 1
-        v["baseline"] = fresh
+        media_type = v["media_type"]
+        for key, policy_for, gates_for in BASELINES:
+            policy = policy_for(media_type)
+            gates = gates_for(media_type) if gates_for else default_gates[media_type]
+            verdict, score_value, coverage_bp = judge(v, policy, gates, reach=reach)[:3]
+            fresh = {"verdict": verdict, "score": score_value, "coverage_bp": coverage_bp}
+            was = v.get(key)
+            # A key the fixture never carried has not MOVED -- there was no number to move
+            # from. Counting it as movement makes every added baseline trip the refusal for
+            # every vector at once, which teaches people to reach for --unbumped on a change
+            # that never touched the engine, and an escape hatch used by reflex is one that
+            # stops being read. Only a value that existed and now differs is a scoring
+            # change (rule 93's distinction: absent is not the same as unreadable, and
+            # neither is the same as changed).
+            if was is None:
+                first_pinned += 1
+            elif fresh != was:
+                print(f"{v['id']} {key}: {was} -> {fresh}")
+                moved += 1
+            v[key] = fresh
+    if first_pinned:
+        print(f"{first_pinned} baseline(s) pinned for the first time; nothing to compare")
     return moved
 
 
@@ -367,8 +415,8 @@ def main() -> None:
     guard_the_full_extract(unbumped)
 
     rng = random.Random(42)
-    rdb = sqlite3.connect(f"file:{REPO / 'data' / 'reaper.db'}?mode=ro", uri=True)
-    cdb = sqlite3.connect(f"file:{REPO / 'data' / 'cache.db'}?mode=ro", uri=True)
+    rdb = sqlite3.connect(f"file:{DATA_DIR / 'reaper.db'}?mode=ro", uri=True)
+    cdb = sqlite3.connect(f"file:{DATA_DIR / 'cache.db'}?mode=ro", uri=True)
 
     row = rdb.execute(
         "SELECT id, created_at FROM snapshot WHERE degraded = 0 ORDER BY id DESC LIMIT 1"
@@ -428,9 +476,6 @@ def main() -> None:
     common_quality = {name for name, n in quality_freq.items() if n >= 5}
 
     # ---- per-candidate vectors ---------------------------------------------
-    movie_pol = DEFAULT_MOVIE_POLICY
-    tv_pol = DEFAULT_TV_POLICY
-
     vectors: list[dict[str, Any]] = []
     group_of: dict[str, list[int]] = {}
     show_watchers: dict[str, dict[int, int]] = {}
@@ -553,11 +598,18 @@ def main() -> None:
                     "is_managed": from_gate("unmanaged", False),
                     "in_curated_list": curated_obs,
                     "is_whitelisted": from_gate("whitelisted", True),
-                    "requested": obs("unknown"),
+                    # These three were hand-written constants -- ``requested`` and
+                    # ``show_ended`` pinned to unknown, and no arrival date at all -- while
+                    # the scan had frozen all three for every candidate. The lab was
+                    # sweeping evidence no real scan produces, which is the failure
+                    # ``stored_obs`` was written for, one field list later. Read what was
+                    # frozen (rule 35).
+                    "requested": stored_obs(frozen, "requested"),
+                    "days_since_added": stored_obs(frozen, "days_since_added", float),
                     "genres": genres_obs,
                     "release_age_days": release_obs,
                     "quality": quality_obs,
-                    "show_ended": obs("unknown") if media_type == "season" else obs("absent"),
+                    "show_ended": stored_obs(frozen, "show_ended", default="absent"),
                 },
                 "guard": guard,
                 "override": override,
@@ -598,13 +650,12 @@ def main() -> None:
     ]
 
     # ---- pinned baseline under the shipped defaults -------------------------
-    gate_lists = {"movie": build_gates(movie_pol), "season": build_gates(tv_pol)}
     for i, v in enumerate(sample):
         v.pop("_group", None)
         v["id"] = f"v{i:04d}"
-        policy = movie_pol if v["media_type"] == "movie" else tv_pol
-        verdict, score_value, coverage_bp, _, _ = judge(v, policy, gate_lists[v["media_type"]])
-        v["baseline"] = {"verdict": verdict, "score": score_value, "coverage_bp": coverage_bp}
+    # One pass through the shared table, so a baseline can never exist on the re-pin path
+    # and not on the extract path. Every key starts absent, so all of them read as moved.
+    rejudge({"vectors": sample})
 
     out = {
         "schema": 1,

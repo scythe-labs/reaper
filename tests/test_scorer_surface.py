@@ -37,15 +37,16 @@ provenance tables here: ``_PLEX_IMAGE_PREFIXES`` decides whether a Plex-served r
 through those defaults and goes red when a verdict, score or coverage moves. It asks for the
 bump in its failure text, and ``policy_lab_extract.rebaseline`` is what enforces it.
 
-*Arithmetic in the operator-authored lanes is caught by nothing at all.* Both shipped
-defaults carry ``custom_condemn: []`` and ``graded_keeps: []``, so no fixture vector
-exercises ``signals.evaluate_custom`` or ``signals.evaluate_keep``. Inverting either --
-``evaluate_keep``'s ``Unknown`` arm paying zero instead of the maximum discount is the
-sharpest, since it turns the keep lane's fail-closed direction fail-open -- leaves this file,
-the baseline, and the refusal all green. Closing it needs fixture vectors that carry a custom
-rule and a graded keep, which needs a regeneration against a real library. Until then this
-paragraph is the record of the hole, deliberately not softened: a reader who takes "between
-the two, everything is covered" from this file would be wrong.
+*Arithmetic in the operator-authored lanes* used to be caught by nothing at all, because both
+shipped defaults carry ``custom_condemn: ()`` and ``graded_keeps: ()``, so no vector reached
+``signals.evaluate_custom`` or ``signals.evaluate_keep``. It is covered now by a second pinned
+baseline judged under ``_policy_lab.lane_policy``, whose four rules are chosen to reach the
+fail-closed ARMS rather than only the ramps -- a keep on a field that is Known on every vector
+pins the ramp and leaves the branch that matters as dead as before.
+
+*What remains uncovered* is the part no fixture can reach: a policy shape nobody has recorded.
+The lab replays real shapes, so a rule over a fact combination this library does not contain
+is still un-pinned by anything here.
 """
 
 from __future__ import annotations

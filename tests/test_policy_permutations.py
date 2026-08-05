@@ -55,6 +55,8 @@ from tests._policy_lab import (
     VERDICT_RANK,
     degraded,
     judge,
+    lane_gates,
+    lane_policy,
     load_fixture,
     with_watchers_window,
 )
@@ -157,20 +159,38 @@ class TestPinnedBaseline:
         what enforces it, because only the regeneration step holds the old baseline and the
         new one at once.
         """
+        self._check("baseline", default_policy, default_gates)
+
+    def test_every_vector_reproduces_its_baseline_under_the_operator_authored_lanes(
+        self,
+    ) -> None:
+        """The same trip-wire, under a policy that actually uses the custom condemn and
+        graded keep lanes. Both shipped defaults leave them empty, so nothing here reached
+        ``signals.evaluate_custom`` or ``signals.evaluate_keep``: inverting the keep lane's
+        ``Unknown`` arm from fail-closed to fail-open moved no pinned number, and nothing
+        asked anyone to bump ``SCORER_VERSION`` for it (rule 113).
+
+        ``lane_policy`` is the shipped body with three rules added, judged through the same
+        production pipeline -- not a second scorer (rule 3/22).
+        """
+        self._check("lane_baseline", lane_policy, lane_gates)
+
+    @staticmethod
+    def _check(key: str, policy_for: object, gates_for: object) -> None:
         mismatches = []
         for v in VECTORS:
             verdict, score, coverage_bp, _, _ = judge(
-                v, default_policy(v["media_type"]), default_gates(v["media_type"])
+                v,
+                policy_for(v["media_type"]),  # type: ignore[operator]
+                gates_for(v["media_type"]),  # type: ignore[operator]
             )
-            base = v["baseline"]
+            base = v[key]
             if (verdict, score, coverage_bp) != (
                 base["verdict"],
                 base["score"],
                 base["coverage_bp"],
             ):
-                mismatches.append(
-                    f"{v['id']}: baseline {base} -> ({verdict}, {score}, {coverage_bp})"
-                )
+                mismatches.append(f"{v['id']} {key}: {base} -> ({verdict}, {score}, {coverage_bp})")
         assert not mismatches, "\n".join(mismatches[:10])
 
     def test_the_fixture_names_the_scorer_its_baselines_were_cut_under(self) -> None:
