@@ -7,8 +7,8 @@ sidebar_position: 1
 
 # What makes it different
 
-Reaper is meant to be useful out of the box. Every shipped default is the cautious one, and the
-logic that decides a removal is pinned by tests that fail the moment a verdict changes.
+Every shipped default is the cautious one, and the
+logic that decides a removal cannot change without a test catching it.
 
 ## TV seasons, judged like a viewer would
 
@@ -21,7 +21,7 @@ fans out into its seasons.
 </Callout>
 
 That hold is one season or the other, not both. It only holds both when Reaper cannot read the
-episode counts, which is the safe way to be wrong. Two details that matter in a real library:
+episode counts. Two details that matter in a real library:
 
 - It steps **over gaps**. Finish season 3 when only 3 and 5 are on disk and it holds 5.
 - It anchors on the **most recent play**, not the highest season number, so a re-watcher and
@@ -58,15 +58,15 @@ protected outright, with no switch to turn that off.
 <Callout tone="caution">
   **A short watch history holds everything.** Where your history does not reach as far back as
   your library, Reaper cannot tell who is partway through, so it holds every prunable season.
-  Automatic TV pruning stays inert until the history catches up. That is intended, and it
-  surprises people who are waiting for TV pruning to start.
+  Automatic TV pruning stays inert until the history catches up. If you are waiting for TV
+  pruning to start, that is why.
 </Callout>
 
 ## It explains the keeps
 
 Every candidate carries the protections that were **checked and did not fire**, with the real
 numbers: *"Only 2 people watched it here in the last year (it takes 3 to keep on that
-alone)."* Nothing short-circuits, so every protection reports even once the answer is settled.
+alone)."* Every protection reports, even once the answer is settled.
 
 The panel separates what spared a title, what it cleared, and what Reaper could not check and
 is leaving to you.
