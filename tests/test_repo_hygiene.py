@@ -3157,7 +3157,9 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # (rule 145). Re-derive by running the test, never by arithmetic on the maps above.
 # +1 for `ListModal.test.tsx`, the add/edit form on Settings -> Lists, which is a screen of its
 # own and carries its own audit rather than being covered by the panel that opens it.
-_EXPECTED_RENDERING_TEST_FILES = 52
+# +1 for `JobsShelfSkip.test.tsx`, which mounts the Jobs panel to drive the shelf row's
+# skipped-scan branch and audits that branch, since the row draws copy no other test renders.
+_EXPECTED_RENDERING_TEST_FILES = 53
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
