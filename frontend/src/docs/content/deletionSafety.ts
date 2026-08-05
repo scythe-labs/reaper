@@ -69,7 +69,7 @@ export const deletionSafety: Doc = {
 
     h2("Judged on frozen, complete evidence", "frozen"),
     p(
-      "Everything is gathered and frozen before anything is scored, so no item's fate depends on a source timing out partway through a scan. If a source that could condemn something was unreachable, the scan is marked incomplete. You can look at it, but nothing can be run against it. Acting on half the evidence is how a tool deletes a loved film during an outage.",
+      "Everything is gathered and frozen before anything is scored, so no item's fate depends on a source timing out partway through a scan. If a source that could condemn something was unreachable, the scan is marked incomplete. You can look at it, but nothing can be run against it.",
     ),
     callout(
       "note",
