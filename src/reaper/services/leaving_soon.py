@@ -563,24 +563,39 @@ async def after_scan(
     the heads-up alone (announcing is a read plus a webhook post -- no Plex write). A
     failure here is logged and swallowed: the warning layer must never fail a scan that
     already committed.
+
+    Every skip below is written down (:func:`_record_skip`), because none of them reach the
+    row ``_run_pass`` writes: the Jobs page then re-read the last COMPLETED pass and showed
+    its green dot, its timestamp and its counts as the answer for a scan that never touched
+    the shelf, under a heading reading "Runs after every scan".
     """
+    # The shelf is on until the pass says otherwise. Off is the one skip not worth writing
+    # down: the Jobs row renders its "Off" branch from that same setting and shows no
+    # last-run line at all, so there is nothing on screen for a record to correct.
+    shelf_on = True
+    # Whether a specific reason is already stored for this call, so the catch-all below
+    # cannot overwrite it with the vague one.
+    recorded = False
     try:
         try:
             await run_sync(session_factory, settings, box)
             return
         except LeavingSoonDisabledError:
-            pass  # shelf off
+            shelf_on = False
         except LeavingSoonDegradedError:
             # The scan that triggered this could not be trusted. There is deliberately NO
             # fall-through to the heads-up below: it reads the same condemned set (rule
             # 116), so "shelf off" and "scan untrustworthy" are not the same skip.
             log.info("leaving_soon.skipped_degraded")
+            await _record_skip(session_factory, "the scan didn't finish cleanly")
             return
         except PlexError as exc:
             # Shelf on, but Plex is unlinked or unreachable. Fall through to the Discord
             # heads-up below, but do not swallow it silently: an operator who enabled the
             # shelf and sees it not updating has no other trail to this cause.
             log.warning("leaving_soon.shelf_unreachable", error=str(exc))
+            await _record_skip(session_factory, "Reaper couldn't reach Plex")
+            recorded = True
 
         # Shelf off, or on with no reachable server: the Discord heads-up still runs
         # whenever a webhook is set. Announcing is a read plus a webhook post, no Plex
@@ -616,6 +631,34 @@ async def after_scan(
             log.info("leaving_soon.announced_without_shelf", count=len(announced))
     except Exception as exc:
         log.warning("leaving_soon.after_scan_failed", error=str(exc))
+        # Not on the shelf-off path, which has no line on screen to correct, and not over a
+        # reason already written above. What is left is a surprise nobody has a name for,
+        # and the row still has to say the shelf did not move.
+        if shelf_on and not recorded:
+            await _record_skip(session_factory, "the update didn't finish")
+
+
+async def _record_skip(
+    session_factory: async_sessionmaker[AsyncSession],
+    result: str,
+) -> None:
+    """Write down that a scan finished without updating the shelf, and why in one clause.
+
+    Read beside the last completed pass and preferred only while it is newer, so a pass that
+    later completes wins on its own timestamp and this is never cleared -- the arrangement
+    ``ScanRow`` already uses for a scheduled scan that crashed and wrote no snapshot.
+
+    Never lets this bookkeeping break the scan it follows: a failed write is logged and
+    swallowed, exactly as :func:`after_scan` handles its own errors.
+    """
+    try:
+        async with session_factory() as session:
+            await app_settings.set_leaving_soon_last_skip(
+                session, at=utcnow().isoformat(), result=result
+            )
+            await session.commit()
+    except Exception as exc:
+        log.warning("leaving_soon.record_skip_failed", error=str(exc))
 
 
 async def cleanup_sections(

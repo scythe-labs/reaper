@@ -397,10 +397,31 @@ class LeavingSoonLastOut(BaseModel):
     result: str
 
 
+class LeavingSoonLastSkipOut(BaseModel):
+    """A scan that finished without updating the shelf.
+
+    Reported beside ``last`` rather than replacing it, because a skipped pass writes
+    nothing to Plex: the shelf still holds what the last completed pass put there, and
+    those counts are the only true ones anybody has. What is no longer true is that they
+    are the outcome of the most recent scan, which is what this says.
+    """
+
+    at: str
+    #: Why, in one clause, because the Jobs row trails it after the exact time.
+    result: str
+
+
 class LeavingSoonSettingsOut(BaseModel):
     enabled: bool
     allow_unarmed: bool
     last: LeavingSoonLastOut | None = None
+    #: Present whenever a skip has ever been recorded. It is the READER that decides
+    #: whether it still governs, by preferring it only while it is newer than ``last`` --
+    #: nothing clears it, so a pass that later completes wins on its own timestamp. Same
+    #: arrangement as the scan's crash record (``ScheduledJob.last_ok``), and the reason
+    #: this is not resolved server-side is that both fields are already on the wire and a
+    #: second, disagreeing answer to "which is current" is worth less than one.
+    last_skip: LeavingSoonLastSkipOut | None = None
 
 
 class LeavingSoonSettingsIn(BaseModel):
@@ -1360,9 +1381,16 @@ async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list
 
 async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> LeavingSoonSettingsOut:
     last = await app_settings.get_leaving_soon_last(session)
+    skip = await app_settings.get_leaving_soon_last_skip(session)
     return LeavingSoonSettingsOut(
         enabled=await app_settings.leaving_soon_enabled(session),
         allow_unarmed=await app_settings.leaving_soon_unarmed(session, settings),
+        last_skip=LeavingSoonLastSkipOut(
+            at=str(skip.get("at", "")),
+            result=str(skip.get("result", "")),
+        )
+        if skip
+        else None,
         last=LeavingSoonLastOut(
             at=str(last.get("at", "")),
             movies=int(last.get("movies", 0)),

@@ -648,3 +648,181 @@ class TestADegradedScanDoesNotReachTheShelf:
         await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
 
         assert len(announced) == 1
+
+
+class TestAScanThatSkippedTheShelfSaysSo:
+    """Every skip in ``after_scan`` returns before ``_run_pass`` writes its record, so the
+    Jobs row re-read the last COMPLETED pass and answered for the scan with it: a green dot,
+    an old timestamp and counts, under a line reading "Runs after every scan".
+
+    The skip is written to its own row and never cleared. The row prefers it only while it
+    is newer than the completed pass, so a pass that later completes wins on its own
+    timestamp -- the arrangement ``ScanRow`` already uses for a scheduled scan that crashed
+    and wrote no snapshot.
+    """
+
+    async def _snapshot(self, factory: async_sessionmaker[AsyncSession], *, degraded: bool) -> None:
+        from reaper.db.models import Snapshot
+
+        async with factory() as session:
+            session.add(
+                Snapshot(
+                    created_at=utcnow(),
+                    horizon_at=utcnow(),
+                    policy_hash="h",
+                    degraded=degraded,
+                )
+            )
+            await session.commit()
+
+    async def _skip(self, factory: async_sessionmaker[AsyncSession]) -> dict[str, Any] | None:
+        async with factory() as session:
+            return await app_settings.get_leaving_soon_last_skip(session)
+
+    async def test_an_untrustworthy_scan_is_written_down(
+        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    ) -> None:
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=True)
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        skip = await self._skip(factory)
+        assert skip is not None, "a scan skipped the shelf and left no record of it"
+        # The exact clause, because the row trails it after a timestamp and this is the whole
+        # of what the operator is told. Plain language, no internals (rule 21).
+        assert skip["result"] == "the scan didn't finish cleanly"
+        assert skip["at"]
+
+    async def test_an_unreachable_plex_is_written_down(
+        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    ) -> None:
+        """No Plex link at all, which is the shape ``_run_pass`` raises ``PlexError`` for.
+
+        A different clause from the degraded case above, and asserted as such: the two are
+        the operator's only signal for which of the two happened, so a fix that collapsed
+        them into one string would still satisfy a test that only checked a record exists.
+        """
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=False)
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        skip = await self._skip(factory)
+        assert skip is not None
+        assert skip["result"] == "Reaper couldn't reach Plex"
+
+    async def test_the_shelf_being_off_is_not_written_down(
+        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    ) -> None:
+        """The one skip with nothing on screen to correct: the row renders its "Off" branch
+        from the same setting and shows no last-run line at all. Recording here would put a
+        failure into a row that never draws one, and it would outlive the operator turning
+        the shelf back on."""
+        await self._snapshot(factory, degraded=False)  # shelf off is the default
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        assert await self._skip(factory) is None
+
+    async def test_a_completed_pass_is_newer_than_the_skip_before_it(
+        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    ) -> None:
+        """Nothing clears the skip row, so what makes a recovery visible is the completed
+        pass carrying a LATER timestamp. Pinned here rather than left to the reader, because
+        the reader's comparison is the only thing that retires a skip: were the two written
+        with the same instant, or out of order, a shelf that recovered would keep reporting
+        the old failure forever."""
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=True)
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        # A completed pass, written the way _run_pass writes one. Called directly: reaching
+        # it through after_scan needs a reachable Plex, and what is under test is the
+        # ordering of the two rows, not the pass that produces one of them.
+        async with factory() as session:
+            await app_settings.set_leaving_soon_last(
+                session,
+                at=(utcnow() + timedelta(seconds=1)).isoformat(),
+                movies=3,
+                seasons=4,
+                applied=True,
+                ok=True,
+                result="1 added, 0 cleared",
+            )
+            await session.commit()
+
+        skip = await self._skip(factory)
+        async with factory() as session:
+            last = await app_settings.get_leaving_soon_last(session)
+        assert skip is not None and last is not None
+        assert last["at"] > skip["at"], "a completed pass could not retire the skip before it"
+
+    async def test_a_specific_reason_survives_a_later_surprise(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The unreachable-Plex path records its reason and then falls through to the
+        Discord heads-up, which sits inside the catch-all. A surprise down there must not
+        overwrite "Reaper couldn't reach Plex" with the vague clause: the specific one is
+        the only clause that tells the operator what to go and fix.
+
+        A notifier is forced in because the fall-through returns before announcing without
+        one, and the surprise is planted in ``announce_new`` rather than ``build_notifier``:
+        ``_run_pass`` builds a notifier too, so a raise from there never reaches the
+        fall-through and the test would prove the opposite branch (which is how it was
+        written first, and it passed).
+        """
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=False)
+
+        async def _notifier(*args: object, **kwargs: object) -> object:
+            return object()  # stands in for a configured Discord webhook
+
+        async def _boom(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("something nobody has a name for")
+
+        monkeypatch.setattr(leaving_soon, "build_notifier", _notifier)
+        monkeypatch.setattr(leaving_soon, "announce_new", _boom)
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        skip = await self._skip(factory)
+        assert skip is not None
+        assert skip["result"] == "Reaper couldn't reach Plex"
+
+    async def test_a_surprise_with_no_name_still_says_the_shelf_did_not_move(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The catch-all's own clause, for a failure inside the pass that no branch above it
+        names. The row cannot say what to fix here, so it says the one thing it knows: the
+        shelf did not move. Silence is what it did before, and silence reads as success."""
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=False)
+
+        async def _boom(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("something nobody has a name for")
+
+        # Inside _run_pass, above the Plex link check, so no named branch can claim it.
+        monkeypatch.setattr(leaving_soon, "build_notifier", _boom)
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        skip = await self._skip(factory)
+        assert skip is not None
+        assert skip["result"] == "the update didn't finish"
