@@ -39,6 +39,7 @@ import copy
 import enum
 import hashlib
 import json
+from collections.abc import Sequence
 from typing import Annotated, Any, ClassVar, Literal, Self, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -1203,9 +1204,113 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
     return None
 
 
-#: The two gate ids ``convert_list_protections`` rewrites. Spelled once: the strip and the
-#: conversion must agree on membership, or a body could lose a gate without gaining its rule.
-_LEGACY_LIST_GATES = ("whitelisted", "curated_list")
+#: The two gates that became keep rules on Settings -> Lists. Retired as gates and kept as
+#: ``GateId`` members so a stored explanation still decodes, but NOT in ``RETIRED_GATES``:
+#: each was a live protection, so a body naming one is converted rather than stripped.
+#: Declared once, because three readers must agree on the membership -- the conversion, the
+#: strip beside it (a body could otherwise lose a gate without gaining its rule), and
+#: ``scan_runner.build_gates``, which owes an operator reaching it a different sentence from
+#: the one an unimplemented gate gets.
+LIST_GATES_NOW_KEEP_RULES: frozenset[GateId] = frozenset({GateId.WHITELISTED, GateId.CURATED_LIST})
+_LEGACY_LIST_GATES = frozenset(gate.value for gate in LIST_GATES_NOW_KEEP_RULES)
+
+#: What a fresh install's two lists are made of, beside the names below: the tag the seeded
+#: tag list carries and the preset its IMDb list names. Spelled here for the reason those
+#: names are, and read by ``list_config.DEFAULT_LISTS`` rather than respelled there, so the
+#: row a fresh install seeds and the row a converted upgrade looks for are one declaration
+#: (rule 104).
+DEFAULT_KEEP_TAG = "reaper-keep"
+DEFAULT_IMDB_PRESET = "top250"
+
+
+def legacy_keep_tags(raw: object) -> tuple[str, ...]:
+    """The *arr tags a legacy body was protecting on, blanks dropped.
+
+    A body carrying no ``keep_tags`` key ran on the shipped default, so that is what it
+    returns; an explicit empty list is an operator who cleared it, and returns nothing
+    (rule 1). Empty therefore means "this body had no tag protection", which is what
+    ``convert_list_protections`` reads it as, and it is also how the caller finds the
+    registry row those tags became -- one derivation, since a resolver disagreeing with
+    the conversion would name a list for a body that has no tags to convert (rule 104).
+    """
+    if not isinstance(raw, dict):
+        return ()
+    tags = raw.get("keep_tags", None)
+    if not isinstance(tags, list):
+        return (DEFAULT_KEEP_TAG,)
+    return tuple(t for t in (str(x).strip() for x in tags) if t)
+
+
+def _config_value(config_json: str | None, key: str) -> object:
+    """One value out of a stored list config, or ``None`` for a body that will not parse.
+    Unreadable reads as "not this row": it can only cost a conversion, and the half that does
+    not convert keeps its gate and stops the scan loudly (rule 96's direction)."""
+    try:
+        config = json.loads(config_json or "{}")
+    except ValueError:
+        return None
+    return config.get(key) if isinstance(config, dict) else None
+
+
+def conversion_list_names(
+    rows: Sequence[tuple[str, str, str | None]],
+    *,
+    keep_tags: Sequence[str],
+) -> tuple[str | None, str | None, tuple[str, ...]]:
+    """Which lists ``convert_list_protections``'s rules must name, out of the registry.
+
+    ``rows`` are ``(source, name, config_json)`` oldest first. Returns the tag list's current
+    name, the shipped IMDb list's, and every list the operator curates on Plex -- the three
+    arguments the conversion takes. ``None`` means no such list, and the conversion then leaves
+    that half's gate in place rather than converting it away.
+
+    **Resolved by what a row HOLDS, never by age.** ``keep_tags`` is the legacy body's own
+    tags, tested against each *arr-tag row's configured ones; the shipped preset is tested
+    against each IMDb row's. Age was the rule until it turned out to be the operator's to
+    change as well: delete the tag list this converts and the *arr-tag list they added for
+    something else becomes the oldest of its source, so it inherited an outright keep that
+    nothing gave it. Settings -> Lists reads the same conversion (``list_rules.usage``), so
+    that list read "Keeps every title on it" while no rule mentioned it, and Remove could not
+    take the rule off -- ``list_rules.detach_list`` declines to write a repaired policy.
+
+    Tag matching is an OVERLAP, not an exact set: the upgrade migration unions both media
+    types' tags into the one list, and an operator who adds a tag beside them has not stopped
+    it being the list their tags became.
+
+    Pure, and takes rows rather than a session, because the load shim reads them through
+    SQLAlchemy and the upgrade migration through raw SQL -- and a second copy of this
+    selection is exactly what drifted (rule 104).
+    """
+    wanted = {t.strip().casefold() for t in keep_tags if t.strip()}
+
+    def carries_a_wanted_tag(config_json: str | None) -> bool:
+        held = _config_value(config_json, "tags")
+        if not isinstance(held, list):
+            return False
+        # Case-folded on both sides, the comparison every reader of a tag makes (rule 88).
+        return bool(wanted & {str(t).strip().casefold() for t in held})
+
+    tag = next(
+        (
+            name
+            for source, name, config in rows
+            if source == "arr_tag" and carries_a_wanted_tag(config)
+        ),
+        None,
+    )
+    imdb = next(
+        (
+            name
+            for source, name, config in rows
+            if source == "imdb" and _config_value(config, "preset") == DEFAULT_IMDB_PRESET
+        ),
+        None,
+    )
+    # No such test for the operator's own Plex lists, and none is possible: the retired
+    # WHITELISTED gate spared everything on every list they curate by hand and the body names
+    # none of them, so the registry's own set is the whole answer the body has.
+    own = tuple(name for source, name, _ in rows if source in ("plex_collection", "plex_watchlist"))
+    return tag, imdb, own
 
 
 def has_legacy_list_protections(raw: object) -> bool:
@@ -1256,7 +1361,10 @@ def convert_list_protections(
     ``tag_list_name`` / ``imdb_list_name`` are the CURRENT names of the registry rows the
     new rules must point at; the caller reads them from the database because the operator
     may have renamed either. ``None`` means no such list exists, and that half converts to
-    no rule rather than to a rule naming nothing (rule 25).
+    no rule rather than to a rule naming nothing (rule 25). The caller identifies those
+    rows by what they HOLD -- these tags, that preset -- never by position, or a list the
+    operator added for something else inherits the protection the moment the real one is
+    deleted (``profiles._conversion_list_names``).
 
     Returns the converted body, or ``None`` when nothing is legacy-shaped. The caller
     flags the conversion (``PolicyRepair.LISTS_MIGRATED``), which makes
@@ -1276,13 +1384,13 @@ def convert_list_protections(
     }
 
     body = copy.deepcopy(raw)
-    tags = body.pop("keep_tags", None)
-    body.pop("keep_tags_match", None)
-
     # An explicit empty tag list is an operator who cleared it, and converts to no rule
     # (rule 1). A body carrying no key at all ran on the shipped default tag, so it had a
-    # live protection to carry over.
-    had_tags = not isinstance(tags, list) or any(str(t).strip() for t in tags)
+    # live protection to carry over. Both readings live in ``legacy_keep_tags``, which the
+    # caller resolving ``tag_list_name`` reads too.
+    had_tags = bool(legacy_keep_tags(body))
+    body.pop("keep_tags", None)
+    body.pop("keep_tags_match", None)
 
     new_rules: list[dict[str, Any]] = []
     if legacy_gates.get("whitelisted"):

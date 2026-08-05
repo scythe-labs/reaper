@@ -1123,18 +1123,26 @@ def _legacy_list_body() -> dict[str, Any]:
 def _only_these_lists(engine: Engine, *sources: str) -> None:
     """Leave the registry holding exactly these sources, under names an operator might have
     chosen. The upgrade to the prior revision seeds rows of its own (the tag list, the shipped
-    IMDb list), and the conversion resolves by source and age rather than by spelling, so a
-    case about a MISSING list has to clear them rather than add beside them."""
-    names = {"arr_tag": "My tagged titles", "imdb": "Films worth keeping"}
+    IMDb list), so a case about a MISSING list has to clear them rather than add beside them.
+
+    Each row carries a real config, because that is what identifies it: the conversion finds
+    the tag list by the tags it holds and the IMDb list by its preset, never by spelling and
+    never by age (``policy.conversion_list_names``).
+    """
+    rows = {
+        "arr_tag": ("My tagged titles", {"tags": ["reaper-keep"], "match": "any"}),
+        "imdb": ("Films worth keeping", {"preset": "top250"}),
+    }
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM list_config"))
         for source in sources:
+            name, config = rows[source]
             conn.execute(
                 text(
                     "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
-                    " created_at) VALUES (:n, :s, '{}', 1, 0, 1750000000)"
+                    " created_at) VALUES (:n, :s, :c, 1, 0, 1750000000)"
                 ),
-                {"n": names[source], "s": source},
+                {"n": name, "s": source, "c": json.dumps(config)},
             )
 
 
@@ -1253,6 +1261,67 @@ class TestPersistingTheListConversion:
         command.upgrade(config, _LIST_CONVERSION)
 
         assert _all_policy_rows(engine) == before
+        engine.dispose()
+
+    def test_a_list_the_tags_never_named_does_not_inherit_the_rule(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The upgrade this revision shipped with wrote the wrong list's name, permanently.
+
+        It resolved the tag list as the oldest *arr-tag row, so an operator who had deleted
+        the list their keep tags became handed the rule to whatever list they had added for
+        something else -- an outright keep, in their policy, for a list they never chose
+        (#526). Driven here as the sequence that produced it: no list carrying the tags, one
+        carrying something else.
+        """
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "imdb")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
+                    " created_at) VALUES ('Saturday movie night', 'arr_tag',"
+                    ' \'{"tags": ["movie-night"], "match": "any"}\', 1, 0, 1750000001)'
+                )
+            )
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        before = _all_policy_rows(engine)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        # Nothing written at all: with no list carrying the tags, the conversion keeps the
+        # `whitelisted` row rather than naming a list nobody pointed it at, and a body still
+        # carrying that row is one this revision declines to persist.
+        assert _all_policy_rows(engine) == before
+        engine.dispose()
+
+    def test_the_tag_list_is_found_behind_an_older_row_of_its_own_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other half of the same defect: age decided, and the operator's own list was
+        older than the one their tags became."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "imdb")
+        with engine.begin() as conn:
+            for name, tags, created in (
+                ("Saturday movie night", ["movie-night"], 1740000000),
+                ("My tagged titles", ["reaper-keep"], 1750000000),
+            ):
+                conn.execute(
+                    text(
+                        "INSERT INTO list_config (name, source, config_json, enabled,"
+                        " built_in, created_at) VALUES (:n, 'arr_tag', :c, 1, 0, :t)"
+                    ),
+                    {"n": name, "c": json.dumps({"tags": tags, "match": "any"}), "t": created},
+                )
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        stored = json.loads(_all_policy_rows(engine)[-1][3])
+        values = {c["value"] for c in stored["protect_conditions"] if c["field"] == "on_list"}
+        assert "My tagged titles" in values
+        assert "Saturday movie night" not in values
         engine.dispose()
 
     def test_it_is_a_noop_on_a_body_that_is_not_legacy_shaped(
