@@ -2919,6 +2919,30 @@ template change is live on `dev` immediately and reaches an operator's install p
 next rebuild, so "the picker is not there" is the expected reading for hours after a merge, and
 the feed's own `last_updated` against the merge time is what separates that from a defect.
 
+## `overflow-wrap: anywhere` is a break opportunity AND a min-content of one glyph (2026-08-05)
+
+The per-server tag counts on Settings, Lists were one comma-joined line per server, which turns
+unreadable as tags and servers multiply, so they became a matrix (tags down the side, servers
+across the top). Driven narrow on a phone, the first cut broke a tag name **one letter per line**,
+stacking `reaper-keep` into an eleven-row-tall cell.
+
+- **`overflow-wrap: anywhere` lowers an element's MIN-content to a single character.** That is
+  what rule 139 wants for prose in a page that scrolls, and exactly wrong for a table cell under
+  width pressure: the column can now shrink to one glyph, so the browser takes it. The tag cell
+  carried `anywhere` (copied from the old `.srv`) AND the table was forced to `width: 100%`, so on
+  a narrow pane the fixed table width squeezed the pinned Tag column down to that one-glyph floor.
+  Two changes fixed it: the cell is `white-space: nowrap` (no break to crush), and the table is
+  `width: max-content; min-width: 100%` — it fills the box when the content is narrow and
+  **overflows and scrolls** when it is wide, rather than being sized to the box and crushing a
+  column. ⇒ For a data matrix, do not wrap cells; let the table size to content and scroll inside
+  an `overflow-x: auto` box. Wrapping belongs to prose, not to a grid of values.
+- **A box that scrolls with nothing focusable inside it is unreadable by keyboard.** The matrix
+  holds no focusable cell, so the `.matrix-scroll` box takes `tabIndex={0}` itself — the same
+  answer `.table-scroll` and the docs tables already carry (WCAG 2.1.1, enforced by
+  `a11y-scroll-reachable.test.ts`). And a cell reached by horizontal scroll is not clipped, so its
+  `nowrap` is a recorded rule-139 exemption in `index-outside-text.test.ts`, not a violation:
+  scrolling is the remedy, where for a clipped container it would be the bug.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

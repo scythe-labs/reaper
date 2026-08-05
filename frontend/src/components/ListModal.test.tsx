@@ -471,7 +471,27 @@ describe("editing a list", () => {
     );
   });
 
-  it("re-scans once a save lands, because a list edit re-scores the library", async () => {
+  it("tells the panel to rescan when a keep rule names the edited list", async () => {
+    // Editing a used list can move its membership or re-spell its rule, so a fate can change
+    // and the queue must re-score. The modal only signals it; the panel starts the scan.
+    const user = userEvent.setup();
+    apiMock.editList.mockResolvedValue({
+      ...PLEX_DEF,
+      name: "Films worth keeping",
+      policy_use: [{ media_type: "movie", strength: "hard", points: null }],
+    });
+    const { onChanged } = renderModal(PLEX_DEF);
+
+    await user.clear(await screen.findByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Films worth keeping");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(true));
+  });
+
+  it("does not signal a rescan for a list no rule names", async () => {
+    // PLEX_DEF carries no policy_use, so editing it moves no fate: the panel must not scan the
+    // whole library. This is what keeps a plain add -- which also names no rule -- from scanning.
     const user = userEvent.setup();
     const { onChanged } = renderModal(PLEX_DEF);
 
@@ -479,7 +499,7 @@ describe("editing a list", () => {
     await user.type(screen.getByLabelText("Name"), "Films worth keeping");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(false));
   });
 
   it("stops the name at the length the server refuses", async () => {

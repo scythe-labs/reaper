@@ -8,10 +8,10 @@
 //
 // The state itself is the server's (`lists.ListHealth`) and is not recomputed here -- that is
 // the whole reason it is decided once. What is pinned is the copy each state produces, and the
-// branches this component does own: `item_count` on a failing list, which is the difference
-// between "your titles are still covered" and "nothing on this list is protected"; the
-// policy-use line, which is what tells the operator a defined list protects nothing; and the
-// definition-to-membership join, which is what lets a row carry Edit and Check now at all.
+// branches this component does own: whether a keep rule uses the list at all, which is the
+// difference between the green "In use" chip and the gray "Not in use"; the live-vs-cached
+// count; and the definition-to-membership join, which is what lets a row carry Edit and Check
+// now at all.
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -145,13 +145,13 @@ describe("the Lists panel", () => {
     await expectNoA11yViolations();
   });
 
-  it("says what a working list is protecting, and when it last checked", async () => {
+  it("says a working, in-use list is in use, with its live count and last check", async () => {
     seed([IMDB_DEF], [WORKING]);
     renderPanel();
 
     expect(await screen.findByText("IMDb Top 250")).toBeInTheDocument();
-    expect(screen.getByText("Working")).toBeInTheDocument();
-    expect(screen.getByText(/Protecting 250 titles\./)).toBeInTheDocument();
+    expect(screen.getByText("In use")).toBeInTheDocument();
+    expect(screen.getByText(/250 titles on it\./)).toBeInTheDocument();
     expect(screen.getByText(/Last checked 8 minutes ago\./)).toBeInTheDocument();
   });
 
@@ -178,7 +178,7 @@ describe("the Lists panel", () => {
 
     expect(await screen.findByText("Not working")).toBeInTheDocument();
     expect(screen.getByText("there is no library called 'Movies'")).toBeInTheDocument();
-    expect(screen.getByText(/protecting nothing/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing cached\./)).toBeInTheDocument();
     // Nothing has ever landed, so there is no "last checked" clause to render a bogus date in.
     expect(screen.queryByText(/Last checked/)).not.toBeInTheDocument();
   });
@@ -194,10 +194,10 @@ describe("the Lists panel", () => {
     renderPanel();
 
     expect(await screen.findByText("Not working")).toBeInTheDocument();
-    expect(
-      screen.getByText(/37 titles from the last good check are still protected/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/protecting nothing/)).not.toBeInTheDocument();
+    // Cached, not live: the count is the last good one, and the red chip and the error line
+    // carry the failure. No "protecting" claim, which a lean rule would make false anyway.
+    expect(screen.getByText(/37 titles cached\./)).toBeInTheDocument();
+    expect(screen.getByText("Sonarr refused the request")).toBeInTheDocument();
   });
 
   it("does not call an empty list working, however well the check went", async () => {
@@ -210,8 +210,9 @@ describe("the Lists panel", () => {
     renderPanel();
 
     expect(await screen.findByText("Nothing on it")).toBeInTheDocument();
-    expect(screen.getByText(/protecting nothing/)).toBeInTheDocument();
-    expect(screen.queryByText("Working")).not.toBeInTheDocument();
+    expect(screen.getByText(/Check it's the one you meant\./)).toBeInTheDocument();
+    // The green "In use" verdict is exactly what an empty keep list must not wear.
+    expect(screen.queryByText("In use")).not.toBeInTheDocument();
   });
 
   it("does not call an empty stale list out of date either", async () => {
@@ -229,17 +230,18 @@ describe("the Lists panel", () => {
     renderPanel();
 
     expect(await screen.findByText("Out of date")).toBeInTheDocument();
-    expect(screen.getByText(/not covered yet/)).toBeInTheDocument();
+    // Cached count, no coverage prose: the amber chip says it is out of date.
+    expect(screen.getByText(/37 titles cached\./)).toBeInTheDocument();
   });
 
-  it("says a list that has never run is protecting nothing yet", async () => {
+  it("says a list that has never run has not been checked yet", async () => {
     // No membership row at all: the definition was saved and no scan has run since. The row
     // must still render, or a list the operator just added is invisible until a scan.
     seed([PLEX_DEF], []);
     renderPanel();
 
     expect(await screen.findByText("Not checked yet")).toBeInTheDocument();
-    expect(screen.getByText(/Nothing on it is protected until it does\./)).toBeInTheDocument();
+    expect(screen.getByText(/Runs with your next scan\./)).toBeInTheDocument();
   });
 
   it("says a never-checked family holding titles is still protecting them", async () => {
@@ -261,10 +263,10 @@ describe("the Lists panel", () => {
     renderPanel();
 
     expect(await screen.findByText("Not checked yet")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Still protecting 40 titles from an earlier check\./),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Nothing on it is protected until it does/)).not.toBeInTheDocument();
+    // The family holds 40 titles from a member that has checked, so the count shows -- as
+    // cached, not "on it", because the family's own state is not-checked-yet.
+    expect(screen.getByText(/40 titles cached\./)).toBeInTheDocument();
+    expect(screen.queryByText(/40 titles on it/)).not.toBeInTheDocument();
   });
 
   it("names where a list points, so two lists are told apart by more than their names", async () => {
@@ -330,118 +332,54 @@ describe("the kind badges", () => {
   });
 });
 
-describe("the policy-use line", () => {
-  it("says a hard rule keeps every title on it, once, and links to Policy", async () => {
-    // Two hard rules (movie and TV) are one sentence: the same fact said twice would read as
-    // two different protections.
+describe("the policy link, and in use vs not", () => {
+  it("an in-use list offers Change policy, and never restates the rule's strength", async () => {
     const user = userEvent.setup();
     seed([IMDB_DEF], [WORKING]);
     const { onGoToPolicy } = renderPanel();
 
-    expect(await screen.findByText(/Keeps every title on it\./)).toBeInTheDocument();
-    expect(screen.getAllByText(/Keeps every title on it/)).toHaveLength(1);
+    expect(await screen.findByText("In use")).toBeInTheDocument();
+    // The row says one true thing: in use, and the count. It does NOT restate the strength,
+    // where "Keeps every title on it" is wrong the moment the rule is a lean.
+    expect(screen.queryByText(/Keeps every title/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/points off/)).not.toBeInTheDocument();
+    // And there is no "Configure in Policy" here -- that is the not-in-use action.
+    expect(screen.queryByRole("button", { name: "Configure in Policy" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Change on Policy" }));
+    await user.click(screen.getByRole("button", { name: "Change policy" }));
     expect(onGoToPolicy).toHaveBeenCalled();
   });
 
-  it("says what a lean is worth, in points", async () => {
+  it("reads a lean the same as any other use: in use, no false 'keeps every title'", async () => {
+    // The case the operator raised: a rule that only leans toward keeping does not keep every
+    // title, so the row must not say it does. It reads "In use" and the plain count, nothing
+    // about strength.
     seed(
-      [
-        {
-          ...IMDB_DEF,
-          policy_use: [{ media_type: "movie", strength: "lean", points: 15 }],
-        },
-      ],
+      [{ ...IMDB_DEF, policy_use: [{ media_type: "movie", strength: "lean", points: 15 }] }],
       [WORKING],
     );
     renderPanel();
 
-    // Named for the media type, because only movies carry the rule: `attach_list` writes both,
-    // so one entry means the operator removed the other, and shows on this list have no rule
-    // at all. The neutral noun below is for the case where both types agree.
-    expect(
-      await screen.findByText(/Leans toward keeping movies, up to 15 points off\./),
-    ).toBeInTheDocument();
-  });
-
-  it("says both halves when the two policies use the list differently", async () => {
-    // Hard-over-lean is right WITHIN one media type -- an outright rule decides the item, so a
-    // lean beside it changes nothing (#510) -- and wrong across the pair: a movie rule decides
-    // nothing about a season. Collapsed, a list keeping movies outright while only leaning on
-    // TV read "Keeps every title on it" and dropped the lean entirely, on the screen built to
-    // answer whether a list is protecting.
-    seed(
-      [
-        {
-          ...IMDB_DEF,
-          policy_use: [
-            { media_type: "movie", strength: "hard", points: null },
-            { media_type: "tv", strength: "lean", points: 20 },
-          ],
-        },
-      ],
-      [WORKING],
-    );
-    renderPanel();
-
-    expect(await screen.findByText(/Keeps every movie on it\./)).toBeInTheDocument();
-    expect(
-      screen.getByText(/Leans toward keeping shows, up to 20 points off\./),
-    ).toBeInTheDocument();
-  });
-
-  it("says one sentence when both policies use the list the same way", async () => {
-    seed(
-      [
-        {
-          ...IMDB_DEF,
-          policy_use: [
-            { media_type: "movie", strength: "hard", points: null },
-            { media_type: "tv", strength: "hard", points: null },
-          ],
-        },
-      ],
-      [WORKING],
-    );
-    renderPanel();
-
-    expect(await screen.findByText(/Keeps every title on it\./)).toBeInTheDocument();
-    expect(screen.queryByText(/Keeps every movie on it/)).not.toBeInTheDocument();
-  });
-
-  it("names only the outright rule when a stored body carries both strengths", async () => {
-    // An outright rule decides the item on its own, so a lean beside it can never change an
-    // outcome. Saying both described one list as doing two things, and sent the operator to
-    // tune points that could not matter (#510). Policy will not compose the pair any more;
-    // a body stored before that could, and this is what it reads as.
-    seed(
-      [
-        {
-          ...IMDB_DEF,
-          policy_use: [
-            { media_type: "movie", strength: "hard", points: null },
-            { media_type: "movie", strength: "lean", points: 15 },
-          ],
-        },
-      ],
-      [WORKING],
-    );
-    renderPanel();
-
-    expect(await screen.findByText(/Keeps every movie on it\./)).toBeInTheDocument();
+    expect(await screen.findByText("In use")).toBeInTheDocument();
+    expect(screen.getByText(/250 titles on it\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Keeps every title/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Leans toward keeping/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/points off/)).not.toBeInTheDocument();
   });
 
-  it("warns when no rule names the list, because it then protects nothing", async () => {
+  it("a list no rule names reads Not in use, and offers Configure in Policy", async () => {
+    // A working check over a list nothing uses still protects nothing, so the chip must not
+    // read green "In use" (rule 79's direction). Its action is to set it up, not to change it.
     const user = userEvent.setup();
     seed([{ ...IMDB_DEF, policy_use: [] }], [WORKING]);
     const { onGoToPolicy } = renderPanel();
 
-    expect(
-      await screen.findByText(/Not used by your policy yet, so it protects nothing\./),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Set it on Policy" }));
+    expect(await screen.findByText("Not in use")).toBeInTheDocument();
+    expect(screen.getByText(/250 titles on it\./)).toBeInTheDocument();
+    expect(screen.queryByText("In use")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change policy" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Configure in Policy" }));
     expect(onGoToPolicy).toHaveBeenCalled();
   });
 });
@@ -484,7 +422,7 @@ describe("the row actions", () => {
     apiMock.lists.mockResolvedValue([{ ...WORKING, item_count: 249 }]);
 
     await user.click(screen.getByRole("button", { name: "Check now, IMDb Top 250" }));
-    expect(await screen.findByText(/Protecting 249 titles\./)).toBeInTheDocument();
+    expect(await screen.findByText(/249 titles on it\./)).toBeInTheDocument();
   });
 
   it("says on the row when its check could not run", async () => {
@@ -637,9 +575,27 @@ describe("the row actions", () => {
     await waitFor(() => expect(apiMock.startScan).toHaveBeenCalled());
   });
 
-  it("re-scans after a removal too", async () => {
-    // Removing takes the keep rules naming the list with it, so it changes what is protected
-    // just as much as adding does, and it hands back no row to check.
+  it("does not scan when a list is added, since it names no rule yet", async () => {
+    // A hand-added list writes no keep rule, so no fate moved and the whole-library scan an
+    // edit of a used list warrants would be pointless work here. The membership check still
+    // runs -- that is how the operator learns what is on the list.
+    const user = userEvent.setup();
+    seed([], []);
+    apiMock.addList.mockResolvedValue({ ...WATCHLIST_DEF, policy_use: [] });
+    apiMock.listConfigs.mockResolvedValue([{ ...WATCHLIST_DEF, policy_use: [] }]);
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Add a list" }));
+    await user.click(await screen.findByRole("button", { name: "Add a Plex watchlist" }));
+    await user.click(await screen.findByRole("button", { name: "Add list" }));
+
+    await waitFor(() => expect(apiMock.syncLists).toHaveBeenCalled());
+    expect(apiMock.startScan).not.toHaveBeenCalled();
+  });
+
+  it("re-scans after removing a list a rule named", async () => {
+    // Removing a USED list takes the keep rules naming it with it, so it changes what is
+    // protected and hands back no row to check. PLEX_DEF is used here, so its removal scans.
     const user = userEvent.setup();
     seed([PLEX_DEF], []);
     apiMock.removeList.mockResolvedValue(undefined);
@@ -694,23 +650,26 @@ describe("a tag list's counts", () => {
     // had nothing between them, so the pill read and copied as "reaper-keep12".
     expect(pills.map((p) => p.textContent)).toEqual(["reaper-keep 12", "keep-forever 2"]);
     expect(screen.getByText(/Across 2 servers\./)).toBeInTheDocument();
-    expect(screen.getByText(/Protecting 14 titles\./)).toBeInTheDocument();
+    expect(screen.getByText(/14 titles on it\./)).toBeInTheDocument();
   });
 
-  it("folds the per-server counts under the row, named by instance", async () => {
+  it("folds the per-server counts into a matrix: tags down, servers across, totals both ways", async () => {
     seed([TAG_DEF], [radarr, sonarr]);
     renderPanel();
 
     expect(await screen.findByText("Counts by server")).toBeInTheDocument();
-    const grid = document.querySelector(".server-grid")!;
-    expect([...grid.querySelectorAll(".srv")].map((s) => s.textContent)).toEqual([
-      "Radarr",
-      "Sonarr",
+    const table = document.querySelector(".tag-matrix")!;
+    const rowOf = (tr: Element) => [...tr.querySelectorAll("th, td")].map((c) => c.textContent);
+    // Servers across the top, the Total column last.
+    expect(rowOf(table.querySelector("thead tr")!)).toEqual(["Tag", "Radarr", "Sonarr", "Total"]);
+    // A tag reads across its row; a dash is a server that does not carry it, its Total sums the
+    // servers shown.
+    expect([...table.querySelectorAll("tbody tr")].map(rowOf)).toEqual([
+      ["reaper-keep", "8", "4", "12"],
+      ["keep-forever", "—", "2", "2"],
     ]);
-    expect([...grid.querySelectorAll(".cnt")].map((s) => s.textContent)).toEqual([
-      "reaper-keep 8",
-      "reaper-keep 4, keep-forever 2",
-    ]);
+    // The footer totals each server's column, and the corner is the grand total.
+    expect(rowOf(table.querySelector("tfoot tr")!)).toEqual(["Total", "8", "6", "14"]);
   });
 
   it("shows a bare pill for a tag no check has counted yet, never a zero", async () => {
@@ -734,8 +693,9 @@ describe("a tag list's counts", () => {
     renderPanel();
 
     expect(await screen.findByText("Counts by server")).toBeInTheDocument();
-    const grid = document.querySelector(".server-grid")!;
-    expect([...grid.querySelectorAll(".srv")].map((s) => s.textContent)).toEqual(["Radarr"]);
+    const cols = [...document.querySelectorAll(".tag-matrix thead th")].map((t) => t.textContent);
+    // Sonarr had an empty counts object, so it is not a column: Tag, the one real server, Total.
+    expect(cols).toEqual(["Tag", "Radarr", "Total"]);
   });
 
   it("says titles need every tag only when the list matches ALL of them", async () => {
@@ -779,7 +739,9 @@ describe("a list stored before the registry existed", () => {
     renderPanel();
 
     expect(await screen.findByText('Plex collection: "Never Reap"')).toBeInTheDocument();
-    expect(screen.getByText(/Protecting 12 titles\./)).toBeInTheDocument();
+    // An orphan carries no definition to hold a policy_use, so it defaults to in use and shows
+    // its live count -- hiding a row still holding titles is the lie this screen exists to fix.
+    expect(screen.getByText(/12 titles on it\./)).toBeInTheDocument();
     expect(
       screen.getByText(/Your next check moves it onto a list you can edit\./),
     ).toBeInTheDocument();

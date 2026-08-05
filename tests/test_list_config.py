@@ -536,13 +536,13 @@ class TestDecodingForTheSync:
 
 
 class TestTheRoutes:
-    def test_adding_answers_with_the_cleaned_row_and_its_policy_use(
+    def test_adding_answers_with_the_cleaned_row_and_no_policy_use(
         self, client: TestClient
     ) -> None:
         """Rule 39: the form re-seeds from what was STORED, not from what it sent. Those
         differ on every save that trimmed anything, and this one trims two tags. The
-        response also carries how Policy now uses the list, because the create attached
-        the keeps-it-outright rule in the same request."""
+        response carries an EMPTY policy use: adding a list writes no rule, so the row reads
+        "Not used by your policy yet" until the operator sets one on Policy."""
         r = client.post(
             "/api/lists/configured",
             json={"name": "  Keep  ", "source": "arr_tag", "config": {"tags": [" keep ", "gold"]}},
@@ -552,10 +552,7 @@ class TestTheRoutes:
         body = r.json()
         assert body["name"] == "Keep"
         assert body["config"] == {"tags": ["keep", "gold"], "match": "any"}
-        assert {(u["media_type"], u["strength"]) for u in body["policy_use"]} == {
-            ("movie", "hard"),
-            ("tv", "hard"),
-        }
+        assert body["policy_use"] == []
 
     def test_a_refusal_reaches_the_operator_in_the_services_own_words(
         self, client: TestClient

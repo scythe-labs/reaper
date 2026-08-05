@@ -139,36 +139,106 @@ details.per-server summary {
 details.per-server summary:hover {
   color: var(--text);
 }
-.server-grid {
-  display: grid;
-  /* `minmax(0, max-content)`, not bare `max-content`: `overflow-wrap: anywhere` on `.srv`
-     below lowers a box's MIN-content contribution and leaves max-content alone, and a
-     `max-content` track is sized from the latter -- so the column grew to the longest
-     unbroken server name and the break this grid asks for never fired (rule 139). The floor
-     is what lets the track shrink far enough to take it. */
-  grid-template-columns: minmax(0, max-content) 1fr;
-  gap: var(--space-2xs) var(--space-3xl);
-  margin: var(--space-sm) 0 var(--space-2xs);
-  padding-left: var(--space-3xl);
+
+/* Counts as a matrix: tags down the side, servers across the top, a count at each intersection,
+   with a Total column (per tag) and Total row (per server). It replaced one comma-joined line per
+   server, which turned to mush as tags and servers multiplied. */
+.matrix-scroll {
+  /* Many servers make the matrix wider than a phone, so it scrolls sideways INSIDE this box and
+     the page never does (rules 138/139). The pinned Tag column below keeps every row labeled
+     through that scroll. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  margin-top: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
-.server-grid .srv {
-  font-weight: var(--weight-medium);
-  overflow-wrap: anywhere;
-}
-.server-grid .cnt {
-  color: var(--muted);
+.tag-matrix {
+  /* Sizes to its content and scrolls, rather than filling the box and crushing the Tag column:
+     `min-width: 100%` fills when the content is narrow, `max-content` overflows (and scrolls)
+     when it is wide. Forcing `width: 100%` squeezed the Tag column on a phone until the name
+     broke one letter per line -- which is also why the Tag cell below is `nowrap`, not
+     `overflow-wrap: anywhere` (that drops its min-content to a single glyph). */
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
+}
+.tag-matrix th,
+.tag-matrix td {
+  padding: var(--space-sm) var(--space-2xl);
+  text-align: right;
+  white-space: nowrap;
+}
+.tag-matrix thead th {
+  color: var(--muted);
+  font-weight: var(--weight-semi);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+}
+/* The Tag column: left-aligned, and pinned so a row keeps its label while the servers scroll. */
+.tag-matrix th[scope="row"],
+.tag-matrix thead th.corner {
+  position: sticky;
+  left: 0;
+  text-align: left;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  border-right: 1px solid var(--border-strong);
+}
+.tag-matrix thead th.corner {
+  color: var(--muted);
+  font-weight: var(--weight-semi);
+}
+.tag-matrix tbody td {
+  color: var(--text);
+}
+.tag-matrix tbody tr:not(:last-child) th[scope="row"],
+.tag-matrix tbody tr:not(:last-child) td {
+  border-bottom: 1px solid var(--border);
+}
+/* A dash or a real zero: both faint, so a populated cell is what the eye lands on. */
+.tag-matrix td.empty {
+  color: var(--faint);
+}
+/* The margins: the Total column and the footer Total row, quietly set off. */
+.tag-matrix .tot {
+  color: var(--muted);
+  font-weight: var(--weight-semi);
+  border-left: 1px solid var(--border-strong);
+}
+.tag-matrix tfoot th[scope="row"],
+.tag-matrix tfoot td {
+  color: var(--text);
+  font-weight: var(--weight-semi);
+  border-top: 1px solid var(--border-strong);
+}
+.tag-matrix tfoot td.tot {
+  color: var(--accent-text);
+  font-weight: var(--weight-bold);
 }
 
-/* How the policies use this list, under every row. Amber when nothing does: a defined list
-   no rule names is a list that protects nothing, which is a fact worth a warning color. */
-.policy-use {
+/* The two ways a row reaches Policy. In use: a muted inline link after the count, to adjust the
+   rule. Not in use: the setup action on its own line, accent, the row's next step. Both open the
+   Policy screen -- you change the policy there, never "on" it from here. */
+button.link.policy-change {
+  color: var(--muted);
+}
+button.link.policy-change:hover:not(:disabled) {
+  color: var(--text);
+}
+button.link.policy-configure {
+  display: inline-block;
+  align-self: flex-start;
   margin: var(--space-sm) 0 0;
   font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
 }
-.policy-use.unused {
-  color: var(--unknown);
+button.link.policy-configure::after {
+  content: " \2192";
 }
 
 /* The list modal's type picker: one card per source, grouped by service. */
