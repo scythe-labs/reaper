@@ -688,6 +688,13 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
     A sweep is only as wide as its rows: every assertion above is flag-shaped, and a fixture
     that condemned nothing, protected nothing, or carried no hand decision would satisfy all
     of them while covering none of the branches they are written for.
+
+    **These counts are properties of the sample, so a regeneration moves them** and each one
+    is re-reconciled by hand rather than pasted (``scripts/policy_lab_extract.py``). What is
+    being checked is never the number itself: it is that each lane, each arm and each
+    quiet branch is still populated at all. The last regeneration moved two of them --
+    the lane split, and how many rows the coverage floor holds back -- both toward wider
+    coverage, and left the rest untouched.
     """
 
     def test_the_rows_land_in_every_lane_and_carry_every_hand_decision(self) -> None:
@@ -697,7 +704,7 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
             lane: sum(1 for r in rows if r.fate == lane)
             for lane in ("condemn", "protect", "abstain")
         }
-        assert lanes == {"condemn": 33, "protect": 175, "abstain": 12}, lanes
+        assert lanes == {"condemn": 29, "protect": 170, "abstain": 21}, lanes
 
         spares = [r for r in rows if r.override == "spare"]
         reaps = [r for r in rows if r.override == "reap"]
@@ -731,7 +738,7 @@ class TestTheSweepReachesEveryLaneItClaimsTo:
             1 for r in judged_under(drafts["coverage_floor_bites"]) if r.verdict == "condemn"
         )
         free = sum(1 for r in judged_under(drafts["coverage_floor_open"]) if r.verdict == "condemn")
-        assert free - held == 2, f"the floor holds {free - held} rows back"
+        assert free - held == 10, f"the floor holds {free - held} rows back"
 
     def test_the_drafts_move_the_answer_they_are_swept_for(self) -> None:
         """The drafts that shift no verdict are named, so none of them can vouch for a path.
