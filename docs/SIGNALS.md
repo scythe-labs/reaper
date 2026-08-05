@@ -35,7 +35,7 @@ several-fold and made a *working* scorer look like it had strongly negative lift
 **Right:** compute the baseline over exactly what the scorer scores — films currently
 in the library, managed by an *arr, with a file on disk.
 
-The two curves, side by side. Note that the error is not uniform: it is worst in
+The two curves, side by side. The error is not uniform: it is worst in
 exactly the buckets the policy cares about most.
 
 | Dormant for | Over all history keys (**wrong**) | Over the actual library (**right**) |

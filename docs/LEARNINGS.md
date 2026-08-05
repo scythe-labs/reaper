@@ -930,7 +930,7 @@ folder names one copy and the exact size names another, that is a positive contr
 and the narrowing **abstains** rather than letting either overrule the other.
 
 **A fourth pass found the remaining two, and both were arbitration, not parsing.** A
-corroborator that stands aside is not neutral, and that is the lesson worth carrying: it
+corroborator that stands aside is not neutral: it
 hands the decision to whatever runs next. The twins gate ran *before* the folder winner was
 computed, so any twin pair made the contradiction veto unreachable and a folder answer from
 outside the group was discarded in favor of the group. And a failed root-folder read was
@@ -1433,9 +1433,9 @@ lab"); these are the learnings.
 ### The stored explanation plus the mirrors is a complete record
 
 Every item's verdict, score, and coverage could be reproduced bit-for-bit offline from
-`explanation_json` + `watch_event` + the IMDb mirror. That is worth knowing on its own:
-the why-panel's record really does contain everything that decided an item's fate. Two
-extraction subtleties bit before fidelity reached 100%, both notes for anyone parsing
+`explanation_json` + `watch_event` + the IMDb mirror. The why-panel's record contains
+everything that decided an item's fate. Two extraction subtleties bit before fidelity
+reached 100%, both notes for anyone parsing
 stored explanations:
 
 - **A hand spare is a synthetic gate row.** The scan injects the spare as an extra
@@ -1569,7 +1569,7 @@ Anomalies found, every one explained and none an ingest bug:
 ## Plex's trash, measured against a live server (2026-07-25)
 
 - **`autoEmptyTrash` is server-wide and ships ON** (read back with `default: True`). It is
-  not a per-library setting and not an unusual choice: it is what a stock install does.
+  not a per-library setting: it is what a stock install does.
 - **So the executor's trash interlock is largely decorative on a default server.**
   `_trash_delta_is_ours`, `_mount_is_up` and `_wait_for_scan` all gate `empty_trash`, but
   when Plex empties the trash itself after every scan, the path refresh Reaper fires per
@@ -1798,7 +1798,7 @@ enough.** Reuse of a nearby field is cheap right up until the field's own safety
 thing you are trying to measure. What the bound needs is a number free to exceed the reach,
 which is why `Facts.days_since_added` is measured from the arrival date itself.
 
-Worth noting because the shortcut was written down as the fix and reads entirely plausible;
+The shortcut was written down as the fix and reads entirely plausible;
 it survives until you ask what `reference_instant` does with the horizon.
 
 ## A span passed to one consumer and defaulted at the next (2026-07-27)
@@ -1996,8 +1996,8 @@ to compare against is 150 ms.
 #149, #228 and #234 read a family of intermittent CI reds as *query cost*: a first
 `await findByRole(..., { name })` re-computing accessible names across the whole tree on every
 50 ms poll, sharing one 1000 ms `findBy` budget with the read that makes the control exist.
-#236 swept ~50 more sites on that reading. **The reading is wrong, and it is wrong in a way that
-inverted the inventory.** Timed with `findByRole` re-implemented as the `waitFor(getByRole)` it
+#236 swept ~50 more sites on that reading. **The reading is wrong in a way that inverted the
+inventory.** Timed with `findByRole` re-implemented as the `waitFor(getByRole)` it
 already is (`query-helpers.js:makeFindQuery`), so every matcher evaluation could be counted and
 timed separately from the waiting; 8 full-suite runs per arm.
 
@@ -2089,8 +2089,8 @@ discriminate must not read as a proof).
 `MinDormancyGate.evaluate` (8 mutants, five test files that could kill them), exactly one
 survived: `dormant.value < floor` reads the same as `<=` because no test drives a dormancy at
 the floor — only 400 days against a 1,095-day floor, and 1,200 and 1,500 well past it. The
-other seven died, including all three inverted comparisons. Worth noting **which way the one
-survivor points**: `<=` protects an item dormant exactly at the floor, so the undefended
+other seven died, including all three inverted comparisons. **Which way the one survivor
+points matters**: `<=` protects an item dormant exactly at the floor, so the undefended
 direction keeps a file rather than deleting one. A real gap, and a low-severity one, and the
 distinction is only visible because the direction was asked about.
 
@@ -2328,7 +2328,7 @@ cannot help: the mirror is faithfully copying rows that are themselves stale.
 
 **Why the fix is not "key the mirror on the guid".** Measured against a live library: live movie
 items outnumber their distinct guids, and **about one guid in twenty-five sits on more than one
-live live rating key** — the same title held twice, HD and [redacted]. A guid does not identify one item, so a
+live rating key** — the same title held twice, HD and [redacted]. A guid does not identify one item, so a
 guid-keyed mirror would pool two separate candidates' plays. `media_key` does separate them:
 of 21 titles present twice, all 21 carry two distinct `media_key`s *and* two distinct rating
 keys. History rows do carry a guid (100% of a 5,000-row window, from
@@ -2388,7 +2388,7 @@ counting rows whose dormancy came back unreadable and splitting them by cause:
 ⇒ **The arm is reachable and never reached.** Every unreadable dormancy across both populations,
 hundreds of thousands of rows between them, came from an item with no Plex rating key at all (an
 ambiguous or unmatched title), not from a
-matched item missing its date — a correlation that is exact, not approximate: zero rows held an
+matched item missing its date — a correlation that is exact: zero rows held an
 unreadable dormancy *and* a clean Plex bind. The `scan.no_added_at` warning, which exists to
 name this state, has never fired in the log either.
 
@@ -2550,7 +2550,7 @@ runs at form submission and colors `:invalid`. A control that never submits a fo
 `e.target.value` sees the fraction either way.
 
 **The consequence for a fix: adding `step={1}` would have changed nothing.** The middle row is
-the whole point of running all three — the obvious remedy is the one measurement that rules it
+what running all three is for — the obvious remedy is the one measurement that rules it
 out, and without the row it stays plausible. The coercion has to be in the component, which is
 where it now is (`useTypedNumber`'s `decimals`). Reaper reaches for `stepMismatch` nowhere, so
 none of this is reachable through validation either.
