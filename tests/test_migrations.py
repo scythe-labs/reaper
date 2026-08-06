@@ -1229,7 +1229,10 @@ class TestPersistingTheListConversion:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Movies and TV are tuned separately and BOTH degrade the scan, so converting one
-        leaves the banner exactly as unclearable as before (rule 72)."""
+        leaves the banner exactly as unclearable as before (rule 72).
+
+        Scoped by media type on the way through: the IMDb chart is movies only, so the TV row
+        converts to the tag list alone while the movie row keeps both (#539)."""
         config, engine = self._upgraded(tmp_path, monkeypatch)
         _only_these_lists(engine, "arr_tag", "imdb")
         _seed_policy_of(engine, "movie", _legacy_list_body())
@@ -1243,6 +1246,13 @@ class TestPersistingTheListConversion:
         assert set(newest) == {"movie", "tv"}
         for body_json in newest.values():
             assert has_legacy_list_protections(json.loads(body_json)) is False
+
+        def _lists(body_json: str) -> set[str]:
+            body = json.loads(body_json)
+            return {c["value"] for c in body["protect_conditions"] if c["field"] == "on_list"}
+
+        assert _lists(newest["movie"]) == {"My tagged titles", "Films worth keeping"}
+        assert _lists(newest["tv"]) == {"My tagged titles"}
         engine.dispose()
 
     def test_it_leaves_a_body_alone_when_the_replacement_list_is_missing(
