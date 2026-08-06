@@ -846,6 +846,10 @@ export interface ProtectionList {
   /** Which *arr instance a tag list's row was read from, for the per-server counts. The
    *  operator named the instance on Settings; null for every other source. */
   server: string | null;
+  /** Which media types this row's stored members span. Empty until the first sync. The
+   *  panel compares it against the types a keep rule names (`policy_use`) so a rule covering
+   *  one side of a mixed list reads as partial cover, not full (#533). */
+  media_types: ("movie" | "tv")[];
 }
 
 /** The settings one list source needs. A union in practice, kept as one optional-field shape

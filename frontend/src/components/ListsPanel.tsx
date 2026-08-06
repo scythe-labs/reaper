@@ -49,6 +49,62 @@ function titles(n: number): string {
   return `${n.toLocaleString()} ${n === 1 ? "title" : "titles"}`;
 }
 
+type MediaType = "movie" | "tv";
+
+/** The operator's word for each media type. Never "movie"/"tv": they see their libraries,
+ *  not the rating-key spaces underneath (rule 21). */
+const MEDIA_WORD: Record<MediaType, string> = { movie: "movies", tv: "shows" };
+
+/** The words for a set of media types, movies before shows so the sentence reads the same
+ *  order every time: "movies", "shows", or "movies and shows". */
+function mediaWords(types: MediaType[]): string {
+  const words = (["movie", "tv"] as MediaType[])
+    .filter((t) => types.includes(t))
+    .map((t) => MEDIA_WORD[t]);
+  return words.length === 2 ? `${words[0]} and ${words[1]}` : (words[0] ?? "");
+}
+
+/** What a list protects, and what is still exposed on it -- the two sets a mixed list is
+ *  read against (#533). A keep rule protects a media TYPE, and a list holds whichever types
+ *  its members do, so a rule naming a mixed list on one policy leaves the other side
+ *  deletable. `protectedTypes` are the types a rule names AND the list is confirmed to hold;
+ *  `exposed` are types on the list no rule covers. Both empty until a sync fills `spanned`,
+ *  so an unchecked list claims neither. */
+type Coverage = { protectedTypes: MediaType[]; exposed: MediaType[]; hasSplitPill: boolean };
+
+function coverageOf(
+  policyUse: { media_type: MediaType }[],
+  spanned: Set<MediaType>,
+  hasSplitPill: boolean,
+): Coverage {
+  const covered = new Set(policyUse.map((u) => u.media_type));
+  const order: MediaType[] = ["movie", "tv"];
+  return {
+    protectedTypes: order.filter((t) => spanned.has(t) && covered.has(t)),
+    exposed: order.filter((t) => spanned.has(t) && !covered.has(t)),
+    hasSplitPill,
+  };
+}
+
+/** The count line for a list a rule covers only part of: what it keeps, then what is still
+ *  deletable. `protectedTypes` is empty when a rule names a side the list does not hold, so
+ *  the sentence leads straight with the exposed side. */
+function partialDetail({ protectedTypes, exposed }: Coverage): string {
+  const kept = protectedTypes.length ? `Keeps your ${mediaWords(protectedTypes)}. ` : "";
+  const still = mediaWords(exposed);
+  return `${kept}${still.charAt(0).toUpperCase()}${still.slice(1)} on it can still be deleted.`;
+}
+
+/** The chip's hover title: what the list is protecting right now. Undefined when a rule names
+ *  it but Reaper has not confirmed a covered type is on it, so the chip carries no claim it
+ *  cannot stand behind. */
+function protectingTitle({ protectedTypes, exposed }: Coverage): string | undefined {
+  if (!protectedTypes.length) return undefined;
+  return exposed.length
+    ? `Protecting ${mediaWords(protectedTypes)} only`
+    : `Protecting ${mediaWords(protectedTypes)}`;
+}
+
 type Tone = "ok" | "warn" | "bad" | "idle";
 type State = ProtectionList["state"];
 
@@ -84,6 +140,7 @@ function describe(
   state: State,
   items: number,
   used: boolean = true,
+  coverage?: Coverage,
 ): { label: string; tone: Tone; detail: string } {
   const onIt = `${titles(items)} on it.`;
   const cached = `${titles(items)} cached.`;
@@ -104,6 +161,18 @@ function describe(
   }
   switch (state) {
     case "working":
+      // A keep rule covers one side of a mixed list and leaves the other still deletable
+      // (#533). The chip stays "In use" -- the list IS in use -- and the partial cover is
+      // carried two ways: the split pill dims its exposed half, and this line names it. The
+      // chip goes amber only where there is no split pill to dim (a flat IMDb/Plex badge),
+      // so that lane still has an at-a-glance warning.
+      if (coverage && coverage.exposed.length > 0) {
+        return {
+          label: "In use",
+          tone: coverage.hasSplitPill ? "ok" : "warn",
+          detail: partialDetail(coverage),
+        };
+      }
       return { label: "In use", tone: "ok", detail: onIt };
     case "stale":
       return { label: "Out of date", tone: "warn", detail: cached };
@@ -119,8 +188,14 @@ function describe(
 }
 
 /** The kind badge beside the name: which family the list reads from, in each service's own
- *  colors. A tag list reads Sonarr and Radarr at once, so its pill is half of each. */
-function kindBadge(source: ListConfig["source"]): ReactNode {
+ *  colors. A tag list reads Sonarr and Radarr at once, so its pill is half of each.
+ *
+ *  When `coverage` is given, each half is bright only where a keep rule covers that side and
+ *  the list is confirmed to hold it; the exposed half fades (#533). Sonarr is shows, Radarr
+ *  is movies. The dim is not the only carrier of that fact -- the sr-only name states the
+ *  exposed side, and the count line names it in a sentence -- because dim alone is a color
+ *  cue a reader never gets (rule 21). */
+function kindBadge(source: ListConfig["source"], coverage?: Coverage): ReactNode {
   if (source === "arr_tag") {
     // One span per half, so each name is centered in its own color instead of riding a
     // gradient stop that falls near, but not on, the space between them.
@@ -130,11 +205,22 @@ function kindBadge(source: ListConfig["source"]): ReactNode {
     // accessibility tree is not something to bet a name on -- a whitespace-only anonymous
     // item generates no box at all. Said outright, it cannot come out as one invented word,
     // and the claim does not rest on layout behavior no test here can observe.
+    const bright = (t: MediaType) => !coverage || coverage.protectedTypes.includes(t);
+    // Only when one side is covered and the other is not: a list nothing covers already reads
+    // "Not in use" on the chip, so the badge saying "not kept" too would be the same fact twice.
+    const partial =
+      coverage !== undefined && coverage.protectedTypes.length > 0 && coverage.exposed.length > 0;
     return (
       <span className="kind-badge kind-arr">
-        <span aria-hidden="true">Sonarr</span>
-        <span aria-hidden="true">Radarr</span>
-        <span className="sr-only">Sonarr and Radarr</span>
+        <span aria-hidden="true" className={bright("tv") ? undefined : "dim"}>
+          Sonarr
+        </span>
+        <span aria-hidden="true" className={bright("movie") ? undefined : "dim"}>
+          Radarr
+        </span>
+        <span className="sr-only">
+          Sonarr and Radarr{partial ? `, ${mediaWords(coverage.exposed)} not kept` : ""}
+        </span>
       </span>
     );
   }
@@ -150,6 +236,7 @@ function ListRow({
   detail,
   label,
   tone,
+  chipTitle,
   meta,
   error,
   checking,
@@ -163,6 +250,9 @@ function ListRow({
   detail: ReactNode;
   label: string;
   tone: Tone;
+  /** The chip's hover title: what the list is protecting, for a list a rule covers. Absent
+   *  where there is nothing to say (not in use, never checked). */
+  chipTitle?: string | undefined;
   meta: string | null;
   error?: string | null;
   checking: boolean;
@@ -184,7 +274,9 @@ function ListRow({
         <div className="list-head">
           <span className="jobrow-title list-name">{title}</span>
           {badge}
-          <span className={`status-chip status-chip-wrap ${STATE_CHIP[tone]}`}>{label}</span>
+          <span className={`status-chip status-chip-wrap ${STATE_CHIP[tone]}`} title={chipTitle}>
+            {label}
+          </span>
         </div>
         <div className="jobrow-desc">{detail}</div>
         {children}
@@ -480,8 +572,22 @@ export function ListsPanel({
           // green "In use", however its sync went (rule 79's direction, from the used/unused
           // side).
           const used = definition.policy_use.length > 0;
+          // The media types the list's members actually span, unioned across the family's
+          // rows -- a tag list is one row per *arr, so movies come off the Radarr rows and
+          // shows off the Sonarr ones. Compared against the types a keep rule names to tell a
+          // fully-covered list from one covered on a single side (#533).
+          const spanned = new Set<MediaType>(mine.flatMap((r) => r.media_types));
+          const coverage = coverageOf(
+            definition.policy_use,
+            spanned,
+            definition.source === "arr_tag",
+          );
           const shown =
-            mine.length === 0 ? describe("never_checked", 0, used) : describe(state, items, used);
+            mine.length === 0
+              ? describe("never_checked", 0, used)
+              : describe(state, items, used, coverage);
+          // What the chip says on hover -- only for a list a rule actually covers.
+          const chipTitle = used ? protectingTitle(coverage) : undefined;
           // A row with nothing stored is the one whose count a running check contradicts:
           // "Runs with your next scan" beside a button that says "Checking…". That pair is now
           // what every operator sees for the length of the check a save starts, so the row says
@@ -520,10 +626,11 @@ export function ListsPanel({
             <ListRow
               key={definition.id}
               title={definition.name}
-              badge={kindBadge(definition.source)}
+              badge={kindBadge(definition.source, coverage)}
               detail={detail}
               label={shown.label}
               tone={shown.tone}
+              chipTitle={chipTitle}
               meta={
                 (checked.length ? `Last checked ${ago(checked[0]!)}. ` : "") +
                 across +

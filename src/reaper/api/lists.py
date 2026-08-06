@@ -91,6 +91,7 @@ async def get_lists(request: Request) -> list[ProtectionListOut]:
                 list_id=row.list_id,
                 tags=tag_counts,
                 server=server,
+                media_types=sorted(row.media_types),
             )
         )
     return out
