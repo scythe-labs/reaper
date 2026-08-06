@@ -3462,6 +3462,81 @@ def test_the_site_palette_matches_the_app_palette() -> None:
     )
 
 
+# --------------------------------------------------------------------------------------------
+# The reaper-artifact skill hands an agent Reaper's live look for a mockup: which files carry the
+# tokens and the component styles, and which variables to build on. A moved file or a renamed
+# token turns that guidance into a wrong mockup silently, so both are pinned here rather than
+# trusted. See .claude/skills/reaper-artifact/SKILL.md.
+# --------------------------------------------------------------------------------------------
+_ARTIFACT_SKILL = REPO / ".claude" / "skills" / "reaper-artifact" / "SKILL.md"
+
+#: Files the skill sends an agent to read for the app's current look. Each must exist AND still be
+#: named in the skill: the tokens already moved once (index.css -> styles/00-tokens.css), which is
+#: the exact break this catches.
+_ARTIFACT_SKILL_SOURCES = (
+    "frontend/src/index.css",
+    "frontend/src/styles/00-tokens.css",
+)
+
+#: Concrete `--tokens` the skill names in "The variables you will reach for", reconciled by hand
+#: against that section. Family forms (`--text-*`, `--space-*`) are excluded on purpose: the
+#: matcher takes only a backtick span whose whole content is `--<name>`, so a `*` form never
+#: matches (rule 147), and a family cannot be checked against one declaration anyway. Pinned so a
+#: token dropped from the skill leaves the scan rather than failing it (rule 145).
+_ARTIFACT_SKILL_TOKENS = 16
+
+
+def test_the_artifact_skill_points_at_files_that_exist() -> None:
+    """The reaper-artifact skill's file pointers still resolve, so its mockup guidance is live.
+
+    The skill tells an agent to read the app's own stylesheet and token file to build an artifact
+    in Reaper's look. When one of those files moves and the skill is not repointed, the guidance
+    reads fine and sends the agent nowhere. That already happened to the tokens once, so the path
+    is guarded rather than trusted (rule 68).
+    """
+    skill = _ARTIFACT_SKILL.read_text(encoding="utf-8")
+    for rel in _ARTIFACT_SKILL_SOURCES:
+        assert (REPO / rel).exists(), (
+            f"reaper-artifact sends an agent to {rel}, which is gone. Repoint the skill at the "
+            "file's new home, or every mockup built from it inherits a dead reference."
+        )
+        assert rel in skill, (
+            f"{rel} is guarded here but no longer named in the skill. Fix whichever is wrong so "
+            "the guard and the skill agree on the file (rule 144)."
+        )
+
+
+def test_the_artifact_skill_names_live_tokens() -> None:
+    """Every design token the reaper-artifact skill names still exists in 00-tokens.css.
+
+    The skill lists the variables an agent reaches for: the verdict colors, the accent, the
+    neutrals. Rename or drop one in the token file without fixing the skill, and a mockup built on
+    the old name renders wrong with no error, because the browser resolves an undefined custom
+    property to nothing. The count is pinned for rule 145's reason: a name silently dropped from
+    the skill leaves the scan and stops being checked, and a "names a live token" assertion cannot
+    tell that from compliance.
+    """
+    skill = _ARTIFACT_SKILL.read_text(encoding="utf-8")
+    root = _declarations(_css_block(_APP_TOKEN_CSS.read_text(encoding="utf-8"), ":root {"))
+
+    # The population: every backtick span whose ENTIRE content is `--<name>`. A family spelled
+    # `--text-*` carries a `*` and never matches, which is deliberate (rule 147): it names a scale,
+    # not one declaration.
+    named = set(re.findall(r"`(--[a-z0-9-]+)`", skill))
+
+    missing = sorted(t for t in named if t not in root)
+    assert not missing, (
+        "reaper-artifact names tokens that are gone from 00-tokens.css: "
+        f"{missing}. A rename here breaks every mockup built from the skill; point the skill at "
+        "the new token names, then re-read the contrast note beside them in the token file."
+    )
+    assert len(named) == _ARTIFACT_SKILL_TOKENS, (
+        f"the skill names {len(named)} concrete tokens, expected {_ARTIFACT_SKILL_TOKENS}. If you "
+        "added or removed one in the variables list, move this number with it; if you did not, a "
+        f"token dropped out of the scan and is no longer checked (rule 145). Named: {sorted(named)}"
+    )
+
+
 def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     """The manual's signals table is the fourth copy of "what earns these points".
 
