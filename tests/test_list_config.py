@@ -692,8 +692,10 @@ class TestTheRegistryFingerprint:
                 readable = await list_config.current_fingerprint(session)
             assert readable is not None, "a registry that reads fine has to answer"
 
-            with sa_create_engine(settings.sync_database_url).begin() as conn:
+            corrupt_engine = sa_create_engine(settings.sync_database_url)
+            with corrupt_engine.begin() as conn:
                 conn.execute(text("UPDATE list_config SET config_json = 'not json'"))
+            corrupt_engine.dispose()
 
             async with create_session_factory(engine)() as session:
                 assert await list_config.current_fingerprint(session) is None

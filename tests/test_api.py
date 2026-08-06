@@ -450,6 +450,7 @@ class TestTheRunsApi:
             step.state = StepState.FAILED
             step.error = reason
             session.commit()
+        engine.dispose()
 
         read_back = client.get(f"/api/runs/{run['id']}").json()["steps"][0]
         assert read_back["state"] == "failed"
@@ -1812,13 +1813,19 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
     def _seed_mirror(self, tmp_path: Path, days_back: int) -> None:
         """One play ``days_back`` ago, which is exactly how far the mirror then reaches."""
-        with sqlite3.connect(tmp_path / "cache.db") as conn:
+        conn = sqlite3.connect(tmp_path / "cache.db")
+        try:
             conn.executescript(SCHEMA)
             conn.execute(
                 "INSERT INTO watch_event (rating_key, user_id, watched_at, watched_status, "
                 "percent_complete, media_type) VALUES (1, 1, ?, 1.0, 100, 'movie')",
                 (int((utcnow() - timedelta(days=days_back)).timestamp()),),
             )
+            conn.commit()
+        finally:
+            # `with sqlite3.connect(...)` commits but never closes the connection, so the
+            # handle leaked to teardown as a ResourceWarning (#541).
+            conn.close()
 
     def _policy_body(self, **overrides: object) -> dict[str, object]:
         """``DEFAULT_GATES`` with the dormancy floor lowered beneath the mirror seeded here.
