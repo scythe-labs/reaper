@@ -561,6 +561,41 @@ async def build_plan(
     if not plannable:
         raise PlanError("Nothing is condemned in this snapshot; there is no plan to build.")
 
+    # Read every instance's row once: the KEYS are the ids configured right now (the
+    # existence check the guard below runs), and the VALUES are each Radarr's own
+    # import-exclusion choice, frozen into the movie delete body further down so the preview
+    # matches the send and the executor reads the approved value back from the journal
+    # (executor._send_movie) rather than a setting that could have changed since approval.
+    # add_import_exclusion is NOT NULL, so every instance has a row and the key set is
+    # complete for the guard.
+    exclusion_by_instance: dict[int, bool] = {
+        row.id: row.add_import_exclusion
+        for row in (await session.execute(select(Instance.id, Instance.add_import_exclusion))).all()
+    }
+    # A movie candidate froze its instance id at scan time; the map holds the instances that
+    # exist now. A Radarr removed between the scan and the plan misses here, and the miss is
+    # not benign: the movie cannot be deleted (executor.radarr_for refuses it at send), and
+    # its per-instance exclusion setting is gone -- so a plan built on a default would preview
+    # a delete that cannot run under a setting the operator never chose (rule 65/91). The
+    # snapshot is stale; refuse it out loud rather than substitute, the way the four refusals
+    # above do. A re-scan drops the item, since a removed instance is never fetched again.
+    # (The Sonarr season path freezes no per-instance setting, so it has no substitution to
+    # make; a season targeting a removed Sonarr is refused per item by the executor.)
+    orphaned = sorted(
+        {
+            ref.instance_id
+            for c in plannable
+            if (ref := MediaRef.parse(c.media_key)).kind == "radarr"
+            and ref.instance_id not in exclusion_by_instance
+        }
+    )
+    if orphaned:
+        raise PlanError(
+            "Some of these items were found by a Radarr that is no longer connected, so "
+            "Reaper cannot remove them. Reconnect it, or run a new scan to drop them from "
+            "the list."
+        )
+
     now = utcnow()
     run = ReapRun(
         snapshot_id=snapshot_id,
@@ -586,21 +621,14 @@ async def build_plan(
     session.add(run)
     await session.flush()  # assigns run.id
 
-    # Each Radarr's own import-exclusion choice, frozen into the delete body below so the
-    # preview matches the send. Missing (an instance removed between scan and plan) falls
-    # back to the safe, historical default of adding the exclusion: the exclusion is
-    # protective, not destructive, so an unknown setting resolves toward keeping a deleted
-    # title from re-downloading.
-    exclusion_by_instance: dict[int, bool] = {
-        row.id: row.add_import_exclusion
-        for row in (await session.execute(select(Instance.id, Instance.add_import_exclusion))).all()
-    }
-
     ordinal = 0
     for candidate in plannable:
         ref = MediaRef.parse(candidate.media_key)
         if ref.kind == "radarr":
-            add_exclusion = exclusion_by_instance.get(ref.instance_id, True)
+            # Guaranteed present: the orphaned-instance guard above refused the plan if any
+            # movie named a Radarr this map does not hold. A KeyError here is that guard
+            # failing, not an operator with a removed instance.
+            add_exclusion = exclusion_by_instance[ref.instance_id]
             steps = _movie_steps(run.id, candidate, ref, ordinal, add_exclusion=add_exclusion)
         elif ref.kind == "sonarr" and ref.season is not None:
             steps = _season_steps(run.id, candidate, ref, ordinal)
