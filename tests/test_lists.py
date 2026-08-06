@@ -312,6 +312,50 @@ class TestSyncStatsRoundTrip:
         assert rows[rule.slug].stats is None
 
 
+class TestMediaTypesSpan:
+    """``configured`` reports which media types a slug's stored members span, read back from
+    ``protection_list_item``. The Lists screen compares it against the types a keep rule names
+    so a rule covering one side of a mixed list reads as partial cover, not full (#533)."""
+
+    async def test_a_list_holding_both_kinds_spans_both(self, engine: AsyncEngine) -> None:
+        provider = _StaticProvider(
+            [
+                ListItem(media_type="movie", imdb_id="tt0000001", title="A film"),
+                ListItem(media_type="tv", tvdb_id=10, title="A show"),
+            ]
+        )
+        await sync(engine, provider)
+
+        rows = {r.slug: r for r in await configured(engine)}
+
+        assert rows[provider.slug].media_types == frozenset({"movie", "tv"})
+
+    async def test_a_single_kind_list_spans_one(self, engine: AsyncEngine) -> None:
+        provider = _StaticProvider([ListItem(media_type="movie", imdb_id="tt0000001", title="A")])
+        await sync(engine, provider)
+
+        rows = {r.slug: r for r in await configured(engine)}
+
+        assert rows[provider.slug].media_types == frozenset({"movie"})
+
+    async def test_a_row_with_no_members_yet_spans_nothing(self, engine: AsyncEngine) -> None:
+        # A defined list before its first sync holds no members, so it spans nothing -- which
+        # is what lets the screen say an unchecked list protects neither side, rather than
+        # claiming cover it cannot confirm (#533).
+        await ensure_schema(engine)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO protection_list (slug, display_name, mode, kind) "
+                    "VALUES ('defined-no-sync', 'Defined, not checked', 'hard', 'whitelist')"
+                )
+            )
+
+        rows = {r.slug: r for r in await configured(engine)}
+
+        assert rows["defined-no-sync"].media_types == frozenset()
+
+
 class TestAdoptLegacy:
     """Rows stored before their definition existed are renamed onto the definition's slug,
     so an upgrade's lists arrive rolled up and editable with their membership, instead of

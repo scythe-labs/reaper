@@ -24,10 +24,10 @@
 // moving between them should not have to learn two layouts (rule 18).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { announce } from "../announce";
-import { api, type ListConfig, type ListPolicyUse, type ProtectionList } from "../api";
+import { api, type ListConfig, type ProtectionList } from "../api";
 import { useBackGuard } from "../backnav";
 import { ListModal } from "./ListModal";
 import { Notice } from "./Notice";
@@ -47,6 +47,62 @@ function ago(iso: string): string {
 
 function titles(n: number): string {
   return `${n.toLocaleString()} ${n === 1 ? "title" : "titles"}`;
+}
+
+type MediaType = "movie" | "tv";
+
+/** The operator's word for each media type. Never "movie"/"tv": they see their libraries,
+ *  not the rating-key spaces underneath (rule 21). */
+const MEDIA_WORD: Record<MediaType, string> = { movie: "movies", tv: "shows" };
+
+/** The words for a set of media types, movies before shows so the sentence reads the same
+ *  order every time: "movies", "shows", or "movies and shows". */
+function mediaWords(types: MediaType[]): string {
+  const words = (["movie", "tv"] as MediaType[])
+    .filter((t) => types.includes(t))
+    .map((t) => MEDIA_WORD[t]);
+  return words.length === 2 ? `${words[0]} and ${words[1]}` : (words[0] ?? "");
+}
+
+/** What a list protects, and what is still exposed on it -- the two sets a mixed list is
+ *  read against (#533). A keep rule protects a media TYPE, and a list holds whichever types
+ *  its members do, so a rule naming a mixed list on one policy leaves the other side
+ *  deletable. `protectedTypes` are the types a rule names AND the list is confirmed to hold;
+ *  `exposed` are types on the list no rule covers. Both empty until a sync fills `spanned`,
+ *  so an unchecked list claims neither. */
+type Coverage = { protectedTypes: MediaType[]; exposed: MediaType[]; hasSplitPill: boolean };
+
+function coverageOf(
+  policyUse: { media_type: MediaType }[],
+  spanned: Set<MediaType>,
+  hasSplitPill: boolean,
+): Coverage {
+  const covered = new Set(policyUse.map((u) => u.media_type));
+  const order: MediaType[] = ["movie", "tv"];
+  return {
+    protectedTypes: order.filter((t) => spanned.has(t) && covered.has(t)),
+    exposed: order.filter((t) => spanned.has(t) && !covered.has(t)),
+    hasSplitPill,
+  };
+}
+
+/** The count line for a list a rule covers only part of: what it keeps, then what is still
+ *  deletable. `protectedTypes` is empty when a rule names a side the list does not hold, so
+ *  the sentence leads straight with the exposed side. */
+function partialDetail({ protectedTypes, exposed }: Coverage): string {
+  const kept = protectedTypes.length ? `Keeps your ${mediaWords(protectedTypes)}. ` : "";
+  const still = mediaWords(exposed);
+  return `${kept}${still.charAt(0).toUpperCase()}${still.slice(1)} on it can still be deleted.`;
+}
+
+/** The chip's hover title: what the list is protecting right now. Undefined when a rule names
+ *  it but Reaper has not confirmed a covered type is on it, so the chip carries no claim it
+ *  cannot stand behind. */
+function protectingTitle({ protectedTypes, exposed }: Coverage): string | undefined {
+  if (!protectedTypes.length) return undefined;
+  return exposed.length
+    ? `Protecting ${mediaWords(protectedTypes)} only`
+    : `Protecting ${mediaWords(protectedTypes)}`;
 }
 
 type Tone = "ok" | "warn" | "bad" | "idle";
@@ -72,89 +128,74 @@ function worst(rows: ProtectionList[]): State {
   return SEVERITY.find((s) => rows.some((r) => r.state === s)) ?? "working";
 }
 
-/** The chip and the sentence under it, for one row or one collapsed family. */
+/** The chip and the count line under it, for one row or one collapsed family.
+ *
+ *  The row says one true thing: whether a keep rule uses the list (the chip), and how many titles
+ *  are on it (the line). It does NOT restate the rule's STRENGTH, where "Keeps every title on it"
+ *  is wrong the moment the rule is a lean -- that lives on Policy, read there. The count is
+ *  "on it" when the last check just succeeded and "cached" when the figure is the last good one a
+ *  failed, stale, or not-yet-run check left behind. No "protecting" claim, which the strength
+ *  could make false either way. */
 function describe(
   state: State,
   items: number,
-  servers?: string[],
+  used: boolean = true,
+  coverage?: Coverage,
 ): { label: string; tone: Tone; detail: string } {
-  const named = servers?.length ? ` ${servers.join(", ")}.` : "";
+  const onIt = `${titles(items)} on it.`;
+  const cached = `${titles(items)} cached.`;
 
-  // Emptiness is checked BEFORE the state, because a successful check over a list holding
-  // nothing is the one combination where the server's verdict and the operator's question come
-  // apart. The check worked, so `working` is true about the sync -- and rendering that green
-  // tells someone whose keep list covers nothing that they are covered. Found by driving a real
-  // install: a "Never Reap" collection sat green at 0 titles, which is indistinguishable from
-  // the collection being read out of the wrong library (#483) or holding only entries Reaper
-  // cannot identify (#474). Green there is the reassuring direction, which is the direction
-  // this codebase must not fail in.
+  // A list no keep rule names protects nothing, whatever its sync says, so the chip -- the
+  // screen's answer to "is this keeping my titles" -- reads "Not in use", never the green "In
+  // use". The empty guard below is the same fail-toward-keeping check from the other side: full,
+  // checked, and keeping nothing. Orphan rows pass no `used` and default to true -- they carry no
+  // definition to hold a rule, and may still protect through a legacy one.
+  if (!used) {
+    return { label: "Not in use", tone: "idle", detail: items > 0 ? onIt : "Nothing on it." };
+  }
+  // Empty and checked is never green. A "Never Reap" collection sitting green at 0 titles told an
+  // operator covered by nothing that they were covered, indistinguishable from Reaper reading the
+  // wrong library (#483) or a list whose entries it cannot identify (#474).
   if (items === 0 && (state === "working" || state === "stale")) {
-    return {
-      label: "Nothing on it",
-      tone: "idle",
-      detail:
-        "The last check worked, but nothing is on this list, so it is protecting nothing. " +
-        "Check the list itself, and that Reaper is reading the one you meant.",
-    };
+    return { label: "Nothing on it", tone: "idle", detail: "Check it's the one you meant." };
   }
   switch (state) {
     case "working":
-      return { label: "Working", tone: "ok", detail: `Protecting ${titles(items)}.` };
+      // A keep rule covers one side of a mixed list and leaves the other still deletable
+      // (#533). The chip stays "In use" -- the list IS in use -- and the partial cover is
+      // carried two ways: the split pill dims its exposed half, and this line names it. The
+      // chip goes amber only where there is no split pill to dim (a flat IMDb/Plex badge),
+      // so that lane still has an at-a-glance warning.
+      if (coverage && coverage.exposed.length > 0) {
+        return {
+          label: "In use",
+          tone: coverage.hasSplitPill ? "ok" : "warn",
+          detail: partialDetail(coverage),
+        };
+      }
+      return { label: "In use", tone: "ok", detail: onIt };
     case "stale":
-      // Names its members like `failing` and `never_checked` do. It was the one state that
-      // took `servers` and ignored it, so a family out of date on one server of four said
-      // something was wrong and not which one -- and "which one" is the whole reason a
-      // rolled-up row names anybody.
-      return {
-        label: "Out of date",
-        tone: "warn",
-        detail:
-          `Still protecting ${titles(items)}, but the last check was too long ago. ` +
-          "Anything added since then is not covered yet." +
-          named,
-      };
+      return { label: "Out of date", tone: "warn", detail: cached };
     case "failing":
-      return {
-        label: "Not working",
-        tone: "bad",
-        detail:
-          (items > 0
-            ? `The last check failed. The ${titles(items)} from the last good check are still ` +
-              "protected, and anything added since then is not."
-            : "The last check failed and nothing is stored, so this is protecting nothing.") +
-          named,
-      };
+      return { label: "Not working", tone: "bad", detail: items > 0 ? cached : "Nothing cached." };
     case "never_checked":
-      // Branched on the stored count, the way `failing` above is. A rolled-up family takes
-      // its state from its WORST member, and `never_checked` outranks `working`, so adding a
-      // second *arr to a tag list that already holds titles lands here with `items` above
-      // zero -- and the flat sentence then told the operator a live protection was not
-      // protecting, on the screen built to answer exactly that.
       return {
         label: "Not checked yet",
         tone: "idle",
-        detail:
-          (items > 0
-            ? `Still protecting ${titles(items)} from an earlier check. Anything added since ` +
-              "then is not covered until the next one runs."
-            : "Runs with your next scan. Nothing on it is protected until it does.") + named,
+        detail: items > 0 ? cached : "Runs with your next scan.",
       };
   }
 }
 
-/** "Radarr (4k) tag: reaper-keep" -> "Radarr (4k)". The fallback when a stored row predates
- *  the `server` field: the collapsed family still has to name which member needs attention.
- *  Falls back to the whole string, so a display name this does not recognize is still named
- *  rather than dropped. */
-function serverOf(row: ProtectionList): string {
-  if (row.server) return row.server;
-  const cut = row.name.indexOf(" tag:");
-  return cut === -1 ? row.name : row.name.slice(0, cut);
-}
-
 /** The kind badge beside the name: which family the list reads from, in each service's own
- *  colors. A tag list reads Sonarr and Radarr at once, so its pill is half of each. */
-function kindBadge(source: ListConfig["source"]): ReactNode {
+ *  colors. A tag list reads Sonarr and Radarr at once, so its pill is half of each.
+ *
+ *  When `coverage` is given, each half is bright only where a keep rule covers that side and
+ *  the list is confirmed to hold it; the exposed half fades (#533). Sonarr is shows, Radarr
+ *  is movies. The dim is not the only carrier of that fact -- the sr-only name states the
+ *  exposed side, and the count line names it in a sentence -- because dim alone is a color
+ *  cue a reader never gets (rule 21). */
+function kindBadge(source: ListConfig["source"], coverage?: Coverage): ReactNode {
   if (source === "arr_tag") {
     // One span per half, so each name is centered in its own color instead of riding a
     // gradient stop that falls near, but not on, the space between them.
@@ -164,11 +205,22 @@ function kindBadge(source: ListConfig["source"]): ReactNode {
     // accessibility tree is not something to bet a name on -- a whitespace-only anonymous
     // item generates no box at all. Said outright, it cannot come out as one invented word,
     // and the claim does not rest on layout behavior no test here can observe.
+    const bright = (t: MediaType) => !coverage || coverage.protectedTypes.includes(t);
+    // Only when one side is covered and the other is not: a list nothing covers already reads
+    // "Not in use" on the chip, so the badge saying "not kept" too would be the same fact twice.
+    const partial =
+      coverage !== undefined && coverage.protectedTypes.length > 0 && coverage.exposed.length > 0;
     return (
       <span className="kind-badge kind-arr">
-        <span aria-hidden="true">Sonarr</span>
-        <span aria-hidden="true">Radarr</span>
-        <span className="sr-only">Sonarr and Radarr</span>
+        <span aria-hidden="true" className={bright("tv") ? undefined : "dim"}>
+          Sonarr
+        </span>
+        <span aria-hidden="true" className={bright("movie") ? undefined : "dim"}>
+          Radarr
+        </span>
+        <span className="sr-only">
+          Sonarr and Radarr{partial ? `, ${mediaWords(coverage.exposed)} not kept` : ""}
+        </span>
       </span>
     );
   }
@@ -184,6 +236,7 @@ function ListRow({
   detail,
   label,
   tone,
+  chipTitle,
   meta,
   error,
   checking,
@@ -194,9 +247,12 @@ function ListRow({
 }: {
   title: string;
   badge?: ReactNode;
-  detail: string;
+  detail: ReactNode;
   label: string;
   tone: Tone;
+  /** The chip's hover title: what the list is protecting, for a list a rule covers. Absent
+   *  where there is nothing to say (not in use, never checked). */
+  chipTitle?: string | undefined;
   meta: string | null;
   error?: string | null;
   checking: boolean;
@@ -207,7 +263,7 @@ function ListRow({
    *  slot, because it is about this list and the button that retries it is on this row
    *  (rule 42). */
   checkError?: string | null | undefined;
-  /** The row's own extras: tag pills, the per-server fold-out, the policy-use line. */
+  /** The row's own extras: tag pills, the per-server fold-out, the Configure in Policy action. */
   children?: ReactNode;
 }) {
   return (
@@ -218,7 +274,9 @@ function ListRow({
         <div className="list-head">
           <span className="jobrow-title list-name">{title}</span>
           {badge}
-          <span className={`status-chip status-chip-wrap ${STATE_CHIP[tone]}`}>{label}</span>
+          <span className={`status-chip status-chip-wrap ${STATE_CHIP[tone]}`} title={chipTitle}>
+            {label}
+          </span>
         </div>
         <div className="jobrow-desc">{detail}</div>
         {children}
@@ -277,6 +335,13 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
   const perServer = counted.filter(
     (r) => r.server !== null && tags.some((tag) => r.tags[tag] !== undefined),
   );
+  // The matrix's margins sum only the servers it SHOWS, so its rows and columns always add up.
+  // A title whose server Reaper never learned is in the pill totals above but has no column to
+  // sit in, so the pill and the matrix Total can differ by exactly those unplaced titles.
+  const colTotal = (r: (typeof perServer)[number]) =>
+    tags.reduce((n, tag) => n + (r.tags[tag] ?? 0), 0);
+  const rowTotal = (tag: string) => perServer.reduce((n, r) => n + (r.tags[tag] ?? 0), 0);
+  const grandTotal = perServer.reduce((n, r) => n + colTotal(r), 0);
   return (
     <>
       <div className="tag-pills">
@@ -296,87 +361,73 @@ function TagCounts({ definition, mine }: { definition: ListConfig; mine: Protect
       {perServer.length > 0 && (
         <details className="per-server">
           <summary>Counts by server</summary>
-          <div className="server-grid">
-            {perServer.map((r) => (
-              <Fragment key={r.slug}>
-                <span className="srv">{r.server}</span>
-                <span className="cnt">
-                  {tags
-                    .filter((tag) => r.tags[tag] !== undefined)
-                    .map((tag) => `${tag} ${r.tags[tag]!.toLocaleString()}`)
-                    .join(", ")}
-                </span>
-              </Fragment>
-            ))}
+          {/* Tags down the side, servers across the top, counts at the intersections: a tag
+              reads across its row and a server down its column, and the figures line up. The old
+              one-comma-joined-line-per-server turned to mush as tags and servers multiplied. The
+              box scrolls sideways when it outgrows the screen (many servers) and the Tag column
+              stays pinned; the table sizes to its content rather than being forced to the box
+              width, which on a phone squeezed a tag name to one glyph per line. The cells do not
+              wrap -- they are reached by scrolling -- which the outside-text guard records as a
+              deliberate exception (rule 139). */}
+          {/* tabIndex so a keyboard operator can focus the box and scroll it: no cell is
+              focusable, so without it the matrix is unreadable past its first screenful on a
+              narrow pane (WCAG 2.1.1). */}
+          <div className="matrix-scroll" tabIndex={0}>
+            <table className="tag-matrix">
+              <thead>
+                <tr>
+                  <th scope="col" className="corner">
+                    Tag
+                  </th>
+                  {perServer.map((r) => (
+                    <th scope="col" key={r.slug}>
+                      {r.server}
+                    </th>
+                  ))}
+                  <th scope="col" className="tot">
+                    Total
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {tags.map((tag) => (
+                  <tr key={tag}>
+                    <th scope="row">{tag}</th>
+                    {perServer.map((r) => {
+                      // A tag the instance does not carry is a dash, distinct from a real zero;
+                      // both read faint, so a populated cell is what the eye lands on.
+                      const n = r.tags[tag];
+                      return (
+                        <td key={r.slug} className={n ? undefined : "empty"}>
+                          {/* A "no value" placeholder, so a screen reader hears an empty cell
+                              rather than voicing a dash (rule 21). A real zero is spoken. */}
+                          {n === undefined ? <span aria-hidden="true">—</span> : n.toLocaleString()}
+                        </td>
+                      );
+                    })}
+                    <td className="tot">{rowTotal(tag).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th scope="row">Total</th>
+                  {/* Plain cells: the footer's own top border sets the Total ROW off, so a
+                      per-server total needs no border of its own. Only the grand total carries
+                      `.tot`, which continues the Total COLUMN's single divider into the footer
+                      and lines up under the body's. Giving every footer cell `.tot` drew a
+                      stray vertical between each one. */}
+                  {perServer.map((r) => (
+                    <td key={r.slug}>{colTotal(r).toLocaleString()}</td>
+                  ))}
+                  <td className="tot">{grandTotal.toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
         </details>
       )}
     </>
-  );
-}
-
-/** How the policies use this list, under every row: the strength of each rule naming it, or
- *  the warning that none does. Sentences come from `policy_use` deduplicated, because the
- *  default rules name a list once per media type and one fact is said once. */
-function PolicyUse({
-  definition,
-  onGoToPolicy,
-}: {
-  definition: ListConfig;
-  onGoToPolicy?: (() => void) | undefined;
-}) {
-  // An outright rule decides the item on its own, so a lean beside it never changes an
-  // outcome and saying both described one list as doing two things (#510). Policy will not
-  // compose the pair any more; a body stored before it could still carry one, and this is
-  // what the operator is told about it: the strength that actually acts.
-  //
-  // WITHIN ONE MEDIA TYPE. Collapsed across both, a list keeping movies outright while only
-  // leaning on TV read "Keeps every title on it" and dropped the lean entirely -- a movie
-  // rule decides nothing about a season, so the operator lost the line saying their shows
-  // on that list are still condemnable, on the screen built to answer that.
-  const acting = (["movie", "tv"] as const).flatMap((mediaType) => {
-    const mine = definition.policy_use.filter((use) => use.media_type === mediaType);
-    const use = mine.find((u) => u.strength === "hard") ?? mine[0];
-    return use ? [{ noun: mediaType === "movie" ? "movie" : "show", use } as const] : [];
-  });
-  const said = (use: ListPolicyUse, noun: "title" | "movie" | "show") => {
-    const plural = noun === "title" ? "titles" : `${noun}s`;
-    return use.strength === "hard"
-      ? `Keeps every ${noun} on it`
-      : `Leans toward keeping ${plural}, up to ${use.points ?? 0} points off`;
-  };
-  // Both types acting the same way is one fact, so it is said once, in the neutral noun.
-  const [forMovies, forShows] = acting;
-  const agree =
-    forMovies !== undefined &&
-    forShows !== undefined &&
-    forMovies.use.strength === forShows.use.strength &&
-    (forMovies.use.points ?? null) === (forShows.use.points ?? null);
-  const sentences =
-    agree && forMovies !== undefined
-      ? [said(forMovies.use, "title")]
-      : acting.map((a) => said(a.use, a.noun));
-  if (sentences.length === 0) {
-    return (
-      <div className="policy-use unused">
-        Not used by your policy yet, so it protects nothing.{" "}
-        {onGoToPolicy && (
-          <button className="link" onClick={onGoToPolicy}>
-            Set it on Policy
-          </button>
-        )}
-      </div>
-    );
-  }
-  return (
-    <div className="policy-use">
-      {sentences.join(". ")}.{" "}
-      {onGoToPolicy && (
-        <button className="link" onClick={onGoToPolicy}>
-          Change on Policy
-        </button>
-      )}
-    </div>
   );
 }
 
@@ -414,16 +465,18 @@ export function ListsPanel({
     () => !blockCloseRef.current,
   );
 
-  // Adding, editing or removing a list changes which titles are protected, and the queue is
-  // showing fates scored under the lists as they were. Nothing here re-scores them: a check
-  // refreshes MEMBERSHIP, which is a different thing, so the queue kept its stale fates with
-  // no stale notice and an approved plan met the executor's list interlock at the far end.
-  // `PolicyEditor` starts a scan on save for exactly this class of change, and a list is the
-  // half of the policy that moved out of the policy body (rules 72, 144).
+  // Editing or removing a list that a KEEP RULE names changes which titles are protected, and
+  // the queue is showing fates scored under the lists as they were. Nothing here re-scores
+  // them: a check refreshes MEMBERSHIP, which is a different thing, so the queue kept its stale
+  // fates with no stale notice and an approved plan met the executor's list interlock at the
+  // far end. `PolicyEditor` starts a scan on save for exactly this class of change, and a list
+  // is the half of the policy that moved out of the policy body (rules 72, 144).
   //
-  // It lives on the panel rather than in the modal because the modal is unmounting: a
-  // mutation started on the way out loses the surface that would report it. Idempotent
-  // server-side, so a scan already running is simply followed.
+  // The modal decides WHETHER a fate moved (`onChanged`'s `rescore`) and this fires only then,
+  // so adding a list nothing uses -- which writes no rule and can change no fate -- does not
+  // scan the whole library for nothing. It lives on the panel rather than in the modal because
+  // the modal is unmounting: a mutation started on the way out loses the surface that would
+  // report it. Idempotent server-side, so a scan already running is simply followed.
   const startScan = useMutation({
     mutationFn: () => api.startScan(),
     onSuccess: (started) => {
@@ -515,21 +568,47 @@ export function ListsPanel({
           const mine = forList(definition.id);
           const state = worst(mine);
           const items = mine.reduce((n, r) => n + r.item_count, 0);
-          // Only the members in the worst state are named, and only when something is wrong.
-          // Listing all of them would put a tag list back at one line per server, which is
-          // the thing being fixed.
-          const wanted = mine.filter((r) => r.state === state).map(serverOf);
+          // A list no keep rule names protects nothing, so its chip reads "Not in use", never
+          // green "In use", however its sync went (rule 79's direction, from the used/unused
+          // side).
+          const used = definition.policy_use.length > 0;
+          // The media types the list's members actually span, unioned across the family's
+          // rows -- a tag list is one row per *arr, so movies come off the Radarr rows and
+          // shows off the Sonarr ones. Compared against the types a keep rule names to tell a
+          // fully-covered list from one covered on a single side (#533).
+          const spanned = new Set<MediaType>(mine.flatMap((r) => r.media_types));
+          const coverage = coverageOf(
+            definition.policy_use,
+            spanned,
+            definition.source === "arr_tag",
+          );
           const shown =
             mine.length === 0
-              ? describe("never_checked", 0)
-              : describe(state, items, state === "working" ? undefined : wanted);
-          // A row with nothing stored is the one whose sentence a running check contradicts:
+              ? describe("never_checked", 0, used)
+              : describe(state, items, used, coverage);
+          // What the chip says on hover -- only for a list a rule actually covers.
+          const chipTitle = used ? protectingTitle(coverage) : undefined;
+          // A row with nothing stored is the one whose count a running check contradicts:
           // "Runs with your next scan" beside a button that says "Checking…". That pair is now
           // what every operator sees for the length of the check a save starts, so the row says
           // what is happening instead. Every other state describes the LAST check and stays
           // true while the next one runs.
-          const detail =
+          const count =
             busy(definition.id) && mine.length === 0 ? "Checking it now." : shown.detail;
+          // An in-use list links to its rule to adjust it; a not-in-use one offers the setup
+          // action below. Both go to Policy -- you change the policy there, never "on" it from
+          // here.
+          const detail =
+            used && onGoToPolicy ? (
+              <>
+                {count}{" "}
+                <button className="link policy-change" onClick={onGoToPolicy}>
+                  Change policy
+                </button>
+              </>
+            ) : (
+              count
+            );
           // Sorted ascending and read at [0], so a family reports its OLDEST check: the row
           // is a claim about the whole family, and the newest member's stamp would say the
           // protection is fresher than its weakest part. Same direction as `worst` above,
@@ -547,10 +626,11 @@ export function ListsPanel({
             <ListRow
               key={definition.id}
               title={definition.name}
-              badge={kindBadge(definition.source)}
+              badge={kindBadge(definition.source, coverage)}
               detail={detail}
               label={shown.label}
               tone={shown.tone}
+              chipTitle={chipTitle}
               meta={
                 (checked.length ? `Last checked ${ago(checked[0]!)}. ` : "") +
                 across +
@@ -563,7 +643,11 @@ export function ListsPanel({
               checkError={failedTarget === definition.id ? (check.error?.message ?? null) : null}
             >
               {definition.source === "arr_tag" && <TagCounts definition={definition} mine={mine} />}
-              <PolicyUse definition={definition} onGoToPolicy={onGoToPolicy} />
+              {!used && onGoToPolicy && (
+                <button className="link policy-configure" onClick={onGoToPolicy}>
+                  Configure in Policy
+                </button>
+              )}
             </ListRow>
           );
         })}
@@ -633,10 +717,9 @@ export function ListsPanel({
           // back, a count or the source's own refusal, which is the answer to the question
           // they were really asking when they saved.
           onSaved={(list) => check.mutate(list.id)}
-          // Every path that changed the registry, removal included: what a list keeps is
-          // scored into the queue's fates, so the library has to be re-judged whether a list
-          // arrived, moved, or left.
-          onChanged={() => startScan.mutate()}
+          // Only when the change moved what a keep rule protects: an edit or a remove of a list
+          // a rule names re-judges the queue, and an add -- which writes no rule -- does not.
+          onChanged={(rescore) => rescore && startScan.mutate()}
         />
       )}
     </div>
@@ -656,9 +739,9 @@ function sourceHint(definition: ListConfig): string {
     return "The watchlist of the Plex account Reaper is signed in with.";
   }
   if (definition.source === "arr_tag") {
-    return definition.config.match === "all"
-      ? "Read from every connected Sonarr and Radarr. Titles need every tag."
-      : "Read from every connected Sonarr and Radarr.";
+    // The "Counts by server" fold-out already names which Sonarrs and Radarrs were read, so the
+    // meta line only carries what that does not: whether a title needs every tag or any one.
+    return definition.config.match === "all" ? "Titles need every tag." : "";
   }
   return definition.config.preset
     ? "Keeps itself up to date."

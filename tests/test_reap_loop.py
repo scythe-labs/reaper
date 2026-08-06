@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -116,11 +116,41 @@ async def _stored_run(factory: async_sessionmaker[AsyncSession], run_id: int) ->
         return stored
 
 
+async def _seed_instances(session: AsyncSession, media_keys: Iterable[str]) -> None:
+    """Seed the Instance rows a plan resolves each candidate's media_key against.
+
+    A scan only condemns items from instances that exist, so a real plan reads a live row for
+    every candidate, and ``build_plan`` refuses a movie whose Radarr is gone. These tests
+    fabricate candidates directly, so they seed the matching instances. Idempotent: a test
+    that already seeded an instance to pin its exclusion setting (``_seed_radarr``) is left
+    untouched, and a freshly seeded row carries the exclusion ON, the historical planner
+    default these tests were written against. One row per id -- the planner keys on the id
+    alone, never the kind.
+    """
+    existing = set((await session.execute(select(Instance.id))).scalars().all())
+    for instance_id in sorted({int(key.split(":")[1]) for key in media_keys}):
+        if instance_id in existing:
+            continue
+        session.add(
+            Instance(
+                id=instance_id,
+                kind=InstanceKind.RADARR,
+                name=f"i{instance_id}",
+                base_url="https://arr.test",
+                api_key_enc="enc",
+                add_import_exclusion=True,
+                created_at=utcnow(),
+            )
+        )
+    await session.flush()
+
+
 async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int | None]]) -> int:
     """A snapshot plus a set of condemned movie candidates: (media_key, size_bytes).
 
     A ``None`` size is an item nothing would measure, which is not the same as a zero."""
     now = utcnow()
+    await _seed_instances(session, [media_key for media_key, _ in condemned])
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),
@@ -2693,6 +2723,7 @@ async def _snapshot_many(
 ) -> int:
     explanation = _clean_explanation() if explanation is None else explanation
     now = utcnow()
+    await _seed_instances(session, [media_key for media_key, _, _ in items])
     snapshot = Snapshot(
         created_at=now,
         policy_hash=await live_policy_hash(session),

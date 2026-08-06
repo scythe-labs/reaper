@@ -91,6 +91,7 @@ async def get_lists(request: Request) -> list[ProtectionListOut]:
                 list_id=row.list_id,
                 tags=tag_counts,
                 server=server,
+                media_types=sorted(row.media_types),
             )
         )
     return out
@@ -155,9 +156,12 @@ async def add_list(request: Request, body: ListConfigIn) -> ListConfigOut:
             )
         except list_config.ListConfigError as exc:
             raise _refused(exc) from None
-        # The fail-safe default the modal promises: a new list keeps its titles outright
-        # until the operator softens or removes the rule on Policy.
-        await list_rules.attach_list(session, row.name)
+        # A list the operator adds here writes no keep rule on its own. Settings owns what a
+        # list IS; Policy owns what it does, and the operator chooses whether and how strongly
+        # it protects. The row renders "Not used by your policy yet" until they do, so adding a
+        # list is never a silent protection the operator did not ask for. The lists Reaper
+        # ships and the ones an upgrade migrated are named by the policy body directly (the
+        # default body, ``convert_list_protections``), not from here.
         uses = await list_rules.usage(session)
         return _out(row, [ListPolicyUseOut(**u) for u in uses.get(row.name.strip().casefold(), [])])
 

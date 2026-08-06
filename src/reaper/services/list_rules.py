@@ -5,9 +5,12 @@ A list is defined on Settings -> Lists; what it does is a keep rule on Policy na
 (the ``on_list`` field, either strength). These helpers keep the two surfaces telling one
 story:
 
-* **adding a list writes a keeps-it-outright rule into both policies**, so a new list
-  protects from its first sync -- the fail-safe default -- and the operator softens or
-  removes the rule on Policy;
+* **adding a list writes no rule.** The operator chooses whether and how strongly it
+  protects, on Policy, and the Lists row reads "Not used by your policy yet" until they do
+  -- so adding a list is never a silent protection nobody asked for. The lists Reaper ships
+  and the ones an upgrade migrated are named by the policy body itself (the default body,
+  ``convert_list_protections``), which is why those act from the first scan and a hand-added
+  one does not;
 * **renaming a list re-spells the rules naming it**, so a rename never turns a live
   protection into a rule naming nothing;
 * **deleting a list deletes its rules**, so none goes on rendering as a live protection
@@ -32,8 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
 from reaper.db.models import Policy as PolicyModel
-from reaper.engine.fields import Op
-from reaper.engine.policy import ConditionSpec, PolicyBody
+from reaper.engine.policy import PolicyBody
 from reaper.services import profiles
 
 log = structlog.get_logger(__name__)
@@ -62,29 +64,6 @@ async def _save(session: AsyncSession, media_type: str, body: PolicyBody) -> Non
             created_at=utcnow(),
         )
     )
-
-
-async def attach_list(session: AsyncSession, name: str) -> None:
-    """Give a just-created list its keeps-it-outright rule, in both policies.
-
-    Skipped for a policy that needed repair to load (see the module docstring) and for one
-    that already carries a rule naming the list -- adding a second would double the row on
-    Policy for no change in effect.
-    """
-    for media_type in MEDIA_TYPES:
-        active = await profiles.active_policy(session, media_type)
-        if active.repaired:
-            log.warning("list_rules.attach_skipped_repaired", media_type=media_type)
-            continue
-        body = active.body
-        if any(
-            c.field == "on_list" and _names_equal(c.value, name) for c in body.protect_conditions
-        ):
-            continue
-        rule = ConditionSpec(field="on_list", op=Op.EQ, value=name)
-        edited = body.model_copy(update={"protect_conditions": (*body.protect_conditions, rule)})
-        await _save(session, media_type, PolicyBody.model_validate(edited.model_dump()))
-    await session.commit()
 
 
 async def rename_list(session: AsyncSession, old: str, new: str) -> None:
@@ -168,4 +147,4 @@ async def usage(session: AsyncSession) -> dict[str, list[dict[str, object]]]:
     return out
 
 
-__all__ = ["MEDIA_TYPES", "attach_list", "detach_list", "rename_list", "usage"]
+__all__ = ["MEDIA_TYPES", "detach_list", "rename_list", "usage"]

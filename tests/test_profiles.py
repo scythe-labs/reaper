@@ -27,13 +27,14 @@ from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyRepair, ProfileSettings
 from reaper.ratings import RatingSource
-from reaper.services import profiles
+from reaper.services import list_config, list_rules, profiles
 from reaper.services.profiles import (
     active_policy,
     active_profile,
     active_profile_settings,
     save_profile_settings,
 )
+from reaper.services.scan_runner import ScanConfigError, build_gates
 
 
 @pytest.fixture
@@ -364,24 +365,32 @@ def _legacy_list_body() -> dict[str, object]:
     return body
 
 
-async def _seed_list_rows(session: AsyncSession) -> None:
-    """The registry rows the conversion's rules must point at, under names the operator
-    may have chosen: resolution is by source and age, never by spelling."""
-    for name, source, config in (
-        ("Films worth keeping", "imdb", {"preset": "top250"}),
-        ("My tagged titles", "arr_tag", {"tags": ["reaper-keep"], "match": "any"}),
-    ):
-        session.add(
-            ListConfigModel(
-                name=name,
-                source=source,
-                config_json=json.dumps(config),
-                enabled=True,
-                built_in=False,
-                created_at=utcnow(),
-            )
+async def _add_list(
+    session: AsyncSession, name: str, source: str, config: dict[str, object]
+) -> None:
+    """One registry row, added in call order so a test can put a decoy in front of the row
+    the conversion must find."""
+    session.add(
+        ListConfigModel(
+            name=name,
+            source=source,
+            config_json=json.dumps(config),
+            enabled=True,
+            built_in=False,
+            created_at=utcnow(),
         )
+    )
     await session.commit()
+
+
+async def _seed_list_rows(session: AsyncSession) -> None:
+    """The registry rows the conversion's rules must point at, under names the operator may
+    have chosen: resolution is by what each row HOLDS -- these tags, that preset -- never by
+    spelling, which is theirs to change, and never by age, which is theirs to change too."""
+    await _add_list(session, "Films worth keeping", "imdb", {"preset": "top250"})
+    await _add_list(
+        session, "My tagged titles", "arr_tag", {"tags": ["reaper-keep"], "match": "any"}
+    )
 
 
 class TestALegacyListBodyIsConvertedOnLoad:
@@ -420,6 +429,105 @@ class TestALegacyListBodyIsConvertedOnLoad:
         assert active.repairs == ()
         assert active.repaired is False
         assert active.body == DEFAULT_MOVIE_POLICY
+
+
+class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
+    """A list they added for something else may not inherit a rule nothing gave it.
+
+    The conversion runs on every load of a legacy body and re-reads the registry each time,
+    so which list it names is answered fresh whenever the registry changes. Answering it by
+    AGE gave the answer away: delete the tag list this converts and the next arr-tag list
+    becomes the oldest of its source, so it silently took over an outright keep. Settings ->
+    Lists reads that same conversion (``list_rules.usage``), so the row read "Keeps every
+    title on it" for a list no rule mentions, and Remove could not take it off -- the writer
+    behind it declines to touch a repaired policy on purpose.
+    """
+
+    async def test_a_decoy_older_than_the_tagged_list_does_not_take_its_rule(
+        self, session: AsyncSession
+    ) -> None:
+        """Age decides nothing. The decoy is added FIRST, and the list carries a tag the
+        operator added beside the stored one, so neither position nor an exact set match is
+        what finds it."""
+        await _add_list(session, "Saturday movie night", "arr_tag", {"tags": ["movie-night"]})
+        await _add_list(session, "My tagged titles", "arr_tag", {"tags": ["reaper-keep", "gold"]})
+        await _store_policy(session, json.dumps(_legacy_list_body()))
+
+        active = await active_policy(session, "movie")
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"My tagged titles"}
+        assert "whitelisted" not in {g.gate.value for g in active.body.gates}
+
+    async def test_removing_the_tagged_list_does_not_hand_its_rule_to_another(
+        self, session: AsyncSession
+    ) -> None:
+        """The operator's own sequence: add a list, remove the one their tags became.
+
+        Removing it takes the protection with it, and the scan then refuses rather than
+        running with a retired gate it cannot answer -- the loud, fail-closed exit rule 38
+        asks for, where the silent one handed the protection to a list nobody chose.
+        """
+        await _seed_list_rows(session)
+        await _add_list(session, "Saturday movie night", "arr_tag", {"tags": ["movie-night"]})
+        await _store_policy(session, json.dumps(_legacy_list_body()))
+        # Read straight from the table: `list_config.all_lists` seeds the shipped defaults on
+        # a registry that has never been seeded, which would put a second tag list on the
+        # screen this test is about.
+        tagged = (
+            await session.execute(
+                select(ListConfigModel).where(ListConfigModel.name == "My tagged titles")
+            )
+        ).scalar_one()
+
+        await list_config.delete(session, tagged.id)
+        await session.commit()
+        # The Lists screen's own removal path, and it declines to write here (the policy is
+        # repaired), which is exactly why the conversion must not be naming a list either.
+        await list_rules.detach_list(session, tagged.name)
+
+        active = await active_policy(session, "movie")
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert "Saturday movie night" not in values
+        assert values == {"Films worth keeping"}
+        # The gate stays, so the scan stops instead of running a protection short.
+        assert "whitelisted" in {g.gate.value for g in active.body.gates}
+        with pytest.raises(ScanConfigError, match="pointing at a list that is no longer there"):
+            build_gates(active.body)
+
+    async def test_an_imdb_list_of_their_own_does_not_take_the_shipped_ones_rule(
+        self, session: AsyncSession
+    ) -> None:
+        """The retired CURATED_LIST gate named one shipped list, the IMDb Top 250. A list
+        the operator pasted an id for is not that list, whatever order it sits in."""
+        await _add_list(session, "My watchlist", "imdb", {"list_id": "ls000000000"})
+        await _add_list(
+            session, "My tagged titles", "arr_tag", {"tags": ["reaper-keep"], "match": "any"}
+        )
+        await _store_policy(session, json.dumps(_legacy_list_body()))
+
+        active = await active_policy(session, "movie")
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"My tagged titles"}
+        assert "curated_list" in {g.gate.value for g in active.body.gates}
+
+    async def test_a_body_whose_tags_were_cleared_names_no_tag_list(
+        self, session: AsyncSession
+    ) -> None:
+        """An explicit empty ``keep_tags`` is an operator who cleared it (rule 1), so there
+        is no protection to carry and no list to find -- and the gate may leave, because
+        nothing it covered is being dropped."""
+        await _seed_list_rows(session)
+        body = _legacy_list_body()
+        body["keep_tags"] = []
+        await _store_policy(session, json.dumps(body))
+
+        active = await active_policy(session, "movie")
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"Films worth keeping"}
+        assert "whitelisted" not in {g.gate.value for g in active.body.gates}
 
 
 class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
@@ -471,7 +579,7 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         await self._seed_plex_collection(session)
 
         async def unreadable(
-            _session: AsyncSession,
+            _session: AsyncSession, *, keep_tags: tuple[str, ...]
         ) -> tuple[str | None, str | None, tuple[str, ...]]:
             raise SQLAlchemyError("the registry could not be read")
 
@@ -502,7 +610,7 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         await self._seed_plex_collection(session)
 
         async def unreadable(
-            _session: AsyncSession,
+            _session: AsyncSession, *, keep_tags: tuple[str, ...]
         ) -> tuple[str | None, str | None, tuple[str, ...]]:
             raise SQLAlchemyError("the registry could not be read")
 

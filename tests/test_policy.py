@@ -3851,14 +3851,23 @@ class TestConvertListProtections:
     def test_an_enabled_gate_with_no_target_list_keeps_its_row(self) -> None:
         """Stripping an enabled gate whose replacement cannot be named would withdraw a
         live protection with nothing in its place. The row stays, and ``build_gates``
-        refuses the scan on it rather than silently skipping (rule 38)."""
+        refuses the scan on it rather than silently skipping (rule 38).
+
+        The refusal is the operator's own words and names no gate id: they never saw
+        `whitelisted` on any screen, and what they can do about it is open Policy and save
+        (rule 21).
+        """
         converted = self._convert(self._legacy(), tag=None, imdb=None)
 
         assert converted is not None
         assert self._rules(converted) == []
         assert {"whitelisted", "curated_list"} <= self._gate_ids(converted)
-        with pytest.raises(ScanConfigError, match="whitelisted"):
+        with pytest.raises(ScanConfigError, match="pointing at a list that is no longer there"):
             build_gates(PolicyBody.model_validate(converted))
+        with pytest.raises(ScanConfigError) as raised:
+            build_gates(PolicyBody.model_validate(converted))
+        assert "whitelisted" not in str(raised.value)
+        assert "curated_list" not in str(raised.value)
 
     def test_on_curated_list_rules_respell_as_on_list(self) -> None:
         legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())

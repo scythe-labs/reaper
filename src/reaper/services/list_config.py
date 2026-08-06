@@ -33,7 +33,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
 from reaper.db.models import ListConfig
-from reaper.engine.policy import DEFAULT_IMDB_LIST_NAME, DEFAULT_TAG_LIST_NAME
+from reaper.engine.policy import (
+    DEFAULT_IMDB_LIST_NAME,
+    DEFAULT_IMDB_PRESET,
+    DEFAULT_KEEP_TAG,
+    DEFAULT_TAG_LIST_NAME,
+)
 from reaper.services import app_settings
 from reaper.services import lists as lists_service
 from reaper.services.lists import ListSource
@@ -202,8 +207,8 @@ async def current_fingerprint(session: AsyncSession) -> str | None:
 #: (``services.list_rules``); the seed runs once, tracked by a flag rather than by the rows,
 #: so removing them does not resurrect them on the next read.
 DEFAULT_LISTS: tuple[tuple[str, ListSource, dict[str, Any]], ...] = (
-    (DEFAULT_IMDB_LIST_NAME, ListSource.IMDB, {"preset": "top250"}),
-    (DEFAULT_TAG_LIST_NAME, ListSource.ARR_TAG, {"tags": ["reaper-keep"], "match": "any"}),
+    (DEFAULT_IMDB_LIST_NAME, ListSource.IMDB, {"preset": DEFAULT_IMDB_PRESET}),
+    (DEFAULT_TAG_LIST_NAME, ListSource.ARR_TAG, {"tags": [DEFAULT_KEEP_TAG], "match": "any"}),
 )
 
 

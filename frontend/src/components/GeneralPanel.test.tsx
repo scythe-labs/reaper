@@ -428,7 +428,12 @@ describe("the default spare length", () => {
     // that stages it. It used to store 30 before the operator had seen that number at all.
     const person = renderPanel();
     await screen.findByLabelText("Application name");
-    expect(dayBox()).toBeNull();
+    // STORED is Forever, but the length box seeds visible for the first paint and the effect
+    // that reads default_spare_days:0 back into Forever removes it only after that commit.
+    // Landing on Application name does not gate that effect, so assert the box's ABSENCE
+    // through waitFor rather than synchronously, or the read can fall in the pre-seed window
+    // and see the seed box carrying 30 (#477).
+    await waitFor(() => expect(dayBox()).toBeNull());
 
     await person.click(days());
 

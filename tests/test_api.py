@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from reaper import logbuffer
 from reaper.clock import utcnow
 from reaper.config import Settings
+from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import (
     ActionStep,
@@ -47,6 +48,7 @@ from reaper.engine.policy import (
     combine_hashes,
 )
 from reaper.main import create_app
+from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import retention
 from reaper.services.history_sync import SCHEMA
 
@@ -681,10 +683,20 @@ class TestTheRunSelectionIsExplicit:
 @pytest.fixture
 def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     """A client armed at the host default (``destructive_actions_enabled=True``), with one
-    condemned movie but no *arr/Plex/Tautulli instances configured. Enough to exercise the
-    execute endpoint's confirmation and client-presence gates without any live service."""
+    condemned movie. The movie's Radarr is configured so ``build_plan`` can resolve it (a plan
+    refuses a movie whose Radarr is gone), but no Plex or Tautulli is, so the execute
+    endpoint's client-presence gate still refuses before any live service is touched. Enough
+    to exercise the confirmation and client-presence gates without any live service."""
     settings = Settings(  # type: ignore[call-arg]
         data_dir=tmp_path, secret_key="k", destructive_actions_enabled=True
+    )
+    # The box the app decrypts the Radarr key with at execute time. Built exactly as main.py
+    # builds it, off the same settings, so the api_key below opens under app.state.secret_box;
+    # resolve_kdf_salt mints the per-install salt here and create_app reads the same one.
+    box = SecretBox(
+        resolve_secret_key(settings),
+        *resolve_old_keys(settings),
+        salt=resolve_kdf_salt(settings),
     )
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
@@ -705,6 +717,16 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
         )
         session.add(snapshot)
         session.flush()
+        session.add(
+            Instance(
+                id=1,
+                kind=InstanceKind.RADARR,
+                name="hd",
+                base_url="https://radarr.example",
+                api_key_enc=box.encrypt("test-key"),
+                created_at=now,
+            )
+        )
         session.add(
             Candidate(
                 snapshot_id=snapshot.id,

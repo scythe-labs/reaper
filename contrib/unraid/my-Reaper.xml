@@ -40,11 +40,11 @@
   <Registry>https://github.com/scythe-labs/reaper/pkgs/container/reaper</Registry>
   <Branch>
     <Tag>latest</Tag>
-    <TagDescription>Follows releases. Use this one.</TagDescription>
+    <TagDescription>Stable releases.</TagDescription>
   </Branch>
   <Branch>
     <Tag>dev</Tag>
-    <TagDescription>Follows daily development, for testing what is coming. Back up your data folder first: a dev build can upgrade the database past what a release build reads, so moving back needs that backup.</TagDescription>
+    <TagDescription>Development, for testing only.</TagDescription>
   </Branch>
   <Network>bridge</Network>
   <MyIP/>

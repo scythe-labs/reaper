@@ -1592,6 +1592,13 @@ class ConfiguredList:
     and the server name for a tag list, ``None`` for every other source and for rows
     written before the column existed, which read as "unknown", never as zero."""
 
+    media_types: frozenset[str] = frozenset()
+    """The protectable media types this slug's stored members actually span -- ``movie``,
+    ``tv``, or both. Empty until a sync has run, which is what lets the Lists screen say a
+    keep rule covers one side of a mixed list and leaves the other still deletable (#533):
+    a rule protects a media type, and a list holds whichever types its members do. Filled
+    from ``protection_list_item`` in :func:`configured`, not stored on the row."""
+
     @property
     def source(self) -> ListSource:
         """Which family this row belongs to. See :class:`ListSource` for why it is derived."""
@@ -1651,6 +1658,20 @@ async def configured(engine: AsyncEngine) -> Sequence[ConfiguredList]:
                 )
             )
         ).all()
+        # Which media types each slug's members span, in one grouped pass over the small
+        # membership table. A tag list is one slug per *arr instance -- a Radarr slug is all
+        # movies, a Sonarr slug all shows -- so a family that reaches the screen across
+        # several slugs carries each type on the slug that holds it (#533).
+        spans = (
+            await conn.execute(
+                text("SELECT slug, media_type FROM protection_list_item GROUP BY slug, media_type")
+            )
+        ).all()
+    types_by_slug: dict[str, set[str]] = {}
+    for span in spans:
+        media_type = str(span.media_type)
+        if media_type in PROTECTABLE_MEDIA_TYPES:
+            types_by_slug.setdefault(str(span.slug), set()).add(media_type)
 
     def _stats(raw: object) -> dict[str, Any] | None:
         """A stats body that will not parse reads as absent, never as a raised row
@@ -1674,6 +1695,7 @@ async def configured(engine: AsyncEngine) -> Sequence[ConfiguredList]:
             last_synced_at=None if r.last_synced_at is None else int(r.last_synced_at),
             last_error=None if r.last_error is None else str(r.last_error),
             stats=_stats(r.stats_json),
+            media_types=frozenset(types_by_slug.get(str(r.slug), set())),
         )
         for r in rows
     ]

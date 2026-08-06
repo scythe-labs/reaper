@@ -34,6 +34,8 @@ from reaper.db.base import Base
 from reaper.db.models import (
     Candidate,
     FirstFlagged,
+    Instance,
+    InstanceKind,
     SeasonPruneEvidence,
     SizeSource,
     Snapshot,
@@ -1400,6 +1402,21 @@ class TestARepairedPolicyCannotBeReapedFrom:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        # The Radarr the stubbed scan sourced its one movie from. build_sources is faked, so
+        # nothing wrote the row a real scan reads it from; the planner resolves every
+        # candidate against it and refuses a movie whose Radarr is gone, so seed it here.
+        async with factory() as s:
+            s.add(
+                Instance(
+                    id=1,
+                    kind=InstanceKind.RADARR,
+                    name="hd",
+                    base_url="https://radarr.example",
+                    api_key_enc="enc",
+                    created_at=utcnow(),
+                )
+            )
+            await s.commit()
         snapshot = await scan_runner.run_scan(
             settings=settings,
             session_factory=factory,

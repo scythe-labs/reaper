@@ -29,7 +29,7 @@ It was set aside, not rejected on quality. Two things stand between it and shipp
 are real work rather than a copy-paste:
 
 - **Its eyes are fixed Plex gold (`#E5A00D`), not the operator's accent.** The shipped mark
-  puts `--accent` on the eyes, which is the whole point of the current drawing. This file is
+  puts `--accent` on the eyes, which is what the current drawing is for. This file is
   not a drop-in.
 - **The glow does not survive every surface the mark has to appear on.** The header wears the
   cowl with no shell (`BrandMark`), so there is no dark ground for a bloom to sit on, and the
@@ -37,4 +37,4 @@ are real work rather than a copy-paste:
   would have to be threaded through `appIconSvg` as well. A mark that glows in one place and
   not another is two marks.
 
-Picking this up later means solving both, not just swapping a file.
+Picking this up later means solving both.

@@ -117,7 +117,7 @@ the shared `gates.lifetime_shortfall`) and raises the conflict wherever more his
 overturn the outcome — the pruned count losing to a bound it may yet clear, or winning against one
 that may yet rise. An outcome the bound already earns still stands, so a season nobody watched
 over a mirror covering its whole life still clears. **The reach of that is wide, and it is the
-intended cost rather than a side effect**: a season the mirror does *not* cover conflicts against
+intended cost**: a season the mirror does *not* cover conflicts against
 every kept season whatever either count says, because more history can always lift a lower bound
 above anything. So wherever the watch history is shallower than the library is old, every prunable
 season of an affected show is held, and *automatic* TV season pruning is inert until the mirror
@@ -353,7 +353,7 @@ while Tautulli keeps every earlier play filed under the old one, so Reaper reads
 the key the item carries *now*, finds nothing, and reports `Known(0)` watchers with maximum
 dormancy. That is an affirmative "nobody ever watched this" about a title somebody watched:
 maximum condemn pressure on the item that deserves it least, and the read path cannot tell it
-from a genuinely unwatched item, because both are "no rows for this key". Measured, not feared:
+from a genuinely unwatched item, because both are "no rows for this key". Measured:
 0% of recently-played movies, rising to 1.5%, 1.5% and 4.5% across the 40th, 50th and 60th
 deciles of a six-figure history, on a server that had never run a deletion through Reaper
 (`docs/LEARNINGS.md`).
@@ -384,7 +384,7 @@ any change to its column tuple, `plex.py` parses raw guids to `ExternalIds` and 
 deferred as not worth the lift (#269). Separately, `snapshot._fold_merged_watch_stats` unions a
 merged group's counts onto the canonical item, so removing a duplicate listing is a real fall
 with no churn behind it; it reads as unreadable and holds that title. Both are keep-direction,
-and both are stated in `services/watch_evidence.py` rather than papered over.
+and both are stated in `services/watch_evidence.py`.
 
 **The escape hatch is required, not a convenience, and it comes in two widths.** Rebuild a
 library without repairing its history and every watched title reads zero at once, so every one
@@ -403,7 +403,7 @@ holding it. No file goes when it is pressed, which is why a typed confirmation p
 theater — but a stray click or a stale tab reaching it is the same failure arming has, and it
 gets the same answer. With no admin password set the control is not offered and the route
 refuses, pointing at the password step rather than at a password to guess. **The narrow twin
-below takes no password**, and the asymmetry is the whole point: the gate is priced on losing
+below takes no password**, and the asymmetry is deliberate: the gate is priced on losing
 every mark at once, so charging it for one title would push an operator with one stale record
 toward the control that clears the library.
 
@@ -815,8 +815,7 @@ VERDICT: CONDEMN   score 91/100  (threshold 70)
 ```
 
 A tool that only explains its deletions cannot be trusted about its keeps. So every protection
-that was checked and did *not* fire is shown too, which is what makes the record auditable
-rather than a verdict handed down.
+that was checked and did *not* fire is shown too, which is what makes the record auditable.
 
 
 ## Size acquisition
@@ -921,6 +920,7 @@ head commit rather than the squash it became — a commit the promotion recipe i
 keeps connected to `dev`'s line. The two carry the same tree, which the workflow verifies
 through the API rather than assumes (the promotion branch deletes itself at merge, so the
 commit is not in the release checkout; the first cut fell back over exactly that and was
-retargeted by hand). The artifacts still build from the pushed sha. The first cut ships
-`.github/first-release-notes.md`: a generated list spanning the whole history is not release
-notes.
+retargeted by hand). The artifacts still build from the pushed sha. The first cut shipped a
+curated summary instead, since a generated list spanning the whole history is not release
+notes; that file retired once v2026.8.1 gave every later cut a tag to start from, and a cut
+that finds no `v*` tag now stops rather than generating notes over an unbounded range.

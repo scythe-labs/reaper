@@ -39,7 +39,14 @@ from reaper import logbuffer
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import ActionStep, Candidate, FirstFlagged, Snapshot
+from reaper.db.models import (
+    ActionStep,
+    Candidate,
+    FirstFlagged,
+    Instance,
+    InstanceKind,
+    Snapshot,
+)
 from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.services import grace, whitelist
@@ -413,6 +420,23 @@ async def _row(
     group_key: str | None = None,
     size: int = 2 * GB,
 ) -> None:
+    # The instance a real plan resolves this candidate against. A scan only condemns items
+    # from instances that exist, and build_plan refuses a movie whose Radarr is gone; these
+    # tests fabricate candidates, so they seed the instance. Idempotent, since a test adds
+    # several rows sharing one instance id.
+    instance_id = int(media_key.split(":")[1])
+    if instance_id not in set((await session.execute(select(Instance.id))).scalars().all()):
+        session.add(
+            Instance(
+                id=instance_id,
+                kind=InstanceKind.RADARR,
+                name=f"i{instance_id}",
+                base_url="https://arr.test",
+                api_key_enc="enc",
+                created_at=NOW,
+            )
+        )
+        await session.flush()
     session.add(
         Candidate(
             snapshot_id=snapshot_id,

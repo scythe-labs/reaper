@@ -10,7 +10,7 @@ export const deletionSafety: Doc = {
     "The path a file takes from candidate to deleted, and the safeties that protect every step of it.",
   body: [
     p(
-      "Reaper removes irreplaceable files from a server other people depend on, so every time something is unclear, the file is kept. The path gets deliberately harder at each step.",
+      "Reaper removes irreplaceable files from a server other people depend on, so every time something is unclear, the file is kept.",
     ),
     callout(
       "tip",
@@ -64,12 +64,12 @@ export const deletionSafety: Doc = {
       "**The delete was declared first.** Every removal is written to a record before it is sent. A request that skipped that step is refused, even while armed.",
     ]),
     p(
-      "The two are independent on purpose, so either one alone still refuses the delete. A brand-new feature is safe by existing, because it travels through that same guarded connection. Plex is reached through a separate connection with the same two locks, and it holds back even a library refresh, because on some servers a refresh empties the trash.",
+      "The two are independent, so either one alone still refuses the delete. A brand-new feature is safe by existing, because it travels through that same guarded connection. Plex is reached through a separate connection with the same two locks, and it holds back even a library refresh, because on some servers a refresh empties the trash.",
     ),
 
     h2("Judged on frozen, complete evidence", "frozen"),
     p(
-      "Everything is gathered and frozen before anything is scored, so no item's fate depends on a source timing out partway through a scan. If a source that could condemn something was unreachable, the scan is marked incomplete. You can look at it, but nothing can be run against it. Acting on half the evidence is how a tool deletes a loved film during an outage.",
+      "Everything is gathered and frozen before anything is scored, so no item's fate depends on a source timing out partway through a scan. If a source that could condemn something was unreachable, the scan is marked incomplete. You can look at it, but nothing can be run against it.",
     ),
     callout(
       "note",

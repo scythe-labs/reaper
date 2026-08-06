@@ -115,10 +115,16 @@ export function ListModal({
    *  edit and remove alike. Separate from `onSaved` because removing changes what protects
    *  the library just as much as saving does and hands back no row to check.
    *
+   *  `rescore` says whether the change moved what a KEEP RULE protects, which is the only kind
+   *  of change the queue's stored fates were scored under: true when a rule names the list
+   *  (an edit or a remove of a used list), false for a list nothing uses -- every add, since an
+   *  added list carries no rule. The panel starts a scan only when it is true, so adding a list
+   *  the operator has not wired to Policy does not kick off a full library scan for nothing.
+   *
    *  The panel does the acting, for the same reason the check runs there: this modal is
    *  unmounting, and a mutation started on the way out loses the surface that would report
    *  it. */
-  onChanged?: (() => void) | undefined;
+  onChanged?: ((rescore: boolean) => void) | undefined;
   /** The panel's mirror of `canClose`, so its Back guard refuses exactly what the scrim,
    *  Escape and the ✕ refuse rather than a stale copy of one of the reasons (rule 80). */
   blockCloseRef?: React.MutableRefObject<boolean> | undefined;
@@ -245,9 +251,9 @@ export function ListModal({
     },
     onSuccess: async (saved) => {
       // Three halves: the definitions this modal wrote, the health rows keyed on them, and
-      // the policies -- adding a list writes its keeps-it-outright rule server-side, and a
-      // rename re-spells every rule naming it, so a stale policy cache would render rules
-      // about a list name that no longer exists (rule 79).
+      // the policies -- adding a list writes no rule, but a rename re-spells every rule
+      // naming it, so a stale policy cache would render rules about a list name that no
+      // longer exists (rule 79).
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["lists-configured"] }),
         queryClient.invalidateQueries({ queryKey: ["lists"] }),
@@ -257,7 +263,10 @@ export function ListModal({
       // The server's row, not the form's fields: it carries the id, and it is the cleaned
       // copy the save actually stored (rule 39).
       onSaved?.(saved);
-      onChanged?.();
+      // A rescan is warranted only when a keep rule names the list: an add writes none, so
+      // `policy_use` is empty and no fate moved; an edit of a used list can move membership or
+      // re-spell the rule, so it did.
+      onChanged?.(saved.policy_use.length > 0);
       onClose();
     },
   });
@@ -271,7 +280,9 @@ export function ListModal({
         queryClient.invalidateQueries({ queryKey: ["lists"] }),
         queryClient.invalidateQueries({ queryKey: ["policy"] }),
       ]);
-      onChanged?.();
+      // Removing a list that a rule named drops that protection, so the queue must re-score;
+      // removing one nothing used changes no fate.
+      onChanged?.((editing?.policy_use.length ?? 0) > 0);
       onClose();
     },
   });
