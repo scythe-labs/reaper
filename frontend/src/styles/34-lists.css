@@ -94,6 +94,18 @@
   border-left: 1px solid rgba(0, 0, 0, 0.55);
   background: var(--radarr);
 }
+/* The exposed half: a media type on this list that no keep rule covers, so its titles are
+   still deletable (#533). The brand color fades toward the surface -- dim, not gone, so the
+   pill still reads as Sonarr/Radarr -- and the ink drops to muted. No strikethrough. The
+   sentence under the row and the sr-only name carry the same fact for a reader (rule 21). */
+.list-head .kind-arr > span[aria-hidden].dim {
+  background: color-mix(in srgb, var(--sonarr) 22%, var(--surface));
+  color: var(--muted);
+}
+.list-head .kind-arr > span[aria-hidden] + span[aria-hidden].dim {
+  background: color-mix(in srgb, var(--radarr) 26%, var(--surface));
+  color: var(--muted);
+}
 
 /* A tag row's display pills: neutral, with the count in accent. Distinct from the green
    `.tag-chip` on purpose -- one is a fact, the other is a thing you can remove. */

@@ -67,6 +67,7 @@ const WORKING: ProtectionList = {
   list_id: 1,
   tags: null,
   server: null,
+  media_types: ["movie"],
 };
 
 /** A Plex collection the operator defined, which is the shape #483 was about. */
@@ -109,6 +110,9 @@ function tagRow(slug: string, over: Partial<ProtectionList> = {}): ProtectionLis
     list_id: 3,
     tags: null,
     server: null,
+    // A Radarr row by default: one *arr instance, one media type. A Sonarr row overrides to
+    // ["tv"], and a test spanning both seeds one of each.
+    media_types: ["movie"],
     ...over,
   };
 }
@@ -381,6 +385,107 @@ describe("the policy link, and in use vs not", () => {
 
     await user.click(screen.getByRole("button", { name: "Configure in Policy" }));
     expect(onGoToPolicy).toHaveBeenCalled();
+  });
+});
+
+describe("media-type coverage on a mixed list (#533)", () => {
+  // A keep rule protects a media TYPE, and a list holds whichever types its members do. A rule
+  // naming a mixed list on one policy alone leaves the other side deletable, and the screen has
+  // to say so rather than reading a full green "In use" that reassured the operator their shows
+  // were safe. The half a rule does not cover fades on the split pill; the count line names it;
+  // and a flat-badge list with no half to dim goes amber instead.
+  const MOVIE_ONLY: ListPolicyUse[] = [{ media_type: "movie", strength: "hard", points: null }];
+
+  /** The two halves of a tag pill, Sonarr then Radarr, so a test can assert which is dim. */
+  function arrHalves() {
+    const arr = document.querySelector(".kind-badge.kind-arr");
+    const [sonarr, radarr] = arr!.querySelectorAll<HTMLElement>(
+      ':scope > span[aria-hidden="true"]',
+    );
+    return { arr, sonarr, radarr };
+  }
+
+  it("dims the shows half and names the exposed side when a tag rule covers movies only", async () => {
+    seed(
+      [{ ...TAG_DEF, policy_use: MOVIE_ONLY }],
+      [
+        tagRow("radarr-1-keeptags-any-list3", { server: "Radarr", media_types: ["movie"] }),
+        tagRow("sonarr-1-keeptags-any-list3", { server: "Sonarr", media_types: ["tv"] }),
+      ],
+    );
+    renderPanel();
+
+    // The chip is still "In use" -- the list IS in use -- and stays green: the dimmed half is
+    // what carries the partial cover here, so the chip color is not the warning (rule 79 is
+    // answered by the pill, not by turning a true "In use" into a lie).
+    const chip = await screen.findByText("In use");
+    expect(chip).toHaveClass("status-kept");
+    expect(chip).toHaveAttribute("title", "Protecting movies only");
+
+    // The sentence, in the operator's words, and it must not restate the strength.
+    expect(
+      screen.getByText(/Keeps your movies\. Shows on it can still be deleted\./),
+    ).toBeInTheDocument();
+
+    // Shows (Sonarr) is the exposed half and fades; movies (Radarr) stays lit.
+    const { arr, sonarr, radarr } = arrHalves();
+    expect(sonarr).toHaveClass("dim");
+    expect(radarr).not.toHaveClass("dim");
+    // The dim is not the only carrier: the badge's spoken name states the exposed side, so a
+    // reader who never sees the color still gets it (rule 21).
+    expect(arr?.querySelector(".sr-only")?.textContent).toBe("Sonarr and Radarr, shows not kept");
+
+    await expectNoA11yViolations(document.body);
+  });
+
+  it("keeps both halves lit and the plain count when a rule covers both sides", async () => {
+    seed(
+      [TAG_DEF],
+      [
+        tagRow("radarr-1-keeptags-any-list3", { media_types: ["movie"] }),
+        tagRow("sonarr-1-keeptags-any-list3", { media_types: ["tv"] }),
+      ],
+    );
+    renderPanel();
+
+    const chip = await screen.findByText("In use");
+    expect(chip).toHaveClass("status-kept");
+    expect(chip).toHaveAttribute("title", "Protecting movies and shows");
+    // No exposure, so it reads the plain count, not the coverage sentence.
+    expect(screen.getByText(/8 titles on it\./)).toBeInTheDocument();
+    expect(screen.queryByText(/can still be deleted/)).not.toBeInTheDocument();
+
+    const { arr, sonarr, radarr } = arrHalves();
+    expect(sonarr).not.toHaveClass("dim");
+    expect(radarr).not.toHaveClass("dim");
+    expect(arr?.querySelector(".sr-only")?.textContent).toBe("Sonarr and Radarr");
+  });
+
+  it("turns the chip amber for a flat-badge list, which has no half to dim", async () => {
+    // A Plex watchlist or an IMDb list can hold both types too and hits the same bug, but its
+    // badge is one flat pill. With no half to fade, the chip carries the exposure by going amber.
+    seed([{ ...IMDB_DEF, policy_use: MOVIE_ONLY }], [{ ...WORKING, media_types: ["movie", "tv"] }]);
+    renderPanel();
+
+    const chip = await screen.findByText("In use");
+    expect(chip).toHaveClass("status-warn");
+    expect(chip).not.toHaveClass("status-kept");
+    expect(chip).toHaveAttribute("title", "Protecting movies only");
+    expect(
+      screen.getByText(/Keeps your movies\. Shows on it can still be deleted\./),
+    ).toBeInTheDocument();
+  });
+
+  it("dims both halves before the first check, when it cannot know what is on the list", async () => {
+    // Never checked: Reaper does not know the members yet, so it can confirm neither side is
+    // protected. Both halves are dim, and the chip is the unchanged "Not checked yet".
+    seed([TAG_DEF], []);
+    renderPanel();
+
+    expect(await screen.findByText("Not checked yet")).toBeInTheDocument();
+    const { sonarr, radarr } = arrHalves();
+    expect(sonarr).toHaveClass("dim");
+    expect(radarr).toHaveClass("dim");
   });
 });
 
@@ -727,6 +832,7 @@ const ORPHAN_ROW: ProtectionList = {
   list_id: null,
   tags: null,
   server: null,
+  media_types: ["movie"],
 };
 
 describe("a list stored before the registry existed", () => {

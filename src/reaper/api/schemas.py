@@ -1352,6 +1352,11 @@ class ProtectionListOut(BaseModel):
     """Which *arr instance a tag list's row was read from, for the per-server counts. The
     operator named the instance on Settings; null for every other source."""
 
+    media_types: list[Literal["movie", "tv"]] = Field(default_factory=list)
+    """Which media types this row's stored members span. Empty until the first sync. The
+    screen compares it against the media types a keep rule names (``policy_use``) so a rule
+    covering only one side of a mixed list reads as partial cover, not full (#533)."""
+
 
 class ListConfigIn(BaseModel):
     """A list the operator is adding or editing.
