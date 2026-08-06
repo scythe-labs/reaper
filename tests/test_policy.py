@@ -664,10 +664,14 @@ class TestDefaultPolicy:
 
     def test_the_shipped_default_protects_before_it_condemns(self) -> None:
         """Every protection the owner asked for is on by default. List membership arrives
-        as the two shipped ``on_list`` keep rules rather than as gates: one names the tag
-        list, one the IMDb list, both keeping outright, and their names are the ones
+        as shipped ``on_list`` keep rules rather than as gates, and their names are the ones
         ``list_config.ensure_defaults`` seeds -- a rule naming a list that does not exist
-        would render as a live protection covering nothing (rule 25)."""
+        would render as a live protection covering nothing (rule 25).
+
+        Scoped by the media type each list can hold (#539): the tag list spans both libraries
+        so both policies name it, but the IMDb chart is movies only, so a TV rule naming it
+        could never keep a season (rule 38). The movie default names both, the TV default the
+        tag list alone."""
         enabled = {g.gate for g in DEFAULT_MOVIE_POLICY.gates if g.enabled}
 
         assert GateId.STREAMING_NOW in enabled
@@ -676,12 +680,15 @@ class TestDefaultPolicy:
         assert GateId.DATA_HORIZON in enabled
         assert GateId.MIN_DORMANCY in enabled
 
-        for body in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY):
-            on_list = [c for c in body.protect_conditions if c.field == "on_list"]
-            assert {str(c.value) for c in on_list} == {
-                DEFAULT_TAG_LIST_NAME,
-                DEFAULT_IMDB_LIST_NAME,
-            }, body.media_type
+        movie_lists = {
+            str(c.value) for c in DEFAULT_MOVIE_POLICY.protect_conditions if c.field == "on_list"
+        }
+        tv_lists = {
+            str(c.value) for c in DEFAULT_TV_POLICY.protect_conditions if c.field == "on_list"
+        }
+        assert movie_lists == {DEFAULT_TAG_LIST_NAME, DEFAULT_IMDB_LIST_NAME}
+        assert tv_lists == {DEFAULT_TAG_LIST_NAME}
+        assert DEFAULT_IMDB_LIST_NAME not in tv_lists
 
     def test_no_shipped_protection_is_one_that_cannot_fire(self) -> None:
         """Rule 38/117, as a standing check rather than a one-off. Every gate a default
@@ -3784,12 +3791,14 @@ class TestConvertListProtections:
     def _convert(
         raw: object,
         *,
+        media_type: str = "movie",
         tag: str | None = "Tagged",
         imdb: str | None = "Top",
         collections: tuple[str, ...] = (),
     ) -> dict[str, object] | None:
         return convert_list_protections(
             raw,
+            media_type=media_type,
             tag_list_name=tag,
             imdb_list_name=imdb,
             collection_list_names=collections,
@@ -3893,6 +3902,39 @@ class TestConvertListProtections:
         assert converted is not None
         assert self._rules(converted) == ["  tagged ", "Top"]
 
+    def test_the_imdb_rule_lands_on_the_movie_body_only(self) -> None:
+        """#539: the IMDb chart is movies only, so converting a TV body must not add its
+        rule -- a TV rule naming it can never match a season and reads as a protection the
+        operator never chose (rule 38). The tag list spans both, so its rule lands on both."""
+        movie = self._convert(self._legacy(), media_type="movie")
+        tv = self._convert(self._legacy(), media_type="tv")
+
+        assert movie is not None and tv is not None
+        assert self._rules(movie) == ["Tagged", "Top"]
+        assert self._rules(tv) == ["Tagged"]
+
+    def test_the_curated_gate_strips_from_a_tv_body_with_no_replacement(self) -> None:
+        """The curated_list gate protected nothing on a TV body (IMDb is movies only), so it
+        strips clean even when no IMDb list can be named -- else a missing list would refuse
+        the TV scan over a protection that never fired there (#539, the movie body keeps
+        refusing, ``test_an_enabled_gate_with_no_target_list_keeps_its_row``)."""
+        converted = self._convert(self._legacy(), media_type="tv", imdb=None)
+
+        assert converted is not None
+        assert "curated_list" not in self._gate_ids(converted)
+        assert "Top" not in self._rules(converted)
+        # It still loads and scans: no unbuildable gate row is left behind.
+        assert build_gates(PolicyBody.model_validate(converted)) is not None
+
+    def test_collections_still_land_on_a_tv_body(self) -> None:
+        """A Plex collection's one media type is its library's, and nothing at load time
+        carries it, so both bodies keep its rule for now (filed separately). Losing no data:
+        an inert rule on the wrong body keeps nothing, and the right body still protects."""
+        converted = self._convert(self._legacy(), media_type="tv", collections=("Never Reap",))
+
+        assert converted is not None
+        assert "Never Reap" in self._rules(converted)
+
     def test_it_is_idempotent_on_a_converted_body(self) -> None:
         converted = self._convert(self._legacy())
         assert converted is not None
@@ -3901,6 +3943,7 @@ class TestConvertListProtections:
         assert (
             convert_list_protections(
                 json.loads(DEFAULT_MOVIE_POLICY.model_dump_json()),
+                media_type="movie",
                 tag_list_name="Tagged",
                 imdb_list_name="Top",
             )
