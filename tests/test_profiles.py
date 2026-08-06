@@ -25,7 +25,12 @@ from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyRepair, ProfileSettings
+from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    DEFAULT_TV_POLICY,
+    PolicyRepair,
+    ProfileSettings,
+)
 from reaper.ratings import RatingSource
 from reaper.services import list_config, list_rules, profiles
 from reaper.services.profiles import (
@@ -182,7 +187,9 @@ class TestSavingCreatesTheBackingPolicyRow:
         assert profile.enabled is False
 
 
-async def _store_policy(session: AsyncSession, body_json: str) -> None:
+async def _store_policy(
+    session: AsyncSession, body_json: str, *, media_type: str = "movie"
+) -> None:
     """Put a raw body straight into the table, bypassing every in-app writer.
 
     Only an externally edited, truncated or restored row can hold something
@@ -192,7 +199,7 @@ async def _store_policy(session: AsyncSession, body_json: str) -> None:
         PolicyModel(
             policy_hash="h",
             body_json=body_json,
-            media_type="movie",
+            media_type=media_type,
             name="stored",
             created_at=utcnow(),
         )
@@ -430,6 +437,33 @@ class TestALegacyListBodyIsConvertedOnLoad:
         assert active.repaired is False
         assert active.body == DEFAULT_MOVIE_POLICY
 
+    async def test_a_migrated_tv_body_does_not_gain_the_imdb_rule(
+        self, session: AsyncSession
+    ) -> None:
+        """#539: the IMDb chart is movies only, so migrating a TV body carries over the tag
+        list but not the IMDb list -- a TV rule naming it can never match a season (rule 38).
+        The curated_list gate strips clean on the TV body, its protection was never live
+        there."""
+        await _seed_list_rows(session)
+        body = json.loads(DEFAULT_TV_POLICY.model_dump_json())
+        body["protect_conditions"] = []
+        body["keep_tags"] = ["reaper-keep"]
+        body["keep_tags_match"] = "any"
+        body["gates"] = [
+            {"gate": "whitelisted", "enabled": True},
+            {"gate": "curated_list", "enabled": True},
+            *body["gates"],
+        ]
+        await _store_policy(session, json.dumps(body), media_type="tv")
+
+        active = await active_policy(session, "tv")
+
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert values == {"My tagged titles"}
+        assert "Films worth keeping" not in values
+        # Both retired gate rows left, so the TV scan is not refused over a movies-only list.
+        assert not {g.gate.value for g in active.body.gates} & {"whitelisted", "curated_list"}
+
 
 class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
     """A list they added for something else may not inherit a rule nothing gave it.
@@ -531,10 +565,10 @@ class TestTheConversionNamesTheListTheOperatorsProtectionBecame:
 
 
 class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
-    """``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
-    Plex keep collection arrives by migration instead, and an install that has never saved a
-    policy returns before ``convert_list_protections`` can run -- so nothing pointed a rule at
-    it, while the WHITELISTED gate that used to spare its titles is retired. A protection that
+    """The shipped conditions name the lists ``list_config.DEFAULT_LISTS`` seeds. A Plex keep
+    collection arrives by migration instead, and an install that has never saved a policy
+    returns before ``convert_list_protections`` can run -- so nothing pointed a rule at it,
+    while the WHITELISTED gate that used to spare its titles is retired. A protection that
     fired on the previous release and cannot fire on this one, silently."""
 
     @staticmethod
@@ -562,8 +596,11 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
         assert "Never Reap" in values
         # Additive: the shipped conditions are still there, and nothing is flagged, because
-        # putting the rule back removes the loss rather than announcing it.
-        assert {"IMDb Top 250", "Titles you've tagged"} <= values
+        # putting the rule back removes the loss rather than announcing it. The shipped set is
+        # the media type's own -- the IMDb chart is on the movie default alone (#539).
+        default = DEFAULT_MOVIE_POLICY if media_type == "movie" else DEFAULT_TV_POLICY
+        shipped = {str(c.value) for c in default.protect_conditions if c.field == "on_list"}
+        assert shipped <= values
         assert active.repaired is False
         assert active.name == "default"
 
