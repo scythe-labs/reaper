@@ -347,6 +347,9 @@ jobs:
 
       - name: Build
         id: build
+        # v1.3.0 still declares runs.using: node20, and no Node 24 release exists yet, so
+        # GitHub force-runs it on Node 24 and logs a deprecation warning. Bump this pin to a
+        # Node 24 release once upstream ships one: https://github.com/canonical/action-build/issues/94
         uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1.3.0
 
       # Same bar as the binaries: install it for real, watch it come up healthy.
@@ -392,6 +395,8 @@ jobs:
 
       - name: Publish to edge
         if: needs.plan.outputs.publish == 'true' && steps.creds.outputs.has == 'true'
+        # Same Node 20 deprecation as action-build above; bump alongside it once a Node 24
+        # release exists: https://github.com/canonical/action-build/issues/94
         uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1.2.0
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
