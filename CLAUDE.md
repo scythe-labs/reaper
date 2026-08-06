@@ -68,9 +68,10 @@ rule narrating the gate that enforces it pays twice for one constraint.
   control. These surfaces are *scanned* while deciding what to delete, so long copy does not
   get read at all. After writing an operator string, cut it once more. Rule 21 governs its
   vocabulary, this rule its length.
-- **Mock up UI/UX before touching code.** Present a rendered, self-contained HTML artifact in
-  Reaper's look and feel and iterate on *that* until it is approved — only then edit frontend
-  code.
+- **Mock up UI/UX before touching code.** Load the `reaper-artifact` skill, then present a
+  rendered, self-contained HTML artifact in Reaper's look and feel and iterate on *that* until it
+  is approved — only then edit frontend code. The skill hands you the app's live tokens and
+  component styles so the mockup matches without re-researching them.
   Iterating on a picture is far cheaper than iterating on a diff.
 - **Ship additive, non-breaking migrations. Never make a tester rebuild their DB.** Testers
   run Reaper on real data, so the Alembic baseline (`22777b2b5015`) is **frozen** — never
