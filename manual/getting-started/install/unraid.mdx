@@ -44,8 +44,11 @@ The channel is only offered while installing. To move an install you already hav
 container and change the tag at the end of the **Repository** field from `:latest` to `:dev`.
 
 Want both at once? Install Reaper a second time, pick **dev**, and give that one its own name,
-port, and appdata folder. Two containers sharing one appdata folder share one database, so the
-folder is the one you must not leave at its default.
+port, and appdata folder. 
+
+<Callout tone="caution">
+  Two containers sharing one appdata folder will break your database. **Do not do this!**
+</Callout>
 
 ## Next
 
