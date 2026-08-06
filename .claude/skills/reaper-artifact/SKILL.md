@@ -13,11 +13,10 @@ read them from the files named here, so the artifact tracks the app instead of a
 ## Get the stylesheet, one of two ways
 
 **Whole grammar (default).** Reuse the app's own CSS, live from source. Read
-`frontend/src/index.css`, follow its `@import "./..."` list in order, concatenate those files,
-and inline the result in one `<style>`. `scripts/gen_screenshot_mockup.py` has a `stylesheet()`
-that does exactly this in four lines; import and call it, or copy it. The import order is the
-cascade and is load-bearing, so keep it. This gives you cards, chips, buttons, and the verdict
-language exactly as the app paints them.
+`frontend/src/index.css`, follow its `@import "./..."` list in order, read each of those files,
+concatenate them, and inline the result in one `<style>`. The import order is the cascade and is
+load-bearing, so keep it. This gives you cards, chips, buttons, and the verdict language exactly
+as the app paints them.
 
 **Tokens only (lighter).** For a simple artifact, inline just the design tokens: copy the
 `:root`, the `@media (prefers-color-scheme: dark)`, and both `:root[data-theme=...]` blocks from

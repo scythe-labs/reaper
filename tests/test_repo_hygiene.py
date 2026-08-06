@@ -3476,7 +3476,6 @@ _ARTIFACT_SKILL = REPO / ".claude" / "skills" / "reaper-artifact" / "SKILL.md"
 _ARTIFACT_SKILL_SOURCES = (
     "frontend/src/index.css",
     "frontend/src/styles/00-tokens.css",
-    "scripts/gen_screenshot_mockup.py",
 )
 
 #: Concrete `--tokens` the skill names in "The variables you will reach for", reconciled by hand
