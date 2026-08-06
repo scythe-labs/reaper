@@ -1335,6 +1335,7 @@ def has_legacy_list_protections(raw: object) -> bool:
 def convert_list_protections(
     raw: object,
     *,
+    media_type: str,
     tag_list_name: str | None,
     imdb_list_name: str | None,
     collection_list_names: tuple[str, ...] = (),
@@ -1365,6 +1366,15 @@ def convert_list_protections(
     rows by what they HOLD -- these tags, that preset -- never by position, or a list the
     operator added for something else inherits the protection the moment the real one is
     deleted (``profiles._conversion_list_names``).
+
+    ``media_type`` scopes the IMDb rule to the body it can hold. ``active_policy`` converts
+    the movie and TV bodies separately, and the IMDb chart is movies only (Radarr's mirror,
+    ``services/lists.py``), so its rule lands on the movie body alone -- a TV rule naming it
+    can never match a season and would read as a protection the operator never chose (#539,
+    rule 38). The curated_list gate protected nothing on a TV body for the same reason, so
+    it strips there with no replacement. The tag list spans both libraries and its rule
+    lands on both. Plex collections still land on both: a collection's one media type is its
+    library's, and nothing at load time carries it (#545).
 
     Returns the converted body, or ``None`` when nothing is legacy-shaped. The caller
     flags the conversion (``PolicyRepair.LISTS_MIGRATED``), which makes
@@ -1401,7 +1411,8 @@ def convert_list_protections(
             new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": tag_list_name})
         for name in collection_list_names:
             new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": name})
-    if legacy_gates.get("curated_list") and imdb_list_name:
+    # The IMDb chart is movies only, so its rule lands on the movie body alone (#539).
+    if legacy_gates.get("curated_list") and imdb_list_name and media_type == "movie":
         new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": imdb_list_name})
 
     def converts(gate_id: str) -> bool:
@@ -1413,7 +1424,11 @@ def convert_list_protections(
             return True
         if gate_id == "whitelisted":
             return not had_tags or tag_list_name is not None
-        return imdb_list_name is not None
+        # curated_list: on a TV body the IMDb chart protected nothing (movies only), so the
+        # gate strips clean with no replacement -- else a missing IMDb list would refuse the
+        # TV scan over a protection that never fired there (#539). On the movie body it
+        # strips only once its replacement rule exists.
+        return media_type != "movie" or imdb_list_name is not None
 
     if isinstance(gates, list):
         body["gates"] = [
@@ -2488,16 +2503,25 @@ DEFAULT_IMDB_LIST_NAME = "IMDb Top 250"
 #: The keep rules a fresh install starts with: the seeded lists keep their titles
 #: outright, the protection level the retired WHITELISTED and CURATED_LIST gates gave the
 #: same sources. Softening one to a lean, or removing it, is a per-list choice on Policy.
-DEFAULT_LIST_CONDITIONS: tuple[ConditionSpec, ...] = (
-    ConditionSpec(field="on_list", op=Op.EQ, value=DEFAULT_TAG_LIST_NAME),
-    ConditionSpec(field="on_list", op=Op.EQ, value=DEFAULT_IMDB_LIST_NAME),
+#:
+#: Scoped by the media type each list can hold. The tag list holds movies (Radarr) and shows
+#: (Sonarr) under the one keep tag, so both policies name it. The IMDb chart is movies only
+#: -- ``services/lists.py`` hardcodes ``media_type="movie"`` for it -- so a TV rule naming it
+#: can never match a season: it protects nothing and reads as a configured protection the
+#: operator never chose (rule 38). So the TV default names the tag list alone.
+DEFAULT_TAG_CONDITION = ConditionSpec(field="on_list", op=Op.EQ, value=DEFAULT_TAG_LIST_NAME)
+DEFAULT_IMDB_CONDITION = ConditionSpec(field="on_list", op=Op.EQ, value=DEFAULT_IMDB_LIST_NAME)
+DEFAULT_MOVIE_LIST_CONDITIONS: tuple[ConditionSpec, ...] = (
+    DEFAULT_TAG_CONDITION,
+    DEFAULT_IMDB_CONDITION,
 )
+DEFAULT_TV_LIST_CONDITIONS: tuple[ConditionSpec, ...] = (DEFAULT_TAG_CONDITION,)
 
 
 DEFAULT_MOVIE_POLICY = PolicyBody(
     media_type="movie",
     condemn_at=70,
-    protect_conditions=DEFAULT_LIST_CONDITIONS,
+    protect_conditions=DEFAULT_MOVIE_LIST_CONDITIONS,
     gates=(
         GateSetting(gate=GateId.STREAMING_NOW),
         GateSetting(gate=GateId.DATA_HORIZON),
@@ -2558,8 +2582,10 @@ DEFAULT_TV_POLICY = PolicyBody(
     condemn_at=70,
     keep_last_seasons=2,
     keep_first_season=True,
-    # The same protections as movies -- a TV season is kept for the same reasons a film is.
-    protect_conditions=DEFAULT_LIST_CONDITIONS,
+    # The same gates as movies -- a TV season is kept for the same reasons a film is -- but
+    # the tag list alone as a keep rule: the IMDb chart above is movies only, so naming it
+    # here would seed a protection that can never keep a season (rule 38).
+    protect_conditions=DEFAULT_TV_LIST_CONDITIONS,
     gates=DEFAULT_MOVIE_POLICY.gates,
     signals=(
         SignalSetting(signal=SignalId.UNWATCHED, weight=60, saturate_at=1825, floor=365),

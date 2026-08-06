@@ -249,6 +249,7 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
         )
         converted = convert_list_protections(
             raw,
+            media_type=media_type,
             tag_list_name=tag_name,
             imdb_list_name=imdb_name,
             collection_list_names=own_names,
@@ -337,9 +338,11 @@ async def _default_with_own_lists(
     """The shipped default plus an outright keep rule for each Plex list the registry holds,
     and whether the registry could be read at all.
 
-    ``DEFAULT_LIST_CONDITIONS`` names the two lists ``list_config.DEFAULT_LISTS`` seeds. A
-    Plex keep collection arrives by migration instead (``20260803_1900``), so on an install
-    that has never saved a policy nothing pointed a rule at it: the row above returns before
+    The shipped conditions (``DEFAULT_MOVIE_LIST_CONDITIONS`` / ``DEFAULT_TV_LIST_CONDITIONS``)
+    name the seeded lists ``list_config.DEFAULT_LISTS`` holds, scoped to the media type each
+    can hold. A Plex keep collection arrives by migration instead (``20260803_1900``), so on
+    an install that has never saved a policy nothing pointed a rule at it: the row above returns
+    before
     ``convert_list_protections`` can run, and the WHITELISTED gate that used to spare its
     titles is retired. That is a protection which fired on the previous release and cannot
     fire on this one, with no degradation and no draft to review -- so the rule is put back

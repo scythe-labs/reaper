@@ -43,6 +43,11 @@ window keeps the wrong rule -- visible on Policy as an ordinary keep rule and re
 which is why it is left alone rather than healed by a later revision that would have to guess
 whether the rule was invented or re-tagged (#526).
 
+The same correction reaches the IMDb rule: the chart is movies only, so ``media_type`` now
+scopes it to the movie body, and a TV row converts to the tag list alone (#539). An install
+already through this revision keeps the inert TV rule, removable on Policy; it protects
+nothing, so no later revision heals it.
+
 Revision ID: d5e6f7a8b9c0
 Revises: a1b2c3d4e5f7
 Create Date: 2026-08-04 17:00:00.000000
@@ -109,6 +114,7 @@ def upgrade() -> None:
             )
             converted = convert_list_protections(
                 raw,
+                media_type=media_type,
                 tag_list_name=tag_name,
                 imdb_list_name=imdb_name,
                 collection_list_names=own_names,
