@@ -1306,6 +1306,53 @@ describe("the coverage clause", () => {
 
     expect(screen.getByText(/Reaper could read 76% of what it scores on/)).toBeVisible();
   });
+
+  it("names the floor when coverage fell under it, the way the score names its threshold", () => {
+    // An abstain forced by the floor scores at or above the threshold and is held anyway, so
+    // the coverage number alone never says it was the reason. 40% under a 50% floor.
+    const d = detail(WORKED_ROWS, { coverage_bp: 4_000 });
+    d.explanation.coverage_floor_bp = 5_000;
+    show(d);
+
+    expect(
+      screen.getByText(
+        /Reaper could read 40% of what it scores on, under the 50% it needs to judge this one/,
+      ),
+    ).toBeVisible();
+  });
+
+  it("does not name the floor when coverage cleared it", () => {
+    // 76% of the weight read, above a 50% floor: the coverage is reduced but it was enough, so
+    // the sentence states it without claiming the floor held anything.
+    const d = detail(WORKED_ROWS, { coverage_bp: 7_550 });
+    d.explanation.coverage_floor_bp = 5_000;
+    show(d);
+
+    expect(screen.getByText(/Reaper could read 76% of what it scores on\./)).toBeVisible();
+    expect(screen.queryByText(/it needs to judge/)).toBeNull();
+  });
+
+  it("drops the floor clause when the row predates the field", () => {
+    // No floor on the stored row (an older scan), so there is no line to name: the panel omits
+    // the clause exactly as it omits a null threshold, never inventing one from the live policy.
+    const d = detail(WORKED_ROWS, { coverage_bp: 4_000 });
+    d.explanation.coverage_floor_bp = null;
+    show(d);
+
+    expect(screen.getByText(/Reaper could read 40% of what it scores on\./)).toBeVisible();
+    expect(screen.queryByText(/it needs to judge/)).toBeNull();
+  });
+
+  it("drops the floor clause when it rounds to the same percent as coverage", () => {
+    // 49.9% under a 50% floor: both render "50%", so "50%, under the 50% it needs" would read
+    // as a bug. Silence is the right call, and the plain coverage sentence still renders.
+    const d = detail(WORKED_ROWS, { coverage_bp: 4_990 });
+    d.explanation.coverage_floor_bp = 5_000;
+    show(d);
+
+    expect(screen.getByText(/Reaper could read 50% of what it scores on\./)).toBeVisible();
+    expect(screen.queryByText(/it needs to judge/)).toBeNull();
+  });
 });
 
 // A row states the line it was measured against, from the ramp the SCAN froze onto it. The

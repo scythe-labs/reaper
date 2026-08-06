@@ -201,6 +201,9 @@ def thaw_threshold(value: object) -> int | None:
     A ``bool`` is not accepted even though Python calls it an ``int``: a threshold of ``True`` is
     not a score of 1, it is a row nobody can read. All three readers go through here, so that
     judgment is made once rather than three times.
+
+    ``Explanation.coverage_floor_bp`` is the same class of frozen policy int and thaws the same
+    way, so its validator reads it here too (rule 72): a floor of ``True`` is not 50 bp either.
     """
     if isinstance(value, bool):
         return None
@@ -228,6 +231,20 @@ class Explanation(BaseModel):
     be read at all and the panel is showing the degraded fallback (routes._explanation_out):
     the panel omits its "your threshold is N" clause rather than print an invented figure."""
     coverage: float
+    coverage_floor_bp: int | None = None
+    """The share of an item's scoring weight that had to be readable before a verdict, in
+    basis points (5000 = 50%). Frozen beside ``threshold`` because it is the same class of
+    value: a policy number the verdict is decided against. An abstain forced by the floor
+    scores at or above ``threshold`` and is held anyway, so the panel restates this line to
+    name what stopped it (``decide_verdict``'s order: coverage before score).
+
+    Frozen, not read off the live policy, for ``threshold``'s reason: the policy may have
+    moved since the scan and the panel would then explain a hold against a floor the item
+    was never measured against (rule 113).
+
+    ``None`` where the stored explanation could not be read, or was frozen before this field
+    shipped. Both mean "no line to state", and the panel drops the floor clause, exactly as
+    it drops the threshold clause for a ``None`` threshold."""
     watch_blind: bool | None = None
     """Whether this title is held because plays recorded earlier stopped being readable.
 
@@ -265,15 +282,19 @@ class Explanation(BaseModel):
     look" is not "we looked and it was fine", and displaying them alike is the entire
     Deleterr failure class."""
 
-    @field_validator("threshold", mode="before")
+    @field_validator("threshold", "coverage_floor_bp", mode="before")
     @classmethod
-    def _thaw_threshold(cls, value: object) -> int | None:
-        """Read an illegible score-to-beat as absent rather than failing the whole panel.
+    def _thaw_frozen_policy_int(cls, value: object) -> int | None:
+        """Read an illegible frozen policy number as absent rather than failing the whole panel.
 
         ``mode="before"`` for the same reason ``GateOutcomeOut`` uses it: the job is to run
         INSTEAD of pydantic's coercion, not after it. ``None`` costs the operator nothing here --
-        it is a state the panel already renders, by omitting its "your threshold is N" clause
-        rather than printing an invented figure (see the field docstring above).
+        it is a state the panel already renders, by omitting the clause that would restate the
+        number rather than printing an invented figure (see the field docstrings above).
+
+        Both fields, one validator: ``threshold`` and ``coverage_floor_bp`` are frozen policy
+        ints read the same way, and a second copy of the coercion is how one of them would come
+        to keep pydantic's lax bool-as-int (the ``_thaw_gate_flag`` reasoning, rule 72).
         """
         return thaw_threshold(value)
 
