@@ -60,13 +60,15 @@ def trace_call(
     how long it took, and how it ended -- which is what "the scan sat there for four minutes"
     needs.
 
-    **This is the one place the line's shape is defined, and every outbound surface emits
-    through here so the three cannot drift (rule 72).** `BaseClient._send` covers the *arr
-    calls; `PlexClient`'s `GuardedSession.request` covers every Plex read and the
-    `refresh_path` and `empty_trash` calls on the deletion path; `PublicClient._stream_once`
-    covers the ratings dataset, the longest single outbound operation in the app. Each passes
+    **This is the one place the line's shape is defined, and all three client surfaces emit
+    through here so they cannot drift (rule 72).** `BaseClient._send` covers the *arr calls;
+    `PlexClient`'s `GuardedSession.request` covers every Plex read and the `refresh_path` and
+    `empty_trash` calls on the deletion path; `PublicClient._stream_once` covers the ratings
+    dataset, the longest single outbound operation in the app. Each passes
     ``urlsplit(url).path`` and never the URL, since plexapi puts ``X-Plex-Token`` in the query
-    string (rule 13).
+    string (rule 13). One outbound call stays out: `notify/discord.py`'s webhook POST
+    (rule 33) carries its secret in the URL path itself, so tracing it by path would log the
+    credential this line keeps out.
 
     **``path`` is the argument, never the post-redirect target and never
     ``response.request.url``**: a Location header carries its own query string, and Tautulli
@@ -76,6 +78,10 @@ def trace_call(
 
     ``status=None`` is a call that never got an answer -- a timeout or an unreachable host --
     which is the shape a scan stuck on one service takes.
+
+    The line is DEBUG-only, so it reaches the 2000-line ring only when the operator turns Debug
+    on. A scan's GUID sweep pages hundreds of Plex calls in at once; that is accepted, because
+    under Debug those are the lines a stuck scan is read by.
 
     **Emitting can never raise.** `GuardedSession.request` runs under ``asyncio.to_thread`` on
     the deletion path, where a raise from a trace would surface as a failed mutation, so the

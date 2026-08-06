@@ -23,7 +23,7 @@ import respx
 
 from reaper import logbuffer
 from reaper.clients.arr import RadarrClient, SonarrClient
-from reaper.clients.base import IntegrationError
+from reaper.clients.base import IntegrationError, SafetyViolationError
 from reaper.clients.plex import GuardedSession
 from reaper.clients.plextv import PlexTvClient
 from reaper.clients.public import PublicClient
@@ -466,10 +466,11 @@ class TestEveryOutboundCallIsTraced:
     the only trace there can be -- and the reason those libraries are quiet is exactly
     the reason this line must not grow a URL, a query string, or a header.
 
-    All three outbound surfaces emit through `base.trace_call`: `BaseClient._send` for the
+    All three client surfaces emit through `base.trace_call`: `BaseClient._send` for the
     *arr calls, `GuardedSession.request` for every Plex call including the deletion path's
     `refresh_path` and `empty_trash`, and `PublicClient._stream_once` for the ratings
-    dataset. The Plex and stream cases are the last two below.
+    dataset. The Discord webhook stays out, since its path is the credential (rule 33). The
+    Plex, blocked-mutation, and stream cases are the last three below.
     """
 
     async def test_a_read_reports_service_status_and_shape(
@@ -612,6 +613,21 @@ class TestEveryOutboundCallIsTraced:
         assert "mutation=False" in call
         assert "SUPERSECRET" not in call
         assert "X-Plex-Token" not in call
+
+    def test_a_blocked_plex_mutation_is_not_traced(
+        self, call_lines: Callable[[], list[str]]
+    ) -> None:
+        """The guard raises above the trace, so a refused write reaches no wire and leaves no
+        line. A blocked mutation never happened: tracing it would invent a call and log the
+        token the block kept off the wire. This pins that ordering (rule 118).
+        """
+        session = GuardedSession(READ_ONLY)
+        with mock.patch.object(requests.Session, "send", autospec=True) as send:
+            with pytest.raises(SafetyViolationError, match="Blocked"):
+                session.delete("http://plex.test/library/metadata/1?X-Plex-Token=SUPERSECRET")
+            send.assert_not_called()
+
+        assert call_lines() == []
 
     async def test_a_streamed_download_is_traced(
         self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]], tmp_path: Path
