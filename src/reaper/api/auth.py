@@ -492,6 +492,10 @@ async def recover(request: Request, payload: RecoverIn, response: Response) -> U
             session, target, user_agent=request.headers.get("user-agent"), via_recovery=True
         )
         await session.commit()
+        # Past the commit: the redemption is durable and the admin session is open, so this
+        # records an outcome. Logging it at flush time asserted a sign-in the 409 rollback
+        # then undid, while the code was in fact still live (rule 26, #467).
+        log.warning("recovery.redeemed", detail="A recovery link was used to gain admin access.")
 
     # Only now, past the commit: the code is spent, so the copy in the data folder is a
     # secret with no remaining use. Deleting it earlier would take the operator's only

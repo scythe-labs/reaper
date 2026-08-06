@@ -345,6 +345,7 @@ class TestPlexSignInIsRateLimited:
 
 class TestARecoveryCodeIsSpentOnlyOnASignIn:
     def _client(self, tmp_path: Path, *, with_admin: bool) -> tuple[TestClient, str]:
+        tmp_path.mkdir(parents=True, exist_ok=True)
         settings = _settings(tmp_path)
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
@@ -411,3 +412,34 @@ class TestARecoveryCodeIsSpentOnlyOnASignIn:
             assert first.status_code == 200, first.text
             again = client.post("/api/auth/recover", json={"token": code}, headers=HEADERS)
             assert again.status_code == 401
+
+    def test_the_redeemed_audit_line_fires_only_on_the_durable_login(self, tmp_path: Path) -> None:
+        """The "gained admin access" line records an outcome, so it fires past the commit,
+        never at flush time where the 409 rollback then undoes the redemption (rule 26, #467).
+        Asserting it at flush time logged a sign-in that never happened while the code stayed
+        live -- the one recovery event a security review reads first."""
+        from reaper import logbuffer
+
+        def redeemed_since(cursor: int) -> list[str]:
+            return [
+                line.text
+                for line in logbuffer.RING.since(cursor)
+                if "recovery.redeemed" in line.text
+            ]
+
+        # No admin to sign in as: the 409 rolls the redemption back, so nothing was gained
+        # and nothing may be logged as gained.
+        no_admin, code = self._client(tmp_path / "no-admin", with_admin=False)
+        with no_admin as client:
+            cursor = logbuffer.RING.last_seq()
+            refused = client.post("/api/auth/recover", json={"token": code}, headers=HEADERS)
+            assert refused.status_code == 409
+            assert redeemed_since(cursor) == []
+
+        # An admin exists: the redemption commits and the line fires exactly once.
+        with_admin, code = self._client(tmp_path / "with-admin", with_admin=True)
+        with with_admin as client:
+            cursor = logbuffer.RING.last_seq()
+            ok = client.post("/api/auth/recover", json={"token": code}, headers=HEADERS)
+            assert ok.status_code == 200, ok.text
+            assert len(redeemed_since(cursor)) == 1

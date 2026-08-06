@@ -250,5 +250,8 @@ async def redeem_recovery_token(session: AsyncSession, plaintext: str) -> bool:
 
     token.used_at = utcnow()
     await session.flush()
-    log.warning("recovery.redeemed", detail="A recovery link was used to gain admin access.")
+    # No audit line here. flush() stamps used_at inside the caller's open transaction, and
+    # the no-admin 409 path rolls that back on purpose to leave the code usable (rule 125).
+    # The "was used to gain admin access" line records an outcome, so it fires past the
+    # caller's commit, where the redemption is durable and a session is actually open (#467).
     return True
