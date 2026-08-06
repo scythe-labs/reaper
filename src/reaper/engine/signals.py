@@ -53,7 +53,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import Literal, assert_never
 
 from reaper.clock import humanize_days, humanize_window
 from reaper.engine import fields
@@ -432,6 +432,13 @@ def _branch_signal(config: SignalConfig, facts: Facts, *, window_days: int) -> S
                 detail = "no IMDb rating"
             else:
                 detail = "could not read the IMDb rating"
+        case _:
+            # A new SignalId with no arm here leaves raw and observation unbound, so the
+            # shared tail below dies with UnboundLocalError on the first scored item of the
+            # next scan. mypy names the missing arm at author time instead (rule 134). The
+            # preview map has its own drift gate (test_signal_preview); the scoring switch
+            # did not, so a signal added with only its READS entry passed CI and still crashed.
+            assert_never(config.signal)
 
     if raw is None and isinstance(observation, Absent):
         # We looked, and there genuinely is no value: an unrated show, a season with no
