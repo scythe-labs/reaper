@@ -89,20 +89,23 @@ beforeEach(() => {
 });
 
 /** One membership row, the join source for a list's media types (`ProtectionList`, `/api/lists`).
- *  Only `list_id` and `media_types` matter to the picker; the rest is filled so the shape is
- *  a real row. A list with NO row here has never synced: its type is unknown, so fail-open. */
+ *  `list_id`, `media_types`, and whether a sync has landed are what the picker reads. A row with
+ *  `synced: false` (or no row at all) is a list no check has reached: type unknown, still offered.
+ *  A `synced` row with empty `media_types` is one a check confirmed holds nothing -- hidden. */
 function membershipRow(
   list_id: number,
   name: string,
   media_types: ("movie" | "tv")[],
+  opts: { synced?: boolean } = {},
 ): ProtectionList {
+  const synced = opts.synced ?? true;
   return {
     slug: `slug-${list_id}`,
     name,
     source: "plex_collection",
-    state: "working",
+    state: synced ? "working" : "never_checked",
     item_count: media_types.length,
-    last_checked_at: null,
+    last_checked_at: synced ? "2026-01-01T00:00:00Z" : null,
     error: null,
     list_id,
     tags: null,
@@ -475,7 +478,7 @@ describe("the list picker filtered by the policy's media type", () => {
     // only once the membership query lands and the shows-only list is hidden.
     expect(
       await screen.findByText(
-        "One list isn't shown here: it holds only shows, which this policy can't keep.",
+        "One list isn't shown here: it has no movies for this policy to keep.",
       ),
     ).toBeInTheDocument();
 
@@ -510,7 +513,7 @@ describe("the list picker filtered by the policy's media type", () => {
 
     expect(
       await screen.findByText(
-        "One list isn't shown here: it holds only movies, which this policy can't keep.",
+        "One list isn't shown here: it has no shows for this policy to keep.",
       ),
     ).toBeInTheDocument();
     expect(within(lists).getByRole("option", { name: "Saturday Cartoons" })).toBeInTheDocument();
@@ -518,7 +521,7 @@ describe("the list picker filtered by the policy's media type", () => {
     expect(within(lists).queryByRole("option", { name: "Movie Night" })).not.toBeInTheDocument();
   });
 
-  it("says to add a movie list when every list holds only shows", async () => {
+  it("says to add a movie list when none of the lists holds movies", async () => {
     apiMock.listConfigs.mockResolvedValue([
       { id: 2, name: "Saturday Cartoons", source: "plex_collection", config: {}, policy_use: [] },
     ]);
@@ -529,10 +532,43 @@ describe("the list picker filtered by the policy's media type", () => {
 
     expect(
       await screen.findByText(
-        "All your lists have only shows on them. This policy keeps movies, so add a movie list on Settings → Lists.",
+        "None of your lists holds movies. Add a movie list on Settings → Lists.",
       ),
     ).toBeInTheDocument();
     // Not the "you have no lists" message: the operator has one, it just can't be kept here.
     expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
+  });
+
+  it("hides a synced-empty list but keeps offering a never-synced one", async () => {
+    // The two "no media type" cases are not the same. A list a sync reached and found empty
+    // can never keep anything, so authoring a rule on it is the invalid config #549 prevents.
+    // A list no sync has reached yet is unknown, not empty: hiding it would block protecting a
+    // list the operator just added, before its first check.
+    apiMock.listConfigs.mockResolvedValue([
+      { id: 10, name: "Empty Collection", source: "plex_collection", config: {}, policy_use: [] },
+      { id: 11, name: "Brand New List", source: "plex_collection", config: {}, policy_use: [] },
+      { id: 12, name: "Movie Night", source: "plex_collection", config: {}, policy_use: [] },
+    ]);
+    apiMock.lists.mockResolvedValue([
+      membershipRow(10, "Empty Collection", [], { synced: true }),
+      membershipRow(11, "Brand New List", [], { synced: false }),
+      membershipRow(12, "Movie Night", ["movie"]),
+    ]);
+    const { user } = renderKeepEditor();
+
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+
+    // Empty Collection is the one hidden, so the note is the sync point.
+    expect(
+      await screen.findByText(
+        "One list isn't shown here: it has no movies for this policy to keep.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument();
+    expect(within(lists).getByRole("option", { name: "Brand New List" })).toBeInTheDocument();
+    expect(
+      within(lists).queryByRole("option", { name: "Empty Collection" }),
+    ).not.toBeInTheDocument();
   });
 });

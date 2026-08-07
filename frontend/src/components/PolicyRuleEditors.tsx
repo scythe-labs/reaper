@@ -738,21 +738,30 @@ export function KeepRulesEditor({
     queryFn: api.lists,
     enabled: onListField !== undefined,
   });
-  const mediaByListId = new Map<number, Set<string>>();
+  const mediaByListId = new Map<number, { types: Set<string>; anyUnsynced: boolean }>();
   for (const row of membership.data ?? []) {
     if (row.list_id == null) continue;
-    const seen = mediaByListId.get(row.list_id) ?? new Set<string>();
-    for (const t of row.media_types) seen.add(t);
-    mediaByListId.set(row.list_id, seen);
+    const entry = mediaByListId.get(row.list_id) ?? {
+      types: new Set<string>(),
+      anyUnsynced: false,
+    };
+    for (const t of row.media_types) entry.types.add(t);
+    // last_checked_at is the last check that landed; null means no sync has confirmed this
+    // slug's contents, so its media types are unknown rather than empty.
+    if (row.last_checked_at == null) entry.anyUnsynced = true;
+    mediaByListId.set(row.list_id, entry);
   }
-  // Offer a list on this policy when it holds this media type, holds both, or has not synced
-  // yet: an unknown type keeps offering, fail-open like the backend `own_list_media_scope`,
-  // where a type it cannot read never withdraws a protection. A list spanning only the other
-  // type can never match here, so offering it authors a rule that keeps nothing and reads as a
-  // protection the operator set (rule 38, #549).
+  // Offer a list on this policy when it holds this media type. Hide it once a sync has shown it
+  // holds only the other type (#549) or nothing at all: a keep rule on either keeps nothing
+  // while reading as a protection the operator set (rule 38). A list no sync has reached yet is
+  // unknown, not empty, so keep offering it -- hiding it would block protecting a list just
+  // added, before its first check.
   const coversThisMedia = (l: { id: number }) => {
-    const types = mediaByListId.get(l.id);
-    return types === undefined || types.size === 0 || types.has(mediaType);
+    const entry = mediaByListId.get(l.id);
+    if (entry === undefined) return true; // no membership row: never synced, type unknown
+    if (entry.types.has(mediaType)) return true;
+    if (entry.types.size > 0) return false; // synced, holds only the other type (#549)
+    return entry.anyUnsynced; // empty: offer only until a check confirms it holds nothing
   };
   const configured = lists.data ?? [];
   const eligible = configured.filter(coversThisMedia);
@@ -784,14 +793,14 @@ export function KeepRulesEditor({
     ? 0
     : configured.filter((l) => !coversThisMedia(l) && !named.has(l.name.trim().toLowerCase()))
         .length;
-  // This policy keeps `thisMedia`; a list hidden here holds only `otherMedia`.
+  // This policy keeps `thisMedia`; a hidden list has none of it (the other type, or nothing).
   const thisMedia = mediaType === "movie" ? "movies" : "shows";
-  const otherMedia = mediaType === "movie" ? "shows" : "movies";
+  const thisSingular = mediaType === "movie" ? "movie" : "show";
   // Why the list select is empty, said once for both composers (rule 72). A failed read is
   // named as one, never shown as "you have no lists" (rules 17/36); a set of lists that all
-  // already have a rule is a third thing; and a set that all hold only the other media type,
-  // which this policy can never keep, is a fourth (#549). Nothing is wrong in the last two, and
-  // adding another list is not the move.
+  // already have a rule is a third thing; and a set none of which holds this media type -- the
+  // other type, or nothing a sync could find -- is a fourth (#549). Nothing is wrong in the
+  // last two, and adding another list is not the move.
   const noListsMessage =
     !lists.isPending && listNames.length === 0
       ? lists.isError
@@ -800,8 +809,7 @@ export function KeepRulesEditor({
           ? 'Your "On a list you curate yourself" rule already keeps every one of your lists. ' +
             "Remove it above to set a strength per list."
           : configured.length > 0 && eligible.length === 0
-            ? `All your lists have only ${otherMedia} on them. This policy keeps ${thisMedia}, ` +
-              `so add a ${mediaType === "movie" ? "movie" : "show"} list on Settings → Lists.`
+            ? `None of your lists holds ${thisMedia}. Add a ${thisSingular} list on Settings → Lists.`
             : eligible.length > 0
               ? "Every list already has a keep rule. Remove one above to give it a different strength."
               : "You have no lists yet. Add one on Settings → Lists first."
@@ -1196,9 +1204,9 @@ export function KeepRulesEditor({
           </div>
           {/* Rule 144: this paragraph is the operator-facing copy of what the two composers
               filter out, or a filter left unsaid reads as a list that went missing. Two filters
-              are always in force and stated here. The third, media type, only hides a list when
-              the operator keeps lists of the other kind, so its copy is the conditional note
-              below and the empty-state message above, said only when it actually bit (#549). */}
+              are always in force and stated here. The third, media type, hides a list a sync has
+              shown holds no media this policy keeps, so its copy is the conditional note below
+              and the empty-state message above, said only when it actually bit (#549). */}
           <p className="help">
             Suggestions are values from your own library. Pick one, or type anything else. Fields
             already covered by a protection you've turned on aren't offered for outright keeps, so a
@@ -1208,8 +1216,8 @@ export function KeepRulesEditor({
           {!keptByBlanketRule && hiddenByMedia > 0 && (
             <p className="help">
               {hiddenByMedia === 1
-                ? `One list isn't shown here: it holds only ${otherMedia}, which this policy can't keep.`
-                : `${hiddenByMedia} lists aren't shown here: they hold only ${otherMedia}, which this policy can't keep.`}
+                ? `One list isn't shown here: it has no ${thisMedia} for this policy to keep.`
+                : `${hiddenByMedia} lists aren't shown here: they have no ${thisMedia} for this policy to keep.`}
             </p>
           )}
         </>
