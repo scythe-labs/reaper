@@ -32,7 +32,7 @@ from reaper.engine.policy import (
     ProfileSettings,
 )
 from reaper.ratings import RatingSource
-from reaper.services import list_config, list_rules, profiles
+from reaper.services import app_settings, list_config, list_rules, profiles
 from reaper.services.profiles import (
     active_policy,
     active_profile,
@@ -572,12 +572,14 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
     fired on the previous release and cannot fire on this one, silently."""
 
     @staticmethod
-    async def _seed_plex_collection(session: AsyncSession, name: str = "Never Reap") -> None:
+    async def _seed_plex_collection(
+        session: AsyncSession, name: str = "Never Reap", library: str = "Films"
+    ) -> None:
         session.add(
             ListConfigModel(
                 name=name,
                 source="plex_collection",
-                config_json=json.dumps({"library": "Films", "collection": name}),
+                config_json=json.dumps({"library": library, "collection": name}),
                 enabled=True,
                 built_in=False,
                 created_at=utcnow(),
@@ -585,10 +587,25 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         )
         await session.commit()
 
+    @staticmethod
+    async def _seed_libraries(session: AsyncSession, *libraries: tuple[str, str]) -> None:
+        """Store synced Plex libraries as ``(title, kind)`` pairs, the shape a library sync
+        writes (``app_settings.set_plex_libraries``). ``kind`` is Plex's own ``movie``/``show``."""
+        await app_settings.set_plex_libraries(
+            session,
+            [
+                {"key": i, "title": title, "kind": kind, "enabled": True}
+                for i, (title, kind) in enumerate(libraries)
+            ],
+        )
+        await session.commit()
+
     @pytest.mark.parametrize("media_type", ["movie", "tv"])
-    async def test_a_seeded_collection_is_kept_outright(
+    async def test_an_unsynced_collection_is_kept_outright_on_both(
         self, session: AsyncSession, media_type: str
     ) -> None:
+        """No library synced, so a collection's media type is unknown: it stays on both policies,
+        fail-open (#545, rules 65/91). The narrowed cases are the two below."""
         await self._seed_plex_collection(session)
 
         active = await active_policy(session, media_type)
@@ -604,6 +621,48 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         assert active.repaired is False
         assert active.name == "default"
 
+    async def test_a_collection_in_a_movie_library_lands_on_the_movie_policy_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """#545: the library is synced as a movie library, so the collection holds movies only.
+        Its keep rule seeds on the movie policy and not the TV one, where it could never match a
+        season and would read as a protection the operator never chose (rule 38)."""
+        await self._seed_libraries(session, ("Films", "movie"))
+        await self._seed_plex_collection(session, library="Films")
+
+        movie = {
+            str(c.value)
+            for c in (await active_policy(session, "movie")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        tv = {
+            str(c.value)
+            for c in (await active_policy(session, "tv")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        assert "Never Reap" in movie
+        assert "Never Reap" not in tv
+
+    async def test_a_collection_in_a_show_library_lands_on_the_tv_policy_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """The mirror: a collection in a show library seeds on the TV policy alone."""
+        await self._seed_libraries(session, ("Shows", "show"))
+        await self._seed_plex_collection(session, library="Shows")
+
+        movie = {
+            str(c.value)
+            for c in (await active_policy(session, "movie")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        tv = {
+            str(c.value)
+            for c in (await active_policy(session, "tv")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        assert "Never Reap" not in movie
+        assert "Never Reap" in tv
+
     async def test_a_registry_it_cannot_read_leaves_the_shipped_rules_alone(
         self, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -617,7 +676,7 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
 
         async def unreadable(
             _session: AsyncSession, *, keep_tags: tuple[str, ...]
-        ) -> tuple[str | None, str | None, tuple[str, ...]]:
+        ) -> tuple[str | None, str | None, tuple[str, ...], dict[str, frozenset[str]]]:
             raise SQLAlchemyError("the registry could not be read")
 
         monkeypatch.setattr(profiles, "_conversion_list_names", unreadable)
@@ -648,7 +707,7 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
 
         async def unreadable(
             _session: AsyncSession, *, keep_tags: tuple[str, ...]
-        ) -> tuple[str | None, str | None, tuple[str, ...]]:
+        ) -> tuple[str | None, str | None, tuple[str, ...], dict[str, frozenset[str]]]:
             raise SQLAlchemyError("the registry could not be read")
 
         monkeypatch.setattr(profiles, "_conversion_list_names", unreadable)
@@ -669,7 +728,9 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         assert active.repaired is False
 
     async def test_a_watchlist_definition_is_kept_too(self, session: AsyncSession) -> None:
-        """The other source ``_conversion_list_names`` returns as the operator's own."""
+        """The other source ``_conversion_list_names`` returns as the operator's own. A
+        watchlist spans the account and can hold both types, so its rule stays on both policies
+        even with libraries synced -- the scoping is a collection concern (#545)."""
         session.add(
             ListConfigModel(
                 name="My watchlist",
@@ -681,12 +742,20 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
             )
         )
         await session.commit()
+        await self._seed_libraries(session, ("Films", "movie"), ("Shows", "show"))
 
-        active = await active_policy(session, "movie")
-
-        assert "My watchlist" in {
-            str(c.value) for c in active.body.protect_conditions if c.field == "on_list"
+        movie = {
+            str(c.value)
+            for c in (await active_policy(session, "movie")).body.protect_conditions
+            if c.field == "on_list"
         }
+        tv = {
+            str(c.value)
+            for c in (await active_policy(session, "tv")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        assert "My watchlist" in movie
+        assert "My watchlist" in tv
 
     async def test_an_empty_registry_leaves_the_shipped_conditions_alone(
         self, session: AsyncSession

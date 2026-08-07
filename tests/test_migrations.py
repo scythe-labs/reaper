@@ -1255,6 +1255,50 @@ class TestPersistingTheListConversion:
         assert _lists(newest["tv"]) == {"My tagged titles"}
         engine.dispose()
 
+    def test_a_single_library_collection_scopes_to_its_media_type(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#545: a collection in a movie library holds movies only, so the whitelisted gate's
+        rule for it lands on the movie body and not the TV one. The library's type comes from
+        the synced ``plex_libraries`` setting, so the upgrade heals without a Policy-page visit.
+        A watchlist would stay on both; an unsynced library keeps both, fail-open."""
+        config, engine = self._upgraded(tmp_path, monkeypatch)
+        _only_these_lists(engine, "arr_tag", "imdb")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
+                    " created_at) VALUES ('Never Reap', 'plex_collection', :c, 1, 0, 1750000000)"
+                ),
+                {"c": json.dumps({"library": "Films", "collection": "Never Reap"})},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO app_setting (key, value_json, updated_at)"
+                    " VALUES ('plex_libraries', :v, 1750000000)"
+                ),
+                {"v": json.dumps([{"key": 1, "title": "Films", "kind": "movie", "enabled": True}])},
+            )
+        _seed_policy_of(engine, "movie", _legacy_list_body())
+        tv = _legacy_list_body()
+        tv["media_type"] = "tv"
+        _seed_policy_of(engine, "tv", tv)
+
+        command.upgrade(config, _LIST_CONVERSION)
+
+        newest = {r[1]: r[3] for r in _all_policy_rows(engine)}
+
+        def _lists(body_json: str) -> set[str]:
+            body = json.loads(body_json)
+            return {c["value"] for c in body["protect_conditions"] if c["field"] == "on_list"}
+
+        assert "Never Reap" in _lists(newest["movie"])
+        assert "Never Reap" not in _lists(newest["tv"])
+        # Both rows still fully converted, so the scan does not degrade on either (#516).
+        for body_json in newest.values():
+            assert has_legacy_list_protections(json.loads(body_json)) is False
+        engine.dispose()
+
     def test_it_leaves_a_body_alone_when_the_replacement_list_is_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
