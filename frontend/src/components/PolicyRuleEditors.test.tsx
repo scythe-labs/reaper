@@ -19,13 +19,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-import type { Condition, GradedKeep, VocabField } from "../api";
+import type { Condition, GradedKeep, ProtectionList, VocabField } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { vocabulary: vi.fn(), vocabularyValues: vi.fn(), listConfigs: vi.fn() },
+  apiMock: { vocabulary: vi.fn(), vocabularyValues: vi.fn(), listConfigs: vi.fn(), lists: vi.fn() },
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -80,9 +80,36 @@ let scrollIntoView: MockInstance<Element["scrollIntoView"]>;
 beforeEach(() => {
   apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [GENRE] });
   apiMock.vocabularyValues.mockResolvedValue({ field: "genre", values: VALUES });
+  // Fail-open default (rule 135): no membership means unknown media types, so the picker
+  // offers every list, which is what the existing membership tests below already expect. The
+  // media-type suite overrides this with rows that carry types.
+  apiMock.lists.mockResolvedValue([]);
   scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
   scrollIntoView.mockClear();
 });
+
+/** One membership row, the join source for a list's media types (`ProtectionList`, `/api/lists`).
+ *  Only `list_id` and `media_types` matter to the picker; the rest is filled so the shape is
+ *  a real row. A list with NO row here has never synced: its type is unknown, so fail-open. */
+function membershipRow(
+  list_id: number,
+  name: string,
+  media_types: ("movie" | "tv")[],
+): ProtectionList {
+  return {
+    slug: `slug-${list_id}`,
+    name,
+    source: "plex_collection",
+    state: "working",
+    item_count: media_types.length,
+    last_checked_at: null,
+    error: null,
+    list_id,
+    tags: null,
+    server: null,
+    media_types,
+  };
+}
 
 describe("arrowing through the value suggester", () => {
   it("scrolls the option it just marked into view", async () => {
@@ -165,7 +192,9 @@ const VOTES: VocabField = {
   ops: ["gte", "lte"],
 };
 
-function renderKeepEditor(over: { conditions?: Condition[]; keeps?: GradedKeep[] } = {}) {
+function renderKeepEditor(
+  over: { conditions?: Condition[]; keeps?: GradedKeep[]; mediaType?: "movie" | "tv" } = {},
+) {
   const onConditions = vi.fn();
   const onKeeps = vi.fn();
   render(
@@ -174,7 +203,7 @@ function renderKeepEditor(over: { conditions?: Condition[]; keeps?: GradedKeep[]
         conditions={over.conditions ?? []}
         keeps={over.keeps ?? []}
         gateIds={[]}
-        mediaType="movie"
+        mediaType={over.mediaType ?? "movie"}
         onConditions={onConditions}
         onKeeps={onKeeps}
       />
@@ -414,5 +443,96 @@ describe("one list, one keep rule", () => {
     await pickTheListField(user);
 
     expect(await screen.findByText(/You have no lists yet/)).toBeInTheDocument();
+  });
+});
+
+describe("the list picker filtered by the policy's media type", () => {
+  // #549: a keep rule on a list of the wrong media type can never match, so it protects
+  // nothing while reading as a protection the operator set (rule 38). A Movies policy offers
+  // only lists that hold movies, hold both, or have not synced yet (unknown, fail-open).
+  beforeEach(() => {
+    apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
+    apiMock.listConfigs.mockResolvedValue([
+      { id: 1, name: "Movie Night", source: "plex_collection", config: {}, policy_use: [] },
+      { id: 2, name: "Saturday Cartoons", source: "plex_collection", config: {}, policy_use: [] },
+      { id: 3, name: "Family Watchlist", source: "plex_watchlist", config: {}, policy_use: [] },
+      { id: 4, name: "Just Added", source: "imdb", config: {}, policy_use: [] },
+    ]);
+    apiMock.lists.mockResolvedValue([
+      membershipRow(1, "Movie Night", ["movie"]),
+      membershipRow(2, "Saturday Cartoons", ["tv"]),
+      membershipRow(3, "Family Watchlist", ["movie", "tv"]),
+      // id 4 "Just Added" has never synced: no membership row, so its type is unknown.
+    ]);
+  });
+
+  it("offers movie, both, and unknown lists but hides a shows-only one on a Movies policy", async () => {
+    const { user } = renderKeepEditor();
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+
+    // The card-level note is the sync point AND the proof the filter ran (rule 137): it appears
+    // only once the membership query lands and the shows-only list is hidden.
+    expect(
+      await screen.findByText(
+        "One list isn't shown here: it holds only shows, which this policy can't keep.",
+      ),
+    ).toBeInTheDocument();
+
+    expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument();
+    expect(within(lists).getByRole("option", { name: "Family Watchlist" })).toBeInTheDocument();
+    // Never synced, so unknown: fail-open, still offered, like the backend own_list_media_scope.
+    expect(within(lists).getByRole("option", { name: "Just Added" })).toBeInTheDocument();
+    expect(
+      within(lists).queryByRole("option", { name: "Saturday Cartoons" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("filters the lean picker the same way (rule 72)", async () => {
+    const { user } = renderKeepEditor();
+    await user.click(await screen.findByRole("button", { name: "Leans toward keeping" }));
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+
+    await screen.findByText(/isn't shown here/);
+    expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument();
+    expect(
+      within(lists).queryByRole("option", { name: "Saturday Cartoons" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("flips the filter and the words on a shows policy", async () => {
+    // The other direction, so a hardcoded "movie"/"shows" cannot pass: now the movies-only list
+    // is the one that can never be kept, and the offered lists swap.
+    const { user } = renderKeepEditor({ mediaType: "tv" });
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+
+    expect(
+      await screen.findByText(
+        "One list isn't shown here: it holds only movies, which this policy can't keep.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(lists).getByRole("option", { name: "Saturday Cartoons" })).toBeInTheDocument();
+    expect(within(lists).getByRole("option", { name: "Family Watchlist" })).toBeInTheDocument();
+    expect(within(lists).queryByRole("option", { name: "Movie Night" })).not.toBeInTheDocument();
+  });
+
+  it("says to add a movie list when every list holds only shows", async () => {
+    apiMock.listConfigs.mockResolvedValue([
+      { id: 2, name: "Saturday Cartoons", source: "plex_collection", config: {}, policy_use: [] },
+    ]);
+    apiMock.lists.mockResolvedValue([membershipRow(2, "Saturday Cartoons", ["tv"])]);
+    const { user } = renderKeepEditor();
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "All your lists have only shows on them. This policy keeps movies, so add a movie list on Settings → Lists.",
+      ),
+    ).toBeInTheDocument();
+    // Not the "you have no lists" message: the operator has one, it just can't be kept here.
+    expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
   });
 });

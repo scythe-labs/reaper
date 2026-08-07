@@ -30,8 +30,10 @@ const { apiMock } = vi.hoisted(() => ({
     vocabularyValues: vi.fn(),
     // Read by the keep-rules composer's list picker, but only while the protect vocabulary
     // offers `on_list`; answered anyway so a fixture that adds the field cannot render a
-    // failed read (rule 135).
+    // failed read (rule 135). The picker reads both: definitions for the names, and `lists`
+    // for the media types it filters them by (#549).
     listConfigs: vi.fn(),
+    lists: vi.fn(),
     savePolicy: vi.fn(),
     saveProfile: vi.fn(),
     setDeletion: vi.fn(),
@@ -158,6 +160,7 @@ function renderEditor(
   else apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [] });
   apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
   apiMock.listConfigs.mockResolvedValue([]);
+  apiMock.lists.mockResolvedValue([]);
   apiMock.validatePolicy.mockResolvedValue({
     policy_hash: "hash",
     name: "default",

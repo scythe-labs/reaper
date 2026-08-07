@@ -729,7 +729,34 @@ export function KeepRulesEditor({
     queryFn: api.listConfigs,
     enabled: onListField !== undefined,
   });
-  const allListNames = (lists.data ?? []).map((l) => l.name);
+  // The media types each list actually spans, joined in by list_id from the membership mirror.
+  // The definitions query above carries no media_types: it renders before the first sync, off
+  // a table the cache half does not fill until one runs, so which types a list holds lives on
+  // `/api/lists` instead, the same two-query join ListsPanel makes (#533, #549).
+  const membership = useQuery({
+    queryKey: ["lists"],
+    queryFn: api.lists,
+    enabled: onListField !== undefined,
+  });
+  const mediaByListId = new Map<number, Set<string>>();
+  for (const row of membership.data ?? []) {
+    if (row.list_id == null) continue;
+    const seen = mediaByListId.get(row.list_id) ?? new Set<string>();
+    for (const t of row.media_types) seen.add(t);
+    mediaByListId.set(row.list_id, seen);
+  }
+  // Offer a list on this policy when it holds this media type, holds both, or has not synced
+  // yet: an unknown type keeps offering, fail-open like the backend `own_list_media_scope`,
+  // where a type it cannot read never withdraws a protection. A list spanning only the other
+  // type can never match here, so offering it authors a rule that keeps nothing and reads as a
+  // protection the operator set (rule 38, #549).
+  const coversThisMedia = (l: { id: number }) => {
+    const types = mediaByListId.get(l.id);
+    return types === undefined || types.size === 0 || types.has(mediaType);
+  };
+  const configured = lists.data ?? [];
+  const eligible = configured.filter(coversThisMedia);
+  const allListNames = eligible.map((l) => l.name);
   // One list, one rule. A list already named by a rule is not offered again at EITHER
   // strength: the two rules do not combine, the outright one wins and the lean beside it can
   // never change an outcome, so the operator was tuning points that could not matter (#510).
@@ -750,10 +777,21 @@ export function KeepRulesEditor({
   const listNames = keptByBlanketRule
     ? []
     : allListNames.filter((n) => !named.has(n.trim().toLowerCase()));
+  // Lists gone from the picker for their media type alone, not because a rule already names
+  // them: the count the card-level note states so a hidden list does not read as one that went
+  // missing (rule 144, #549).
+  const hiddenByMedia = keptByBlanketRule
+    ? 0
+    : configured.filter((l) => !coversThisMedia(l) && !named.has(l.name.trim().toLowerCase()))
+        .length;
+  // This policy keeps `thisMedia`; a list hidden here holds only `otherMedia`.
+  const thisMedia = mediaType === "movie" ? "movies" : "shows";
+  const otherMedia = mediaType === "movie" ? "shows" : "movies";
   // Why the list select is empty, said once for both composers (rule 72). A failed read is
-  // named as one, never shown as "you have no lists" (rules 17/36), and a set of lists that
-  // all already have a rule is a fourth thing again: nothing is wrong, and adding another
-  // list is not the move.
+  // named as one, never shown as "you have no lists" (rules 17/36); a set of lists that all
+  // already have a rule is a third thing; and a set that all hold only the other media type,
+  // which this policy can never keep, is a fourth (#549). Nothing is wrong in the last two, and
+  // adding another list is not the move.
   const noListsMessage =
     !lists.isPending && listNames.length === 0
       ? lists.isError
@@ -761,9 +799,12 @@ export function KeepRulesEditor({
         : keptByBlanketRule
           ? 'Your "On a list you curate yourself" rule already keeps every one of your lists. ' +
             "Remove it above to set a strength per list."
-          : allListNames.length > 0
-            ? "Every list already has a keep rule. Remove one above to give it a different strength."
-            : "You have no lists yet. Add one on Settings → Lists first."
+          : configured.length > 0 && eligible.length === 0
+            ? `All your lists have only ${otherMedia} on them. This policy keeps ${thisMedia}, ` +
+              `so add a ${mediaType === "movie" ? "movie" : "show"} list on Settings → Lists.`
+            : eligible.length > 0
+              ? "Every list already has a keep rule. Remove one above to give it a different strength."
+              : "You have no lists yet. Add one on Settings → Lists first."
       : null;
 
   const [strength, setStrength] = useState<"hard" | "lean">("hard");
@@ -1154,14 +1195,23 @@ export function KeepRulesEditor({
             )}
           </div>
           {/* Rule 144: this paragraph is the operator-facing copy of what the two composers
-              filter out, and both filters are stated, or the one left unsaid reads as a list
-              that went missing. */}
+              filter out, or a filter left unsaid reads as a list that went missing. Two filters
+              are always in force and stated here. The third, media type, only hides a list when
+              the operator keeps lists of the other kind, so its copy is the conditional note
+              below and the empty-state message above, said only when it actually bit (#549). */}
           <p className="help">
             Suggestions are values from your own library. Pick one, or type anything else. Fields
             already covered by a protection you've turned on aren't offered for outright keeps, so a
             rule never repeats a built-in. A list that already has a keep rule isn't offered either:
             one list takes one rule, at one strength.
           </p>
+          {!keptByBlanketRule && hiddenByMedia > 0 && (
+            <p className="help">
+              {hiddenByMedia === 1
+                ? `One list isn't shown here: it holds only ${otherMedia}, which this policy can't keep.`
+                : `${hiddenByMedia} lists aren't shown here: they hold only ${otherMedia}, which this policy can't keep.`}
+            </p>
+          )}
         </>
       )}
     </div>
