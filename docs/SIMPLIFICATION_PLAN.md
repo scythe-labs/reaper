@@ -340,8 +340,9 @@ look like.
 
 ## Owner decisions
 
-Two items are product questions the audit cannot settle. Both are listed with the mechanics
-worked out so the decision is the only remaining step.
+Three items turn on a roadmap call rather than on the code. Each is listed with the mechanics
+worked out so the decision is the only remaining step. Only the first is still open: 2 and 3
+carry a recommendation, and 2 reverses what this audit's first pass concluded.
 
 **1. `engine/backtest.py` and `engine/calibration.py`: 974 source lines and 657 test lines with no
 caller in `src/`.** Verified: nothing under `src/` imports `backtest` at all, and `calibration` is
@@ -352,17 +353,49 @@ what wiring `POST /api/policy/backtest` would need. **Do not delete blind**: `do
 wire it, or move both behind a `research/` boundary excluded from the rule-35 sweep.
 
 **2. `db/models.py:314` `AutonomyGrant`: a table, two CHECK constraints and an index for a feature
-with no code.** Zero references in `src/`, `tests/` or `frontend/src/`. Its docstring concedes
-"Not wired yet" and defends itself on a single-baseline premise that expired at revision 2 of 24.
-Rule 25 forbids exactly this. The mechanics need **no migration**: `alembic/env.py:45` already has
-an `include_name` filter for cache tables, so a `RETIRED_TABLES` arm plus deleting the model class
-leaves existing databases with an inert empty table and keeps `alembic check` green. But
-`STATUS.md:45` tracks the flow as open work #1, so keeping the schema is a defensible answer.
+with no code. The recommendation here is to KEEP it and correct one sentence.** The audit's first
+pass said delete, on the strength of "zero references in `src/`, `tests/` or `frontend/src/`. That
+claim is true of *code* and false of *prose*, and the difference decides the question:
 
-A third, smaller one: `AuthSession.user_agent` is written once and read by nothing, but is
-threaded through three layers to get there. Retiring it is the staged pattern (stop writing, then
-drop the column in a later release) and should not share a PR with the PIN-flow merge, which
-touches the same functions.
+- `services/scheduler.py:22` — "This scheduler never deletes media ... automated deletion is an M8
+  concern gated behind an earned autonomy grant". `tests/test_scheduler.py:168` and `:199` pin it.
+- `engine/policy.py:386` — a policy edit "voids pending approvals and any autonomy grant keyed to
+  it".
+- `engine/backtest.py:260` — the number the earned-autonomy flow is designed to consume.
+
+So the concept is load-bearing in the reasoning even though the table is inert, and the docstring
+is the only full record of the design: the grant keys on `policy_hash`, so any policy edit mints a
+new hash, the grant stops joining, and the profile reverts to approval-required. Autonomy cannot
+be inherited by a policy nobody reviewed. The two CHECK constraints mean no row can honestly exist
+until the backtest ships, so this is fail-closed rather than a footgun.
+
+`STATUS.md:45` tracks the flow as **open work #1**, the top of the roadmap. Removing schema
+immediately before building the feature is churn, and it costs a `RETIRED_TABLES` entry that would
+be deleted again when M3b lands.
+
+What *is* wrong is the docstring's self-defense: it justifies keeping the schema on "pre-release,
+single migration baseline", a premise that expired at revision 2 of 24. The conclusion is still
+right; the stated reason is false, which is #550's class. Rewrite it to name the real reason
+(M3b is next, tracked at `STATUS.md` open 1) and the rule 25 tension is at least honestly stated.
+
+If M3b leaves the roadmap, revisit. The mechanics then need **no migration**: `alembic/env.py:45`
+already has an `include_name` filter for cache tables, so a `RETIRED_TABLES` arm plus deleting the
+model class leaves existing databases with an inert empty table and keeps `alembic check` green.
+
+**3. `AuthSession.user_agent`: keep it, and give it the reader it was missing.** Written once at
+`auth/sessions.py:69` and read by nothing today, having been threaded through seven sites to get
+there (`api/auth.py:341`, `:401`, `:492`; `services/login.py:159`, `:256`, `:320`, `:350`). The
+audit read "no reader" as "delete the column"; the owner's call is the other resolution, which is
+better: **emit it at debug when a session opens**, so a stored value that only a database client
+could see becomes something a session can actually be diagnosed with.
+
+That closes the finding rather than deferring it. The dead-state complaint is that the value is
+recorded and unreachable; a debug line makes it reachable, and the column stops being write-only
+state. The existing 300-character truncation carries over unchanged. Debug level specifically, not
+info: a user agent on every session open is noise at the default level and useful only when
+someone is chasing a login problem.
+
+No migration, no staging, and nothing to keep out of the PIN-flow merge.
 
 ## Do not touch
 
