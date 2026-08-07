@@ -91,7 +91,7 @@ get all three wrong:
    Conventional Commit and still names its finding IDs.
 
 **PR #552 is the integration pull request.** It stays open as a **draft** for the duration, base
-`dev`, head `audit/simplification-plan`, carrying `Kind/Refactor` and `Priority/Medium`. It is
+`dev`, head `audit/simplification-plan`, carrying `Kind/Chore` and `Priority/Medium`. It is
 what CI runs against on every push and what makes the accumulated diff visible. Draft is what
 stops it merging early. Its body does **not** duplicate the log below: it links to
 [Progress](#progress), because one fact written twice is the failure rule 144 describes.
