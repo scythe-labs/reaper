@@ -21,9 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
+from reaper.db.models import AppSetting, Profile
 from reaper.db.models import ListConfig as ListConfigModel
 from reaper.db.models import Policy as PolicyModel
-from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
@@ -661,6 +661,33 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
             if c.field == "on_list"
         }
         assert "Never Reap" not in movie
+        assert "Never Reap" in tv
+
+    @pytest.mark.parametrize("blob", ["123", "null", "not json at all"])
+    async def test_a_corrupt_plex_libraries_setting_does_not_crash_the_load(
+        self, session: AsyncSession, blob: str
+    ) -> None:
+        """``active_policy`` is contractually total. A malformed or non-list ``plex_libraries``
+        value (a restored backup, a hand-edit) makes ``get_plex_libraries`` raise
+        ``ValueError``/``TypeError`` inside the scope read, which must not escape. It falls back
+        to no scoping, so the collection keeps both policies, fail-open, exactly as the migration
+        does on the same value (rule 104). Each blob is a real crash trigger: ``123``/``null``
+        parse to a non-iterable, and ``not json`` fails to parse at all."""
+        await self._seed_plex_collection(session)  # "Never Reap" in "Films"
+        session.add(AppSetting(key="plex_libraries", value_json=blob, updated_at=utcnow()))
+        await session.commit()
+
+        movie = {
+            str(c.value)
+            for c in (await active_policy(session, "movie")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        tv = {
+            str(c.value)
+            for c in (await active_policy(session, "tv")).body.protect_conditions
+            if c.field == "on_list"
+        }
+        assert "Never Reap" in movie
         assert "Never Reap" in tv
 
     async def test_a_registry_it_cannot_read_leaves_the_shipped_rules_alone(

@@ -329,10 +329,16 @@ async def _conversion_list_names(
     one policy, so losing it leaves the rule on both -- the wider protection, the keep direction
     -- and does not degrade. Rules 65/91 forbid a read failure WIDENING what can be reaped; this
     read only ever widens protection. The registry read below still raises, and the caller
-    degrades on it."""
+    degrades on it.
+
+    A malformed stored value is caught here too, not only a database error: ``get_plex_libraries``
+    parses ``value_json`` and iterates it, so a corrupt or non-list setting (a restored backup, a
+    hand-edit) raises ``ValueError``/``TypeError``, and ``active_policy`` must not raise (its
+    contract, and the reason the whole load path is total). Falls back to no scoping, exactly as
+    the sibling migration ``_library_media_types`` does on the same value (rule 104)."""
     try:
         libraries = await app_settings.get_plex_libraries(session)
-    except SQLAlchemyError:
+    except (SQLAlchemyError, ValueError, TypeError):
         log.warning("policy.plex_libraries_unreadable")
         libraries = []
     rows = [
