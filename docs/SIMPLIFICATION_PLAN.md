@@ -6,7 +6,7 @@ subsystem, the engine, identity and clients, the API layer, settings and credent
 remaining services and persistence, three frontend lanes, the test suite, and the seams between
 them.
 
-**This document is a proposal, not a decision.** It is written to be attacked. Nothing in it has
+**This document is a proposal.** It is written to be attacked. Nothing in it has
 been applied.
 
 ## How to review this
@@ -19,7 +19,7 @@ behavior today. A reviewer's job is to break the ones that are wrong, in this or
    leaving the code alone, and this plan is more likely to be wrong in that direction than in any
    other. The *Do not touch* register at the bottom is the audit's own answer; extend it.
 2. **Check the size estimates.** Several are extrapolated from a sample.
-3. **Challenge the sequencing.** Waves are ordered by value-to-risk ratio, not by subsystem.
+3. **Challenge the sequencing.** Waves are ordered by value-to-risk ratio.
 4. **Argue with the recommendations** in *Owner decisions*, and with wave 1.2. Those turn on the
    roadmap rather than on the code, and both reverse an earlier conclusion of this audit.
 
@@ -40,13 +40,12 @@ and they should be read before any of the findings below:
   docstrings, comments and blanks, Python tests are **0.82x** their source and the frontend is
   **0.45x**. Median test body is **12 lines**; only 8 of 3,164 exceed 80. The suite is not
   copy-pasted assertions: AST-exact duplicate bodies number **13** in 100k lines.
-- **The comments are the record, not padding.** `identity.py` is 47% prose, `plex.py` 41%,
+- **The comments are the record.** `identity.py` is 47% prose, `plex.py` 41%,
   `policy.py` 26%, and the frontend runs 31%. Nearly all of it is incident history citing issue
   and rule numbers. Rule 7/24 makes a comment naming a safeguard a checkable claim, and five
   comments that failed that check are filed as #550. The other several thousand passed.
 
-So this plan does not propose making Reaper smaller. It proposes removing four specific kinds of
-waste, of which only the fourth is large:
+The plan therefore targets four specific kinds of waste, of which only the fourth is large:
 
 | Kind | Where it is | Rough size |
 | --- | --- | --- |
@@ -231,7 +230,7 @@ reasoning.
 Rules 72, 104 and 144 are the same obligation at three scales: a copied function, a value derived
 twice, a sentence stated twice. These are the clusters where the copies exist and, in several
 cases, **have already drifted**. Ordered by drift risk rather than line count, because the value
-here is preventing a future divergence, not the lines.
+here is preventing a future divergence.
 
 **Already drifted, fix first:**
 
@@ -344,7 +343,7 @@ FastAPI already serves the schema at `/api/openapi.json`, and the repo already h
 generated-asset pattern rule 68 requires. Proposal: a committed generator emitting
 `api.types.gen.ts`, plus a **small hand-written overlay** for the ~8 documented deliberate
 tightenings (the closed `status` union, the optional fields the fixtures do not carry) and the 3
-client-only shapes. The overlay is load-bearing, not optional: generation *loosens* unions the
+client-only shapes. The overlay is load-bearing: generation *loosens* unions the
 TypeScript deliberately narrows. **~1,100 TS lines and ~400 Python lines replaced by ~150**, and
 the guard upgrades from "names match" to "types and optionality match".
 
@@ -402,9 +401,9 @@ until the backtest ships, so this is fail-closed rather than a footgun.
 immediately before building the feature is churn, and it costs a `RETIRED_TABLES` entry that would
 be deleted again when M3b lands.
 
-What *is* wrong is the docstring's self-defense: it justifies keeping the schema on "pre-release,
-single migration baseline", a premise that expired at revision 2 of 24. The conclusion is still
-right; the stated reason is false, which is #550's class. Rewrite it to name the real reason
+The docstring's self-defense is the broken part. It justifies keeping the schema on "pre-release,
+single migration baseline", a premise that expired at revision 2 of 24, so the conclusion is still
+right while the stated reason is false. That is #550's class. Rewrite it to name the real reason
 (M3b is next, tracked at `STATUS.md` open 1) and the rule 25 tension is at least honestly stated.
 
 If M3b leaves the roadmap, revisit. The mechanics then need **no migration**: `alembic/env.py:45`
