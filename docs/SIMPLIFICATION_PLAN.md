@@ -161,7 +161,7 @@ row moving is indistinguishable from one that never started.
 | # | Phase | Status | Landed | Notes |
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 outstanding |
-| 1 | Behavioral baseline | in progress | 1 of 2 | Tier A landed. Blocks every later phase. C13 outstanding |
+| 1 | Behavioral baseline | **done** | 2 of 2 | C13 is due before phase 2 and only the owner can settle it |
 | 2 | Test-suite wall clock | not started | 0 of ~6 | |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
@@ -186,7 +186,8 @@ forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: it
 
 | Checkpoint | Status | Settled by |
 | --- | --- | --- |
-| C1 to C14 | not started | — |
+| C13 | **due** | Nobody yet. Phase 2 may not start until the owner reads what the two tiers cover and what they redact |
+| C1, C2 to C12, C14 | not started | — |
 
 Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
 C7, C9, C11, C13, C14) records **what the owner decided**, not that they looked. The decision is
@@ -200,6 +201,7 @@ here first and never reconstructed later.
 | Sub-PR | Phase | Finding IDs | Symbol | Baseline moved? | Notes |
 | --- | --- | --- | --- | --- | --- |
 | #562 | 1 | Tier A | `_policy_lab.pinned_baseline` | n/a, it is the baseline | 880 blocks re-pinned, every leaf additive. Fixture 754 KB → 1,574 KB |
+| #563 | 1 | Tier B | `scripts/baseline_capture.py` | n/a, it is the baseline | Snapshot 86, 5,965 items, 592 planned. Source database digest unchanged |
 
 ### Killed while executing
 
@@ -459,6 +461,21 @@ substitutes for it.
 
 Two PRs, roughly one session each: Tier A extends the fixture, Tier B adds the script and its
 committed capture. Both ship with their generators under rule 68.
+
+> **Landed.** `scripts/baseline_capture.py` writes `tests/fixtures/whole_library_baseline.json`:
+> snapshot 86, 5,965 items, and the plan `build_plan` builds from it. Three things the section
+> above did not anticipate. **`build_plan` writes**, so the source is opened `mode=ro` and copied
+> to a temp directory and the plan is built against the copy (digest of the source unchanged,
+> before and after). **A real database is behind head** — this one by three revisions — and the
+> ORM names every mapped column, so the copy is migrated first and the revision it reached is
+> recorded beside the capture. And **the plan is larger than the condemned set**, 592 against
+> 543, because hand reaps add to it where spares subtract; a baseline pinning verdicts alone
+> would have missed the override layer entirely.
+>
+> The capture carries no string that is not an item id, a digest, or one of a fixed vocabulary,
+> and the writer refuses rather than warns. That is not decoration: three of `build_plan`'s
+> refusals name the media keys they refused on, and the guard caught four wrong step-kind names
+> on the first run.
 
 **This phase is worth skipping only if the answer to "how would we know?" is already good.** It is
 not: S3's own example is that dropping eight `except SafetyViolationError: raise` arms goes green.

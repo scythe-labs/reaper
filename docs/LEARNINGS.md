@@ -2985,6 +2985,32 @@ leaves per block where there were 3.
   going blind between scans, which is not a property of a fact vector — every replayed value is
   `None`. It is pinned for the key's presence and nothing else; rule 141 governs the rest.
 
+## A plan is larger than the condemned set, and a real database is behind head (2026-08-07)
+
+Two findings from building the whole-library capture, which reads one stored snapshot and runs
+`build_plan` against a throwaway copy of it.
+
+- **The plan covered more items than the scan condemned**: 543 condemned, 592 planned. Not a
+  bug, and the direction is the surprising part. `effective_condemned` applies the operator's
+  overrides on top of the frozen verdicts, so hand reaps *add* to the set while spares subtract,
+  and on this library the reaps outnumbered the spares. ⇒ A baseline that pinned only the
+  scan's verdicts would miss the whole override layer, which is a live input to what gets
+  deleted. Capture the plan, not just the verdicts.
+- **The operator's own database was three migrations behind head**, because it was last written
+  by a build older than the checkout. Anything reading a real library through the ORM fails
+  outright on that — one missing column fails the whole select, since SQLAlchemy names every
+  mapped column. Raw SQL naming its own columns survives it, which is why the policy-lab
+  extractor never hit this. ⇒ A tool that reads a tester's database through models migrates its
+  own copy first and records the revision it reached, or it is answering under a schema it
+  cannot name.
+
+Also recorded: **`build_plan` writes**, so a read-only capture cannot call it in place. The
+source is opened `mode=ro` and `sqlite3`-backed up to a temp directory; the plan is built
+against the copy and rolled back on top of that. Verified by digesting the source file before
+and after — unchanged. A rollback alone would have been enough in theory and is not the trade
+to make here: a bug in a capture script must not be able to leave an approved run in the
+operator's database.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have

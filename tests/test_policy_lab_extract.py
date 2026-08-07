@@ -30,9 +30,7 @@ without the scorer moving.
 
 from __future__ import annotations
 
-import ast
 import copy
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -41,32 +39,11 @@ from typing import Any
 import pytest
 
 from reaper.engine.policy import SCORER_VERSION
+from tests._generators import functions_that_can_write, load_script
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "policy_lab_extract.py"
 
-
-def _load_script() -> Any:
-    """Import the generator by path rather than by name, and put ``sys.path`` back.
-
-    ``scripts/`` is not a package and is not on the path. Executing the module runs its own
-    two ``sys.path.insert`` calls, so importing it here mutates process-global state the next
-    xdist worker inherits (rule 133) -- restoring it is what makes that untrue, not the spec.
-    An earlier docstring credited the spec, and was measured wrong: under pytest those two
-    entries happen to be present already, so the mechanism looked clean because of the
-    environment, which is rule 119's environmental accident.
-    """
-    before = list(sys.path)
-    try:
-        spec = importlib.util.spec_from_file_location("policy_lab_extract", _SCRIPT)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    finally:
-        sys.path[:] = before
-    return module
-
-
-extract = _load_script()
+extract = load_script(_SCRIPT)
 
 #: A baseline no engine can produce, so "this vector moved" is guaranteed rather than
 #: probable. A plausible-looking wrong baseline could coincide with the real answer for some
@@ -420,55 +397,6 @@ class TestTheFullExtractIsHeldToTheSameBar:
         extract.guard_the_full_extract(None)
 
 
-#: Spellings that put bytes on disk. Rule 147 asks for the accepted set to be written down
-#: and the matcher proven against what it rejects, which
-#: ``test_the_matcher_sees_the_forms_a_second_writer_would_use`` does. The residual blind
-#: spot is fully dynamic dispatch (``getattr(OUT, "write_" + "text")``), which no walk over
-#: names can see.
-_WRITE_SPELLINGS = frozenset(
-    {
-        "write_text",
-        "write_bytes",
-        "writelines",
-        "write",
-        "dump",
-        "open",
-        "replace",
-        "rename",
-        "copy",
-        "copyfile",
-        "copy2",
-        "touch",
-    }
-)
-
-
-def _functions_that_can_write(source: str) -> set[str]:
-    """Every function naming a write spelling, whether it calls it or merely takes a
-    reference to it.
-
-    Attributes and bare names rather than calls only: ``writer = OUT.write_text`` followed by
-    ``writer(...)`` is a call whose callee is a local, so a call-shaped matcher sees nothing,
-    and that alias was measured invisible to the first version of this guard.
-    """
-    tree = ast.parse(source)
-    owners: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        for inner in ast.walk(node):
-            named = (
-                inner.attr
-                if isinstance(inner, ast.Attribute)
-                else inner.id
-                if isinstance(inner, ast.Name)
-                else None
-            )
-            if named in _WRITE_SPELLINGS:
-                owners.add(node.name)
-    return owners
-
-
 class TestOneWriterSetsTheStamp:
     """Rule 72's sibling here cannot be reached by a test: the full extract needs a real
     ``data/reaper.db``. So the stamp is set by the single writer both paths call, and what is
@@ -503,7 +431,7 @@ class TestOneWriterSetsTheStamp:
         """The design rests on there being one write, and a second one added later would
         take the stamp with it on that path alone -- the very split that made the sibling
         untestable."""
-        assert _functions_that_can_write(_SCRIPT.read_text()) == {"write_fixture"}
+        assert functions_that_can_write(_SCRIPT.read_text()) == {"write_fixture"}
 
     @pytest.mark.parametrize(
         "snippet",
@@ -521,12 +449,12 @@ class TestOneWriterSetsTheStamp:
         could spell the thing in, not only the one already there. The first version counted
         the string ``OUT.write_text`` and read two, because ``write_fixture``'s own docstring
         says it; the second parsed calls only, and the alias form walked straight past."""
-        assert _functions_that_can_write(snippet) == {"sneak"}
+        assert functions_that_can_write(snippet) == {"sneak"}
 
     def test_the_matcher_does_not_fire_on_serialization_alone(self) -> None:
         """``json.dumps`` produces a string and touches no disk. A matcher that flagged it
         would make the guard useless the moment anyone formatted JSON outside the writer."""
-        assert _functions_that_can_write("def calm(f):\n    return json.dumps(f)\n") == set()
+        assert functions_that_can_write("def calm(f):\n    return json.dumps(f)\n") == set()
 
 
 class TestTheCommittedFixtureAgreesWithTheGenerator:
