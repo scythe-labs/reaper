@@ -53,11 +53,14 @@ from tests._policy_lab import (
     DEGRADABLE,
     FIXTURE,
     VERDICT_RANK,
+    baseline_differences,
     degraded,
     judge,
     lane_gates,
     lane_policy,
+    leaves,
     load_fixture,
+    pinned_baseline,
     with_watchers_window,
 )
 
@@ -177,20 +180,25 @@ class TestPinnedBaseline:
 
     @staticmethod
     def _check(key: str, policy_for: object, gates_for: object) -> None:
+        """Compare the WHOLE pinned block, leaf by leaf.
+
+        The verdict triple alone was what this compared, and it reads a much larger
+        conclusion coarsely: which protections were checked, what each signal contributed
+        and whether it could be evaluated all move under a refactor that still rounds to the
+        same score against the same threshold. ``pinned_baseline`` is the same function the
+        regeneration script writes with, so the comparison and the write cannot disagree
+        about what a baseline is (rule 119).
+        """
         mismatches = []
         for v in VECTORS:
-            verdict, score, coverage_bp, _, _ = judge(
+            fresh = pinned_baseline(
                 v,
                 policy_for(v["media_type"]),  # type: ignore[operator]
                 gates_for(v["media_type"]),  # type: ignore[operator]
             )
-            base = v[key]
-            if (verdict, score, coverage_bp) != (
-                base["verdict"],
-                base["score"],
-                base["coverage_bp"],
-            ):
-                mismatches.append(f"{v['id']} {key}: {base} -> ({verdict}, {score}, {coverage_bp})")
+            mismatches += [
+                f"{v['id']} {key}.{line}" for line in baseline_differences(v[key], fresh)
+            ]
         assert not mismatches, "\n".join(mismatches[:10])
 
     def test_the_fixture_names_the_scorer_its_baselines_were_cut_under(self) -> None:
@@ -206,6 +214,95 @@ class TestPinnedBaseline:
             f"fixture was cut under scorer {FIX.get('scorer_version')}, running scorer is "
             f"{SCORER_VERSION}; re-run scripts/policy_lab_extract.py --rebaseline"
         )
+
+    @pytest.mark.parametrize("key", ["baseline", "lane_baseline"])
+    def test_every_vector_pins_the_whole_block_rather_than_a_subset_of_it(self, key: str) -> None:
+        """Rule 145: the field list is a population, reconciled by hand here.
+
+        A field dropped from ``pinned_baseline`` alone goes red above, because the committed
+        fixture still carries it. A field dropped from both -- removed from the builder and
+        then re-pinned -- is silent: the comparison stops covering it and every test in this
+        class stays green while the conclusion it claims to freeze got smaller. This is the
+        only thing that notices.
+        """
+        expected = {
+            "verdict",
+            "score",
+            "coverage_bp",
+            "base_score",
+            "keep_discount",
+            "threshold",
+            "coverage_floor_bp",
+            "watch_blind",
+            "signals",
+            "protectors",
+            "checked_and_did_not_fire",
+            "could_not_be_checked",
+        }
+        wrong = [v["id"] for v in VECTORS if set(v[key]) != expected]
+        assert not wrong, f"{len(wrong)} vector(s) carry a different {key} shape: {wrong[:5]}"
+
+    def test_the_fixture_pins_no_operator_copy(self) -> None:
+        """``detail`` is rule 21 copy on every one of these blocks, it is roughly 60% of the
+        explanation by bytes, and phases 4, 7 and 9 of the simplification plan all edit it.
+        Pinned, every wording change would land as a baseline stop -- and a stop that fires on
+        rewording is one that stops being read.
+
+        Walks the committed fixture rather than the builder, because the fixture is what a
+        future regeneration would carry it in.
+        """
+        carried = [
+            v["id"]
+            for v in VECTORS
+            for key in ("baseline", "lane_baseline")
+            for path, _ in leaves(v[key])
+            if path.endswith("detail")
+        ]
+        assert not carried, f"{len(carried)} pinned detail string(s), first: {carried[:5]}"
+
+
+class TestTheBaselineComparisonCanReportAMove:
+    """``TestPinnedBaseline`` is worth its bytes only if the comparison behind it can fail.
+
+    ``baseline_differences`` returning an empty list for everything would leave both baseline
+    tests green against any engine change at all, and nothing would say a word -- the fixture
+    would keep being re-pinned and keep reading as a trip-wire (rule 118).
+    """
+
+    def test_a_moved_scalar_names_both_values(self) -> None:
+        assert baseline_differences({"score": 70}, {"score": 52}) == ["score: 70 -> 52"]
+
+    def test_a_moved_leaf_inside_a_list_is_named_by_index(self) -> None:
+        """The failure a reader needs. Twelve signal rows compared as one blob would say
+        only that ``signals`` moved, which is where a session starts guessing."""
+        was = {"signals": [{"id": "unwatched", "contribution": 12.0}]}
+        fresh = {"signals": [{"id": "unwatched", "contribution": 9.0}]}
+
+        assert baseline_differences(was, fresh) == ["signals[0].contribution: 12.0 -> 9.0"]
+
+    def test_a_gate_dropped_from_a_list_is_reported_rather_than_ignored(self) -> None:
+        """A shortened list is the shape the "checked and did not fire" promise fails in:
+        the entries that remain still match, so a comparison that walked only the shorter
+        side would report nothing."""
+        was = {"checked_and_did_not_fire": ["streaming_now", "data_horizon"]}
+        fresh = {"checked_and_did_not_fire": ["streaming_now"]}
+
+        assert baseline_differences(was, fresh) == [
+            "checked_and_did_not_fire[1]: 'data_horizon' -> <absent>"
+        ]
+
+    def test_a_null_is_a_value_rather_than_an_absence(self) -> None:
+        """``watch_blind`` is pinned as ``None`` on every vector, so a comparison treating
+        absent and null alike would let the key leave ``_explain`` unnoticed -- which is the
+        one thing pinning that field buys."""
+        assert baseline_differences({"watch_blind": None}, {}) == ["watch_blind: None -> <absent>"]
+
+    def test_identical_blocks_report_nothing(self) -> None:
+        """The other direction: a comparison that always reported something would make every
+        re-pin look like an engine change and teach people to reach for ``--unbumped``."""
+        block = {"score": 70, "signals": [{"id": "unwatched", "contribution": 12.0}]}
+
+        assert baseline_differences(block, dict(block)) == []
 
 
 class TestFixtureStaysDeidentified:
