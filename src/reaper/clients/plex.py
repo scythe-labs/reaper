@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+import time
 from collections.abc import Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -43,7 +44,7 @@ from xml.etree.ElementTree import Element
 import requests
 import structlog
 
-from reaper.clients.base import SAFE_METHODS, SafetyViolationError
+from reaper.clients.base import SAFE_METHODS, SafetyViolationError, trace_call
 from reaper.config import RuntimeSafety
 from reaper.engine.identity import PlexFile, PlexItem, parse_guids, to_basename
 from reaper.ratings import Rating, from_plex
@@ -354,7 +355,17 @@ class GuardedSession(requests.Session):
                     "action journal. Destructive calls must go through the action "
                     "executor so that they are recorded before they are sent."
                 )
-        return super().request(method, url, *args, **kwargs)
+        # Trace only what passed the guard and reached the wire; a blocked mutation raised
+        # above and never happened. plexapi puts X-Plex-Token in the query string (rule 13),
+        # so `path` -- already the token-free split above -- is what is logged, never `url`.
+        started = time.monotonic()
+        status: int | None = None
+        try:
+            response = super().request(method, url, *args, **kwargs)
+            status = response.status_code
+            return response
+        finally:
+            trace_call("plex", method, path, status, started, mutation=mutates)
 
 
 def normalize_label(tag: str) -> str:

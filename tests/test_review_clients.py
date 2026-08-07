@@ -11,17 +11,22 @@ must not be relayed same-origin.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import httpx
 import httpx2
 import pytest
+import requests
 import respx
 
 from reaper import logbuffer
 from reaper.clients.arr import RadarrClient, SonarrClient
-from reaper.clients.base import IntegrationError
+from reaper.clients.base import IntegrationError, SafetyViolationError
+from reaper.clients.plex import GuardedSession
 from reaper.clients.plextv import PlexTvClient
+from reaper.clients.public import PublicClient
 from reaper.clients.seerr import SeerrClient
 from reaper.clients.tautulli import ALLOWED_IMAGE_TYPES, TautulliClient
 from reaper.config import RuntimeSafety
@@ -453,17 +458,19 @@ def call_lines(_restore_logging: None) -> Iterator[Callable[[], list[str]]]:
     logbuffer.RING = logbuffer.LogRing()
 
 
-class TestEveryBaseClientCallIsTraced:
-    """One DEBUG line per `BaseClient` call, and it never carries a credential.
+class TestEveryOutboundCallIsTraced:
+    """One DEBUG line per outbound call, and it never carries a credential.
 
     Nothing else records that one of these calls happened: the HTTP libraries are pinned
     to WARNING because they log the URL verbatim (``logging._NOISY_LOGGERS``), so this is
     the only trace there can be -- and the reason those libraries are quiet is exactly
     the reason this line must not grow a URL, a query string, or a header.
 
-    Named for `BaseClient` and not for every outbound call, because two surfaces are not
-    traced: `PlexClient` rides plexapi rather than this base, and `PublicClient.stream_to`
-    streams past `_send`. `_trace`'s docstring carries what extending it would cost.
+    All three client surfaces emit through `base.trace_call`: `BaseClient._send` for the
+    *arr calls, `GuardedSession.request` for every Plex call including the deletion path's
+    `refresh_path` and `empty_trash`, and `PublicClient._stream_once` for the ratings
+    dataset. The Discord webhook stays out, since its path is the credential (rule 33). The
+    Plex, blocked-mutation, and stream cases are the last three below.
     """
 
     async def test_a_read_reports_service_status_and_shape(
@@ -584,3 +591,58 @@ class TestEveryBaseClientCallIsTraced:
         assert "SUPERSECRET" not in call
         assert "apikey" not in call
         assert "path=/api/v2" in call
+
+    def test_a_plex_call_is_traced_by_path_and_never_the_token(
+        self, call_lines: Callable[[], list[str]]
+    ) -> None:
+        """`PlexClient` rides plexapi through `GuardedSession`, not `BaseClient`, so this is
+        the only line a Plex read or an `emptyTrash` on the deletion path produces. plexapi
+        carries `X-Plex-Token` in the query string (rule 13), so the line logs the path split
+        and never the URL, exactly like the Tautulli case above.
+        """
+        session = GuardedSession(READ_ONLY)
+        response = requests.Response()
+        response.status_code = 200
+        with mock.patch.object(requests.Session, "send", autospec=True, return_value=response):
+            session.get("http://plex.test/library/sections?X-Plex-Token=SUPERSECRET")
+
+        (call,) = call_lines()
+        assert "service=plex" in call
+        assert "path=/library/sections" in call
+        assert "status=200" in call
+        assert "mutation=False" in call
+        assert "SUPERSECRET" not in call
+        assert "X-Plex-Token" not in call
+
+    def test_a_blocked_plex_mutation_is_not_traced(
+        self, call_lines: Callable[[], list[str]]
+    ) -> None:
+        """The guard raises above the trace, so a refused write reaches no wire and leaves no
+        line. A blocked mutation never happened: tracing it would invent a call and log the
+        token the block kept off the wire. This pins that ordering (rule 118).
+        """
+        session = GuardedSession(READ_ONLY)
+        with mock.patch.object(requests.Session, "send", autospec=True) as send:
+            with pytest.raises(SafetyViolationError, match="Blocked"):
+                session.delete("http://plex.test/library/metadata/1?X-Plex-Token=SUPERSECRET")
+            send.assert_not_called()
+
+        assert call_lines() == []
+
+    async def test_a_streamed_download_is_traced(
+        self, httpx2_mock: respx.Router, call_lines: Callable[[], list[str]], tmp_path: Path
+    ) -> None:
+        """`PublicClient._stream_once` hand-rolls its loop past `_send`, so the ratings
+        dataset -- the longest single outbound operation in the app -- traces itself. `path`
+        is the argument, never the post-redirect target.
+        """
+        httpx2_mock.get("https://data.test/ratings.tsv").mock(
+            return_value=httpx.Response(200, content=b"col\tval\n")
+        )
+        async with PublicClient("https://data.test") as client:
+            await client.stream_to("/ratings.tsv", tmp_path / "out.tsv")
+
+        (call,) = call_lines()
+        assert "service=public-fetch" in call
+        assert "path=/ratings.tsv" in call
+        assert "status=200" in call

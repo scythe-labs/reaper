@@ -22,6 +22,7 @@ Two things it deliberately does *not* rely on:
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar, Self
@@ -39,6 +40,64 @@ from tenacity import (
 from reaper.config import RuntimeSafety
 
 log = structlog.get_logger(__name__)
+
+
+def trace_call(
+    service: str,
+    method: str,
+    path: str,
+    status: int | None,
+    started: float,
+    *,
+    mutation: bool = False,
+) -> None:
+    """One DEBUG line per outbound call: which service, what was asked, what came back.
+
+    Nothing else records that one of these calls happened. The HTTP libraries would, but
+    they are pinned to WARNING on purpose (``logging._NOISY_LOGGERS``) because they log the
+    URL verbatim and the structlog scrubber never sees a stdlib record, so this is the only
+    trace there can be. ``client.retry`` says a blip happened; this says the call happened,
+    how long it took, and how it ended -- which is what "the scan sat there for four minutes"
+    needs.
+
+    **This is the one place the line's shape is defined, and all three client surfaces emit
+    through here so they cannot drift (rule 72).** `BaseClient._send` covers the *arr calls;
+    `PlexClient`'s `GuardedSession.request` covers every Plex read and the `refresh_path` and
+    `empty_trash` calls on the deletion path; `PublicClient._stream_once` covers the ratings
+    dataset, the longest single outbound operation in the app. Each passes
+    ``urlsplit(url).path`` and never the URL, since plexapi puts ``X-Plex-Token`` in the query
+    string (rule 13). One outbound call stays out: `notify/discord.py`'s webhook POST
+    (rule 33) carries its secret in the URL path itself, so tracing it by path would log the
+    credential this line keeps out.
+
+    **``path`` is the argument, never the post-redirect target and never
+    ``response.request.url``**: a Location header carries its own query string, and Tautulli
+    and MDBList both put their key in one (rule 13). ``params`` and ``headers`` are never
+    logged for the same reason. The scrubber would catch the known key names, but not logging
+    a credential is a stronger guarantee than redacting one.
+
+    ``status=None`` is a call that never got an answer -- a timeout or an unreachable host --
+    which is the shape a scan stuck on one service takes.
+
+    The line is DEBUG-only, so it reaches the 2000-line ring only when the operator turns Debug
+    on. A scan's GUID sweep pages hundreds of Plex calls in at once; that is accepted, because
+    under Debug those are the lines a stuck scan is read by.
+
+    **Emitting can never raise.** `GuardedSession.request` runs under ``asyncio.to_thread`` on
+    the deletion path, where a raise from a trace would surface as a failed mutation, so the
+    emit is swallowed: a trace must never break the call it describes.
+    """
+    with contextlib.suppress(Exception):
+        log.debug(
+            "client.call",
+            service=service,
+            method=method.upper(),
+            path=path,
+            status=status,
+            duration_ms=round((time.monotonic() - started) * 1000),
+            mutation=mutation,
+        )
+
 
 # Methods that cannot change remote state.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -281,43 +340,8 @@ class BaseClient:
     def _trace(
         self, method: str, path: str, status: int | None, started: float, *, mutation: bool = False
     ) -> None:
-        """One line per `BaseClient` call: which service, what was asked, what came back.
-
-        Nothing else records that one of these calls happened. The HTTP libraries would, but
-        they are pinned to WARNING on purpose (``logging._NOISY_LOGGERS``) because they log
-        the URL verbatim and the structlog scrubber never sees a stdlib record, so this is
-        the only trace there can be. ``client.retry`` says a blip happened; this says the
-        call happened, how long it took, and how it ended -- which is what "the scan sat
-        there for four minutes" needs.
-
-        **Two outbound surfaces are NOT traced, and reading the *arr half as the whole
-        picture is the mistake this paragraph exists to prevent.** `PlexClient` is not a
-        `BaseClient`: it rides plexapi through `GuardedSession`, so every Plex read, and the
-        `refresh_path` and `empty_trash` calls on the deletion path, produce no line here.
-        `PublicClient.stream_to` streams past `_send`, so the ratings dataset -- the longest
-        single outbound operation in the app -- produces none either. Extending the trace to
-        `GuardedSession` means logging ``urlsplit(url).path`` and never the URL, since
-        plexapi puts ``X-Plex-Token`` in the query string (rule 13), and weighing the volume:
-        the GUID sweep pages through hundreds of calls into a 2000-line ring.
-
-        **``path`` is the argument, never the post-redirect target and never
-        ``response.request.url``**: a Location header carries its own query string, and
-        Tautulli and MDBList both put their key in one (rule 13). ``params`` and ``headers``
-        are never logged for the same reason. The scrubber would catch the known key names,
-        but not logging a credential is a stronger guarantee than redacting one.
-
-        ``status=None`` is a call that never got an answer -- a timeout or an unreachable
-        host -- which is the shape a scan stuck on one service takes.
-        """
-        log.debug(
-            "client.call",
-            service=self.service,
-            method=method.upper(),
-            path=path,
-            status=status,
-            duration_ms=round((time.monotonic() - started) * 1000),
-            mutation=mutation,
-        )
+        """One line per `BaseClient` call, emitted through :func:`trace_call`."""
+        trace_call(self.service, method, path, status, started, mutation=mutation)
 
     async def _send(
         self,
