@@ -16,7 +16,13 @@ code as dead, reclassified five, and caught one proposal that would have uncoupl
 confirmation phrase from the set the executor deletes. Its corrections are folded into the
 findings in place. [Execution](#execution) is the plan for landing what survived.
 
-**Nothing here has been applied.**
+**This document is the living state of the work, not a proposal about it.** It is edited as each
+piece lands, in the same commit that lands it. [Progress](#progress) is the current status and is
+the first thing to read; [Execution](#execution) is how to run the next phase. An agent that
+finishes a piece and does not update Progress has left the next session guessing.
+
+**All of this lands on one branch, `audit/simplification-plan`, and reaches `dev` once.** See
+[Branch and pull request workflow](#branch-and-pull-request-workflow).
 
 ## How to read this
 
@@ -32,7 +38,11 @@ drifted*, `W3b-*` its *Largest by volume*, `W3c` the parameter-object paragraph.
 as four items in sentence order.
 
 **A pull request names the IDs it closes, and the symbol.** Line numbers in this document go stale
-the moment phase 5 moves a file; symbol names do not.
+the moment phase 6 moves a file; symbol names do not.
+
+**Phase numbers are frozen.** They were assigned once, in execution order, and a phase that turns
+out to belong elsewhere moves by editing the *Why here* column, never by renumbering. Thirty-seven
+lines cite a phase by number; a renumber that misses one sends a session to the wrong work.
 
 Risk classes: `none` (pure motion or deletion of unreachable code), `behavior` (observable output
 could move), `safety-path` (touches or sits beside a deletion interlock), `migration`, `a11y`,
@@ -59,6 +69,98 @@ a statement), **W3**'s `plex.py` helper (it would swallow the transport guard's 
 Several counts moved. `engine/policy.py` is 2,709 lines, not 2,263, and every Python line count in
 this document is short by 0.2% to 16%. They size a session and settle nothing else (S5).
 
+## Branch and pull request workflow
+
+**Every change from this plan lands on `audit/simplification-plan`. Nothing goes to `dev` until
+the last phase closes.** The tree moves too far for a partial landing to be reviewable, and
+several phases only make sense against the shape an earlier phase left behind.
+
+That inverts three habits CLAUDE.md sets for normal work, so an agent following its defaults will
+get all three wrong:
+
+1. **Cut the working branch from `audit/simplification-plan`, not from `origin/dev`.** Name it
+   `simp/<phase>-<short-symbol>` (`simp/2-hygiene-lru-cache`). Open its pull request with
+   `--base audit/simplification-plan`. A PR based on `dev` carries the whole audit in its diff.
+2. **`dev` is merged *into* this branch, never rebased onto it.** Working branches are cut from it
+   and PRs merge into it, so its history is shared and a rebase rewrites commits other branches are
+   built on. Sync weekly, and always before starting a phase:
+   `git fetch origin && git merge origin/dev`. Resolve toward `dev` for any file this plan has not
+   touched yet.
+3. **Sub-PRs squash into this branch the same way anything squashes into `dev`.** One finding, one
+   PR, one squash commit here. That commit's subject is the sub-PR title, so it still parses as a
+   Conventional Commit and still names its finding IDs.
+
+**PR #552 is the integration pull request.** It stays open as a **draft** for the duration, base
+`dev`, head `audit/simplification-plan`, carrying `Kind/Refactor` and `Priority/Medium`. It is
+what CI runs against on every push and what makes the accumulated diff visible. Draft is what
+stops it merging early. Its body does **not** duplicate the log below: it links to
+[Progress](#progress), because one fact written twice is the failure rule 144 describes.
+
+**The landing is one squash commit on `dev`, and that is a real cost.** The repository allows no
+other style, so months of work arrive as a single commit and `git bisect` cannot see inside it.
+The [Landed](#landed) table is therefore the history: each row names the finding, the symbol and
+the sub-PR, and a future bisect starts by reading it. Nothing else will record the order.
+
+**Retitle and rewrite #552 before marking it ready.** Its current title and body describe an
+audit that touched no code. They become the permanent commit message for a change that touches
+most of the tree.
+
+**Run the full gate set on the branch tip after every fifth merge, and at the end of every phase.**
+A squash merge lands a sha CI never tested, because the change is replayed onto whatever the branch
+is now. Over sixty sub-PRs that is sixty untested commits on the branch everything else is cut
+from, and a per-PR green tells you nothing about the tip. The end-of-phase run is the one that
+matters: it is the last point where the phase that broke something is still obvious.
+
+## Progress
+
+**Edit this section in the same commit that changes its truth.** A phase that finishes without its
+row moving is indistinguishable from one that never started.
+
+| # | Phase | Status | Landed | Notes |
+| --- | --- | --- | --- | --- |
+| 0 | Correct the plan | **done** | — | Third pass folded in. C1 outstanding |
+| 1 | Behavioral baseline | not started | — | Blocks every later phase |
+| 2 | Test-suite wall clock | not started | 0 of ~6 | |
+| 3 | Gates that land green | not started | 0 of 4 | |
+| 4 | Drift corrections | not started | 0 of 4 | |
+| 5 | Deletions | not started | 0 of 4 | |
+| 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
+| 7 | Wire contract | not started | 0 of ~4 | C7 outstanding |
+| 8 | Dedup and carriers | not started | 0 of ~25 | |
+| 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
+
+Status vocabulary, and nothing else: `not started`, `in progress`, `blocked`, `done`. `blocked`
+carries the reason in *Notes* and the checkpoint or decision that unblocks it.
+
+### Checkpoints
+
+| Checkpoint | Status | Settled by |
+| --- | --- | --- |
+| C1 to C13 | not started | — |
+
+Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
+C7, C9, C11, C13) records **what the owner decided**, not that they looked. The decision is the
+part the next session needs.
+
+### Landed
+
+One row per merged sub-PR. This is the history the squash merge will destroy, so it is written
+here first and never reconstructed later.
+
+| Sub-PR | Phase | Finding IDs | Symbol | Baseline moved? | Notes |
+| --- | --- | --- | --- | --- | --- |
+| *none yet* | | | | | |
+
+### Killed while executing
+
+A finding that turns out to be wrong is struck here rather than silently skipped, so the next
+session does not re-derive it. The third pass killed four before any code moved; execution will
+kill more.
+
+| Finding | Killed because | Found by |
+| --- | --- | --- |
+| *none yet* | | |
+
 ## Execution
 
 The findings are the *what*. This section is the *how*, and an agent picking up work reads it
@@ -66,7 +168,7 @@ first.
 
 ### Standing constraints
 
-Five hold across every phase. Each is a way an otherwise-correct change breaks something.
+Ten hold across every phase. Each is a way an otherwise-correct change breaks something.
 
 **S1. A wire field never moves in one language alone.** `tests/test_api_type_mirror.py` compares
 `api/schemas.py` against `frontend/src/api.ts` and fails on a field present in one and absent from
@@ -107,39 +209,64 @@ message. But the reason to ignore them is the first paragraph, not the second: a
 how big a session is, never whether the change is worth making.
 
 **S6. `docs/STATUS.md` is full.** 120 of 120 lines, enforced at `tests/test_repo_hygiene.py:47`
-alongside the 100-column bound at `:54`. Phases 4, 6, 7 and 8 all alter what the app does, which
+alongside the 100-column bound at `:54`. Phases 4, 7, 8 and 9 all alter what the app does, which
 CLAUDE.md's golden rule says updates STATUS in the same commit, so **every such PR removes a line
 to add one**. A new dagger costs more: a `docs/DECISIONS.md` section *and* a bump to the
 hand-reconciled `DECISION_SECTIONS` at `:60`, which is checked both ways. W1.1-a's correction is
 the case that will hit this first.
 
 **S7. Hand-reconciled counters move with the populations they count.** S1 names two
-(`EXPECTED_INTERFACES`, `EXPECTED_PAIRS`); `DECISION_SECTIONS` is a third, and every gate phase 2
-lands under rule 145 adds another. Phase 5 splits two routers and phase 7 creates `api/deps.py` and
-moves `LAUNCHER_CONF_NAME` — both move populations that phase 2's gates count. Grep for the counter
+(`EXPECTED_INTERFACES`, `EXPECTED_PAIRS`); `DECISION_SECTIONS` is a third, and every gate phase 3
+lands under rule 145 adds another. Phase 6 splits two routers and phase 8 creates `api/deps.py` and
+moves `LAUNCHER_CONF_NAME` — both move populations that phase 3's gates count. Grep for the counter
 before closing a PR that adds or removes a member.
+
+**S8. Every PR diffs the behavioral baseline, and an unexplained line is a regression.** Phase 1
+freezes what the app currently *decides* about a real library: the snapshot hash, every verdict,
+every gate that fired, every explanation payload, the built plan. The test suite does not cover
+this — it pins mechanisms, and 3,164 green tests are compatible with the app reaching a different
+conclusion about the same file. **Only the phases S6 names as altering what the app does may move
+the baseline**, and each of their PRs names which lines moved and why, in the body. A diff out of
+any other phase means stop. The two lists are one fact, so correct S6 and read it from there.
+
+**S9. Every PR gets a `/reaper-review` pass before it merges into the branch.** The skill ranks
+findings by proximity to the deletion path, which is the axis these risk classes already use. The
+checkpoints below are the owner reading a *decision*; this is an agent reading a *diff*, and
+neither substitutes for the other. A `safety-path` PR gets both, plus S3's driven pass.
+
+**S10. The PR that lands the work updates this document.** [Progress](#progress) moves in the same
+commit: the phase row, the *Landed* row, and the *Killed while executing* row if the session
+disproved a finding. A phase whose findings are all merged sets its status to `done`. This is the
+only record that survives the squash merge, and a session that skips it costs the next one an
+archaeology pass over 60 sub-PRs.
 
 ### The phases
 
-Nine, ordered so each shrinks or stabilizes what the next one reads. Later phases are landable
-earlier at a cost that is named in each.
+Ten, ordered so each shrinks or stabilizes what the next one reads. Later phases are landable
+earlier at a cost that is named in each. **The numbers are frozen** — see *How to read this*.
 
 | # | Phase | Findings | Risk | Why here |
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | this section | none | Done. The corrections below are the deliverable |
-| 1 | Test-suite wall clock, then scaffolding | W1.3, W12, then W1.4 | none | Every later phase is paid for in test cycles |
-| 2 | Gates that land green | W6-5, W6-6, W6-8, W1.5-c | none | A layering test is worthless after the graph moves |
-| 3 | Deletions | W1.1, W1.2, W7 | none, `behavior`, `migration` | Shrinks what phases 5 to 8 must read |
-| 4 | Drift corrections | W10 | `behavior` | Defects, not simplifications. Independent of the rest |
-| 5 | Structural motion | W2 | none | Dedup inside a 2,800-line file is where sessions run out of context |
-| 6 | Wire contract | W8, W4.3, W7-2 | `behavior`, `safety-path` | Two-language commits; smaller files make them tractable |
-| 7 | Dedup and carriers | W3, W5, W9, W6-1/2/3/4/7, W11 | up to `safety-path` | The bulk. Every safety-path item is its own PR |
-| 8 | Declaration tax | W4.1, W4.2 | `behavior` | Most leverage, widest blast radius, smallest tree |
+| 1 | Behavioral baseline | none | none | Nothing else can tell a refactor from a regression |
+| 2 | Test-suite wall clock, then scaffolding | W1.3, W12, then W1.4 | none | Every later phase is paid for in test cycles |
+| 3 | Gates that land green | W6-5, W6-6, W6-8, W1.5-c | none | A layering test is worthless after the graph moves |
+| 4 | Drift corrections | W10 | `behavior` | Defects. Fixed before the baseline is trusted, so later phases preserve correct behavior rather than bugs |
+| 5 | Deletions | W1.1, W1.2, W7 | none, `behavior`, `migration` | Shrinks what phases 6 to 9 must read |
+| 6 | Structural motion | W2 | none | Dedup inside a 2,800-line file is where sessions run out of context |
+| 7 | Wire contract | W8, W4.3, W7-2 | `behavior`, `safety-path` | Two-language commits; smaller files make them tractable |
+| 8 | Dedup and carriers | W3, W5, W9, W6-1/2/3/4/7, W11 | up to `safety-path` | The bulk. Every safety-path item is its own PR |
+| 9 | Declaration tax | W4.1, W4.2 | `behavior` | Most leverage, widest blast radius, smallest tree |
 
 **One PR is one session.** A phase is several. A session whose context has been compacted stops
 before a `safety-path` merge rather than pushing through.
 
-**Entering a phase, re-read the `> Corrected:` blocks for every ID it names.** Phases 3 to 8 run
+**One session works one phase.** Never two, and never a phase another session is already in. Eight
+files carry findings from four or more waves, so two sessions in different phases will meet inside
+`api/routes.py` or `main.py`. The *Progress* table's `in progress` status is what claims a phase;
+set it before starting and clear it before stopping, whether or not the work finished.
+
+**Entering a phase, re-read the `> Corrected:` blocks for every ID it names.** Phases 4 to 9 run
 weeks after the review that wrote them, and a finding's body still reads as originally written; the
 correction is the part that goes stale in a reader's memory rather than on the page. Four findings
 say plainly that the obvious implementation is the dangerous one.
@@ -150,33 +277,61 @@ Eight files carry findings from four or more waves. Phase order is mostly *about
 
 | File | Waves | Consequence |
 | --- | --- | --- |
-| `api/routes.py` | 2, 5, 7, 8, 9, 11 | Phase 5 splits it into four. **Phase 5's exit task is re-anchoring every finding body that cites a `routes.py` line**, because IDs identify findings and not code |
-| `services/snapshot.py` | 1.1, 3, 5, 7, 11 | Never split. Phase 3 deletes from it, phase 7 rewrites its carriers |
-| `api/settings.py` | 2, 3, 4.1, 5, 6, 9, 10 | Phase 5 takes 14 Plex routes out. See the password-gate note below |
-| `frontend/src/api.ts` | 1.1, 4.1, 4.2, 4.3, 7, 8 | Phase 6 hand-edits the type block; phase 8 deletes 1,239 lines of it |
-| `components/Settings.tsx` | 2, 3, 4.1, 10 | Phase 5 extracts 7 panels; phase 8's `FIELDS` descriptor then lands in `GeneralPanel.tsx` alone |
-| `services/executor.py` | 1.1, 3, 8, 9, 11 | Phase 3's deletions are trivial; phase 7's size-interlock work is the sharpest thing in that phase |
-| `main.py` | 2, 3, 4.2, 4.3, 9, 10, 11 | Spans phases 4, 7 and 8. Nothing splits it, so the risk is three phases editing one boot path |
-| `services/leaving_soon.py` | 3, 6, 8, 9, 10 | Phases 4, 6 and 7. W3's `plex.py` helper changes what this file's error handling sees |
-| `tests/conftest.py` | 1.3, 1.4, 6, 12 | Phase 1 twice and phase 2 once. Land the scrypt wrapper before the socket guard |
-| `services/season_scan.py` | 1.1, 2, 3, 5 | Phase 5's `season_evidence.py` move makes phase 7's `gather` carrier cheaper |
+| `api/routes.py` | 2, 5, 7, 8, 9, 11 | Phase 6 splits it into four. **Phase 6's exit task is re-anchoring every finding body that cites a `routes.py` line**, because IDs identify findings and not code |
+| `services/snapshot.py` | 1.1, 3, 5, 7, 11 | Never split. Phase 5 deletes from it, phase 8 rewrites its carriers |
+| `api/settings.py` | 2, 3, 4.1, 5, 6, 9, 10 | Phase 6 takes 14 Plex routes out. See the password-gate note below |
+| `frontend/src/api.ts` | 1.1, 4.1, 4.2, 4.3, 7, 8 | Phase 7 hand-edits the type block; phase 9 deletes 1,239 lines of it |
+| `components/Settings.tsx` | 2, 3, 4.1, 10 | Phase 6 extracts 7 panels; phase 9's `FIELDS` descriptor then lands in `GeneralPanel.tsx` alone |
+| `services/executor.py` | 1.1, 3, 8, 9, 11 | Phase 5's deletions are trivial; phase 8's size-interlock work is the sharpest thing in that phase |
+| `main.py` | 2, 3, 4.2, 4.3, 9, 10, 11 | Spans phases 4, 8 and 9. Nothing splits it, so the risk is three phases editing one boot path |
+| `services/leaving_soon.py` | 3, 6, 8, 9, 10 | Phases 4, 7 and 8. W3's `plex.py` helper changes what this file's error handling sees |
+| `tests/conftest.py` | 1.3, 1.4, 6, 12 | Phase 2 twice and phase 3 once. Land the scrypt wrapper before the socket guard |
+| `services/season_scan.py` | 1.1, 2, 3, 5 | Phase 6's `season_evidence.py` move makes phase 8's `gather` carrier cheaper |
 
 **`alembic/env.py` carries only waves 1.1 and 7 and is under this table's threshold**, listed
-because those two are one PR rather than three. See phase 3.
+because those two are one PR rather than three. See phase 5.
 
 **One contradiction the waves do not resolve, decided here: the admin-password helpers go to
 `api/deps.py`, not `api/auth.py`.** W3 asks for the gate ritual extracted out of `api/settings.py`
-and W9 asks for the five helpers moved out of `api/auth.py`; both are phase 7, both are
+and W9 asks for the five helpers moved out of `api/auth.py`; both are phase 8, both are
 `safety-path`, and whichever lands second silently re-homes the gate that guards arming deletion.
 They are **one PR**: six functions to `api/deps.py` (`_refuse_if_waiting` is a shared callee and
 travels with them), the ritual extracted onto them, the throttle key tuple passed rather than
 derived, and the missing throttle tests for the three gates that lack them.
 
-**Two items are each called dangerous, and they are dangerous differently.** W8-2 in phase 6 can
-delete files nobody approved. W3's `plex.py` helper in phase 7 can turn a safety refusal into a
+**Two items are each called dangerous, and they are dangerous differently.** W8-2 in phase 7 can
+delete files nobody approved. W3's `plex.py` helper in phase 8 can turn a safety refusal into a
 per-library warning. Neither ranks the other.
 
-### Phase 1 — test-suite wall clock
+### Phase 1 — behavioral baseline
+
+**Nothing in the repository records what the app currently decides.** The suite pins mechanisms:
+that a gate fires when its input says it should, that a signal weights what it claims. It does not
+pin the conclusion, so a refactor that changes which titles a real library would lose passes 3,164
+tests. Every later phase is judged against what this one freezes.
+
+Freeze, from a scan against real data, and commit as a fixture under `tests/baseline/`:
+
+1. **The snapshot** — the frozen evidence hash per item, which is already computed and is the
+   cheapest single check that gathering did not move.
+2. **The verdict per item** — condemn, abstain or protect, with the score and the denominator.
+3. **Every gate that fired, and every gate that was checked and did not.** The second half is the
+   product promise, and it is the half a refactor silently drops.
+4. **The explanation payload** per item, as served.
+5. **The built plan** — the ordered set the planner journals, and its caps.
+
+Redaction is the constraint, not the capture. **The golden rule against identifying data binds a
+committed fixture harder than it binds anything else**, so titles, paths, ids and library names are
+hashed with a salt held in `.env.local`, and the fixture holds shapes, ratios and stable
+per-item keys. A baseline nobody can commit is a baseline nobody re-runs.
+
+One PR: the capture script, the fixture, and a test that re-runs the comparison and fails on a
+diff. The script is committed with the fixture under rule 68. Roughly one session.
+
+**This phase is worth skipping only if the answer to "how would we know?" is already good.** It is
+not: S3's own example is that dropping eight `except SafetyViolationError: raise` arms goes green.
+
+### Phase 2 — test-suite wall clock
 
 `@lru_cache` on `test_repo_hygiene.py`'s two file readers (W1.3), the scrypt cost wrapper, the
 one test that dials the network, the `openapi_tags` fixture scope, and the twelve frontend files
@@ -185,13 +340,13 @@ that pay for jsdom (W12a).
 Then **W1.4's scaffolding**: the `conftest` boot fixtures, `renderWithProviders`, `tests/_fakes.py`
 and the complete api mock. It sits here because everything after is priced in test cycles, and
 because `_fakes.py` retires the 65 `# type: ignore[arg-type]` suppressions that are the only reason
-a client signature change fails the build — which phase 7's `clients/plex.py` and `clients/arr.py`
+a client signature change fails the build — which phase 8's `clients/plex.py` and `clients/arr.py`
 work depends on.
 
 Five or six PRs. No production code changes. The scrypt wrapper is `conftest`-only, must not touch
 `crypto.py`'s constant, and ships with the injectivity guard its correction names.
 
-### Phase 2 — gates that land green
+### Phase 3 — gates that land green
 
 The layering AST test (W6-5), the socket guard (W6-8), the three path-list sentences (W6-6), and
 deleting `W1.5-c` — **only that one**. Its correction kills the other three: the B017 grep is not
@@ -205,11 +360,26 @@ member it never saw, and this document's own W6-8 correction is the case: a sock
 new gate lands with **a count of what its scan collects, reconciled by hand** against the members
 you believe exist. Demonstrating it red is worth doing and is not the proof.
 
-W6-5's scope note interacts with phase 7: the layering test must skip `TYPE_CHECKING` and
+W6-5's scope note interacts with phase 8: the layering test must skip `TYPE_CHECKING` and
 function-local imports, and W9 deletes three such workarounds. Pin those three sites by name so the
 gate is not blind to the change it would most want to police.
 
-### Phase 3 — deletions
+### Phase 4 — drift corrections
+
+W10's seven, minus item 5, which is already #558's second half. Items 1 and 4 are filed; 2, 3, 6
+and 7 stay here. Item 3's fix changes behavior as written; see the correction.
+
+**These are defects, and they run before anything is deleted or moved.** Every one of them changes
+what the app does, so landing them after a refactor makes two questions out of one: did the
+refactor break this, or was it already broken? Landing them here means phase 1's baseline is
+re-frozen once, deliberately, against corrected behavior, and every diff after that is a
+regression. Each PR names the baseline lines it moves (S8), and C12 checks item 3.
+
+**Items 1, 4 and 5 are filed as issues and are not this phase's work.** A session that fixes one
+anyway does it on a branch off `dev`, not here: they are independent defects and holding them
+behind this branch delays a fix for months.
+
+### Phase 5 — deletions
 
 Four PRs, in order:
 
@@ -232,12 +402,7 @@ Four PRs, in order:
 W7-1's `ListMode` is separate and safe: `protection_list` is raw DDL on `cache.db`, and both
 columns carry server defaults.
 
-### Phase 4 — drift corrections
-
-W10's seven, minus item 5, which is already #558's second half. Items 1 and 4 are filed; 2, 3, 6
-and 7 stay here. Item 3's fix changes behavior as written; see the correction.
-
-### Phase 5 — structural motion
+### Phase 6 — structural motion
 
 W2's eight rows, one PR each, in ascending order of coupling: `season_scan` → `api/settings.py` →
 `App.tsx` → `engine/policy.py` → `Settings.tsx` → `api/routes.py` → `ReviewQueue.tsx` →
@@ -252,22 +417,24 @@ home and there is no simulate banner. The invariant to hold is the same set of m
 `operationId` and tags, not a byte-identical document — `paths` is ordered by registration, and
 four `include_router` calls will not reproduce the current order.
 
-**Phase 5's exit task**: re-anchor every finding body in this document that cites a moved file's
-line number. Phases 6 and 7 read those bodies.
+**Phase 6's exit task, and it blocks phase 7**: re-anchor every finding body in this document that
+cites a moved file's line number, and mark the phase `done` in *Progress* only once that is
+finished. Phases 7 and 8 read those bodies, and a session that reads a stale line number edits the
+wrong code with green tests behind it.
 
-### Phase 6 — wire contract
+### Phase 7 — wire contract
 
 W8, W4.3 and W7-2's `spared`. Every PR is two languages (S1), and each carries its
 `EXPECTED_INTERFACES`/`EXPECTED_PAIRS` reconciliation (S7).
 
-**W4.3's `Literal` types come before phase 8's generator**, because generation off loose unions
+**W4.3's `Literal` types come before phase 9's generator**, because generation off loose unions
 bakes the looseness in, and the 17 `export type` unions are exactly what today's mirror guard does
 not cover. Keep the `Literal` on `decide_verdict`'s return and out of `schemas.py`, per its
 correction.
 
 W8-2 is designed before it is built, not reviewed after (C7).
 
-### Phase 7 — dedup and carriers
+### Phase 8 — dedup and carriers
 
 The bulk of the remaining line count and all of the remaining risk. Order within it: the already-
 drifted clusters first (they are corrections), then the `none`-risk carriers, then each
@@ -277,7 +444,7 @@ Four items in this phase are rewritten by the third pass and must not be built a
 described: `plex.py`'s `_call`, the sqlite pragma unification, the scheduler decorator, and
 `paged()`.
 
-### Phase 8 — declaration tax
+### Phase 9 — declaration tax
 
 W4.1 then W4.2. W4.1's loop must validate every field before writing any, which
 `tests/test_general_and_logs.py:236` exists to pin, and its `FIELDS` descriptor covers three of
@@ -285,36 +452,48 @@ W4.1 then W4.2. W4.1's loop must validate every field before writing any, which
 off `create_app(settings).openapi()`; an HTTP fetch needs a booted, authenticated server.
 
 **W4.2 last is a risk call, not a cost one.** It deletes 1,239 hand-written lines and both mirror
-counters, so phase 6's edits to those lines are thrown away either way. It goes last because a
+counters, so phase 7's edits to those lines are thrown away either way. It goes last because a
 generator lands against the smallest, most settled schema surface, and because W4.3's `Literal`
-types (phase 6) must precede it.
+types (phase 7) must precede it.
 
 ### Review checkpoints
 
-Ten places to stop and have the owner look. Each names what to check, because "review this
-branch" at the wrong moment costs more than it catches.
+Thirteen places to stop and have the owner look. Each names what to check, because "review this
+branch" at the wrong moment costs more than it catches. **Record the outcome in
+[Progress](#progress)**: what was decided, not that it happened.
+
+These are the owner reading a *decision*. They do not replace S9's `/reaper-review` pass on every
+sub-PR, which is an agent reading a *diff*. The two catch different things and a `safety-path` PR
+needs both.
 
 | # | When | What to check | Rough size |
 | --- | --- | --- | --- |
 | C1 | Phase 0, now | The corrections. Every `> Corrected:` line, and whether any surviving finding still reads as safe to you | 30 min |
-| C2 | After phase 1 | The measured before/after, that `crypto.py` is untouched, and that the injectivity guard fails when the mapping collapses | 15 min |
-| C3 | Each phase-2 gate | Its hand-reconciled population count, against the members you believe exist. The red demonstration is evidence, not proof | 10 min each |
-| C4 | **Before phase 3 deletes anything** | The deletion list itself, plus PR 2's prose sweep, which no test covers. This is where a wrong call removes a feature, and four were already wrong | 45 min |
+| C13 | **After phase 1, before phase 2** | The baseline's coverage and its redaction. What it captures is what every later phase is judged against, and what it misses is invisible for months | 30 min |
+| C2 | After phase 2 | The measured before/after, that `crypto.py` is untouched, and that the injectivity guard fails when the mapping collapses | 15 min |
+| C3 | Each phase-3 gate | Its hand-reconciled population count, against the members you believe exist. The red demonstration is evidence, not proof | 10 min each |
+| C12 | After phase 4 | W10 item 3's fix, which changes what startup applies unless the two loops are reconciled deliberately, and the deliberate re-freeze of the baseline | 15 min |
+| C4 | **Before phase 5 deletes anything** | The deletion list itself, plus PR 2's prose sweep, which no test covers. This is where a wrong call removes a feature, and four were already wrong | 45 min |
 | C5 | **The alembic PR** | The migration against S2, driven: a fresh install's first settings save, and an existing tester's database. `alembic check` is silenced by the same PR, so nothing else catches this | 20 min |
-| C6 | **Before phase 5 splits `api/routes.py`** | The four-way decomposition, including where *Vocabulary* goes and how the preamble is shared. Reversing it later is a second full session | 30 min |
+| C6 | **Before phase 6 splits `api/routes.py`** | The four-way decomposition, including where *Vocabulary* goes and how the preamble is shared. Reversing it later is a second full session | 30 min |
 | C7 | **Before W8-2 is built** | The proposed cap's location. It sits at `_run_out`'s serialization or the phrase decouples from the delete | 20 min |
 | C8 | After W8-1 | Driven: the review queue, a show with a season row predating `show_status`, and the bulk bar's count | 20 min |
-| C9 | **Each phase-7 `safety-path` PR** | The interlock's behavior before and after, driven. Not the diff | 30 min each |
-| C10 | Phase 8, before building | The `SETTINGS` table's shape, and which fields are declared exceptions | 30 min |
 | C11 | **Before any published response field is dropped** (W8-3, W8-5) | The field list, as an API contract. An operator's script is not in this repository and no gate can see it | 20 min |
-| C12 | After phase 4 | W10 item 3's fix, which changes what startup applies unless the two loops are reconciled deliberately | 15 min |
+| C9 | **Each phase-8 `safety-path` PR** | The interlock's behavior before and after, driven. Not the diff | 30 min each |
+| C10 | Phase 9, before building | The `SETTINGS` table's shape, and which fields are declared exceptions | 30 min |
 
-C4, C5, C7, C9 and C11 are not optional. Each guards something no gate in the repository can see:
-a feature deleted, a tester's database, the confirmation phrase, an interlock, and an external
-contract. The rest are worth skipping when the branch is small and the tests are honest.
+The table is ordered by when each fires, so **the numbers are out of sequence and that is
+deliberate** — C13 was added after the rest and C12 moved with phase 4. Checkpoint numbers are
+frozen for the same reason phase numbers are.
 
-C6 and C7 sit **before** the work rather than after it, because in both cases the expensive part is
-the decision and reviewing the diff means reviewing a session that already went the wrong way.
+C4, C5, C7, C9, C11 and C13 are not optional. Each guards something no gate in the repository can
+see: a feature deleted, a tester's database, the confirmation phrase, an interlock, an external
+contract, and whether the baseline everything else leans on is worth leaning on. The rest are worth
+skipping when the branch is small and the tests are honest.
+
+C6, C7, C10 and C13 sit **before** the work rather than after it, because in each case the
+expensive part is the decision and reviewing the diff means reviewing a session that already went
+the wrong way.
 
 ## The headline
 
@@ -790,7 +969,7 @@ nothing structurally preventing the movie loop being handed `tv_keeps`.
 > 503 clause is already structural.** `PasswordVerificationBusyError` raises out of
 > `api/auth.py:179-182` before `record_password_failure` is reachable, so all four inherit it
 > rather than re-deriving it. The extraction belongs in `api/auth.py`, never in `settings.py`,
-> which phase 5 splits. The helper takes the throttle key tuple rather than deriving it: the four
+> which phase 6 splits. The helper takes the throttle key tuple rather than deriving it: the four
 > gates use distinct account keys, and merging them means a wrong restore password locks out
 > arming.
 >
@@ -1066,8 +1245,19 @@ Any change from this plan carries, in the same commit:
 5. **For anything classed `behavior` on operator copy**: a test asserting the exact string, added
    if one does not exist. Several strings in wave 3 are pinned only by tests that check structure.
 
+And before the sub-PR merges into the branch:
+
+6. **A clean baseline diff** (S8), or, for phases 4, 7 and 9, an explained one, with the moved
+   lines named in the PR body.
+7. **A `/reaper-review` pass** (S9), with each finding fixed or answered in the PR body.
+8. **The [Progress](#progress) rows moved** in the same commit (S10): the phase row, the *Landed*
+   row, and *Killed while executing* if the session disproved a finding.
+
 Waves are landable independently and in any order, but wave 1 first is strongly preferred: it
 removes ~2,000 lines that waves 2 and 3 would otherwise have to read, move and reason about.
+
+> **Superseded by [Execution](#execution) on ordering.** The paragraph above predates the phase
+> table and is kept because its reasoning still holds. The phase table is the order to follow.
 
 ---
 

@@ -366,8 +366,10 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
   five places in `src/`: `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py`, and
   `api/routes.py`. Read it before touching any of them, and before the rewatch curve in
   `engine/backtest.py`.
-- The live plans, none of them committed to: `docs/CSS_SPLIT_PLAN.md` (4 optional stages remain),
-  `docs/I18N_PLAN.md` (a proposal, nothing landed), `docs/SIMPLIFICATION_PLAN.md` (a whole-tree
-  audit awaiting review, nothing applied). `docs/README.md`'s map is the list to correct.
+- The live plans: `docs/CSS_SPLIT_PLAN.md` (4 optional stages remain) and `docs/I18N_PLAN.md` (a
+  proposal, nothing landed), neither committed to. `docs/SIMPLIFICATION_PLAN.md` is committed to
+  and being executed: its own `Progress` table is the status, every change lands on
+  `audit/simplification-plan`, and nothing reaches `dev` until the last phase closes.
+  `docs/README.md`'s map is the list to correct.
 - `docs/history/` — frozen: the retired plan narratives and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.
