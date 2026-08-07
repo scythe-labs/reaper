@@ -955,6 +955,20 @@ function Signals({ item }: { item: CandidateDetail }) {
   const inapplicable = rows.filter((r) => r.state === "not_applicable");
   const addedTotal = adds.reduce((sum, r) => sum + r.share, 0);
 
+  // Below the floor, name the line coverage fell under, the way the score names its threshold.
+  // An abstain forced by too little readable evidence scores at or above the threshold and is
+  // held anyway (`decide_verdict` checks coverage before the score), so the score alone never
+  // explains that hold and the coverage number alone does not say it was too low. Only when the
+  // two round to different percentages: "40%, under the 50% it needs" reads, "50%, under the
+  // 50% it needs" reads as a bug. Silent when the floor predates the field (null, so the panel
+  // omits it like a null threshold) or coverage cleared it. `coverage_bp < floor` implies
+  // `< FULL_COVERAGE_BP`, so this clause only ever rides inside the sentence below.
+  const floor = explanation.coverage_floor_bp ?? null;
+  const floorClause =
+    floor != null && item.coverage_bp < floor && coverage(item.coverage_bp) !== coverage(floor)
+      ? `, under the ${coverage(floor)} it needs to judge this one`
+      : "";
+
   return (
     <section className="block">
       <h3>Why it scored {explanation.score}</h3>
@@ -970,7 +984,10 @@ function Signals({ item }: { item: CandidateDetail }) {
       <p className="blurb">
         Reasons to believe nobody will watch it again.
         {item.coverage_bp < FULL_COVERAGE_BP && (
-          <> Reaper could read {coverage(item.coverage_bp)} of what it scores on.</>
+          <>
+            {" "}
+            Reaper could read {coverage(item.coverage_bp)} of what it scores on{floorClause}.
+          </>
         )}
       </p>
 

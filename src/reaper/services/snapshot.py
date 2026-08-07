@@ -1654,6 +1654,14 @@ def _explain(
             "base_score": round(item_score.base_value, 1),
             "keep_discount": round(item_score.keep_discount, 1),
             "threshold": policy.condemn_at,
+            # The coverage line the verdict was decided against, frozen beside the threshold
+            # because it is the same class of number: a policy value the score is compared to,
+            # which the panel restates so an abstain forced by too little readable evidence can
+            # name the line it fell under. Read here, never off the live policy, which by the
+            # time anyone opens the panel need not be the one this item was scored under (rule
+            # 113). Additive and nullable: a row frozen before this shipped thaws to None and
+            # the panel drops the floor clause, exactly as threshold does.
+            "coverage_floor_bp": policy.coverage_floor_bp,
             "coverage": round(item_score.coverage, 3),
             # Whether THIS item was held because plays recorded earlier stopped being
             # readable. Typed, because the panel offers the per-title escape (#275) on it and

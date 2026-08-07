@@ -974,6 +974,88 @@ class TestChip:
         assert chip is not None
         assert (chip.tone, chip.text) == ("quiet", "Too little of it could be checked")
 
+    @pytest.mark.parametrize("stored_floor", [6000, 3000])
+    def test_explain_freezes_the_coverage_floor_the_panel_restates(self, stored_floor: int) -> None:
+        """The floor is the threshold's twin: a policy number the verdict is decided against,
+        frozen so the panel restates the line coverage fell under rather than reading the live
+        policy, which may have moved since the scan (rule 113).
+
+        Through the REAL writer (``_explain``) and read back through the panel's own
+        ``Explanation``, so the freeze cannot silently stop (rule 132). Both floors differ from
+        the 5000 default, so an omission that let the panel read a constant fails here (rule
+        141).
+        """
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"coverage_floor_bp": stored_floor})
+        frozen = _explain(
+            Evaluation(results=[]),
+            Score(value=82.0, coverage=0.4, results=[]),
+            policy,
+        )
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=frozen,
+            score=82,
+            coverage_bp=4000,
+        )
+
+        panel = _explanation_out(row)
+
+        assert not panel.unreadable
+        assert panel.body.coverage_floor_bp == stored_floor
+
+    @pytest.mark.parametrize("junk", ["70.5", '"abc"', "true", "[]", '{"a": 1}'])
+    def test_an_illegible_coverage_floor_thaws_to_absent_and_nothing_else(self, junk: str) -> None:
+        """``coverage_floor_bp`` is ``threshold``'s twin, thawed by the same helper (rule 72).
+
+        ``true`` is in the sweep because Python calls a ``bool`` an ``int``: a floor of ``True``
+        is not 1 bp, it is a row nobody can read. An illegible byte costs its own clause -- the
+        panel drops the floor sentence -- never the whole panel, and never its twin's clause.
+        """
+        exp = json.loads(
+            f'{{"coverage_floor_bp": {junk}, "threshold": 70, "score": 82, "coverage": 1.0, '
+            '"signals": [], "protections_fired": [], "protections_checked": [], '
+            '"protections_unknown": []}'
+        )
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=json.dumps(exp),
+            score=82,
+            coverage_bp=4000,
+        )
+
+        panel = _explanation_out(row)
+
+        assert not panel.unreadable
+        assert panel.body.coverage_floor_bp is None
+        assert panel.body.threshold == 70
+
+    def test_a_row_frozen_before_the_floor_shipped_reads_as_absent(self) -> None:
+        """A row scanned before this field existed carries no key, and the panel drops the floor
+        clause rather than invent a line -- the three-state a null threshold already has. Built
+        by dropping the key from a real frozen row, so the "the writer emits it" half cannot
+        drift from the shape the reader is handed (rule 142).
+        """
+        frozen = json.loads(
+            _explain(
+                Evaluation(results=[]),
+                Score(value=82.0, coverage=1.0, results=[]),
+                DEFAULT_MOVIE_POLICY,
+            )
+        )
+        assert "coverage_floor_bp" in frozen  # the writer emits it...
+        del frozen["coverage_floor_bp"]  # ...and this is what an older scan left on disk
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=json.dumps(frozen),
+            score=82,
+            coverage_bp=10_000,
+        )
+
+        panel = _explanation_out(row)
+
+        assert not panel.unreadable
+        assert panel.body.coverage_floor_bp is None
+
     def test_below_threshold_names_both_numbers(self) -> None:
         chip = _chip(_exp(42), "abstain", 42)
         assert chip is not None

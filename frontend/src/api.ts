@@ -342,6 +342,11 @@ export interface Explanation {
    *  is N" clause rather than print a number that is not the operator's setting. */
   threshold: number | null;
   coverage: number;
+  /** The share of scoring weight that had to be readable before Reaper would judge this, in
+   *  basis points (5000 = 50%). Frozen beside `threshold` so an abstain forced by the floor can
+   *  name the line coverage fell under. Null when the row could not be read or predates this
+   *  field: the panel drops the floor clause rather than read the live policy (rule 113). */
+  coverage_floor_bp?: number | null;
   /** Whether this title is held because the plays Reaper recorded earlier stopped being
    *  readable. The panel offers the per-title escape on it, and on nothing else: the reason
    *  text beside it is operator copy and will be reworded (rule 92).
