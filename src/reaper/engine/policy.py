@@ -1365,11 +1365,19 @@ def own_list_media_scope(
     it costs nothing, while dropping it on a lookup that could not answer would withdraw a live
     protection. A watchlist keeps both always. This is the whole reason scoping a collection is
     "harder than the IMDb half" (#545): the IMDb chart is statically movies-only, a collection's
-    one type is its library's and nothing in the registry carries it."""
-    scope: dict[str, frozenset[str]] = {}
+    one type is its library's and nothing in the registry carries it.
+
+    Two rows can share a casefolded key, so the types UNION rather than overwrite (rule 63: a
+    key that is a display name always can collide). ``list_config.name`` is unique, but under a
+    ``NOCASE`` collation and a ``func.lower`` pre-check that both fold ASCII only, while this key
+    is a full-Unicode ``casefold`` -- so a non-ASCII case pair ("strasse" vs "stra"+eszett) is
+    admitted as two rows that collapse here. Overwriting would scope the loser to the other's
+    type and drop its rule off the policy it keeps on; the union keeps both, fail-open."""
+    scope: dict[str, set[str]] = {}
     for source, name, config_json in rows:
+        key = name.strip().casefold()
         if source == "plex_watchlist":
-            scope[name.strip().casefold()] = BOTH_MEDIA_TYPES
+            scope.setdefault(key, set()).update(BOTH_MEDIA_TYPES)
             continue
         if source != "plex_collection":
             continue
@@ -1382,10 +1390,9 @@ def own_list_media_scope(
         # Narrow only a library that is known and single-typed. ``held`` is None for an unsynced
         # or renamed library, and carries two types for same-titled movie and show libraries;
         # both keep the rule on both policies.
-        scope[name.strip().casefold()] = (
-            held if held is not None and len(held) == 1 else BOTH_MEDIA_TYPES
-        )
-    return scope
+        this = held if held is not None and len(held) == 1 else BOTH_MEDIA_TYPES
+        scope.setdefault(key, set()).update(this)
+    return {key: frozenset(media) for key, media in scope.items()}
 
 
 def has_legacy_list_protections(raw: object) -> bool:

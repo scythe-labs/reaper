@@ -3831,6 +3831,23 @@ class TestOwnListMediaScope:
         assert scope["keep films"] == frozenset({"movie", "tv"})
         assert scope["keep series"] == frozenset({"movie", "tv"})
 
+    def test_two_collections_that_casefold_collide_union_to_both(self) -> None:
+        """rule 63: the scope key is a display name, which can always collide. ``list_config``'s
+        NOCASE UNIQUE and its ``func.lower`` pre-check fold ASCII only, but this key is a
+        full-Unicode ``casefold``, so a non-ASCII case pair is admitted as two rows that collapse
+        to one key. A movie-library and a show-library collection colliding there must UNION to
+        both -- overwriting would drop the loser's rule off the policy it keeps on."""
+        # "STRASSE".casefold() == "straße".casefold() == "strasse", but the two differ under
+        # NOCASE (ß is not folded), so both rows exist in the registry.
+        rows = [
+            ("plex_collection", "straße", json.dumps({"library": "Shows"})),
+            ("plex_collection", "STRASSE", json.dumps({"library": "Films"})),
+        ]
+        scope = own_list_media_scope(
+            rows, {"shows": frozenset({"tv"}), "films": frozenset({"movie"})}
+        )
+        assert scope["strasse"] == frozenset({"movie", "tv"})
+
 
 class TestConvertListProtections:
     """The load shim for a body from before every list protected through its own keep rule.
