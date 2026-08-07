@@ -16,6 +16,14 @@ code as dead, reclassified five, and caught one proposal that would have uncoupl
 confirmation phrase from the set the executor deletes. Its corrections are folded into the
 findings in place. [Execution](#execution) is the plan for landing what survived.
 
+A **fourth pass attacked the execution plan** rather than the findings, run against `17bec21`. It
+rewrote phase 1, which specified a re-scan against live data and a salted fixture: the machinery
+already exists, one of its five capture items hashed the wrong thing and would have failed green,
+and a re-scan moves 45% of its own lines in 30 days from the calendar alone. It rejected a proposal
+to land phases 1 to 5 on `dev` and replaced it with a per-item escape hatch. It found the
+"which phases may move the baseline" list written a third time, wrong, in the verification
+protocol. Its changes are in place throughout; nothing below it was reopened.
+
 **This document is the living state of the work, not a proposal about it.** It is edited as each
 piece lands, in the same commit that lands it. [Progress](#progress) is the current status and is
 the first thing to read; [Execution](#execution) is how to run the next phase. An agent that
@@ -38,7 +46,11 @@ drifted*, `W3b-*` its *Largest by volume*, `W3c` the parameter-object paragraph.
 as four items in sentence order.
 
 **A pull request names the IDs it closes, and the symbol.** Line numbers in this document go stale
-the moment phase 6 moves a file; symbol names do not.
+at **phase 4**, not at phase 6: W10 item 2 rewrites five mappings in `api/settings.py`, and phase 5
+deletes from `routes.py`, `season_scan.py` and `snapshot.py`. Symbol names do not go stale, and a
+symbol alone is not always an anchor — eight citations sit hundreds of lines inside `scan`,
+`simulate`, `list_candidates` and `ReviewQueue`, and two pairs share one symbol. **The durable form
+is the symbol plus a quoted fragment of the line.**
 
 **Phase numbers are frozen.** They were assigned once, in execution order, and a phase that turns
 out to belong elsewhere moves by editing the *Why here* column, never by renumbering. Thirty-seven
@@ -90,6 +102,24 @@ get all three wrong:
    PR, one squash commit here. That commit's subject is the sub-PR title, so it still parses as a
    Conventional Commit and still names its finding IDs.
 
+**One escape hatch, and it is per item rather than per phase.** A change that touches only `tests/`
+or a doc sentence, needs no baseline, and cannot collide with a file phases 6 to 9 move is worth
+more landed on `dev` than parked here: it reaches every other session at once and its conflict
+surface is nil. That is W1.3's `lru_cache`, W12's scrypt wrapper (with its injectivity guard), the
+`probe_root_folders` stub, `test_openapi_tags`'s fixture scope, the twelve `@vitest-environment
+node` docblocks, and W6-6's two-sentence rule 7/24 correction. **W1.4's scaffolding stays here** —
+it is a real refactor and phase 8 depends on it.
+
+**Splitting whole phases off is the version that does not work**, and it was considered and
+rejected rather than never raised. Every sub-PR edits this document under S10 and `docs/STATUS.md`
+under S6; both append at a fixed position, which is the one construct git cannot merge.
+`docs/SIMPLIFICATION_PLAN.md` does not exist on `dev` at all, so the weekly merge's conflict
+surface is **zero** today and would not stay that way — and a *Landed* row dropped while resolving
+a conflict is lost silently, in the table this plan calls the history the squash merge will
+destroy. The phase-3 gates are the case that looks strongest and is not: the socket guard found
+exactly one violation across the repository's whole history, so its expected yield on `dev` during
+the audit is about zero, while its hand-reconciled counters (S7) would conflict on every merge.
+
 **PR #552 is the integration pull request.** It stays open as a **draft** for the duration, base
 `dev`, head `audit/simplification-plan`, carrying `Kind/Chore` and `Priority/Medium`. It is
 what CI runs against on every push and what makes the accumulated diff visible. Draft is what
@@ -98,12 +128,24 @@ stops it merging early. Its body does **not** duplicate the log below: it links 
 
 **The landing is one squash commit on `dev`, and that is a real cost.** The repository allows no
 other style, so months of work arrive as a single commit and `git bisect` cannot see inside it.
-The [Landed](#landed) table is therefore the history: each row names the finding, the symbol and
-the sub-PR, and a future bisect starts by reading it. Nothing else will record the order.
+**Tag the branch tip before merging** — `git tag audit/pre-squash && git push origin
+audit/pre-squash` — because the head branch auto-deletes at merge and the tag is then the only
+thing keeping the sub-PR commits reachable. That restores `git bisect` inside the squash for one
+command, and it is free: no workflow triggers on a tag, `release.yml` being `push: branches:
+[main]` plus `workflow_dispatch`. The [Landed](#landed) table is the index into those commits: each
+row names the finding, the symbol and the sub-PR.
 
 **Retitle and rewrite #552 before marking it ready.** Its current title and body describe an
 audit that touched no code. They become the permanent commit message for a change that touches
 most of the tree.
+
+**The last PR retires this document.** It moves to `docs/history/` under the FROZEN banner
+`tests/test_repo_hygiene.py:2275` checks, and the same commit corrects `docs/README.md:118` and
+CLAUDE.md's live-plans paragraph. Both assert this plan is live, no gate covers either, and
+`test_docs_referenced_from_code_exist` scans code and `pyproject.toml` rather than those two files
+— so a move without them leaves two confident false statements and a dangling path behind a green
+suite. Where the file goes needs no instruction; `docs/README.md` already routes a finished
+remediation.
 
 **Run the full gate set on the branch tip after every fifth merge, and at the end of every phase.**
 A squash merge lands a sha CI never tested, because the change is replayed onto whatever the branch
@@ -119,7 +161,7 @@ row moving is indistinguishable from one that never started.
 | # | Phase | Status | Landed | Notes |
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 outstanding |
-| 1 | Behavioral baseline | not started | — | Blocks every later phase |
+| 1 | Behavioral baseline | not started | 0 of 2 | Blocks every later phase. C13 outstanding |
 | 2 | Test-suite wall clock | not started | 0 of ~6 | |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
@@ -130,17 +172,25 @@ row moving is indistinguishable from one that never started.
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
 
 Status vocabulary, and nothing else: `not started`, `in progress`, `blocked`, `done`. `blocked`
-carries the reason in *Notes* and the checkpoint or decision that unblocks it.
+carries the reason in *Notes* and the checkpoint or decision that unblocks it. **`done` means every
+finding landed or killed *and* the phase's exit task finished**, so phase 6 is not `done` until its
+re-anchoring is; an outstanding checkpoint that gates nothing downstream goes in *Notes* rather
+than holding the row open.
+
+**A killed finding lowers the denominator.** Write the *Landed* cell as `4 landed, 1 killed` once
+either is non-zero, because a phase that kills three findings would otherwise read `22 of 25`
+forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: its last two rows are
+"land them as their own work or drop them."
 
 ### Checkpoints
 
 | Checkpoint | Status | Settled by |
 | --- | --- | --- |
-| C1 to C13 | not started | — |
+| C1 to C14 | not started | — |
 
 Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
-C7, C9, C11, C13) records **what the owner decided**, not that they looked. The decision is the
-part the next session needs.
+C7, C9, C11, C13, C14) records **what the owner decided**, not that they looked. The decision is
+the part the next session needs.
 
 ### Landed
 
@@ -156,6 +206,11 @@ here first and never reconstructed later.
 A finding that turns out to be wrong is struck here rather than silently skipped, so the next
 session does not re-derive it. The third pass killed four before any code moved; execution will
 kill more.
+
+**A kill also gets a `> Killed:` block on the finding body itself**, in the same commit, exactly as
+the third pass folded its corrections in place. A phase-8 session reads the finding, not a table
+1,400 lines above it, which is why *Entering a phase* has to tell it to re-read the
+`> Corrected:` blocks at all.
 
 | Finding | Killed because | Found by |
 | --- | --- | --- |
@@ -187,6 +242,12 @@ additive `batch_alter_table` revision adding a `server_default` (the shape
 `20260804_1300_heal_list_config_shape.py` already demonstrates), **then** the attribute plus the
 `include_name` arm. Doing it in one step fails the first write on a fresh install.
 
+**The `include_name` arm is required for *every* dropped attribute; the `server_default` revision
+only for the `NOT NULL` ones.** `Candidate.poster_url` (W1.1-i) is `Mapped[str | None]` with
+`default=None`, so it needs no revision — and it still needs the arm, or `alembic check` reports a
+pending `drop_column` forever (#271). Phase 5 bundles it correctly; this constraint read alone used
+to say nullable was safe.
+
 **S3. A `safety-path` change ships with a driven pass, not green tests.** The `verify` skill,
 against real data, plus `tests/test_reap_loop.py`, `tests/test_guarded_transport.py` and
 `tests/test_plex_guard.py` run alone and read by exit code. Green tests are not enough here
@@ -212,7 +273,7 @@ how big a session is, never whether the change is worth making.
 alongside the 100-column bound at `:54`. Phases 4, 7, 8 and 9 all alter what the app does, which
 CLAUDE.md's golden rule says updates STATUS in the same commit, so **every such PR removes a line
 to add one**. A new dagger costs more: a `docs/DECISIONS.md` section *and* a bump to the
-hand-reconciled `DECISION_SECTIONS` at `:60`, which is checked both ways. W1.1-a's correction is
+hand-reconciled `DECISION_SECTIONS` at `:59`, which is checked both ways. W1.1-a's correction is
 the case that will hit this first.
 
 **S7. Hand-reconciled counters move with the populations they count.** S1 names two
@@ -222,12 +283,22 @@ moves `LAUNCHER_CONF_NAME` — both move populations that phase 3's gates count.
 before closing a PR that adds or removes a member.
 
 **S8. Every PR diffs the behavioral baseline, and an unexplained line is a regression.** Phase 1
-freezes what the app currently *decides* about a real library: the snapshot hash, every verdict,
-every gate that fired, every explanation payload, the built plan. The test suite does not cover
+freezes what the app currently *decides* about a real library. The test suite does not cover
 this — it pins mechanisms, and 3,164 green tests are compatible with the app reaching a different
 conclusion about the same file. **Only the phases S6 names as altering what the app does may move
 the baseline**, and each of their PRs names which lines moved and why, in the body. A diff out of
 any other phase means stop. The two lists are one fact, so correct S6 and read it from there.
+
+**The baseline has two tiers and they are diffed differently.** Tier A is the replay, runs in CI on
+every PR, and is what makes this constraint a gate instead of prose: a diff is a stop. Tier B is
+the owner-run capture, diffed at phase boundaries rather than per PR, and its verdict and score
+lines are read as **counts and set membership, never line by line** — measured, the calendar alone
+moves 45% of score lines in 30 days while holding the code and the library still, so a per-line
+reading of Tier B is noise by the second week.
+
+**Diff Tier B immediately after each weekly `dev` merge.** That merge is the one commit that
+legitimately arrives carrying a week of someone else's behavior changes, in the worst possible
+granularity for attributing anything, so it gets its own reading and the next PR starts clean.
 
 **S9. Every PR gets a `/reaper-review` pass before it merges into the branch.** The skill ranks
 findings by proximity to the deletion path, which is the axis these risk classes already use. The
@@ -235,10 +306,15 @@ checkpoints below are the owner reading a *decision*; this is an agent reading a
 neither substitutes for the other. A `safety-path` PR gets both, plus S3's driven pass.
 
 **S10. The PR that lands the work updates this document.** [Progress](#progress) moves in the same
-commit: the phase row, the *Landed* row, and the *Killed while executing* row if the session
-disproved a finding. A phase whose findings are all merged sets its status to `done`. This is the
-only record that survives the squash merge, and a session that skips it costs the next one an
-archaeology pass over 60 sub-PRs.
+commit: the phase row, the *Landed* row, and the *Killed while executing* row plus a `> Killed:`
+block on the finding body if the session disproved a finding. A phase whose findings are all merged
+sets its status to `done`. This is the only record that survives the squash merge, and a session
+that skips it costs the next one an archaeology pass over 60 sub-PRs.
+
+**A PR that shifts line numbers in a file another finding cites re-anchors that citation in the
+same commit.** The stale window opens at phase 4, so phase 6's exit task is the sweep rather than
+the only obligation, and a phase-8 session should not be the one discovering that phase 5 moved
+`snapshot.py` out from under eight citations.
 
 ### The phases
 
@@ -301,32 +377,82 @@ derived, and the missing throttle tests for the three gates that lack them.
 
 **Two items are each called dangerous, and they are dangerous differently.** W8-2 in phase 7 can
 delete files nobody approved. W3's `plex.py` helper in phase 8 can turn a safety refusal into a
-per-library warning. Neither ranks the other.
+per-library warning. Neither ranks the other, so **both are designed before they are built**: C7
+and C14. They used to be gated unequally, W8-2 before the work and `_call` only after it.
 
 ### Phase 1 — behavioral baseline
 
-**Nothing in the repository records what the app currently decides.** The suite pins mechanisms:
-that a gate fires when its input says it should, that a signal weights what it claims. It does not
-pin the conclusion, so a refactor that changes which titles a real library would lose passes 3,164
-tests. Every later phase is judged against what this one freezes.
+**The repository already records what the app decides for about a quarter of the decision surface,
+and this phase extends that rather than building beside it.** `tests/_policy_lab.py` replays 440
+de-identified real fact vectors through production `judge_facts` and pins `verdict`, `score` and
+`coverage_bp` per vector; `scripts/policy_lab_extract.py` regenerates it from `data/reaper.db`
+read-only, de-identified by construction, with a `--rebaseline` mode that needs no real library and
+a refusal that blocks a moved baseline while `SCORER_VERSION` stands still (rule 113). *Do not
+touch* names it already. This section used to open by saying nothing recorded what the app decides,
+which its own page refuted.
 
-Freeze, from a scan against real data, and commit as a fixture under `tests/baseline/`:
+What is still unpinned is the conclusion *outside* `judge_facts`, so a refactor that changes which
+titles a real library would lose passes 3,164 tests. Every later phase is judged against what this
+one freezes.
 
-1. **The snapshot** — the frozen evidence hash per item, which is already computed and is the
-   cheapest single check that gathering did not move.
-2. **The verdict per item** — condemn, abstain or protect, with the score and the denominator.
-3. **Every gate that fired, and every gate that was checked and did not.** The second half is the
-   product promise, and it is the half a refactor silently drops.
-4. **The explanation payload** per item, as served.
-5. **The built plan** — the ordered set the planner journals, and its caps.
+**Tier A — the replay. CI-enforced, every PR, and this is what makes S8 a gate.** Extend the
+fixture's per-vector `baseline` block with:
 
-Redaction is the constraint, not the capture. **The golden rule against identifying data binds a
-committed fixture harder than it binds anything else**, so titles, paths, ids and library names are
-hashed with a salt held in `.env.local`, and the fixture holds shapes, ratios and stable
-per-item keys. A baseline nobody can commit is a baseline nobody re-runs.
+1. **The three gate lists** — `protectors`, `checked_and_did_not_fire`, `could_not_be_checked`
+   (`engine/gates.py:917`), **by gate id and outcome class only**. The second is the product
+   promise, and the half a refactor silently drops.
+2. **The explanation's decision-bearing numerics**: `base_score`, `keep_discount`, `threshold`,
+   `coverage_floor_bp`, `watch_blind`, and per signal its `id`, `contribution`, `state` and
+   `evaluated`.
 
-One PR: the capture script, the fixture, and a test that re-runs the comparison and fails on a
-diff. The script is committed with the fixture under rule 68. Roughly one session.
+**Never pin `detail`.** It is rule 21 operator copy that phases 4, 7 and 9 edit, it is roughly 60%
+of the payload by bytes, and pinning it turns every copy edit into an S8 stop. Measured: ids and
+outcome classes add ~371 KB to a 736 KB fixture, the full explanation text ~1,383 KB. The work is
+one change to `rejudge()` (`policy_lab_extract.py:193`) and one `--rebaseline --unbumped="the
+baseline block gained fields; the engine did not move"` run, which is the refusal's own fourth
+named case.
+
+**Tier B — the capture. Owner-run, at phase boundaries and at C12/C13, never per PR.** A second
+script reading `data/reaper.db` read-only exactly as the extractor does, emitting per item:
+
+3. **A hash of `Candidate.facts_json`**, the per-item frozen evidence. `Snapshot.evidence_hash` is
+   **not** this and belongs nowhere in the baseline: it hashes the *policy fields* that decide what
+   gathering asks for (`engine/policy.py:850`), there is one per snapshot, and it is constant while
+   the policy is. A refactor that changed what gathering produced would not move it at all. This
+   item previously claimed that hash was "already computed and the cheapest single check that
+   gathering did not move," and it would have failed green.
+4. **The verdict triple per item**, as the whole-library reading Tier A's 440-vector sample cannot
+   give.
+5. **The built plan** against that stored snapshot: `build_plan`'s ordered `media_key` list,
+   ordinals, cap decisions and `manifest_hash`. Deterministic — its `utcnow()` calls only stamp
+   `created_at`.
+
+**De-identify by construction, and there is no salt.** This section used to ask for titles and ids
+hashed under a salt in `.env.local`. That is weaker than the shipped precedent and is itself a
+fingerprint under the golden rule's "ratios and shapes, never fingerprints." The extractor's answer
+is positional ids (`v0000`), tokenized genres, votes to two significant figures, sizes to 100 MB,
+and it scans even its own justification string for identifying data. Copy that. A baseline nobody
+can commit is a baseline nobody re-runs.
+
+**Neither tier needs a live server, and neither may re-scan.** Both read the stored snapshot,
+because a re-scan is wall-clock dependent — `ScanContext(horizon=utcnow())` plus dormancy at
+`snapshot.py:350` and `:496` — and measured against the lab, advancing only the clock by 30 days
+moves 45.2% of score-or-coverage lines and 1.4% of verdicts. Over a plan that runs for months, a
+re-scanned baseline is noise. Freezing the clock instead is the expensive road: `utcnow` is a
+`from`-import in 32 modules, so patching `reaper.clock` reaches none of them, and the tree freezes
+time at four sites total.
+
+**Say what neither tier covers, because the riskiest work lives there.** Both hold `Facts` fixed,
+so both are blind to the gather side: `clients/arr.py`'s shape guards, whose recorded incident is a
+coerced `[]` read as an empty library; `plan_series_prune`'s nine permissive defaults; `scan`'s
+twelve parallel `movie_*`/`tv_*` locals. A carrier that widens what is prunable on a real library
+moves **zero** of the 440 vectors. The lab also reconstructs two fact fields (`_on_lists_from`,
+`_ratings_from`) rather than replaying them, and phase 8's `lists.py` work sits directly under
+that. **S3's driven pass is the only thing that reaches any of it**, and no baseline of any shape
+substitutes for it.
+
+Two PRs, roughly one session each: Tier A extends the fixture, Tier B adds the script and its
+committed capture. Both ship with their generators under rule 68.
 
 **This phase is worth skipping only if the answer to "how would we know?" is already good.** It is
 not: S3's own example is that dropping eight `except SafetyViolationError: raise` arms goes green.
@@ -345,6 +471,14 @@ work depends on.
 
 Five or six PRs. No production code changes. The scrypt wrapper is `conftest`-only, must not touch
 `crypto.py`'s constant, and ships with the injectivity guard its correction names.
+
+**Wave 12's figures are single-threaded and the documented gate is not.** `uv run pytest -n auto`
+measures **81.97s** for 4,040 tests on 8 cores, against the ~268s single-threaded figure the wave
+reasons from, because the scrypt cost overlaps across workers. The honest saving is tens of seconds
+off a full run, not the ~93s the numbers imply. Take the win; do not re-plan around it (S5).
+Everything here except W1.4's scaffolding goes to `dev` under the escape hatch above.
+`CONTRIBUTING.md:125` claims "~45s" for this gate and is drifted about 1.8x, which is a `dev` fix,
+not this branch's.
 
 ### Phase 3 — gates that land green
 
@@ -418,9 +552,15 @@ home and there is no simulate banner. The invariant to hold is the same set of m
 four `include_router` calls will not reproduce the current order.
 
 **Phase 6's exit task, and it blocks phase 7**: re-anchor every finding body in this document that
-cites a moved file's line number, and mark the phase `done` in *Progress* only once that is
-finished. Phases 7 and 8 read those bodies, and a session that reads a stale line number edits the
-wrong code with green tests behind it.
+cites a line number in **any file this branch has edited**, not only a moved one, and mark the
+phase `done` in *Progress* only once that is finished. `services/snapshot.py` is never split and
+carries eight phase-7/8/9 citations that all shift when phase 5 deletes at `:202`; `executor.py`
+carries five, `main.py` four. Re-anchor to the **symbol plus a quoted fragment**: eight of these sit
+hundreds of lines inside `scan`, `simulate`, `list_candidates` or `ReviewQueue`, where the symbol
+alone locates nothing, and two pairs share a symbol (`season_scan.py:1254`/`:1302` in `gather`,
+`routes.py:567`/`:610` in `_group_rollups`), so a bare symbol silently merges two sites into one and
+under-scopes W6-2's sweep. Phases 7 and 8 read those bodies, and a session that reads a stale line
+number edits the wrong code with green tests behind it.
 
 ### Phase 7 — wire contract
 
@@ -458,7 +598,7 @@ types (phase 7) must precede it.
 
 ### Review checkpoints
 
-Thirteen places to stop and have the owner look. Each names what to check, because "review this
+Fourteen places to stop and have the owner look. Each names what to check, because "review this
 branch" at the wrong moment costs more than it catches. **Record the outcome in
 [Progress](#progress)**: what was decided, not that it happened.
 
@@ -479,19 +619,20 @@ needs both.
 | C7 | **Before W8-2 is built** | The proposed cap's location. It sits at `_run_out`'s serialization or the phrase decouples from the delete | 20 min |
 | C8 | After W8-1 | Driven: the review queue, a show with a season row predating `show_status`, and the bulk bar's count | 20 min |
 | C11 | **Before any published response field is dropped** (W8-3, W8-5) | The field list, as an API contract. An operator's script is not in this repository and no gate can see it | 20 min |
+| C14 | **Before `plex.py`'s `_call` is built** | Its opt-out list: which of the four structural opt-outs plus the write shape stay bespoke, and whether the eight `except SafetyViolationError: raise` arms survive. That arm is entirely unpinned, so reviewing the diff afterward cannot tell you | 20 min |
 | C9 | **Each phase-8 `safety-path` PR** | The interlock's behavior before and after, driven. Not the diff | 30 min each |
 | C10 | Phase 9, before building | The `SETTINGS` table's shape, and which fields are declared exceptions | 30 min |
 
 The table is ordered by when each fires, so **the numbers are out of sequence and that is
-deliberate** — C13 was added after the rest and C12 moved with phase 4. Checkpoint numbers are
-frozen for the same reason phase numbers are.
+deliberate** — C13 and C14 were added after the rest and C12 moved with phase 4. Checkpoint
+numbers are frozen for the same reason phase numbers are.
 
-C4, C5, C7, C9, C11 and C13 are not optional. Each guards something no gate in the repository can
-see: a feature deleted, a tester's database, the confirmation phrase, an interlock, an external
-contract, and whether the baseline everything else leans on is worth leaning on. The rest are worth
-skipping when the branch is small and the tests are honest.
+C4, C5, C7, C9, C11, C13 and C14 are not optional. Each guards something no gate in the repository
+can see: a feature deleted, a tester's database, the confirmation phrase, an interlock, an external
+contract, whether the baseline everything else leans on is worth leaning on, and an unpinned
+refusal arm. The rest are worth skipping when the branch is small and the tests are honest.
 
-C6, C7, C10 and C13 sit **before** the work rather than after it, because in each case the
+C6, C7, C10, C13 and C14 sit **before** the work rather than after it, because in each case the
 expensive part is the decision and reviewing the diff means reviewing a session that already went
 the wrong way.
 
@@ -1247,8 +1388,10 @@ Any change from this plan carries, in the same commit:
 
 And before the sub-PR merges into the branch:
 
-6. **A clean baseline diff** (S8), or, for phases 4, 7 and 9, an explained one, with the moved
-   lines named in the PR body.
+6. **A clean baseline diff** (S8), or, for the phases S6 names, an explained one, with the moved
+   lines named in the PR body. Read that list from S6 and nowhere else: this line used to carry its
+   own copy, and the copy omitted phase 8 — every `safety-path` item and all of W11's `behavior`
+   work, whose legitimate diffs it would have called a stop.
 7. **A `/reaper-review` pass** (S9), with each finding fixed or answered in the PR body.
 8. **The [Progress](#progress) rows moved** in the same commit (S10): the phase row, the *Landed*
    row, and *Killed while executing* if the session disproved a finding.
