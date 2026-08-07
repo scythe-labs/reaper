@@ -20,8 +20,8 @@ behavior today. A reviewer's job is to break the ones that are wrong, in this or
    other. The *Do not touch* register at the bottom is the audit's own answer; extend it.
 2. **Check the size estimates.** Several are extrapolated from a sample.
 3. **Challenge the sequencing.** Waves are ordered by value-to-risk ratio, not by subsystem.
-4. **Argue with the two judgment calls** in *Owner decisions*. Those are product questions and
-   this plan deliberately does not settle them.
+4. **Argue with the recommendations** in *Owner decisions*, and with wave 1.2. Those turn on the
+   roadmap rather than on the code, and both reverse an earlier conclusion of this audit.
 
 Risk classes used throughout: `none` (pure motion or deletion of unreachable code), `behavior`
 (observable output could move), `safety-path` (touches or sits beside a deletion interlock),
@@ -50,7 +50,7 @@ waste, of which only the fourth is large:
 
 | Kind | Where it is | Rough size |
 | --- | --- | --- |
-| Unreachable code and unread state | scattered, 30+ sites | ~2,000 lines |
+| Unreachable code and unread state | scattered, 30+ sites, plus two whole engines | ~3,600 lines |
 | Files that hold several unrelated jobs | 8 files, all self-declaring their seams | ~9,000 lines moved |
 | One derivation written N times | ~25 clusters | ~1,400 lines |
 | The declaration tax on adding anything | settings, wire types, cross-language enums | ~1,700 lines, and the real cost is elsewhere |
@@ -114,7 +114,44 @@ baseline, so removing the attribute leaves `alembic check`, a CI gate, reporting
 never-written members are also *not* dead: the executor's growth interlock allow-lists them
 exhaustively and fails closed, so deleting one narrows a fail-closed set (rule 143).
 
-### 1.2 Test-suite wall clock, for two lines
+### 1.2 The two unreachable engines: delete both
+
+`engine/backtest.py` (686) and `engine/calibration.py` (288), plus `tests/test_backtest.py` and
+`tests/test_calibration.py` (657). **1,631 lines, no caller in `src/`.** Verified: nothing under
+`src/` imports `engine.backtest` at all, and `calibration` is imported only by `backtest`, which
+takes two names from it and then falls back to its own constant rather than calling `derive`.
+
+The audit's first pass filed this as an owner decision between wiring them and fencing them off.
+The owner's call is **delete**, and the reasoning is better than either option offered:
+
+- **The backtest already banked its finding.** It is how Reaper learned that a size-weighted
+  scorer "produced a condemned set with *worse* regret than picking at random among films of the
+  same age" (`engine/signals.py:66`). That result is already in the shipped defaults: `SIZE` is
+  off, and turning it on raises a danger warning. It was a lab instrument for *building* Reaper,
+  not a feature an operator needs.
+- **Neither engine is the shape the replacement features want.** Both successors below are
+  cheaper, need no rewinding of history, and are honest by construction rather than by careful
+  handling. Keeping 1,631 lines parked so that a future feature might reuse them is how the
+  parking became permanent in the first place.
+
+Two successors are filed as feature requests and are deliberately *not* attempts to wire this
+code: **#553** (weigh a previously reaped title down, because its return is an observed regret)
+and **#554** (probability of a future rewatch, over a long enough window to mean something).
+
+**Before deleting, rehome one constant.** `FALLBACK_REWATCH_PRIOR` lives in `backtest.py:109` and
+is cited from `engine/gates.py:759` and `engine/policy.py:2644`, plus `docs/SIGNALS.md:155`,
+`docs/LEARNINGS.md:121` and `docs/README.md:64`. `engine/dormancy.py` is its natural home. Rule 64:
+the doc citations move in the same change.
+
+**And correct the roadmap in the same commit.** `docs/STATUS.md` carries M3c, M3f and M3g plus
+open work item 2, all of which describe wiring that is no longer going to happen. `SIGNALS.md`'s
+"Your library is not this library" section promises a per-operator prior that `calibration.derive`
+would have fitted; it must say the curve is borrowed, full stop, until #554 ships.
+
+Removing these also retires a standing rule-35 tax: every new `Facts` field currently has to be
+spelled in both modules' builders.
+
+### 1.3 Test-suite wall clock, for two lines
 
 `tests/test_repo_hygiene.py:890`'s `_repo_text_files()` does a full `rglob` plus `read_text` of
 every file in the repository and is called from **7** sites; `_uvicorn_launches()` re-enters it.
@@ -124,7 +161,7 @@ no `functools` import in the file.
 Adding `@lru_cache` to `_repo_text_files()` and `_source_files_to_scan()` is **+2 lines for ~44s
 per run**. This is the single best value-to-effort item in the audit.
 
-### 1.3 Test scaffolding that was never lifted
+### 1.4 Test scaffolding that was never lifted
 
 The suite already shares `tests/_auth.py`'s `login()` across 28 files, so the pattern is accepted;
 the layer beneath it was just never built.
@@ -151,7 +188,7 @@ the layer beneath it was just never built.
   start getting an answer, though `frontend/src/test/setup.ts:97` still fails the run on a genuine
   gap.
 
-### 1.4 Four tests that a linter runs or that cannot fail
+### 1.5 Four tests that a linter runs or that cannot fail
 
 `test_no_bare_exception_assertions_in_tests` (`test_repo_hygiene.py:433`) greps for
 `pytest.raises(Exception)`; **ruff B017 is enabled, runs in CI, and is strictly broader**.
@@ -340,19 +377,11 @@ look like.
 
 ## Owner decisions
 
-Three items turn on a roadmap call rather than on the code. Each is listed with the mechanics
-worked out so the decision is the only remaining step. Only the first is still open: 2 and 3
-carry a recommendation, and 2 reverses what this audit's first pass concluded.
+Two items turned on a roadmap call rather than on the code. Both are now settled and carry a
+recommendation; each reverses what this audit's first pass concluded. A third, the two unreachable
+engines, was settled the other way and has moved to wave 1.2 as a deletion.
 
-**1. `engine/backtest.py` and `engine/calibration.py`: 974 source lines and 657 test lines with no
-caller in `src/`.** Verified: nothing under `src/` imports `backtest` at all, and `calibration` is
-imported only by `backtest`. Both carry standing rule-35 obligations, so every new `Facts` field
-must be spelled in both builders, which taxes unrelated work. `docs/STATUS.md:46` lists exactly
-what wiring `POST /api/policy/backtest` would need. **Do not delete blind**: `docs/SIGNALS.md` and
-`MinDormancyGate`'s docstring both cite `FALLBACK_REWATCH_PRIOR`, which lives here. The choice is
-wire it, or move both behind a `research/` boundary excluded from the rule-35 sweep.
-
-**2. `db/models.py:314` `AutonomyGrant`: a table, two CHECK constraints and an index for a feature
+**1. `db/models.py:314` `AutonomyGrant`: a table, two CHECK constraints and an index for a feature
 with no code. The recommendation here is to KEEP it and correct one sentence.** The audit's first
 pass said delete, on the strength of "zero references in `src/`, `tests/` or `frontend/src/`. That
 claim is true of *code* and false of *prose*, and the difference decides the question:
@@ -382,7 +411,7 @@ If M3b leaves the roadmap, revisit. The mechanics then need **no migration**: `a
 already has an `include_name` filter for cache tables, so a `RETIRED_TABLES` arm plus deleting the
 model class leaves existing databases with an inert empty table and keeps `alembic check` green.
 
-**3. `AuthSession.user_agent`: keep it, and give it the reader it was missing.** Written once at
+**2. `AuthSession.user_agent`: keep it, and give it the reader it was missing.** Written once at
 `auth/sessions.py:69` and read by nothing today, having been threaded through seven sites to get
 there (`api/auth.py:341`, `:401`, `:492`; `services/login.py:159`, `:256`, `:320`, `:350`). The
 audit read "no reader" as "delete the column"; the owner's call is the other resolution, which is
