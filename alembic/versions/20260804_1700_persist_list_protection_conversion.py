@@ -78,6 +78,30 @@ def _list_rows(conn: sa.Connection) -> list[tuple[str, str, str | None]]:
     return [(str(r[0]), str(r[1]), r[2]) for r in rows]
 
 
+def _library_media_types(conn: sa.Connection) -> dict[str, frozenset[str]]:
+    """Casefolded Plex library title -> the media types it spans, from the synced
+    ``plex_libraries`` setting. Read best-effort: it only ever narrows a collection's rule to
+    one policy, so an absent, unparseable, or unreadable setting leaves every collection on both
+    -- the wider protection, and the same fail-open the load path takes (rule 104, #545)."""
+    from reaper.engine.policy import library_media_types
+
+    try:
+        row = conn.execute(
+            sa.text("SELECT value_json FROM app_setting WHERE key = 'plex_libraries'")
+        ).first()
+    except sa.exc.SQLAlchemyError:
+        return {}
+    if row is None:
+        return {}
+    try:
+        libraries = json.loads(row[0])
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(libraries, list):
+        return {}
+    return library_media_types([lib for lib in libraries if isinstance(lib, dict)])
+
+
 def upgrade() -> None:
     # Imported inside the function, so a module that moves or fails to import cannot stop an
     # upgrade whose other revisions are unrelated to policy bodies.
@@ -87,10 +111,14 @@ def upgrade() -> None:
         convert_list_protections,
         has_legacy_list_protections,
         legacy_keep_tags,
+        own_list_media_scope,
     )
 
     conn = op.get_bind()
     rows = _list_rows(conn)
+    # One derivation of a collection's media scope for both bodies (rule 104): a single-library
+    # collection's rule lands only on the policy for its library's type (#545).
+    collection_scope = own_list_media_scope(rows, _library_media_types(conn))
     now = int(datetime.now(UTC).timestamp())
 
     for media_type in ("movie", "tv"):
@@ -118,6 +146,7 @@ def upgrade() -> None:
                 tag_list_name=tag_name,
                 imdb_list_name=imdb_name,
                 collection_list_names=own_names,
+                collection_media_scope=collection_scope,
             )
             # A conversion that left any legacy shape behind did so deliberately, to keep a
             # protection whose replacement list does not exist. Leave the stored row alone and

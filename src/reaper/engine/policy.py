@@ -39,7 +39,7 @@ import copy
 import enum
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, ClassVar, Literal, Self, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -1313,6 +1313,88 @@ def conversion_list_names(
     return tag, imdb, own
 
 
+#: A collection whose library kind Reaper cannot pin down keeps a rule on BOTH policies. A name
+#: absent from ``own_list_media_scope``'s map reads as this too, so an empty map leaves every
+#: rule where it was before this scoping existed. Public so the load shim and the upgrade
+#: migration read one constant (rule 104).
+BOTH_MEDIA_TYPES: frozenset[str] = frozenset({"movie", "tv"})
+
+#: The policy media type each Plex library kind seeds a keep rule on. Plex names a TV library
+#: "show"; a policy names that side "tv". Music and photo libraries never reach here --
+#: ``PlexClient.video_sections`` surfaces only these two, and ``app_settings.set_plex_libraries``
+#: stores what it returns.
+_PLEX_KIND_TO_MEDIA: dict[str, str] = {"movie": "movie", "show": "tv"}
+
+
+def library_media_types(
+    libraries: Sequence[Mapping[str, object]],
+) -> dict[str, frozenset[str]]:
+    """Casefolded library title -> the media types libraries of that title span, from the synced
+    ``plex_libraries`` setting rows (each a ``{"title", "kind", ...}`` dict).
+
+    Two same-titled libraries of different kinds union to both, which ``own_list_media_scope``
+    reads as "cannot tell" and so keeps a collection under that title on both policies. A kind
+    that is neither ``movie`` nor ``show`` (never surfaced today) is skipped. Case-folded, the
+    comparison every reader of a Plex name makes (rule 88)."""
+    out: dict[str, set[str]] = {}
+    for lib in libraries:
+        title = lib.get("title")
+        media = _PLEX_KIND_TO_MEDIA.get(str(lib.get("kind")))
+        if isinstance(title, str) and title.strip() and media is not None:
+            out.setdefault(title.strip().casefold(), set()).add(media)
+    return {title: frozenset(media) for title, media in out.items()}
+
+
+def own_list_media_scope(
+    rows: Sequence[tuple[str, str, str | None]],
+    library_types: Mapping[str, frozenset[str]],
+) -> dict[str, frozenset[str]]:
+    """For each Plex list the operator curates by hand, the media types a keep rule naming it may
+    protect -- keyed by the list's name casefolded, the spelling every reader of a list name
+    compares on (rule 88).
+
+    A ``plex_collection`` lives in ONE Plex library, so it can only hold that library's one type;
+    a ``plex_watchlist`` spans the account and can hold both. ``library_types`` maps a casefolded
+    library title to the media types libraries of that title span (``library_media_types``, off
+    the synced ``plex_libraries`` setting): a library never synced, one since renamed, or two
+    same-titled libraries of different kinds all leave the title unknown or two-typed.
+
+    Fail-open, the direction rules 65/91 require: this NARROWS a collection's rule to one policy
+    only when its library is known and single-typed. An unknown, ambiguous, or unsynced library
+    keeps BOTH -- a rule on the media type the collection cannot hold matches no item, so leaving
+    it costs nothing, while dropping it on a lookup that could not answer would withdraw a live
+    protection. A watchlist keeps both always. This is the whole reason scoping a collection is
+    "harder than the IMDb half" (#545): the IMDb chart is statically movies-only, a collection's
+    one type is its library's and nothing in the registry carries it.
+
+    Two rows can share a casefolded key, so the types UNION rather than overwrite (rule 63: a
+    key that is a display name always can collide). ``list_config.name`` is unique, but under a
+    ``NOCASE`` collation and a ``func.lower`` pre-check that both fold ASCII only, while this key
+    is a full-Unicode ``casefold`` -- so a non-ASCII case pair ("strasse" vs "stra"+eszett) is
+    admitted as two rows that collapse here. Overwriting would scope the loser to the other's
+    type and drop its rule off the policy it keeps on; the union keeps both, fail-open."""
+    scope: dict[str, set[str]] = {}
+    for source, name, config_json in rows:
+        key = name.strip().casefold()
+        if source == "plex_watchlist":
+            scope.setdefault(key, set()).update(BOTH_MEDIA_TYPES)
+            continue
+        if source != "plex_collection":
+            continue
+        library = _config_value(config_json, "library")
+        held = (
+            library_types.get(str(library).strip().casefold())
+            if isinstance(library, str) and library.strip()
+            else None
+        )
+        # Narrow only a library that is known and single-typed. ``held`` is None for an unsynced
+        # or renamed library, and carries two types for same-titled movie and show libraries;
+        # both keep the rule on both policies.
+        this = held if held is not None and len(held) == 1 else BOTH_MEDIA_TYPES
+        scope.setdefault(key, set()).update(this)
+    return {key: frozenset(media) for key, media in scope.items()}
+
+
 def has_legacy_list_protections(raw: object) -> bool:
     """Whether ``convert_list_protections`` would fire on this body. Exposed so callers can
     decide whether resolving the target list names (a database read) is worth it, against
@@ -1339,6 +1421,7 @@ def convert_list_protections(
     tag_list_name: str | None,
     imdb_list_name: str | None,
     collection_list_names: tuple[str, ...] = (),
+    collection_media_scope: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[str, Any] | None:
     """A stored body from before every list protected through its own keep rule.
 
@@ -1373,8 +1456,15 @@ def convert_list_protections(
     can never match a season and would read as a protection the operator never chose (#539,
     rule 38). The curated_list gate protected nothing on a TV body for the same reason, so
     it strips there with no replacement. The tag list spans both libraries and its rule
-    lands on both. Plex collections still land on both: a collection's one media type is its
-    library's, and nothing at load time carries it (#545).
+    lands on both.
+
+    ``collection_media_scope`` scopes each Plex collection's rule the same way, keyed by the
+    collection name casefolded (``own_list_media_scope``). A collection lives in one Plex
+    library, so it holds that library's one type; its rule lands only on the policy for that
+    type. Fail-open: a name the map omits, or one the map keeps at both (an unsynced, renamed,
+    or ambiguous library, and every watchlist), lands on both -- so ``None`` here is the
+    behavior before this scoping existed (#545). A watchlist genuinely spans both and stays on
+    both.
 
     Returns the converted body, or ``None`` when nothing is legacy-shaped. The caller
     flags the conversion (``PolicyRepair.LISTS_MIGRATED``), which makes
@@ -1409,8 +1499,12 @@ def convert_list_protections(
         # own rule, or an upgrade would quietly withdraw the collections' cover.
         if had_tags and tag_list_name:
             new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": tag_list_name})
+        scope = collection_media_scope or {}
         for name in collection_list_names:
-            new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": name})
+            # A single-library collection's rule lands only on the policy for its library's
+            # type; an unknown/ambiguous library keeps it on both (#545, fail-open).
+            if media_type in scope.get(name.strip().casefold(), BOTH_MEDIA_TYPES):
+                new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": name})
     # The IMDb chart is movies only, so its rule lands on the movie body alone (#539).
     if legacy_gates.get("curated_list") and imdb_list_name and media_type == "movie":
         new_rules.append({"field": "on_list", "op": Op.EQ.value, "value": imdb_list_name})

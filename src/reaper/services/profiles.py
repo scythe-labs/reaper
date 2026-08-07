@@ -34,6 +34,7 @@ from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.engine.fields import Op
 from reaper.engine.policy import (
+    BOTH_MEDIA_TYPES,
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
     ConditionSpec,
@@ -45,9 +46,12 @@ from reaper.engine.policy import (
     convert_list_protections,
     has_legacy_list_protections,
     legacy_keep_tags,
+    library_media_types,
+    own_list_media_scope,
     rebalance,
     recover_rating_rules,
 )
+from reaper.services import app_settings
 
 log = structlog.get_logger(__name__)
 
@@ -244,7 +248,7 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     # so a body needing two of them reports two and the editor says both.
     repairs: tuple[PolicyRepair, ...] = ()
     if has_legacy_list_protections(raw):
-        tag_name, imdb_name, own_names = await _conversion_list_names(
+        tag_name, imdb_name, own_names, scope = await _conversion_list_names(
             session, keep_tags=legacy_keep_tags(raw)
         )
         converted = convert_list_protections(
@@ -253,6 +257,7 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
             tag_list_name=tag_name,
             imdb_list_name=imdb_name,
             collection_list_names=own_names,
+            collection_media_scope=scope,
         )
         if converted is not None:
             raw = converted
@@ -313,23 +318,44 @@ async def _conversion_list_names(
     session: AsyncSession,
     *,
     keep_tags: tuple[str, ...],
-) -> tuple[str | None, str | None, tuple[str, ...]]:
-    """The registry rows ``convert_list_protections`` must point its rules at, read from the
-    database and selected by ``policy.conversion_list_names`` -- which owns WHICH row answers
-    each half, so the load path here and the upgrade migration cannot answer it differently
-    (rule 104)."""
-    rows = (
-        await session.execute(
-            select(
-                ListConfigModel.source,
-                ListConfigModel.name,
-                ListConfigModel.config_json,
-            ).order_by(ListConfigModel.id)
-        )
-    ).all()
-    return conversion_list_names(
-        [(str(r.source), str(r.name), r.config_json) for r in rows], keep_tags=keep_tags
-    )
+) -> tuple[str | None, str | None, tuple[str, ...], dict[str, frozenset[str]]]:
+    """The registry rows ``convert_list_protections`` must point its rules at, plus the media
+    scope each of the operator's own Plex lists may keep on. Selected by
+    ``policy.conversion_list_names`` and ``policy.own_list_media_scope``, which own WHICH row
+    answers each half and WHICH policy a collection's rule belongs on, so the load path here and
+    the upgrade migration cannot answer either differently (rule 104).
+
+    ``plex_libraries`` is read best-effort. Its only effect is to NARROW a collection's rule to
+    one policy, so losing it leaves the rule on both -- the wider protection, the keep direction
+    -- and does not degrade. Rules 65/91 forbid a read failure WIDENING what can be reaped; this
+    read only ever widens protection. The registry read below still raises, and the caller
+    degrades on it.
+
+    A malformed stored value is caught here too, not only a database error: ``get_plex_libraries``
+    parses ``value_json`` and iterates it, so a corrupt or non-list setting (a restored backup, a
+    hand-edit) raises ``ValueError``/``TypeError``, and ``active_policy`` must not raise (its
+    contract, and the reason the whole load path is total). Falls back to no scoping, exactly as
+    the sibling migration ``_library_media_types`` does on the same value (rule 104)."""
+    try:
+        libraries = await app_settings.get_plex_libraries(session)
+    except (SQLAlchemyError, ValueError, TypeError):
+        log.warning("policy.plex_libraries_unreadable")
+        libraries = []
+    rows = [
+        (str(r.source), str(r.name), r.config_json)
+        for r in (
+            await session.execute(
+                select(
+                    ListConfigModel.source,
+                    ListConfigModel.name,
+                    ListConfigModel.config_json,
+                ).order_by(ListConfigModel.id)
+            )
+        ).all()
+    ]
+    tag, imdb, own = conversion_list_names(rows, keep_tags=keep_tags)
+    scope = own_list_media_scope(rows, library_media_types(libraries))
+    return tag, imdb, own, scope
 
 
 async def _default_with_own_lists(
@@ -361,7 +387,7 @@ async def _default_with_own_lists(
     try:
         # No tags to resolve against: there is no stored body here, so nothing was ever
         # protecting on tags. Only the Plex half is read, and it is asked for by name.
-        _, _, own = await _conversion_list_names(session, keep_tags=())
+        _, _, own, scope = await _conversion_list_names(session, keep_tags=())
     except SQLAlchemyError:
         log.warning("policy.default_lists_unreadable")
         return default, True
@@ -371,10 +397,14 @@ async def _default_with_own_lists(
         if c.field == "on_list" and isinstance(c.value, str)
     }
     # Case-folded on both sides, the comparison every reader of a list name makes (rule 88).
+    # A single-library collection's rule is added only to the policy for its library's media
+    # type; an unsynced or ambiguous library, and every watchlist, keep the rule on both
+    # (``scope`` reads BOTH there, fail-open -- #545).
     extra = tuple(
         ConditionSpec(field="on_list", op=Op.EQ, value=name)
         for name in dict.fromkeys(own)
         if name.strip().casefold() not in carried
+        and default.media_type in scope.get(name.strip().casefold(), BOTH_MEDIA_TYPES)
     )
     if not extra:
         return default, False

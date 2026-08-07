@@ -53,6 +53,8 @@ from reaper.engine.policy import (
     convert_list_protections,
     has_legacy_list_protections,
     inspect,
+    library_media_types,
+    own_list_media_scope,
     rebalance,
     recover_rating_rules,
 )
@@ -3762,6 +3764,91 @@ class TestTheGradedKeepRemedyReadsAsASentence:
         )
 
 
+class TestOwnListMediaScope:
+    """Which policy a Plex list the operator curates by hand may keep on (#545).
+
+    A ``plex_collection`` lives in one library, so it holds that library's one type; a
+    ``plex_watchlist`` spans the account and holds both. Fail-open (rules 65/91): the scope
+    narrows a rule only when the library is known and single-typed, so an unsynced, renamed, or
+    ambiguous library keeps the rule on both.
+    """
+
+    def test_library_media_types_maps_title_to_the_policy_side(self) -> None:
+        """Plex names a TV library "show"; the policy side is "tv". Music and photo never reach
+        here, and a stray kind is skipped rather than mapped to a wrong side."""
+        libs = [
+            {"title": "Films", "kind": "movie"},
+            {"title": "Series", "kind": "show"},
+            {"title": "Tunes", "kind": "artist"},
+        ]
+        assert library_media_types(libs) == {
+            "films": frozenset({"movie"}),
+            "series": frozenset({"tv"}),
+        }
+
+    def test_two_same_titled_libraries_union_to_both(self) -> None:
+        """Case-folded on the title (rule 88): two libraries sharing a title but not a kind
+        become a two-typed entry, which the scope below reads as "cannot tell"."""
+        libs = [{"title": "Media", "kind": "movie"}, {"title": "media", "kind": "show"}]
+        assert library_media_types(libs) == {"media": frozenset({"movie", "tv"})}
+
+    @staticmethod
+    def _rows() -> list[tuple[str, str, str | None]]:
+        return [
+            ("plex_collection", "Keep Films", json.dumps({"library": "Films"})),
+            ("plex_collection", "Keep Series", json.dumps({"library": "Series"})),
+            ("plex_collection", "Keep Unsynced", json.dumps({"library": "Gone"})),
+            ("plex_watchlist", "My Watchlist", "{}"),
+            ("imdb", "Top 250", json.dumps({"preset": "top250"})),
+        ]
+
+    def test_a_collection_narrows_to_its_librarys_type(self) -> None:
+        lib_types = {"films": frozenset({"movie"}), "series": frozenset({"tv"})}
+        scope = own_list_media_scope(self._rows(), lib_types)
+        assert scope["keep films"] == frozenset({"movie"})
+        assert scope["keep series"] == frozenset({"tv"})
+
+    def test_an_unsynced_library_and_a_watchlist_keep_both(self) -> None:
+        """ "Gone" is in no synced library, so its collection keeps both; a watchlist always
+        does. The IMDb row is not the operator's own hand-curated list, so it is absent from
+        the map (the caller reads an absent name as both anyway)."""
+        scope = own_list_media_scope(self._rows(), {"films": frozenset({"movie"})})
+        assert scope["keep unsynced"] == frozenset({"movie", "tv"})
+        assert scope["my watchlist"] == frozenset({"movie", "tv"})
+        assert "top 250" not in scope
+
+    def test_an_ambiguous_library_keeps_both(self) -> None:
+        """A collection whose library title maps to two kinds cannot be pinned to one policy."""
+        scope = own_list_media_scope(
+            [("plex_collection", "Keep Films", json.dumps({"library": "Media"}))],
+            {"media": frozenset({"movie", "tv"})},
+        )
+        assert scope["keep films"] == frozenset({"movie", "tv"})
+
+    def test_an_empty_library_map_keeps_every_collection_on_both(self) -> None:
+        """The pre-scoping behavior: with nothing synced, every collection stays on both."""
+        scope = own_list_media_scope(self._rows(), {})
+        assert scope["keep films"] == frozenset({"movie", "tv"})
+        assert scope["keep series"] == frozenset({"movie", "tv"})
+
+    def test_two_collections_that_casefold_collide_union_to_both(self) -> None:
+        """rule 63: the scope key is a display name, which can always collide. ``list_config``'s
+        NOCASE UNIQUE and its ``func.lower`` pre-check fold ASCII only, but this key is a
+        full-Unicode ``casefold``, so a non-ASCII case pair is admitted as two rows that collapse
+        to one key. A movie-library and a show-library collection colliding there must UNION to
+        both -- overwriting would drop the loser's rule off the policy it keeps on."""
+        # "STRASSE".casefold() == "straße".casefold() == "strasse", but the two differ under
+        # NOCASE (ß is not folded), so both rows exist in the registry.
+        rows = [
+            ("plex_collection", "straße", json.dumps({"library": "Shows"})),
+            ("plex_collection", "STRASSE", json.dumps({"library": "Films"})),
+        ]
+        scope = own_list_media_scope(
+            rows, {"shows": frozenset({"tv"}), "films": frozenset({"movie"})}
+        )
+        assert scope["strasse"] == frozenset({"movie", "tv"})
+
+
 class TestConvertListProtections:
     """The load shim for a body from before every list protected through its own keep rule.
 
@@ -3795,6 +3882,7 @@ class TestConvertListProtections:
         tag: str | None = "Tagged",
         imdb: str | None = "Top",
         collections: tuple[str, ...] = (),
+        collection_scope: dict[str, frozenset[str]] | None = None,
     ) -> dict[str, object] | None:
         return convert_list_protections(
             raw,
@@ -3802,6 +3890,7 @@ class TestConvertListProtections:
             tag_list_name=tag,
             imdb_list_name=imdb,
             collection_list_names=collections,
+            collection_media_scope=collection_scope,
         )
 
     def test_every_curated_by_hand_list_gets_its_own_rule(self) -> None:
@@ -3926,14 +4015,47 @@ class TestConvertListProtections:
         # It still loads and scans: no unbuildable gate row is left behind.
         assert build_gates(PolicyBody.model_validate(converted)) is not None
 
-    def test_collections_still_land_on_a_tv_body(self) -> None:
-        """A Plex collection's one media type is its library's, and nothing at load time
-        carries it, so both bodies keep its rule for now (filed separately). Losing no data:
-        an inert rule on the wrong body keeps nothing, and the right body still protects."""
-        converted = self._convert(self._legacy(), media_type="tv", collections=("Never Reap",))
+    def test_an_unscoped_collection_lands_on_both_bodies(self) -> None:
+        """#545 fail-open: with no scope for it -- an unsynced, renamed, or ambiguous library --
+        a collection's rule lands on both bodies. Losing no data: an inert rule on the wrong
+        body keeps nothing, and the right body still protects. ``None`` scope is the behavior
+        before scoping existed."""
+        movie = self._convert(self._legacy(), media_type="movie", collections=("Never Reap",))
+        tv = self._convert(self._legacy(), media_type="tv", collections=("Never Reap",))
 
-        assert converted is not None
-        assert "Never Reap" in self._rules(converted)
+        assert movie is not None and tv is not None
+        assert "Never Reap" in self._rules(movie)
+        assert "Never Reap" in self._rules(tv)
+
+    def test_a_movie_scoped_collection_lands_on_the_movie_body_only(self) -> None:
+        """#545: a collection in a movie library holds movies only, so its rule lands on the
+        movie body and NOT the TV one -- a TV rule naming it can never match a season and reads
+        as a protection the operator never chose (rule 38). Matched case-folded (rule 88)."""
+        scope = {"never reap": frozenset({"movie"})}
+        movie = self._convert(
+            self._legacy(), media_type="movie", collections=("Never Reap",), collection_scope=scope
+        )
+        tv = self._convert(
+            self._legacy(), media_type="tv", collections=("Never Reap",), collection_scope=scope
+        )
+
+        assert movie is not None and tv is not None
+        assert "Never Reap" in self._rules(movie)
+        assert "Never Reap" not in self._rules(tv)
+
+    def test_a_show_scoped_collection_lands_on_the_tv_body_only(self) -> None:
+        """The mirror of the movie case: a collection in a show library lands on TV alone."""
+        scope = {"never reap": frozenset({"tv"})}
+        movie = self._convert(
+            self._legacy(), media_type="movie", collections=("Never Reap",), collection_scope=scope
+        )
+        tv = self._convert(
+            self._legacy(), media_type="tv", collections=("Never Reap",), collection_scope=scope
+        )
+
+        assert movie is not None and tv is not None
+        assert "Never Reap" not in self._rules(movie)
+        assert "Never Reap" in self._rules(tv)
 
     def test_it_is_idempotent_on_a_converted_body(self) -> None:
         converted = self._convert(self._legacy())
