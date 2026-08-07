@@ -201,7 +201,7 @@ here first and never reconstructed later.
 | Sub-PR | Phase | Finding IDs | Symbol | Baseline moved? | Notes |
 | --- | --- | --- | --- | --- | --- |
 | #562 | 1 | Tier A | `_policy_lab.pinned_baseline` | n/a, it is the baseline | 880 blocks re-pinned, every leaf additive. Fixture 754 KB → 1,574 KB |
-| #564 | 1 | Tier B | `scripts/baseline_capture.py` | n/a, it is the baseline | Snapshot 86, 5,965 items, 592 planned. Source database digest unchanged |
+| #563 | 1 | Tier B | `scripts/baseline_capture.py` | n/a, it is the baseline | Snapshot 86, 5,965 items, 592 planned. Source database digest unchanged |
 
 ### Killed while executing
 
