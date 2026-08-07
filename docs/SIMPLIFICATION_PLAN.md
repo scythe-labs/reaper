@@ -161,7 +161,7 @@ row moving is indistinguishable from one that never started.
 | # | Phase | Status | Landed | Notes |
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 outstanding |
-| 1 | Behavioral baseline | not started | 0 of 2 | Blocks every later phase. C13 outstanding |
+| 1 | Behavioral baseline | in progress | 1 of 2 | Tier A landed. Blocks every later phase. C13 outstanding |
 | 2 | Test-suite wall clock | not started | 0 of ~6 | |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
@@ -199,7 +199,7 @@ here first and never reconstructed later.
 
 | Sub-PR | Phase | Finding IDs | Symbol | Baseline moved? | Notes |
 | --- | --- | --- | --- | --- | --- |
-| *none yet* | | | | | |
+| #562 | 1 | Tier A | `_policy_lab.pinned_baseline` | n/a, it is the baseline | 880 blocks re-pinned, every leaf additive. Fixture 754 KB → 1,574 KB |
 
 ### Killed while executing
 
@@ -407,10 +407,16 @@ fixture's per-vector `baseline` block with:
 
 **Never pin `detail`.** It is rule 21 operator copy that phases 4, 7 and 9 edit, it is roughly 60%
 of the payload by bytes, and pinning it turns every copy edit into an S8 stop. Measured: ids and
-outcome classes add ~371 KB to a 736 KB fixture, the full explanation text ~1,383 KB. The work is
-one change to `rejudge()` (`policy_lab_extract.py:193`) and one `--rebaseline --unbumped="the
-baseline block gained fields; the engine did not move"` run, which is the refusal's own fourth
-named case.
+outcome classes add ~371 KB to a 736 KB fixture, the full explanation text ~1,383 KB.
+
+> **Landed.** `_policy_lab.pinned_baseline` builds the block off the serialized explanation, and
+> `baseline_differences` reports a move leaf by leaf; `rejudge` and `TestPinnedBaseline` both call
+> them, so the write and the comparison cannot disagree about what a baseline is. Re-pinned under
+> the refusal's fourth named case (`--unbumped="the baseline block gained fields; the engine did
+> not move"`): 880 blocks moved and **every** moved leaf was additive, which is the evidence the
+> engine stood still. The fixture is 1,574 KB, 27 pinned leaves per block against 3. Three
+> mutations measured, in `docs/LEARNINGS.md`: reordering `checked_and_did_not_fire` moves nothing
+> in the other 4,035 tests and is caught here alone.
 
 **Tier B — the capture. Owner-run, at phase boundaries and at C12/C13, never per PR.** A second
 script reading `data/reaper.db` read-only exactly as the extractor does, emitting per item:

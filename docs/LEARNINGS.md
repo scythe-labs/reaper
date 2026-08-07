@@ -2943,6 +2943,48 @@ stacking `reaper-keep` into an eleven-row-tall cell.
   `nowrap` is a recorded rule-139 exemption in `index-outside-text.test.ts`, not a violation:
   scrolling is the remedy, where for a clipped container it would be the bug.
 
+## A verdict triple is a coarse reading of the conclusion it pins (2026-08-07)
+
+The policy lab pinned `(verdict, score, coverage_bp)` per vector, which reads as a complete
+engine trip-wire and is not: a great deal of what the scan concludes rounds away before it
+reaches those three numbers. Measured by mutating production and running the other 4,035 tests
+with the pinned baseline deselected:
+
+| mutation | what the triple saw | what the rest of the suite saw |
+| --- | --- | --- |
+| `checked_and_did_not_fire` truncated to one entry | **0 of 440 vectors moved** | one invariant test |
+| a below-floor `ARGUES_KEEP` folded to `NOT_APPLICABLE` | no move | one state test |
+| `checked_and_did_not_fire` **reordered**, membership identical | no move | **nothing** |
+
+The third is the one worth keeping. It is a legal-looking refactor, it changes the order the
+operator reads their protections in, and 4,035 tests are green through it. The first is worse in
+what it removes and only survived because a separate invariant happens to count gate reports:
+the block that carries the product promise — every protection that was checked and did *not*
+fire — is downstream of the why-panel, and nothing else asserted on it per real shape.
+
+⇒ **Pin the conclusion, not the decision.** The baseline block now carries the three gate lists
+by gate id, the explanation's `base_score`, `keep_discount`, `threshold`, `coverage_floor_bp`
+and `watch_blind`, and per signal its `id`, `contribution`, `state` and `evaluated`. 27 pinned
+leaves per block where there were 3.
+
+- **Read it off the serialized explanation, never off the score object.** Every number above
+  also exists on `Score` and the policy, and recomputing them in the lab would be a second
+  implementation of `_explain`'s rounding whose output the fixture then pins as ground truth
+  (rule 119). Reading production's own payload also makes the pin cover the serialization: a key
+  dropped from `_explain` raises rather than thawing to `None` and comparing equal.
+- **`detail` is deliberately not pinned, and that is a cost accepted.** It is roughly 60% of the
+  payload by bytes and it is rule 21 operator copy, so pinning it turns every wording edit into a
+  baseline stop — and a stop that fires on rewording is one that stops being read. The fixture
+  grew 754 KB → 1,574 KB without it.
+- **Report the diff leaf by leaf.** Twelve signal rows compared as one blob say only that
+  `signals` moved. The failure a reader can act on is
+  `v0007 baseline.signals[2].contribution: 12.0 -> 9.0`, and the comparison that produces it is
+  shared by the test and the regeneration script so the two cannot disagree about what a
+  baseline is.
+- **One field cannot move and is pinned anyway.** `watch_blind` comes from the watch mirror
+  going blind between scans, which is not a property of a fact vector — every replayed value is
+  `None`. It is pinned for the key's presence and nothing else; rule 141 governs the rest.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
