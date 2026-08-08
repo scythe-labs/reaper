@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 // `reapBlockers` re-derives, for the sake of a sentence, a question the server already
 // answered as `reap_ready`. Two derivations of one fact is the shape that drifts, so the
 // agreement test at the bottom drives every combination of the fields both sides read and

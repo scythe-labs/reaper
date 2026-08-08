@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 // One invariant, held over the whole stylesheet: a rule that lifts a surface clear of the phone's
 // section bar is declared AFTER that surface's own `bottom`, never before it.
 //

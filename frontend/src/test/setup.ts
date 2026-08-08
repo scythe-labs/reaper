@@ -4,17 +4,25 @@ import "@testing-library/jest-dom/vitest";
 
 import { afterEach } from "vitest";
 
-// jsdom has no layout, so window.scrollTo is unimplemented and logs a noisy "Not
-// implemented" on every call. ModalShell restores the scroll offset with it when a modal
-// closes, so make it a quiet no-op here -- nothing in the tests reads a real scroll.
-window.scrollTo = () => {};
+// This file is `setupFiles`, so it runs for EVERY test file, including the twelve carrying an
+// `@vitest-environment node` docblock. Those have no DOM at all rather than an empty one, so
+// the three writes below are guarded. The console guards further down are not: rule 135's mock
+// gap and rule 136's stray update are as real without a DOM as with one.
+const hasDom = typeof document !== "undefined";
 
-// Same reason, one layer down: jsdom does not implement Element.scrollIntoView AT ALL, so the
-// property is `undefined` rather than a no-op and calling it throws. Four components scroll a
-// keyboard target into view (the suggester's active option, the docs anchor, the policy
-// warning anchors), and each would take its whole test file down with a TypeError. Assigned
-// rather than spied, because `vi.spyOn` cannot wrap a method that does not exist.
-Element.prototype.scrollIntoView = () => {};
+if (hasDom) {
+  // jsdom has no layout, so window.scrollTo is unimplemented and logs a noisy "Not
+  // implemented" on every call. ModalShell restores the scroll offset with it when a modal
+  // closes, so make it a quiet no-op here -- nothing in the tests reads a real scroll.
+  window.scrollTo = () => {};
+
+  // Same reason, one layer down: jsdom does not implement Element.scrollIntoView AT ALL, so
+  // the property is `undefined` rather than a no-op and calling it throws. Four components
+  // scroll a keyboard target into view (the suggester's active option, the docs anchor, the
+  // policy warning anchors), and each would take its whole test file down with a TypeError.
+  // Assigned rather than spied, because `vi.spyOn` cannot wrap a method that does not exist.
+  Element.prototype.scrollIntoView = () => {};
+}
 
 // Pay jsdom's first `getComputedStyle` here, where nothing is timing it.
 //
@@ -35,16 +43,18 @@ Element.prototype.scrollIntoView = () => {};
 // The property is read, not just the call made, because jsdom builds the CSSOM on first
 // access rather than on the call -- and the value is then asserted, so a jsdom that stops
 // answering fails here loudly instead of leaving this line silently warming nothing.
-const warm = document.createElement("div");
-document.body.appendChild(warm);
-const warmedVisibility = window.getComputedStyle(warm).visibility;
-warm.remove();
-if (warmedVisibility === "") {
-  throw new Error(
-    "jsdom returned no computed visibility for a plain div, so this file is no longer " +
-      "paying the first-getComputedStyle cost it exists to pay. Every test file's first " +
-      "*ByRole query is back to spending ~52ms of its findBy budget on it.",
-  );
+if (hasDom) {
+  const warm = document.createElement("div");
+  document.body.appendChild(warm);
+  const warmedVisibility = window.getComputedStyle(warm).visibility;
+  warm.remove();
+  if (warmedVisibility === "") {
+    throw new Error(
+      "jsdom returned no computed visibility for a plain div, so this file is no longer " +
+        "paying the first-getComputedStyle cost it exists to pay. Every test file's first " +
+        "*ByRole query is back to spending ~52ms of its findBy budget on it.",
+    );
+  }
 }
 
 // A query with no queryFn FAILS the test rather than warning (rule 135).
