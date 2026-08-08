@@ -9,7 +9,7 @@ paths:
 Blockers, not suggestions, distilled from six adversarial review passes. **Rule numbers are
 permanent** (tests and comments cite them); where two overlap, the more specific governs.
 Rules binding every file are in the root `CLAUDE.md`; the SPA's are in
-`.claude/rules/frontend.md`. Holds 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143.
+`.claude/rules/frontend.md`. Holds 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143, 148.
 
 ## The safety / deletion path
 
@@ -449,3 +449,37 @@ when it is empty.
 results exactly as it does to facts, and conflating them tells the operator a check passed when
 it never ran. `engine/verdict.py` carries what a block does and does not hold today; do not
 infer it from the encoding.
+
+## Schema removal
+
+**148. Schema leaves in two releases, never in one, and never by accumulating instead.**
+Release M removes the reads, the writes and the ORM attribute, and ships whatever revision the
+column needs to keep working without Python holding it up — for a `NOT NULL` column with no
+server default, an `alter_column` adding one, because the Python-side `default=` dies with the
+attribute and the next `INSERT` omits the column. Release M+1 drops the column. One release
+where both images work is what makes the operator's rollback survivable, and it is the only
+thing that does: a `downgrade()` recreating the column does not bring its data back.
+
+**Measure the cost against the alternative, not against zero.** Under `render_as_batch`, SQLite
+rebuilds the whole table for anything outside `add_column`/`create_index`/`drop_index` — so the
+`server_default` revision that lets you KEEP a dead column copies the table exactly as dropping
+it would. Where both cost the same rebuild, keeping it buys only a permanent `include_object`
+arm and a registry entry, and defers the drop forever. That symmetry is the reason this rule
+exists; it does not hold for a nullable column, which can be abandoned for free.
+
+**Three obligations on the M+1 revision, and the first is the one that bricks an install.**
+One `batch_alter_table` block per table with every one of that table's drops inside it, since
+each block is another full copy and another chance to strand `_alembic_tmp_<table>` (#564).
+`drop_index` before `drop_constraint` before `drop_column`, because Alembic reflects an index
+on a column being dropped and recreates it against a column that is gone — a two-line
+authoring slip that is invisible against a fresh database and fatal against a populated one.
+And assert the surviving indexes and named constraints in a test rather than by eye: a batch
+recreate silently drops expression indexes, triggers and `AUTOINCREMENT`, and Alembic's own
+docs record that unnamed CHECK constraints do not survive it.
+
+**Leave `recreate` at its default.** On SQLite the default already recreates for a drop;
+`recreate="always"` adds nothing here and forces a rebuild on backends that would not need one.
+
+**A column holding anything the operator chose is not dead because no code reads it.** Prove it
+write-only across `src/`, `tests/` and `frontend/src/` before release M, and say in the PR body
+what you grepped. Rule 143's sweep applies to a column exactly as it does to a set.
