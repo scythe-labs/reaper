@@ -125,8 +125,11 @@ countdown itself holds nothing back.)
 
 ## How to check any future signal
 
-Every number above came from **lift**: the regret rate of the condemned set versus what
-you would expect by picking randomly among films **of the same age**.
+Every *verdict* above — worth doing, contributing nothing, worse than nothing — came from
+**lift**: the regret rate of the condemned set versus what you would expect by picking
+randomly among films **of the same age**. The rewatch table and the regret rates it is
+computed from are raw probabilities, not lift, which is the distinction the population
+warning below turns on.
 
 ```
 lift = (age_matched_expected_regret − actual_regret) / age_matched_expected_regret

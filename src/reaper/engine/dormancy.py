@@ -56,8 +56,8 @@ def reference_instant(
     overload existed to spare them a None-check that could not fire. That narrowing was itself
     a second thaw rule -- a movie with no arrival date and a play 400 days ago is condemned by
     a live scan and never entered the rehearsal at all, so the replay under-reported exactly
-    what production would remove. The overload went with them, and the signature says the one
-    true thing about every lane.
+    what production would remove. The overload is gone, and the signature says the one true
+    thing about every lane.
     """
     if last_played is not None:
         return last_played

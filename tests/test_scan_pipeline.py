@@ -1524,6 +1524,99 @@ class TestReleaseAgeRoundsTowardKeeping:
         assert obs.value == 0.0
 
 
+class TestTheWindowScoredAgainstIsThePolicysOwn:
+    """The span a watcher count was taken over is the span its reach is checked against.
+
+    ``_watch_stats`` COUNTS ``distinct_watchers`` over the policy's popularity window, and
+    since rule 140 every reader of that count checks ``Facts.history_reach_days`` against the
+    span the count claims to cover. Hand one span to the counter and a different one to
+    ``score`` and you compare a count to a reach it was never taken over, which fails OPEN:
+    measured, a 730-day window over a 400-day mirror scored against the 365-day default takes
+    the full 20 points of ``FEW_WATCHERS`` pressure at coverage 1.00, where production
+    withholds them at coverage 0.00 (``engine/signals.py``, above ``_branch_signal``).
+
+    **Both consumers are pinned, not just one.** "One span, two readers" is the invariant, and
+    either drifting to its own 365 default reopens the hole. Spying on ``score`` alone proves
+    the line it watches and nothing about the count built four hundred lines above it.
+
+    **365 is deliberately excluded from the sweep** (rule 141). It is the default of both
+    callees *and* of both shipped policies, so it is the one value that cannot tell a window
+    that was passed from one that was omitted. This test replaces a sweep that lived on the
+    retired replay engine, where every other fixture pinned 365 and hid exactly this for a
+    release; the live lane had no equivalent, which is the gap deleting that engine exposed.
+
+    Each spy reads its kwarg with ``.get`` rather than subscripting, so an omission fails on
+    the VALUE that was used. Subscripting raises ``KeyError`` and passes for the wrong reason:
+    it pins that an argument arrived, never which one.
+    """
+
+    @pytest.mark.parametrize("window", [30, 90, 730])
+    async def test_both_readers_of_the_span_get_the_policys_own(
+        self,
+        session: AsyncSession,
+        cache_engine: AsyncEngine,
+        monkeypatch: pytest.MonkeyPatch,
+        window: int,
+    ) -> None:
+        counted: list[int | None] = []
+        scored: list[int | None] = []
+        real_watch_stats = snapshot_service._watch_stats
+        # Captured through the module deliberately: the spy below rebinds this name IN
+        # `snapshot`, so taking it from `engine.signals` would restore a different binding
+        # and production would keep calling the spy. `score` is imported there rather than
+        # defined, which is what mypy is objecting to.
+        real_score = snapshot_service.score  # type: ignore[attr-defined]
+
+        async def _counting_spy(*args: object, **kwargs: object) -> Any:
+            counted.append(kwargs.get("window_days"))  # type: ignore[arg-type]
+            return await real_watch_stats(*args, **kwargs)  # type: ignore[arg-type]
+
+        def _scoring_spy(*args: object, **kwargs: object) -> Any:
+            scored.append(kwargs.get("window_days"))  # type: ignore[arg-type]
+            return real_score(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(snapshot_service, "_watch_stats", _counting_spy)
+        monkeypatch.setattr(snapshot_service, "score", _scoring_spy)
+
+        movie_policy = DEFAULT_MOVIE_POLICY.model_copy(
+            update={
+                # A tuple, not a list: `gates` is declared `tuple[GateSetting, ...]`, and a
+                # list round-trips with a pydantic serializer warning on every model_dump.
+                "gates": tuple(
+                    g.model_copy(update={"window_days": window, "enabled": True})
+                    if g.gate is GateId.SERVER_POPULARITY
+                    else g
+                    for g in DEFAULT_MOVIE_POLICY.gates
+                )
+            }
+        )
+        # The premise, asserted rather than assumed: the sweep is worthless if the policy
+        # copy silently kept 365.
+        assert movie_policy.popularity_window_days() == window
+
+        await _seed_sync(cache_engine, ago=timedelta(minutes=5))
+        await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )
+            ],
+            sonarrs=[],
+            tautulli=scan_library(movies=_movie_spine(), shows=[], children={}),
+            movie_policy=movie_policy,
+            movie_gates=build_gates(movie_policy),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+        assert counted, "the scan never counted watchers, so this test proved nothing"
+        assert scored, "the scan never scored an item, so this test proved nothing"
+        assert set(counted) == {window}, counted
+        assert set(scored) == {window}, scored
+
+
 # ---------------------------------------------------------------------------
 # One scan at a time -- the claim lives inside run_scan, shared by every caller.
 # ---------------------------------------------------------------------------

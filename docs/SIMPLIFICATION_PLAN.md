@@ -162,7 +162,7 @@ audit that touched no code. They become the permanent commit message for a chang
 most of the tree.
 
 **The last PR retires this document.** It moves to `docs/history/` under the FROZEN banner
-`tests/test_repo_hygiene.py:2272` checks, and the same commit corrects `docs/README.md:118` and
+`tests/test_repo_hygiene.py:2272` checks, and the same commit corrects `docs/README.md:117` and
 CLAUDE.md's live-plans paragraph. Both assert this plan is live, no gate covers either, and
 `test_docs_referenced_from_code_exist` scans code and `pyproject.toml` rather than those two files
 — so a move without them leaves two confident false statements and a dangling path behind a green
@@ -250,6 +250,7 @@ here first and never reconstructed later.
 | #595 | 4 | W10-6 | `_strut_comment`, `_bolding_and_strutted` | no | Comment-only in the CSS, as the correction says: the two rules are byte-identical and the enumeration omitted `.view-tab`. Six controls bold when chosen, five carry the strut, `.filter-mi` is exempt in writing. The gate reads the claim *sentence*, not the block, because the block's own narrative mention of `.view-tab` made the first version green on the very drift it was written for |
 | #596 | 4 | W10-7 | `plexServerQueries.invalidateAllPlex` | no | Decided to fix here rather than move to #550, on the finding body: the fix adds keys, so it is rule 79's class and not a comment correction. Five server-changing paths across two components, one declaration. No symptom confirmed by reading `App.tsx`'s gate, not assumed |
 | #597 | 5 | W1.1 a-h, i's `_SeriesWork.plan`, j, k, m, o; W7-3/4; W7-5's `detail` | `evaluate_rules`, `GateConfig.gate`, `_verdict(override=)`, `HealthOut` | no | 13 findings landed, W1.1-l killed. Two deletions were bigger than their rows: `_verdict`'s override took `blocked_holds_reap` and `safety_protected` with it (rule 64) and moved 14 reap assertions onto `reap_override_verdict_decoded`, the only caller production has; `is_available` took `MediaRequest.status` and the `MediaStatus` enum. `Condemn logic` daggered, `DECISION_SECTIONS` 17 to 18 |
+| #599 | 5 | W1.2 | `engine/backtest.py`, `engine/calibration.py` | no | 1,974 lines of engine and test, plus ~30 prose sites nothing would have failed on. `FALLBACK_REWATCH_PRIOR` is NOT rehomed: its only reader was `rewatch_prior`, whose only caller was `backtest.run`, so the correction is right that moving the pair moves dead code. The curve survives in `SIGNALS.md` and a new hygiene test holds the two source docstrings to it by name (rule 144), which is what the deleted `TestTheRewatchPrior` used to do. **The review found one real coverage loss and it is repaired here**: the suite's only non-default `window_days` sweep lived on the replay lane, so `TestTheWindowScoredAgainstIsThePolicysOwn` now pins both readers of the span on the live scan, driven red against each. M3c/M3g dropped, M3f done, open item 2 gone. S7: 78→76 modules, 49→47 loggers, 43→39 reasons |
 
 ### Killed while executing
 
@@ -854,7 +855,7 @@ The worst individual units, which is where waves 2 and 3 point:
 | --- | --- | --- | --- |
 | `engine/policy.py:1600 inspect` | 988 | 52 | 4 |
 | `services/snapshot.py:570 scan` | 714 | 43 | 17 |
-| `services/season_scan.py:1244 gather` | 478 | 34 | 25 |
+| `services/season_scan.py:1243 gather` | 478 | 34 | 25 |
 | `services/planner.py:315 build_plan` | 375 | 27 | 5 |
 | `services/snapshot.py:1447 _judge_item` | 111 | n/a | **27** |
 | `components/PolicyEditor.tsx:1238` | 1,408 | n/a | n/a |
@@ -896,7 +897,7 @@ table.
 > `fields.py:1016-1042`, inside the cited span, and is the whole user-authored-protection path
 > (`services/scan_runner.py:205,213`). `evaluate_rules` ends at `:1104`. Delete the four named
 > symbols, not the range. `tests/test_fields.py`'s dead blocks are `:127-217` and `:274-287`, with
-> a live `TestCustomProtectGate` at `:239` between them. `docs/STATUS.md:78`'s "Flat AND of typed
+> a live `TestCustomProtectGate` at `:239` between them. `docs/STATUS.md:69`'s "Flat AND of typed
 > conditions" loses its only code expression and carries no dagger, so the reasoning survives
 > nowhere unless the commit moves it.
 >
