@@ -26,7 +26,6 @@ import signal
 import sqlite3
 import stat
 import tarfile
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -43,7 +42,7 @@ from reaper.db.base import Base
 from reaper.main import create_app
 from reaper.services import app_settings, restore
 from reaper.services.restore import RestoreError
-from tests._auth import TEST_PASSWORD, clear_admin_password, login
+from tests._auth import TEST_PASSWORD, clear_admin_password
 
 # A revision this build actually ships, so the schema gate accepts it. Iteration order of
 # the frozenset is unimportant: any shipped revision is one boot's migrations can serve.
@@ -574,17 +573,6 @@ class TestApplyPendingRestore:
 
 
 # --- the API surface ---------------------------------------------------------
-
-
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)  # seeds the admin whose password is TEST_PASSWORD
-        yield c
 
 
 class TestApi:

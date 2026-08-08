@@ -15,9 +15,7 @@ Two clusters of behavior the review pinned:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import timedelta
-from pathlib import Path
 
 import httpx
 import pytest
@@ -27,24 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.db.base import Base
-from reaper.db.session import create_engine, create_session_factory
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import app_settings
 from reaper.services.grace import GraceItem, GraceReport
 from reaper.services.leaving_soon import announce_new
 
 WEBHOOK = "https://discord.com/api/webhooks/123/token-is-a-secret"
-
-
-@pytest.fixture
-async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-    engine = create_engine(settings)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield create_session_factory(engine)
-    await engine.dispose()
 
 
 def _box() -> SecretBox:
@@ -62,14 +48,14 @@ def _settings(**overrides: object) -> Settings:
 
 class TestDiscordWebhookStorage:
     async def test_stored_webhook_roundtrips_and_is_not_plaintext(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         box = _box()
-        async with factory() as session:
+        async with async_factory() as session:
             await app_settings.set_discord_webhook(session, box, WEBHOOK)
             await session.commit()
 
-        async with factory() as session:
+        async with async_factory() as session:
             # The raw stored value is a Fernet token, never the URL itself.
             raw = await app_settings._get(session, app_settings.DISCORD_WEBHOOK_KEY, default=None)
             assert raw is not None
@@ -78,36 +64,36 @@ class TestDiscordWebhookStorage:
             assert await app_settings.has_discord_webhook(session, box) is True
 
     async def test_clear_turns_notifications_off(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         box = _box()
-        async with factory() as session:
+        async with async_factory() as session:
             await app_settings.set_discord_webhook(session, box, WEBHOOK)
             await app_settings.clear_discord_webhook(session)
             await session.commit()
-        async with factory() as session:
+        async with async_factory() as session:
             assert await app_settings.has_discord_webhook(session, box) is False
             assert await app_settings.get_discord_webhook(session, box, _settings()) is None
 
     async def test_env_webhook_is_seeded_into_the_db_once(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """REAPER_DISCORD_WEBHOOK is a first-boot seed: read once, it lands in the DB so the
         database is the source of truth thereafter."""
         box = _box()
         seeded = _settings(discord_webhook=WEBHOOK)
-        async with factory() as session:
+        async with async_factory() as session:
             assert await app_settings.get_discord_webhook(session, box, seeded) == WEBHOOK
             await session.commit()
 
         # With nothing in the environment now, the seeded value still resolves from the DB.
-        async with factory() as session:
+        async with async_factory() as session:
             assert await app_settings.get_discord_webhook(session, box, _settings()) == WEBHOOK
 
     async def test_has_webhook_counts_an_unseeded_env_value(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             assert (
                 await app_settings.has_discord_webhook(
                     session, _box(), _settings(discord_webhook=WEBHOOK)
@@ -116,45 +102,45 @@ class TestDiscordWebhookStorage:
             )
 
     async def test_an_undecryptable_stored_webhook_reads_as_absent(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """A stored webhook that will not decrypt (the secret key changed) must never raise
         into a scan -- it is treated as absent and can be re-entered."""
-        async with factory() as session:
+        async with async_factory() as session:
             await app_settings.set_discord_webhook(session, _box(), WEBHOOK)
             await session.commit()
         other_key = SecretBox("a-different-key")
-        async with factory() as session:
+        async with async_factory() as session:
             assert await app_settings.get_discord_webhook(session, other_key, _settings()) is None
 
     async def test_an_undecryptable_stored_webhook_reads_as_not_configured(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """The has-check must agree with the send path: a stored webhook that no longer
         decrypts is skipped by every send, so the UI must not report it as configured."""
-        async with factory() as session:
+        async with async_factory() as session:
             await app_settings.set_discord_webhook(session, _box(), WEBHOOK)
             await session.commit()
         other_key = SecretBox("a-different-key")
-        async with factory() as session:
+        async with async_factory() as session:
             assert await app_settings.has_discord_webhook(session, other_key) is False
 
 
 class TestBuildNotifier:
     async def test_no_webhook_anywhere_means_no_notifier(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             assert await build_notifier(session, _box(), _settings()) is None
 
     async def test_a_stored_webhook_yields_a_notifier(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         box = _box()
-        async with factory() as session:
+        async with async_factory() as session:
             await app_settings.set_discord_webhook(session, box, WEBHOOK)
             await session.commit()
-        async with factory() as session:
+        async with async_factory() as session:
             assert await build_notifier(session, box, _settings()) is not None
 
 

@@ -16,21 +16,18 @@ under Settings -> Plex. The rules pinned here:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
-from reaper.main import create_app
 from reaper.services import app_settings, leaving_soon
-from tests._auth import login
 
 
 @pytest.fixture
@@ -104,19 +101,6 @@ class TestTheLibraryStore:
             enabled = await app_settings.enabled_plex_libraries(session)
         assert [lib["key"] for lib in stored] == [2, 5]
         assert [lib["key"] for lib in enabled] == [2]
-
-
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    """A logged-in client over an EMPTY database: no Plex server, no snapshot. Exactly a
-    fresh install, which is the state the defaults are promised for."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
 
 
 class TestTheSettingsRoutes:

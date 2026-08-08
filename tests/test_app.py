@@ -9,33 +9,9 @@ cleanly and only fails when a request arrives. Only a real request catches it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-
-import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
 
 from reaper.config import Settings
-from reaper.db.base import Base
-from reaper.main import create_app
-
-from ._auth import login
-
-
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-
-    # The app's lifespan reads the database (to seed instances and check that a
-    # local admin exists), so the schema must exist before it starts.
-    sync_engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(sync_engine)
-    sync_engine.dispose()
-
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
 
 
 def test_health_returns_ok(client: TestClient) -> None:

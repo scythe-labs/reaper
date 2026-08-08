@@ -10,7 +10,6 @@ and the log redactor must reach secrets nested below the top level.
 from __future__ import annotations
 
 import stat
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -25,9 +24,7 @@ from reaper.auth.sessions import close_all_for_user, open_session, resolve_sessi
 from reaper.auth.tokens import hash_token
 from reaper.config import Settings
 from reaper.crypto import SecretBox, _derive_legacy_fernet_key
-from reaper.db.base import Base
 from reaper.db.models import AuthSession
-from reaper.db.session import create_engine, create_session_factory
 from reaper.logging import REDACTED, redact_secrets
 from reaper.secrets import (
     SecretMaterialError,
@@ -119,68 +116,58 @@ class TestKeyFilePermissions:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-    engine = create_engine(settings)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield create_session_factory(engine)
-    await engine.dispose()
-
-
 class TestPasswordChangeRevokesSessions:
     async def test_admin_password_change_keeps_the_acting_session_and_revokes_others(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """The intuitive 'reset my password after a suspected theft' must actually evict
         the other cookie, while not logging the operator out of the tab they used."""
         from reaper.services.admin_password import set_password
 
-        async with factory() as session:
+        async with async_factory() as session:
             user, _ = await create_local_admin(session, "owner", "origpassword")
             acting = await open_session(session, user)
             stolen = await open_session(session, user)
             await session.commit()
 
-        async with factory() as session:
+        async with async_factory() as session:
             await set_password(session, "newpassword1", keep_session_token=acting)
             await session.commit()
 
-        async with factory() as session:
+        async with async_factory() as session:
             assert await resolve_session(session, acting) is not None
             assert await resolve_session(session, stolen) is None
 
     async def test_cli_reset_revokes_every_session(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             user, _ = await create_local_admin(session, "owner", "origpassword")
             token = await open_session(session, user)
             await session.commit()
 
-        async with factory() as session:
+        async with async_factory() as session:
             await cli_reset_password(session, "owner", "resetpassword1")
             await session.commit()
 
-        async with factory() as session:
+        async with async_factory() as session:
             assert await resolve_session(session, token) is None
 
     async def test_close_all_except_spares_one_token(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             user, _ = await create_local_admin(session, "owner", "pw")
             keep = await open_session(session, user)
             drop = await open_session(session, user)
             await session.commit()
             uid = user.id
 
-        async with factory() as session:
+        async with async_factory() as session:
             await close_all_for_user(session, uid, except_token_hash=hash_token(keep))
             await session.commit()
 
-        async with factory() as session:
+        async with async_factory() as session:
             rows = (await session.execute(select(AuthSession))).scalars().all()
             assert [r.token_hash for r in rows] == [hash_token(keep)]
             assert await resolve_session(session, drop) is None
