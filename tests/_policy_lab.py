@@ -232,7 +232,7 @@ def to_facts(vector: dict[str, Any], *, reach: float | None = None) -> Facts:
 def guard_result(vector: dict[str, Any]) -> GateResult | None:
     """The season-pruning guard outcome recorded for this vector, as the scan merges it.
 
-    ``"unknown"`` models ONE of the blocked shapes ``season_scan.guard_result`` can emit:
+    ``"unknown"`` models ONE of the blocked shapes ``season_evidence.guard_result`` can emit:
     the keep-rule conflict whose comparison was made and lost, which sets
     ``defers_to_owner``. Three have no vector here, because nothing in the policy sweep
     varies what they turn on -- the refused conflicts (a kept season nobody could read, and

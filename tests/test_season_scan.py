@@ -38,7 +38,7 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score, SignalConfig
 from reaper.engine.signals import score as score_signals
 from reaper.ratings import Rating, RatingSource
-from reaper.services import history_sync, lists, requested_by, season_scan
+from reaper.services import history_sync, lists, requested_by, season_evidence, season_scan
 from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
@@ -342,7 +342,7 @@ class TestGuardResult:
     def test_a_protected_season_becomes_a_protecting_gate(self) -> None:
         plan = plan_series_prune(series_title="S", seasons=[_season(1), _season(2)], keep_last=1)
         # Season 1 is the first season -> protected.
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
         assert result.gate is GateId.SEASON_PROGRESSION
         assert result.outcome == PROTECT
 
@@ -357,7 +357,7 @@ class TestGuardResult:
             keep_first_season=False,
             watchers_by_season={1: 40, 2: 1, 3: 1, 4: 1},
         )
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
         assert result.outcome == ABSTAIN
         assert result.blocked is True
 
@@ -368,7 +368,7 @@ class TestGuardResult:
             keep_last=1,
             keep_first_season=False,
         )
-        result = season_scan.guard_result(plan, 2)
+        result = season_evidence.guard_result(plan, 2)
         assert result.outcome == ABSTAIN
         assert result.blocked is False
 
@@ -387,7 +387,7 @@ class TestGuardResult:
             keep_first_season=False,
             watchers_by_season={1: 40, 2: 1, 3: 1, 4: 1},
         )
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
 
         assert result.blocked is True
         assert result.defers_to_owner is True
@@ -412,7 +412,7 @@ class TestGuardResult:
             keep_first_season=False,
             watchers_by_season={1: 40, 2: 1, 3: 1, 4: None},
         )
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
 
         assert result.blocked is True
         assert result.defers_to_owner is False
@@ -444,7 +444,7 @@ class TestGuardResult:
         season_2 = [c for c in plan.conflicts if c.pruned_season == 2]
         assert [c.kept_watchers for c in season_2] == [0, 2, None]
 
-        result = season_scan.guard_result(plan, 2)
+        result = season_evidence.guard_result(plan, 2)
 
         assert result.blocked is True
         assert result.defers_to_owner is False
@@ -470,7 +470,7 @@ class TestGuardResult:
             watchers_by_season={1: 0, 2: 0, 3: 1, 4: 1},
             shortfall_by_season={1: "your watch history only goes back 12 months"},
         )
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
 
         assert result.blocked is True
         assert result.defers_to_owner is False
@@ -497,7 +497,7 @@ class TestGuardResult:
             "your watch history only goes back 12 months",
         ]
 
-        result = season_scan.guard_result(plan, 1)
+        result = season_evidence.guard_result(plan, 1)
 
         assert result.defers_to_owner is False
         assert "Season 4" in result.detail
@@ -742,7 +742,7 @@ def _judge(facts: Any, guard: Any = None) -> str:
 class TestNothingUnseenIsCondemned:
     def test_an_unresolved_season_cannot_be_condemned(self) -> None:
         facts = _facts(plex_rating_key=None)
-        clean = season_scan.guard_result(
+        clean = season_evidence.guard_result(
             plan_series_prune(
                 series_title="S", seasons=[_season(3)], keep_last=0, keep_first_season=False
             ),
@@ -754,7 +754,7 @@ class TestNothingUnseenIsCondemned:
         """The other side of the guarantee: when the evidence is real and the guards allow
         it, a season IS condemnable -- otherwise the whole path would be inert."""
         facts = _facts(plex_rating_key=700, last_played=None, watchers_window=0)
-        clean = season_scan.guard_result(
+        clean = season_evidence.guard_result(
             plan_series_prune(
                 series_title="S",
                 seasons=[_season(n) for n in range(1, 6)],
@@ -767,7 +767,7 @@ class TestNothingUnseenIsCondemned:
 
     def test_a_guard_protected_season_wins_over_any_score(self) -> None:
         facts = _facts(plex_rating_key=700, last_played=None, watchers_window=0)
-        protect = season_scan.guard_result(
+        protect = season_evidence.guard_result(
             plan_series_prune(series_title="S", seasons=[_season(3)], keep_last=1), 3
         )
         assert protect.outcome == PROTECT
@@ -786,7 +786,7 @@ class TestNothingUnseenIsCondemned:
             last_played=None,
             watchers_window=0,
         )
-        clean = season_scan.guard_result(
+        clean = season_evidence.guard_result(
             plan_series_prune(
                 series_title="S",
                 seasons=[_season(n) for n in range(1, 7)],
@@ -808,7 +808,7 @@ class TestNothingUnseenIsCondemned:
             last_played=None,
             watchers_window=0,
         )
-        clean = season_scan.guard_result(
+        clean = season_evidence.guard_result(
             plan_series_prune(
                 series_title="S",
                 seasons=[_season(n) for n in range(1, 6)],
@@ -2199,7 +2199,7 @@ class TestGatherEndToEnd:
         # The cause is the one the season's own Unknown facts carry, character for character,
         # which is what makes `WhyPanel.LeftForYou` group all five under one heading instead
         # of opening a second box saying the same thing (rule 144).
-        cause = season_scan.no_key_reason(identity.MatchStatus.UNMATCHED)
+        cause = season_evidence.no_key_reason(identity.MatchStatus.UNMATCHED)
         assert guard.detail == f"could not check who is part-way through it: {cause}"
         unwatched = by_key["sonarr:1:77:2"].facts.days_observed_unwatched
         assert isinstance(unwatched, Unknown)

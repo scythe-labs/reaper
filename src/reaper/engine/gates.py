@@ -96,7 +96,7 @@ class GateId(enum.StrEnum):
 
     SEASON_PROGRESSION = "season_progression"
     """Not authorable in a policy. The engine emits it from the season judgment
-    (``season_scan.guard_result``); no policy row builds it."""
+    (``season_evidence.guard_result``); no policy row builds it."""
 
     CUSTOM = "custom"
     """Not authorable in a policy. Tags the result of an operator-authored custom rule,
@@ -158,7 +158,7 @@ class GateResult:
     docstring carries why.
 
     What it still does is tell two SHAPES of block apart for the operator's copy, which
-    was always the more honest use of it. ``season_scan.guard_result`` sets it when every
+    was always the more honest use of it. ``season_evidence.guard_result`` sets it when every
     ``season_pruning.PruneConflict`` naming the season was a comparison Reaper could
     actually make: a readable ``kept_watchers`` AND a ``shortfall`` of ``None``. The
     second is not implied by the first -- a count read off a mirror that does not reach
@@ -178,7 +178,7 @@ class GateResult:
     """Only meaningful on a ``blocked`` result: this check never ran, as against one that ran
     and left its answer to the operator.
 
-    Set by the season guard alone (``services.season_scan.guard_result``), the one producer
+    Set by the season guard alone (``services.season_evidence.guard_result``), the one producer
     whose blocked results are not all of a kind, and read by ``WhyPanel.keepRuleConflict``.
     A keep-rule conflict made the comparison and found the rule fighting the evidence, which
     is a decision waiting for a person ("Needs a look"). The same guard on a show Plex never

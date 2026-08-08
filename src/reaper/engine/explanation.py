@@ -90,7 +90,7 @@ class GateOutcomeOut(BaseModel):
     defers_to_owner: bool | None = None
     """Whether the comparison behind this hold is one Reaper actually made.
 
-    Set only by the season keep-rule guard (``services.season_scan.guard_result``), where a
+    Set only by the season keep-rule guard (``services.season_evidence.guard_result``), where a
     conflict arrives in three shapes and only one of them is a comparison: the other two are
     a kept season's watcher count that could not be read, and a watch mirror too short to
     stand behind the counts it reports. All three send the item to the operator; only the

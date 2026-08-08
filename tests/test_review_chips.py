@@ -59,9 +59,9 @@ from reaper.services.condemned import (
     MATCH_UNREADABLE,
     reap_override_verdict_decoded,
 )
+from reaper.services.season_evidence import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
+from reaper.services.season_evidence import guard_result
 from reaper.services.season_pruning import PruneConflict, SeriesPrunePlan
-from reaper.services.season_scan import _NO_KEY_REASONS as SEASON_NO_KEY_REASONS
-from reaper.services.season_scan import guard_result
 from reaper.services.snapshot import _NO_KEY_REASONS as MOVIE_NO_KEY_REASONS
 from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
 

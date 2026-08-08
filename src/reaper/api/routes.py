@@ -110,7 +110,6 @@ from reaper.services import (
     backup,
     list_config,
     season_evidence,
-    season_scan,
     whitelist,
 )
 from reaper.services.condemned import (
@@ -2110,7 +2109,7 @@ def _season_guard_replay(
     if season not in set(plan.prunable) | {p.season_number for p in plan.protected}:
         raise _SeasonEvidenceMissingError(SimStale.SEASONS_NOT_RECORDED)
 
-    replayed = season_scan.guard_result(
+    replayed = season_evidence.guard_result(
         plan, season, progress_unknown_reason=bundle.progress_unknown_reason
     )
     if not any(r.gate is GateId.SEASON_PROGRESSION for r in frozen):

@@ -1145,7 +1145,7 @@ const CAUSE_COPY: Record<string, string> = {
   "more than one Plex item matches this title": "This looks like more than one thing in Plex.",
   "more than one Plex item matches this show": "This show looks like more than one thing in Plex.",
   // The disagreement pair. Generated nowhere: these are the exact strings snapshot.py and
-  // season_scan.py put in `_NO_KEY_REASONS`, and
+  // season_evidence.py put in `_NO_KEY_REASONS`, and
   // tests/test_review_chips.py::TestTheMatchStatusVocabulary fails when one of those has no
   // entry here -- without which the box prints the backend's raw phrasing (rule 144).
   "Plex and Radarr describe this file differently":
