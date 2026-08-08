@@ -14,7 +14,7 @@ properties, each pinned here:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 import httpx2
@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from reaper.api.settings import PlexUpdateIn, update_plex_settings
 from reaper.clients.base import IntegrationError
+from reaper.clients.plex import PlexClient, PlexError
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -1198,6 +1199,23 @@ class TestPlexLinkChoice:
     """The Settings-page link flow for an account owning several servers: the exact
     API contract the PlexPanel picker consumes. The login-time twin of this flow is
     pinned in test_sessions; this pins the in-app route."""
+
+    @pytest.fixture(autouse=True)
+    def _plex_server_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A finished link fires a library autosync, and that one goes over plexapi.
+
+        `httpx2_mock` covers httpx. plexapi speaks `requests`, so nothing here mocked it and
+        seven of these tests really resolved the connection host on every run -- swallowed by
+        `_sync_libraries_after_link`, which catches every exception because its docstring
+        promises a sign-in never strands on a failed library refresh. The outcome pinned below
+        is the one those runs already had, minus the name lookup: `PlexClient._connect` maps
+        any failure to `PlexError`, which is what an unreachable server produced.
+        """
+
+        async def _unreachable(_self: PlexClient) -> NoReturn:
+            raise PlexError("no Plex server in these tests")
+
+        monkeypatch.setattr(PlexClient, "_connect", _unreachable)
 
     def _mock_plextv(self, httpx2_mock: respx.Router) -> None:
         httpx2_mock.post("https://plex.tv/api/v2/pins").mock(
