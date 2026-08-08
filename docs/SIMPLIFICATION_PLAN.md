@@ -162,7 +162,7 @@ row moving is indistinguishable from one that never started.
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
-| 2 | Test-suite wall clock | in progress | 0 of ~6 | Five items go to `dev` under the escape hatch; only W1.4 lands here |
+| 2 | Test-suite wall clock | in progress | 5 of ~6 | The five wall-clock items landed on `dev`. W1.4's scaffolding is the remainder and lands here |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
@@ -204,6 +204,11 @@ here first and never reconstructed later.
 | #562 | 1 | Tier A | `_policy_lab.pinned_baseline` | n/a, it is the baseline | 880 blocks re-pinned, every leaf additive. Fixture 754 KB → 1,574 KB |
 | #563 | 1 | Tier B | `scripts/baseline_capture.py` | n/a, it is the baseline | Snapshot 86, 5,965 items, 592 planned. Source database digest unchanged |
 | #568 | 0 | C1 | the six decisions | no | Recorded on each finding. Rule 148 landed separately on `dev` (#567) |
+| #570 | 2 | W1.3 | `_repo_text_files`, `_source_files_to_scan` | no | On `dev`. `test_repo_hygiene.py` 53.41s to 9.11s |
+| #571 | 2 | W12a-1 | `conftest.pytest_configure` | no | On `dev`. `crypto.py` untouched; the cheap map is injective and pinned |
+| #572 | 2 | W12a-2 | `test_the_pre_save_test_carries_the_checkbox_value` | no | On `dev`. 15.04s to 0.01s, and off rule 119's environmental accident |
+| #573 | 2 | W12a-3 | `test_openapi_tags.schema` | no | On `dev`. 4.70s to 1.32s. The fixture boots hermetically itself, since `_hermetic` runs after it |
+| #574 | 2 | W12a-4 | twelve `@vitest-environment node` docblocks | no | On `dev`. Frontend environment CPU 37.25s to 29.56s |
 
 ### Killed while executing
 
@@ -498,12 +503,17 @@ Five or six PRs. No production code changes. The scrypt wrapper is `conftest`-on
 `crypto.py`'s constant, and ships with the injectivity guard its correction names.
 
 **Wave 12's figures are single-threaded and the documented gate is not.** `uv run pytest -n auto`
-measures **81.97s** for 4,040 tests on 8 cores, against the ~268s single-threaded figure the wave
-reasons from, because the scrypt cost overlaps across workers. The honest saving is tens of seconds
-off a full run, not the ~93s the numbers imply. Take the win; do not re-plan around it (S5).
-Everything here except W1.4's scaffolding goes to `dev` under the escape hatch above.
-`CONTRIBUTING.md:125` claims "~45s" for this gate and is drifted about 1.8x, which is a `dev` fix,
-not this branch's.
+measured **81.97s** for 4,040 tests on 8 cores, against the ~268s single-threaded figure the wave
+reasons from, because the scrypt cost overlaps across workers. So the saving to expect was tens of
+seconds off a full run, not the ~93s the numbers imply. Everything here except W1.4's scaffolding
+goes to `dev` under the escape hatch above.
+
+> **Landed, and the caution was too pessimistic.** Measured on this branch's own tree either side
+> of the five, `uv run pytest -n auto` on 8 cores: **83.44s to 38.74s**, and 330.93s to 182.75s of
+> CPU. 4,099 passed and 1 skipped before, 4,100 and 1 after, the extra test being the injectivity
+> guard. The frontend run moves as predicted and barely at all in wall clock: 26.84s to 25.93s,
+> with its environment cost 37.25s to 29.56s of CPU. Wall clock more than halved because the
+> overlap argument cuts both ways -- with the KDF gone the workers stop contending for it.
 
 ### Phase 3 — gates that land green
 
