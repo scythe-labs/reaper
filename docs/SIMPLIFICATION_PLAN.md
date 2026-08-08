@@ -187,7 +187,7 @@ row moving is indistinguishable from one that never started.
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
-| 5 | Deletions | **in progress** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save |
+| 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
@@ -708,6 +708,36 @@ Four PRs, in order:
 
 W7-1's `ListMode` is separate and safe: `protection_list` is raw DDL on `cache.db`, and both
 columns carry server defaults.
+
+**Closed 2026-08-08. #597, #599, #600, #601.** Around 2,900 lines gone, and the reviews found
+more than the deletions did.
+
+**The one that mattered was not a deletion at all.** Retiring `Profile.active_policy_id` in #600
+orphaned `_ensure_active_policy_row`, whose whole job was giving the foreign key a target — and
+the body it persisted was the bare shipped policy, while `active_policy` computes a *wider* one
+for an install that has never saved: a keep rule per Plex collection the registry holds. Once
+that row existed, recency returned it forever. So an operator's keep collection stopped
+protecting the first time they touched Pace, with `repaired` False, nothing degraded and no
+notice. Predates this branch by a long way. **Rule 64's supply chain reaches what FED a column,
+not only what read it**, and that is the sentence this phase is worth remembering for.
+
+**Three more that the diff could not show.** A `NOT NULL` foreign key cannot take a
+`server_default` under `PRAGMA foreign_keys`. A batch rebuild copies from reflection, and
+reflection does not report collations, so touching one column silently un-protected a unique
+index — in the downgrade as well as the upgrade, where the re-upgrade then wedges the container.
+And hiding a column from autogenerate does not hide its foreign key. All three are in
+`docs/DECISIONS.md` under *Migrations*, because the next release-M author looks there.
+
+**Rule 144 fired four times in four PRs**, which is the rate worth noticing. A rewatch
+percentage in three places, a `Facts(` builder list that had always been "the only two", a
+`get_bind` count in four files, an operation count in five. Every one was a measured number that
+nothing asserted, and every one drifted in the direction that reads as measured. Each is now
+either derived or pinned, and each failure message names its siblings by name.
+
+**Tier A never moved. Tier B moved by one line**, the recorded alembic head — 5,965 items,
+protect 4,261 / condemn 543 / abstain 1,161, same plan and manifest hash as phase 4 left them.
+The keep-collection fix is invisible to it by construction: the capture replays a stored
+snapshot, and that snapshot was scored under the policy the operator had.
 
 ### Phase 6 — structural motion
 
