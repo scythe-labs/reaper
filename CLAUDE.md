@@ -280,18 +280,22 @@ answer: a test with something to tell you must fail, not warn.
 
 **Asking whether CI is green** is far cheaper than reading a log: `gh pr checks <n>` lists one
 row per job with its conclusion, and it is the merge gate above. **Which jobs appear depends on
-what the commit touched.** `ci.yml`'s `changes` job classifies the diff once, into three lanes
-(`docs/**`, `.claude/**` and `*.md` are prose; `manual/**` and `website/**` are the site;
-everything else is code), and every other job in that file reads the verdict rather than
-filtering itself: a prose-only commit runs `hygiene` alone, a code-only commit runs `check`,
-`frontend` and `docker`, and a commit touching both runs everything.
+what the commit touched.** `ci.yml`'s `changes` job classifies each changed path into one of
+three lanes, first match winning: `docs/*`, `.claude/*` and `*.md` are prose, `manual/*` and
+`website/*` are the site, everything else is code. Every other job in that file reads the
+verdict rather than filtering itself, so a prose-only commit runs `hygiene` alone, a code-only
+commit runs `check`, `frontend` and `docker`, and a commit spanning lanes runs each lane it
+touched — which is not the same as everything.
 **Two workflows outside it carry their own path lists and have to** — a `paths` filter decides
 whether a workflow starts, so it cannot read another one's output. `codeql.yml` restates the
-prose globs as `paths-ignore` once per trigger, and `docs-deploy.yml` carries the site lane by
-another spelling. `tests/test_repo_hygiene.py` counts all three, so a fourth cannot arrive
-quietly and this paragraph go stale again. **A skipped job publishes no check run at all**, which is why the required check is
-`CI gate` — it runs on every commit, counts a skipped lane as a pass and a cancelled one as a
-failure, and is the one job whose absence means something is genuinely wrong.
+prose globs as `paths-ignore` once per trigger, in `**` spelling rather than the `case` globs
+above; `docs-deploy.yml` carries a third list that is *near* the site lane and not equal to it.
+`tests/test_repo_hygiene.py` pins all three by name, so neither a fourth nor a move between
+files can arrive quietly and leave this paragraph stale again. **A workflow skipped by its own
+path filter publishes no check run at all** — a *job* skipped by an `if:` does publish one,
+with conclusion `skipped`, which is what the next sentence relies on. That is why the required
+check is `CI gate`: it runs on every commit, counts a skipped lane as a pass and a cancelled
+one as a failure, and is the one job whose absence means something is genuinely wrong.
 `pr-validation.yml` is separate, runs on every pull request whatever the paths, and reads the
 title alone.
 
