@@ -4132,3 +4132,163 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
         "from reaper import launcher, crypto",
     ):
         assert not _edges_in(source, "reaper/services/thing.py"), f"should be no edge: {source}"
+
+
+# --- the HTTP status an InstanceError means is declared once (rule 144) ---------------
+
+#: Every `except` arm in `api/` that catches one of the `services.instances` errors. Pinned
+#: because the ban below can only judge the handlers the walk collected, and a walk that
+#: stopped reading the tree would pass by finding none (rule 145). Six today: five map the
+#: error to a response, and `test_new_instance`'s arm reports it as `map_error` copy beside a
+#: passed connection test instead, which is why the second number is not the first.
+_EXPECTED_INSTANCE_ERROR_HANDLERS = 6
+_EXPECTED_INSTANCE_ERROR_RESPONSES = 5
+
+#: The three the walk recognizes, by the trailing name. Spelled as a suffix set rather than
+#: matched on the dotted path, so `instances.InstanceError` and a bare `InstanceError` are one
+#: case and a future subclass is caught by being named here rather than by being missed.
+_INSTANCE_ERROR_NAMES = frozenset(
+    {"InstanceError", "InstanceNotFoundError", "InstanceConflictError"}
+)
+
+
+def _names_an_instance_error(node: ast.expr | None) -> bool:
+    """Whether an ``except`` clause catches one of them, in any form the tree may spell it.
+
+    Four forms reach here: a bare ``InstanceError``, a dotted ``instances.InstanceError``, a
+    tuple holding either beside an unrelated error (``(IntegrationError,
+    instances.InstanceError)``, live in the tree), and a bare ``except:`` -- which names
+    nothing and so catches these too, but cannot be told apart from any other blanket catch
+    and is banned elsewhere. Reading the trailing name is what makes the first two one case;
+    anchoring on the dotted spelling would have read only the one the tree happens to use
+    (rule 147).
+    """
+    if node is None:
+        return False
+    if isinstance(node, ast.Tuple):
+        return any(_names_an_instance_error(el) for el in node.elts)
+    if isinstance(node, ast.Attribute):
+        return node.attr in _INSTANCE_ERROR_NAMES
+    return isinstance(node, ast.Name) and node.id in _INSTANCE_ERROR_NAMES
+
+
+def _http_status_args(handler: ast.ExceptHandler) -> list[tuple[int, ast.expr]]:
+    """The first argument of every ``HTTPException(...)`` raised inside ``handler``.
+
+    That first argument is the status. Collected from the whole handler body rather than from
+    its first statement, so an arm that branches before raising is read too, and returned in
+    source order -- ``ast.walk`` is breadth-first, so the raise nested inside an ``if`` comes
+    back after a raise written below it.
+    """
+    out: list[tuple[int, ast.expr]] = []
+    for node in ast.walk(handler):
+        if not isinstance(node, ast.Raise) or node.exc is None:
+            continue
+        exc = node.exc
+        if not isinstance(exc, ast.Call) or not exc.args:
+            continue
+        callee = exc.func
+        name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+        if name == "HTTPException":
+            out.append((node.lineno, exc.args[0]))
+    return sorted(out, key=lambda pair: pair[0])
+
+
+def _instance_error_handlers() -> list[tuple[str, int, ast.ExceptHandler]]:
+    """Every such arm across ``api/``, as (repo-relative path, line, node)."""
+    found: list[tuple[str, int, ast.ExceptHandler]] = []
+    for path in sorted((SRC / "api").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler) and _names_an_instance_error(node.type):
+                found.append((path.relative_to(REPO).as_posix(), node.lineno, node))
+    return found
+
+
+def test_no_route_hand_writes_the_status_an_instance_error_already_declares() -> None:
+    """The status comes from ``exc.status``, never from a number typed at the ``except``.
+
+    ``services.instances`` declares one status per subclass -- 422 for the base, 404 for
+    not-found, 409 for a name clash -- and each subclass's docstring says why. The five arms
+    that answer these used to hand-write the number instead, and two of them wrote 404 for the
+    base class: correct only because those callees can raise nothing but ``InstanceNotFound``
+    today, so a service that grew a blank-field guard the way ``create_instance`` has would
+    have told the operator the instance did not exist. Reading the declaration is what makes
+    that unable to happen again, and this is what keeps a sixth arm from reintroducing it
+    (rule 144).
+    """
+    handlers = _instance_error_handlers()
+    assert len(handlers) == _EXPECTED_INSTANCE_ERROR_HANDLERS, (
+        f"{len(handlers)} `except InstanceError` arms under api/, expected "
+        f"{_EXPECTED_INSTANCE_ERROR_HANDLERS}. Update the count once the new arm reads "
+        f"`exc.status`: {[(p, n) for p, n, _ in handlers]}"
+    )
+
+    answered = 0
+    for path, _, handler in handlers:
+        for lineno, arg in _http_status_args(handler):
+            answered += 1
+            assert isinstance(arg, ast.Attribute) and arg.attr == "status", (
+                f"{path}:{lineno} raises HTTPException with a hand-written status. "
+                f"Use `exc.status`, which services/instances.py declares per subclass."
+            )
+    assert answered == _EXPECTED_INSTANCE_ERROR_RESPONSES, (
+        f"{answered} of those arms answer with an HTTPException, expected "
+        f"{_EXPECTED_INSTANCE_ERROR_RESPONSES}"
+    )
+
+
+def test_the_instance_error_matcher_reads_every_form_the_clause_can_take() -> None:
+    """The four forms it must collect, and the ones it must leave alone (rule 147).
+
+    The ban above is only as wide as this classifier: an arm it does not collect is absent
+    from the count and from the assertion at once, so the two agree while disagreeing with the
+    tree. Only one of the accepted forms is live in `api/` today.
+    """
+    accepted = (
+        "except InstanceError as exc: pass",
+        "except instances.InstanceError as exc: pass",
+        "except (IntegrationError, instances.InstanceError) as exc: pass",
+        "except (instances.InstanceNotFoundError, ValueError): pass",
+        "except InstanceConflictError: pass",
+        "except services.instances.InstanceError: pass",
+    )
+    for clause in accepted:
+        tree = ast.parse(f"try:\n    pass\n{clause}")
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        assert _names_an_instance_error(handler.type), f"should be collected: {clause}"
+
+    for clause in (
+        "except IntegrationError as exc: pass",
+        "except (ValueError, KeyError): pass",
+        "except restore.RestoreError as exc: pass",
+        # Catches one, and is indistinguishable from any other blanket catch.
+        "except Exception: pass",
+    ):
+        tree = ast.parse(f"try:\n    pass\n{clause}")
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        assert not _names_an_instance_error(handler.type), f"should be left alone: {clause}"
+
+
+def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
+    """``_http_status_args`` reads the raise, not the handler's first line.
+
+    An arm that logs first, or branches before raising, still raises a status -- and a reader
+    that only inspected ``handler.body[0]`` would call both of those clean. Driven against a
+    nested raise, since that is the shape a future arm most plausibly takes.
+    """
+    nested = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        "    log.warning('x')\n"
+        "    if exc.status:\n"
+        "        raise HTTPException(404, str(exc)) from exc\n"
+        "    raise HTTPException(exc.status, str(exc)) from exc\n"
+    )
+    handler = next(n for n in ast.walk(nested) if isinstance(n, ast.ExceptHandler))
+    args = _http_status_args(handler)
+    assert len(args) == 2, f"both raises should be read, got {len(args)}"
+    (_, nested_arg), (_, trailing_arg) = args
+    assert isinstance(nested_arg, ast.Constant) and nested_arg.value == 404
+    assert isinstance(trailing_arg, ast.Attribute) and trailing_arg.attr == "status"

@@ -619,12 +619,8 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 plex_library_map=payload.plex_library_map,
                 service_instance_map=payload.service_instance_map,
             )
-        except instances.InstanceConflictError as exc:
-            # A duplicate name is a conflict; anything else the service refused (a blank
-            # field, say) is a validation failure -- mirror update_instance's split.
-            raise HTTPException(409, str(exc)) from exc
         except instances.InstanceError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         await session.commit()
         return InstanceOut.of(view)
 
@@ -651,11 +647,8 @@ async def update_instance(
                 plex_library_map=payload.plex_library_map,
                 service_instance_map=payload.service_instance_map,
             )
-        except instances.InstanceConflictError as exc:
-            # A rename into an existing name is a conflict, not a missing resource.
-            raise HTTPException(409, str(exc)) from exc
         except instances.InstanceError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         await session.commit()
         return InstanceOut.of(view)
 
@@ -777,7 +770,7 @@ async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
         try:
             result = await instances.test_saved_instance(session, _box(request), instance_id)
         except instances.InstanceError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         await session.commit()
     return TestOut(ok=result.ok, detail=result.detail, version=result.version)
 
@@ -800,10 +793,8 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
             folders = await instances.instance_root_folders(
                 session, _box(request), instance_id, section_paths=section_paths
             )
-        except instances.InstanceNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
         except instances.InstanceError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         except IntegrationError as exc:
             raise HTTPException(502, f"Could not read the folder list: {exc}") from exc
     return [RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in folders]
@@ -821,10 +812,8 @@ async def instance_seerr_services(request: Request, instance_id: int) -> list[Se
     async with _factory(request)() as session:
         try:
             services = await instances.seerr_services(session, _box(request), instance_id)
-        except instances.InstanceNotFoundError as exc:
-            raise HTTPException(404, str(exc)) from exc
         except instances.InstanceError as exc:
-            raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(exc.status, str(exc)) from exc
         except IntegrationError as exc:
             raise HTTPException(502, f"Could not read the service list: {exc}") from exc
     return [
