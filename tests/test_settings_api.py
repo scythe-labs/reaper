@@ -549,8 +549,8 @@ class TestTheStoredTestResultDescribesWhatWasTested:
 
     def _saved_and_tested(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> dict[str, object]:
-        made = client.post(
+    ) -> dict[str, Any]:
+        made: dict[str, Any] = client.post(
             "/api/settings/instances",
             json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
         ).json()

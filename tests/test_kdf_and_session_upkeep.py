@@ -248,7 +248,10 @@ class TestTheSignInPollHonorsItsDeadline:
     whatever a 429 named. A ``Retry-After`` of hours parked ``reaper-admin link-plex`` on a
     sleep with the terminal stuck on "Waiting..." (S2-2)."""
 
-    class _Client:
+    class _Client(plextv.PlexTvClient):
+        """Inherits the real client so an override that stops matching it fails the build,
+        and never calls its `__init__`, so it owns no HTTP client and cannot reach out."""
+
         def __init__(self, retry_after: float | None) -> None:
             self.calls = 0
             self._retry_after = retry_after

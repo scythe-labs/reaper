@@ -640,7 +640,7 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
 
     from reaper.engine.policy import ProfileSettings
 
-    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)
+    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)  # type: ignore[arg-type]
     reads = {
         name
         for name in re.findall(r"self\.(\w+)", validator)
@@ -1917,17 +1917,19 @@ _MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md", "docs/SIMPLIFICATION_PLAN
 
 
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
-    """`tests/_fakes.py` rides on the mypy run, and three files say so independently.
+    """`tests/` rides on the mypy run, and four files say so independently.
 
-    The fakes there inherit the real clients, which is what turns a client signature change
-    they no longer match into a build failure. That only works while the invocation actually
-    names the file -- and the invocation is written three times, by three different authors
-    reading each other. A developer running CONTRIBUTING's list would then get a narrower
-    check than CI runs and see a clean tree that CI rejects, or the reverse: the widening
-    lands in CONTRIBUTING alone and the gate everyone quotes is not the gate that runs.
+    Two things have to hold, and each is checked below. **`tests/` is named**, or nothing in
+    it is type-checked and the structural fakes that inherit their real client prove nothing
+    by doing so (#580). And **`src/reaper` is named alongside it**, or mypy resolves `reaper`
+    from site-packages, finds no py.typed marker, and reports 731 import errors while
+    silently checking almost none of the tree -- a run that looks like it did the work.
 
-    Rule 144, and the direction is the dangerous one: a stale copy reads as the shorter,
-    safer-looking command, so nothing about it looks wrong.
+    The invocation is written four times, by four authors reading each other. A developer
+    running CONTRIBUTING's list would otherwise get a narrower check than CI runs and see a
+    clean tree that CI rejects, or the reverse. Rule 144, and the direction is the dangerous
+    one: a stale copy reads as the shorter, safer-looking command, so nothing about it looks
+    wrong.
     """
     sites = [
         (path.relative_to(REPO), lineno, " ".join(match.group(1).split()))
@@ -1950,10 +1952,17 @@ def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() ->
         "CI rejects, or CI runs a check nobody can reproduce."
     )
     (targets_run,) = targets
-    assert "tests/_fakes.py" in targets_run, (
-        f"the typecheck gate runs `{targets_run}`, which no longer includes tests/_fakes.py.\n"
-        "Those fakes inherit the real clients so that a signature change they stop matching\n"
-        "fails the build; off the gate they are unchecked, and inheriting proves nothing."
+    named = targets_run.split()
+    assert any(target.startswith("tests") for target in named), (
+        f"the typecheck gate runs `{targets_run}`, which no longer covers tests/.\n"
+        "The structural fakes inherit their real client so that a signature change they stop\n"
+        "matching fails the build; off the gate they are unchecked, and inheriting proves\n"
+        "nothing (#580)."
+    )
+    assert "src/reaper" in named, (
+        f"the typecheck gate runs `{targets_run}`, which no longer names src/reaper.\n"
+        "Without it mypy resolves `reaper` from site-packages, finds no py.typed marker, and\n"
+        "answers with import errors instead of checking the tree -- green-looking, and blind."
     )
 
 

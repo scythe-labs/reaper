@@ -37,7 +37,7 @@ from hypothesis import strategies as st
 
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine.fields import BY_KEY, Condition, Lane, Op
-from reaper.engine.gates import GateId
+from reaper.engine.gates import Gate, GateId
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
@@ -79,7 +79,7 @@ def default_policy(media_type: str) -> PolicyBody:
     return DEFAULT_MOVIE_POLICY if media_type == "movie" else DEFAULT_TV_POLICY
 
 
-def default_gates(media_type: str) -> list[dict[str, Any]]:
+def default_gates(media_type: str) -> list[Gate]:
     return MOVIE_GATES if media_type == "movie" else TV_GATES
 
 
@@ -763,7 +763,7 @@ class TestTheLabJudgesWithTheScansOwnCode:
     ground truth (rule 22).
     """
 
-    def _season_with_a_keep_rule_conflict(self, override: str | None) -> dict:
+    def _season_with_a_keep_rule_conflict(self, override: str | None) -> dict[str, Any]:
         """A season the keep rule would prune but that was watched more than one it keeps.
 
         The scan flags this for a human rather than auto-approving it: a *blocked* abstain
@@ -944,7 +944,7 @@ class TestDecideVerdictMatrix:
         ``blocked_holds_reap``, the one parameter that can flip a reap from protect to
         condemn, while claiming to cover every boundary.
         """
-        assert decide_verdict(**{**_DECISION_BASE, **row}) == expected  # type: ignore[arg-type]
+        assert decide_verdict(**{**_DECISION_BASE, **row}) == expected
 
     def test_a_protection_that_fired_is_never_condemned_without_a_hand_reap(self) -> None:
         """A property over the whole space, asserted in one direction only.
@@ -1159,7 +1159,11 @@ class TestSequentialGuardPermutations:
         from datetime import UTC, datetime, timedelta
 
         now = datetime(2026, 1, 1, tzinfo=UTC)
-        progress = {"a": {3: 2}, "b": {5: 1}, "c": {2: None}}
+        progress: dict[str, dict[int, int | None]] = {
+            "a": {3: 2},
+            "b": {5: 1},
+            "c": {2: None},
+        }
         last = {
             "a": now - timedelta(days=60),
             "b": None,  # unreadable timestamp: the hold survives

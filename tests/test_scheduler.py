@@ -431,7 +431,8 @@ class TestTheSchedulerIsUpkeepOnly:
         monkeypatch.setattr(retention, "compact_if_fragmented", _compact)
         monkeypatch.setattr(scan_runner, "_scan_running", live == "scan")
 
-        await scheduler.sweep_old_snapshots(None, tmp_path, lambda: live == "reap")
+        # None on purpose: the case is that the sweep refuses before it touches a session.
+        await scheduler.sweep_old_snapshots(None, tmp_path, lambda: live == "reap")  # type: ignore[arg-type]
 
         assert swept == [True]
         assert attempted == []

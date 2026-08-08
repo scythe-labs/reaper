@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import uvicorn
 
 from reaper import launcher
 
@@ -345,16 +346,20 @@ class _FakeIcon:
         self.stopped.set()
 
 
-class _FakeServer:
+class _FakeServer(uvicorn.Server):
     """uvicorn's seam: ``run()`` blocks until ``should_exit``, or dies with the
-    scripted error. Self-terminating, so a failed assertion cannot hang the suite."""
+    scripted error. Self-terminating, so a failed assertion cannot hang the suite.
+
+    Inherits the real `Server` so `_serve_with_tray`'s parameter type holds, and skips its
+    `__init__` so no `Config` is built and nothing binds a port.
+    """
 
     def __init__(self, error: BaseException | None = None) -> None:
         self.should_exit = False
         self.running = threading.Event()
         self._error = error
 
-    def run(self) -> None:
+    def run(self, sockets: list[socket.socket] | None = None) -> None:
         self.running.set()
         if self._error is not None:
             raise self._error
@@ -396,7 +401,7 @@ class TestServeWithTray:
 
         presser = threading.Thread(target=press_quit)
         presser.start()
-        error = launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)  # type: ignore[arg-type]
+        error = launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)
         presser.join(timeout=10)
         assert error is None
         assert server.should_exit is True
@@ -435,7 +440,7 @@ class TestServeWithTray:
 
         driver = threading.Thread(target=drive)
         driver.start()
-        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)  # type: ignore[arg-type]
+        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)
         driver.join(timeout=10)
         assert opened == ["http://127.0.0.1:8437"]
 
@@ -451,7 +456,7 @@ class TestServeWithTray:
 
         presser = threading.Thread(target=press_quit)
         presser.start()
-        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=True)  # type: ignore[arg-type]
+        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=True)
         presser.join(timeout=10)
         assert docked == [True]
 

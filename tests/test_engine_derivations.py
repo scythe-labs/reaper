@@ -104,8 +104,9 @@ class TestTheFrozenFieldListFollowsTheDataclass:
 
         thawed, _ = facts_codec.facts_from_dict(frozen)
 
+        # `Unknown` and `Absent` are disjoint, so this one assert carries both halves:
+        # a second `not isinstance(..., Absent)` beside it could never fail (rule 118).
         assert isinstance(thawed.requested, Unknown)
-        assert not isinstance(thawed.requested, Absent)
         # And the fields that ARE recorded still come back exactly as they went in.
         assert thawed.days_observed_unwatched == Known(value=400, source="tautulli")
 

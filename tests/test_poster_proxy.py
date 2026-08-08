@@ -14,8 +14,10 @@ through the old connection), and it must be CLOSED at shutdown rather than leake
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
@@ -72,7 +74,7 @@ def _is_closed(client: object) -> bool:
 
 
 def _built(client: TestClient) -> object | None:
-    cached = getattr(client.app.state, "artwork_client", None)
+    cached = getattr(cast(FastAPI, client.app).state, "artwork_client", None)
     return None if cached is None else cached[1]
 
 

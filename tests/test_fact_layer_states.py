@@ -22,8 +22,7 @@ from structlog.testing import capture_logs
 
 from reaper.clock import utcnow
 from reaper.engine import identity
-from reaper.engine.facts import Facts
-from reaper.engine.gates import GateConfig, GateId, ServerPopularityGate
+from reaper.engine.gates import Facts, GateConfig, GateId, ServerPopularityGate
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.verdict import decide_verdict

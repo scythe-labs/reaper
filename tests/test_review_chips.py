@@ -1638,9 +1638,12 @@ class TestTheMatchStatusVocabulary:
             for name, value in sorted(
                 {
                     **checked,
-                    **{f"_NO_KEY_REASONS[{s.name}]": r for s, r in MOVIE_NO_KEY_REASONS.items()},
                     **{
-                        f"season _NO_KEY_REASONS[{s.name}]": r
+                        f"_NO_KEY_REASONS[{s.name if s else None}]": r
+                        for s, r in MOVIE_NO_KEY_REASONS.items()
+                    },
+                    **{
+                        f"season _NO_KEY_REASONS[{s.name if s else None}]": r
                         for s, r in SEASON_NO_KEY_REASONS.items()
                     },
                 }.items()

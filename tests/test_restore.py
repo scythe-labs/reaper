@@ -27,8 +27,10 @@ import sqlite3
 import stat
 import tarfile
 from pathlib import Path
+from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import text
@@ -819,7 +821,8 @@ class TestRestartNow:
         has a graceful Stop of its own, and the staged restore will wait as long as it takes.
         """
         _arm(client, tmp_path)
-        client.app.state.reap_status = ReapStatus(running=True, run_id=1)
+        app = cast(FastAPI, client.app)
+        app.state.reap_status = ReapStatus(running=True, run_id=1)
 
         response = client.post("/api/settings/backup/restore/restart")
 

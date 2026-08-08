@@ -1846,7 +1846,10 @@ def _rounding_slack(before_body: dict[str, Any], repaired: dict[str, Any]) -> fl
     """
     weights = [s["weight"] for s in before_body["signals"]]
     exact = [w * 100 / sum(weights) for w in weights]
-    return sum(max(0.0, s["weight"] - e) for s, e in zip(repaired["signals"], exact, strict=True))
+    slack: float = sum(
+        max(0.0, s["weight"] - e) for s, e in zip(repaired["signals"], exact, strict=True)
+    )
+    return slack
 
 
 def _evidence(days: float, watchers: int, rank: int, rating: int, size_gb: float) -> Facts:
@@ -3874,7 +3877,8 @@ class TestConvertListProtections:
             *body["gates"],
         ]
         body.update(over)
-        return body
+        merged: dict[str, Any] = body
+        return merged
 
     @staticmethod
     def _convert(

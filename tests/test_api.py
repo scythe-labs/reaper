@@ -1228,7 +1228,7 @@ class TestTheSimulator:
     knob and its blast radius sit in the same viewport."""
 
     def _simulate(self, client: TestClient, condemn_at: int) -> dict[str, Any]:
-        return client.post(
+        body: dict[str, Any] = client.post(
             "/api/policy/simulate",
             json={
                 "condemn_at": condemn_at,
@@ -1236,6 +1236,7 @@ class TestTheSimulator:
                 "signals": DEFAULT_SIGNALS,
             },
         ).json()
+        return body
 
     def test_lowering_the_threshold_condemns_more(self, client: TestClient) -> None:
         strict = self._simulate(client, 95)

@@ -3069,7 +3069,8 @@ class FakeTautulli:
         if self._raise:
             raise IntegrationError("tautulli", "history unavailable")
         if self._body is not None:
-            return self._body
+            body: dict[str, Any] = self._body
+            return body
         if self._rows_by_key is not None:
             key = rating_key if rating_key is not None else parent_rating_key
             return {"data": list(self._rows_by_key.get(key or 0, []))}

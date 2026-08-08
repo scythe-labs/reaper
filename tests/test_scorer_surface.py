@@ -351,7 +351,9 @@ class TestTheWalkSeesWhatItClaimsTo:
         assert surface != _RECORDED_SURFACE
 
     def test_a_signal_this_commit_has_never_seen_reaches_the_surface(self) -> None:
-        future = enum.StrEnum(
+        # The functional StrEnum form builds a member list mypy cannot read, which is exactly
+        # why it is used here: a signal id the enum does NOT ship yet.
+        future = enum.StrEnum(  # type: ignore[misc]
             "SignalId", {m.name: m.value for m in SignalId} | {"PROBE": "surface_walk_probe"}
         )
 
@@ -360,7 +362,9 @@ class TestTheWalkSeesWhatItClaimsTo:
         assert "signal.surface_walk_probe" in surface
 
     def test_a_gate_this_commit_has_never_seen_reaches_the_surface(self) -> None:
-        future = enum.StrEnum(
+        # The functional StrEnum form builds a member list mypy cannot read, which is exactly
+        # why it is used here: a signal id the enum does NOT ship yet.
+        future = enum.StrEnum(  # type: ignore[misc]
             "GateId", {m.name: m.value for m in GateId} | {"PROBE": "surface_walk_probe"}
         )
 
@@ -390,7 +394,9 @@ class TestTheWalkSeesWhatItClaimsTo:
         assert "field.surface_walk_probe: count, lanes=condemn, ops=gte, media=movie/tv" in surface
 
     def test_a_rating_source_this_commit_has_never_seen_reaches_the_surface(self) -> None:
-        future = enum.StrEnum(
+        # The functional StrEnum form builds a member list mypy cannot read, which is exactly
+        # why it is used here: a signal id the enum does NOT ship yet.
+        future = enum.StrEnum(  # type: ignore[misc]
             "RatingSource",
             {m.name: m.value for m in RatingSource} | {"PROBE": "surface_walk_probe"},
         )
