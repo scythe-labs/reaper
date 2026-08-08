@@ -3305,7 +3305,10 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # own and carries its own audit rather than being covered by the panel that opens it.
 # +1 for `JobsShelfSkip.test.tsx`, which mounts the Jobs panel to drive the shelf row's
 # skipped-scan branch and audits that branch, since the row draws copy no other test renders.
-_EXPECTED_RENDERING_TEST_FILES = 53
+# +1 for `SetupPlexStep.test.tsx`, the wizard's Plex step, which had no test of its own while the
+# settings panel's copy of the same behavior had a careful one (W10-7). It audits its linked
+# state, where the server and connection pickers are.
+_EXPECTED_RENDERING_TEST_FILES = 54
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:

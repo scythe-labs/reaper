@@ -289,10 +289,16 @@ describe("linking with Plex", () => {
 
 // Every read below the connection form means "of the currently LINKED server", and not one of the
 // four is qualified by a machine identifier, so a row cached against the old server answers for
-// the new one. All three paths that change which server that is therefore have to refresh the
-// whole set; two of them refreshed the status row alone, so unlinking and then linking a DIFFERENT
+// the new one. Every path that changes which server that is therefore has to refresh the whole
+// set; two of them refreshed the status row alone, so unlinking and then linking a DIFFERENT
 // server painted the previous server's libraries and their enabled flags -- and "Movies" and
 // "TV Shows" collide across servers, so the wrong list looked like the right one (#205).
+//
+// **Three of the five such paths are on this panel.** The setup wizard holds the other two, and
+// this file is where the claim used to be checked, which is how the wizard came to open-code a
+// three-key version of the set (W10-7). The keys now live in `plexServerQueries.ts` and
+// `plexServerQueries.test.ts` bans any handler from restating them; these stay because they drive
+// the panel's three paths through the UI, which a source scan cannot do.
 //
 // **These pin the invalidation, not the symptom, and the symptom is not reachable from here.** It
 // needs a cached row to still be FRESH when the query re-enables, and freshness is the one thing

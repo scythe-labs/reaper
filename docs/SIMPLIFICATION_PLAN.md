@@ -181,7 +181,7 @@ row moving is indistinguishable from one that never started.
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
-| 4 | Drift corrections | **in progress** | 3 of 4 | |
+| 4 | Drift corrections | **in progress** | 4 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
 | 7 | Wire contract | not started | 0 of ~4 | C7 outstanding |
@@ -242,6 +242,7 @@ here first and never reconstructed later.
 | #593 | 4 | W10-2 | `InstanceError.status` | no | Latent as the correction says: the two 404 arms covered the base class and were right only against today's callees. Five arms now read one declaration. The gate walks `api/` by AST, pins 6 handlers and 5 responses, and bans a literal status; three routes had no status test at all |
 | #594 | 4 | W10-3 | `apply_stored_schedules` | **yes, named in the PR** | Boot calls the shared function. The correction's population difference is real and preserved: an orphaned stored row was a boot-only `KeyError` warning and is now an explicit event on both paths. Two boot tests where there were none, both driven red. Re-anchored `main.py:519-522`/`:705`/`:776` |
 | #595 | 4 | W10-6 | `_strut_comment`, `_bolding_and_strutted` | no | Comment-only in the CSS, as the correction says: the two rules are byte-identical and the enumeration omitted `.view-tab`. Six controls bold when chosen, five carry the strut, `.filter-mi` is exempt in writing. The gate reads the claim *sentence*, not the block, because the block's own narrative mention of `.view-tab` made the first version green on the very drift it was written for |
+| #596 | 4 | W10-7 | `plexServerQueries.invalidateAllPlex` | no | Decided to fix here rather than move to #550, on the finding body: the fix adds keys, so it is rule 79's class and not a comment correction. Five server-changing paths across two components, one declaration. No symptom confirmed by reading `App.tsx`'s gate, not assumed |
 
 ### Killed while executing
 
@@ -2056,6 +2057,33 @@ disagreement.
 > latch, so the consumers are unmounted while it is up and it is unreachable after. The drifted
 > fact is `PlexPanel.tsx:196`'s "every server-changing path", which is five paths, not three, with
 > the enforcement test pinning only `PlexPanel`. That is #550's class and belongs there.
+
+> **Decided in phase 4, item 7 stays here.** The correction's last sentence and the phase text
+> disagreed, and this settles it: **fixed in #596, not moved to #550.** Three reasons, in the
+> order they weighed.
+>
+> **The fix is not a comment edit, so it is not #550's class.** #550 is five *backend* comments
+> asserting a safeguard that is absent, and its own *Fix* section closes three of them by
+> deleting the thing the comment describes. Here the three missing keys are real and the cheapest
+> correct fix adds them — the comment is wrong *because* the code is, which is the opposite
+> direction. Rule 79 governs this one by name ("a cache-invalidation helper claiming completeness
+> is grep-verified against every query key"), not rule 7/24 alone.
+>
+> **Folding it in would stop #550 being closable by one commit**, which the `reaper-review`
+> skill makes the test of whether sites belong in one issue. It would add a frontend site with a
+> different fix shape to a backend checklist.
+>
+> **No symptom, verified rather than assumed.** `App.tsx:1155` returns `<SetupWizard>` *instead
+> of* `<Dashboard>`, and `wasNeeded` latches, so the three missing keys have no mounted consumer
+> while the wizard is up. Reaching the wizard from a configured install means unlinking Plex,
+> which runs the full `invalidateAllPlex` on the way. "Symptomless" is a statement about
+> reachability and never a reason to leave it (rule 38/117), and the count in the comment was
+> wrong on a page whose job is deciding what Reaper may delete from.
+>
+> The fix hoists the helper to `frontend/src/plexServerQueries.ts` so one declaration serves all
+> five paths, and the guard bans a *handler* from naming two of the keys by hand. `setConnection`
+> is not a sixth path: it changes the server's address, not which server, so its one-key
+> invalidation is correct in both components.
 
 ## Wave 11: the rest, by lane
 
