@@ -324,11 +324,11 @@ def _hand_reap(result: GateResult) -> str:
     again**, which is exactly what the reversal bought and exactly what a future change
     re-adding a hold would break.
 
-    It goes through the freeze rather than ``snapshot._verdict(..., override="reap")`` for
-    two reasons. That call is a dead path -- its only caller, ``judge_facts``, passes
-    ``override=None`` unconditionally, and ``effective_fate`` routes every hand reap through
-    ``condemned`` off the frozen explanation instead -- so asserting on it proved nothing
-    about production. And going through ``_explain`` makes these assertions cover the
+    It goes through the freeze because that is the only way a hand reap is decided:
+    ``effective_fate`` routes every one of them through ``condemned`` off the frozen
+    explanation, and ``snapshot._verdict`` takes no override at all. It used to take one and
+    no caller ever passed it, so asserting through that parameter proved nothing about
+    production; it is gone. Going through ``_explain`` also makes these assertions cover the
     writer: a field the writer stops emitting changes the answer here.
     """
     policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})

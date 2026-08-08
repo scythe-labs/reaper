@@ -648,7 +648,6 @@ print(json.dumps({"order": order, "cases": cases}))
 GATES_PROBE = r"""
 import json
 from reaper.engine.gates import (
-    CuratedListGate,
     DataHorizonGate,
     Facts,
     GateConfig,
@@ -657,7 +656,6 @@ from reaper.engine.gates import (
     RatingRule,
     ServerPopularityGate,
     StreamingNowGate,
-    WhitelistGate,
     history_shortfall,
     lifetime_shortfall,
     progress_is_establishable,
@@ -790,15 +788,10 @@ gate_case("dormancy-absent", dorm, days_observed_unwatched=Absent(source="x"))
 # --- the three switch-shaped gates ---
 for name, gate, field in (
     ("streaming", StreamingNowGate(GateConfig()), "is_streaming_now"),
-    ("whitelist", WhitelistGate(GateConfig()), "is_whitelisted"),
 ):
     gate_case(f"{name}-true", gate, **{field: Known(value=True, source="x")})
     gate_case(f"{name}-false", gate, **{field: Known(value=False, source="x")})
     gate_case(f"{name}-unreadable", gate, **{field: Unknown(reason="r", source="x")})
-curated = CuratedListGate(GateConfig())
-gate_case("curated-on-a-list", curated, in_curated_list=Known(value="a list", source="x"))
-gate_case("curated-on-no-list", curated, in_curated_list=Absent(source="x"))
-gate_case("curated-unreadable", curated, in_curated_list=Unknown(reason="r", source="x"))
 gate_case("horizon-unreadable", DataHorizonGate(GateConfig()),
           days_observed_unwatched=Unknown(reason="r", source="x"))
 
@@ -1164,8 +1157,6 @@ ZONES: dict[str, Zone] = {
             "lifetime_shortfall",
             "progress_is_establishable",
             "ServerPopularityGate.evaluate",
-            "WhitelistGate.evaluate",
-            "CuratedListGate.evaluate",
             "MinDormancyGate.evaluate",
             "DataHorizonGate.evaluate",
             "evaluate_all",

@@ -25,10 +25,15 @@ between conditions inside a rule, and so no `OR` and no nesting either. Several 
 through the *score*, not through boolean logic, and the score is unsigned, so a rule that cannot
 be evaluated withdraws pressure rather than adding it.
 
-**The AND was the original design and it never shipped.** `engine.fields` carried a `RuleSet`
-holding a lane's conditions and an `evaluate_rules` that joined the condemn lane with a flat
-`AND` and the protect lane with an `OR`. Nothing in `src/` ever called it; the reasoning is
-recorded here because deleting the code deleted the last written trace of it.
+**The AND was the original design, and the AND is the half that never shipped.**
+`engine.fields` carried a `RuleSet` holding a lane's conditions and an `evaluate_rules` that
+joined the condemn lane with a flat `AND` and the protect lane with an `OR`. The protect half did
+run: `engine/custom_gate.py` called it for every user-authored protection until `bb33045`
+replaced that gate with today's one-per-condition `CustomProtectGate`. The condemn half never
+ran at all, and provably so rather than by inspection: that gate raised in `__post_init__` for
+any lane but `PROTECT`, so nothing could reach the `Lane.CONDEMN` arm. `evaluate_rules` then sat
+callerless for a further release and was deleted with the rest of wave 1.1; the reasoning is
+recorded here because deleting the code deleted its last written trace.
 
 **Why the language stays flat.** An `OR` inside a removal rule is expressible by writing a
 second rule, and that forces the operator to *name* the second thing they mean. A named rule is

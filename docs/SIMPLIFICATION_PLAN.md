@@ -68,6 +68,11 @@ written.
 
 Killed outright, because the code is live: **W1.1-k** (`history_sync.state`), the
 `CustomProtectGate` half of **W1.1-a**, **W1.1-i**'s `poster_url`, and **W7-5**'s `window_days`.
+**Two of those four kills have since been reversed by a later decision, and both reversals are
+recorded on the finding, not here**: C1 sent W1.1-i's poster chain to phase 5 whole, and #597
+removed the `PolicyProbeOut.detail` that made `window_days` live, so the condition this line
+rests on no longer holds for it. Read the finding's `> Corrected:` block before trusting a kill
+in this paragraph.
 
 Reclassified upward: **W5-1** and the parameter-object paragraph to `safety-path`, **W5-5** off
 `none`, **W1.1-n** to an external contract change, **W8-2** to the plan's one genuinely dangerous
@@ -157,7 +162,7 @@ audit that touched no code. They become the permanent commit message for a chang
 most of the tree.
 
 **The last PR retires this document.** It moves to `docs/history/` under the FROZEN banner
-`tests/test_repo_hygiene.py:2275` checks, and the same commit corrects `docs/README.md:118` and
+`tests/test_repo_hygiene.py:2272` checks, and the same commit corrects `docs/README.md:118` and
 CLAUDE.md's live-plans paragraph. Both assert this plan is live, no gate covers either, and
 `test_docs_referenced_from_code_exist` scans code and `pyproject.toml` rather than those two files
 — so a move without them leaves two confident false statements and a dangling path behind a green
@@ -184,7 +189,7 @@ row moving is indistinguishable from one that never started.
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
 | 5 | Deletions | **in progress** | 1 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/` |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
-| 7 | Wire contract | not started | 0 of ~4 | C7 outstanding |
+| 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
 
@@ -244,7 +249,7 @@ here first and never reconstructed later.
 | #594 | 4 | W10-3 | `apply_stored_schedules` | **yes, named in the PR** | Boot calls the shared function. The correction's population difference is real and preserved: an orphaned stored row was a boot-only `KeyError` warning and is now an explicit event on both paths. Two boot tests where there were none, both driven red. Re-anchored `main.py:519-522`/`:705`/`:776` |
 | #595 | 4 | W10-6 | `_strut_comment`, `_bolding_and_strutted` | no | Comment-only in the CSS, as the correction says: the two rules are byte-identical and the enumeration omitted `.view-tab`. Six controls bold when chosen, five carry the strut, `.filter-mi` is exempt in writing. The gate reads the claim *sentence*, not the block, because the block's own narrative mention of `.view-tab` made the first version green on the very drift it was written for |
 | #596 | 4 | W10-7 | `plexServerQueries.invalidateAllPlex` | no | Decided to fix here rather than move to #550, on the finding body: the fix adds keys, so it is rule 79's class and not a comment correction. Five server-changing paths across two components, one declaration. No symptom confirmed by reading `App.tsx`'s gate, not assumed |
-| #597 | 5 | W1.1 a-h, j, k, m, o; W7-3/4/5 | `evaluate_rules`, `GateConfig.gate`, `_verdict(override=)`, `HealthOut` | no | 13 findings landed, W1.1-l killed. Two deletions were bigger than their rows: `_verdict`'s override took `blocked_holds_reap` and `safety_protected` with it (rule 64) and moved 14 reap assertions onto `reap_override_verdict_decoded`, the only caller production has; `is_available` took `MediaRequest.status` and the `MediaStatus` enum. `Condemn logic` daggered, `DECISION_SECTIONS` 17 to 18 |
+| #597 | 5 | W1.1 a-h, i's `_SeriesWork.plan`, j, k, m, o; W7-3/4; W7-5's `detail` | `evaluate_rules`, `GateConfig.gate`, `_verdict(override=)`, `HealthOut` | no | 13 findings landed, W1.1-l killed. Two deletions were bigger than their rows: `_verdict`'s override took `blocked_holds_reap` and `safety_protected` with it (rule 64) and moved 14 reap assertions onto `reap_override_verdict_decoded`, the only caller production has; `is_available` took `MediaRequest.status` and the `MediaStatus` enum. `Condemn logic` daggered, `DECISION_SECTIONS` 17 to 18 |
 
 ### Killed while executing
 
@@ -314,7 +319,7 @@ This document's Python line counts are also short by 0.2% to 16%, so do not quot
 message. But the reason to ignore them is the first paragraph, not the second: a size estimate says
 how big a session is, never whether the change is worth making.
 
-**S6. `docs/STATUS.md` is full.** 120 of 120 lines, enforced at `tests/test_repo_hygiene.py:47`
+**S6. `docs/STATUS.md` is full.** 120 of 120 lines, enforced at `tests/test_repo_hygiene.py:46`
 alongside the 100-column bound at `:54`. Phases 4, 7, 8 and 9 all alter what the app does, which
 CLAUDE.md's golden rule says updates STATUS in the same commit, so **every such PR removes a line
 to add one**. A new dagger costs more: a `docs/DECISIONS.md` section *and* a bump to the
@@ -446,7 +451,7 @@ one freezes.
 fixture's per-vector `baseline` block with:
 
 1. **The three gate lists** — `protectors`, `checked_and_did_not_fire`, `could_not_be_checked`
-   (`engine/gates.py:917`), **by gate id and outcome class only**. The second is the product
+   (`engine/gates.py:922`), **by gate id and outcome class only**. The second is the product
    promise, and the half a refactor silently drops.
 2. **The explanation's decision-bearing numerics**: `base_score`, `keep_discount`, `threshold`,
    `coverage_floor_bp`, `watch_blind`, and per signal its `id`, `contribution`, `state` and
@@ -489,7 +494,7 @@ can commit is a baseline nobody re-runs.
 
 **Neither tier needs a live server, and neither may re-scan.** Both read the stored snapshot,
 because a re-scan is wall-clock dependent — `ScanContext(horizon=utcnow())` plus dormancy at
-`snapshot.py:350` and `:496` — and measured against the lab, advancing only the clock by 30 days
+`snapshot.py:349` and `:496` — and measured against the lab, advancing only the clock by 30 days
 moves 45.2% of score-or-coverage lines and 1.4% of verdicts. Over a plan that runs for months, a
 re-scanned baseline is noise. Freezing the clock instead is the expensive road: `utcnow` is a
 `from`-import in 32 modules, so patching `reaper.clock` reaches none of them, and the tree freezes
@@ -724,8 +729,10 @@ number edits the wrong code with green tests behind it.
 
 ### Phase 7 — wire contract
 
-W8, W4.3 and W7-2's `spared`. Every PR is two languages (S1), and each carries its
-`EXPECTED_INTERFACES`/`EXPECTED_PAIRS` reconciliation (S7).
+W8, W4.3, W7-2's `spared`, and **W7-5's `SignalProbeIn.window_days`**, which arrives here from
+phase 5: #597 removed the `PolicyProbeOut.detail` it fed, so the third pass's kill no longer holds
+and what is left is a served request field the engine cannot act on. Every PR is two languages
+(S1), and each carries its `EXPECTED_INTERFACES`/`EXPECTED_PAIRS` reconciliation (S7).
 
 **W4.3's `Literal` types come before phase 9's generator**, because generation off loose unions
 bakes the looseness in, and the 17 `export type` unions are exactly what today's mirror guard does
@@ -860,6 +867,13 @@ commit. This wave is the one to run first because it shrinks the surface every l
 
 ### 1.1 Unreachable code
 
+**Thirteen of these fifteen rows landed in #597, and their `Site` line numbers are deliberately
+NOT re-anchored** — the symbol is gone, so the number can only point at whatever moved up into its
+place. S10's obligation covers citations to code that still exists, and every one of those was
+swept in the same PR. What is left here is `-i`'s poster chain (phase 5, PR 3), `-l` (killed, see
+below), and `-n` (phase 5, PR 4). Read the *Landed* row before acting on a line number in this
+table.
+
 | Site | What | Lines | Risk |
 | --- | --- | --- | --- |
 | `engine/fields.py:1016-1100` | `Mode`, `RuleSet`, `RuleSetResult`, `evaluate_rules`: a complete second lane evaluator with no importer in `src/`. Its docstring states the lane semantics as though it enforced them (part of #550) | 55 + 85 test | `none` |
@@ -879,7 +893,7 @@ commit. This wave is the one to run first because it shrinks the surface every l
 | `styles/00-tokens.css:167`, `21-queue-cards.css:337`, `23-queue-chips.css:34` | `--radius-xs`, `.row-actions`, `.chip-reap`: no user in any construction path | 20 | `none` |
 
 > **Corrected: W1.1-a's line range is wrong and holds live code.** `CustomProtectGate` sits at
-> `fields.py:1044-1071`, inside the cited span, and is the whole user-authored-protection path
+> `fields.py:1016-1042`, inside the cited span, and is the whole user-authored-protection path
 > (`services/scan_runner.py:205,213`). `evaluate_rules` ends at `:1104`. Delete the four named
 > symbols, not the range. `tests/test_fields.py`'s dead blocks are `:127-217` and `:274-287`, with
 > a live `TestCustomProtectGate` at `:239` between them. `docs/STATUS.md:78`'s "Flat AND of typed
@@ -887,14 +901,14 @@ commit. This wave is the one to run first because it shrinks the surface every l
 > nowhere unless the commit moves it.
 >
 > **Decided 2026-08-07 (C1): move it.** The deleting commit daggers that row and writes its
-> `docs/DECISIONS.md` section, bumping `DECISION_SECTIONS` at `tests/test_repo_hygiene.py:59`
+> `docs/DECISIONS.md` section, bumping `DECISION_SECTIONS` at `tests/test_repo_hygiene.py:58`
 > (S6 and S7 both apply). A design choice whose last written trace is the code implementing it
 > dies with the code, and this one is the shape of the whole rule lane.
 
-> **Corrected: W1.1-k is false. `history_sync.state` is live.** `services/snapshot.py:618` calls
+> **Corrected: W1.1-k is false. `history_sync.state` is live.** `services/snapshot.py:617` calls
 > it on every scan. Only `latest` is test-only. Applying this row as written breaks scanning.
 
-> **Corrected: W1.1-i's `poster_url` has a reader.** `snapshot.py:1163` passes
+> **Corrected: W1.1-i's `poster_url` has a reader.** `snapshot.py:1162` passes
 > `judgment.poster_url` into `Display`, which reaches `Candidate.poster_url`. It is a three-hop
 > chain, not a field drop. `RawItem.poster_url` is never assigned either, so the stored column is
 > always `NULL` and `api/routes.py:1197` recomputes the poster and ignores it. Delete the whole
@@ -911,7 +925,7 @@ commit. This wave is the one to run first because it shrinks the surface every l
 > Deleting them also orphans `services.whitelist.spare` and `list_spared` (rule 64).
 
 > **Corrected: W1.1-m's `is_mappable` deletion removes a prose claim, not a safeguard.** The real
-> check is inline at `services/fairness.py:248`. Worth saying in the commit, since #550 is about
+> check is inline at `services/fairness.py:243`. Worth saying in the commit, since #550 is about
 > exactly that class.
 >
 > **And it is bigger than two properties.** `is_available` was the only reader of
@@ -967,7 +981,7 @@ code: **#553** (weigh a previously reaped title down, because its return is an o
 and **#554** (probability of a future rewatch, over a long enough window to mean something).
 
 **Before deleting, rehome one constant.** `FALLBACK_REWATCH_PRIOR` lives in `backtest.py:109` and
-is cited from `engine/gates.py:759` and `engine/policy.py:2644`, plus `docs/SIGNALS.md:155`,
+is cited from `engine/gates.py:764` and `engine/policy.py:2644`, plus `docs/SIGNALS.md:155`,
 `docs/LEARNINGS.md:121` and `docs/README.md:64`. `engine/dormancy.py` is its natural home. Rule 64:
 the doc citations move in the same change.
 
@@ -1012,7 +1026,7 @@ spelled in both modules' builders.
 
 ### 1.3 Test-suite wall clock, for two lines
 
-`tests/test_repo_hygiene.py:890`'s `_repo_text_files()` does a full `rglob` plus `read_text` of
+`tests/test_repo_hygiene.py:901`'s `_repo_text_files()` does a full `rglob` plus `read_text` of
 every file in the repository and is called from **7** sites; `_uvicorn_launches()` re-enters it.
 The file takes **53.04s**, and its 7 slowest tests, all callers, are **50.2s** of that. There is
 no `functools` import in the file.
@@ -1124,7 +1138,7 @@ the layer beneath it was just never built.
 
 ### 1.5 Four tests that a linter runs or that cannot fail
 
-`test_no_bare_exception_assertions_in_tests` (`test_repo_hygiene.py:433`) greps for
+`test_no_bare_exception_assertions_in_tests` (`test_repo_hygiene.py:442`) greps for
 `pytest.raises(Exception)`; **ruff B017 is enabled, runs in CI, and is strictly broader**.
 `test_instruction_files_exist:278` filters a list built from a glob for absent files, which a glob
 cannot return. `test_the_select_name_matcher_rejects_what_it_claims_to_reject`'s case at `:3116`
@@ -1245,7 +1259,7 @@ here is preventing a future divergence.
   `safety-path`, 8 pinning tests.
 - `WhyPanel.tsx:1316` vs `ShowPanel.tsx:69` — the same panel head, except one carries a `↗` glyph
   and the other does not. The divergence should be **decided**, not inherited.
-- `clients/seerr.py:336-430` — the paging contract written three times; its own test is titled
+- `clients/seerr.py:299-393` — the paging contract written three times; its own test is titled
   "Rule 72: the same loop, twenty lines down". `plex.py`'s `_iter_pages` is the complete-or-raise
   helper rule 56/89 names; Seerr never got one.
 - `services/scan_runner.py:323,441` + `services/instances.py:582` — per-kind client construction
@@ -1281,7 +1295,7 @@ here is preventing a future divergence.
   Risk `safety-path`, and note **only one of the four gates has a throttle test**.
 
 > **Corrected: two of the four have one.** Arming (`tests/test_settings_api.py:839`) and forgetting
-> a watch record (`tests/test_watch_evidence.py:452`). `change_password` and `restore` have none,
+> a watch record (`tests/test_watch_evidence.py:451`). `change_password` and `restore` have none,
 > and the extraction PR writes them.
 - `services/leaving_soon.py:425` — Plex client construction at **6** sites, and the
   `None`-when-unlinked branch already reads differently in two. `safety` is keyword-only and
@@ -1289,7 +1303,7 @@ here is preventing a future divergence.
 - `services/app_settings.py:185` — the "stored wins, else env seed" rule written **7 times in 3
   spellings**, with log level resolving in `main.py` instead of a getter.
 - `backup.py`/`restore.py`/`retention.py` — **5 raw `sqlite3.connect` blocks**, none using
-  `db/session.py:33`'s declared pragma set, so `busy_timeout` is 5000 in two, 30000 in one and
+  `db/session.py:31`'s declared pragma set, so `busy_timeout` is 5000 in two, 30000 in one and
   absent in two. Two share a byte-identical operator string. Risk `safety-path`; the pragma
   unification and the string lift should be separate commits.
 - Frontend hooks: the image-fallback ladder **3 times** (`Backdrop`, `Poster`, `WhyHero`, whose
@@ -1304,7 +1318,7 @@ here is preventing a future divergence.
 `SeasonPolicy` that `SeasonPolicy.from_body` already builds; `season_evidence.py:121` names this
 as rule 144's shape in its own comment), `build_season_facts` (24), `plan_series_prune` (20),
 `snapshot.scan` (17), the Plex match record threaded as **6 loose parameters through 4
-signatures**. `snapshot.py:929` is the sharp case: 12 parallel `movie_*`/`tv_*` locals with
+signatures**. `snapshot.py:928` is the sharp case: 12 parallel `movie_*`/`tv_*` locals with
 nothing structurally preventing the movie loop being handed `tv_keeps`.
 
 > **Corrected: this paragraph carries no risk class and two of its six sit on the deletion path.**
@@ -1424,7 +1438,7 @@ direction of the mirror.
 | Signal ids | `engine/signals.py:66` (5) | `SIGNAL_META`, `RAMPS`, `BUILTIN_SIGNAL_IDS`, 4 more | Partial: 3 TS maps unguarded |
 | Verdict | **none: bare `str`** | `api.ts:17` closed union, `reviewFate.ts` | Impossible, no declaration to compare |
 | Override | one model only | `api.ts:168`, `reviewFate.ts`, `StatusChip.tsx` | None |
-| Chip tone | `schemas.py:112` | `api.ts:40`, **CSS classes** via interpolation | None |
+| Chip tone | `schemas.py:113` | `api.ts:40`, **CSS classes** via interpolation | None |
 | `InstanceKind`, `SignalState`, `MatchStatus`, `ListSource`, `ListHealth`, `ShowStatus`, `Channel` | various | `api.ts`, labels, `.env.example`, the Unraid template | None |
 
 Two fixes, both small:
@@ -1709,12 +1723,12 @@ added to the first.
 
 | Site | The two copies | Lines | Risk |
 | --- | --- | --- | --- |
-| `snapshot.py:1618` vs `engine/explanation.py:31` | The stored explanation built as a 110-line hand-typed dict on the write side, declared as Pydantic models on the read side. The reader's own docstring records that `keeps` and `match` were **silently dropped** here until the fields were declared, which is why the panel's keep breakdown never rendered. `facts_codec.py:39` is the in-tree precedent that raises at import on an unhandled field | ~30 net | `behavior` |
-| `snapshot.py:1287` `Display` | The 15-field carrier exists; `RawItem` and `SeasonJudgment` both re-declare its fields flat, then `:1057` and `:1157` re-pack them field for field, then `_judge_item` unpacks it again | ~60 | `none` |
+| `snapshot.py:1606` vs `engine/explanation.py:31` | The stored explanation built as a 110-line hand-typed dict on the write side, declared as Pydantic models on the read side. The reader's own docstring records that `keeps` and `match` were **silently dropped** here until the fields were declared, which is why the panel's keep breakdown never rendered. `facts_codec.py:39` is the in-tree precedent that raises at import on an unhandled field | ~30 net | `behavior` |
+| `snapshot.py:1286` `Display` | The 15-field carrier exists; `RawItem` and `SeasonJudgment` both re-declare its fields flat, then `:1057` and `:1157` re-pack them field for field, then `_judge_item` unpacks it again | ~60 | `none` |
 | `season_scan.py:1254` `gather` | Nine loose policy fields taken one frame above the `SeasonPolicy` that groups them, re-packed at `:1302`. This is the sole reason the second road exists: `SeasonPolicy.from_body` is the same nine assignments written again, and `season_evidence.py:130` already names it "rule 144's shape" | ~40 | `behavior` |
 | `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:224`, `api/fairness.py:159`, `api/settings.py:748` **and** `:831` (written twice), `api/runs.py:776`, `api/routes.py:1290` | ~180 | `none` |
 | `api/runs.py:741`/`:775` `ProfileSettingsIO` | A 7-field record declared twice, **including re-typed `ge`/`le` bounds**, with a hand-written converter in each direction. Rule 131 wants a consumer's bound derived from the producer's; here it is transcribed | ~16 | `none` |
-| `routes.py:1968`, `:2299`, `:2611` | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded at `schemas.py:854` | ~25 | `none` |
+| `routes.py:1968`, `:2299`, `:2611` | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded at `schemas.py:860` | ~25 | `none` |
 | `auth.py:220` vs `settings.py:259` | `PlexServerChoiceOut` **declared twice under the same class name in two modules**. Pydantic collapses them in `components.schemas` today; the moment either gains a field both operations get module-qualified component names and any generated client breaks silently | 8 | `none` |
 
 **One caveat, and it is the reason this wave is not risk-free.** Building the explanation from the
@@ -1730,7 +1744,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > decides whether a hand reap condemns.
 >
 > Three more things the caveat misses. `Explanation` is already the *wire* model
-> (`schemas.py:279`), so making it the writer welds the on-disk format to the API: a later
+> (`schemas.py:280`), so making it the writer welds the on-disk format to the API: a later
 > `exclude_none` or alias change made for the wire silently changes what is written to disk. And as
 > declared it would **drop** an unhandled write-side key rather than raise, because Pydantic
 > defaults to `extra="ignore"` — the cited precedent raises at `facts_codec.py:75`, so the rebuild
@@ -1741,7 +1755,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 >
 > Smaller corrections: `Display` is 16 fields, not 15, repacked at `:1057` and `:1160`; `RawItem`
 > re-declares 10 of them, not all 16. `Explanation` is declared at `engine/explanation.py:213` and
-> reaches the wire through `schemas.py:280`. `season_evidence.py`'s "rule 144's shape" comment is
+> reaches the wire through `schemas.py:281`. `season_evidence.py`'s "rule 144's shape" comment is
 > at `:121` —
 > the plan says `:121` in one place and `:130` in another. W5-4 names `runs.py:776`, which is
 > W5-5's site in the reverse direction, and its real population is ~13 sites, not 7. W5-5 is not
@@ -1760,9 +1774,9 @@ gate instead."
 
 | Constraint | Where it is stated | How it is implemented | Fix |
 | --- | --- | --- | --- |
-| Rule 40's one control standard | `00-tokens.css:215`, in prose | 10 rule blocks re-declare the same 6 fields; 8 more re-declare the identical focus ring | One grouped base rule, ~70 lines, risk `visual` (source order) |
+| Rule 40's one control standard | `00-tokens.css:212`, in prose | 10 rule blocks re-declare the same 6 fields; 8 more re-declare the identical focus ring | One grouped base rule, ~70 lines, risk `visual` (source order) |
 | Rule 94's 500-key `IN` bound | prose only | `_KEY_CHUNK`, `_WATCH_KEY_CHUNK`, three bare `500` literals, one `_CHUNK = 200` whose comment already enumerates the others | One constant + a hygiene grep, ~10 lines |
-| Rule 56's paging contract | cited by all four loops | `plex.py:427` hardened, `history_sync.py:380` with a backstop, `library_index.py:245` with **no backstop**, `seerr.py:370` and `:396` | One `paged()` iterator, ~60 lines, risk `safety-path` |
+| Rule 56's paging contract | cited by all four loops | `plex.py:427` hardened, `history_sync.py:380` with a backstop, `library_index.py:245` with **no backstop**, `seerr.py:345` and `:370` | One `paged()` iterator, ~60 lines, risk `safety-path` |
 | Rule 88's case-fold | 3 docstrings cross-referencing each other | `normalize_label`, `_tag_key`, `_name_key` are all `x.strip().casefold()`, plus ~28 inline copies across 10 modules | One `fold()`, so the rule is greppable by symbol, ~16 lines |
 | The layering in *Architecture* | CLAUDE.md prose | Holds today, measured: 0 top-level SCCs, no `engine/ → services`, no upward `api/` import | A ~30-line AST test lands **green** and pins it |
 | "The only path list in the repository" | `ci.yml:55` **and** `CLAUDE.md:280` | `codeql.yml` restates it twice, `docs-deploy.yml` once | Correct the two sentences, 2 lines (rule 7/24) |
@@ -1783,19 +1797,19 @@ enforced by nothing but the next author's memory.
 > different things across them; plex and `history_sync` advance by `len(page)` while both seerr
 > loops advance by the constant, and unifying either way reintroduces a bug one of them already
 > fixed; and plex is synchronous plexapi over XML. **Replace the row with: add a page backstop to
-> `library_index.py:246` and `seerr.py:382`/`:407`, modeled on `MAX_HISTORY_PAGES`, currently the
+> `library_index.py:246` and `seerr.py:345`/`:370`, modeled on `MAX_HISTORY_PAGES`, currently the
 > repo's only page cap.** ~10 lines, risk `none`. `library_index.py:246` having no backstop is
 > confirmed and is already **#559**; the row should point at it.
 >
 > **W6-2's `_CHUNK = 200` is not drift and must stay out of the shared constant.**
 > `watch_evidence.py:78-88` says why in source: it chunks a multi-row INSERT at four variables per
-> row, so 500 there would be 2,000 bound variables — the exact rule 94 failure. `snapshot.py:1824`
+> row, so 500 there would be 2,000 bound variables — the exact rule 94 failure. `snapshot.py:1812`
 > carries a bare `300` on the same footing, unlisted. The hygiene grep allow-lists those two by
 > name or it flags two correct values.
 >
 > **The sweep is nine `IN` sites, not five.** The row inherits the plan's "three bare `500`
 > literals" and that is short by four: `_KEY_CHUNK` (`routes.py:635`), `_WATCH_KEY_CHUNK`
-> (`snapshot.py:1320`), and bare literals at `routes.py:567`, `:610`, `snapshot.py:1856`,
+> (`snapshot.py:1319`), and bare literals at `routes.py:567`, `:610`, `snapshot.py:1844`,
 > `imdb_dataset.py:341`, `fairness.py:888`, `:916` and `season_scan.py:1028`. Under-scoping a sweep
 > is rule 72's own failure mode, so count before extracting.
 >
@@ -1846,7 +1860,7 @@ fields and a fail-open guard.
   and it never varies.** Every writer passes `HARD`; `SOFT` appears only in its own declaration
   and two comments. It drags along the `mode` column, the `weight` column (written at
   `lists.py:838`, **read by nothing**), `Membership.mode`, `ConfiguredList.mode`, and **two guard
-  branches that can never fire** (`snapshot.py:2693`, `:2776`), both of which skip a degradation
+  branches that can never fire** (`snapshot.py:2669`, `:2776`), both of which skip a degradation
   check. Those two point fail-*open*, which is the direction that matters here. `protection_list`
   lives in `cache.db`, which is disposable by contract, so there is no migration. ~35 lines.
 - **`CandidateOut.spared`** is a dead second name for `override == "spare"`, set literally that
@@ -1885,6 +1899,16 @@ fields and a fail-open guard.
 > looks inert. Removing `PolicyProbeOut.detail` first makes it genuinely dead; removing it alone
 > changes what the engine returns. Do not sweep by name: `GateSettingIn.window_days` is a
 > different, heavily-read field.
+>
+> **#597 removed `detail`, so the kill is spent and the field is now dead: it goes, in phase 7.**
+> Measured there: `reach_shortfall` is the only other thing it reaches, and it can never fire in a
+> preview, because the mirror `engine.preview` hands the engine is pinned to exactly the ceiling
+> the field allows. Those two numbers were `36_500` written twice in two modules with nothing
+> holding them together, which is rule 131 and is what #597 fixed instead — one
+> `preview.MAX_PROBE_WINDOW_DAYS`, read by the schema, driven at the boundary in both directions.
+> **It was not deleted there because removing a served REQUEST field is a two-language change
+> under S1 and an external contract change under S4**, which is the same reason W1.1-n is its own
+> PR. Phase 5 PR 1 removed a response field and left the request alone deliberately.
 >
 > **`run_migrations_offline` has a test invoker.** `tests/test_migrations.py:163-175` is
 > parametrized `["offline", "online"]` and drives `as_sql=True` specifically to assert what the
@@ -1948,7 +1972,7 @@ An axis no pass has measured. Two of these are the largest single wins in either
 > `confirmation_phrase` come from. The execute route re-derives `expected` through the same helper
 > at `runs.py:522`. A `LIMIT 50` placed in `_run_steps` or `_planned_candidates` shrinks the
 > detail route and the execute route *consistently*, so the typed phrase still matches, while the
-> executor loads its own steps independently at `executor.py:615` and deletes every one. The
+> executor loads its own steps independently at `executor.py:622` and deletes every one. The
 > operator types `REAP 50 SOULS` and 500 go.
 >
 > **The cap is only safe applied at the `steps=[...]` serialization inside `_run_out`.** The
@@ -1976,7 +2000,7 @@ An axis no pass has measured. Two of these are the largest single wins in either
 > does not claim a page reads `empties_after_scan`, so that row's rule 25 framing rests on nothing;
 > the substance holds, since `usePlexTrash.ts:44` is the surface that would use it. The three
 > `RunOut` hash and approver fields are safe to drop from the *response*: every interlock reads the
-> DB row (`executor.py:972`, `:995`), never the wire model. Ten routes return `dict[str, bool]`,
+> DB row (`executor.py:975`, `:995`), never the wire model. Ten routes return `dict[str, bool]`,
 > not eleven, and **`backup.py:293` returns two keys** (`ok` and `cleared`, the second read at
 > `api.ts:1893`), so it needs its own model rather than a shared `OkOut`. `backup.py:326` is a
 > fifth anonymous-payload route the sweep misses (rule 72). W8-4 needs no lockstep; W8-3 and W8-5
@@ -2319,7 +2343,7 @@ Three items are stated as questions, with no `Reviewed/` claim behind them:
    producer's own sentence.** Rule 92/142's shape, and its docstring records that a reword already
    stranded three of these on older snapshots. Could the frozen explanation carry a reason id,
    leaving the prefix tests as the legacy-row fallback? The stored-schema cost was not measured.
-2. **`executor.py:2745`'s `expected <= 0` branch** appears unreachable behind the caller's guard
+2. **`executor.py:2748`'s `expected <= 0` branch** appears unreachable behind the caller's guard
    at `:2698`, the same caller/callee doubling as the `restore.py` finding. No path to it was
    demonstrated, so it is not asserted dead.
 3. **The `aria-describedby` error-id idiom** recurs at 8 sites. Whether one `useFieldError(owner)`

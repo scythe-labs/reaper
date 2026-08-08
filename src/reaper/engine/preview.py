@@ -67,9 +67,19 @@ NOT_PROBED_REASON = "not part of this preview"
 
 _NOTHING = Unknown(source="preview", reason=NOT_PROBED_REASON)
 
+#: The widest popularity window a probe may be asked about. A boundary bound rather than a real
+#: one (rule 95): a century, above any history anyone has.
+#:
+#: ``api.schemas.SignalProbeIn.window_days`` reads THIS rather than restating the number, because
+#: the mirror below is set to exactly it and the two only work as a pair (rule 131). Raise the
+#: wire's bound alone and every ``FEW_WATCHERS`` probe takes the shortfall arm and reports zero at
+#: every value on the ramp, which reads to the operator as a rule that does nothing.
+MAX_PROBE_WINDOW_DAYS = 36_500
+
 #: Long enough that the watch mirror never withholds a watcher count here. See the module
 #: docstring: the probe is about the ramp, and the shortfall has its own warning elsewhere.
-_REACH_DAYS = 36_500.0
+#: ``history_shortfall`` returns ``None`` at ``reach >= needed``, so equality is enough.
+_REACH_DAYS = float(MAX_PROBE_WINDOW_DAYS)
 
 
 def _bare_facts(field: str, value: float) -> Facts:

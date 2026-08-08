@@ -33,6 +33,7 @@ from reaper.engine.policy import (
     PolicyRepair,
     RatingRuleSpec,
 )
+from reaper.engine.preview import MAX_PROBE_WINDOW_DAYS
 from reaper.engine.signals import SignalId
 
 # The why-panel document moved to ``engine.explanation`` so the reap path could run the same
@@ -600,13 +601,14 @@ class SignalProbeIn(SignalSettingIn):
     one (rule 95) -- above any file anyone has, and below where a float stops counting whole
     numbers."""
 
-    window_days: int = Field(default=365, ge=1, le=36_500)
+    window_days: int = Field(default=365, ge=1, le=MAX_PROBE_WINDOW_DAYS)
     """The policy's popularity window, phrasing "in the last ..." inside the engine.
 
-    It moves no number a probe returns: a probe answers about a RULE and not an item, so
-    ``engine.preview`` hands the engine a mirror reaching the maximum window this field
-    allows, and the reach check can never come up short. The editor does not send it and
-    the default stands in."""
+    It moves no number a probe returns, and the ceiling is what makes that true: a probe
+    answers about a RULE and not an item, so ``engine.preview`` hands the engine a mirror
+    reaching exactly ``MAX_PROBE_WINDOW_DAYS``, and the reach check can never come up short.
+    The bound is read from there rather than restated, because the two are one fact
+    (rule 131). The editor does not send this field and the default stands in."""
 
 
 #: What ``POST /api/policy/probe`` accepts.
