@@ -117,12 +117,15 @@ is the resolution working — but note the second half, because it is the one no
 **the sub-PR that carries the merge back is itself squashed, which flattens the merge out of this
 branch's history.** The tree was correct and `git merge-base --is-ancestor origin/dev HEAD` was
 false, so the next weekly merge would have replayed the same commit into a file that already held
-it. The repair is `git merge -s ours origin/dev`, pushed to this branch **directly**: it records
-the ancestry and touches no file, and it cannot go through a pull request, because a squash would
-flatten it exactly as it flattened the first one. So an escape-hatch item costs one anchor
-conflict and one ancestry repair, and both are cheap while somebody remembers. Send an item to
-`dev` when what it corrects is read by every session — CLAUDE.md was, here — and keep it here when
-it is not.
+it.
+
+**So push the `dev` merge to this branch directly, never inside a sub-PR.** Done that way it is
+an ordinary merge commit and `git merge-base --is-ancestor origin/dev HEAD` is true afterwards,
+so the next merge starts from the right base. Both round trips were measured: the first went
+through the phase-close PR and needed repairing, the second was pushed directly and did not. If
+one has already been flattened, the repair is `git merge -s ours origin/dev`, also pushed
+directly — it records the ancestry and touches no file. Send an item to `dev` when what it
+corrects is read by every session, as CLAUDE.md is, and keep it here when it is not.
 
 **Splitting whole phases off is the version that does not work**, and it was considered and
 rejected rather than never raised. Every sub-PR edits this document under S10 and `docs/STATUS.md`
