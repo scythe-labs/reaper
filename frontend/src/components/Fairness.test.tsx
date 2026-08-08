@@ -3,7 +3,6 @@
 // states have to be honest: a reclaimable card names the disk; a clean card says so plainly;
 // and either one opens the person's full breakdown. The page says out loud when it is
 // loading, could not load, or has no scan to sit on.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { act, type ReactElement } from "react";
@@ -11,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
 import { ApiError, type FairnessReport, type RequesterRow } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Fairness, PersonCard } from "./Fairness";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -44,8 +43,7 @@ function row(over: Partial<RequesterRow> = {}): RequesterRow {
 }
 
 function renderWithClient(ui: ReactElement) {
-  const client = testQueryClient();
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return renderWithProviders(ui);
 }
 
 /** What an operator would hear from the app's shared region. Empty when it has said nothing. */

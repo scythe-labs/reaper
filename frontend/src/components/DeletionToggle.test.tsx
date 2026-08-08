@@ -2,12 +2,11 @@
 // The deletion switch is safety UI, so it never renders nothing and never reads as safe on a
 // state it could not confirm. It also never strands the operator: the direction that can only
 // make Reaper safer stays one click away, whatever the server said.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { DeletionToggle } from "./DeletionToggle";
 
@@ -21,13 +20,12 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 function renderToggle() {
-  const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
+  renderWithProviders(
+    <>
       {/* App mounts this once above every route; the switch speaks into it (#170). */}
       <Announcer />
       <DeletionToggle />
-    </QueryClientProvider>,
+    </>,
   );
   return userEvent.setup();
 }

@@ -15,15 +15,14 @@
 //
 // Both directions are driven: a claim narrowed to nowhere is the same failure as a claim made
 // everywhere, and only the pair can tell them apart.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupStatus } from "../api";
 import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { IDLE_SCAN } from "../test/apiFixtures";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { SetupScanStep } from "./SetupScanStep";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -63,8 +62,8 @@ const DONE: SetupStatus = {
 const DONE_NO_PLEX: SetupStatus = { ...DONE, plex_linked: false, reap_ready: false };
 
 function renderStep(setup: SetupStatus, onGoToPlex = vi.fn(), onBack = vi.fn()) {
-  render(
-    <QueryClientProvider client={testQueryClient()}>
+  renderWithProviders(
+    <>
       {/* The app mounts this above every route, and `announce()` returns early with no region
           listening, so a test about what is spoken would pass against silence. */}
       <Announcer />
@@ -74,7 +73,7 @@ function renderStep(setup: SetupStatus, onGoToPlex = vi.fn(), onBack = vi.fn()) 
       <main className="setup">
         <SetupScanStep setup={setup} onBack={onBack} onGoToPlex={onGoToPlex} onDone={vi.fn()} />
       </main>
-    </QueryClientProvider>,
+    </>,
   );
   return { person: userEvent.setup(), onGoToPlex, onBack };
 }

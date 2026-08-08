@@ -7,13 +7,12 @@
 // separately and never cleared, so what retires it is a later pass carrying a later timestamp
 // -- which makes the row's own comparison the whole mechanism, and the reason both directions
 // are driven here rather than only the failing one.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeavingSoonSettings, Schedule } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Settings } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -72,11 +71,7 @@ beforeEach(() => {
 /** The row's own status line and its counts line, read off the DOM the way `JobStatus.test`
  *  reads them: the sentence is built from nested spans, so no single text node holds it. */
 async function shelfRow(): Promise<{ status: string; counts: string }> {
-  render(
-    <QueryClientProvider client={testQueryClient()}>
-      <Settings initialPanel="jobs" />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<Settings initialPanel="jobs" />);
   const title = await screen.findByText("Update Leaving Soon shelf");
   const row = title.closest(".jobrow");
   // Not an optional chain into the assertions below: a selector that stopped matching would

@@ -11,8 +11,7 @@
 // Each gate is pinned in BOTH directions, because a fix that simply deleted the `isError` arm
 // would pass a one-sided test while dropping a fresh install onto an empty Dashboard with no way
 // back to the wizard. The never-loaded case is the reason those arms were written.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,6 +24,7 @@ import {
   IDLE_SCAN,
 } from "./test/apiFixtures";
 import { testQueryClient } from "./test/queryClient";
+import { renderWithProviders } from "./test/renderWithProviders";
 import { expectNoA11yViolations } from "./test/a11y";
 import { App } from "./App";
 
@@ -182,11 +182,7 @@ beforeEach(() => {
 
 function renderApp(): QueryClient {
   const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<App />, { client: queryClient });
   return queryClient;
 }
 

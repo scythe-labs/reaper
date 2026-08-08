@@ -3,14 +3,14 @@
 // the open list must say "loading" and "failed" out loud (an open chevron over silence
 // reads as broken), and every season is actable in place -- each carries its own Spare/Reap,
 // judged by that season's own verdict (rule 51), whatever tab you opened the show from.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Chip, Group, ShowStatus, Verdict } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { ReviewQueue } from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -136,17 +136,16 @@ function renderQueue(
     snapshotId: 1,
   });
   const queryClient = seedSettings(testQueryClient());
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ReviewQueue
-        verdict="abstain"
-        onVerdictChange={() => {}}
-        selectedId={null}
-        selectedGroupKey={null}
-        onSelect={overrides.onSelect ?? (() => {})}
-        onSelectGroup={overrides.onSelectGroup ?? (() => {})}
-      />
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <ReviewQueue
+      verdict="abstain"
+      onVerdictChange={() => {}}
+      selectedId={null}
+      selectedGroupKey={null}
+      onSelect={overrides.onSelect ?? (() => {})}
+      onSelectGroup={overrides.onSelectGroup ?? (() => {})}
+    />,
+    { client: queryClient },
   );
 }
 

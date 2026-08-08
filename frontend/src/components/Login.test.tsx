@@ -3,13 +3,12 @@
 // unreachable. It keeps its own markup (it slides up rather than appearing over a scrim),
 // so these pin the part it borrows from ModalShell: Tab stays inside the sheet, in both
 // directions, instead of landing on the sign-in buttons behind it.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Login } from "./Login";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -31,12 +30,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 async function openSheet() {
-  const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
-      <Login />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<Login />);
   const person = userEvent.setup();
   await person.click(await screen.findByRole("button", { name: /use a local account/i }));
   return person;
@@ -142,12 +136,7 @@ describe("the Plex sign-in popup", () => {
     const open = vi.fn<typeof window.open>(() => null);
     vi.stubGlobal("open", open);
 
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <Login />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<Login />);
     const person = userEvent.setup();
     await person.click(await screen.findByRole("button", { name: /sign in with plex/i }));
 
@@ -174,13 +163,13 @@ describe("the Plex sign-in popup", () => {
     // restored in the `finally`, or the next test in the file inherits the fake clock.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      render(
-        <QueryClientProvider client={testQueryClient()}>
+      renderWithProviders(
+        <>
           {/* The region `announce()` speaks through. Without it the call is a no-op by design,
               so this test would pass against a component that says nothing. */}
           <Announcer />
           <Login />
-        </QueryClientProvider>,
+        </>,
       );
       const person = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       await person.click(await screen.findByRole("button", { name: /sign in with plex/i }));
@@ -217,12 +206,7 @@ describe("the recovery card", () => {
     // who most need this screen with nowhere to look (#433). Both are asserted, because a card
     // naming one of two is exactly as wrong for half the install base as naming neither.
     window.history.pushState({}, "", "/recover");
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <Login />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<Login />);
 
     const note = await screen.findByText(/The code is in/);
     expect(note.textContent).toContain("recovery.txt");
@@ -240,12 +224,7 @@ describe("the recovery card", () => {
     // reaches this screen and no other, so its landmarks are the only ones on the page and the
     // sheet audit above cannot answer for them (rule 72, rule 118).
     window.history.pushState({}, "", "/recover");
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <Login />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<Login />);
 
     await screen.findByText(/The code is in/);
     await expectNoA11yViolations(document.body, { pageLevel: true });

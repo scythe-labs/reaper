@@ -11,14 +11,13 @@
 // The third case is the one an implementation is likeliest to skip: a wizard resumed in a fresh
 // tab holds no password, and the flow has to fall back to the box rather than sending an empty
 // string at a route that would refuse it.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupStatus } from "../api";
 import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { SetupConnectStep } from "./SetupConnectStep";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -74,13 +73,13 @@ const SUMMARY = {
 /** The step as the wizard mounts it. `password` is what step one handed up: a string once it
  *  has been typed this session, null on a flow resumed in another tab. */
 function renderStep(password: string | null) {
-  render(
-    <QueryClientProvider client={testQueryClient()}>
+  renderWithProviders(
+    <>
       {/* The app mounts this above every route, and `announce()` returns early with no region
           listening, so the armed sentence would be dropped without it. */}
       <Announcer />
       <SetupConnectStep setup={SCAN_READY} password={password} onBack={vi.fn()} onNext={vi.fn()} />
-    </QueryClientProvider>,
+    </>,
   );
   return userEvent.setup();
 }

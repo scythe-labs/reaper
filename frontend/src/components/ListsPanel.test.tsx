@@ -12,13 +12,12 @@
 // difference between the green "In use" chip and the gray "Not in use"; the live-vs-cached
 // count; and the definition-to-membership join, which is what lets a row carry Edit and Check
 // now at all.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import type { ListConfig, ListPolicyUse, ProtectionList } from "../api";
 import { ListsPanel } from "./ListsPanel";
 
@@ -118,11 +117,7 @@ function tagRow(slug: string, over: Partial<ProtectionList> = {}): ProtectionLis
 }
 
 function renderPanel(onGoToPolicy = vi.fn()) {
-  render(
-    <QueryClientProvider client={testQueryClient()}>
-      <ListsPanel onGoToPolicy={onGoToPolicy} />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<ListsPanel onGoToPolicy={onGoToPolicy} />);
   return { onGoToPolicy };
 }
 

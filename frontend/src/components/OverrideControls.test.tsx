@@ -3,13 +3,12 @@
 // press WILL do (the operator's default length); spared, it says what is in force on THIS item.
 // The bug that motivated it: a 90-day spare under a Forever default left the button reading
 // "∞ Spared" -- the wrong glyph, and no sign of when the spare ends.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { OverrideControls, OverrideMark } from "./OverrideControls";
 import { QueueSettingsContext, type QueueSettings } from "./queueSettings";
 
@@ -25,18 +24,16 @@ function draw(props: Partial<Parameters<typeof OverrideControls>[0]> = {}, defau
     defaultSpareDays,
     unmeasured: { holdsBack: true, isPending: false, isError: false },
   };
-  return render(
-    <QueryClientProvider client={testQueryClient()}>
-      <QueueSettingsContext.Provider value={shared}>
-        <OverrideControls
-          override={null}
-          onSet={vi.fn()}
-          onClear={vi.fn()}
-          pending={false}
-          {...props}
-        />
-      </QueueSettingsContext.Provider>
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <QueueSettingsContext.Provider value={shared}>
+      <OverrideControls
+        override={null}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+        pending={false}
+        {...props}
+      />
+    </QueueSettingsContext.Provider>,
   );
 }
 
@@ -60,17 +57,15 @@ function DrawLive({ defaultSpareDays = 30, override = null }: DrawLiveProps) {
     unmeasured: { holdsBack: true, isPending: false, isError: false },
   };
   return (
-    <QueryClientProvider client={testQueryClient()}>
-      <QueueSettingsContext.Provider value={shared}>
-        <OverrideControls
-          override={override}
-          spareExpiresAt={null}
-          onSet={() => setPending(true)}
-          onClear={() => setPending(true)}
-          pending={pending}
-        />
-      </QueueSettingsContext.Provider>
-    </QueryClientProvider>
+    <QueueSettingsContext.Provider value={shared}>
+      <OverrideControls
+        override={override}
+        spareExpiresAt={null}
+        onSet={() => setPending(true)}
+        onClear={() => setPending(true)}
+        pending={pending}
+      />
+    </QueueSettingsContext.Provider>
   );
 }
 type DrawLiveProps = { defaultSpareDays?: number; override?: "spare" | "reap" | null };
@@ -347,7 +342,7 @@ describe("the spare-length menu's keyboard reach", () => {
   // covered only Escape, and was green while the two commonest exits were broken.
   it("hands focus back to the caret after a pick, once the mutation settles", async () => {
     const user = userEvent.setup();
-    render(<DrawLive />);
+    renderWithProviders(<DrawLive />);
     const caret = screen.getByRole("button", { name: CARET });
     await user.click(caret);
 
@@ -361,7 +356,7 @@ describe("the spare-length menu's keyboard reach", () => {
 
   it("hands focus back to the caret after Clear this spare", async () => {
     const user = userEvent.setup();
-    render(<DrawLive override="spare" />);
+    renderWithProviders(<DrawLive override="spare" />);
     const caret = screen.getByRole("button", { name: CARET });
     await user.click(caret);
 
