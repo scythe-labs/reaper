@@ -35,7 +35,6 @@ class TestTheProbeAgreesWithTheScorer:
         probed = probe_signal(LOW_RATING, tenths, window_days=365)
 
         assert probed.points == pytest.approx(scanned.pressure)
-        assert probed.detail == scanned.detail
 
     def test_the_shipped_rating_ramp_pays_what_it_is_documented_to_pay(self) -> None:
         # The one place a literal belongs: these are the numbers the operator is shown, and

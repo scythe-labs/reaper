@@ -182,7 +182,7 @@ row moving is indistinguishable from one that never started.
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
-| 5 | Deletions | **in progress** | 0 of 4 | |
+| 5 | Deletions | **in progress** | 1 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/` |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
 | 7 | Wire contract | not started | 0 of ~4 | C7 outstanding |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
@@ -258,7 +258,7 @@ the third pass folded its corrections in place. A phase-8 session reads the find
 
 | Finding | Killed because | Found by |
 | --- | --- | --- |
-| *none yet* | | |
+| W1.1-l | `TautulliClient.metadata` is not dead. `scripts/validate_ingest.py:290` reads `added_at` through it for the dormancy-derivation check, and `docs/LEARNINGS.md` cites that harness. The row measured "no caller" over `src/` alone | Phase 5, PR 1 |
 
 ## Execution
 
@@ -910,8 +910,20 @@ commit. This wave is the one to run first because it shrinks the surface every l
 > Deleting them also orphans `services.whitelist.spare` and `list_spared` (rule 64).
 
 > **Corrected: W1.1-m's `is_mappable` deletion removes a prose claim, not a safeguard.** The real
-> check is inline at `services/fairness.py:243`. Worth saying in the commit, since #550 is about
+> check is inline at `services/fairness.py:248`. Worth saying in the commit, since #550 is about
 > exactly that class.
+>
+> **And it is bigger than two properties.** `is_available` was the only reader of
+> `MediaRequest.status`, which was in turn the only reader of the `MediaStatus` enum, so rule 64
+> takes all three: the portal already filters by availability server-side
+> (`SeerrClient.requests(filter_="available")`), which is why nothing ever consulted the field.
+
+> **Killed 2026-08-08: W1.1-l is false. `TautulliClient.metadata` has a live caller.**
+> `scripts/validate_ingest.py:290` reads an item's `added_at` through it to re-derive the stored
+> dormancy phrase against the source, one of that harness's five checks, and `docs/LEARNINGS.md`
+> cites the harness by name. The method and the `get_metadata` allow-list entry both stay. The
+> row's "no caller" was measured over `src/` alone; a committed, documented, runnable script is a
+> caller.
 
 **One trap, recorded here so it is not walked into.** `Profile.enabled` (`db/models.py:290`) is
 also unread, and is deliberately kept: it is `NOT NULL` with no server default in the frozen
@@ -1846,7 +1858,7 @@ fields and a fail-open guard.
 - **`DiscordNotifier(client=…)`** is an injection seam wired zero times, and `build_notifier`'s
   docstring claims it exists "so tests can drive it" while all four test sites construct the
   notifier bare. 8 lines, plus a false sentence. The lane also reported a leaked client here; that
-  is wrong, `post`'s `finally` at `discord.py:115` closes the one it opened.
+  is wrong, `post`'s `async with` at `discord.py:93` closes the one it opened.
 - **`SignalProbeIn.window_days` and `PolicyProbeOut.detail`** are each documented *in source* as
   read by nobody, which the same file's own note forbids ("a probe kind arrives with the surface
   that asks it, or it does not exist"). ~14 lines.
@@ -2324,7 +2336,7 @@ Tautulli walk with no page backstop, filed as a question because nobody demonstr
 triggers it).
 
 One lane finding was **wrong and is recorded here so it is not re-raised**: `DiscordNotifier.post`
-was reported to leak an `httpx` client per notification. It does not; `discord.py:115`'s `finally`
+was reported to leak an `httpx` client per notification. It does not; `discord.py:93`'s `async with`
 closes the one it opened.
 
 ## Sequencing

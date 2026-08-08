@@ -52,7 +52,7 @@ def _facts(days_dormant: float | None) -> Facts:
     )
 
 
-GATE = MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1095))
+GATE = MinDormancyGate(GateConfig(threshold=1095))
 
 SEASON_SIGNAL = SignalConfig(SignalId.SEASON_RANK, weight=15, saturate_at=5)
 

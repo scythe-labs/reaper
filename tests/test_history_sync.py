@@ -251,11 +251,12 @@ class TestTheIngestClockIsSeparateFromTheWatchingClock:
     async def test_a_sync_that_returned_nothing_still_moves_the_clock(
         self, engine: AsyncEngine
     ) -> None:
-        """Nobody watched anything, so `latest` stays empty. The ingest ran, so the sync
-        clock moves. Degrading a scan on `latest` would call this library broken."""
+        """Nobody watched anything, so the newest event stays empty. The ingest ran, so the
+        sync clock moves. Degrading a scan on the newest event would call this library
+        broken."""
         await sync(engine, PagingTautulli([]))
 
-        assert await history_sync.latest(engine) is None
+        assert (await history_sync.state(engine)).latest is None
         synced = await history_sync.last_synced_at(engine)
         assert synced is not None
         assert abs((utcnow() - synced).total_seconds()) < 60

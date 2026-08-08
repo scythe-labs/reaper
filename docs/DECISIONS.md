@@ -14,6 +14,41 @@ everything here is doctrine still in force. The story of how a fix was chosen is
 `docs/history/`; measured findings are `docs/LEARNINGS.md`.
 
 
+## Condemn logic
+
+**Choice: One typed condition per rule, weighted. No OR, no nesting, no NOT.**
+
+A removal rule the operator authors is exactly one condition — `field op value`, or a numeric
+field ramped between a floor and a saturation point — carrying a weight
+(`policy.BooleanCondemnSpec`, `policy.GradedCondemnSpec`). There is no combinator: no `AND`
+between conditions inside a rule, and so no `OR` and no nesting either. Several rules compose
+through the *score*, not through boolean logic, and the score is unsigned, so a rule that cannot
+be evaluated withdraws pressure rather than adding it.
+
+**The AND was the original design and it never shipped.** `engine.fields` carried a `RuleSet`
+holding a lane's conditions and an `evaluate_rules` that joined the condemn lane with a flat
+`AND` and the protect lane with an `OR`. Nothing in `src/` ever called it; the reasoning is
+recorded here because deleting the code deleted the last written trace of it.
+
+**Why the language stays flat.** An `OR` inside a removal rule is expressible by writing a
+second rule, and that forces the operator to *name* the second thing they mean. A named rule is
+one the editor can show, weigh, warn about and switch off on its own terms; a nested boolean is
+none of those, and it is read wrong by whoever inherits the server. Nesting also has no failure
+mode that resolves toward keeping: a condition that could not be evaluated has an obvious answer
+inside one rule (no pressure, weight retained) and no obvious answer inside a tree.
+
+**And the case that looked like it needed composition did not.** "Keep the last two seasons" reads
+like `season_number >= total - 2`, which is a boolean problem; it is expressed as `season_rank >=
+3` against a derived field, which is one condition. The pattern held every time it came up: what
+looked like missing logic was a missing *field*. `tests/test_fields.py`'s
+`TestSeasonPruningNeedsNoBooleanCleverness` is that case, pinned.
+
+**The protect lane is an `OR`, and it is enforced somewhere else.** Each operator-authored
+protection is its own `fields.CustomProtectGate`, one gate per condition, and `evaluate_all`
+protects when any gate fires. That is why the asymmetry is safe rather than merely convenient: a
+protect gate has no CONDEMN constructor to reach, so a badly written protection can at worst fail
+to keep something, while a badly written removal rule deletes a file.
+
 ## What a hand reap may overrule
 
 **Choice: Everything except a structural stop.**

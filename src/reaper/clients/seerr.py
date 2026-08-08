@@ -24,7 +24,6 @@ been ignored for five months.
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, ClassVar
@@ -43,23 +42,6 @@ log = structlog.get_logger(__name__)
 DEFAULT_PAGE_SIZE = 100
 
 
-class MediaStatus(enum.IntEnum):
-    """Seerr's media status.
-
-    The enum diverges between forks: ``DELETED`` is **7** on Seerr and Jellyseerr,
-    but **6** on Overseerr, where 6 is ``BLOCKLISTED``. Never hardcode the integer;
-    compare against this enum and detect the flavor from ``/status``.
-    """
-
-    UNKNOWN = 1
-    PENDING = 2
-    PROCESSING = 3
-    PARTIALLY_AVAILABLE = 4
-    AVAILABLE = 5
-    BLOCKLISTED = 6
-    DELETED = 7
-
-
 @dataclass(frozen=True)
 class Requester:
     """The person who asked. ``plex_id`` is the join to Tautulli."""
@@ -70,15 +52,6 @@ class Requester:
     display_name: str | None
     email: str | None
 
-    @property
-    def is_mappable(self) -> bool:
-        """Can we tell whether this person watched the thing they asked for?
-
-        If not, the requester rule must abstain. An unmappable requester is a
-        *protection*, never evidence that nobody wanted it.
-        """
-        return self.plex_id is not None
-
 
 @dataclass(frozen=True)
 class MediaRequest:
@@ -87,7 +60,6 @@ class MediaRequest:
     request_id: int
     media_type: str  # "movie" | "tv"
     is_4k: bool
-    status: int
     requested_at: datetime | None
     requester: Requester
 
@@ -116,10 +88,6 @@ class MediaRequest:
     raw: dict[str, Any] | None = None
     """The full payload, archived before we ever call DELETE /media/{id}: that
     delete cascades and destroys the very request history that justified it."""
-
-    @property
-    def is_available(self) -> bool:
-        return self.status in (MediaStatus.AVAILABLE, MediaStatus.PARTIALLY_AVAILABLE)
 
 
 @dataclass(frozen=True)
@@ -195,15 +163,10 @@ def _parse_request(payload: dict[str, Any], portal_key: str = "") -> MediaReques
     user = payload.get("requestedBy") or {}
     is_4k = bool(payload.get("is4k"))
 
-    # A 4K request correlates to the parallel *4k fields. Reading the HD ones for a
-    # 4K request would check watch history against the wrong file entirely.
-    status = _as_int(media.get("status4k") if is_4k else media.get("status")) or 0
-
     return MediaRequest(
         request_id=_as_int(payload.get("id")) or 0,
         media_type=str(payload.get("type") or media.get("mediaType") or "movie"),
         is_4k=is_4k,
-        status=status,
         requested_at=from_iso(payload.get("createdAt")),
         requester=Requester(
             seerr_user_id=_as_int(user.get("id")) or 0,

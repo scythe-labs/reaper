@@ -239,11 +239,6 @@ async def override_for(session: AsyncSession, media_key: str) -> str | None:
     return entry.decision if entry is not None else None
 
 
-async def is_spared(session: AsyncSession, media_key: str) -> bool:
-    """Whether one media_key has been hand-spared -- a targeted check for a single item."""
-    return await override_for(session, media_key) == "spare"
-
-
 async def list_spared(session: AsyncSession) -> list[WhitelistEntry]:
     """The overridden items, newest first, for the "Spared" view."""
     rows = await session.execute(select(WhitelistEntry).order_by(WhitelistEntry.created_at.desc()))
@@ -332,8 +327,3 @@ async def remove_override(session: AsyncSession, *, media_key: str) -> bool:
     await session.delete(entry)
     await session.flush()
     return True
-
-
-async def unspare(session: AsyncSession, *, media_key: str) -> bool:
-    """Backwards-compatible alias for :func:`remove_override`."""
-    return await remove_override(session, media_key=media_key)

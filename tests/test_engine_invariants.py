@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from pathlib import Path
@@ -40,7 +41,7 @@ from reaper.engine.gates import (
     evaluate_all,
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
 from reaper.engine.signals import (
     MAX_SCORE,
     CustomSignalConfig,
@@ -55,9 +56,24 @@ from reaper.engine.signals import (
 )
 from reaper.engine.verdict import STRUCTURAL_GATES
 from reaper.ratings import Rating, RatingSource
-from reaper.services.snapshot import _verdict
+from reaper.services.condemned import reap_override_verdict_decoded
+from reaper.services.snapshot import _explain, _verdict
 
 _IMDB_BAR = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
+
+
+def _hand_reap(evaluation: Evaluation, score_value: int, policy: PolicyBody) -> str:
+    """What a hand reap on this evaluation actually decides, through the production path.
+
+    A reap never reaches the scan's ``_verdict``: the scan freezes an explanation, and
+    ``condemned.reap_override_verdict_decoded`` re-decides from that document hours later
+    when the operator presses Reap. So the frozen document is produced here by the real
+    writer (``snapshot._explain``) rather than hand-typed, and a field the writer stops
+    emitting fails these tests instead of quietly changing what the read side can see.
+    """
+    frozen = Score(value=float(score_value), coverage=1.0, results=[])
+    stored = json.loads(_explain(evaluation, frozen, policy))
+    return reap_override_verdict_decoded(stored, score=score_value)
 
 
 def _imdb(value: float, votes: int) -> tuple[Rating, ...]:
@@ -112,8 +128,8 @@ def _on_list_gate(name: str = "My keep list") -> fields.CustomProtectGate:
 
 ALL_GATES: list[Gate] = [
     RatingFloorGate(rules=(_IMDB_BAR,)),
-    StreamingNowGate(GateConfig(GateId.STREAMING_NOW)),
-    ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)),
+    StreamingNowGate(GateConfig()),
+    ServerPopularityGate(GateConfig(threshold=3)),
     _on_list_gate(),
 ]
 
@@ -188,8 +204,8 @@ class TestOnlyTwoGatesMayEverRefuseAHandReap:
                 results=[GateResult(gate, ABSTAIN, detail="could not check it", blocked=True)]
             )
 
-            assert _verdict(fired, 100, 10_000, policy, override="reap") == "protect", gate
-            assert _verdict(unreadable, 100, 10_000, policy, override="reap") == "condemn", gate
+            assert _hand_reap(fired, 100, policy) == "protect", gate
+            assert _hand_reap(unreadable, 100, policy) == "condemn", gate
             # ...and with nobody deciding by hand, the block still keeps it off every
             # automatic path. That is the job a block kept.
             assert _verdict(unreadable, 100, 10_000, policy) == "abstain", gate
@@ -294,10 +310,10 @@ _ALL_READABLE = Facts(
 FAIL_CLOSED_GUARDS: list[tuple[Gate, str]] = [
     (RatingFloorGate(rules=(_IMDB_BAR,)), "imdb_rating_tenths"),
     (RatingFloorGate(rules=(_IMDB_BAR,)), "imdb_votes"),
-    (StreamingNowGate(GateConfig(GateId.STREAMING_NOW)), "is_streaming_now"),
-    (ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)), "distinct_watchers"),
-    (MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1095)), "days_observed_unwatched"),
-    (DataHorizonGate(GateConfig(GateId.DATA_HORIZON)), "days_observed_unwatched"),
+    (StreamingNowGate(GateConfig()), "is_streaming_now"),
+    (ServerPopularityGate(GateConfig(threshold=3)), "distinct_watchers"),
+    (MinDormancyGate(GateConfig(threshold=1095)), "days_observed_unwatched"),
+    (DataHorizonGate(GateConfig()), "days_observed_unwatched"),
 ]
 
 _GUARD_IDS = [f"{gate.__class__.__name__}.{field}" for gate, field in FAIL_CLOSED_GUARDS]
@@ -878,7 +894,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
     The window here is the shipped 365 days and the floor the shipped 3.
     """
 
-    gate = ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365))
+    gate = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
 
     def test_a_history_shorter_than_the_window_cannot_report_nobody(self) -> None:
         """The bug, stated as the scan met it: a mirror three months deep, a title nobody
@@ -931,9 +947,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         outright raises, which no test noticed either. Rule 21: an operator reading
         "1 people watched it" is reading a bug, in the panel whose job is to be believed.
         """
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=floor, window_days=365)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=floor, window_days=365))
 
         result = gate.evaluate(_popularity_facts(count, Known(value=400.0, source="t")))
 
@@ -948,9 +962,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         deleting an unwatched title and protecting the entire library. Nothing drove that
         substitution, because every other case here carries a ``Known`` count.
         """
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=1, window_days=365)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=1, window_days=365))
 
         result = gate.evaluate(_popularity_facts(None, Known(value=400.0, source="t"), absent=True))
 
@@ -993,7 +1005,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         # Un-overridden, at a score that would otherwise condemn twice over.
         assert _verdict(evaluation, 100, 10_000, policy) == "abstain"
         # And the owner may still settle it by hand.
-        assert _verdict(evaluation, 100, 10_000, policy, override="reap") == "condemn"
+        assert _hand_reap(evaluation, 100, policy) == "condemn"
 
     def test_enough_watchers_still_protect_on_a_short_history(self) -> None:
         """The lower bound only ever *understates*. Three people seen inside the covered
@@ -1058,9 +1070,7 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         """The operator's remedy, and proof the check is against the *configured* window
         rather than a fixed span: narrowing the window to what the mirror holds gets a
         real answer back."""
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=90)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=3, window_days=90))
         result = gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
 
         assert result.blocked is False
@@ -1108,9 +1118,9 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         ABSTAIN blocked=True on exactly these Facts while the operator's own rule returned
         ABSTAIN blocked=False. One bound, one answer, whichever lane asks."""
         item = _popularity_facts(0, Known(value=90.0, source="t"))
-        built_in = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=1, window_days=self.WINDOW)
-        ).evaluate(item)
+        built_in = ServerPopularityGate(GateConfig(threshold=1, window_days=self.WINDOW)).evaluate(
+            item
+        )
         authored = self._protect("recent_watchers", 1).evaluate(item)
 
         assert built_in.blocked is authored.blocked is True

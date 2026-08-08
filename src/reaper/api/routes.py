@@ -1810,7 +1810,7 @@ async def probe_policy(payload: PolicyProbeIn) -> PolicyProbeOut:
                 raise HTTPException(422, "Reaper can't try values against that rule.") from exc
         case _ as unreachable:
             assert_never(unreachable)
-    return PolicyProbeOut(points=answer.points, detail=answer.detail)
+    return PolicyProbeOut(points=answer.points)
 
 
 @router.post("/policy/validate", tags=[api_tags.POLICY])

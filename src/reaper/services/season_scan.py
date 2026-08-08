@@ -244,8 +244,9 @@ class PlexSeason:
 class _SeriesWork:
     """One series carried through the gather pipeline, accumulating what each pass learns.
 
-    The plan is recomputed once watch evidence is available (the sequential and
-    conflict guards need it); ``show_rating_key`` and ``seasons_in_plex`` are filled in by
+    Carries no plan: the first pass builds one to answer ``fully_protected``, and the plan
+    that decides anything is recomputed later, once watch evidence is in hand (the sequential
+    and conflict guards need it). ``show_rating_key`` and ``seasons_in_plex`` are filled in by
     the Plex resolution pass, and stay empty for a series Plex could not match -- which is
     what makes every one of its seasons abstain.
     """
@@ -253,7 +254,6 @@ class _SeriesWork:
     source: SonarrSource
     series: dict[str, Any]
     seasons: list[SeasonStats]
-    plan: SeriesPrunePlan
     # No season is prunable under THIS scan's policy -- every one is kept by a guard. Still
     # gathered and surfaced as kept (never hide content), and counted so the scan can say how
     # many shows have nothing reapable. It used to spare the show its episodes() read as
@@ -1413,9 +1413,7 @@ async def gather(
                 plan=plan,
             )
             work.append(
-                _SeriesWork(
-                    source=source, series=series, seasons=seasons, plan=plan, fully_protected=fully
-                )
+                _SeriesWork(source=source, series=series, seasons=seasons, fully_protected=fully)
             )
 
     # Every series above emitted one greppable DEBUG decision line (season_scan.series_decision)

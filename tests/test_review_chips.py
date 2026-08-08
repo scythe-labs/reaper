@@ -397,9 +397,7 @@ class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
         )
         assert reference is not None
         facts = _never_played_facts(dormancy_days(reference, now=now))
-        result = MinDormancyGate(
-            GateConfig(GateId.MIN_DORMANCY, threshold=self.WAITS_DAYS)
-        ).evaluate(facts)
+        result = MinDormancyGate(GateConfig(threshold=self.WAITS_DAYS)).evaluate(facts)
 
         assert result.outcome == PROTECT, "the gate must fire for this chip to exist at all"
         return _kept_phrase("min_dormancy", result.detail)
@@ -954,9 +952,9 @@ class TestChip:
         by the gate id -- so this chip and ``WhyPanel``'s check/cause split are the only
         places a reword shows up, which is why the assertion lives here.
         """
-        result = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-        ).evaluate(_popularity_short_history_facts())
+        result = ServerPopularityGate(GateConfig(threshold=3, window_days=365)).evaluate(
+            _popularity_short_history_facts()
+        )
         assert result.blocked is True
 
         chip = _chip(

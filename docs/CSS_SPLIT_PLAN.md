@@ -240,6 +240,8 @@ than Stage 1 rather than a free rider on it. Both are still worth doing:
 **Landed 2026-08-01**, along with `--radius-pill` (the literal `999px`, 39 sites across 16 files,
 the most-used unnamed value in the tree) and `--radius-xs`. The computed-value check this section
 called for was written rather than done by hand, and is what proves Stage 6 as well.
+`--radius-xs` has since been deleted (`SIMPLIFICATION_PLAN.md`, W1.1-o): it was named on the
+strength of a cluster of bare 1-6px radii and then used by nothing.
 
 One correction to the stacking half, found while doing it: **the ladder is eight values, not
 twelve.** The low four (0,1,2,3) layer a background, a scrim and its content inside a single

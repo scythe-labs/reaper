@@ -601,9 +601,12 @@ class SignalProbeIn(SignalSettingIn):
     numbers."""
 
     window_days: int = Field(default=365, ge=1, le=36_500)
-    """The policy's popularity window. It reaches only ``detail``'s wording, which nothing
-    renders yet, so the editor does not send it and the default stands in. A client that
-    starts rendering ``detail`` sends its policy's own window with it."""
+    """The policy's popularity window, phrasing "in the last ..." inside the engine.
+
+    It moves no number a probe returns: a probe answers about a RULE and not an item, so
+    ``engine.preview`` hands the engine a mirror reaching the maximum window this field
+    allows, and the reach check can never come up short. The editor does not send it and
+    the default stands in."""
 
 
 #: What ``POST /api/policy/probe`` accepts.
@@ -627,11 +630,12 @@ class PolicyProbeOut(BaseModel):
 
     points: float
     """What this rule would move the score by, in the rule's own direction: pressure for a
-    signal, and a discount for a keep rule when one is added."""
+    signal, and a discount for a keep rule when one is added.
 
-    detail: str
-    """The engine's own words for it. Carried for a client that wants the engine's phrasing;
-    the editor words its own sentence, so nothing reads this today."""
+    The only field. The engine's own wording for the answer used to ride beside it and no
+    client ever rendered it: ``signalRamp.ts`` words both the editor's sentence and the
+    panel's row, which is where those two are held in step, so a second wording arriving
+    over the wire would have been a third copy rather than the thing reconciling them."""
 
 
 class ConditionIn(BaseModel):
@@ -1255,13 +1259,6 @@ NO_PLEX_FORWARD = PlexStartIn()
 Both start routes default to it, so the sign-in works with the window left open rather
 than 422-ing on a missing body. Shared safely because the model is frozen.
 """
-
-
-class HealthOut(BaseModel):
-    status: str
-    version: str
-    destructive_actions_enabled: bool
-    safety_note: str | None = None
 
 
 class AboutOut(BaseModel):

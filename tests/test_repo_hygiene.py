@@ -28,7 +28,6 @@ import yaml
 from reaper.engine.gates import (
     Facts,
     GateConfig,
-    GateId,
     MinDormancyGate,
     ServerPopularityGate,
 )
@@ -59,7 +58,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 17
+DECISION_SECTIONS = 18
 
 
 def _live_docs() -> list[Path]:
@@ -2260,10 +2259,8 @@ def _checked_examples() -> dict[str, list[Path]]:
     the docs do not all illustrate the same lane: the panel's own worked example is the
     dormancy sentence, and the manual's is the popularity one.
     """
-    dormancy = MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1_095))
-    popularity = ServerPopularityGate(
-        GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-    )
+    dormancy = MinDormancyGate(GateConfig(threshold=1_095))
+    popularity = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
     examples = {
         dormancy.evaluate(_worked_example_facts(watchers=0)).detail: [
             REPO / "README.md",

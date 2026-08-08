@@ -61,7 +61,6 @@ def _req(
         request_id=request_id,
         media_type=media_type,
         is_4k=False,
-        status=5,
         requested_at=NOW - timedelta(days=500),
         requester=Requester(
             seerr_user_id=plex_id,

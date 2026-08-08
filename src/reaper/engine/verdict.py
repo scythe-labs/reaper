@@ -113,19 +113,17 @@ def decide_verdict(
     signal's contribution belongs rendered blank and reaped anyway (#142). The sentence in
     parentheses above is the promise; that function is what makes it one.
 
-    ``snapshot._verdict`` passes ``False``, though it
-    never takes the reap branch in production -- its only caller, ``judge_facts``, passes
-    ``override=None`` unconditionally, and a hand reap is applied afterwards by
-    ``effective_fate`` off the frozen explanation.
+    **There is exactly one reap caller**, and the scan is not it: ``snapshot._verdict`` takes
+    no override at all, because a hand reap is applied after the freeze by ``effective_fate``
+    off the frozen explanation and re-decided from that explanation here.
 
-    The parameter still defaults to ``blocked`` rather than to ``False``, and exactly one
-    reap caller reaches that default: ``condemned.reap_override_verdict_decoded``'s early
-    return for an explanation that is not a JSON object, which passes no value here at all.
-    It resolves to hold, which is what that row wants anyway (it also passes
-    ``safety_protected=True``), so the default is load-bearing there rather than vestigial.
-    It stays fail-closed so a future caller that forgets to think about it inherits the
-    cautious answer -- the same reasoning that keeps ``UNMANAGED`` in
-    :data:`STRUCTURAL_GATES`.
+    The parameter defaults to ``blocked`` rather than to ``False``, and that one caller
+    reaches the default on one arm: ``reap_override_verdict_decoded``'s early return for an
+    explanation that is not a JSON object, which passes no value here at all. It resolves to
+    hold, which is what that row wants anyway (it also passes ``safety_protected=True``), so
+    the default is load-bearing there rather than vestigial. It stays fail-closed so a future
+    caller that forgets to think about it inherits the cautious answer -- the same reasoning
+    that keeps ``UNMANAGED`` in :data:`STRUCTURAL_GATES`.
 
     ``override`` is the owner's hand decision: ``"reap"`` forces condemn past every
     cautious protection, fired or unverifiable alike; a ``"spare"`` is expressed upstream

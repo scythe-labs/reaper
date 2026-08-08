@@ -1013,34 +1013,6 @@ def _plural(phrase: str, count: float) -> str:
     return _ALTERNATIVES.sub(lambda m: m.group(1) if singular else m.group(2), phrase)
 
 
-Mode = Literal["all"]
-"""The condemn lane joins conditions with AND, and only AND.
-
-Not an oversight. OR is expressible by making a second profile, which forces the
-owner to name the second thing they mean -- and a named profile can be capped,
-approved and (once the backtest ships) backtested on its own terms. A nested OR cannot.
-"""
-
-
-@dataclass(frozen=True, slots=True)
-class RuleSet:
-    """A lane's conditions."""
-
-    lane: Lane
-    conditions: tuple[Condition, ...]
-
-    def __post_init__(self) -> None:
-        for condition in self.conditions:
-            condition.validate_for(self.lane)
-
-
-@dataclass(frozen=True, slots=True)
-class RuleSetResult:
-    matched: bool
-    blocked: bool
-    results: tuple[ConditionResult, ...]
-
-
 @dataclass(frozen=True, slots=True)
 class CustomProtectGate:
     """A single user-authored protection, wearing the built-in Gate interface.
@@ -1068,37 +1040,3 @@ class CustomProtectGate:
         if result.matched:
             return GateResult(self.id, PROTECT, detail=f"your rule: {result.detail}")
         return GateResult(self.id, ABSTAIN, detail=f"checked your rule: {result.detail}")
-
-
-def evaluate_rules(
-    rules: RuleSet, facts: Facts, *, window_days: int | None = None
-) -> RuleSetResult:
-    """Evaluate a lane.
-
-    CONDEMN is a flat AND: every condition must match, and a single blocked
-    condition means we cannot say the item qualifies -- so it does not.
-
-    PROTECT is an OR of conditions: *any* reason to keep a file is sufficient. That
-    is safe by construction, which is exactly why this lane may be user-authored.
-    """
-    results = tuple(
-        evaluate(condition, facts, window_days=window_days) for condition in rules.conditions
-    )
-    if not results:
-        return RuleSetResult(matched=False, blocked=False, results=())
-
-    blocked = any(r.blocked for r in results)
-
-    if rules.lane is Lane.CONDEMN:
-        # A blocked condition cannot be assumed true. Unknown never condemns.
-        return RuleSetResult(
-            matched=all(r.matched for r in results) and not blocked,
-            blocked=blocked,
-            results=results,
-        )
-
-    return RuleSetResult(
-        matched=any(r.matched for r in results),
-        blocked=blocked,
-        results=results,
-    )

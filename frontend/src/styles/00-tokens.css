@@ -162,9 +162,6 @@
      literal `999px` at 37 sites across 16 files, which made it the most-used unnamed value in
      the stylesheet. */
   --radius-pill: 999px;
-  /* The small radius under --radius-sm: progress fills, strip squares, inline code, swatches.
-     Names the largest cluster of the bare pixel radii (1-6px) that sat below the scale. */
-  --radius-xs: 4px;
 
   /* THE STACKING ORDER of the app's own surfaces, named at the values they already had.
 
