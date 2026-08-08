@@ -39,21 +39,8 @@ vi.mock("./SetupConnectStep", () => ({
   ),
 }));
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    setupStatus: vi.fn(),
-    scanStatus: vi.fn(),
-    startScan: vi.fn(),
-    setAdminPassword: vi.fn(),
-    // The scan step's Discord row reads this. Named even though no test below asserts on it:
-    // a mock that omits a read the tree performs hands it `undefined`, and rule 135 fails the
-    // run rather than letting the tree render its failed-read branch unnoticed.
-    notifications: vi.fn(),
-    // The scan step states the safety regime through the shared `SafetyBanner`, which reads
-    // this. It used to hand-write "Deletion is off" and consult nothing, which is how a host
-    // armed by env var was told the opposite of the truth on the only screen saying anything.
-    safety: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 

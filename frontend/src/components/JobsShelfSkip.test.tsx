@@ -15,19 +15,8 @@ import { DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { Settings } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    // Rule 135: the mock answers everything the shell mounts, not only the row under test.
-    about: vi.fn(),
-    update: vi.fn(),
-    safety: vi.fn(),
-    schedule: vi.fn(),
-    latestSnapshot: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    general: vi.fn(),
-    scanStatus: vi.fn(),
-    notifications: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

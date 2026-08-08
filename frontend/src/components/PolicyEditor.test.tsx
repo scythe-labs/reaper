@@ -15,27 +15,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import type { WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
 import { PolicyEditor, REPAIR_NOTICES, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    policy: vi.fn(),
-    probePolicy: vi.fn(),
-    profile: vi.fn(),
-    safety: vi.fn(),
-    scanStatus: vi.fn(),
-    seasonShape: vi.fn(),
-    simulate: vi.fn(),
-    validatePolicy: vi.fn(),
-    vocabulary: vi.fn(),
-    vocabularyValues: vi.fn(),
-    // Read by the keep-rules composer's list picker, but only while the protect vocabulary
-    // offers `on_list`; answered anyway so a fixture that adds the field cannot render a
-    // failed read (rule 135).
-    listConfigs: vi.fn(),
-    savePolicy: vi.fn(),
-    saveProfile: vi.fn(),
-    setDeletion: vi.fn(),
-    startScan: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => {

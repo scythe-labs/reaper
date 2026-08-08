@@ -162,7 +162,7 @@ row moving is indistinguishable from one that never started.
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
-| 2 | Test-suite wall clock | in progress | 8 of 9 | W1.4's last bullet, the complete api mock. Read its `coverage-loss` note first |
+| 2 | Test-suite wall clock | **done** | 9 of 9 | C2 is the checkpoint and gates nothing downstream. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
@@ -213,6 +213,7 @@ here first and never reconstructed later.
 | #575 | 2 | W1.4, first bullet | `settings`, `sync_db`, `async_factory`, `client` | no | 16 hand-written boots retired across 15 files. The other three bullets are untouched |
 | #577 | 2 | W1.4, second bullet | `renderWithProviders`, `renderHookWithProviders` | no | All 87 provider trees across 38 files, one left standing with its reason. 1,320 frontend tests either side. Widened the rendered-surface walk, which the rename had emptied by 29 files |
 | #578 | 2 | W1.4, third bullet | `tests/_fakes.py`, `mypy src/reaper tests/_fakes.py` | no | 15 client fakes retired into 5, 84 suppressions gone. The gate widened to cover them, which is what makes inheriting the real client mean anything, and a hygiene test pins its four spellings |
+| #579 | 2 | W1.4, fourth bullet | `src/test/apiMock.ts` | no | All 35 hoisted api mocks onto one 94-function mock, checked against `Object.keys(api)` both ways. The `vi.hoisted` idiom and its 784 call sites are untouched |
 
 ### Killed while executing
 
@@ -517,7 +518,7 @@ Read all three `> Landed:` blocks before the last one — the shape they settled
 every time, and each line-count estimate was wrong for the same reason. What remains is the
 complete api mock, which carries a `coverage-loss` risk worth reading before starting.
 
-Eight PRs so far, and one left. No production code changes. The scrypt wrapper is `conftest`-only,
+Nine PRs, and the phase is closed. No production code changes. The scrypt wrapper is `conftest`-only,
 must not touch `crypto.py`'s constant, and ships with the injectivity guard its correction names.
 
 **Wave 12's figures are single-threaded and the documented gate is not.** `uv run pytest -n auto`
@@ -1018,6 +1019,29 @@ the layer beneath it was just never built.
   by construction. Risk `coverage-loss`: a file relying on an *absent* mock to reject a read would
   start getting an answer, though `frontend/src/test/setup.ts:97` still fails the run on a genuine
   gap.
+
+  > **Landed, and the `coverage-loss` risk does not survive its own caveat.** All 35 hoisted
+  > mocks are on `src/test/apiMock.ts`'s `makeApiMock()`, 94 functions, checked against
+  > `Object.keys(api)` in both directions. The risk needed the two shapes separating: a tree
+  > reading `queryFn: api.foo` gets `undefined` from an omitted key, which `setup.ts` **already
+  > fails the run on** — so no passing test relies on that absence and there were none to break.
+  > A tree reading `queryFn: () => api.foo(x)` renders its failed-read branch silently either
+  > way, an omitted key throwing a `TypeError` inside the arrow and an unconfigured `vi.fn()`
+  > resolving `undefined`. Same branch, same silence, which is rule 135's own documented blind
+  > spot and unchanged.
+  >
+  > **The mutations were the half nothing watched, and that is the stronger case for this than
+  > the one the finding makes.** `setup.ts` fails a query with no `queryFn` and says nothing
+  > about a mutation with no `mutationFn`, because React Query does not announce that one.
+  > `removeApiKey` was missing from the General panel's mock until the Remove path needed
+  > driving, and it went missing silently. For every mutation in the module, completeness is not
+  > a tidier spelling of an existing gate; it is the only thing between a gap and a confusing
+  > failure.
+  >
+  > 390 lines out against 82 in, plus 172 in the shared mock and its drift test. The
+  > `vi.hoisted` idiom and all 784 `apiMock.x.mockY()` call sites are untouched: `vi.hoisted`
+  > takes an async factory, so the shared one is reached with an `await import` inside it, which
+  > was probed before anything was rewritten.
 
 ### 1.5 Four tests that a linter runs or that cannot fail
 

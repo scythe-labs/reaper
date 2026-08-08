@@ -23,18 +23,8 @@ import { ListsPanel } from "./ListsPanel";
 
 // Rule 135: every read the tree under test performs, including the modal's, or React Query
 // renders a failed read and the test passes against the fallback.
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    lists: vi.fn(),
-    listConfigs: vi.fn(),
-    syncLists: vi.fn(),
-    addList: vi.fn(),
-    editList: vi.fn(),
-    removeList: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-    startScan: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 

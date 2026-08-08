@@ -10,8 +10,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { DeletionToggle } from "./DeletionToggle";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { safety: vi.fn(), setDeletion: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

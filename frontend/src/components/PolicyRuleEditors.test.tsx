@@ -23,8 +23,8 @@ import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { vocabulary: vi.fn(), vocabularyValues: vi.fn(), listConfigs: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

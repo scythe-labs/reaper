@@ -17,8 +17,8 @@ import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { ScanRow } from "./ScanBar";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { scanStatus: vi.fn(), startScan: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 

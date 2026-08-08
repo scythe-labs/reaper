@@ -6,7 +6,9 @@ import { renderHookWithProviders } from "./test/renderWithProviders";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSafety } from "./useSafety";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: { safety: vi.fn() } }));
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("./test/apiMock")).makeApiMock(),
+}));
 
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),

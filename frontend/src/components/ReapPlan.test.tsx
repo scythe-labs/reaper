@@ -12,20 +12,8 @@ import { DEFAULT_PROFILE, IDLE_SCAN, READY_SETUP } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { ReapPlan } from "./ReapPlan";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    safety: vi.fn(),
-    createRun: vi.fn(),
-    run: vi.fn(),
-    dryRun: vi.fn(),
-    runs: vi.fn(),
-    latestSnapshot: vi.fn(),
-    reapBreakdown: vi.fn(),
-    plexTrash: vi.fn(),
-    profile: vi.fn(),
-    scanStatus: vi.fn(),
-    setupStatus: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

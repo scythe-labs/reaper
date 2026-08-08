@@ -15,21 +15,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { ServiceModal } from "./ServiceModal";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    instanceRootFolders: vi.fn(),
-    instanceSeerrServices: vi.fn(),
-    instances: vi.fn(),
-    plexLibraries: vi.fn(),
-    // The modal reads the library list through `usePlexLibraries`, which SYNCS a list that came
-    // back empty rather than telling the operator to go press Sync somewhere else (#384). An
-    // unmocked sync would throw out of the one test that renders an empty list.
-    syncPlexLibraries: vi.fn(),
-    updateInstance: vi.fn(),
-    createInstance: vi.fn(),
-    testInstance: vi.fn(),
-    testSavedInstance: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));

@@ -25,17 +25,8 @@ import { IDLE_SCAN } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { SetupScanStep } from "./SetupScanStep";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    scanStatus: vi.fn(),
-    startScan: vi.fn(),
-    // The Discord row on this step reads it. Named though nothing below asserts on it, because
-    // a mock that omits a read the tree performs renders its failed-read branch (rule 135).
-    notifications: vi.fn(),
-    // The pre-scan branch states the safety regime through the shared `SafetyBanner`, which
-    // reads this. Only that branch does, which is why it arrived with the cases below.
-    safety: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),

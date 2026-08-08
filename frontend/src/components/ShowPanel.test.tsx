@@ -14,8 +14,8 @@ import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { ShowPanel } from "./ShowPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { override: vi.fn(), clearOverride: vi.fn(), general: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));

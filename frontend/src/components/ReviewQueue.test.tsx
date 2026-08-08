@@ -29,17 +29,8 @@ import {
   ShowStatusChip,
 } from "./ReviewQueue";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    candidates: vi.fn(),
-    group: vi.fn(),
-    override: vi.fn(),
-    clearOverride: vi.fn(),
-    vocabularyValues: vi.fn(),
-    reapBreakdown: vi.fn(),
-    general: vi.fn(),
-    profile: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));

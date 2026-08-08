@@ -14,29 +14,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    plexStatus: vi.fn(),
-    plexResources: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-    setPlexLibraries: vi.fn(),
-    watchEvidence: vi.fn(),
-    resetWatchEvidence: vi.fn(),
-    // Read by `useSafety`, which the watch-history group consults for `has_password` before it
-    // offers the reset at all. A mock that omitted it would hand the hook `undefined` and the
-    // group would render its "couldn't check" branch in every test here (rule 135).
-    safety: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    setLeavingSoonSettings: vi.fn(),
-    syncLeavingSoon: vi.fn(),
-    setPlexSettings: vi.fn(),
-    plexSetConnection: vi.fn(),
-    plexSwitchServer: vi.fn(),
-    plexUnlink: vi.fn(),
-    plexLinkStart: vi.fn(),
-    plexLinkPoll: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));

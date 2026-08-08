@@ -19,14 +19,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import type { ListConfig } from "../api";
 import { ListModal } from "./ListModal";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    addList: vi.fn(),
-    editList: vi.fn(),
-    removeList: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 
