@@ -162,7 +162,7 @@ row moving is indistinguishable from one that never started.
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
-| 2 | Test-suite wall clock | not started | 0 of ~6 | |
+| 2 | Test-suite wall clock | in progress | 0 of ~6 | Five items go to `dev` under the escape hatch; only W1.4 lands here |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
