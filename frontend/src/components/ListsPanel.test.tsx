@@ -53,6 +53,7 @@ const IMDB_DEF: ListConfig = {
   source: "imdb",
   config: { preset: "top250" },
   policy_use: HARD_USE,
+  authorable_media: ["movie"],
 };
 
 /** Its membership row, joined on `list_id`. */
@@ -77,6 +78,7 @@ const PLEX_DEF: ListConfig = {
   source: "plex_collection",
   config: { library: "Films", collection: "Never Reap" },
   policy_use: HARD_USE,
+  authorable_media: ["movie"],
 };
 
 /** What the server stores for a watchlist added through the modal: the form with no fields,
@@ -87,6 +89,7 @@ const WATCHLIST_DEF: ListConfig = {
   source: "plex_watchlist",
   config: {},
   policy_use: HARD_USE,
+  authorable_media: ["movie", "tv"],
 };
 
 /** A tag list, read once per *arr instance. */
@@ -96,6 +99,7 @@ const TAG_DEF: ListConfig = {
   source: "arr_tag",
   config: { tags: ["reaper-keep", "keep-forever"], match: "any" },
   policy_use: HARD_USE,
+  authorable_media: ["movie", "tv"],
 };
 
 function tagRow(slug: string, over: Partial<ProtectionList> = {}): ProtectionList {

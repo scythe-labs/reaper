@@ -19,7 +19,14 @@ import { type CSSProperties, type RefObject, useEffect, useId, useRef, useState 
 import { useQuery } from "@tanstack/react-query";
 import { announce } from "../announce";
 import { REMOVES_ITS_ROW, useRemovalFocus } from "../focus";
-import { api, type Condition, type CustomCondemn, type GradedKeep, type VocabField } from "../api";
+import {
+  api,
+  type Condition,
+  type CustomCondemn,
+  type GradedKeep,
+  type ListConfig,
+  type VocabField,
+} from "../api";
 import { FIELD_TO_GATE, FIELD_TO_SIGNAL, humanDays, OP_LABELS } from "./PolicyEditor";
 import { usePopoverShift } from "./popoverFit";
 import {
@@ -729,41 +736,13 @@ export function KeepRulesEditor({
     queryFn: api.listConfigs,
     enabled: onListField !== undefined,
   });
-  // The media types each list actually spans, joined in by list_id from the membership mirror.
-  // The definitions query above carries no media_types: it renders before the first sync, off
-  // a table the cache half does not fill until one runs, so which types a list holds lives on
-  // `/api/lists` instead, the same two-query join ListsPanel makes (#533, #549).
-  const membership = useQuery({
-    queryKey: ["lists"],
-    queryFn: api.lists,
-    enabled: onListField !== undefined,
-  });
-  const mediaByListId = new Map<number, { types: Set<string>; anyUnsynced: boolean }>();
-  for (const row of membership.data ?? []) {
-    if (row.list_id == null) continue;
-    const entry = mediaByListId.get(row.list_id) ?? {
-      types: new Set<string>(),
-      anyUnsynced: false,
-    };
-    for (const t of row.media_types) entry.types.add(t);
-    // last_checked_at is the last check that landed; null means no sync has confirmed this
-    // slug's contents, so its media types are unknown rather than empty.
-    if (row.last_checked_at == null) entry.anyUnsynced = true;
-    mediaByListId.set(row.list_id, entry);
-  }
-  // Offer a list on this policy when it holds this media type. Hide it once a sync has shown it
-  // holds only the other type (#549) or nothing at all: a keep rule on either keeps nothing
-  // while reading as a protection the operator set (rule 38). A list no sync has reached yet is
-  // unknown, not empty, so keep offering it -- hiding it would block protecting a list just
-  // added, before its first check.
-  const coversThisMedia = (l: { id: number }) => {
-    const entry = mediaByListId.get(l.id);
-    if (entry === undefined) return true; // no membership row: never synced, type unknown
-    if (entry.types.has(mediaType)) return true;
-    if (entry.types.size > 0) return false; // synced, holds only the other type (#549)
-    return entry.anyUnsynced; // empty: offer only until a check confirms it holds nothing
-  };
   const configured = lists.data ?? [];
+  // Which policy each list may protect is the server's call, not the picker's: `authorable_media`
+  // is the authoritative scope (`policy.authorable_media_scope`, #549), so a Plex collection is
+  // scoped by its library kind before any sync, and an unsynced tag whose type nothing can
+  // establish is offered on neither. Offering a list a rule there could never match reads as a
+  // protection the operator set (rule 38).
+  const coversThisMedia = (l: ListConfig) => l.authorable_media.includes(mediaType);
   const eligible = configured.filter(coversThisMedia);
   const allListNames = eligible.map((l) => l.name);
   // One list, one rule. A list already named by a rule is not offered again at EITHER
@@ -786,21 +765,27 @@ export function KeepRulesEditor({
   const listNames = keptByBlanketRule
     ? []
     : allListNames.filter((n) => !named.has(n.trim().toLowerCase()));
-  // Lists gone from the picker for their media type alone, not because a rule already names
-  // them: the count the card-level note states so a hidden list does not read as one that went
-  // missing (rule 144, #549).
-  const hiddenByMedia = keptByBlanketRule
+  // Two reasons hide a list from the picker, each with its own note (rule 144, #549), and
+  // neither is that a rule already names it. A list holding only the other type can never keep
+  // here; a list no sync has read yet has an unknown type and is withheld until it is checked.
+  // Counted apart because the fix differs: nothing to do about the first, "check it" about the
+  // second.
+  const notNamed = (l: ListConfig) => !named.has(l.name.trim().toLowerCase());
+  const hiddenWrongType = keptByBlanketRule
     ? 0
-    : configured.filter((l) => !coversThisMedia(l) && !named.has(l.name.trim().toLowerCase()))
+    : configured.filter((l) => notNamed(l) && l.authorable_media.length > 0 && !coversThisMedia(l))
         .length;
-  // This policy keeps `thisMedia`; a hidden list has none of it (the other type, or nothing).
+  const hiddenUnverified = keptByBlanketRule
+    ? 0
+    : configured.filter((l) => notNamed(l) && l.authorable_media.length === 0).length;
   const thisMedia = mediaType === "movie" ? "movies" : "shows";
+  const otherMedia = mediaType === "movie" ? "shows" : "movies";
   const thisSingular = mediaType === "movie" ? "movie" : "show";
-  // Why the list select is empty, said once for both composers (rule 72). A failed read is
-  // named as one, never shown as "you have no lists" (rules 17/36); a set of lists that all
-  // already have a rule is a third thing; and a set none of which holds this media type -- the
-  // other type, or nothing a sync could find -- is a fourth (#549). Nothing is wrong in the
-  // last two, and adding another list is not the move.
+  // Why the list select is empty, said once for both composers (rule 72). A failed read is named
+  // as one, never shown as "you have no lists" (rules 17/36); a set that all already have a rule
+  // is a third thing; and a set none of which this policy can keep is a fourth, which is either
+  // the wrong type or not synced yet (#549). Nothing is wrong in the last two, and adding another
+  // list is not the move.
   const noListsMessage =
     !lists.isPending && listNames.length === 0
       ? lists.isError
@@ -808,11 +793,15 @@ export function KeepRulesEditor({
         : keptByBlanketRule
           ? 'Your "On a list you curate yourself" rule already keeps every one of your lists. ' +
             "Remove it above to set a strength per list."
-          : configured.length > 0 && eligible.length === 0
-            ? `None of your lists holds ${thisMedia}. Add a ${thisSingular} list on Settings → Lists.`
+          : configured.length === 0
+            ? "You have no lists yet. Add one on Settings → Lists first."
             : eligible.length > 0
               ? "Every list already has a keep rule. Remove one above to give it a different strength."
-              : "You have no lists yet. Add one on Settings → Lists first."
+              : hiddenUnverified > 0 && hiddenWrongType === 0
+                ? "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them."
+                : hiddenWrongType > 0 && hiddenUnverified === 0
+                  ? `None of your lists holds ${thisMedia}. Add a ${thisSingular} list on Settings → Lists.`
+                  : "None of your lists can be kept here yet. Check them on Settings → Lists."
       : null;
 
   const [strength, setStrength] = useState<"hard" | "lean">("hard");
@@ -1204,20 +1193,27 @@ export function KeepRulesEditor({
           </div>
           {/* Rule 144: this paragraph is the operator-facing copy of what the two composers
               filter out, or a filter left unsaid reads as a list that went missing. Two filters
-              are always in force and stated here. The third, media type, hides a list a sync has
-              shown holds no media this policy keeps, so its copy is the conditional note below
-              and the empty-state message above, said only when it actually bit (#549). */}
+              are always in force and stated here. Two more, media type and not-yet-synced, hide a
+              list only in some states, so their copy is the conditional notes below and the
+              empty-state message above, said only when they actually bite (#549). */}
           <p className="help">
             Suggestions are values from your own library. Pick one, or type anything else. Fields
             already covered by a protection you've turned on aren't offered for outright keeps, so a
             rule never repeats a built-in. A list that already has a keep rule isn't offered either:
             one list takes one rule, at one strength.
           </p>
-          {!keptByBlanketRule && hiddenByMedia > 0 && (
+          {!keptByBlanketRule && listNames.length > 0 && hiddenWrongType > 0 && (
             <p className="help">
-              {hiddenByMedia === 1
-                ? `One list isn't shown here: it has no ${thisMedia} for this policy to keep.`
-                : `${hiddenByMedia} lists aren't shown here: they have no ${thisMedia} for this policy to keep.`}
+              {hiddenWrongType === 1
+                ? `One list isn't shown here: it holds only ${otherMedia}, which this policy can't keep.`
+                : `${hiddenWrongType} lists aren't shown here: they hold only ${otherMedia}, which this policy can't keep.`}
+            </p>
+          )}
+          {!keptByBlanketRule && listNames.length > 0 && hiddenUnverified > 0 && (
+            <p className="help">
+              {hiddenUnverified === 1
+                ? "One list isn't shown here yet: it hasn't synced. Check it on Settings → Lists."
+                : `${hiddenUnverified} lists aren't shown here yet: they haven't synced. Check them on Settings → Lists.`}
             </p>
           )}
         </>

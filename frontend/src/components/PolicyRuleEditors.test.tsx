@@ -19,13 +19,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-import type { Condition, GradedKeep, ProtectionList, VocabField } from "../api";
+import type { Condition, GradedKeep, ListConfig, VocabField } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { vocabulary: vi.fn(), vocabularyValues: vi.fn(), listConfigs: vi.fn(), lists: vi.fn() },
+  apiMock: { vocabulary: vi.fn(), vocabularyValues: vi.fn(), listConfigs: vi.fn() },
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -80,38 +80,20 @@ let scrollIntoView: MockInstance<Element["scrollIntoView"]>;
 beforeEach(() => {
   apiMock.vocabulary.mockResolvedValue({ lane: "condemn", fields: [GENRE] });
   apiMock.vocabularyValues.mockResolvedValue({ field: "genre", values: VALUES });
-  // Fail-open default (rule 135): no membership means unknown media types, so the picker
-  // offers every list, which is what the existing membership tests below already expect. The
-  // media-type suite overrides this with rows that carry types.
-  apiMock.lists.mockResolvedValue([]);
   scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
   scrollIntoView.mockClear();
 });
 
-/** One membership row, the join source for a list's media types (`ProtectionList`, `/api/lists`).
- *  `list_id`, `media_types`, and whether a sync has landed are what the picker reads. A row with
- *  `synced: false` (or no row at all) is a list no check has reached: type unknown, still offered.
- *  A `synced` row with empty `media_types` is one a check confirmed holds nothing -- hidden. */
-function membershipRow(
-  list_id: number,
+/** A list definition as the picker reads it (`/api/lists/configured`). `authorable_media` is
+ *  the server's authoritative scope: the policies a keep rule on this list may protect. Empty
+ *  means offer on neither -- the type is not known (an unsynced tag), #549. */
+function listCfg(
+  id: number,
   name: string,
-  media_types: ("movie" | "tv")[],
-  opts: { synced?: boolean } = {},
-): ProtectionList {
-  const synced = opts.synced ?? true;
-  return {
-    slug: `slug-${list_id}`,
-    name,
-    source: "plex_collection",
-    state: synced ? "working" : "never_checked",
-    item_count: media_types.length,
-    last_checked_at: synced ? "2026-01-01T00:00:00Z" : null,
-    error: null,
-    list_id,
-    tags: null,
-    server: null,
-    media_types,
-  };
+  authorable_media: ("movie" | "tv")[],
+  source: ListConfig["source"] = "plex_collection",
+): ListConfig {
+  return { id, name, source, config: {}, policy_use: [], authorable_media };
 }
 
 describe("arrowing through the value suggester", () => {
@@ -219,8 +201,8 @@ describe("a hard keep rule on a list", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+      listCfg(1, "Never Reap", ["movie", "tv"]),
+      listCfg(2, "IMDb Top 250", ["movie"], "imdb"),
     ]);
   });
 
@@ -263,9 +245,7 @@ describe("a hard keep rule on a list", () => {
 describe("a lean keep rule on a list", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
-    apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-    ]);
+    apiMock.listConfigs.mockResolvedValue([listCfg(1, "Never Reap", ["movie", "tv"])]);
   });
 
   async function openLean(user: ReturnType<typeof userEvent.setup>) {
@@ -357,8 +337,8 @@ describe("one list, one keep rule", () => {
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Never Reap", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 2, name: "IMDb Top 250", source: "imdb", config: {}, policy_use: [] },
+      listCfg(1, "Never Reap", ["movie", "tv"]),
+      listCfg(2, "IMDb Top 250", ["movie"], "imdb"),
     ]);
   });
 
@@ -449,46 +429,38 @@ describe("one list, one keep rule", () => {
   });
 });
 
-describe("the list picker filtered by the policy's media type", () => {
-  // #549: a keep rule on a list of the wrong media type can never match, so it protects
-  // nothing while reading as a protection the operator set (rule 38). A Movies policy offers
-  // only lists that hold movies, hold both, or have not synced yet (unknown, fail-open).
+describe("the list picker filtered to what the server says it may protect", () => {
+  // #549: `authorable_media` is the server's authoritative scope. A Movies policy offers a list
+  // whose scope includes "movie" -- a movie or both-type list, or a synced-but-empty one the
+  // operator may fill -- and hides a shows-only list and an unsynced one whose type is unknown.
   beforeEach(() => {
     apiMock.vocabulary.mockResolvedValue({ lane: "protect", fields: [ON_LIST, VOTES] });
     apiMock.listConfigs.mockResolvedValue([
-      { id: 1, name: "Movie Night", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 2, name: "Saturday Cartoons", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 3, name: "Family Watchlist", source: "plex_watchlist", config: {}, policy_use: [] },
-      { id: 4, name: "Just Added", source: "imdb", config: {}, policy_use: [] },
-    ]);
-    apiMock.lists.mockResolvedValue([
-      membershipRow(1, "Movie Night", ["movie"]),
-      membershipRow(2, "Saturday Cartoons", ["tv"]),
-      membershipRow(3, "Family Watchlist", ["movie", "tv"]),
-      // id 4 "Just Added" has never synced: no membership row, so its type is unknown.
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(2, "Saturday Cartoons", ["tv"]),
+      listCfg(3, "Family Watchlist", ["movie", "tv"]),
+      listCfg(4, "Empty Collection", ["movie", "tv"]), // synced but empty: offered on both
     ]);
   });
 
-  it("offers movie, both, and unknown lists but hides a shows-only one on a Movies policy", async () => {
+  it("offers movie, both, and synced-empty lists, and hides a shows-only one", async () => {
     const { user } = renderKeepEditor();
     await pickTheListField(user);
     const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
 
-    // The card-level note is the sync point AND the proof the filter ran (rule 137): it appears
-    // only once the membership query lands and the shows-only list is hidden.
-    expect(
-      await screen.findByText(
-        "One list isn't shown here: it has no movies for this policy to keep.",
-      ),
-    ).toBeInTheDocument();
-
-    expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument();
     expect(within(lists).getByRole("option", { name: "Family Watchlist" })).toBeInTheDocument();
-    // Never synced, so unknown: fail-open, still offered, like the backend own_list_media_scope.
-    expect(within(lists).getByRole("option", { name: "Just Added" })).toBeInTheDocument();
+    expect(within(lists).getByRole("option", { name: "Empty Collection" })).toBeInTheDocument();
     expect(
       within(lists).queryByRole("option", { name: "Saturday Cartoons" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here: it holds only shows, which this policy can't keep.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("filters the lean picker the same way (rule 72)", async () => {
@@ -496,36 +468,58 @@ describe("the list picker filtered by the policy's media type", () => {
     await user.click(await screen.findByRole("button", { name: "Leans toward keeping" }));
     await pickTheListField(user);
     const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
 
-    await screen.findByText(/isn't shown here/);
-    expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument();
     expect(
       within(lists).queryByRole("option", { name: "Saturday Cartoons" }),
     ).not.toBeInTheDocument();
   });
 
   it("flips the filter and the words on a shows policy", async () => {
-    // The other direction, so a hardcoded "movie"/"shows" cannot pass: now the movies-only list
-    // is the one that can never be kept, and the offered lists swap.
+    // The other direction, so a hardcoded "movie"/"shows" cannot pass: the movies-only list is
+    // now the one that can never be kept, and the offered lists swap.
     const { user } = renderKeepEditor({ mediaType: "tv" });
     await pickTheListField(user);
     const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Saturday Cartoons" })).toBeInTheDocument(),
+    );
 
-    expect(
-      await screen.findByText(
-        "One list isn't shown here: it has no shows for this policy to keep.",
-      ),
-    ).toBeInTheDocument();
-    expect(within(lists).getByRole("option", { name: "Saturday Cartoons" })).toBeInTheDocument();
     expect(within(lists).getByRole("option", { name: "Family Watchlist" })).toBeInTheDocument();
     expect(within(lists).queryByRole("option", { name: "Movie Night" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here: it holds only movies, which this policy can't keep.",
+      ),
+    ).toBeInTheDocument();
   });
 
-  it("says to add a movie list when none of the lists holds movies", async () => {
+  it("hides an unsynced list and says to check it, while still offering a known one", async () => {
+    // A synced-empty list is offered (verified, fillable); an unsynced one is withheld until a
+    // check reads it. The two carry different notes because the fix differs.
     apiMock.listConfigs.mockResolvedValue([
-      { id: 2, name: "Saturday Cartoons", source: "plex_collection", config: {}, policy_use: [] },
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(20, "Fresh List", []), // no sync has read it: offered on neither
     ]);
-    apiMock.lists.mockResolvedValue([membershipRow(2, "Saturday Cartoons", ["tv"])]);
+    const { user } = renderKeepEditor();
+    await pickTheListField(user);
+    const lists = await screen.findByRole("combobox", { name: "Which list" });
+    await waitFor(() =>
+      expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument(),
+    );
+
+    expect(within(lists).queryByRole("option", { name: "Fresh List" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "One list isn't shown here yet: it hasn't synced. Check it on Settings → Lists.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says to add a movie list when the only list holds shows", async () => {
+    apiMock.listConfigs.mockResolvedValue([listCfg(2, "Saturday Cartoons", ["tv"])]);
     const { user } = renderKeepEditor();
 
     await pickTheListField(user);
@@ -539,36 +533,16 @@ describe("the list picker filtered by the policy's media type", () => {
     expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
   });
 
-  it("hides a synced-empty list but keeps offering a never-synced one", async () => {
-    // The two "no media type" cases are not the same. A list a sync reached and found empty
-    // can never keep anything, so authoring a rule on it is the invalid config #549 prevents.
-    // A list no sync has reached yet is unknown, not empty: hiding it would block protecting a
-    // list the operator just added, before its first check.
-    apiMock.listConfigs.mockResolvedValue([
-      { id: 10, name: "Empty Collection", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 11, name: "Brand New List", source: "plex_collection", config: {}, policy_use: [] },
-      { id: 12, name: "Movie Night", source: "plex_collection", config: {}, policy_use: [] },
-    ]);
-    apiMock.lists.mockResolvedValue([
-      membershipRow(10, "Empty Collection", [], { synced: true }),
-      membershipRow(11, "Brand New List", [], { synced: false }),
-      membershipRow(12, "Movie Night", ["movie"]),
-    ]);
+  it("says to sync when the only list has never been read", async () => {
+    apiMock.listConfigs.mockResolvedValue([listCfg(20, "Fresh List", [])]);
     const { user } = renderKeepEditor();
 
     await pickTheListField(user);
-    const lists = await screen.findByRole("combobox", { name: "Which list" });
 
-    // Empty Collection is the one hidden, so the note is the sync point.
     expect(
       await screen.findByText(
-        "One list isn't shown here: it has no movies for this policy to keep.",
+        "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them.",
       ),
     ).toBeInTheDocument();
-    expect(within(lists).getByRole("option", { name: "Movie Night" })).toBeInTheDocument();
-    expect(within(lists).getByRole("option", { name: "Brand New List" })).toBeInTheDocument();
-    expect(
-      within(lists).queryByRole("option", { name: "Empty Collection" }),
-    ).not.toBeInTheDocument();
   });
 });
