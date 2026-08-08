@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 //
 // What is on disk under `manual/`, audited against what the docs declare.
 //

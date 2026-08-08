@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 //
 // The scales hold, and the iOS zoom floor cannot be outranked.
 //

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 // The size formatter feeds every number shown beside a destructive control, so its
 // conventions are pinned: binary units with the unit named honestly (GiB, not GB),
 // one decimal below 100, none above, and nothing negative ever rendered.
