@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment node
 //
 // The one part of an anchored popover's placement that is arithmetic rather than layout: how far
 // it slides to stay on screen. jsdom reports every box as zero-sized, so the measuring the
