@@ -467,9 +467,12 @@ it would. Where both cost the same rebuild, keeping it buys only a permanent `in
 arm and a registry entry, and defers the drop forever. That symmetry is the reason this rule
 exists; it does not hold for a nullable column, which can be abandoned for free.
 
-**Three obligations on the M+1 revision, and the first is the one that bricks an install.**
-One `batch_alter_table` block per table with every one of that table's drops inside it, since
-each block is another full copy and another chance to strand `_alembic_tmp_<table>` (#564).
+**Three obligations on the M+1 revision.** One `batch_alter_table` block per table with every
+one of that table's drops inside it, since each block is another full copy of the table. This
+used to be the obligation that bricked an install, because each block was another chance to
+strand `_alembic_tmp_<table>` behind a failure; #564 put DDL back inside the migration's
+transaction, so a failed sweep now rolls the temp table back with everything else and the
+remaining cost is the copying.
 `drop_index` before `drop_constraint` before `drop_column`, because Alembic reflects an index
 on a column being dropped and recreates it against a column that is gone — a two-line
 authoring slip that is invisible against a fresh database and fatal against a populated one.
