@@ -163,7 +163,7 @@ row moving is indistinguishable from one that never started.
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
-| 3 | Gates that land green | in progress | 2 of 4 | |
+| 3 | Gates that land green | in progress | 3 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
@@ -216,6 +216,7 @@ here first and never reconstructed later.
 | #579 | 2 | W1.4, fourth bullet | `src/test/apiMock.ts` | no | All 35 hoisted api mocks onto one 94-function mock, checked against `Object.keys(api)` both ways. The `vi.hoisted` idiom and its 784 call sites are untouched |
 | #582 | 3 | W1.5-c | `test_the_select_name_matcher_rejects_what_it_claims_to_reject` | no | One case cut. It drove the same branch on the same tag as the entry above it, since the matcher returns before reading `text`. The orphaned comment moved to the loop it described |
 | #583 | 3 | W6-5 | `_LAYERS`, `_EXPECTED_LAYERED_MODULES`, `_DEFERRED_CROSS_PACKAGE_IMPORTS` | no | Order is api → services → clients → engine, `identity.py`'s purity note deciding the last pair. 78 modules, 6 pairs, 3 deferred sites, all reconciled by hand. The deferred three are held to the rule rather than skipped: measured, all run downward |
+| #585 | 3 | W6-8 | `NetworkReached`, `_LOOPBACK_HOSTS`, `tests/test_network_guard.py` | no | Hooks `getaddrinfo` plus both `connect` forms, allows loopback and AF_UNIX. Found **7** live violations, not one: plexapi speaks requests, which respx does not mock. Off `Exception`, or `PlexClient._connect` converts the refusal to `PlexError`. The allowed population is 2,023 socketpairs across 1,674 tests, not 58 across 38 |
 
 ### Killed while executing
 
