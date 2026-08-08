@@ -253,6 +253,14 @@ here first and never reconstructed later.
 | #597 | 5 | W1.1 a-h, i's `_SeriesWork.plan`, j, k, m, o; W7-3/4; W7-5's `detail` | `evaluate_rules`, `GateConfig.gate`, `_verdict(override=)`, `HealthOut` | no | 13 findings landed, W1.1-l killed. Two deletions were bigger than their rows: `_verdict`'s override took `blocked_holds_reap` and `safety_protected` with it (rule 64) and moved 14 reap assertions onto `reap_override_verdict_decoded`, the only caller production has; `is_available` took `MediaRequest.status` and the `MediaStatus` enum. `Condemn logic` daggered, `DECISION_SECTIONS` 17 to 18 |
 | #599 | 5 | W1.2 | `engine/backtest.py`, `engine/calibration.py` | no | 1,974 lines of engine and test, plus ~30 prose sites nothing would have failed on. `FALLBACK_REWATCH_PRIOR` is NOT rehomed: its only reader was `rewatch_prior`, whose only caller was `backtest.run`, so the correction is right that moving the pair moves dead code. The curve survives in `SIGNALS.md` and a new hygiene test holds the two source docstrings to it by name (rule 144), which is what the deleted `TestTheRewatchPrior` used to do. **The review found one real coverage loss and it is repaired here**: the suite's only non-default `window_days` sweep lived on the replay lane, so `TestTheWindowScoredAgainstIsThePolicysOwn` now pins both readers of the span on the live scan, driven red against each. M3c/M3g dropped, M3f done, open item 2 gone. S7: 78→76 modules, 49→47 loggers, 43→39 reasons |
 
+| #603 | 6 | W2, `season_scan` row | `guard_result`, `no_key_reason`, `_NO_KEY_REASONS` | no | 152 lines to `season_evidence.py`, every executable line byte-identical, and the served OpenAPI document byte-identical either side (194,926 bytes, built in-process from both revisions). `api/routes.py` no longer imports the scan module at all. Three review lanes found nothing at tiers 1-3. What they did find is the same class twice: comments moved with the code and were false on arrival ("kept beside its own builder", which stayed behind), and a docstring written for the pair claimed both are read by the simulator's replay when only `guard_result` is. 22 shifted plan citations re-anchored here under S10 rather than deferred to the exit sweep |
+
+**#600 and #601 landed with no row here, and this one cannot be written for them.** Both are
+phase 5 work merged on 2026-08-08; the table jumps #599 to #603. The rule above says this record
+is written first and never reconstructed later, so filling them in from commit subjects now would
+be exactly the reconstruction it forbids. Filed as an issue against their PR bodies, which are
+the only surviving source.
+
 ### Killed while executing
 
 A finding that turns out to be wrong is struck here rather than silently skipped, so the next
