@@ -188,7 +188,8 @@ forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: it
 | --- | --- | --- |
 | C1 | **settled** | Owner, 2026-08-07. Six decisions, each recorded on the finding it governs: delete the whitelist routes (not shipped, so S4 has no reader to protect yet); delete the poster chain whole; move the flat-AND reasoning to `DECISIONS.md`; delete `run_migrations_offline`; keep `backtest_passed` and correct its docstring; and schema now leaves under rule 148 rather than accumulating |
 | C13 | **part settled** | Owner, 2026-08-07, on redaction: the capture ships as cut. The coverage half stands open — both tiers hold `Facts` fixed, so a carrier that widens what is prunable on a real library moves nothing in either. S3's driven pass is the only thing that reaches it |
-| C2 to C12, C14 | not started | — |
+| C2 | ready, not yet read | Owner. Its three questions are already answered in writing, so this is a read rather than an investigation: the before/after is in [Phase 2](#phase-2--test-suite-wall-clock), and #571's body carries both `crypto.py` staying untouched and the injectivity guard demonstrated red against a deliberately collapsing wrapper |
+| C3 to C12, C14 | not started | — |
 
 Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
 C7, C9, C11, C13, C14) records **what the owner decided**, not that they looked. The decision is
