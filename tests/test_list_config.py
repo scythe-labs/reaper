@@ -25,13 +25,13 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.api import lists as list_config_api
 from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
-from reaper.services import list_config
+from reaper.services import list_config, scan_runner
+from reaper.services import snapshot as snapshot_service
 from reaper.services.lists import ListSource
 from tests._auth import login
 
@@ -719,7 +719,7 @@ class TestCheckingTheListsNow:
         async def fake_build(factory: object, settings: object, box: object, **kw: object) -> Any:
             return ([], [], None, [], plex)
 
-        monkeypatch.setattr(list_config_api.scan_runner, "build_sources", fake_build)
+        monkeypatch.setattr(scan_runner, "build_sources", fake_build)
 
     @staticmethod
     def _syncs(monkeypatch: pytest.MonkeyPatch, result: dict[str, object]) -> dict[str, Any]:
@@ -731,7 +731,7 @@ class TestCheckingTheListsNow:
             seen.update(kw)
             return result
 
-        monkeypatch.setattr(list_config_api.snapshot, "sync_protection_lists", fake_sync)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync)
         return seen
 
     def test_a_list_saved_in_a_form_reaper_cannot_read_stops_the_whole_check(
@@ -785,9 +785,9 @@ class TestCheckingTheListsNow:
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         async def refuses(factory: object, settings: object, box: object, **kw: object) -> Any:
-            raise list_config_api.scan_runner.ScanConfigError("Add a Radarr before checking.")
+            raise scan_runner.ScanConfigError("Add a Radarr before checking.")
 
-        monkeypatch.setattr(list_config_api.scan_runner, "build_sources", refuses)
+        monkeypatch.setattr(scan_runner, "build_sources", refuses)
         seen = self._syncs(monkeypatch, {})
 
         response = client.post("/api/lists/sync", json={})

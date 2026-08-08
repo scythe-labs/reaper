@@ -20,6 +20,7 @@ from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
 
 from reaper.api.schemas import GateSettingIn, PolicyIn
+from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
@@ -62,7 +63,7 @@ from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 from reaper.services.scan_runner import GATE_TYPES, ScanConfigError, build_gates
-from reaper.services.season_pruning import SeasonStats, plan_series_prune
+from reaper.services.season_pruning import plan_series_prune
 
 #: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
 #: ``GATE_TYPES`` because it takes a set of per-source bars rather than one GateConfig, so

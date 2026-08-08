@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -205,7 +207,7 @@ class TestLoopbackGuard:
         """The dialog is for the double-clicked binary that has no readable stderr;
         a source run must never pop native UI."""
         calls: list[object] = []
-        monkeypatch.setattr(launcher.subprocess, "run", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
         launcher._say("a plain refusal", frozen=False)
         assert "a plain refusal" in capsys.readouterr().err
         assert calls == []
@@ -419,7 +421,7 @@ class TestServeWithTray:
         """default=True is what makes a double-click on the Windows tray icon open
         the UI rather than only the right-click menu."""
         opened: list[str] = []
-        monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url))
+        monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
         module, created = self._module()
         server = _FakeServer()
 

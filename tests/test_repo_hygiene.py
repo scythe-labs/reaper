@@ -3630,7 +3630,8 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     the next author to remember.
     """
     from reaper.clock import humanize_days
-    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, SignalId
+    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+    from reaper.engine.signals import SignalId
 
     page = (FRONTEND_SRC / "docs" / "content" / "understandingPolicy.ts").read_text()
     shipped = {

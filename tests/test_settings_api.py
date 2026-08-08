@@ -1253,7 +1253,9 @@ class TestPlexLinkChoice:
         from reaper.services import plex_link
 
         captured: dict[str, object] = {}
-        real_probe = plex_link.probe_connection
+        # Through `plex_link` for the same reason the spy is installed there: the module
+        # under test reads this name, and rebinding any other copy patches nothing.
+        real_probe = plex_link.probe_connection  # type: ignore[attr-defined]
 
         async def spying_probe(
             connection: object, token: str, *, timeout: float = 5.0, verify: bool = True

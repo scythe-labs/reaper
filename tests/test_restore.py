@@ -842,7 +842,7 @@ class TestRestartNow:
         signal number IS the behavior, and any other one is a different shutdown or none.
         """
         sent: list[tuple[int, int]] = []
-        monkeypatch.setattr(backup_api.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+        monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append((pid, sig)))
 
         backup_api._stop_this_process()
 

@@ -916,7 +916,10 @@ class TestTheBacktestVerdictMatchesProduction:
         """
         scored: list[int | None] = []
         built: list[int | None] = []
-        real_score = bt.score
+        # Read through `bt` deliberately: the spy below rebinds this name IN backtest, so
+        # capturing it anywhere else would restore a different binding. `score` is
+        # imported rather than defined there, which is what mypy is objecting to.
+        real_score = bt.score  # type: ignore[attr-defined]
         real_facts_as_of = bt.facts_as_of
 
         def _score_spy(*args: object, **kwargs: object) -> Score:

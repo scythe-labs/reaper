@@ -29,7 +29,7 @@ from sqlalchemy import create_engine as sa_create_engine
 
 from reaper.api import tags as api_tags
 from reaper.config import Settings
-from reaper.db.models import Base
+from reaper.db.base import Base
 from reaper.main import create_app
 from tests._auth import login
 

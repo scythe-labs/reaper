@@ -50,8 +50,8 @@ from reaper.db.models import (
 )
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
-from reaper.services import executor as executor_module
 from reaper.services import list_config, whitelist
+from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -3708,7 +3708,7 @@ class TestAnOverrideChangedMidRun:
                 raise RuntimeError("the database went away")
             return await real_overrides(sess)
 
-        with mock.patch.object(executor_module.whitelist, "overrides", flaky):
+        with mock.patch.object(whitelist_module, "overrides", flaky):
             report = await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert report.state is RunState.ABORTED
@@ -3740,7 +3740,7 @@ class TestAnOverrideChangedMidRun:
             reads["n"] += 1
             return await real_overrides(sess)
 
-        with mock.patch.object(executor_module.whitelist, "overrides", counted):
+        with mock.patch.object(whitelist_module, "overrides", counted):
             report = await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert report.state is RunState.COMPLETED

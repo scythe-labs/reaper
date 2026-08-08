@@ -31,6 +31,7 @@ from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
 from reaper.services import app_settings, imdb_dataset, retention, scan_runner, scheduler
+from reaper.services import snapshot as snapshot_service
 from reaper.services.imdb_dataset import ImdbRatings
 from reaper.services.update_check import UpdateChecker, UpdateStatus
 
@@ -143,7 +144,7 @@ class TestRatingsRefreshFreshnessGuard:
             called.append("downloaded")
             return 0
 
-        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        monkeypatch.setattr(imdb_dataset, "refresh", fake_download)
         await scheduler.refresh_ratings(cache_engine, tmp_path)
         assert called == []  # synced an hour ago, well within the window
 
@@ -157,7 +158,7 @@ class TestRatingsRefreshFreshnessGuard:
             called.append("downloaded")
             return 7
 
-        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        monkeypatch.setattr(imdb_dataset, "refresh", fake_download)
         await scheduler.refresh_ratings(cache_engine, tmp_path)
         assert called == ["downloaded"]  # 25h old, past the 20h window
 
@@ -496,7 +497,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def no_sources(*args: object, **kwargs: object) -> tuple[object, ...]:
             return ([], [], None, [], None)
 
-        monkeypatch.setattr(scheduler.scan_runner, "build_sources", no_sources)
+        monkeypatch.setattr(scan_runner, "build_sources", no_sources)
         settings = Settings(data_dir=tmp_path, secret_key="k")
         return settings, SecretBox(resolve_secret_key(settings))
 
@@ -512,7 +513,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def fake_sync(*args: object, **kwargs: object) -> dict[str, int]:
             return {"imdb-top250-list1": 250}
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", fake_sync)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fake_sync)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -536,7 +537,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def all_bad(*args: object, **kwargs: object) -> dict[str, str]:
             return {"imdb-top250-list1": "error: source down"}
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", all_bad)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", all_bad)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -563,7 +564,7 @@ class TestUpkeepJobsRecordTheirLastRun:
                 "plex-collection-never-reap-list3": 12,
             }
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", one_bad)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", one_bad)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -591,7 +592,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def boom(*args: object, **kwargs: object) -> dict[str, int]:
             raise RuntimeError("the cache database is locked")
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", boom)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", boom)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -636,7 +637,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def only_the_others(*args: object, **kwargs: object) -> dict[str, int]:
             return {"imdb-top250-list1": 250}
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", only_the_others)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", only_the_others)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -659,7 +660,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def fine(*args: object, **kwargs: object) -> dict[str, int]:
             return {"imdb-top250-list1": 250}
 
-        monkeypatch.setattr(scheduler.snapshot_service, "sync_protection_lists", fine)
+        monkeypatch.setattr(snapshot_service, "sync_protection_lists", fine)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -681,9 +682,9 @@ class TestUpkeepJobsRecordTheirLastRun:
         settings, box = self._wire_lists(monkeypatch, tmp_path)
 
         async def refuse(*args: object, **kwargs: object) -> tuple[object, ...]:
-            raise scheduler.scan_runner.ScanConfigError("no sources configured")
+            raise scan_runner.ScanConfigError("no sources configured")
 
-        monkeypatch.setattr(scheduler.scan_runner, "build_sources", refuse)
+        monkeypatch.setattr(scan_runner, "build_sources", refuse)
         await scheduler.refresh_curated_lists(cache_engine, main_factory, settings, box)
 
         last = await self._last(main_factory, "refresh_curated_lists")
@@ -719,7 +720,7 @@ class TestUpkeepJobsRecordTheirLastRun:
         async def fake_download(engine: AsyncEngine, data_dir: Path) -> imdb_dataset.LoadResult:
             return imdb_dataset.LoadResult(rows=7, skipped=0)
 
-        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        monkeypatch.setattr(imdb_dataset, "refresh", fake_download)
         await scheduler.refresh_ratings(cache_engine, tmp_path, main_factory)
 
         last = await self._last(main_factory, "refresh_ratings")
