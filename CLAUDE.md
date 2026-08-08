@@ -18,11 +18,11 @@ Where the two touch the same subject, CONTRIBUTING is the copy to correct.
 
 ## Where the engineering rules live
 
-147 numbered blockers, adversarially verified across seven review passes. **The numbers are
+148 numbered blockers, adversarially verified across seven review passes. **The numbers are
 permanent** — code and comments cite them (`rule 28` in `snapshot.py`), so never renumber and
 never reuse a number for a different rule. A comment may only cite a rule that exists;
 `tests/test_repo_hygiene.py` fails on one that does not. New rules append to the scoped file
-that governs them, from 148.
+that governs them, from 149.
 
 They live in `.claude/rules/`, scoped by `paths` frontmatter so each set loads when you read a
 file it governs, and a file must be read before it can be edited. **The scoping is the budget**:
@@ -31,7 +31,7 @@ cluster large enough to notice earns its own file.
 
 | File | Governs | Rules |
 | --- | --- | --- |
-| `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, persistence | 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143 |
+| `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, persistence | 1–6, 8–10, 13, 22, 23, 26–35, 38, 52, 55–59, 63, 65, 70, 71, 73, 77, 78, 81, 82, 87–97, 102–117, 124, 127–129, 131, 140, 142, 143, 148 |
 | `.claude/rules/auth.md` | `src/reaper/auth/**`, `secrets.py`, `logbuffer.py`, `services/{backup,restore}.py`, `api/settings.py` — credentials, sessions, at-rest key material | 11, 12, 14, 74–76, 83, 84, 98–101, 125, 126, 130 |
 | `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, gating surfaces | 17–20, 36, 39–47, 51, 53, 54, 60–62, 66, 67, 69, 79, 80, 85, 86, 138, 139, 146 |
 | `.claude/rules/review-queue.md` | `ReviewQueue`, `OverrideControls`, `ShowPanel`, `SeasonList`, `reviewFate` — fate, overrides, the two-level spare | 48–50, 120–123 |
@@ -45,7 +45,7 @@ This table, each file's `Holds` line, and the count are one fact written four ti
 `test_every_index_of_the_rules_matches_the_rules` checks all of them and names each one that
 disagrees. They had already drifted (rule 144).
 
-**A new rule earns its number, and most candidates do not.** Before appending 148, in order:
+**A new rule earns its number, and most candidates do not.** Before appending 149, in order:
 **extend an existing rule** if one covers the class — rules 127, 140, 142 and 143 each described
 rule 72's sweep at a different target, five rules where four instances do it; **write the gate
 instead** if the violation is greppable, since `test_repo_hygiene.py` binds an author who never
@@ -77,9 +77,13 @@ rule narrating the gate that enforces it pays twice for one constraint.
   run Reaper on real data, so the Alembic baseline (`22777b2b5015`) is **frozen** — never
   edit it. Every schema change is its own new revision chained onto the current head by
   `down_revision` (a nullable `ADD COLUMN`, a new table, a backfill), so `alembic upgrade
-  head` on an existing database only ever adds. New columns are nullable or carry a server
+  head` on an existing database ordinarily only adds. New columns are nullable or carry a server
   default, and the next scan backfills them; a not-yet-backfilled `NULL` reads as "unknown,"
   never as a wrong definite value. `cache.db` stays disposable and unmigrated.
+  **Schema still has to be able to leave, and rule 148 is the only door.** Additive-by-default
+  with no exit is how dead columns accumulate forever behind a growing exclusion list whose
+  job is to hide a `drop_column` from a reviewer — the wrong direction for a repository that
+  fails closed. Removal is a two-release sequence, never an ad-hoc drop.
 - **A change that alters what the app *does* updates `docs/STATUS.md` in the same commit** —
   edit the line that is now wrong, never append beside it. Measured findings, including
   negative results, go to `docs/LEARNINGS.md`. `docs/README.md` says what belongs where: state,
