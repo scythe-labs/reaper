@@ -59,7 +59,7 @@ def _fresh_limits() -> Iterator[None]:
 
 
 def _settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    return Settings(data_dir=tmp_path, secret_key="k")
 
 
 class TestTheRateLimiter:
@@ -172,7 +172,7 @@ class TestForwardedHeadersNeedATrustedPeer:
             "query_string": b"",
             "app": _App(),
         }
-        return is_secure_request(Request(scope))  # type: ignore[arg-type]
+        return is_secure_request(Request(scope))
 
     def test_an_untrusted_peer_is_ignored(self) -> None:
         assert not self._request(proxies=(), peer="203.0.113.7", proto="https")
@@ -254,7 +254,7 @@ class TestTheServerDoesNotDecidePeerTrust:
                 trusted_proxies = ()
 
         async def endpoint(scope: dict, receive: object, send: object) -> None:
-            seen.append(client_ip(Request(scope)))  # type: ignore[arg-type]
+            seen.append(client_ip(Request(scope)))
 
         async def _noop(*_args: object) -> None:
             return None

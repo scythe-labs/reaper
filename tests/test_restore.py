@@ -152,7 +152,7 @@ def _make_archive(
 
 
 def _settings(tmp_path: Path) -> Settings:
-    s = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    s = Settings(data_dir=tmp_path, secret_key="k")
     s.ensure_data_dir()
     return s
 
@@ -868,7 +868,7 @@ class TestRestartNow:
         to reach the same await. It commits through the app's OWN session factory, so a
         disposal that landed too early fails here.
         """
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()
@@ -926,7 +926,7 @@ class TestApiKeyIsFenced:
 
 
 def test_prepare_needs_a_session(tmp_path: Path) -> None:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()

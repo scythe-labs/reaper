@@ -511,7 +511,7 @@ def _client_over(tmp: Path, *, stored_scores_usable: bool) -> Iterator[TestClien
         "conftest's _hermetic fixture is not in effect: this fixture must be function-scoped"
     )
     tmp.mkdir(parents=True, exist_ok=True)
-    settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -538,7 +538,7 @@ def replay(tmp_path: Path) -> Iterator[TestClient]:
 def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
     """Replace the stored scan with one taken under `policy`."""
     tmp.mkdir(parents=True, exist_ok=True)
-    settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp, secret_key="k")
     # Before the sync session opens, for the reason the fixture's own docstring gives: two
     # engines on one SQLite file is a lock waiting to happen.
     list_hash = seeded_fingerprint(settings)
@@ -596,7 +596,7 @@ def load_snapshot(tmp: Path, policy: PolicyBody, rows: list[Judged]) -> None:
 
 def break_scoring_hash(tmp: Path) -> None:
     """Make the stored scores unusable, which is what routes an edit to the replay."""
-    settings = Settings(data_dir=tmp, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with Session(engine) as session:
         snapshot = session.query(Snapshot).one()

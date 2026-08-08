@@ -37,7 +37,7 @@ from reaper.services.update_check import UpdateChecker, UpdateStatus
 
 @pytest.fixture
 async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 
@@ -167,7 +167,7 @@ class TestTheSchedulerIsUpkeepOnly:
         """A timer must never be able to trigger a reap. Automated deletion is gated
         behind an earned autonomy grant, not a cron entry -- so the scheduler's whole job
         list is refreshes."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
@@ -220,7 +220,7 @@ class TestTheSchedulerIsUpkeepOnly:
         mostly dead weight now, so an interval trigger's default first fire -- a whole
         twelve hours in -- is the wrong answer. Pinned against the interval rather than a
         literal, so raising one cannot quietly turn the delay back into a full period."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
@@ -255,7 +255,7 @@ class TestTheSchedulerIsUpkeepOnly:
         must land at different offsets within the interval, and each gap must still sit
         inside one interval plus the spread, so a jitter large enough to reorder firings or
         small enough to round away would both fail."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
@@ -304,7 +304,7 @@ class TestTheSchedulerIsUpkeepOnly:
         """
         db_dir, sweep_dir = tmp_path / "db", tmp_path / "swept"
         db_dir.mkdir()
-        settings = Settings(data_dir=db_dir, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=db_dir, secret_key="k")
         engine = create_engine(settings)
         factory = create_session_factory(engine)
         sched = scheduler.build_scheduler(
@@ -332,7 +332,7 @@ class TestTheSchedulerIsUpkeepOnly:
 
         The predicate is passed answering True, which no default could produce -- a job wired
         to a placeholder would read False here (rule 141)."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         sched = scheduler.build_scheduler(
             engine,
@@ -358,7 +358,7 @@ class TestTheSchedulerIsUpkeepOnly:
 
         Driven in both states off one predicate object, because a lambda captured before the
         status existed would answer False forever and read as correct in the False case."""
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         sync_engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(sync_engine)
         sync_engine.dispose()
@@ -430,9 +430,7 @@ class TestTheSchedulerIsUpkeepOnly:
         monkeypatch.setattr(retention, "compact_if_fragmented", _compact)
         monkeypatch.setattr(scan_runner, "_scan_running", live == "scan")
 
-        await scheduler.sweep_old_snapshots(  # type: ignore[arg-type]
-            None, tmp_path, lambda: live == "reap"
-        )
+        await scheduler.sweep_old_snapshots(None, tmp_path, lambda: live == "reap")
 
         assert swept == [True]
         assert attempted == []
@@ -465,7 +463,7 @@ async def main_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Async
     can record its last run. Its own file, kept apart from the cache engine above."""
     data_dir = tmp_path / "main"
     data_dir.mkdir()
-    settings = Settings(data_dir=data_dir, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=data_dir, secret_key="k")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -499,7 +497,7 @@ class TestUpkeepJobsRecordTheirLastRun:
             return ([], [], None, [], None)
 
         monkeypatch.setattr(scheduler.scan_runner, "build_sources", no_sources)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         return settings, SecretBox(resolve_secret_key(settings))
 
     async def test_a_successful_list_refresh_records_ok(
@@ -976,7 +974,7 @@ class TestScheduledScanRecordsOnlyItsFailure:
             raise RuntimeError("radarr unreachable")
 
         monkeypatch.setattr(scan_runner, "run_scan", boom)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
 
         last = await self._last(main_factory, scheduler.SCAN_JOB_ID)
@@ -997,7 +995,7 @@ class TestScheduledScanRecordsOnlyItsFailure:
             raise scan_runner.ScanConfigError("no Radarr configured yet")
 
         monkeypatch.setattr(scan_runner, "run_scan", config_error)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
 
         assert await self._last(main_factory, scheduler.SCAN_JOB_ID) is None
@@ -1015,7 +1013,7 @@ class TestScheduledScanRecordsOnlyItsFailure:
             raise scan_runner.ScanInProgressError("a scan is already running")
 
         monkeypatch.setattr(scan_runner, "run_scan", in_progress)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
 
         assert await self._last(main_factory, scheduler.SCAN_JOB_ID) is None

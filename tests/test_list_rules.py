@@ -45,7 +45,7 @@ from tests._auth import login
 
 @pytest.fixture
 async def session(tmp_path: Path) -> Iterator[AsyncSession]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     sync = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(sync)
     sync.dispose()
@@ -58,7 +58,7 @@ async def session(tmp_path: Path) -> Iterator[AsyncSession]:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()

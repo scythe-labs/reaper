@@ -1286,7 +1286,7 @@ class TestSeasonNumber:
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot holding one show whose three seasons landed in three different
     lanes, plus a movie -- the shape the group view exists to show whole."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 
@@ -1442,7 +1442,7 @@ class TestGroupDetail:
     def test_the_group_view_is_behind_auth(self, tmp_path: Path) -> None:
         authless_dir = tmp_path / "authless"
         authless_dir.mkdir()
-        settings = Settings(data_dir=authless_dir, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=authless_dir, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()

@@ -34,7 +34,7 @@ _AUTH_TABLE_HINTS = ("auth", "session", "login", "recovery", "token", "credentia
 
 
 def _settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    return Settings(data_dir=tmp_path, secret_key="k")
 
 
 def _sqlite_file(path: Path) -> None:

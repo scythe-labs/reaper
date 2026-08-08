@@ -35,7 +35,7 @@ from tests._auth import login
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over an empty database: exactly a fresh install."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -148,7 +148,7 @@ class TestSweepStaleTemp:
     """PR-3: crash-leftover backup/restore temp is swept at boot, real state is spared."""
 
     def test_it_clears_leftover_temp_and_spares_real_state(self, tmp_path: Path) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         settings.ensure_data_dir()
         # Crash debris: a backup temp dir with a partial snapshot, a restore staging temp,
         # and an upload spool file.
@@ -184,7 +184,7 @@ class TestApiKeyIsFenced:
 
 
 def test_the_backup_download_needs_a_session(tmp_path: Path) -> None:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()

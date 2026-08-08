@@ -44,7 +44,7 @@ HORIZON = NOW - timedelta(days=3000)
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     async with eng.begin() as conn:
         for statement in SCHEMA.strip().split(";"):
             if statement.strip():

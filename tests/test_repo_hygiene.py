@@ -676,7 +676,7 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
             caps[name] = raw == "true" if raw in ("true", "false") else int(raw.replace("_", ""))
         assert caps, f"parsed no fields out of a caps block in {_PRESETS_TS.relative_to(REPO)}"
         # A ValidationError here is the defect, stated by the server in its own words.
-        ProfileSettings(**caps)  # type: ignore[arg-type]
+        ProfileSettings(**caps)
 
 
 # ``pkill``/``killall`` select processes by PATTERN, which is machine-wide: nothing in the

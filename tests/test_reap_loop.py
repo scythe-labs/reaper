@@ -3123,7 +3123,7 @@ class TestJournalDurability:
     never roll back to PLANNED as if no file were gone."""
 
     async def test_a_crash_mid_run_leaves_a_durable_journal(self, tmp_path: Path) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_engine(settings)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -3175,7 +3175,7 @@ class TestTheExecutingClaimIsAtomic:
     mid-run is refused, instead of re-running the plan over the first one's journal."""
 
     async def test_a_second_execute_while_one_is_in_flight_is_refused(self, tmp_path: Path) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_engine(settings)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -3243,7 +3243,7 @@ class TestRollingThirtyDayCaps:
             "max_bytes_per_30d": 500 * 10**9,
         }
         base.update(overrides)
-        return ProfileSettings(**base)  # type: ignore[arg-type]
+        return ProfileSettings(**base)
 
     async def _execute(
         self, session: AsyncSession, run_id: int, settings: ProfileSettings, *, dry: bool = False
@@ -4506,7 +4506,7 @@ async def _fresh_engine(tmp_path: Path) -> tuple[Any, async_sessionmaker[AsyncSe
     """An engine of this test's own, so durable state can be read back through a session the
     executor never touched. The run's own session answers from its identity map
     (``expire_on_commit=False``) and cannot tell a durable write from a discarded one."""
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

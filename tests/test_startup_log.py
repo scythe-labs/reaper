@@ -67,7 +67,7 @@ def _make(
 
     ``revision`` writes the ``alembic_version`` row that ``create_all`` never makes, so the
     banner's revision field can be pinned to a value that is not the default (rule 141)."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     if revision is not None:

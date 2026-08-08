@@ -42,7 +42,7 @@ from tests._fakes import FakeSonarr
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 

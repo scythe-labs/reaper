@@ -49,7 +49,7 @@ def _row(row_id: int | None, days_ago: int) -> dict[str, Any]:
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 
@@ -63,7 +63,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
     async def test_the_first_sync_walks_everything(self, engine: AsyncEngine) -> None:
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)])
 
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         assert await _count(engine) == 10
         # A fresh mirror has nothing to be "after", so the walk is unfiltered.
@@ -74,14 +74,14 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         delta instead of the full history."""
         history = [_row(i, days_ago=i) for i in range(1, 11)]
         fake = PagingTautulli(history)
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         # A new play arrives; re-sync.
         history.insert(0, _row(11, days_ago=0))
         fake.total = 11
         fake.after_calls.clear()
 
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         assert await _count(engine) == 11  # the new row landed
         # It asked with an `after` date (not a full walk from the start of history).
@@ -90,10 +90,10 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
     async def test_a_full_sync_re_walks_everything(self, engine: AsyncEngine) -> None:
         """The nightly sweep that catches backfilled old events must NOT use `after`."""
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 6)])
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
         fake.after_calls.clear()
 
-        await sync(engine, fake, full=True)  # type: ignore[arg-type]
+        await sync(engine, fake, full=True)
 
         assert fake.after_calls[0] is None
 
@@ -101,7 +101,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         """row_id is null only for in-progress sessions -- not history yet."""
         fake = PagingTautulli([_row(None, days_ago=0), _row(1, days_ago=1), _row(2, days_ago=2)])
 
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         assert await _count(engine) == 2  # the live session was not recorded
 
@@ -126,7 +126,7 @@ class TestThePageLoopFetchesEveryRow:
                 return page
 
         rows = [_row(n, days_ago=n) for n in range(1, 8)]
-        await sync(engine, _NoTotal(rows), full=True)  # type: ignore[arg-type]
+        await sync(engine, _NoTotal(rows), full=True)
 
         assert await _count(engine) == 7
 
@@ -151,7 +151,7 @@ class TestThePageLoopFetchesEveryRow:
                 return page
 
         rows = [_row(n, days_ago=n) for n in range(1, 13)]
-        await sync(engine, _ShortSecondPage(rows), full=True)  # type: ignore[arg-type]
+        await sync(engine, _ShortSecondPage(rows), full=True)
 
         assert await _count(engine) == 12
 
@@ -172,7 +172,7 @@ class TestThePageLoopFetchesEveryRow:
                 return page
 
         rows = [_row(n, days_ago=n) for n in range(1, 8)]
-        await sync(engine, _Endless(rows), full=True)  # type: ignore[arg-type]
+        await sync(engine, _Endless(rows), full=True)
 
         assert await _count(engine) == 2  # it stopped, and kept what it read
 
@@ -182,40 +182,40 @@ class TestRegressionDetection:
         self, engine: AsyncEngine
     ) -> None:
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 6)], total=5)
-        await sync(engine, fake)  # type: ignore[arg-type]  # must not raise
+        await sync(engine, fake)  # must not raise
         assert await history_sync._last_tautulli_total(engine) == 5
 
     async def test_a_shrunk_history_raises(self, engine: AsyncEngine) -> None:
         """Tautulli's total drops sharply -- reset, prune or restore. Every 'never
         watched' verdict is now suspect, so the sync stops before writing."""
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         # Tautulli now reports far fewer rows.
         shrunk = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
 
         with pytest.raises(HistoryRegressionError, match="shrank from 100"):
-            await sync(engine, shrunk)  # type: ignore[arg-type]
+            await sync(engine, shrunk)
 
     async def test_a_small_wobble_does_not_raise(self, engine: AsyncEngine) -> None:
         """Grouping can nudge the reported count by a row or two; that is not a reset."""
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         nudged = PagingTautulli([_row(i, days_ago=i) for i in range(1, 100)], total=98)
-        await sync(engine, nudged)  # type: ignore[arg-type]  # 98 >= 100*0.95, fine
+        await sync(engine, nudged)  # 98 >= 100*0.95, fine
 
     async def test_the_check_is_not_fooled_by_our_growing_mirror(self, engine: AsyncEngine) -> None:
         """The old check compared our mirror's row count, which only grows -- so a real
         Tautulli shrink was invisible. This asserts the check keys on Tautulli's total:
         our mirror still has 100 rows, but Tautulli reporting 10 must still raise."""
         fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
         assert await _count(engine) == 100
 
         shrunk = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
         with pytest.raises(HistoryRegressionError):
-            await sync(engine, shrunk)  # type: ignore[arg-type]
+            await sync(engine, shrunk)
 
         # Our mirror is untouched -- we preserve what we hold.
         assert await _count(engine) == 100
@@ -229,14 +229,14 @@ class TestOverlapNeverDropsARow:
         play recorded later that same day would fall in the gap and be lost forever."""
         newest = _row(1, days_ago=0)
         fake = PagingTautulli([newest])
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         # Another play the SAME day, a few hours later (higher row_id, same date bucket).
         later_same_day = dict(newest, row_id=2, rating_key=999, date=newest["date"] + 3600)
         fake.rows.insert(0, later_same_day)
         fake.total = 2
 
-        await sync(engine, fake)  # type: ignore[arg-type]
+        await sync(engine, fake)
 
         assert await _count(engine) == 2  # the same-day play was not missed
 

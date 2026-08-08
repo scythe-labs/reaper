@@ -139,7 +139,7 @@ def _env_py_configure_kwargs(
     arguments, which also means a future env.py that never calls it fails here
     rather than passing on an empty result.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     monkeypatch.setattr("reaper.config.get_settings", lambda: settings)
 
     # env.py replays alembic.ini's logging config, and fileConfig() disables every
@@ -189,7 +189,7 @@ def test_env_py_configures_batch_mode(
 
 def _alembic_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     """An alembic Config whose env.py resolves the DB URL to ``tmp_path/reaper.db``."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     monkeypatch.setattr("reaper.config.get_settings", lambda: settings)
     monkeypatch.setattr("logging.config.fileConfig", lambda *a, **kw: None)
     return Config(str(PROJECT_ROOT / "alembic.ini"))

@@ -60,7 +60,7 @@ def schema(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         patched.setitem(Settings.model_config, "env_file", None)
         patched.setattr("reaper.main.load_raw_env", lambda _s: {})
         patched.setattr("reaper.main.catch_up_on_startup", _no_catch_up)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()
@@ -193,7 +193,7 @@ class TestOneProducerOfTheSchema:
         instead of the reference silently degrading to a flat scroll under an auth box
         that does not authenticate. Driven the way the trap would spring -- build the
         schema before the first request, then read what the reference page is served."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()

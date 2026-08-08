@@ -38,7 +38,7 @@ from tests._auth import login
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -49,7 +49,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 @pytest.fixture
 async def session(tmp_path: Path) -> Iterator[AsyncSession]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     sync = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(sync)
     sync.dispose()
@@ -674,7 +674,7 @@ class TestTheRegistryFingerprint:
         The same row is read twice, readable then not, so the ``None`` is pinned to the
         decode failure and not to anything else about this database (rule 141).
         """
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         sync_engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(sync_engine)
         with sync_engine.begin() as conn:
@@ -748,7 +748,7 @@ class TestCheckingTheListsNow:
         # Read once so the shipped lists are actually seeded -- the registry fills in lazily,
         # and corrupting an empty table would leave a valid registry and prove nothing.
         assert client.get("/api/lists/configured").json()
-        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
         with engine.begin() as conn:
             assert conn.execute(text("UPDATE list_config SET config_json = 'not json'")).rowcount
         engine.dispose()
@@ -898,7 +898,7 @@ class TestARowStaysOnScreenSoTheOperatorCanFixIt:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         assert client.get("/api/lists/configured").json()
-        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
         with engine.begin() as conn:
             assert conn.execute(
                 text("UPDATE list_config SET config_json = 'not json' WHERE source = 'arr_tag'")

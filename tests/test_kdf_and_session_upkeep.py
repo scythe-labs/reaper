@@ -251,7 +251,7 @@ class TestTheSignInPollHonorsItsDeadline:
         self, retry_after: float | None, timeout: float
     ) -> tuple[object, TestTheSignInPollHonorsItsDeadline._Client]:
         client = self._Client(retry_after)
-        token = await plextv.PlexTvClient.wait_for_pin(client, 1, timeout=timeout)  # type: ignore[arg-type]
+        token = await plextv.PlexTvClient.wait_for_pin(client, 1, timeout=timeout)
         return token, client
 
     async def test_an_outrageous_retry_after_does_not_outlive_the_deadline(

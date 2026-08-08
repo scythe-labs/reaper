@@ -123,7 +123,7 @@ VERDICTS = {
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot in which every row's stored explanation is broken in some way."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 

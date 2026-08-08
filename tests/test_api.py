@@ -135,7 +135,7 @@ def _explanation(score: float) -> str:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -442,7 +442,7 @@ class TestTheRunsApi:
         run = client.post("/api/runs").json()
         reason = "Radarr accepted the delete; not confirmed. Reaper could not reach it again."
 
-        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)  # type: ignore[call-arg]
+        engine = sa_create_engine(Settings(data_dir=tmp_path, secret_key="k").sync_database_url)
         with Session(engine) as session:
             step = session.execute(
                 select(ActionStep).where(ActionStep.run_id == run["id"])
@@ -541,7 +541,7 @@ def selection_client(tmp_path: Path) -> Iterator[TestClient]:
     one I asked for" and "planned the whole set" the same number -- so the selection could
     not be told from the fall-through. Three is the smallest count that distinguishes them.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -688,9 +688,7 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     refuses a movie whose Radarr is gone), but no Plex or Tautulli is, so the execute
     endpoint's client-presence gate still refuses before any live service is touched. Enough
     to exercise the confirmation and client-presence gates without any live service."""
-    settings = Settings(  # type: ignore[call-arg]
-        data_dir=tmp_path, secret_key="k", destructive_actions_enabled=True
-    )
+    settings = Settings(data_dir=tmp_path, secret_key="k", destructive_actions_enabled=True)
     # The box the app decrypts the Radarr key with at execute time. Built exactly as main.py
     # builds it, off the same settings, so the api_key below opens under app.state.secret_box;
     # resolve_kdf_salt mints the per-install salt here and create_app reads the same one.
@@ -947,7 +945,7 @@ class TestLimitsNobodySavedDoNotBoundAReap:
     def _break_the_saved_limits(tmp_path: Path) -> None:
         """Corrupt the stored blob out of band, which is how this really happens: a value
         that stopped validating across an upgrade, or a hand-edited row."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             row = session.execute(select(Profile).order_by(Profile.id.asc()).limit(1)).scalar_one()
@@ -1278,7 +1276,7 @@ class TestTheSimulator:
     def test_the_histogram_covers_every_item(self, client: TestClient) -> None:
         result = self._simulate(client, 70)
 
-        assert sum(result["histogram"]) == 4  # type: ignore[arg-type]
+        assert sum(result["histogram"]) == 4
 
     def test_a_threshold_only_change_is_exact(self, client: TestClient) -> None:
         """Moving condemn_at re-compares a STORED score against a new number, which
@@ -1451,7 +1449,7 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
         assert result["exact"] is False
         assert result["condemned"] == 0
         assert result["reclaimable_bytes"] == 0
-        assert sum(result["histogram"]) == 0  # type: ignore[arg-type]
+        assert sum(result["histogram"]) == 0
         # No examples and no spared-by tally either: stale names would be acted on
         # exactly like stale counts.
         assert result["examples_newly_condemned"] == []
@@ -1585,7 +1583,7 @@ class TestPolicyPersistence:
         """
         stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         stored["signals"] = [{"signal": "unwatched", "weight": 42, "saturate_at": 1825, "floor": 0}]
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.add(
@@ -1619,7 +1617,7 @@ class TestPolicyPersistence:
         """Rescaling only fixes the budget. Anything else unreadable opens on the default,
         which must announce itself: a silent default reads as "this is what you configured"
         and is the one way this fallback could cause a deletion nobody chose."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.add(
@@ -1788,7 +1786,7 @@ class TestRequestedOnlyScopeNeedsSeerr:
         """A disabled Seerr is not one Reaper can ask, so the floor silently covers every
         show. Switching it off, rather than deleting the row, is the case a configured-vs-
         usable mix-up would miss."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             seerr = session.query(Instance).filter(Instance.kind == InstanceKind.SEERR).one()
@@ -1915,7 +1913,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         )
         payload["gates"] = [
             {**g, "enabled": False} if g["gate"] == "server_popularity" else g
-            for g in payload["gates"]  # type: ignore[union-attr]
+            for g in payload["gates"]
         ]
 
         warnings = client.post("/api/policy/validate", json=payload).json()["warnings"]

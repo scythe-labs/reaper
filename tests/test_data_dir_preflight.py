@@ -27,7 +27,7 @@ from reaper.services import backup, restore
 
 
 def _settings(data_dir: Path) -> Settings:
-    return Settings(data_dir=data_dir)  # type: ignore[call-arg]
+    return Settings(data_dir=data_dir)
 
 
 def test_ensure_data_dir_creates_and_leaves_nothing(tmp_path: Path) -> None:

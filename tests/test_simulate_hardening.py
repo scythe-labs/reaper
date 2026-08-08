@@ -252,7 +252,7 @@ EXPECTED = dict(Counter(r.bucket for r in ROWS))
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot carrying every explanation shape in ``ROWS``."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -575,7 +575,7 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
     stored scores; the stored evidence hash is exactly the draft's, so the frozen Facts are
     still what a scan would gather and the replay is allowed.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -769,7 +769,7 @@ def keep_rule_client(tmp_path: Path) -> Iterator[TestClient]:
     override, so ``was`` is condemn for all three and the only thing that moves them is the
     draft's own protections firing on the frozen facts.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -895,7 +895,7 @@ class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
         payload = REPLAY_PAYLOAD.model_copy(
             update={"gates": [GateSettingIn.model_validate(g) for g in gates]}
         )
-        return payload.model_dump()  # type: ignore[no-any-return]
+        return payload.model_dump()
 
     def test_the_panel_answers_instead_of_asking_for_a_scan(
         self, replay_client: TestClient
@@ -973,7 +973,7 @@ def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
     the request will carry that same policy back through the wire schema. Nothing here is
     contrived except the version number: this is what every upgraded install looks like.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -1108,7 +1108,7 @@ def _reach_client(
     which is exactly what a row frozen before ``Facts.history_reach_days`` existed looks
     like on disk.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -1234,7 +1234,7 @@ SPARED_ROWS: tuple[tuple[str, str, str], ...] = (
 @pytest.fixture
 def spared_client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot whose every row carries a hand spare, on the stored-score tier."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     # What a scan records about the lists it gathered membership under: without it the
@@ -1426,7 +1426,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         """
         assert _simulate(client, 40)["exact"] is True
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.execute(sa_update(Snapshot).values(list_config_hash=None))
@@ -1451,7 +1451,7 @@ class TestAListChangedSinceTheScanIsRefusedRatherThanReplayed:
         """
         assert _simulate(client, 40)["exact"] is True
 
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         with Session(engine) as session:
             session.execute(sa_update(Snapshot).values(list_config_hash=None))

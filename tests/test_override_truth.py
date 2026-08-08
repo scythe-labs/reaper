@@ -574,7 +574,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over a database seeded with one snapshot and three rows:
     a scan-condemned movie, a cautiously-protected one, and a structurally-protected
     one. Sync seeding, because the app builds its own async engine over the same file."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     with Session(engine) as s:
@@ -619,7 +619,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def _clock_rows(tmp_path: Path) -> dict[str, Any]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with Session(engine) as s:
         rows = {f.media_key: f.first_flagged_at for f in s.query(FirstFlagged).all()}
@@ -636,7 +636,7 @@ def _seed_clock(
 ) -> None:
     """Force a grace clock into a chosen (possibly stale) state, standing in for the scans that
     re-condemned an item while it still showed spared -- the B-2 burn-down."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with Session(engine) as s:
         s.merge(
@@ -754,7 +754,7 @@ class TestOverrideRoutesAndTheGraceClock:
 def show_client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over one show with two seasons: one the scan condemned, one it
     cautiously kept. Both carry the show's group key, so a whole-show override reaches them."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     show = "sonarr:1:42"

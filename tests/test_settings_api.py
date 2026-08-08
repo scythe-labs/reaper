@@ -37,7 +37,7 @@ pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 
 def _make(tmp_path: Path, **overrides: object) -> Settings:
-    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -543,7 +543,7 @@ class TestTheStoredTestResultDescribesWhatWasTested:
     @staticmethod
     def _row(client: TestClient, instance_id: int) -> dict[str, object]:
         listed = client.get("/api/settings/instances").json()
-        return next(row for row in listed if row["id"] == instance_id)  # type: ignore[no-any-return]
+        return next(row for row in listed if row["id"] == instance_id)
 
     def _saved_and_tested(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

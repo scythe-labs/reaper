@@ -364,7 +364,7 @@ class TestTheWalkSeesWhatItClaimsTo:
             "GateId", {m.name: m.value for m in GateId} | {"PROBE": "surface_walk_probe"}
         )
 
-        surface = _scoring_surface(gate_ids=tuple(future))  # type: ignore[arg-type]
+        surface = _scoring_surface(gate_ids=tuple(future))
 
         # Not in POLICY_AUTHORABLE_GATES, so the role resolves without a second declaration.
         assert "gate.surface_walk_probe: not-authorable" in surface

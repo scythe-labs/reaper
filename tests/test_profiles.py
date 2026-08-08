@@ -44,7 +44,7 @@ from reaper.services.scan_runner import ScanConfigError, build_gates
 
 @pytest.fixture
 async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

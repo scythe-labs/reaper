@@ -409,7 +409,7 @@ class TestServeWithTray:
         boom = RuntimeError("bind failed")
         error = launcher._serve_with_tray(
             module, _FakeServer(error=boom), 8437, object(), dock_icon=False
-        )  # type: ignore[arg-type]
+        )
         assert error is boom
         assert created[0].stopped.is_set()
 

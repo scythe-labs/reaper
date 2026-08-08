@@ -84,7 +84,7 @@ WATCHLIST_SLUG = "plex-watchlist-account-list4"
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 
@@ -630,7 +630,7 @@ class TestLegacySlugsAreRehomedOnUpgrade:
 
     async def _store_legacy_row(self, engine: AsyncEngine) -> str:
         """A keep-tag list as the pre-registry code stored it: no definition id."""
-        rule = ArrTagRule(self._sonarr_client(), ("keep",), "any", instance_id=1)  # type: ignore[arg-type]
+        rule = ArrTagRule(self._sonarr_client(), ("keep",), "any", instance_id=1)
         await lists.sync(engine, rule, kind=ListKind.WHITELIST)
         return rule.slug
 

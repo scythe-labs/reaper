@@ -85,7 +85,7 @@ def _policy(**overrides: object) -> PolicyBody:
         # single-signal policy carries the whole budget.
         "signals": (SignalSetting(signal=SignalId.UNWATCHED, weight=100, saturate_at=730),),
     }
-    return PolicyBody(**{**base, **overrides})  # type: ignore[arg-type]
+    return PolicyBody(**{**base, **overrides})
 
 
 def _split(unwatched: int, few_watchers: int) -> tuple[SignalSetting, ...]:
@@ -1380,7 +1380,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
     def _pop(self, **overrides: object) -> PolicyBody:
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
-        return _policy(gates=(GateSetting(**{**base, **overrides}),))  # type: ignore[arg-type]
+        return _policy(gates=(GateSetting(**{**base, **overrides}),))
 
     def _pop_with_dormancy_floor(self, threshold: int) -> PolicyBody:
         """The same gate beside a dormancy floor, which decides whether the window matters."""
@@ -1403,7 +1403,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
-            gates=(GateSetting(**{**base, "enabled": False, **overrides}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False, **overrides}),),
             protect_conditions=(ConditionSpec(field="recent_watchers", op=op, value=1),),
         )
 
@@ -1483,7 +1483,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
-            gates=(GateSetting(**{**base, "enabled": False}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False}),),
             protect_conditions=(
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=5),
@@ -1534,7 +1534,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         with_bystanders = _policy(
-            gates=(GateSetting(**{**base, "enabled": False}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False}),),
             protect_conditions=(
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),
                 ConditionSpec(field="recent_watchers", op=Op.LTE, value=9),
@@ -3906,13 +3906,13 @@ class TestConvertListProtections:
     def _rules(body: dict[str, object]) -> list[str]:
         return [
             str(c["value"])
-            for c in body.get("protect_conditions") or []  # type: ignore[union-attr]
+            for c in body.get("protect_conditions") or []
             if isinstance(c, dict) and c.get("field") == "on_list"
         ]
 
     @staticmethod
     def _gate_ids(body: dict[str, object]) -> set[str]:
-        return {str(g.get("gate")) for g in body.get("gates") or [] if isinstance(g, dict)}  # type: ignore[union-attr]
+        return {str(g.get("gate")) for g in body.get("gates") or [] if isinstance(g, dict)}
 
     def test_enabled_gates_become_rules_and_the_keys_leave(self) -> None:
         converted = self._convert(self._legacy())
@@ -3928,7 +3928,7 @@ class TestConvertListProtections:
         """The operator had the protection off; the Lists screen now says "not used by
         your policy" where the switch used to be."""
         legacy = self._legacy()
-        for gate in legacy["gates"]:  # type: ignore[union-attr]
+        for gate in legacy["gates"]:
             if gate["gate"] in ("whitelisted", "curated_list"):
                 gate["enabled"] = False
 

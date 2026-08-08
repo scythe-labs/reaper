@@ -136,7 +136,7 @@ class TestCachesLiveInTheirOwnDatabase:
     """
 
     def test_the_two_databases_are_different_files(self, tmp_path: Path) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
 
         assert settings.database_url != settings.cache_database_url
         assert "reaper.db" in settings.database_url
@@ -192,7 +192,7 @@ class TestScanClientsCarryTheTlsChoice:
     async def test_build_sources_passes_each_rows_own_choice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_engine(settings)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
