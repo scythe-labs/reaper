@@ -182,7 +182,7 @@ row moving is indistinguishable from one that never started.
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
-| 5 | Deletions | not started | 0 of 4 | |
+| 5 | Deletions | **in progress** | 0 of 4 | |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
 | 7 | Wire contract | not started | 0 of ~4 | C7 outstanding |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
