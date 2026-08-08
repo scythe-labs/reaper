@@ -2943,6 +2943,38 @@ stacking `reaper-keep` into an eleven-row-tall cell.
   `nowrap` is a recorded rule-139 exemption in `index-outside-text.test.ts`, not a violation:
   scrolling is the remedy, where for a clipped container it would be the bug.
 
+## On SQLite, the transaction a migration runs in is not the one env.py opens (2026-08-07)
+
+Fixing #564 (a failed batch recreate strands `_alembic_tmp_<table>` and wedges every later
+boot) is two lines of SQLAlchemy's documented pysqlite recipe. Proving it was the part with a
+trap in it.
+
+- **`context.begin_transaction()` at env.py's call site is a no-op on SQLite.**
+  `SQLiteImpl.transactional_ddl` is `False`, and Alembic reads that to mean "wrap each
+  migration, not the whole run": the outer call returns a `nullcontext()` and the real
+  transaction is opened per migration, inside `run_migrations`. So the obvious test shape —
+  patch `context.run_migrations` and do a batch recreate where a migration body would run —
+  probes **no transaction at all**. It went green on the unfixed tree by committing the whole
+  recreate, and the assertion that caught it was not "nothing was stranded" (that passes too,
+  since a completed recreate renames the temp table away) but the one checking the rollback was
+  total. ⇒ A test standing in for a migration body is not a migration. Drive the real runner
+  over a real migration, or the transaction under test is one nothing opened.
+- **Only the FIRST recreate in a migration is exposed**: pysqlite opens no transaction for DDL,
+  so the first `CREATE TABLE _alembic_tmp_X` autocommits and the `INSERT INTO … SELECT` after it
+  opens the implicit transaction that every later statement joins.
+- **A migration does not have to look like it recreates, and counting the ones that do by eye
+  undercounts.** Recorded off the live statement stream, a fresh `alembic upgrade head` performs
+  **three** batch recreates, each the first in its own migration and so each exposed — and
+  **two of the three are `add_column` calls**. Alembic rebuilds the table for an `add_column`
+  whose `server_default` is a ClauseElement, and `sa.false()` is one where `"0"` would not be.
+  The issue's hand-written list of exposed sites named neither, and named only the three
+  migrations that visibly `alter_column`. ⇒ Ask the statement stream which migrations recreate;
+  reading `batch_op.` calls answers a different question.
+- **The failure needs no crash.** Any exception does it, and the one to expect is the ordinary
+  authoring slip rule 148 now warns about: dropping a column before the index sitting on it,
+  which raises *after* the temp table is committed and is invisible against a fresh database,
+  because a fresh database has no index to trip over.
+
 ## Prior art
 
 Read as of 2026-07, at default settings. These are live projects and any of them may have
