@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from collections.abc import Set as AbstractSet
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -2200,7 +2201,9 @@ class TestGatherEndToEnd:
         # of opening a second box saying the same thing (rule 144).
         cause = season_scan.no_key_reason(identity.MatchStatus.UNMATCHED)
         assert guard.detail == f"could not check who is part-way through it: {cause}"
-        assert by_key["sonarr:1:77:2"].facts.days_observed_unwatched.reason == cause
+        unwatched = by_key["sonarr:1:77:2"].facts.days_observed_unwatched
+        assert isinstance(unwatched, Unknown)
+        assert unwatched.reason == cause
 
     async def test_a_show_without_files_logs_no_content(self, cache_engine: AsyncEngine) -> None:
         """A show Sonarr has no downloaded episodes for is dropped as no_content, and its
@@ -2352,7 +2355,7 @@ class TestFinalEpisodes:
 
 
 class TestKeepLastApplies:
-    def _index(self, *, shows: set[str] = frozenset()) -> requested_by.RequestIndex:
+    def _index(self, *, shows: AbstractSet[str] = frozenset()) -> requested_by.RequestIndex:
         return requested_by.RequestIndex(
             available=True,
             movie_keys=frozenset(),

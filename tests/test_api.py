@@ -1424,7 +1424,8 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
     """
 
     def _simulate(self, client: TestClient, policy: dict[str, Any]) -> dict[str, Any]:
-        return client.post("/api/policy/simulate", json=policy).json()
+        body: dict[str, Any] = client.post("/api/policy/simulate", json=policy).json()
+        return body
 
     def test_the_premise(self, client: TestClient) -> None:
         """No row here froze its Facts, so the replay tier is unreachable by construction."""

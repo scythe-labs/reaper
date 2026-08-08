@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -127,7 +127,7 @@ async def _seed_instances(session: AsyncSession, media_keys: Iterable[str]) -> N
     await session.flush()
 
 
-async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int | None]]) -> int:
+async def _snapshot_with(session: AsyncSession, condemned: Sequence[tuple[str, int | None]]) -> int:
     """A snapshot plus a set of condemned movie candidates: (media_key, size_bytes).
 
     A ``None`` size is an item nothing would measure, which is not the same as a zero."""
@@ -1444,7 +1444,7 @@ class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
                 snapshot_id=snapshot_id,
                 approved_by="admin",
                 max_unmeasured=5,
-                only_media_keys=["radarr:1:3"],
+                only_media_keys={"radarr:1:3"},
             )
 
     async def test_a_selection_keeping_one_measured_item_still_plans(
@@ -1462,7 +1462,7 @@ class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
             snapshot_id=snapshot_id,
             approved_by="admin",
             max_unmeasured=5,
-            only_media_keys=["radarr:1:1", "radarr:1:3"],
+            only_media_keys={"radarr:1:1", "radarr:1:3"},
         )
 
         ordered = [s.media_key for s in await _steps(session, run.id)]

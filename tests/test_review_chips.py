@@ -395,6 +395,7 @@ class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
             # horizon is not what is being measured here -- the arrival date is.
             horizon=now - timedelta(days=400),
         )
+        assert reference is not None
         facts = _never_played_facts(dormancy_days(reference, now=now))
         result = MinDormancyGate(
             GateConfig(GateId.MIN_DORMANCY, threshold=self.WAITS_DAYS)

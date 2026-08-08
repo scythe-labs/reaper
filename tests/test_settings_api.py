@@ -541,9 +541,10 @@ class TestTheStoredTestResultDescribesWhatWasTested:
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
 
     @staticmethod
-    def _row(client: TestClient, instance_id: int) -> dict[str, object]:
+    def _row(client: TestClient, instance_id: int) -> dict[str, Any]:
         listed = client.get("/api/settings/instances").json()
-        return next(row for row in listed if row["id"] == instance_id)
+        row: dict[str, Any] = next(r for r in listed if r["id"] == instance_id)
+        return row
 
     def _saved_and_tested(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
