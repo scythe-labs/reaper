@@ -1160,7 +1160,12 @@ class PersonDetailOut(BaseModel):
 
 
 class WhitelistEntryOut(BaseModel):
-    """One hand-overridden item, as the "Spared" / overrides list shows it."""
+    """One hand-overridden item, as ``POST /api/override`` hands it back.
+
+    Pydantic ships a class docstring as the schema ``description``, so this renders in the
+    API reference. It used to say "as the Spared / overrides list shows it", naming a list
+    surface that retired with ``GET /api/whitelist`` -- a reference telling a script author
+    to go looking for a view that is not there (rules 25, 64)."""
 
     media_key: str
     title: str
@@ -1173,20 +1178,12 @@ class WhitelistEntryOut(BaseModel):
     created_at: str
 
 
-#: The most days a hand-spare may be set for -- ten years, a floor-and-ceiling so a typo can
-#: neither reap the file tomorrow (``ge=1``, below) nor set a nonsense century-long clock.
+#: The most days a hand-spare may be set for -- ten years, so a typo cannot set a nonsense
+#: century-long clock. A ceiling only: the floor is ``ge=0`` below, and ``0`` is the default
+#: and means forever, which is the keep direction. This used to claim a ``ge=1`` floor
+#: "so a typo cannot reap the file tomorrow" -- never implemented, and it would not have done
+#: that anyway, since ``ge=1`` admits the one-day spare it describes (rule 7/24).
 _MAX_SPARE_DAYS = 3650
-
-
-class SpareIn(BaseModel):
-    """Spare an item. The title is looked up server-side from the latest snapshot, so
-    the client sends only what identifies the file and, optionally, why."""
-
-    media_key: str = Field(max_length=_MAX_MEDIA_KEY)
-    note: str | None = Field(default=None, max_length=500)
-    spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
-    """How long to keep it: ``0`` (default) keeps it forever, a positive count keeps it that
-    many days and then the next scan re-judges it."""
 
 
 class OverrideIn(BaseModel):

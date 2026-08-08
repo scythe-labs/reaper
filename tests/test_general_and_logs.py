@@ -57,6 +57,14 @@ from reaper.main import create_app
 from reaper.services import app_settings
 from tests._auth import login
 
+#: How many served operations are fenced to the signed-in browser, hand-reconciled. Every
+#: irreversible authority plus every setting and credential write; an API key gets scanning,
+#: planning, the policy and the reap profile. The number is here rather than in a docstring
+#: because it was in one for two releases, drifting once per route added while
+#: ``test_the_session_scheme_is_declared`` said "counted, not remembered" and asserted
+#: nothing (rule 144).
+FENCED_OPERATIONS = 48
+
 
 class TestScanProgressPercent:
     """The bar reads a monotonic 0-100, never a raw done/total whose denominator changes
@@ -692,14 +700,15 @@ class TestTheApiKeyLane:
         assert _api_key_allowed("PUT", "/api/settings/safety") is False
         assert _api_key_allowed("PUT", "/api/settings/general") is False
         assert _api_key_allowed("PUT", "/api/settings/plex/connection") is False
-        # Recording a decision by hand is a signed-in act, not an automation one, and the
-        # read is the only part of the keep list a key gets. Pinned because #326 rests on
-        # it: the 404 those two writes can raise is reachable from no script, which is what
-        # settled it as a wording fix rather than a behavior one.
-        assert _api_key_allowed("GET", "/api/whitelist") is True
-        assert _api_key_allowed("POST", "/api/whitelist") is False
+        # Recording a decision by hand is a signed-in act, not an automation one. Pinned
+        # because #326 rests on it: the 404 these writes can raise is reachable from no
+        # script, which is what settled it as a wording fix rather than a behavior one.
+        # There used to be a third line here, `GET /api/whitelist` allowed, pinning that the
+        # read was the one part of the keep list a key got. That route is gone and so is the
+        # behavior, so the case retires rather than being handed a stand-in: `/api/candidates`
+        # is already asserted above, and it is not the same question anyway -- an override on
+        # an item the latest snapshot does not hold appears in neither.
         assert _api_key_allowed("POST", "/api/override") is False
-        assert _api_key_allowed("DELETE", "/api/whitelist/{media_key}") is False
         assert _api_key_allowed("DELETE", "/api/override/{media_key}") is False
 
 
@@ -824,9 +833,9 @@ class TestTheAuthBoxDescribesTheFence:
 
 class TestEveryOperationSaysWhichCredentialReachesIt:
     """The auth box tells the truth once; these put it on the operation the reader is
-    looking at. A scheme applied document-wide renders a working auth box over all 87,
-    so try-it-out looked available on routes that answer 403 -- the reader had no way to
-    tell which without sending the request.
+    looking at. A scheme applied document-wide renders a working auth box over every
+    operation in the document, so try-it-out looked available on routes that answer 403 --
+    the reader had no way to tell which without sending the request.
     """
 
     def _operations(self, client: TestClient) -> list[tuple[str, str, dict[str, Any]]]:
@@ -838,11 +847,13 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         ]
 
     def test_the_session_scheme_is_declared(self, client: TestClient) -> None:
-        """A fenced operation narrows to this scheme, so a missing declaration would
-        leave 42 operations pointing at a credential the document never defines.
+        """A fenced operation narrows to this scheme, so a missing declaration would leave
+        every fenced operation pointing at a credential the document never defines.
 
-        Counted, not remembered: #117 moved the two fairness reads behind the browser,
-        which took the number from 40 to 42.
+        **Counted here, not remembered.** This docstring used to name the figure (42, then
+        40 before #117 moved the two fairness reads behind the browser) and nothing asserted
+        it, so it read as measured while drifting once per route added: it was 42 against a
+        real 48. The count moved into the assertion below, where a wrong one fails.
         """
         schema = client.get("/api/openapi.json").json()
         schemes = schema["components"]["securitySchemes"]
@@ -855,6 +866,19 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         # script, so leading with Session is what leaves try-it-out working signed in.
         assert schema["security"] == [{"Session": []}, {"ApiKey": []}]
 
+        # The figure this docstring used to carry, now where a wrong one fails. Reconcile it
+        # by hand when a route is fenced or unfenced (rule 145): the walk below counts what
+        # the document declares, and a fence that never reached the schema is missing from
+        # both the count and the flag-shaped assertions above it.
+        fenced = sum(
+            1 for _, _, op in self._operations(client) if op.get("security") == [{"Session": []}]
+        )
+        assert fenced == FENCED_OPERATIONS, (
+            f"{fenced} operations are fenced to the browser, not {FENCED_OPERATIONS}. If a "
+            "route was deliberately fenced or unfenced, update FENCED_OPERATIONS; if not, a "
+            "write just became reachable by an API key."
+        )
+
     def test_the_routes_a_live_key_was_refused_on_are_marked(self, client: TestClient) -> None:
         """Rule 119: the expectation is the evidence from issue #104, driven with a real
         key against a real install, not a re-reading of the allowlist. Each of these
@@ -866,7 +890,6 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             if op.get("security") == [{"Session": []}]
         }
         for refused in (
-            ("POST", "/api/whitelist"),
             ("POST", "/api/override"),
             ("DELETE", "/api/override/{media_key}"),
             ("PUT", "/api/settings/plex"),
@@ -921,7 +944,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         # The half a bare cookie is enough for.
         assert panel.get("/api/candidates").status_code == 200
         # The same credential, one unsafe method, no header.
-        refused = panel.post("/api/whitelist", json={})
+        refused = panel.post("/api/override", json={})
         assert refused.status_code == 403
         assert "CSRF" in refused.json()["detail"]
 
@@ -1044,13 +1067,13 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
     def test_the_note_does_not_displace_what_the_route_does(self, client: TestClient) -> None:
         """Prepended, never substituted: a route's own description is the reason someone
         is reading the entry at all."""
-        _, _, spare = next(
+        _, _, override = next(
             (m, p, op)
             for m, p, op in self._operations(client)
-            if (m, p) == ("POST", "/api/whitelist")
+            if (m, p) == ("POST", "/api/override")
         )
-        assert "Spare an item" in spare["description"]
-        assert "—" not in spare["description"]  # rule 21
+        assert "Override an item's verdict by hand" in override["description"]
+        assert "—" not in override["description"]  # rule 21
 
 
 def _request(

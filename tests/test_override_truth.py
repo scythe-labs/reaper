@@ -883,17 +883,18 @@ class TestAHandDecisionLeavesARecord:
         assert "decision=reap" in new[0]
         assert "prior=None" in new[0]
 
-    @pytest.mark.parametrize("route", ["/api/override", "/api/whitelist"])
-    def test_clearing_one_records_what_it_used_to_be(self, client: TestClient, route: str) -> None:
+    def test_clearing_one_records_what_it_used_to_be(self, client: TestClient) -> None:
         """The row is gone after this, so the log is the only surviving record.
 
-        Both delete routes, because they are line-for-line the same body under two names
-        and only one was driven -- the shape rule 72 exists for. A record that survives an
-        un-spare on one path and not the other is the same silence, reachable from the UI.
+        **One route, and it used to be parametrized over two.** ``DELETE /api/whitelist``
+        was line for line the same body under a second name, so this drove both to keep the
+        record from surviving on one path and not the other (rule 72). That route is gone,
+        and the parametrize went with it rather than staying as a second id driving the same
+        handler, which would read as twice the coverage (rule 118).
         """
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
         before = logbuffer.RING.last_seq()
-        cleared = client.delete(f"{route}/radarr:1:22")
+        cleared = client.delete("/api/override/radarr:1:22")
         assert cleared.json() == {"removed": True}, cleared.text
 
         new = self._overrides(before)
@@ -911,11 +912,10 @@ class TestAHandDecisionLeavesARecord:
         assert "prior=spare" in new[0]
         assert "decision=reap" in new[0]
 
-    @pytest.mark.parametrize("route", ["/api/override", "/api/whitelist"])
-    def test_clearing_nothing_says_nothing(self, client: TestClient, route: str) -> None:
+    def test_clearing_nothing_says_nothing(self, client: TestClient) -> None:
         """No override to remove is not a decision, and a line for it would read as one."""
         before = logbuffer.RING.last_seq()
-        response = client.delete(f"{route}/radarr:1:99")
+        response = client.delete("/api/override/radarr:1:99")
 
         assert response.json() == {"removed": False}
         assert self._overrides(before) == []

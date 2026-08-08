@@ -2015,13 +2015,14 @@ export const api = {
   syncLists: (target: { list_id?: number } = {}) => post<ListSyncResult>("/api/lists/sync", target),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
-  // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.
-  // `whitelist`, `spare` and `unspare` used to sit here too, uncalled by anything: three
-  // more ways to write the same safety-adjacent row, with nothing to tell a reader which
-  // one the app actually used (rule 38, R-6). Their routes are still served, but only the
-  // READ is reachable by an API key: `_API_KEY_WRITES` admits scanning, planning, the
-  // policy and the profile, so a key meets a 403 on both writes. This line offered the
-  // lane all three, and #326 was filed against the refusal that mistake implied.
+  // The keep list has one pair of methods, `override` / `clearOverride` below, and now one
+  // pair of routes behind them. `whitelist`, `spare` and `unspare` used to sit here too,
+  // uncalled by anything: three more ways to write the same safety-adjacent row, with nothing
+  // to tell a reader which one the app actually used (rule 38, R-6). The methods went first
+  // and the routes stayed served; both are gone now, so there is one way to write the row.
+  // Neither survivor is reachable by an API key: `_API_KEY_WRITES` admits scanning, planning,
+  // the policy and the profile. This line offered the lane all three, and #326 was filed
+  // against the refusal that mistake implied.
   /** Override a verdict by hand -- spare (keep) or reap (force onto the list). A show's
    *  media_key covers all its seasons. `spareDays` is how long a spare keeps it: 0 = forever,
    *  a positive count that many days; ignored for a reap. */

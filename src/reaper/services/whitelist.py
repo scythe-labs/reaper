@@ -239,12 +239,6 @@ async def override_for(session: AsyncSession, media_key: str) -> str | None:
     return entry.decision if entry is not None else None
 
 
-async def list_spared(session: AsyncSession) -> list[WhitelistEntry]:
-    """The overridden items, newest first, for the "Spared" view."""
-    rows = await session.execute(select(WhitelistEntry).order_by(WhitelistEntry.created_at.desc()))
-    return list(rows.scalars().all())
-
-
 async def set_override(
     session: AsyncSession,
     *,
@@ -289,30 +283,6 @@ async def set_override(
         entry.spare_expires_at = expires_at
     await session.flush()
     return entry
-
-
-async def spare(
-    session: AsyncSession,
-    *,
-    media_key: str,
-    title: str,
-    note: str | None,
-    spare_days: int = 0,
-    now: datetime | None = None,
-) -> WhitelistEntry:
-    """Record a spare -- a ``"spare"`` override. Kept as the common-case shorthand.
-
-    ``spare_days`` is the keep length (``0`` = forever); see :func:`set_override`.
-    """
-    return await set_override(
-        session,
-        media_key=media_key,
-        title=title,
-        decision="spare",
-        note=note,
-        spare_days=spare_days,
-        now=now,
-    )
 
 
 async def remove_override(session: AsyncSession, *, media_key: str) -> bool:
