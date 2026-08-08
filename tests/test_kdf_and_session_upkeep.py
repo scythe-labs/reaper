@@ -34,6 +34,25 @@ def _legacy_box(n: int, *, salt: bytes | None) -> object:
     return MultiFernet([Fernet(crypto._derive_fernet_key("the-key", write_salt, n))])
 
 
+def test_the_cheap_kdf_derives_a_different_key_per_cost() -> None:
+    """The class below is vacuous unless two costs derive two keys, and cannot notice.
+
+    ``tests/conftest.py`` replaces ``_derive_fernet_key`` with a cheap one for the session, so
+    everything here runs against the wrapper rather than against scrypt at 64 MiB. Every test
+    below reads "data written at the old cost still opens under the new one" -- which a wrapper
+    mapping every cost to ONE key satisfies by making the two costs the same key, silently.
+    Measured on a deliberately collapsing wrapper: 30 tests pass, and four of the six
+    compatibility tests prove nothing.
+
+    So the wrapper's injectivity is pinned here, beside the suite that leans on it (rule 145).
+    Against the real derivation this holds trivially, which is the point: it can only fail for
+    a harness that stopped standing in for it.
+    """
+    assert crypto._derive_fernet_key("the-key", SALT) != crypto._derive_fernet_key(
+        "the-key", SALT, 2**14
+    )
+
+
 class TestTheRaisedCostStillOpensEverything:
     """Every derivation this codebase has shipped, encrypted-then-read across the change."""
 
@@ -125,6 +144,9 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
         assert built == [], "a token the current derivation opens must cost nothing extra"
 
         old = _legacy_box(2**14, salt=SALT)
+        # Building the old box derives a key of its own, under the same patch, so the
+        # assertion below reads the fixture rather than the miss unless this is cleared.
+        built.clear()
         assert box.decrypt(old.encrypt(b"y").decode("ascii")) == "y"  # type: ignore[attr-defined]
         assert built, "a miss must build the superseded set"
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Session-wide test configuration.
 
-Three hermeticity guarantees, applied to every test:
+Four guarantees, applied to every test:
 
 **Cheap Argon2.** The hasher is patched to minimal cost parameters before any test
 runs. Production defaults (time_cost=3, memory_cost=65536) are intentionally slow; on a
@@ -9,6 +9,10 @@ CI runner that can add several minutes to the suite for the 100+ tests that hash
 verify a password via fixtures. The patch is safe: tests care only that authentication
 accepts the right password and rejects the wrong one, not about the hash's resistance
 to offline cracking.
+
+**Cheap at-rest KDF.** The same trade for ``crypto._derive_fernet_key``, whose scrypt cost
+every ``create_app`` lifespan pays once, and which 495 tests reach through a ``client``
+fixture. See :func:`pytest_configure`, which is where it is applied and why.
 
 **No developer state, no network.** The autouse fixture below keeps every test off the
 developer's real ``.env``/``.env.local`` and off the network, whether or not the test
@@ -39,7 +43,7 @@ from pwdlib.hashers.argon2 import Argon2Hasher
 from structlog._config import BoundLoggerLazyProxy
 
 import reaper.auth.passwords as _passwords
-from reaper import logbuffer
+from reaper import crypto, logbuffer
 from reaper.auth.ratelimit import (
     argon2_gate,
     login_throttle,
@@ -50,6 +54,56 @@ from reaper.config import Settings
 from reaper.logging import _NOISY_LOGGERS
 
 _passwords._hasher = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),))
+
+_real_derive_fernet_key = crypto._derive_fernet_key
+
+#: Every scrypt cost ``crypto`` declares, each mapped to its own small one. Built from the
+#: declaration rather than transcribed, so raising ``_SCRYPT_N`` extends this by itself and
+#: retiring a cost drops it. Distinct in, distinct out is the whole property here: the
+#: compatibility suite is made of "data written at cost A still opens", which says nothing at
+#: all once A and B derive the same key.
+_CHEAP_SCRYPT_N = {
+    n: 2 ** (2 + i) for i, n in enumerate(sorted({crypto._SCRYPT_N, *crypto._SUPERSEDED_SCRYPT_N}))
+}
+
+
+def _cheap_derive_fernet_key(secret: str, salt: bytes, n: int = crypto._SCRYPT_N) -> bytes:
+    """Stand in for ``crypto._derive_fernet_key`` at a cost no test reads."""
+    cheap = _CHEAP_SCRYPT_N.get(n)
+    if cheap is None:
+        raise AssertionError(
+            f"scrypt cost {n} is not one crypto.py declares, so there is no cheap cost here "
+            "that is guaranteed distinct from the others. Register it in "
+            "_SUPERSEDED_SCRYPT_N, or call the real derivation."
+        )
+    return _real_derive_fernet_key(secret, salt, cheap)
+
+
+def pytest_configure() -> None:
+    """Cheapen the at-rest KDF for the session, without collapsing what it distinguishes.
+
+    ``crypto._SCRYPT_N`` is 64 MiB and about 124ms per derivation, deliberately: the threat it
+    answers is an offline attacker holding a leaked database. Every ``create_app`` lifespan
+    derives one, and 495 tests take a ``client`` fixture, so production cost here is about 30%
+    of this suite's wall clock and buys no assertion anywhere.
+
+    **The constant is not patched, the function is.** ``test_kdf_and_session_upkeep.py`` reads
+    ``_SCRYPT_N`` and ``_SUPERSEDED_SCRYPT_N`` directly -- it pins that new data is written
+    under the highest cost, and five of its boxes are built at a hardcoded old one -- so moving
+    either constant breaks the suite that exists to prove nothing was stranded.
+
+    **And the mapping is injective, because that suite cannot tell if it is not.** Every
+    compatibility test there reads "written at cost A, opens today"; under a wrapper sending
+    every cost to one key they all hold vacuously, measured at 30 passing with four proving
+    nothing. ``test_the_cheap_kdf_derives_a_different_key_per_cost`` is what carries that
+    instead (rule 145).
+
+    In ``pytest_configure`` rather than at module level, so ``import tests.conftest`` cannot
+    apply it either. It cannot reach production by any route: ``tests/`` is outside the wheel,
+    there is no root ``conftest.py``, and nothing in ``src/`` imports this file.
+    """
+    crypto._derive_fernet_key = _cheap_derive_fernet_key
+
 
 _real_async_sleep = asyncio.sleep
 
