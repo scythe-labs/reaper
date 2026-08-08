@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: CI
 
-# One workflow, two lanes, one list of paths.
+# One workflow, three lanes, and the classification done in a job rather than in a filter.
 #
 # The expensive lane (uv install, mypy, pytest, a node build, an image build) costs ~3.5
 # minutes and cannot be changed by prose: .dockerignore drops `docs/` and `*.md`, the single
@@ -13,16 +13,22 @@ name: CI
 # "it's only docs" is false in this repo: that test reads CLAUDE.md, docs/ and .claude/, and
 # a prose-only commit is precisely when it has something to say.
 #
+# The third is the site: `manual/` and `website/` ship in neither the image nor the wheel, so
+# they need none of the above -- and they do need an .mdx build, or one that fails to compile
+# lands with nothing having tried.
+#
 # This used to be two workflow files whose `paths` and `paths-ignore` lists had to stay exact
 # complements of each other, with a comment in each saying "edit one and you must edit the
 # other". Two consequences retired that arrangement:
 #
-#   1. A path-filtered workflow that skips reports NO check run at all, so naming any of
-#      these jobs as a required check would leave the other lane's pull requests pending
-#      forever. Branch protection needs one check that always reports, which is `CI gate`
-#      below.
-#   2. One fact written in two places drifts. The list now exists once, in `changes`, and
-#      both lanes read it from there.
+#   1. A workflow skipped by its own path filter reports NO check run at all, so naming any
+#      of these jobs as a required check would leave the other lane's pull requests pending
+#      forever. (A JOB skipped by an `if:` is the opposite: it reports, with conclusion
+#      `skipped`, which is what lets `CI gate` below count one as a pass.) Branch protection
+#      needs one check that always reports, which is `CI gate`.
+#   2. One fact written in two places drifts. This file's copy now exists once, in `changes`,
+#      and every job here reads it from there. It is not the repository's only copy -- see
+#      the `changes` comment below, which names the two workflows that cannot read it.
 #
 # `changes` and `CI gate` each cost a runner start (~10s a side). The lane that skips still
 # skips, so the saving that motivated the split is intact.
@@ -58,8 +64,17 @@ jobs:
   # was written (rule 7/24). Two other workflows filter themselves and neither can read an
   # output of this one, because a `paths` filter decides whether a workflow starts at all:
   # `codeql.yml` restates the prose globs below as `paths-ignore`, twice, once per trigger;
-  # `docs-deploy.yml` carries its own list, which is the `site` lane by another spelling.
-  # `tests/test_repo_hygiene.py` counts all three so a fourth cannot arrive quietly.
+  # `docs-deploy.yml` carries its own, three globs against the two here.
+  #
+  # **`docs-deploy.yml`'s list and the `site` lane are near neighbors, not the same set**,
+  # and the gap runs both ways -- do not restate one as the other, which a correction here
+  # already did once. Editing `docs-deploy.yml` itself fires that workflow while landing in
+  # `code` here, so `site` skips; and a `.md` under `manual/` or `website/` is caught by the
+  # `*.md` arm first, so `site` skips while docs-deploy publishes it. That second one is
+  # latent while those trees hold only `.mdx` (#589).
+  #
+  # `tests/test_repo_hygiene.py` pins all three by name, so neither the count nor which
+  # file holds which can move without this comment being re-read.
   changes:
     name: Decide what to run
     runs-on: ubuntu-latest

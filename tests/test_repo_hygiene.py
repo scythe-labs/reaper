@@ -1895,17 +1895,25 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
     )
 
 
-#: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand:
-#: `codeql.yml` filters both its triggers, and `docs-deploy.yml` filters its one. `ci.yml` has
-#: none, deliberately -- it runs on everything and classifies the diff inside a job, so its
-#: verdict can be read by other jobs and a skipped lane still publishes a check run.
+#: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand and
+#: **named, not counted**. `codeql.yml` filters both its triggers, `docs-deploy.yml` filters its
+#: one, and `ci.yml` has none deliberately -- it runs on everything and classifies the diff
+#: inside a job, so its verdict can be read by other jobs and a skipped lane still reports.
 #:
-#: The number is here because two sentences describe this arrangement in prose and both were
-#: wrong: `ci.yml`'s `changes` comment and CLAUDE.md's "which jobs appear" paragraph each said
-#: nothing else in the repository restated the path list, while three lists sat in two files
-#: (rule 7/24). A count is what turns that from something a reader has to notice into
-#: something a fourth list cannot get past (rule 145).
-_EXPECTED_WORKFLOW_PATH_FILTERS = 3
+#: This is here because two sentences describe the arrangement in prose and both were wrong:
+#: `ci.yml`'s `changes` comment and CLAUDE.md's "which jobs appear" paragraph each said nothing
+#: else in the repository restated the path list, while three lists sat in two files (rule
+#: 7/24). It is a SET rather than a number because those sentences name which file holds which,
+#: and a count cannot see a filter moving between files -- move `docs-deploy.yml`'s to
+#: `release.yml` and a pinned `3` stays green while both sentences go false (rule 145: pin the
+#: population, and a scalar is not one).
+_WORKFLOW_PATH_FILTERS = frozenset(
+    {
+        "codeql.yml:push:paths-ignore",
+        "codeql.yml:pull_request:paths-ignore",
+        "docs-deploy.yml:push:paths",
+    }
+)
 
 
 def test_the_workflows_that_filter_themselves_by_path_are_the_ones_the_prose_names() -> None:
@@ -1914,12 +1922,13 @@ def test_the_workflows_that_filter_themselves_by_path_are_the_ones_the_prose_nam
     That is the whole reason more than one list exists, and it is not going away: a workflow
     skipped by its own filter publishes no check run at all, which is safe here only while
     neither of these two is a required check. `ci.yml` answers the same question the other
-    way, inside a job, which is why `CI gate` can report a skipped lane as a pass.
+    way, inside a job -- and a JOB skipped by an `if:` does report, with conclusion `skipped`,
+    which is what lets `CI gate` count one as a pass.
 
-    **Two prose copies say how many lists there are** -- `.github/workflows/ci.yml`'s `changes`
-    comment and CLAUDE.md's "Which jobs appear depends on what the commit touched" paragraph.
-    Both are named in the failure below, because a count that moves without them is the same
-    falsehood arriving a second time (rule 144).
+    **Two prose copies say which file holds which list** -- `.github/workflows/ci.yml`'s
+    `changes` comment and CLAUDE.md's "Which jobs appear depends on what the commit touched"
+    paragraph. Both are named in the failure below, because a set that moves without them is
+    the same falsehood arriving a second time (rule 144).
     """
     found: dict[str, list[str]] = {}
     workflows = REPO / ".github" / "workflows"
@@ -1937,22 +1946,18 @@ def test_the_workflows_that_filter_themselves_by_path_are_the_ones_the_prose_nam
                 if key in spec:
                     found[f"{path.name}:{event}:{key}"] = spec[key]
 
-    assert len(found) == _EXPECTED_WORKFLOW_PATH_FILTERS, (
-        f"expected {_EXPECTED_WORKFLOW_PATH_FILTERS} path filters across the workflows, found "
-        f"{len(found)}:\n"
-        + "\n".join(f"  {where} -> {globs}" for where, globs in found.items())
-        + "\n\nA NEW one needs both prose copies corrected in the same commit: the `changes`\n"
-        "job's comment in .github/workflows/ci.yml, and CLAUDE.md's paragraph on which jobs\n"
-        "appear. One that went away: drop it from both, then lower this number."
+    assert frozenset(found) == _WORKFLOW_PATH_FILTERS, (
+        "the workflow path filters moved.\n"
+        f"  new:  {sorted(frozenset(found) - _WORKFLOW_PATH_FILTERS) or 'none'}\n"
+        f"  gone: {sorted(_WORKFLOW_PATH_FILTERS - frozenset(found)) or 'none'}\n"
+        "  now:  " + "\n        ".join(f"{w} -> {g}" for w, g in found.items()) + "\n\n"
+        "Both prose copies name which file holds which, so either direction needs them\n"
+        "corrected in the same commit: the `changes` job's comment in\n"
+        ".github/workflows/ci.yml, and CLAUDE.md's paragraph on which jobs appear."
     )
-
-    codeql = {where: tuple(globs) for where, globs in found.items() if where.startswith("codeql")}
-    assert len(set(codeql.values())) == 1, (
-        "codeql.yml's two triggers ignore different paths:\n"
-        + "\n".join(f"  {where} -> {list(globs)}" for where, globs in codeql.items())
-        + "\n\nThey are one list written twice, so a push and a pull request on the same\n"
-        "commit would otherwise analyze different trees."
-    )
+    # What codeql's two lists CONTAIN is pinned by `_CODEQL_PATHS_IGNORE` above, which asserts
+    # each trigger equals it by value -- strictly stronger than the two agreeing with each
+    # other, so nothing is repeated here.
 
 
 BINARIES_WORKFLOW = REPO / ".github" / "workflows" / "binaries.yml"
