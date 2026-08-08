@@ -534,6 +534,18 @@ goes to `dev` under the escape hatch above.
 > with its environment cost 37.25s to 29.56s of CPU. Wall clock more than halved because the
 > overlap argument cuts both ways -- with the KDF gone the workers stop contending for it.
 
+**Exit run, on the branch tip after #579.** Every gate alone, by exit code: `ruff check`,
+`ruff format --check`, `mypy src/reaper tests/_fakes.py`, `alembic upgrade head` and `alembic
+check` against a temp `REAPER_DATA_DIR`, `npm run lint`, `prettier --check`, `npm run build` --
+all 0. `pytest -n auto` **41.71s, 4,101 passed and 1 skipped**; vitest **26.27s, 78 files and
+1,322 passed**. The scaffolding added four tests to the suite and cost the wall clock nothing.
+
+**Filed while executing, not fixed here.** #580: 204 `# type: ignore[arg-type]` comments remain
+in `tests/`, all inert, because only `tests/_fakes.py` joined the mypy run. Deleting them and
+widening the run are separable, and the second is a decision rather than a chore -- `mypy tests/`
+reports 1,308 errors today. #576 (four leaked SQLite connections) is byte-identical to `dev` and
+belongs there rather than here.
+
 ### Phase 3 — gates that land green
 
 The layering AST test (W6-5), the socket guard (W6-8), the three path-list sentences (W6-6), and
