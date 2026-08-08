@@ -875,12 +875,11 @@ commit. This wave is the one to run first because it shrinks the surface every l
 
 ### 1.1 Unreachable code
 
-**Thirteen of these fifteen rows landed in #597, and their `Site` line numbers are deliberately
-NOT re-anchored** — the symbol is gone, so the number can only point at whatever moved up into its
-place. S10's obligation covers citations to code that still exists, and every one of those was
-swept in the same PR. What is left here is `-i`'s poster chain (phase 5, PR 3), `-l` (killed, see
-below), and `-n` (phase 5, PR 4). Read the *Landed* row before acting on a line number in this
-table.
+**Every row here has landed, and the `Site` line numbers are deliberately NOT re-anchored** — the
+symbol is gone, so the number can only point at whatever moved up into its place. S10's obligation
+covers citations to code that still exists, and every one of those was swept in the PR that moved
+it. Thirteen rows landed in #597, `-i`'s poster chain in #600 and `-n` in #601; `-l` is killed, see
+below. Read the *Landed* row before acting on a line number in this table.
 
 | Site | What | Lines | Risk |
 | --- | --- | --- | --- |
@@ -931,6 +930,15 @@ table.
 > (`test_general_and_logs.py:699,869,1050`, `test_override_truth.py:897,925`,
 > `test_candidate_pagination.py:229,240`, `test_api.py:373,398`, `test_candidate_filters.py:266`).
 > Deleting them also orphans `services.whitelist.spare` and `list_spared` (rule 64).
+>
+> **Landed in #601, and the file count was low by three.** The five files above call the routes;
+> four more call `spare()` as *setup*, 32 times, and move to `set_override(..., decision="spare")`
+> because the shorthand goes with its only production caller. A count taken off a production sweep
+> understates a deletion every time the deleted thing was also a test convenience. Two of the five
+> were parametrized over both delete routes precisely because the handlers were byte-identical
+> (rule 72), and de-parametrizing them was the change rather than a symptom of one. `WhitelistEntryOut`
+> stays, serving `POST /api/override`; its description named the "Spared" list and was corrected in
+> the same PR (rule 64).
 
 > **Corrected: W1.1-m's `is_mappable` deletion removes a prose claim, not a safeguard.** The real
 > check is inline at `services/fairness.py:243`. Worth saying in the commit, since #550 is about

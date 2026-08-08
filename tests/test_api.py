@@ -370,18 +370,9 @@ class TestTheRunsApi:
         payload, and it should never reach a query."""
         long_key = "radarr:1:" + "9" * 200
 
-        assert (
-            client.post(
-                "/api/override", json={"media_key": long_key, "decision": "spare"}
-            ).status_code
-            == 422
-        )
-        assert (
-            client.post(
-                "/api/override", json={"media_key": long_key, "decision": "spare"}
-            ).status_code
-            == 422
-        )
+        refused = client.post("/api/override", json={"media_key": long_key, "decision": "spare"})
+
+        assert refused.status_code == 422, refused.text
 
     def test_an_unknown_key_is_refused_for_what_reaper_can_actually_know(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -399,15 +390,14 @@ class TestTheRunsApi:
         """
         monkeypatch.setattr(retention, "KEEP_SNAPSHOTS", 7)
 
-        for route, payload in (
-            ("/api/override", {"media_key": "radarr:1:never-scanned", "decision": "spare"}),
-            ("/api/override", {"media_key": "radarr:1:never-scanned", "decision": "spare"}),
-        ):
-            refused = client.post(route, json=payload)
-            assert refused.status_code == 404, refused.text
-            assert refused.json()["detail"] == (
-                "Reaper has no record of that item. It keeps only the last 7 scans."
-            )
+        refused = client.post(
+            "/api/override", json={"media_key": "radarr:1:never-scanned", "decision": "spare"}
+        )
+
+        assert refused.status_code == 404, refused.text
+        assert refused.json()["detail"] == (
+            "Reaper has no record of that item. It keeps only the last 7 scans."
+        )
 
     def test_a_plan_shows_the_literal_steps_and_the_confirmation_phrase(
         self, client: TestClient

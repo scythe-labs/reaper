@@ -622,7 +622,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entirely** -- once ``x-tagGroups`` is present Scalar builds the sidebar from the
         group members alone, so an ungrouped tag emits no navigation entry and its
         operations are reachable only by someone who already knows the path. Measured
-        against the shipped bundle by retagging one route: 86 of 87 operations
+        against the shipped bundle by retagging one route: every other operation
         navigable, the retagged one absent, and no stray heading.
         ``tests/test_openapi_tags.py`` refuses it for that reason, not for tidiness.
         """
@@ -641,8 +641,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "in": "header",
                 "name": "X-Api-Key",
                 # Built from the fence in api/middleware.py, never written beside it: the
-                # box that offers the key on all 87 operations has to say which ones it
-                # will actually get through.
+                # box that offers the key on every operation in the document has to say
+                # which ones it will actually get through. Neither sentence carries the
+                # operation count any more -- both said 87 against a real 96, drifting once
+                # per route added and reading as measured the whole time (rule 144). The
+                # count was load-bearing in neither, so it is gone rather than gated.
                 "description": api_key_scope_description(),
             }
             components["securitySchemes"]["Session"] = {
