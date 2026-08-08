@@ -69,7 +69,8 @@ def fixture_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _read(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
+    parsed: dict[str, Any] = json.loads(path.read_text())
+    return parsed
 
 
 def _write(path: Path, data: dict[str, Any]) -> None:

@@ -13,6 +13,7 @@ import json
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
@@ -1307,11 +1308,13 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
         added_early = reference_instant(
             last_played=None, added_at=now - timedelta(days=5000), horizon=horizon
         )
+        assert added_early is not None
         assert dormancy_days(added_early, now=now) == 90
         # Added after the horizon: measured from arrival, which is nearer still.
         added_late = reference_instant(
             last_played=None, added_at=now - timedelta(days=10), horizon=horizon
         )
+        assert added_late is not None
         assert dormancy_days(added_late, now=now) == 10
 
     def test_a_floor_the_history_cannot_reach_is_flagged(self) -> None:
@@ -1806,7 +1809,7 @@ _RESCALE_SHAPES: tuple[tuple[str, int, int], ...] = (
 )
 
 
-def _over_budget(weights: Sequence[int]) -> dict:
+def _over_budget(weights: Sequence[int]) -> dict[str, Any]:
     """A legacy body: the first ``len(weights)`` signal shapes, totalling anything at all."""
     return {
         "media_type": "tv",

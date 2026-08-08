@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import func, select
@@ -357,10 +358,10 @@ class TestACorruptPolicyBodyNeverRaises:
         assert active.body.keep_rating_rules == ()
 
 
-def _legacy_list_body() -> dict[str, object]:
+def _legacy_list_body() -> dict[str, Any]:
     """A stored body from before every list protected through its own keep rule: the keep
     tags on the policy, plus the two retired list gates, both enabled."""
-    body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+    body: dict[str, Any] = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
     body["protect_conditions"] = []
     body["keep_tags"] = ["reaper-keep"]
     body["keep_tags_match"] = "any"

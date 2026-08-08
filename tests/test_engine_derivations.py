@@ -201,9 +201,9 @@ class TestDormancyIsDerivedOnce:
         assert facts is not None
         assert isinstance(facts.days_observed_unwatched, Known)
         scored = facts.days_observed_unwatched.value
-        assert scored == dormancy_days(
-            reference_instant(last_played=None, added_at=added, horizon=horizon), now=cutoff
-        )
+        instant = reference_instant(last_played=None, added_at=added, horizon=horizon)
+        assert instant is not None
+        assert scored == dormancy_days(instant, now=cutoff)
         assert scored == 9, "9.96 days must read as 9, the bound that argues for keeping"
 
     def test_the_backtest_reads_plays_as_bare_id_and_instant(self) -> None:

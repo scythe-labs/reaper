@@ -79,7 +79,7 @@ def default_policy(media_type: str) -> PolicyBody:
     return DEFAULT_MOVIE_POLICY if media_type == "movie" else DEFAULT_TV_POLICY
 
 
-def default_gates(media_type: str) -> list:
+def default_gates(media_type: str) -> list[dict[str, Any]]:
     return MOVIE_GATES if media_type == "movie" else TV_GATES
 
 
@@ -95,7 +95,7 @@ def mutated(policy: PolicyBody, **changes) -> PolicyBody:
     return PolicyBody.model_validate(body)
 
 
-def balanced(signals: list[dict]) -> list[dict]:
+def balanced(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drawn weights rescaled to total exactly 100, keeping their relative shape.
 
     The generators below draw each weight independently, which no longer validates: the

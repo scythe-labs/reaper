@@ -334,7 +334,8 @@ class _Rendezvous:
                     await self._second_arrived.wait()
         else:
             self._second_arrived.set()
-        return await self._real(session)
+        seen: set[int] = await self._real(session)
+        return seen
 
 
 class TestOverlappingPassesAnnounceOnce:

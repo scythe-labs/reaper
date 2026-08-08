@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -253,7 +254,7 @@ class TestTheServerDoesNotDecidePeerTrust:
             class state:  # noqa: N801 -- mimics Starlette's app.state
                 trusted_proxies = ()
 
-        async def endpoint(scope: dict, receive: object, send: object) -> None:
+        async def endpoint(scope: dict[str, Any], receive: object, send: object) -> None:
             seen.append(client_ip(Request(scope)))
 
         async def _noop(*_args: object) -> None:

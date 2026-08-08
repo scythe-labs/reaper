@@ -16,6 +16,7 @@ import re
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -1382,7 +1383,7 @@ _EXPECTED_MANIFEST_KINDS = {
 }
 
 
-def _dependabot_updates() -> list[dict]:
+def _dependabot_updates() -> list[dict[str, Any]]:
     """Every ``updates:`` entry in ``.github/dependabot.yml``.
 
     A parsed list, not a text scan, so unlike the walks elsewhere in this file its population

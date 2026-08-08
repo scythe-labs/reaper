@@ -42,7 +42,8 @@ capture = load_script(_SCRIPT)
 
 
 def _committed() -> dict[str, Any]:
-    return json.loads(capture.OUT.read_text())
+    parsed: dict[str, Any] = json.loads(capture.OUT.read_text())
+    return parsed
 
 
 class TestTheCommittedCaptureCarriesNothingIdentifying:

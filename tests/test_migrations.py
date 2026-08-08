@@ -648,7 +648,7 @@ def test_the_migration_reads_a_recoverable_bar_exactly_as_the_shim_does() -> Non
     base = _legacy_body(recoverable=True)
 
     def variant(**gate_patch: Any) -> dict[str, Any]:
-        body = json.loads(json.dumps(base))
+        body: dict[str, Any] = json.loads(json.dumps(base))
         for gate in body["gates"]:
             if gate["gate"] == GateId.RATING_FLOOR.value:
                 gate.update(gate_patch)
