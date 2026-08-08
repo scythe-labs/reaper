@@ -10,13 +10,14 @@ These are filesystem checks -- no app boot, no fixtures, no network.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 import yaml
@@ -3738,3 +3739,308 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
         "Add the title/desc/offWarning to JOB_META, or drop the stale entry. The off-warning "
         "states what stops happening when the job is off (rule 55)."
     )
+
+
+# --- the layering CLAUDE.md's *Architecture* section describes ------------------------------
+
+#: The four packages *Architecture* names, top of the stack first. An import that reaches a
+#: package LATER in this tuple runs downward and is fine; one that reaches a package EARLIER
+#: runs upward, and refusing that is the whole of the test below.
+#:
+#: **`clients` above `engine` is the one position the prose does not hand you**, and the live
+#: edge is what fixes it: `clients/plex.py` takes `PlexFile`, `PlexItem`, `parse_guids` and
+#: `to_basename` from `engine/identity.py`, whose own *Why this module is pure* section says it
+#: holds data types and pure functions while the index builders that call Plex and Tautulli live
+#: above it and hand the frozen types in. So that edge is the shape the module was designed for,
+#: and the one that would be wrong is its reverse -- the decision engine reaching for a client,
+#: which is zero today and which this ordering is what holds at zero.
+#:
+#: **Scoped to these four deliberately.** `notify` and `services` are a real runtime two-cycle
+#: (`notify/discord.py` <-> `services/leaving_soon.py`), so a gate that swept every package under
+#: `src/reaper` would be red the day it landed and would get deleted rather than fixed.
+_LAYERS = ("api", "services", "clients", "engine")
+
+#: Every `.py` file under those four, which is the population the walk parses. It moves when a
+#: module is added, split or deleted, and it is pinned because a walk that quietly stopped
+#: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
+_EXPECTED_LAYERED_MODULES = 78
+
+#: Every ordered pair where one of the four imports another, reconciled by hand: all six
+#: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
+#: so a pair that goes to zero is a change someone declares here rather than one nobody sees.
+_EXPECTED_LAYER_EDGES = frozenset(
+    {
+        ("api", "services"),
+        ("api", "clients"),
+        ("api", "engine"),
+        ("services", "clients"),
+        ("services", "engine"),
+        ("clients", "engine"),
+    }
+)
+
+#: Every cross-package import that does NOT run at module import time, by importing file, target
+#: and how it is deferred. Three, and all three are ones `docs/SIMPLIFICATION_PLAN.md`'s wave 9
+#: proposes to delete -- which is why they are written out rather than counted. A deferred import
+#: is how a layering violation hides from a runtime graph, so a new one is a decision made here
+#: by hand, never a number bumped to make a red test go green.
+_DEFERRED_CROSS_PACKAGE_IMPORTS = frozenset(
+    {
+        ("reaper/api/routes.py", "reaper.services.scan_runner", "function-local"),
+        ("reaper/services/executor.py", "reaper.clients.plex", "TYPE_CHECKING"),
+        ("reaper/services/scan_runner.py", "reaper.engine.fields", "function-local"),
+    }
+)
+
+
+class _Edge(NamedTuple):
+    """One import statement, resolved to the packages it leaves and reaches."""
+
+    #: Repo-relative path of the importing file, posix-spelled.
+    path: str
+    lineno: int
+    #: The importing package and the imported one, both members of `_LAYERS`.
+    src: str
+    dst: str
+    #: The full dotted module the import names.
+    target: str
+    #: "" when the import runs at module import time, else how it is deferred.
+    deferred: str
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    """``if TYPE_CHECKING:`` and ``if typing.TYPE_CHECKING:``, and nothing else.
+
+    ``if not TYPE_CHECKING:`` is deliberately not one of them: it runs, so whatever it imports
+    is a runtime edge however it is spelled.
+    """
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    return isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+
+
+def _deferred_import_lines(tree: ast.Module) -> dict[int, str]:
+    """Line -> how it is deferred, for every import that does not run at module import time.
+
+    Two spellings defer one and the tree uses both: inside a ``def``/``async def``, which runs
+    on the first call, and inside ``if TYPE_CHECKING:``, which never runs. TYPE_CHECKING wins
+    where they nest, since that import has no runtime existence to defer.
+    """
+    deferred: dict[int, str] = {}
+    for scope in ast.walk(tree):
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for node in ast.walk(scope):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    deferred[node.lineno] = "function-local"
+    for scope in ast.walk(tree):
+        if isinstance(scope, ast.If) and _is_type_checking(scope.test):
+            for node in ast.walk(scope):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    deferred[node.lineno] = "TYPE_CHECKING"
+    return deferred
+
+
+def _imported_modules(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
+    """Every dotted module ``node`` reaches, made absolute against its containing ``package``.
+
+    ``import a.b`` and ``import a.b as c`` both name ``a.b``. ``from a.b import c`` names
+    ``a.b``, the ``c`` being a symbol here rather than a module, which is why the package is
+    read off the ``from`` clause and never off the imported names. A relative ``from . import
+    x`` resolves against ``package``: the four hold none today, and one that arrives must not
+    drop out of the walk unseen (rule 147).
+    """
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if not node.level:
+        return [node.module] if node.module else []
+    base = package.rsplit(".", node.level - 1)[0]
+    return [f"{base}.{node.module}" if node.module else base]
+
+
+def _edges_in(source: str, path: str) -> list[_Edge]:
+    """Every cross-package import in ``source``, for a file at repo-relative ``path``.
+
+    Split out from the walk so the classifier can be run against the import forms the tree
+    does not currently spell as well as the ones it does (rule 147).
+    """
+    parts = Path(path).with_suffix("").parts
+    src = parts[1]
+    # The containing package, which is what a relative import resolves against. The same
+    # expression serves `__init__.py`, where `.` means the package the file *is* rather than
+    # the one above it, because dropping the last part gets there from either side.
+    package = ".".join(parts[:-1])
+    tree = ast.parse(source)
+    deferred = _deferred_import_lines(tree)
+    edges: list[_Edge] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _imported_modules(node, package):
+            bits = target.split(".")
+            if len(bits) < 2 or bits[0] != "reaper" or bits[1] not in _LAYERS:
+                continue
+            if bits[1] == src:
+                continue
+            edges.append(
+                _Edge(path, node.lineno, src, bits[1], target, deferred.get(node.lineno, ""))
+            )
+    return edges
+
+
+@lru_cache(maxsize=1)
+def _layered_modules() -> tuple[tuple[str, str], ...]:
+    """Every module under the four packages, as (repo-relative posix path, source)."""
+    return tuple(
+        (p.relative_to(SRC.parent).as_posix(), p.read_text(encoding="utf-8"))
+        for layer in _LAYERS
+        for p in sorted((SRC / layer).rglob("*.py"))
+    )
+
+
+@lru_cache(maxsize=1)
+def _cross_package_edges() -> tuple[_Edge, ...]:
+    """Every import that leaves one of the four packages for another."""
+    return tuple(edge for path, source in _layered_modules() for edge in _edges_in(source, path))
+
+
+def test_the_four_packages_import_only_downward() -> None:
+    """CLAUDE.md's *Architecture* section describes a stack, and nothing held it to one.
+
+    The claim it makes is a dependency direction: routers sit on services, services compose
+    the decision engine and the HTTP clients, and neither of those two reaches back up. That
+    is true today and was true only because everyone who touched it happened to keep it true.
+    The failure it prevents is not a crash -- Python imports a cycle happily until it does
+    not -- it is `engine/` growing a reason to know about `services/`, at which point the one
+    place a fate is decided stops being separable from the code that acts on it.
+
+    **The pinned module count is the load-bearing half** (rule 145). A direction assertion is
+    a flag: it cannot tell a module that complies from one the walk never opened, so a scan
+    scoped to the wrong root, or one that stopped parsing, reports a clean stack while reading
+    nothing. Same for `_EXPECTED_LAYER_EDGES`, which is an equality for the same reason.
+
+    The plan this landed under expected the test to skip deferred imports to be green on day
+    one. Measured, it does not need to: all three cross-package imports that do not run at
+    module import time run downward, so they are held to the same rule as the rest and pinned
+    by name in the test below.
+    """
+    modules = _layered_modules()
+    assert len(modules) == _EXPECTED_LAYERED_MODULES, (
+        f"expected {_EXPECTED_LAYERED_MODULES} modules under {'/, '.join(_LAYERS)}/, walked "
+        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number. If you did not, the\n"
+        "walk lost part of the tree -- and every assertion below passes on what it cannot see."
+    )
+    rank = {layer: i for i, layer in enumerate(_LAYERS)}
+    upward = [e for e in _cross_package_edges() if rank[e.dst] < rank[e.src]]
+    assert not upward, (
+        "these imports run UP the stack:\n"
+        + "\n".join(f"  {e.path}:{e.lineno}  {e.src} -> {e.dst}  ({e.target})" for e in upward)
+        + "\n\nThe order is "
+        + " -> ".join(_LAYERS)
+        + ", and a package may only import one to its right. If the\n"
+        "import is right and the order is wrong, move _LAYERS and say why -- but read\n"
+        "engine/identity.py's 'Why this module is pure' section first: it is the reason the\n"
+        "decision engine is at the bottom and takes nothing from anywhere."
+    )
+    found = frozenset((e.src, e.dst) for e in _cross_package_edges())
+    assert found == _EXPECTED_LAYER_EDGES, (
+        "the set of package pairs that import each other moved.\n"
+        f"  new:  {sorted(found - _EXPECTED_LAYER_EDGES) or 'none'}\n"
+        f"  gone: {sorted(_EXPECTED_LAYER_EDGES - found) or 'none'}\n\n"
+        "A new pair is a layer boundary being crossed for the first time; one that went away\n"
+        "is a dependency the stack no longer has. Both are worth a sentence in the pull\n"
+        "request, and both are declared here rather than discovered later."
+    )
+
+
+def test_every_deferred_cross_package_import_is_named() -> None:
+    """An import that does not run at module import time is invisible to a runtime graph.
+
+    That is what makes the escape hatch worth pinning rather than counting. `if TYPE_CHECKING:`
+    and a `def`-local import are both legitimate -- they are how a genuine cycle gets broken --
+    and they are also exactly where a layering violation would go to hide, since the module
+    graph a tool draws does not have the edge at all.
+
+    All three of these are ones `docs/SIMPLIFICATION_PLAN.md`'s wave 9 proposes to delete,
+    having measured that none of them breaks the cycle it looks like it was written for. This
+    list is what makes that deletion visible: without it the walk skips the sites, the count
+    never moves, and the gate is blind to the one change it exists to watch.
+    """
+    deferred = frozenset(
+        (e.path, e.target, e.deferred) for e in _cross_package_edges() if e.deferred
+    )
+    assert deferred == _DEFERRED_CROSS_PACKAGE_IMPORTS, (
+        "the deferred cross-package imports moved.\n"
+        f"  new:  {sorted(deferred - _DEFERRED_CROSS_PACKAGE_IMPORTS) or 'none'}\n"
+        f"  gone: {sorted(_DEFERRED_CROSS_PACKAGE_IMPORTS - deferred) or 'none'}\n\n"
+        "One that went away is wave 9 landing, and the entry comes out. A NEW one needs a\n"
+        "reason written down: it is a cross-package dependency that no import graph will show,\n"
+        "so if it is here to break a cycle, name the cycle."
+    )
+
+
+def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> None:
+    """The walk above is worth what its parser can resolve, so the forms are run, not assumed.
+
+    Rule 147: a matcher ships with the spellings it accepts AND the ones it rejects. The
+    relative forms are the sharp ones -- the four packages hold none today, so nothing in the
+    tree would notice `from ..engine import x` silently resolving to nothing and dropping out
+    of the walk, which is a layering violation the gate reports as clean.
+    """
+    cases = {
+        "from reaper.engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
+        "from reaper.engine import gates": ("engine", "reaper.engine", ""),
+        "import reaper.clients.plex": ("clients", "reaper.clients.plex", ""),
+        "import reaper.clients.plex as plex": ("clients", "reaper.clients.plex", ""),
+        "from ..engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
+        "from ..engine import gates": ("engine", "reaper.engine", ""),
+        "if TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "TYPE_CHECKING",
+        ),
+        "if typing.TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "TYPE_CHECKING",
+        ),
+        "def f():\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        "async def f():\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        "class C:\n    def m(self):\n        from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        # It runs, so it is a runtime edge whatever the condition is called.
+        "if not TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "",
+        ),
+        # A class body runs at import time too.
+        "class C:\n    from reaper.engine import gates": ("engine", "reaper.engine", ""),
+    }
+    for source, (dst, target, deferred) in cases.items():
+        edges = _edges_in(source, "reaper/services/thing.py")
+        assert len(edges) == 1, f"expected one edge from {source!r}, got {edges}"
+        assert (edges[0].dst, edges[0].target, edges[0].deferred) == (dst, target, deferred), (
+            f"{source!r} classified as {edges[0].dst}/{edges[0].target}/"
+            f"{edges[0].deferred!r}, expected {dst}/{target}/{deferred!r}"
+        )
+
+    # And the forms that are correctly NOT an edge: the package importing itself, a package
+    # outside the four, and a third-party module whose name merely starts the same way.
+    for source in (
+        "from reaper.services.planner import MediaRef",
+        "from reaper.notify.discord import DiscordNotifier",
+        "from reaper.config import Settings",
+        "import structlog",
+    ):
+        assert not _edges_in(source, "reaper/services/thing.py"), f"should be no edge: {source}"
