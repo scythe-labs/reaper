@@ -4056,7 +4056,9 @@ def test_the_four_packages_import_only_downward() -> None:
         f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number -- AND the two prose\n"
         "copies of it, which nothing else asserts (rule 144): docs/SIMPLIFICATION_PLAN.md's S7\n"
         "paragraph names this constant and restates the figure, and its C3 checkpoint row does\n"
-        "too. Both were already stale by two when this message was written.\n"
+        "too. Both were already stale by two when this message was written. Leave the *Landed*\n"
+        "rows alone -- their figures are historical deltas, and editing one makes a correct\n"
+        "record false.\n"
         "If you did not add or delete one, the walk lost part of the tree -- and every\n"
         "assertion below passes on what it cannot see."
     )

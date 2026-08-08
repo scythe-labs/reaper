@@ -6,6 +6,8 @@ paths:
   - "src/reaper/services/restore.py"
   - "src/reaper/services/backup.py"
   - "src/reaper/api/settings.py"
+  - "src/reaper/api/plex.py"
+  - "src/reaper/api/backup.py"
 ---
 
 # Auth, secrets, and the artifacts that carry them

@@ -4,17 +4,28 @@
 Fourteen routes lifted out of ``api/settings.py`` whole: the link flow, the server and
 connection choice, the library shelf, and the watch-evidence mirror the shelf is read
 against. They keep the ``/api/settings`` prefix and their own ``PLEX`` tag, so the served
-document is unchanged by the move -- tags are per-route here, never router-level.
+document is equivalent by construction -- tags are per-route here, never router-level. The
+*sorted* document is byte-identical either side; the one thing that does move is `paths`
+insertion order, which nothing reads (Scalar renders by tag section, ``test_openapi_tags.py``
+sorts, and no snapshot is committed).
 
 **The seam is the tag, and it was already drawn.** Every route below was `PLEX`-tagged
 inside a 2,000-line file whose other routes are services, jobs, security and
 notifications; ``api/plex_trash.py`` and ``api/leaving_soon.py`` already sit beside it as
 sibling routers.
 
-The request accessors come from ``api.settings`` rather than being copied. Five routers
-already carry their own ``_factory``/``_settings``/``_box``, and phase 8's ``api/deps.py``
-collapses all five at once (``docs/SIMPLIFICATION_PLAN.md``, wave 3); a sixth copy here
-would grow exactly what that change exists to shrink, and make its count wrong.
+The request accessors come from ``api.settings`` rather than being copied. Seven modules
+already declare their own under two spellings -- ``_factory``/``_settings``/``_box`` in
+``api/auth.py``, ``api/backup.py``, ``api/settings.py`` and ``api/setup.py``, and ``_sessions``
+in ``api/routes.py``, ``api/runs.py`` and ``api/whitelist.py`` -- and phase 8's ``api/deps.py``
+collapses them at once
+(``docs/SIMPLIFICATION_PLAN.md``, wave 3). Named rather than counted, because a count in prose
+is a number nothing asserts. A copy here would grow exactly what that change exists to shrink.
+
+Two things are true of this router, as they are of ``api/settings.py`` it came from: **it
+requires a session** (these routes sit behind the auth gate, see ``api.middleware``), and
+**the Plex token is write-only** -- encrypted the instant it arrives and never read back to
+the browser.
 """
 
 from __future__ import annotations
@@ -671,7 +682,8 @@ async def reset_watch_evidence(
     source, so re-syncing it fetches the same rows back. The repair that restores the real
     numbers is on the source side, in Tautulli.
 
-    **Gated on the admin password, exactly like arming deletion (:func:`set_safety`) and
+    **Gated on the admin password, exactly like arming deletion
+    (:func:`reaper.api.settings.set_safety`) and
     confirming a restore (:func:`reaper.api.backup.restore_confirm`)** -- the same per-IP and
     per-account lockout, the same Argon2 concurrency gate, and the same refusal when no
     password has been set at all. It earns that gate on blast radius: the record is the only

@@ -727,7 +727,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(setup_router)
     app.include_router(settings_router)
-    # Right after its parent, so the Plex routes keep their place in `paths`.
+    # Beside its parent, which is where a reader looks for it. Not an ordering
+    # constraint: `paths` insertion order moves whatever the include order, and
+    # nothing reads it.
     app.include_router(plex_router)
     app.include_router(backup_router)
     app.include_router(router)

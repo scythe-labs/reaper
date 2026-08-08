@@ -2,7 +2,9 @@
 """Configuring Reaper from the web UI.
 
 Everything an operator needs to stand the tool up and keep it running lives here: the
-external services it reads from, the Plex link, the schedule, and the safety switch.
+external services it reads from, the schedule, and the safety switch. The Plex link and the
+library shelf moved to ``api/plex.py``, which keeps this prefix and restates the two facts
+below for its own readers.
 
 Two things are true of the whole router:
 

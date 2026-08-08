@@ -247,19 +247,15 @@ here first and never reconstructed later.
 | #591 | 3 | W6-6, audit | `_WORKFLOW_PATH_FILTERS` | no | On `dev`. The gate pinned a count, which cannot see a filter moving between files; now a set. `ci.yml`'s header contradicted the comment #586 fixed, 50 lines up. Opened #589, #590 |
 | #592 | 3 | W6-8, audit | `_is_allowed`, `_owner`, `_real_resolvers` | no | 3 hooks to 10. Five resolver siblings and both UDP forms escaped a live probe; `_host_of` crashed on an unhashable address and allowlisted a bare string. Every hook now driven refused and allowed, and a refusal names the test that owns it |
 | #593 | 4 | W10-2 | `InstanceError.status` | no | Latent as the correction says: the two 404 arms covered the base class and were right only against today's callees. Five arms now read one declaration. The gate walks `api/` by AST, pins 6 handlers and 5 responses, and bans a literal status; three routes had no status test at all |
-| #594 | 4 | W10-3 | `apply_stored_schedules` | **yes, named in the PR** | Boot calls the shared function. The correction's population difference is real and preserved: an orphaned stored row was a boot-only `KeyError` warning and is now an explicit event on both paths. Two boot tests where there were none, both driven red. Re-anchored `main.py:520-523`/`:705`/`:776` |
+| #594 | 4 | W10-3 | `apply_stored_schedules` | **yes, named in the PR** | Boot calls the shared function. The correction's population difference is real and preserved: an orphaned stored row was a boot-only `KeyError` warning and is now an explicit event on both paths. Two boot tests where there were none, both driven red. Re-anchored `main.py:520-523`/`:706` |
 | #595 | 4 | W10-6 | `_strut_comment`, `_bolding_and_strutted` | no | Comment-only in the CSS, as the correction says: the two rules are byte-identical and the enumeration omitted `.view-tab`. Six controls bold when chosen, five carry the strut, `.filter-mi` is exempt in writing. The gate reads the claim *sentence*, not the block, because the block's own narrative mention of `.view-tab` made the first version green on the very drift it was written for |
 | #596 | 4 | W10-7 | `plexServerQueries.invalidateAllPlex` | no | Decided to fix here rather than move to #550, on the finding body: the fix adds keys, so it is rule 79's class and not a comment correction. Five server-changing paths across two components, one declaration. No symptom confirmed by reading `App.tsx`'s gate, not assumed |
 | #597 | 5 | W1.1 a-h, i's `_SeriesWork.plan`, j, k, m, o; W7-3/4; W7-5's `detail` | `evaluate_rules`, `GateConfig.gate`, `_verdict(override=)`, `HealthOut` | no | 13 findings landed, W1.1-l killed. Two deletions were bigger than their rows: `_verdict`'s override took `blocked_holds_reap` and `safety_protected` with it (rule 64) and moved 14 reap assertions onto `reap_override_verdict_decoded`, the only caller production has; `is_available` took `MediaRequest.status` and the `MediaStatus` enum. `Condemn logic` daggered, `DECISION_SECTIONS` 17 to 18 |
 | #599 | 5 | W1.2 | `engine/backtest.py`, `engine/calibration.py` | no | 1,974 lines of engine and test, plus ~30 prose sites nothing would have failed on. `FALLBACK_REWATCH_PRIOR` is NOT rehomed: its only reader was `rewatch_prior`, whose only caller was `backtest.run`, so the correction is right that moving the pair moves dead code. The curve survives in `SIGNALS.md` and a new hygiene test holds the two source docstrings to it by name (rule 144), which is what the deleted `TestTheRewatchPrior` used to do. **The review found one real coverage loss and it is repaired here**: the suite's only non-default `window_days` sweep lived on the replay lane, so `TestTheWindowScoredAgainstIsThePolicysOwn` now pins both readers of the span on the live scan, driven red against each. M3c/M3g dropped, M3f done, open item 2 gone. S7: 78→76 modules, 49→47 loggers, 43→39 reasons |
 
+| #600 | 5 | W1.1-i's poster chain, rule 148 release M | `e6f7a8b9c0d1`, six write-only ORM attributes | no | **Row written after the fact, from the PR body**, which is why it is here and not in the landing commit; see #604. Rule 148 release M for six columns `src/`, `tests/` and `frontend/src/` only ever write. The attributes leave, nothing is dropped. Five are `NOT NULL` with no server default, so deleting the attribute alone breaks a fresh install's first write; the revision lands the shape ahead of them, per column: `sa.false()` where the retiring value is still a real answer (`profile.enabled`, `list_config.built_in`), nullable where there is no honest default (`pending_plex_login.pin_code`, `plex_server.owner_plex_account_id`, `profile.active_policy_id`). **Three traps, each found by driving rather than reading**: a `NOT NULL` FOREIGN KEY cannot take a `server_default` at all under `PRAGMA foreign_keys`; the `list_config` batch rebuild silently dropped `COLLATE NOCASE`, since reflection does not report collations, and two lists differing only in case then answered one keep rule; and `include_name` had to grow a `foreign_key_constraint` arm, because hiding a column from autogenerate does not hide its FK. Counter-proof at the previous head: the first settings save dies with `IntegrityError` on `profile.enabled` |
+| #601 | 5 | W1.1-n | `SpareIn`, `whitelist.spare`, `whitelist.list_spared`, three `/api/whitelist` routes | no | **Row written after the fact, from the PR body**; see #604. One way to write a keep-list row, not three. **Nine test files changed and that is not the usual warning sign**: five assert the deleted routes exist, which is what the PR removes, and two were parametrized over the byte-identical pair precisely because only one was driven (rule 72). **The plan's file count was wrong and the correction is the general lesson**: it said six, counting the production sweep; four more test files call `spare()` as setup 32 times, so a count taken off `src/` understates the work whenever the deleted thing was also a test convenience. The 32 rewrites were AST-compared at base and HEAD, 41 calls per side, zero mismatches. Review: 19 candidates, 7 survived, all tier 4. The one worth carrying forward is **one count in five ungenerated prose copies**, two in `main.py` and three in `test_general_and_logs.py`, all saying 87 operations and 42 fenced against a measured 96 and 48, stale before the PR and moved further by it |
 | #603 | 6 | W2, `season_scan` row | `guard_result`, `no_key_reason`, `_NO_KEY_REASONS` | no | 152 lines to `season_evidence.py`, every executable line byte-identical, and the served OpenAPI document byte-identical either side (194,926 bytes, built in-process from both revisions). `api/routes.py` no longer imports the scan module at all. Three review lanes found nothing at tiers 1-3. What they did find is the same class twice: comments moved with the code and were false on arrival ("kept beside its own builder", which stayed behind), and a docstring written for the pair claimed both are read by the simulator's replay when only `guard_result` is. 22 shifted plan citations re-anchored here under S10 rather than deferred to the exit sweep |
-
-**#600 and #601 landed with no row here, and this one cannot be written for them.** Both are
-phase 5 work merged on 2026-08-08; the table jumps #599 to #603. The rule above says this record
-is written first and never reconstructed later, so filling them in from commit subjects now would
-be exactly the reconstruction it forbids. Filed as an issue against their PR bodies, which are
-the only surviving source.
 
 ### Killed while executing
 
@@ -341,11 +337,13 @@ the case that will hit this first.
 lands under rule 145 adds another. Phase 6 splits two routers and phase 8 creates `api/deps.py` and
 moves `LAUNCHER_CONF_NAME` — both move populations that phase 3's gates count. Grep for the counter
 before closing a PR that adds or removes a member. **The phase-3 counters, by name:**
-`_EXPECTED_LAYERED_MODULES` (**77** modules under the four packages, and the figure has moved
-twice already: #599's deletion took it to 76 without this paragraph noticing, and phase 6's
-`api/plex.py` took it to 77. The gate's failure message now names this line and C3's, since
-nothing asserts either)
-and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (the three sites W9 deletes).
+`_EXPECTED_LAYERED_MODULES` (**77** modules under the four packages), the logger counter in
+`tests/test_capturable_loggers.py` (**48**, and it is the one phase 6 had to bump that this list
+did not name), and `_DEFERRED_CROSS_PACKAGE_IMPORTS` (the three sites W9 deletes). The module
+figure has moved twice already: #599's deletion took it to 76 without this paragraph noticing,
+and phase 6's
+`api/plex.py` took it to 77. Each gate's failure message now names its prose siblings, since
+nothing asserts them.
 
 **S8. Every PR diffs the behavioral baseline, and an unexplained line is a regression.** Phase 1
 freezes what the app currently *decides* about a real library. The test suite does not cover
@@ -1246,7 +1244,7 @@ Each of these files draws its own seams already, in banner comments or in the fa
 | `api/routes.py` | 2,789 | `api/review.py` (~1,315), `api/policy.py` (~480), `api/simulate.py` (~840), `api/about.py`. `routes.py` ceases to exist | Four banner comments already name the four. `main.py:47` imports only `router`, so the change is `include_router` calls |
 | `engine/policy.py` | 2,263 | `+policy_migrations.py` (~530), `+policy_warnings.py` (~1,030) | The two halves import the model and nothing imports them back. No cycle exists |
 | `components/Settings.tsx` | 3,086 | 6 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell (~180) | **The tests are already split per panel** (6 files). Three sibling panels were already extracted. Only the source never followed |
-| `api/settings.py` | 2,025 | `api/plex.py` (~630, 12 routes) | **Landed, and it is 14 routes as the correction says, not 12.** 698 lines out, settings 2,044 to 1,344. The served document is byte-identical, not merely equivalent: same 96 operations and the same sorted document either side. `plex.py` **imports** the request accessors from `settings.py` rather than copying them, so phase 8's `api/deps.py` still collapses five copies and not six |
+| `api/settings.py` | 2,025 | `api/plex.py` (~630, 12 routes) | **Landed, and it is 14 routes as the correction says, not 12.** 698 lines out, settings 2,044 to 1,344. The **sorted** document is byte-identical either side, same 96 operations; the one thing that moves is `paths` insertion order, which nothing reads. Reported as plain "byte-identical" first, which is the reassuring direction rule 144 warns about. `plex.py` **imports** the request accessors from `settings.py` rather than copying them, so phase 8's `api/deps.py` still collapses five copies and not six |
 | `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | The file draws the seams as banner comments, and the rule-146 dirty contract is computed from connection-section drafts only, so the other three cannot break it |
 | `App.tsx` | 1,225 | 5 components to `components/` (~520) | Three carry a comment saying they are "exported for its tests" |
 | `components/ReviewQueue.tsx` | 2,654 | `QueueFilterBar` (~330), `queueChips.tsx` (~60), delete the re-export shim | The filter block never reads `override`, `verdict` or a candidate. The shim's own comment calls itself transitional |
@@ -1353,7 +1351,9 @@ here is preventing a future divergence.
 - `components/Settings.tsx` and siblings — the `.set-row` label/help/control triplet typed out
   **26 times** across three files. A `<SetRow>` also makes rule 45 structural: one help slot per
   row means one paragraph cannot cover two controls. **~100 lines**.
-- `api/deps.py` (new) — `_sessions` copy-pasted at **5** routers, `_latest_snapshot` at **7**
+- `api/deps.py` (new) — a request accessor copy-pasted at **7** routers under two spellings
+  (`_factory`/`_settings`/`_box` in `api/{auth,backup,settings,setup}.py`, `_sessions` in
+  `api/{routes,runs,whitelist}.py`), `_latest_snapshot` at **7**
   sites. **~35 lines**.
 - `services/login.py:115` vs `services/plex_link.py:395` — the Plex PIN flow written twice,
   differing in four tokens. Rules 11/98 and 125 sit above the seam and are untouched by the merge.
@@ -1550,7 +1550,7 @@ look like.
 > exceptions.
 >
 > **4.2's mechanism is wrong.** `/api/openapi.json` sits inside `/api` behind the `AuthGuard`
-> (`main.py:502-505`, `:687`), which a session cookie or an API key satisfies, so an HTTP-fetching
+> (`main.py:502-505`, `:688`), which a session cookie or an API key satisfies, so an HTTP-fetching
 > generator needs a booted server and a credential. Build the document **in process** with
 > `create_app(settings).openapi()` instead. No precedent exists for that in the tree:
 > `tests/test_openapi_tags.py`'s fixture deliberately reads it over HTTP, signed in, and its header
@@ -1798,7 +1798,8 @@ added to the first.
 | `snapshot.py:1606` vs `engine/explanation.py:31` | The stored explanation built as a 110-line hand-typed dict on the write side, declared as Pydantic models on the read side. The reader's own docstring records that `keeps` and `match` were **silently dropped** here until the fields were declared, which is why the panel's keep breakdown never rendered. `facts_codec.py:39` is the in-tree precedent that raises at import on an unhandled field | ~30 net | `behavior` |
 | `snapshot.py:1286` `Display` | The 15-field carrier exists; `RawItem` and `SeasonJudgment` both re-declare its fields flat, then `:1057` and `:1157` re-pack them field for field, then `_judge_item` unpacks it again | ~60 | `none` |
 | `season_scan.py:1099` `gather` | Nine loose policy fields taken one frame above the `SeasonPolicy` that groups them, re-packed at `:1147`. This is the sole reason the second road exists: `SeasonPolicy.from_body` is the same nine assignments written again, and `season_evidence.py:140` already names it "rule 144's shape" | ~40 | `behavior` |
-| `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:224`, `api/fairness.py:159`, `api/settings.py:567` **and** `:831` (written twice), `api/runs.py:776`, `api/routes.py:1289` | ~180 | `none` |
+| `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:224`, `api/fairness.py:159`, `api/settings.py:562` **and** `:641`, both `SeerrServiceOut(` (written twice; the second
+citation read `:831` from the start, which was a banner comment even then), `api/runs.py:776`, `api/routes.py:1289` | ~180 | `none` |
 | `api/runs.py:741`/`:775` `ProfileSettingsIO` | A 7-field record declared twice, **including re-typed `ge`/`le` bounds**, with a hand-written converter in each direction. Rule 131 wants a consumer's bound derived from the producer's; here it is transcribed | ~16 | `none` |
 | `routes.py:1967`, `:2298`, `:2610` | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded at `schemas.py:860` | ~25 | `none` |
 | `auth.py:220` vs `api/plex.py:118` | `PlexServerChoiceOut` **declared twice under the same class name in two modules**. Pydantic collapses them in `components.schemas` today; the moment either gains a field both operations get module-qualified component names and any generated client breaks silently | 8 | `none` |
