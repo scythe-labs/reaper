@@ -280,11 +280,16 @@ answer: a test with something to tell you must fail, not warn.
 
 **Asking whether CI is green** is far cheaper than reading a log: `gh pr checks <n>` lists one
 row per job with its conclusion, and it is the merge gate above. **Which jobs appear depends on
-what the commit touched.** `ci.yml`'s `changes` job classifies the diff once, against the only
-path list left in the repository (`docs/**`, `.claude/**` and `*.md` are prose, everything else
-is code), and every other job reads that verdict: a prose-only commit runs `hygiene` alone, a
-code-only commit runs `check`, `frontend` and `docker`, and a commit touching both runs
-everything. **A skipped job publishes no check run at all**, which is why the required check is
+what the commit touched.** `ci.yml`'s `changes` job classifies the diff once, into three lanes
+(`docs/**`, `.claude/**` and `*.md` are prose; `manual/**` and `website/**` are the site;
+everything else is code), and every other job in that file reads the verdict rather than
+filtering itself: a prose-only commit runs `hygiene` alone, a code-only commit runs `check`,
+`frontend` and `docker`, and a commit touching both runs everything.
+**Two workflows outside it carry their own path lists and have to** — a `paths` filter decides
+whether a workflow starts, so it cannot read another one's output. `codeql.yml` restates the
+prose globs as `paths-ignore` once per trigger, and `docs-deploy.yml` carries the site lane by
+another spelling. `tests/test_repo_hygiene.py` counts all three, so a fourth cannot arrive
+quietly and this paragraph go stale again. **A skipped job publishes no check run at all**, which is why the required check is
 `CI gate` — it runs on every commit, counts a skipped lane as a pass and a cancelled one as a
 failure, and is the one job whose absence means something is genuinely wrong.
 `pr-validation.yml` is separate, runs on every pull request whatever the paths, and reads the
