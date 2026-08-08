@@ -611,7 +611,6 @@ class TestUpkeepJobsRecordTheirLastRun:
                     source="plex_collection",
                     config_json='{"library": "Films", "collection": "Keep these"}',
                     enabled=True,
-                    built_in=False,
                     created_at=utcnow(),
                 )
             )

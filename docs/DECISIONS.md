@@ -742,6 +742,42 @@ own revision chained onto head: an add, a new table, a backfill, or a guarded re
 always *widening* — the one exception is that same heal migration also dropping a stray server
 default, safe only because the ORM carries the Python-side default. `cache.db` stays disposable.
 
+**Schema still has to be able to leave, and it leaves in two releases** (rule 148). Release M
+removes the reads, the writes and the ORM attribute, and ships whatever the column needs to keep
+working without Python holding it up; release M+1 drops the column. `e6f7a8b9c0d1` is the first
+release M, for six write-only columns. What it taught, none of it visible in the shape of the
+migration:
+
+- **A `NOT NULL` foreign key cannot take a `server_default`.** `PRAGMA foreign_keys` is ON, so
+  defaulting `profile.active_policy_id` to `0` points every new row at a policy that does not
+  exist and the insert fails — the exact first-save break the revision exists to prevent. It went
+  nullable instead. A NULL foreign key is permitted and checks clean.
+- **A batch rebuild silently drops a collation.** SQLite reflection does not report one, so a
+  `batch_alter_table` on `list_config` for an unrelated column recreated `name` case-*sensitive*
+  and two lists differing only in case could both exist. The behavioral test caught it; nothing in
+  the diff would have. Any rebuild of that table restates `COLLATE NOCASE`.
+- **Hiding a retired column from autogenerate does not hide its foreign key.** `include_name`
+  needs a second arm for `foreign_key_constraint`, or `alembic check` — a CI gate — reports
+  `remove_fk` on every commit.
+- **The downgrade rebuilds the same tables and needs the same care, and getting it wrong there is
+  worse.** A rollback that dropped the collation would admit the colliding pair, and the
+  re-upgrade would then die on `UNIQUE constraint failed` with the disambiguation pass already
+  applied and never re-run: the container fails its migration on every restart. Rule 148's
+  assert-the-survivors obligation covers both directions.
+- **Rolling back is two steps, and the migration says so.** `alembic downgrade` from the M image
+  first, *then* start M-1. Starting M-1 against an M database leaves it stamped at a revision that
+  image has never heard of, and its boot migration stops the container. Fail-closed, but the
+  operator needs the recipe rather than the property.
+- **A column retiring takes the code that existed only to satisfy it.** `active_policy_id` had a
+  writer whose whole job was giving the foreign key something to point at, and it persisted the
+  bare shipped policy — so the first Pace save replaced the wider body `active_policy` computes
+  for an unsaved install, and an operator's Plex keep collection silently stopped protecting.
+  Rule 64's supply chain reaches the thing that *fed* the column, not only the thing that read it.
+
+The exclusion list in `alembic/env.py` is a one-release bridge and empties with the M+1 sweep. A
+column that outlives its sweep is how a dead column becomes permanent behind a growing list of
+silencers, which is the direction rule 148 exists to refuse.
+
 ## Gate retirement
 
 **Choice: the upgrade persists the heal where it can, a load-time shim covers what it cannot,

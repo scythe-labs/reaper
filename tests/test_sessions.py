@@ -255,7 +255,6 @@ async def _link_server(factory: async_sessionmaker[AsyncSession], machine_id: st
                 name="Home",
                 connection_uri="https://x.plex.direct:32400",
                 token_enc="enc",
-                owner_plex_account_id=1,
                 created_at=utcnow(),
             )
         )
@@ -267,7 +266,6 @@ async def _pending(factory: async_sessionmaker[AsyncSession], pin_id: int) -> No
         session.add(
             PendingPlexLogin(
                 pin_id=pin_id,
-                pin_code="ABCD",
                 purpose="login",
                 created_at=utcnow(),
                 expires_at=expiry(PLEX_LOGIN_TTL),

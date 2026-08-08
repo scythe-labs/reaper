@@ -770,7 +770,11 @@ async def update_profile(request: Request, payload: ProfileSettingsIO) -> Profil
     The domain enforces the invariants (a per-run cap may not exceed the rolling 30-day
     cap; grace is at least a week), so a nonsensical combination comes back as a 422 with
     the reason -- never a silent clamp that would let a run do more than the owner meant.
-    Saving does not enable the profile; acting is a separate, deliberate switch.
+
+    Saving these settings deletes nothing and arms nothing. Removing files takes turning
+    deletion on and typing the confirmation phrase for the exact plan you reviewed, on a
+    different screen. There is no on switch on the profile itself: the ``enabled`` column
+    that clause used to name was written False, read by nothing, and retired in release M.
     """
     try:
         settings = ProfileSettings(

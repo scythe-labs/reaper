@@ -154,7 +154,6 @@ class PlexServer(Base):
     connections_json: Mapped[str] = mapped_column(Text, default="[]")
 
     token_enc: Mapped[str] = mapped_column(Text)
-    owner_plex_account_id: Mapped[int] = mapped_column(Integer)
 
     # Verify the server's TLS certificate (mirrors Instance.verify_tls). Off is a
     # deliberate operator choice for a self-signed HTTPS server, never a silent default.
@@ -232,13 +231,17 @@ class PendingPlexLogin(Base):
     The PIN is created and polled entirely by the backend. The browser never
     handles a Plex authToken -- Overseerr posts the token from the browser to its
     own API, which needlessly exposes a full-power account credential to the page.
+
+    Only the pin **id** is stored, because only the id is polled. The human-readable code
+    rode along in a column nothing ever read back: this flow hands the operator an auth URL
+    rather than a code to type, so the code had no reader the day it was written. The
+    attribute retired in release M (rule 148).
     """
 
     __tablename__ = "pending_plex_login"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     pin_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    pin_code: Mapped[str] = mapped_column(String(20))
     purpose: Mapped[str] = mapped_column(String(20))  # "setup" | "login"
     created_at: Mapped[UtcTimestamp]
     expires_at: Mapped[UtcTimestamp]
@@ -279,36 +282,24 @@ class Profile(Base):
     """A named configuration: which policy, and how much it may do.
 
     The caps and the grace period live here rather than on the Policy so that
-    tightening a limit is always safe and never voids a pending approval. Only the
-    ``active_policy_id`` pointer moves.
+    tightening a limit is always safe and never voids a pending approval.
+
+    **Two attributes left in release M** (rule 148): ``enabled``, which shipped False and
+    was read by nothing, and ``active_policy_id``, which pointed at a policy row while the
+    policy actually in force is resolved by pure recency. Their columns survive one release
+    so a rollback works, and revision ``e6f7a8b9c0d1`` is what lets an INSERT omit them.
     """
 
     __tablename__ = "profile"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    """Ships disabled, and nothing in ``src/`` reads it: written at creation, never
-    consulted, so it gates nothing today. What keeps a fresh install from acting is the
-    arming requirement and the typed phrase on ``api.runs.execute_run``, not this flag.
-
-    **The attribute cannot simply be deleted (#271).** The column is ``NOT NULL`` with no
-    server default in the frozen baseline, so dropping it here leaves ``alembic check``
-    -- a CI gate -- reporting a pending ``drop_column`` forever, and a ``DROP COLUMN``
-    revision is not the additive-only migration ``CLAUDE.md`` requires. Retiring it for
-    real means excluding it from autogenerate first. Until then the honest state is this
-    docstring plus ``test_profiles``'s pin, which says what the value is and refuses to
-    call it a safeguard."""
-
-    active_policy_id: Mapped[int] = mapped_column(ForeignKey("policy.id"))
 
     settings_json: Mapped[str] = mapped_column(Text)
     """ProfileSettings: the four caps, caps_enabled, grace_days, the unknown-size allowance."""
 
     created_at: Mapped[UtcTimestamp]
     updated_at: Mapped[UtcTimestamp]
-
-    policy: Mapped[Policy] = relationship()
 
 
 class AutonomyGrant(Base):
@@ -545,9 +536,6 @@ class Candidate(Base):
     year: Mapped[int | None] = mapped_column(Integer, default=None)
     summary: Mapped[str | None] = mapped_column(Text, default=None)
     """A short description of the show or film -- the *arr's ``overview``."""
-
-    poster_url: Mapped[str | None] = mapped_column(String(1000), default=None)
-    """A poster image URL (the *arr's remote TMDb cover). Display only; may be absent."""
 
     requested_by: Mapped[str | None] = mapped_column(String(200), default=None)
     """Who asked for this via Seerr, if anyone. Never a gate -- see services.requested_by."""
@@ -919,11 +907,6 @@ class ListConfig(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     """Off keeps the row and its name, so a list switched off comes back with its rules
     intact. Deleting is a separate verb and is the operator's to choose."""
-
-    built_in: Mapped[bool] = mapped_column(Boolean, default=False)
-    """Ships with Reaper (the IMDb Top 250). Editable and switchable, never deletable: the
-    default policy carries a keep rule naming it, and copy may only reference a mechanism
-    that is wired (rule 25)."""
 
     created_at: Mapped[UtcTimestamp]
 

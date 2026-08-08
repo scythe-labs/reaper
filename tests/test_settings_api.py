@@ -94,7 +94,6 @@ def _link_plex(client: TestClient) -> None:
                 name="Example Server",
                 connection_uri="http://plex.local:32400",
                 token_enc="enc",
-                owner_plex_account_id=1,
                 created_at=utcnow(),
             )
         )

@@ -91,7 +91,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |
 | ORM | **Plain SQLAlchemy, not SQLModel** † |
-| Migrations | **Baseline `22777b2b5015` is frozen going forward** † |
+| Migrations | **Frozen baseline; schema leaves in two releases, never one** † |
 | Gate retirement | **Persisted by the upgrade where it can be, healed on load where it can't** † |
 | Plex index retirement | **A row dropped only once the sweep has spoken** † |
 

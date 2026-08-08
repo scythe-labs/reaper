@@ -714,7 +714,8 @@ CREATE INDEX IF NOT EXISTS ix_pli_plex ON protection_list_item (plex_rating_key)
 #: Columns added to ``protection_list_item`` after it first shipped. ``CREATE TABLE IF NOT
 #: EXISTS`` leaves a table that already exists exactly as it is, so a stored ``cache.db``
 #: never sees a new column from :data:`SCHEMA` alone -- and this table is not Alembic's
-#: (``alembic/env.py`` excludes it), so nothing else would add it either. Additive only:
+#: (it lives in ``cache.db``, which alembic is never pointed at), so nothing else would add
+#: it either. Additive only:
 #: every one is nullable, and the next sync fills it in.
 _ADDED_COLUMNS = {"plex_rating_key": "INTEGER"}
 

@@ -147,17 +147,22 @@ class TestActiveProfileSettings:
         assert active.settings.grace_days == 30  # the operator's real value survived
 
 
-class TestSavingCreatesTheBackingPolicyRow:
-    async def test_the_first_save_persists_the_default_policy(self, session: AsyncSession) -> None:
-        """The profile's FK needs a policy row; a fresh install has none, so saving must
-        create one from the in-code default."""
-        assert (await session.execute(select(func.count()).select_from(PolicyModel))).scalar() == 0
+class TestSavingWritesNoPolicyRow:
+    async def test_the_first_save_leaves_the_policy_table_empty(
+        self, session: AsyncSession
+    ) -> None:
+        """Saving Pace settings is not saving a policy, and it must not write one.
 
+        It did, to satisfy the foreign key that retired in release M (rule 148,
+        ``Profile.active_policy_id``), and the body it wrote was bare
+        ``DEFAULT_MOVIE_POLICY``. Recency then returned that row forever, so an operator's
+        Plex keep collection lost its rule the first time they touched Pace
+        (``TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds`` drives that end). An empty
+        table is what keeps ``active_policy`` computing the wider body on every read."""
         await save_profile_settings(session, ProfileSettings())
 
-        assert (await session.execute(select(func.count()).select_from(PolicyModel))).scalar() == 1
-        profile = (await session.execute(select(Profile))).scalar_one()
-        assert profile.active_policy_id is not None
+        assert (await session.execute(select(func.count()).select_from(PolicyModel))).scalar() == 0
+        assert (await session.execute(select(func.count()).select_from(Profile))).scalar() == 1
 
     async def test_saving_twice_does_not_fork_the_profile(self, session: AsyncSession) -> None:
         await save_profile_settings(session, ProfileSettings(max_items_per_run=5))
@@ -166,26 +171,6 @@ class TestSavingCreatesTheBackingPolicyRow:
         count = (await session.execute(select(func.count()).select_from(Profile))).scalar()
         assert count == 1  # updated in place, not duplicated
         assert (await active_profile_settings(session)).max_items_per_run == 7
-
-    async def test_the_unread_enabled_column_keeps_its_shipped_value(
-        self, session: AsyncSession
-    ) -> None:
-        """`Profile.enabled` is written False at creation, and that is ALL this pins (#271).
-
-        It used to claim this was what stopped a starter template deleting a library. Nothing
-        in `src/` reads the column, so a profile written `enabled=True` would scan and reap
-        identically, and a test asserting a safeguard nobody implemented is rule 7/24's
-        failure. What actually keeps a fresh install from acting is the master switch shipping
-        off (`test_app.test_destructive_actions_are_off_by_default`,
-        `test_settings_api.TestSafety.test_it_starts_read_only`) and the content-bound typed
-        phrase on `api.runs.execute_run`.
-
-        Kept rather than deleted because the attribute cannot go: `db.models.Profile.enabled`
-        records why `alembic check` blocks that.
-        """
-        await save_profile_settings(session, ProfileSettings())
-        profile = (await session.execute(select(Profile))).scalar_one()
-        assert profile.enabled is False
 
 
 async def _store_policy(
@@ -384,7 +369,6 @@ async def _add_list(
             source=source,
             config_json=json.dumps(config),
             enabled=True,
-            built_in=False,
             created_at=utcnow(),
         )
     )
@@ -582,7 +566,6 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
                 source="plex_collection",
                 config_json=json.dumps({"library": library, "collection": name}),
                 enabled=True,
-                built_in=False,
                 created_at=utcnow(),
             )
         )
@@ -621,6 +604,25 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
         assert shipped <= values
         assert active.repaired is False
         assert active.name == "default"
+
+    async def test_saving_the_pace_settings_does_not_take_the_collections_rule_away(
+        self, session: AsyncSession
+    ) -> None:
+        """The rule above is computed on the way out, so anything that WRITES a policy row has
+        to write the computed body and not the shipped one. ``save_profile_settings`` used to
+        persist bare ``DEFAULT_MOVIE_POLICY`` to satisfy a foreign key, and from that save on
+        recency returned the stored row: the operator's keep collection stopped protecting the
+        first time they touched Pace, with ``repaired`` still False, so nothing degraded and no
+        notice fired. The pointer retired in release M and the write went with it.
+        """
+        await self._seed_plex_collection(session)
+
+        await save_profile_settings(session, ProfileSettings(grace_days=21))
+
+        active = await active_policy(session, "movie")
+        values = {str(c.value) for c in active.body.protect_conditions if c.field == "on_list"}
+        assert "Never Reap" in values
+        assert active.repaired is False
 
     async def test_a_collection_in_a_movie_library_lands_on_the_movie_policy_alone(
         self, session: AsyncSession
@@ -765,7 +767,6 @@ class TestTheDefaultPolicyKeepsThePlexListsTheRegistryHolds:
                 source="plex_watchlist",
                 config_json="{}",
                 enabled=True,
-                built_in=False,
                 created_at=utcnow(),
             )
         )

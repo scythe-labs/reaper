@@ -199,11 +199,12 @@ class RawItem:
     tmdb_id: int | None
     plex_rating_key: int | None
     added_at: datetime | None
-    # Display fields, carried onto the candidate so the review queue can show a poster and
-    # a blurb without a second data source. None of them influence the verdict.
+    # Display fields, carried onto the candidate so the review queue can show a blurb
+    # without a second data source. None of them influence the verdict. No poster: it is
+    # derived from the Plex rating key at read time (`api/routes._candidate_out`), which is
+    # why the stored column carried a NULL for its whole life and retired in release M.
     year: int | None = None
     summary: str | None = None
-    poster_url: str | None = None
     requested_by: str | None = None
     # How this item was bound to its Plex row (and why, if it was not) -- for the why-panel.
     matched_by: identity.MatchedBy | None = None
@@ -1056,7 +1057,6 @@ async def scan(
             display=Display(
                 year=item.year,
                 summary=item.summary,
-                poster_url=item.poster_url,
                 requested_by=item.requested_by,
                 tmdb_id=item.tmdb_id,
                 # Radarr's id first, the Plex-matched one as fallback -- the same
@@ -1159,7 +1159,6 @@ async def scan(
             display=Display(
                 year=judgment.year,
                 summary=judgment.summary,
-                poster_url=judgment.poster_url,
                 requested_by=judgment.requested_by,
                 group_key=judgment.group_key,
                 group_title=judgment.group_title,
@@ -1289,7 +1288,6 @@ class Display:
 
     year: int | None = None
     summary: str | None = None
-    poster_url: str | None = None
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
@@ -1530,7 +1528,6 @@ def _judge_item(
             size_source=size_source,
             year=display.year,
             summary=display.summary,
-            poster_url=display.poster_url,
             requested_by=display.requested_by,
             # Suggestion fields for the rule editors' datalists, from evidence already in
             # hand. Facts carries genres comma-joined (genre names never contain ", ").
@@ -2131,8 +2128,6 @@ def _raw_items(
                 added_at=matched.added_at if matched is not None else None,
                 year=int(movie["year"]) if movie.get("year") else None,
                 summary=_summary(movie.get("overview")),
-                # poster_url is derived from the Plex rating key at read time (api/poster.py),
-                # not stored -- the *arr's art is stale. See routes._candidate_out.
                 # Three tiers, best-first (requested_by.build_map): the exact media_key where the
                 # operator mapped the Seerr service, then this copy's Plex rating key (zero-config,
                 # copy-true when a portal scans only its own library), then the loose tmdb union.

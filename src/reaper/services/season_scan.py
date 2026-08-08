@@ -190,12 +190,12 @@ class SeasonJudgment:
     """Set when this season's watch history stopped being readable, and already applied to
     ``facts``. Carried so the caller can COUNT it without deciding it a second time: one
     decision, made where the marks are compared, read everywhere else."""
-    # Display fields, carried onto the candidate. A season's poster/blurb/year are the
-    # show's; ``group_key``/``group_title`` collapse every season under one show row in the
-    # review queue. None of them affect the verdict.
+    # Display fields, carried onto the candidate. A season's blurb and year are the show's;
+    # ``group_key``/``group_title`` collapse every season under one show row in the review
+    # queue. None of them affect the verdict. The poster comes off ``show_rating_key`` below
+    # at read time, never from a stored URL.
     year: int | None = None
     summary: str | None = None
-    poster_url: str | None = None
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None

@@ -187,7 +187,7 @@ row moving is indistinguishable from one that never started.
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
-| 5 | Deletions | **in progress** | 2 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/` |
+| 5 | Deletions | **in progress** | 3 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/` |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
@@ -677,8 +677,8 @@ Four PRs, in order:
    > measurement.
    >
    > **`run_migrations_offline` goes, and the reason is stronger than the finding's.** Measured:
-   > `alembic upgrade head --sql` exits 1 today, dying at revision 3 of 23, because 8 of the 23
-   > call `op.get_bind()` and offline mode has no connection. Those are rule 81's reflection
+   > `alembic upgrade head --sql` exits 1 today, dying at revision 3, because 9
+   > revisions call `op.get_bind()` and offline mode has no connection. Those are rule 81's reflection
    > guards, so the capability cannot be restored without giving them up. The deletion also
    > corrects `CONTRIBUTING.md:305-312`, which claims the test covers both call sites (rule 64).
    >
@@ -956,6 +956,17 @@ exhaustively and fails closed, so deleting one narrows a fail-closed set (rule 1
 > holds for `PendingPlexLogin.pin_code` and for all three of W7-8's columns. Constraint S2 in
 > [Execution](#execution) governs: a `server_default` revision first, the attribute second.
 > `include_name` today filters tables and indexes only, so the column arm does not yet exist.
+>
+> **Landed as `e6f7a8b9c0d1` (#600), and three things the correction did not see.** A `NOT NULL`
+> FOREIGN KEY cannot take a `server_default` at all -- `PRAGMA foreign_keys` is ON, so defaulting
+> `Profile.active_policy_id` to `0` points at a policy row that does not exist and the insert
+> fails, which is the very break S2 describes. It went nullable instead. A batch rebuild of
+> `list_config` for an unrelated column silently recreated `name` case-SENSITIVE, because SQLite
+> reflection does not report a collation; the behavioral test caught it and the diff never would
+> have. And hiding a column from autogenerate does not hide its foreign key, so `include_name`
+> needs a second arm or `alembic check` stays red. All three are in `docs/DECISIONS.md` under
+> *Migrations*, because the next release-M author needs them and this document is not where they
+> would look.
 
 ### 1.2 The two unreachable engines: delete both
 

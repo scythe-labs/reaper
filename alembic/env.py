@@ -38,48 +38,55 @@ config.set_main_option("sqlalchemy.url", _settings.sync_database_url)
 
 target_metadata = Base.metadata
 
-# Tables Alembic must leave alone.
-#
-# These are rebuildable CACHES, not schema: the IMDb dataset (millions of rows,
-# reloaded nightly) and the local mirror of Tautulli's history (which grows without
-# bound). They are created and swapped by their own services with raw DDL --
-# imdb_rating in particular is loaded into a staging table and renamed, which no
-# migration can express.
-#
-# Without this filter, autogenerate sees tables it did not create and helpfully
-# proposes to DROP them.
-CACHE_TABLES = {
-    "imdb_rating",
-    "imdb_rating_staging",
-    "imdb_dataset_sync",
-    "watch_event",
-    "protection_list",
-    "protection_list_item",
+#: Columns whose ORM attribute has been removed but whose column has not been dropped yet:
+#: rule 148's one-release bridge, NOT a permanent registry. Without this filter autogenerate
+#: sees a column with no attribute and proposes to DROP it, so ``alembic check`` -- a CI gate
+#: -- fails on every commit until someone either drops it or silences it here (#271).
+#:
+#: **Every entry here is a debt with a due date.** The M+1 sweep drops all six in one
+#: revision under rule 148's three obligations, and this set empties with it. An entry that
+#: outlives its sweep is how a dead column becomes permanent behind a growing exclusion list,
+#: which is the failure rule 148 exists to prevent -- so add to this only alongside the
+#: release that removes the attribute, and never to make a red ``alembic check`` go green.
+#:
+#: ``candidate.poster_url`` is nullable and needed no schema change to survive its attribute
+#: leaving; it still needs this arm, because autogenerate does not care why a column has no
+#: attribute. The other five are the ``NOT NULL`` ones that revision ``e6f7a8b9c0d1`` gave a
+#: server default or made nullable first.
+RETIRED_COLUMNS = {
+    ("candidate", "poster_url"),
+    ("list_config", "built_in"),
+    ("pending_plex_login", "pin_code"),
+    ("plex_server", "owner_plex_account_id"),
+    ("profile", "active_policy_id"),
+    ("profile", "enabled"),
+}
+
+#: A retired column that carried a FOREIGN KEY leaves the constraint behind too, and hiding
+#: the column does not hide it: ``alembic check`` reports ``remove_fk`` on the next commit and
+#: the CI gate stays red. Found by running the check rather than by reading the docs, which is
+#: the only reason it is here -- nothing about ``include_name``'s column arm suggests a second
+#: one is needed. Empties with ``RETIRED_COLUMNS`` at the M+1 sweep, where the constraint is
+#: dropped ahead of its column (rule 148's ordering).
+RETIRED_CONSTRAINTS = {
+    ("profile", "fk_profile_active_policy_id_policy"),
 }
 
 
 def include_name(name: str | None, type_: str, parent_names: dict[str, str | None]) -> bool:
-    if type_ == "table":
-        return name not in CACHE_TABLES
-    if type_ == "index":
-        return parent_names.get("table_name") not in CACHE_TABLES
+    """Hide the retired columns from autogenerate, and nothing else.
+
+    This used to filter six cache TABLES as well, and it could never have been doing
+    anything: all six are raw DDL on ``cache.db`` (``services/{imdb_dataset,history_sync,
+    lists}.py``), none is on ``Base.metadata``, and Alembic is pointed at ``reaper.db``
+    (``config.sync_database_url``). The proof it was inert is that ``history_sync_state``
+    was missing from the set and never once mattered.
+    """
+    if type_ == "column":
+        return (parent_names.get("table_name"), name) not in RETIRED_COLUMNS
+    if type_ == "foreign_key_constraint":
+        return (parent_names.get("table_name"), name) not in RETIRED_CONSTRAINTS
     return True
-
-
-def run_migrations_offline() -> None:
-    context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-        render_as_batch=True,
-        compare_type=True,
-        compare_server_default=True,
-        render_item=render_epoch_datetime,
-        include_name=include_name,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
 
 
 def keep_ddl_in_the_transaction(engine: Engine) -> None:
@@ -141,7 +148,9 @@ def run_migrations_online() -> None:
             context.run_migrations()
 
 
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+# No offline (``--sql``) branch. There was one, with no invoker in the tree, and it could
+# not have worked: 9 revisions call ``op.get_bind()`` -- rule 81's reflection guards, and
+# the shape every heal migration takes -- so ``alembic upgrade head --sql`` exits 1 at
+# revision 3. Restoring the capability means giving those guards up, which is the wrong
+# trade for a mode nothing runs.
+run_migrations_online()
