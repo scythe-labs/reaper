@@ -3904,17 +3904,29 @@ def _imported_modules(node: ast.Import | ast.ImportFrom, package: str) -> list[s
     """Every dotted module ``node`` reaches, made absolute against its containing ``package``.
 
     ``import a.b`` and ``import a.b as c`` both name ``a.b``. ``from a.b import c`` names
-    ``a.b``, the ``c`` being a symbol here rather than a module, which is why the package is
-    read off the ``from`` clause and never off the imported names. A relative ``from . import
-    x`` resolves against ``package``: the four hold none today, and one that arrives must not
-    drop out of the walk unseen (rule 147).
+    ``a.b``, the ``c`` being a symbol rather than a module in every case but one.
+
+    **The exception is ``from reaper import services``**, where the `from` clause is the
+    parent and the imported NAME is the package. Reading the clause alone made that edge
+    vanish, which is a layering violation the gate reported as clean, and the idiom is live
+    in the tree: `api/logs.py` and `api/settings.py` both spell it, and both are non-edges
+    today only because `logbuffer` and `launcher` are not among the four. One package over
+    and it is silent. So each name is checked too, whenever the clause resolves to `reaper`
+    itself. `from a.b import c` is left alone: `c` there really is a symbol, and a package
+    that deep would already have been named by the clause.
+
+    A relative ``from . import x`` resolves against ``package``: the four hold none today,
+    and one that arrives must not drop out of the walk unseen (rule 147).
     """
     if isinstance(node, ast.Import):
         return [alias.name for alias in node.names]
-    if not node.level:
-        return [node.module] if node.module else []
-    base = package.rsplit(".", node.level - 1)[0]
-    return [f"{base}.{node.module}" if node.module else base]
+    base = node.module or ""
+    if node.level:
+        parent = package.rsplit(".", node.level - 1)[0]
+        base = f"{parent}.{node.module}" if node.module else parent
+    if base == "reaper":
+        return [f"reaper.{alias.name}" for alias in node.names]
+    return [base] if base else []
 
 
 def _edges_in(source: str, path: str) -> list[_Edge]:
@@ -4053,6 +4065,13 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
         "import reaper.clients.plex as plex": ("clients", "reaper.clients.plex", ""),
         "from ..engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
         "from ..engine import gates": ("engine", "reaper.engine", ""),
+        # The `from` clause is the PARENT, so the package is the imported name. Reading the
+        # clause alone dropped this edge entirely, and `from reaper import <name>` is spelled
+        # in two of the four packages already -- for modules outside them, which is the only
+        # reason it was not a live hole.
+        "from reaper import engine": ("engine", "reaper.engine", ""),
+        "from .. import engine": ("engine", "reaper.engine", ""),
+        "from reaper import engine as e": ("engine", "reaper.engine", ""),
         "if TYPE_CHECKING:\n    from reaper.engine import gates": (
             "engine",
             "reaper.engine",
@@ -4102,5 +4121,9 @@ def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> N
         "from reaper.notify.discord import DiscordNotifier",
         "from reaper.config import Settings",
         "import structlog",
+        # The `from reaper import <name>` arm above must not turn a module OUTSIDE the four
+        # into an edge. Both of these are spelled in the tree today.
+        "from reaper import logbuffer",
+        "from reaper import launcher, crypto",
     ):
         assert not _edges_in(source, "reaper/services/thing.py"), f"should be no edge: {source}"
