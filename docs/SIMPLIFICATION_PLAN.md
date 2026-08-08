@@ -181,7 +181,7 @@ row moving is indistinguishable from one that never started.
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
-| 4 | Drift corrections | **in progress** | 2 of 4 | |
+| 4 | Drift corrections | **in progress** | 3 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
 | 7 | Wire contract | not started | 0 of ~4 | C7 outstanding |
@@ -241,6 +241,7 @@ here first and never reconstructed later.
 | #592 | 3 | W6-8, audit | `_is_allowed`, `_owner`, `_real_resolvers` | no | 3 hooks to 10. Five resolver siblings and both UDP forms escaped a live probe; `_host_of` crashed on an unhashable address and allowlisted a bare string. Every hook now driven refused and allowed, and a refusal names the test that owns it |
 | #593 | 4 | W10-2 | `InstanceError.status` | no | Latent as the correction says: the two 404 arms covered the base class and were right only against today's callees. Five arms now read one declaration. The gate walks `api/` by AST, pins 6 handlers and 5 responses, and bans a literal status; three routes had no status test at all |
 | #594 | 4 | W10-3 | `apply_stored_schedules` | **yes, named in the PR** | Boot calls the shared function. The correction's population difference is real and preserved: an orphaned stored row was a boot-only `KeyError` warning and is now an explicit event on both paths. Two boot tests where there were none, both driven red. Re-anchored `main.py:519-522`/`:705`/`:776` |
+| #595 | 4 | W10-6 | `_strut_comment`, `_bolding_and_strutted` | no | Comment-only in the CSS, as the correction says: the two rules are byte-identical and the enumeration omitted `.view-tab`. Six controls bold when chosen, five carry the strut, `.filter-mi` is exempt in writing. The gate reads the claim *sentence*, not the block, because the block's own narrative mention of `.view-tab` made the first version green on the very drift it was written for |
 
 ### Killed while executing
 

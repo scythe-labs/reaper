@@ -4321,3 +4321,170 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
     bare = ast.parse("try:\n    pass\nexcept InstanceError:\n    raise\n")
     handler = next(n for n in ast.walk(bare) if isinstance(n, ast.ExceptHandler))
     assert _http_status_args(handler) == []
+
+
+# --- the bold-when-active strut, and the sentence enumerating it (rule 144) -----------
+
+_STYLES = FRONTEND_SRC / "styles"
+
+#: Selecting a control bumps its label 500 -> 600, which would widen it and shove its
+#: neighbors sideways. A hidden bold copy of the label reserves the wider width at every
+#: weight. `04-buttons.css` holds the rule for four of the five controls carrying one and a
+#: comment enumerating all five; `02-masthead.css` holds `.view-tab`'s, byte-identical.
+_STRUT_ENUMERATION = _STYLES / "04-buttons.css"
+
+#: Every control that bolds when active or selected. Pinned because both assertions below
+#: are set comparisons, and a walk that stopped reading the tree satisfies a set comparison
+#: by finding nothing on both sides at once (rule 145).
+_EXPECTED_BOLD_WHEN_ACTIVE = 6
+
+#: The one that bolds and deliberately carries no strut, with the reason -- classified in
+#: writing rather than silenced, since the assertion below is an equality and would otherwise
+#: just be relaxed. A vertical list has no sideways neighbor to shove.
+_BOLDS_WITHOUT_A_STRUT = {".filter-mi": "a vertical menu item, so nothing sits beside it"}
+
+#: A selector carrying a chosen state. `.sel` and `.active` are both live spellings here.
+_ACTIVE_STATE = re.compile(r"\.active\b|\.sel\b|\[aria-selected|\[data-active")
+_CSS_RULE = re.compile(r"(?m)^([^{}/@]+?)\{([^{}]*)\}")
+#: The leading class of a selector, which is the control the rule is about.
+_LEAD_CLASS = re.compile(r"^\s*(\.[a-z0-9-]+)")
+
+
+def _css_rules() -> list[tuple[str, int, str, str]]:
+    """Every flat CSS rule under `styles/`, as (file, line, selector, body).
+
+    Flat, so a rule nested in `@media` is read too -- ``10-layout.css`` turns `.view-tab`'s
+    strut back off inside one, and a walk that skipped media queries would not see it.
+    """
+    out: list[tuple[str, int, str, str]] = []
+    for path in sorted(_STYLES.glob("*.css")):
+        text = path.read_text(encoding="utf-8")
+        for match in _CSS_RULE.finditer(text):
+            line = text[: match.start()].count("\n") + 1
+            out.append((path.name, line, " ".join(match.group(1).split()), match.group(2)))
+    return out
+
+
+def _lead_classes(selector: str) -> set[str]:
+    """The control each comma-separated part of ``selector`` is about."""
+    found = set()
+    for part in selector.split(","):
+        lead = _LEAD_CLASS.match(part)
+        if lead:
+            found.add(lead.group(1))
+    return found
+
+
+def _bolding_and_strutted() -> tuple[set[str], set[str]]:
+    """(controls that bold when chosen, controls carrying a strut), by leading class."""
+    bolding: set[str] = set()
+    strutted: set[str] = set()
+    for _, _, selector, body in _css_rules():
+        if "font-weight" in body and _ACTIVE_STATE.search(selector):
+            bolding |= _lead_classes(selector)
+        # `content: none` is the phone bar turning the strut OFF, not a control carrying one.
+        if "[data-label]" in selector and "::after" in selector and "content: none" not in body:
+            strutted |= _lead_classes(selector)
+    return bolding, strutted
+
+
+#: The sentence in ``04-buttons.css`` that makes the claim. The matcher anchors on it rather
+#: than on the comment block, and the block rather than the file, because both wider readings
+#: are satisfied by prose: the file mentions `.seg2` and `.intent-band` in unrelated comments,
+#: and the block's own closing paragraph names `.view-tab` while narrating the drift -- so
+#: deleting the name from the list left the test green (rule 147). Reading the claim itself is
+#: the only scope where a name's presence means what the test says it means.
+_STRUT_CLAIM_OPENER = "Applied to every control that bolds when active"
+
+
+def _strut_comment() -> str:
+    """The enumeration sentence, from its opener to the end of that paragraph."""
+    text = _STRUT_ENUMERATION.read_text(encoding="utf-8")
+    start = text.find(_STRUT_CLAIM_OPENER)
+    assert start != -1, (
+        f"{_STRUT_ENUMERATION.name} no longer contains the sentence enumerating the "
+        f"bold-width strut ({_STRUT_CLAIM_OPENER!r}). Restore it or retarget this gate: "
+        f"without it nothing reconciles the comment against the selectors"
+    )
+    end = text.find("\n\n", start)
+    return text[start : end if end != -1 else len(text)]
+
+
+def test_every_control_that_bolds_when_chosen_reserves_the_bold_width() -> None:
+    """A control that bolds on selection carries the strut, or is classified as not needing it.
+
+    Without one the label widens on click and shoves its neighbors sideways. The exemption is
+    written out rather than the assertion relaxed, so a sixth control that quietly stops
+    reserving its width fails here instead of being covered by a subset check.
+    """
+    bolding, strutted = _bolding_and_strutted()
+    assert len(bolding) == _EXPECTED_BOLD_WHEN_ACTIVE, (
+        f"{len(bolding)} controls bold when chosen, expected {_EXPECTED_BOLD_WHEN_ACTIVE}: "
+        f"{sorted(bolding)}. A new one either gets a `[data-label]::after` strut or a line in "
+        f"_BOLDS_WITHOUT_A_STRUT saying why it does not need one"
+    )
+    assert bolding - strutted == set(_BOLDS_WITHOUT_A_STRUT), (
+        f"unstrutted: {sorted(bolding - strutted)}, exempt: {sorted(_BOLDS_WITHOUT_A_STRUT)}"
+    )
+
+
+def test_the_strut_comment_names_every_control_that_carries_one() -> None:
+    """The enumeration in ``04-buttons.css`` and the selectors are one fact, checked both ways.
+
+    It claimed to cover "every control that bolds when active" and listed four, while five
+    carried a strut: `.view-tab`'s rule lives in ``02-masthead.css``, so the author of either
+    file could read their own and be right. That is rule 144's shape -- one sentence about what
+    the app does, stated where the code it describes is not -- and the direction it failed in
+    is the reassuring one, since a reader checking whether a control needs a strut was told the
+    list was complete.
+
+    Both directions, because they fail differently: a strutted control missing from the
+    sentence is the drift that happened, and a name in the sentence with no rule behind it is a
+    strut someone deleted while leaving the claim standing (rule 7/24).
+    """
+    _, strutted = _bolding_and_strutted()
+    named = {f".{name}" for name in re.findall(r"`\.([a-z0-9-]+)`", _strut_comment())}
+
+    missing = strutted - named
+    assert not missing, (
+        f"{_STRUT_ENUMERATION.name} enumerates the controls carrying the bold-width strut and "
+        f"does not name {sorted(missing)}. Add them to the comment above "
+        f"`.tab[data-label]::after`, or the next author reads a list that says it is complete"
+    )
+    claimed = named - set(_BOLDS_WITHOUT_A_STRUT)
+    assert claimed <= strutted, (
+        f"{_STRUT_ENUMERATION.name} names {sorted(claimed - strutted)} as carrying a strut, and "
+        f"no `[data-label]::after` rule does"
+    )
+
+
+def test_the_css_walk_reads_the_forms_the_stylesheets_spell(tmp_path: Path) -> None:
+    """The two assertions above are only as wide as this walk (rule 147).
+
+    Driven against the spellings `styles/` uses -- a grouped selector, a rule nested in a media
+    query, a state class other than `.active` -- and against the one that must NOT count, the
+    phone bar's `content: none`, which turns a strut off rather than declaring one. A walk that
+    counted that would report `.view-tab` strutted on a build where it is not.
+    """
+    assert _lead_classes(".tab[data-label]::after, .seg[data-label]::after") == {".tab", ".seg"}
+    assert _lead_classes(".view-tab.active:hover:not(:disabled)") == {".view-tab"}
+    assert _lead_classes(".filter-mi.sel") == {".filter-mi"}
+    assert _lead_classes("  .settings-tab[data-label]::after") == {".settings-tab"}
+
+    scratch = tmp_path / "styles"
+    scratch.mkdir()
+    (scratch / "x.css").write_text(
+        ".a.active {\n  font-weight: var(--weight-semi);\n}\n"
+        "@media (max-width: 40rem) {\n"
+        "  .a[data-label]::after {\n    content: none;\n  }\n}\n"
+        ".b[data-label]::after {\n  content: attr(data-label);\n}\n"
+    )
+    global _STYLES
+    real, _STYLES = _STYLES, scratch
+    try:
+        bolding, strutted = _bolding_and_strutted()
+    finally:
+        _STYLES = real
+    assert bolding == {".a"}, bolding
+    # `.a`'s only `[data-label]` rule is the media query switching it off, so it is not strutted.
+    assert strutted == {".b"}, strutted
