@@ -796,7 +796,9 @@ export function KeepRulesEditor({
           : configured.length === 0
             ? "You have no lists yet. Add one on Settings → Lists first."
             : eligible.length > 0
-              ? "Every list already has a keep rule. Remove one above to give it a different strength."
+              ? // "this policy can keep" so it stays true when an unnamed wrong-type or unsynced
+                // list is also hidden: those are not lists this policy can keep (#549).
+                "Every list this policy can keep already has a rule. Remove one above to give it a different strength."
               : hiddenUnverified > 0 && hiddenWrongType === 0
                 ? "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them."
                 : hiddenWrongType > 0 && hiddenUnverified === 0

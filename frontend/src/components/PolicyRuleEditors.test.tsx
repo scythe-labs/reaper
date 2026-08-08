@@ -413,7 +413,7 @@ describe("one list, one keep rule", () => {
 
     expect(
       await screen.findByText(
-        "Every list already has a keep rule. Remove one above to give it a different strength.",
+        "Every list this policy can keep already has a rule. Remove one above to give it a different strength.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/You have no lists yet/)).not.toBeInTheDocument();
@@ -542,6 +542,26 @@ describe("the list picker filtered to what the server says it may protect", () =
     expect(
       await screen.findByText(
         "Your lists haven't synced yet. Check them on Settings → Lists so Reaper knows what's on them.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the already-ruled copy true when an unsynced list is also hidden", async () => {
+    // The keepable list is named and an unsynced one is hidden, so the picker is empty. The copy
+    // is qualified ("this policy can keep") so it does not claim the unsynced list has a rule.
+    apiMock.listConfigs.mockResolvedValue([
+      listCfg(1, "Movie Night", ["movie"]),
+      listCfg(20, "Fresh List", []),
+    ]);
+    const { user } = renderKeepEditor({
+      conditions: [{ field: "on_list", op: "eq", value: "Movie Night" }],
+    });
+
+    await pickTheListField(user);
+
+    expect(
+      await screen.findByText(
+        "Every list this policy can keep already has a rule. Remove one above to give it a different strength.",
       ),
     ).toBeInTheDocument();
   });
