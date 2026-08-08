@@ -30,6 +30,7 @@ from reaper.services.list_config import ListDefinition
 from reaper.services.lists import IMDB_TOP_250_URL, ArrTagRule, ListKind, ListSource, memberships
 from reaper.services.season_scan import SonarrSource
 from reaper.services.snapshot import _watch_stats, sync_protection_lists
+from tests._fakes import FakeSonarr
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -196,9 +197,9 @@ class TestANarrowedPassSweepsOnlyTheListItChecked:
     @staticmethod
     def _sonarr() -> SonarrSource:
         return SonarrSource(
-            client=_TaggedSonarr(
-                [{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
-                [
+            client=FakeSonarr(
+                tag_rows=[{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
+                series_rows=[
                     {"title": "A", "tvdbId": 10, "tags": [1]},
                     {"title": "B", "tvdbId": 11, "tags": [1, 2]},
                 ],
@@ -252,11 +253,7 @@ class TestANarrowedPassSweepsOnlyTheListItChecked:
             engine, definitions=[_tag_list(("keep", "gold"), "any")], sonarrs=[self._sonarr()]
         )
 
-        class _Unreachable(_TaggedSonarr):
-            async def tags(self) -> list[dict[str, object]]:
-                raise RuntimeError("connection refused")
-
-        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        broken = SonarrSource(client=FakeSonarr(fail_tags=True), instance_id=1, name="hd")
         tightened = _tag_list(("keep", "gold"), "all")
         synced = await sync_protection_lists(
             engine, definitions=[tightened], sonarrs=[broken], only=tightened.id
@@ -348,22 +345,6 @@ class TestOneFailingListDoesNotSinkTheScan:
         assert "error" in synced[IMDB_SLUG]
 
 
-class _TaggedSonarr:
-    """A Sonarr stand-in carrying exactly what the keep-tag rule reads."""
-
-    service = "sonarr"
-
-    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
-        self._tags = tags
-        self._series = series
-
-    async def tags(self) -> list[dict[str, object]]:
-        return self._tags
-
-    async def series(self) -> list[dict[str, object]]:
-        return self._series
-
-
 class _CollectionServer:
     """A Plex stand-in holding one library with one collection, whatever it is called.
 
@@ -434,17 +415,17 @@ class TestEachInstanceKeepsItsOwnKeepList:
         other instance's keep-tagged titles from the whitelist, silently -- a protection
         failing open, in whichever order the syncs happened to finish."""
         first = SonarrSource(
-            client=_TaggedSonarr(
-                [{"id": 1, "label": "keep"}],
-                [{"title": "A", "tvdbId": 10, "tags": [1]}],
+            client=FakeSonarr(
+                tag_rows=[{"id": 1, "label": "keep"}],
+                series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
             ),
             instance_id=1,
             name="hd",
         )
         second = SonarrSource(
-            client=_TaggedSonarr(
-                [{"id": 9, "label": "keep"}],
-                [{"title": "B", "tvdbId": 20, "tags": [9]}],
+            client=FakeSonarr(
+                tag_rows=[{"id": 9, "label": "keep"}],
+                series_rows=[{"title": "B", "tvdbId": 20, "tags": [9]}],
             ),
             instance_id=2,
             name="uhd",
@@ -472,9 +453,9 @@ class TestAReplacedKeepListStopsProtecting:
     @staticmethod
     def _sonarr() -> SonarrSource:
         return SonarrSource(
-            client=_TaggedSonarr(
-                [{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
-                [
+            client=FakeSonarr(
+                tag_rows=[{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
+                series_rows=[
                     {"title": "A", "tvdbId": 10, "tags": [1]},  # keep only
                     {"title": "B", "tvdbId": 11, "tags": [1, 2]},  # both
                 ],
@@ -550,13 +531,9 @@ class TestAReplacedKeepListStopsProtecting:
         kept it deliberately. Retiring it here would unprotect every title on it because
         one *arr was briefly unreachable."""
 
-        class _Unreachable(_TaggedSonarr):
-            async def tags(self) -> list[dict[str, object]]:
-                raise RuntimeError("connection refused")
-
         await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[self._sonarr()])
 
-        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        broken = SonarrSource(client=FakeSonarr(fail_tags=True), instance_id=1, name="hd")
         synced = await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[broken])
 
         assert "error" in str(synced[TAG_SLUG])
@@ -645,10 +622,10 @@ class TestLegacySlugsAreRehomedOnUpgrade:
     sync that would withdraw the only membership still protecting."""
 
     @staticmethod
-    def _sonarr_client() -> _TaggedSonarr:
-        return _TaggedSonarr(
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+    def _sonarr_client() -> FakeSonarr:
+        return FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         )
 
     async def _store_legacy_row(self, engine: AsyncEngine) -> str:
@@ -679,11 +656,7 @@ class TestLegacySlugsAreRehomedOnUpgrade:
         refresh right after the upgrade still protects every tagged title."""
         await self._store_legacy_row(engine)
 
-        class _Unreachable(_TaggedSonarr):
-            async def tags(self) -> list[dict[str, object]]:
-                raise RuntimeError("connection refused")
-
-        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        broken = SonarrSource(client=FakeSonarr(fail_tags=True), instance_id=1, name="hd")
         synced = await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[broken])
 
         assert "error" in str(synced[TAG_SLUG])
@@ -705,11 +678,7 @@ class TestLegacySlugsAreRehomedOnUpgrade:
         """
         await self._store_legacy_row(engine)
 
-        class _Unreachable(_TaggedSonarr):
-            async def tags(self) -> list[dict[str, object]]:
-                raise RuntimeError("connection refused")
-
-        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        broken = SonarrSource(client=FakeSonarr(fail_tags=True), instance_id=1, name="hd")
         await sync_protection_lists(engine, definitions=[_tag_list()], sonarrs=[broken])
 
         held = await memberships(engine, media_type="tv", tvdb_id=10)
@@ -742,11 +711,7 @@ class TestLegacySlugsAreRehomedOnUpgrade:
         strength of a sync that did not land is the fail-open this stands against."""
         legacy = await self._store_legacy_row(engine)
 
-        class _Unreachable(_TaggedSonarr):
-            async def tags(self) -> list[dict[str, object]]:
-                raise RuntimeError("connection refused")
-
-        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        broken = SonarrSource(client=FakeSonarr(fail_tags=True), instance_id=1, name="hd")
         two = [_tag_list(), _tag_list(("gold",), "any", list_id=4)]
         synced = await sync_protection_lists(engine, definitions=two, sonarrs=[broken])
 

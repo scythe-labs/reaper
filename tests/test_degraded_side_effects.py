@@ -37,6 +37,7 @@ from reaper.services.list_config import ListDefinition
 from reaper.services.lists import ListSource, load_membership_index
 from reaper.services.season_scan import SonarrSource
 from reaper.services.snapshot import sync_protection_lists
+from tests._fakes import FakeSonarr
 
 
 @pytest.fixture
@@ -46,25 +47,11 @@ async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     await eng.dispose()
 
 
-class _TaggedSonarr:
-    service = "sonarr"
-
-    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
-        self._tags = tags
-        self._series = series
-
-    async def tags(self) -> list[dict[str, object]]:
-        return self._tags
-
-    async def series(self) -> list[dict[str, object]]:
-        return self._series
-
-
 def _sonarr() -> SonarrSource:
     return SonarrSource(
-        client=_TaggedSonarr(  # type: ignore[arg-type]
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        client=FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         ),
         instance_id=1,
         name="hd",
@@ -214,7 +201,7 @@ class TestAShortRatingsReadDegradesTheScan:
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             _client_with(server),
             section_type="movie",
             degrade=reasons.append,
@@ -249,7 +236,7 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             None,
             section_type="movie",
             degrade=reasons.append,
@@ -270,7 +257,7 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             None,
             section_type="movie",
             degrade=reasons.append,

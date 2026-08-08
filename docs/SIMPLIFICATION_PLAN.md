@@ -162,7 +162,7 @@ row moving is indistinguishable from one that never started.
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
-| 2 | Test-suite wall clock | in progress | 7 of 9 | W1.4's last two bullets, one PR each: `tests/_fakes.py`, the complete api mock |
+| 2 | Test-suite wall clock | in progress | 8 of 9 | W1.4's last bullet, the complete api mock. Read its `coverage-loss` note first |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
@@ -212,6 +212,7 @@ here first and never reconstructed later.
 | #574 | 2 | W12a-4 | twelve `@vitest-environment node` docblocks | no | On `dev`. Frontend environment CPU 37.25s to 29.56s |
 | #575 | 2 | W1.4, first bullet | `settings`, `sync_db`, `async_factory`, `client` | no | 16 hand-written boots retired across 15 files. The other three bullets are untouched |
 | #577 | 2 | W1.4, second bullet | `renderWithProviders`, `renderHookWithProviders` | no | All 87 provider trees across 38 files, one left standing with its reason. 1,320 frontend tests either side. Widened the rendered-surface walk, which the rename had emptied by 29 files |
+| #578 | 2 | W1.4, third bullet | `tests/_fakes.py`, `mypy src/reaper tests/_fakes.py` | no | 15 client fakes retired into 5, 84 suppressions gone. The gate widened to cover them, which is what makes inheriting the real client mean anything, and a hygiene test pins its four spellings |
 
 ### Killed while executing
 
@@ -508,13 +509,15 @@ that were exactly one of them deleted from 15 files. The bespoke `client` fixtur
 are the ones that SEED, which is what a file-local fixture should hold; they now compose on
 `settings` or `sync_db` rather than rewriting the preamble. The second landed the same way
 (#577): all 87 `<QueryClientProvider>` trees onto `src/test/renderWithProviders.tsx`, and the 55
-file-local `render*` helpers KEPT, because each holds the props its own file passes. Read that
-bullet's `> Landed:` block before the next one — the shape it settled on is the same both times,
-and the line-count estimate was wrong for the same reason. The remaining two are `tests/_fakes.py`
-and the complete api mock, and the api mock is the one that carries a `coverage-loss` risk worth
-reading before starting.
+file-local `render*` helpers KEPT, because each holds the props its own file passes. The third
+(#578) is `tests/_fakes.py`, and its correction is the one to read before phase 8: the
+suppressions it retires never held anything, because `tests/` was not type-checked at all, so the
+deliverable is the fakes inheriting the real clients **and** the mypy run widened to see them.
+Read all three `> Landed:` blocks before the last one — the shape they settled on is the same
+every time, and each line-count estimate was wrong for the same reason. What remains is the
+complete api mock, which carries a `coverage-loss` risk worth reading before starting.
 
-Seven PRs so far, and two left. No production code changes. The scrypt wrapper is `conftest`-only,
+Eight PRs so far, and one left. No production code changes. The scrypt wrapper is `conftest`-only,
 must not touch `crypto.py`'s constant, and ships with the injectivity guard its correction names.
 
 **Wave 12's figures are single-threaded and the documented gate is not.** `uv run pytest -n auto`
@@ -981,6 +984,33 @@ the layer beneath it was just never built.
   drifted from each other. Six independent Tautulli fakes, seven Sonarrs, four Seerrs. Proposal:
   one `tests/_fakes.py` per client, each inheriting the real class. **~600 lines and 65
   suppressions**, and it is strictly stronger than what it replaces.
+
+  > **Landed, and the stated mechanism was wrong in a way that changes the deliverable.** The
+  > suppressions were not "the only reason a client signature change does not fail the build."
+  > They were inert: CI runs `mypy src/reaper`, so no file under `tests/` was type-checked at
+  > all and a `# type: ignore` written there suppressed nothing. Probed both directions rather
+  > than argued. Adding one keyword-only argument to `TautulliClient.children_metadata` and
+  > updating its production caller turned **44 tests red** with `TypeError` while
+  > `mypy src/reaper` stayed **green** — so a change to a method's *shape* was already caught,
+  > loudly, by the suite. What nothing caught was a change to a *type* alone. So inheriting the
+  > real class buys nothing on its own; it buys the type check only once the module is **on the
+  > mypy run**, which is the second half and the reason this landed as
+  > `uv run mypy src/reaper tests/_fakes.py`. A probe fake with a drifted parameter type is
+  > reported as a Liskov violation under exactly that command and under nothing else.
+  >
+  > **The dedup half is real for Sonarr and Seerr and wrong for Tautulli.** Four Sonarr fakes
+  > were character-identical apart from their class name, and five copies of one `_Unreachable`
+  > subclass sat in `test_protection_sync.py` alone. But the two Tautulli `history` fakes are a
+  > paging simulator and a per-key router with error injection: merging them yields a class
+  > whose behavior no caller could predict from its arguments, so they stayed two classes,
+  > `FakeTautulli` and `PagingTautulli`. **15 fakes retired into 5**, 84 suppressions gone
+  > against the 65 predicted, and 677 lines out against 449 in.
+  >
+  > **`test_reap_loop.py` is deliberately not in it.** Its four deletion-path simulators are
+  > each tuned by several subclasses declared beside them, and moving a simulator away from the
+  > tests dictating its failure modes is the wrong trade on the one path that deletes. They are
+  > the largest remaining fakes and the obvious next candidate; phase 8 should decide that with
+  > the arr client change in front of it, not now.
 - **No complete api mock.** 37 frontend files `vi.mock` the api module; only 16 import
   `apiFixtures`. Each redeclares its own `vi.fn()` set, ranging from 1 function to 32. Rule 135
   requires the mock to answer everything the tree reads, and the fixtures supply payloads but not

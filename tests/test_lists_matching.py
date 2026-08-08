@@ -48,6 +48,7 @@ from reaper.services.lists import (
     sync,
 )
 from reaper.services.snapshot import protection_sync_degradations
+from tests._fakes import FakeSonarr
 from tests.test_engine_invariants import _ALL_READABLE
 
 
@@ -56,22 +57,6 @@ async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
     yield eng
     await eng.dispose()
-
-
-class _FakeSonarr:
-    """A Sonarr stand-in: not a RadarrClient, so ``ArrTagRule`` takes the series path."""
-
-    service = "sonarr"
-
-    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
-        self._tags = tags
-        self._series = series
-
-    async def tags(self) -> list[dict[str, object]]:
-        return self._tags
-
-    async def series(self) -> list[dict[str, object]]:
-        return self._series
 
 
 class _FakePlexServer:
@@ -155,10 +140,10 @@ class TestEveryConfiguredKeepTagMustResolve:
     read healthy. An absent tag and a renamed one are the same fetch, so both fail."""
 
     @staticmethod
-    def _sonarr(*labels: str, tagged: bool = True) -> _FakeSonarr:
+    def _sonarr(*labels: str, tagged: bool = True) -> FakeSonarr:
         tags = [{"id": i, "label": label} for i, label in enumerate(labels, start=1)]
         series = [{"title": "A", "tvdbId": 10, "tags": [1]}] if tagged and tags else []
-        return _FakeSonarr(tags, series)
+        return FakeSonarr(tag_rows=tags, series_rows=series)
 
     async def test_a_missing_tag_under_any_keeps_the_stored_membership(
         self, engine: AsyncEngine
@@ -168,7 +153,7 @@ class TestEveryConfiguredKeepTagMustResolve:
 
         # "gold" was renamed upstream. "keep" still resolves, which is exactly the case
         # that used to sync happily and drop everything the renamed tag protected.
-        renamed = ArrTagRule(self._sonarr("keep"), ("keep", "gold"), "any")  # type: ignore[arg-type]
+        renamed = ArrTagRule(self._sonarr("keep"), ("keep", "gold"), "any")
         with pytest.raises(IntegrationError) as caught:
             await sync(engine, renamed, kind=ListKind.WHITELIST)
 
@@ -229,12 +214,12 @@ class TestEveryConfiguredKeepTagMustResolve:
         rule = ArrTagRule(self._sonarr("keep"), ("keep",), "any")  # type: ignore[arg-type]
         assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
 
-        idless = _FakeSonarr(
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tags": [1]}],  # no tvdbId, no imdbId
+        idless = FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tags": [1]}],  # no tvdbId, no imdbId
         )
         with pytest.raises(ContainerMissingError):
-            await sync(engine, ArrTagRule(idless, ("keep",), "any"), kind=ListKind.WHITELIST)  # type: ignore[arg-type]
+            await sync(engine, ArrTagRule(idless, ("keep",), "any"), kind=ListKind.WHITELIST)
 
         index = await load_membership_index(engine)
         assert index.lookup(media_type="tv", tvdb_id=10)
@@ -267,10 +252,10 @@ class TestTheNameAKeepRuleMatches:
     """
 
     @staticmethod
-    def _sonarr() -> _FakeSonarr:
-        return _FakeSonarr(
-            [{"id": 1, "label": "reaper-keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+    def _sonarr() -> FakeSonarr:
+        return FakeSonarr(
+            tag_rows=[{"id": 1, "label": "reaper-keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         )
 
     @staticmethod
