@@ -7,13 +7,13 @@
 // sentence for a read that really never landed, the stale line for one that landed and then
 // blinked -- because a fix that showed the stale line in both cases would pass a one-sided test
 // (#140).
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { About, Schedule } from "../api";
 import { DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Settings } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -127,11 +127,7 @@ beforeEach(() => {
 
 function renderPanel(panel: "about" | "jobs" | "notifications"): QueryClient {
   const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
-      <Settings initialPanel={panel} />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<Settings initialPanel={panel} />, { client: queryClient });
   return queryClient;
 }
 

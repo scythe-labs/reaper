@@ -162,7 +162,7 @@ row moving is indistinguishable from one that never started.
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
-| 2 | Test-suite wall clock | in progress | 6 of 9 | W1.4's last three bullets, one PR each: `renderWithProviders`, `tests/_fakes.py`, the complete api mock |
+| 2 | Test-suite wall clock | in progress | 7 of 9 | W1.4's last two bullets, one PR each: `tests/_fakes.py`, the complete api mock |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
@@ -211,6 +211,7 @@ here first and never reconstructed later.
 | #573 | 2 | W12a-3 | `test_openapi_tags.schema` | no | On `dev`. 4.70s to 1.32s. The fixture boots hermetically itself, since `_hermetic` runs after it |
 | #574 | 2 | W12a-4 | twelve `@vitest-environment node` docblocks | no | On `dev`. Frontend environment CPU 37.25s to 29.56s |
 | #575 | 2 | W1.4, first bullet | `settings`, `sync_db`, `async_factory`, `client` | no | 16 hand-written boots retired across 15 files. The other three bullets are untouched |
+| #577 | 2 | W1.4, second bullet | `renderWithProviders`, `renderHookWithProviders` | no | All 87 provider trees across 38 files, one left standing with its reason. 1,320 frontend tests either side. Widened the rendered-surface walk, which the rename had emptied by 29 files |
 
 ### Killed while executing
 
@@ -505,11 +506,15 @@ work depends on.
 (#575): `settings`, `sync_db`, `async_factory` and `client` in `conftest.py`, and the 16 boots
 that were exactly one of them deleted from 15 files. The bespoke `client` fixtures that survive
 are the ones that SEED, which is what a file-local fixture should hold; they now compose on
-`settings` or `sync_db` rather than rewriting the preamble. The other three bullets —
-`renderWithProviders`, `tests/_fakes.py`, the complete api mock — are untouched, and the api mock
-is the one that carries a `coverage-loss` risk worth reading before starting.
+`settings` or `sync_db` rather than rewriting the preamble. The second landed the same way
+(#577): all 87 `<QueryClientProvider>` trees onto `src/test/renderWithProviders.tsx`, and the 55
+file-local `render*` helpers KEPT, because each holds the props its own file passes. Read that
+bullet's `> Landed:` block before the next one — the shape it settled on is the same both times,
+and the line-count estimate was wrong for the same reason. The remaining two are `tests/_fakes.py`
+and the complete api mock, and the api mock is the one that carries a `coverage-loss` risk worth
+reading before starting.
 
-Six PRs so far, and three left. No production code changes. The scrypt wrapper is `conftest`-only,
+Seven PRs so far, and two left. No production code changes. The scrypt wrapper is `conftest`-only,
 must not touch `crypto.py`'s constant, and ships with the injectivity guard its correction names.
 
 **Wave 12's figures are single-threaded and the documented gate is not.** `uv run pytest -n auto`
@@ -952,6 +957,24 @@ the layer beneath it was just never built.
 - **No `renderWithProviders`.** Grep returns **0**. There are **87** `<QueryClientProvider>` trees
   across 35 files, **95** `testQueryClient()` calls and **55 file-local render helpers in 32
   files**, four of them near-verbatim copies and two character-identical. **~800 lines**.
+
+  > **Landed, and the duplicate-helper half does not reproduce.** All 87 trees are on
+  > `src/test/renderWithProviders.tsx`; the counts of 87 and 55 were both exact. What is left is
+  > **one** hand-built provider, in `useScanSettled.test.ts`, whose `Announcer` has to be a
+  > sibling ABOVE the hook rather than a wrapper around it, and it says so where it stands.
+  > Net 217 lines out of the test files against 77 in the helper, well under the ~800: the
+  > estimate counted the 55 helpers as deletable, and they are not. Each holds the props its
+  > own file passes, which is what a file-local helper is for — the same line #575 drew around
+  > the bespoke `client` fixtures that SEED. Hashing all 55 with their own names normalized away
+  > finds **zero** identical pairs, and the same pass over the pre-change tree finds zero too, so
+  > "two character-identical" is not a claim this pass could confirm or act on.
+  >
+  > Two things worth having came out that the finding did not predict. `rerender` now keeps its
+  > providers, because the provider is testing-library's `wrapper` rather than part of the
+  > element: five call sites were re-rendering into a *fresh* `QueryClient`, which is a cache
+  > swap no running app performs. And `test_repo_hygiene.py`'s rendered-surface walk matched
+  > `\brender\(` alone, so 29 of its 53 files left the walk in one commit — rule 147 exactly,
+  > caught by the pinned count beside it, and the matcher now reads every spelling.
 - **67 structural fakes, 60 of them declaring no base class**, behind **65**
   `# type: ignore[arg-type]` suppressions. mypy is `strict = true`, so those suppressions are the
   only reason a real client signature change does not fail the build, and the fakes have already

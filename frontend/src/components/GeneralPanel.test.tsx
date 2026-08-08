@@ -5,8 +5,7 @@
 // elsewhere. And the spare length, which is the one field edited by two controls at once, stages
 // BOTH of them in the bar: it was a third on-the-spot writer, and pressing Forever committed the
 // number the bar had just called unsaved (issue #90).
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
@@ -14,6 +13,7 @@ import type { GeneralSettings } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { GeneralPanel } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -71,15 +71,14 @@ beforeEach(() => {
 });
 
 function renderPanel() {
-  const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
+  renderWithProviders(
+    <>
       {/* Mounted the way the app mounts it -- once, above the panel, before anything can speak
           into it. Without it in the tree a call to `announce` writes to a store nothing is
           listening to, so a test could only ever prove the call did not throw. */}
       <Announcer />
       <GeneralPanel />
-    </QueryClientProvider>,
+    </>,
   );
   return userEvent.setup();
 }
@@ -89,11 +88,12 @@ function renderPanel() {
  *  produce it, and it is the state #203 is about. */
 function renderPanelWithClient() {
   const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
+  renderWithProviders(
+    <>
       <Announcer />
       <GeneralPanel />
-    </QueryClientProvider>,
+    </>,
+    { client: queryClient },
   );
   return { user: userEvent.setup(), queryClient };
 }
@@ -119,11 +119,7 @@ function renderReporting(
   const onDirtyChange = vi.fn();
   const queryClient = testQueryClient();
   if (cached) queryClient.setQueryData(["general-settings"], cached);
-  render(
-    <QueryClientProvider client={queryClient}>
-      <GeneralPanel onDirtyChange={onDirtyChange} />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<GeneralPanel onDirtyChange={onDirtyChange} />, { client: queryClient });
   return { person: userEvent.setup(), onDirtyChange, queryClient };
 }
 
@@ -828,11 +824,11 @@ describe("the Desktop app group", () => {
 
   it("has no accessibility violations with the group shown", async () => {
     apiMock.general.mockResolvedValue(MACOS);
-    const { container } = render(
-      <QueryClientProvider client={testQueryClient()}>
+    const { container } = renderWithProviders(
+      <>
         <Announcer />
         <GeneralPanel />
-      </QueryClientProvider>,
+      </>,
     );
     await screen.findByLabelText("Show the Dock icon");
     await expectNoA11yViolations(container);

@@ -7,13 +7,13 @@
 // never set a password cannot walk past the step that creates the local account. And **once
 // the first scan is running you can leave for the app immediately**, instead of being held on
 // the wizard until it finishes -- the behavior this file was originally written for.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SetupStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { SetupWizard } from "./SetupWizard";
 
 // The Plex and Connect steps drive the real service and Plex surfaces, which make their own
@@ -92,11 +92,7 @@ const IDLE = {
 const RUNNING = { ...IDLE, running: true, phase: "history", percent: 3, detail: "syncing" };
 
 function renderWizard(onSkip: () => void = () => {}) {
-  return render(
-    <QueryClientProvider client={testQueryClient()}>
-      <SetupWizard onSkip={onSkip} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<SetupWizard onSkip={onSkip} />);
 }
 
 beforeEach(() => {
@@ -371,11 +367,7 @@ describe("a status that changes under the operator", () => {
     const client = testQueryClient();
     const AT_CONNECT = { ...AT_SCAN, scan_ready: false, reap_ready: false };
     apiMock.setupStatus.mockResolvedValue(AT_CONNECT);
-    render(
-      <QueryClientProvider client={client}>
-        <SetupWizard onSkip={() => {}} />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<SetupWizard onSkip={() => {}} />, { client });
     // The Connect step is stubbed in this file, so "still on Connect" is read as "the scan step
     // has not taken the screen" -- which is exactly the jump being pinned against.
     await screen.findByRole("list", { name: /setup steps/i }).catch(() => null);

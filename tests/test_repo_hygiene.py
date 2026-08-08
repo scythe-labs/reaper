@@ -3189,7 +3189,14 @@ def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
     rendering: dict[str, int] = {}
     for path in sorted(FRONTEND_SRC.rglob("*.test.tsx")):
         body = path.read_text(encoding="utf-8")
-        if not re.search(r"\brender\(", body):
+        # Every spelling of "mounts a tree" the suite uses, not just the bare one (rule 147):
+        # testing-library's `render(` and `renderHook(`, the shared `renderWithProviders(` and
+        # `renderHookWithProviders(`, and the file-local `renderPanel(`/`renderQueue(` helpers
+        # that wrap them. `\b` keeps `rerender(` out, which mounts nothing new. This matched
+        # `render(` alone until the provider trees moved onto the shared helper, and 29 of the
+        # 53 files below silently left the walk in one commit -- caught by the count, which is
+        # what it is here for.
+        if not re.search(r"\brender[A-Za-z]*\(", body):
             continue
         rel = path.relative_to(FRONTEND_SRC).as_posix()
         rendering[rel] = len(re.findall(r"\bexpectNoA11yViolations\(", body))

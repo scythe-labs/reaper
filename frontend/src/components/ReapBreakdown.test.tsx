@@ -2,13 +2,12 @@
 //
 // The reap breakdown: the ledger (policy verdict, hand changes, the net), the by-reason
 // bars, the empty/error/no-scan states, and the two pointers off the page.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReapBreakdown as Breakdown, ScanStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { ReapBreakdown } from "./ReapBreakdown";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -73,12 +72,7 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
 }
 
 function renderBreakdown(onPlex = () => {}, onReview = () => {}) {
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ReapBreakdown onGoToPlexSettings={onPlex} onGoToReview={onReview} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<ReapBreakdown onGoToPlexSettings={onPlex} onGoToReview={onReview} />);
 }
 
 beforeEach(() => {

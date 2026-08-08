@@ -11,14 +11,14 @@
 //   - the Discord row, whose URL box is editable right beside the badge.
 // Fix one of these and leave a sibling and the class is half-closed with no test saying so, which
 // is what rule 72 is for.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Announcer } from "../announce";
 import type { Instance } from "../api";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { NotificationsPanel, ServicesPanel } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -82,11 +82,12 @@ describe("the badge on a saved service card", () => {
     // this row at all, and the badge went on vouching for the host that passed.
     apiMock.instances.mockResolvedValue([sonarr()]);
     const client = testQueryClient();
-    render(
-      <QueryClientProvider client={client}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ServicesPanel />
-      </QueryClientProvider>,
+      </>,
+      { client },
     );
     const user = userEvent.setup();
 
@@ -109,11 +110,11 @@ describe("the badge on the Discord row", () => {
   const urlBox = () => screen.getByLabelText(/Webhook URL/i);
 
   async function sendATestMessage() {
-    render(
-      <QueryClientProvider client={testQueryClient()}>
+    renderWithProviders(
+      <>
         <Announcer />
         <NotificationsPanel />
-      </QueryClientProvider>,
+      </>,
     );
     const user = userEvent.setup();
     await fill(user, urlBox(), "https://discord.com/api/webhooks/1/aaa");
@@ -164,11 +165,12 @@ describe("where a keyboard operator lands when a service card removes itself", (
     apiMock.instances.mockResolvedValue([tautulli()]);
     apiMock.deleteInstance.mockResolvedValue({ ok: true });
     const client = testQueryClient();
-    render(
-      <QueryClientProvider client={client}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ServicesPanel />
-      </QueryClientProvider>,
+      </>,
+      { client },
     );
     const user = userEvent.setup();
 

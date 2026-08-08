@@ -3,14 +3,14 @@
 // manual-address editor for an address they typed earlier, getting out of a sign-in whose
 // plex.tv tab never opened, seeing a failed sign-in as a failure, and -- for anyone driving
 // this panel by ear -- being able to tell one box on it from another.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlexResourceConnection, PlexStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
 
@@ -101,14 +101,15 @@ function renderPanel(
   });
   const queryClient = testQueryClient();
   if (cached) queryClient.setQueryData(["plex"], cached);
-  return render(
-    <QueryClientProvider client={queryClient}>
+  return renderWithProviders(
+    <>
       {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when no
           region is listening -- so without it here this panel's sentences are dropped and a test
           about them passes against silence. */}
       <Announcer />
       <PlexPanel onDirtyChange={onDirtyChange} />
-    </QueryClientProvider>,
+    </>,
+    { client: queryClient },
   );
 }
 
@@ -243,12 +244,7 @@ describe("when plex.tv's list comes back without the linked server", () => {
         },
       ],
     });
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />);
 
     // The row says what happened, and names the server Reaper is actually linked to.
     const notice = await screen.findByText(/came back without the server Reaper uses/);
@@ -361,11 +357,7 @@ describe("changing which server is linked", () => {
       invalidated.push(JSON.stringify(filters?.queryKey));
       return passThrough(filters);
     });
-    render(
-      <QueryClientProvider client={client}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />, { client });
     return invalidated;
   }
 
@@ -440,12 +432,7 @@ describe("the signed-in account label", () => {
           resolveResources = resolve;
         }),
     );
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />);
 
     // Past the fast, local status query, the account row is up, but the live plex.tv
     // account lookup is still in flight.
@@ -753,11 +740,7 @@ describe("the groups below the form, through a failed refetch", () => {
       ],
     });
     const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />, { client: queryClient });
     return queryClient;
   }
 
@@ -926,13 +909,14 @@ describe("forgetting the recorded watch history", () => {
       ],
     });
     const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         {/* `announce()` returns early when no region is listening, so without this the
             sentence below is dropped and the test passes against silence. */}
         <Announcer />
         <PlexPanel />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
     return queryClient;
   }

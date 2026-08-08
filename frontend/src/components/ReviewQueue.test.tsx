@@ -8,7 +8,7 @@
 //     and says so, rather than quietly meaning "the first page";
 //   - nothing else can be pressed while a bulk write is in flight.
 // The compact dormancy span is pinned here too: it rewrites a string the server writes.
-import { QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,7 +16,7 @@ import { Announcer } from "../announce";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL } from "../test/apiFixtures";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { NARROW_SCREEN_QUERY } from "../useMediaQuery";
 import { filtersKey } from "./queueFilters";
 import { shouldExpandSeasons } from "./queueSettings";
@@ -123,9 +123,8 @@ function BreakdownProbe() {
 }
 
 function renderQueue(verdict: Verdict = "condemn", latestScanSnapshotId: number | null = null) {
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
+  return renderWithProviders(
+    <>
       <BreakdownProbe />
       <ReviewQueue
         verdict={verdict}
@@ -136,7 +135,7 @@ function renderQueue(verdict: Verdict = "condemn", latestScanSnapshotId: number 
         onSelectGroup={() => {}}
         latestScanSnapshotId={latestScanSnapshotId}
       />
-    </QueryClientProvider>,
+    </>,
   );
 }
 
@@ -245,20 +244,17 @@ describe("keeping the list in step with the latest scan", () => {
     // snapshot, so keeping it open would leave the operator deciding from stale evidence (B-7).
     const onClearItemSelection = vi.fn();
     apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)], 2, 0, 1));
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ReviewQueue
-          verdict="condemn"
-          onVerdictChange={() => {}}
-          selectedId={1}
-          selectedGroupKey={null}
-          onSelect={() => {}}
-          onSelectGroup={() => {}}
-          onClearItemSelection={onClearItemSelection}
-          latestScanSnapshotId={2}
-        />
-      </QueryClientProvider>,
+    renderWithProviders(
+      <ReviewQueue
+        verdict="condemn"
+        onVerdictChange={() => {}}
+        selectedId={1}
+        selectedGroupKey={null}
+        onSelect={() => {}}
+        onSelectGroup={() => {}}
+        onClearItemSelection={onClearItemSelection}
+        latestScanSnapshotId={2}
+      />,
     );
     const user = userEvent.setup();
     // Settle the two states this control's EXISTENCE depends on, in order, before reaching
@@ -1100,19 +1096,16 @@ describe("what a screen reader hears on a queue card", () => {
   it("opens a card from the keyboard through its title control", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(7)]));
     const onSelect = vi.fn();
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ReviewQueue
-          verdict="condemn"
-          onVerdictChange={() => {}}
-          selectedId={null}
-          selectedGroupKey={null}
-          onSelect={onSelect}
-          onSelectGroup={() => {}}
-          latestScanSnapshotId={null}
-        />
-      </QueryClientProvider>,
+    renderWithProviders(
+      <ReviewQueue
+        verdict="condemn"
+        onVerdictChange={() => {}}
+        selectedId={null}
+        selectedGroupKey={null}
+        onSelect={onSelect}
+        onSelectGroup={() => {}}
+        latestScanSnapshotId={null}
+      />,
     );
     (await screen.findByRole("button", { name: "Why Example Movie 7 scored 80" })).focus();
     await userEvent.keyboard("{Enter}");
@@ -1170,11 +1163,8 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
     const onSet = vi.fn();
     // OverrideControls reads the default spare length from the general-settings query, so it
     // needs a client even in isolation; unresolved, the default reads as 0 (forever).
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
-      </QueryClientProvider>,
+    renderWithProviders(
+      <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />,
     );
     screen.getByRole("button", { name: "Spare" }).focus();
     await userEvent.keyboard("{Enter}");
@@ -1189,19 +1179,16 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
     // press on Spare must save the decision and leave the operator where they are.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     const onSelect = vi.fn();
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ReviewQueue
-          verdict="condemn"
-          onVerdictChange={() => {}}
-          selectedId={null}
-          selectedGroupKey={null}
-          onSelect={onSelect}
-          onSelectGroup={() => {}}
-          latestScanSnapshotId={null}
-        />
-      </QueryClientProvider>,
+    renderWithProviders(
+      <ReviewQueue
+        verdict="condemn"
+        onVerdictChange={() => {}}
+        selectedId={null}
+        selectedGroupKey={null}
+        onSelect={onSelect}
+        onSelectGroup={() => {}}
+        latestScanSnapshotId={null}
+      />,
     );
     const spare = await screen.findByRole("button", { name: "Spare" });
     spare.focus();
@@ -1501,11 +1488,8 @@ describe("what a card says after a hand decision", () => {
 // pick spares at that length, so the menu is the action, not a form.
 describe("the Spare length menu", () => {
   function renderControls(onSet = vi.fn()) {
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
-      </QueryClientProvider>,
+    renderWithProviders(
+      <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />,
     );
     return onSet;
   }
@@ -1623,19 +1607,19 @@ describe("switching tabs", () => {
     });
   }
 
+  /** The queue alone, so `rerender` re-wraps it in the providers the first render mounted it
+   *  under. The tab switch this describe is about happens in one app against one cache, and
+   *  handing the re-render a fresh client would drop every read the old tab had made. */
   function queue(verdict: Verdict) {
-    const queryClient = testQueryClient();
     return (
-      <QueryClientProvider client={queryClient}>
-        <ReviewQueue
-          verdict={verdict}
-          onVerdictChange={() => {}}
-          selectedId={null}
-          selectedGroupKey={null}
-          onSelect={() => {}}
-          onSelectGroup={() => {}}
-        />
-      </QueryClientProvider>
+      <ReviewQueue
+        verdict={verdict}
+        onVerdictChange={() => {}}
+        selectedId={null}
+        selectedGroupKey={null}
+        onSelect={() => {}}
+        onSelectGroup={() => {}}
+      />
     );
   }
 
@@ -1649,7 +1633,7 @@ describe("switching tabs", () => {
     );
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
 
-    const { rerender } = render(queue("condemn"));
+    const { rerender } = renderWithProviders(queue("condemn"));
     await waitFor(() =>
       expect(apiMock.candidates).toHaveBeenCalledWith(
         "condemn",
@@ -1891,9 +1875,8 @@ describe("what a reviewer hears when a scan lands under an open review", () => {
 
   function renderWithAnnouncer() {
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ReviewQueue
           verdict="condemn"
@@ -1904,7 +1887,7 @@ describe("what a reviewer hears when a scan lands under an open review", () => {
           onSelectGroup={() => {}}
           latestScanSnapshotId={2}
         />
-      </QueryClientProvider>,
+      </>,
     );
   }
 
@@ -1957,11 +1940,7 @@ describe("the search box a jump aims at this queue", () => {
     // request for the whole condemned lane -- and one paint of it -- before the seeded one
     // replaces it. The list must arrive filtered.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        {focused("Example Movie 1 2011", 7)}
-      </QueryClientProvider>,
-    );
+    renderWithProviders(focused("Example Movie 1 2011", 7));
     await screen.findByText("Example Movie 1");
     expect(searches()).toEqual(["Example Movie 1 2011"]);
     // And the box shows what it searched for, so the operator can widen it.
@@ -1972,15 +1951,9 @@ describe("the search box a jump aims at this queue", () => {
 
   it("applies a jump that arrives while the queue is already on screen", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
-    const { rerender } = render(
-      <QueryClientProvider client={testQueryClient()}>{focused("", 1)}</QueryClientProvider>,
-    );
+    const { rerender } = renderWithProviders(focused("", 1));
     await screen.findByText("Example Movie 1");
-    rerender(
-      <QueryClientProvider client={testQueryClient()}>
-        {focused("Example Movie 1 2011", 2)}
-      </QueryClientProvider>,
-    );
+    rerender(focused("Example Movie 1 2011", 2));
     await waitFor(() => expect(searches()).toContain("Example Movie 1 2011"));
   });
 
@@ -1988,19 +1961,11 @@ describe("the search box a jump aims at this queue", () => {
     // The nonce is what "once" is counted with. Without it every unrelated re-render would
     // put the jump's term back, and typing over it would be undone a keystroke later.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
-    const { rerender } = render(
-      <QueryClientProvider client={testQueryClient()}>
-        {focused("Example Movie 1 2011", 7)}
-      </QueryClientProvider>,
-    );
+    const { rerender } = renderWithProviders(focused("Example Movie 1 2011", 7));
     const box = await screen.findByRole("searchbox", { name: /search titles/i });
     await userEvent.clear(box);
     await userEvent.type(box, "something else");
-    rerender(
-      <QueryClientProvider client={testQueryClient()}>
-        {focused("Example Movie 1 2011", 7)}
-      </QueryClientProvider>,
-    );
+    rerender(focused("Example Movie 1 2011", 7));
     expect(box).toHaveValue("something else");
   });
 });
@@ -2014,17 +1979,15 @@ describe("what the search box calls itself", () => {
   // box is the sibling that already pairs this way.
   it("names itself with the words on screen, so it can be asked for by voice", async () => {
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        <ReviewQueue
-          verdict="condemn"
-          onVerdictChange={() => {}}
-          selectedId={null}
-          selectedGroupKey={null}
-          onSelect={() => {}}
-          onSelectGroup={() => {}}
-        />
-      </QueryClientProvider>,
+    renderWithProviders(
+      <ReviewQueue
+        verdict="condemn"
+        onVerdictChange={() => {}}
+        selectedId={null}
+        selectedGroupKey={null}
+        onSelect={() => {}}
+        onSelectGroup={() => {}}
+      />,
     );
     const box = await screen.findByRole("searchbox", { name: /search titles/i });
     // The ellipsis is the one difference the visible copy is allowed: it says "keep typing",

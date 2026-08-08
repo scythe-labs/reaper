@@ -14,14 +14,13 @@
 // keeps outright, a lean is a FLAT discount. What is pinned is the exact body each composer
 // emits, because the server validates it (`GradedKeepSpec._valid_keep`) and a wrong shape is
 // a keep rule that refuses to save.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import type { Condition, GradedKeep, VocabField } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -52,10 +51,8 @@ function optionNamed(name: string): HTMLElement {
 
 async function openTheSuggester() {
   const user = userEvent.setup();
-  const { container } = render(
-    <QueryClientProvider client={testQueryClient()}>
-      <RemoveRulesEditor condemn={[]} onCondemn={() => {}} mediaType="movie" />
-    </QueryClientProvider>,
+  const { container } = renderWithProviders(
+    <RemoveRulesEditor condemn={[]} onCondemn={() => {}} mediaType="movie" />,
   );
 
   // Rule 137: the picker is a <select>, whose accessible name does not change while the
@@ -168,17 +165,15 @@ const VOTES: VocabField = {
 function renderKeepEditor(over: { conditions?: Condition[]; keeps?: GradedKeep[] } = {}) {
   const onConditions = vi.fn();
   const onKeeps = vi.fn();
-  render(
-    <QueryClientProvider client={testQueryClient()}>
-      <KeepRulesEditor
-        conditions={over.conditions ?? []}
-        keeps={over.keeps ?? []}
-        gateIds={[]}
-        mediaType="movie"
-        onConditions={onConditions}
-        onKeeps={onKeeps}
-      />
-    </QueryClientProvider>,
+  renderWithProviders(
+    <KeepRulesEditor
+      conditions={over.conditions ?? []}
+      keeps={over.keeps ?? []}
+      gateIds={[]}
+      mediaType="movie"
+      onConditions={onConditions}
+      onKeeps={onKeeps}
+    />,
   );
   return { onConditions, onKeeps, user: userEvent.setup() };
 }

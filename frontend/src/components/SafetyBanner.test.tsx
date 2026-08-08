@@ -4,12 +4,11 @@
 // at all times, so every branch is driven here rather than only the one a change touched: a
 // state with no test is one refactor away from silently becoming another state's copy, and the
 // question this banner answers is "can this thing delete my library right now?" (rule 118).
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Safety } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { SafetyBanner } from "./SafetyBanner";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: { safety: vi.fn() } }));
@@ -27,11 +26,7 @@ const READ_ONLY: Safety = {
 };
 
 function renderBanner() {
-  render(
-    <QueryClientProvider client={testQueryClient()}>
-      <SafetyBanner />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<SafetyBanner />);
 }
 
 describe("the safety banner", () => {
