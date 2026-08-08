@@ -163,7 +163,7 @@ row moving is indistinguishable from one that never started.
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
-| 3 | Gates that land green | not started | 0 of 4 | |
+| 3 | Gates that land green | in progress | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
