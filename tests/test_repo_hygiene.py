@@ -4173,24 +4173,34 @@ def _names_an_instance_error(node: ast.expr | None) -> bool:
 
 
 def _http_status_args(handler: ast.ExceptHandler) -> list[tuple[int, ast.expr]]:
-    """The first argument of every ``HTTPException(...)`` raised inside ``handler``.
+    """The status argument of every ``HTTPException(...)`` raised inside ``handler``.
 
-    That first argument is the status. Collected from the whole handler body rather than from
-    its first statement, so an arm that branches before raising is read too, and returned in
-    source order -- ``ast.walk`` is breadth-first, so the raise nested inside an ``if`` comes
-    back after a raise written below it.
+    Collected from the whole handler body rather than from its first statement, so an arm that
+    branches before raising is read too, and returned in source order -- ``ast.walk`` is
+    breadth-first, so a raise nested inside an ``if`` comes back after one written below it.
+
+    **Both spellings of the status, because the tree spells it both ways**: positionally, which
+    is what every arm here uses, and as ``status_code=``, which ``api/lists.py`` uses twice. A
+    reader of the positional form alone does not report a keyword-spelled arm as a violation --
+    it drops that arm out of the population entirely, so the count below fails saying an arm
+    stopped answering when the truth is that it answered in a spelling nobody could read
+    (rule 147).
     """
     out: list[tuple[int, ast.expr]] = []
     for node in ast.walk(handler):
         if not isinstance(node, ast.Raise) or node.exc is None:
             continue
         exc = node.exc
-        if not isinstance(exc, ast.Call) or not exc.args:
+        if not isinstance(exc, ast.Call):
             continue
         callee = exc.func
         name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-        if name == "HTTPException":
-            out.append((node.lineno, exc.args[0]))
+        if name != "HTTPException":
+            continue
+        keyword = next((kw.value for kw in exc.keywords if kw.arg == "status_code"), None)
+        status = exc.args[0] if exc.args else keyword
+        if status is not None:
+            out.append((node.lineno, status))
     return sorted(out, key=lambda pair: pair[0])
 
 
@@ -4275,7 +4285,9 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
 
     An arm that logs first, or branches before raising, still raises a status -- and a reader
     that only inspected ``handler.body[0]`` would call both of those clean. Driven against a
-    nested raise, since that is the shape a future arm most plausibly takes.
+    nested raise, since that is the shape a future arm most plausibly takes, and against
+    ``status_code=``, which is a live spelling in ``api/lists.py`` and reaches the ban only
+    because the reader takes it (rule 147).
     """
     nested = ast.parse(
         "try:\n"
@@ -4284,11 +4296,28 @@ def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
         "    log.warning('x')\n"
         "    if exc.status:\n"
         "        raise HTTPException(404, str(exc)) from exc\n"
-        "    raise HTTPException(exc.status, str(exc)) from exc\n"
+        "    raise HTTPException(status_code=409, detail=str(exc)) from exc\n"
     )
     handler = next(n for n in ast.walk(nested) if isinstance(n, ast.ExceptHandler))
     args = _http_status_args(handler)
     assert len(args) == 2, f"both raises should be read, got {len(args)}"
-    (_, nested_arg), (_, trailing_arg) = args
-    assert isinstance(nested_arg, ast.Constant) and nested_arg.value == 404
-    assert isinstance(trailing_arg, ast.Attribute) and trailing_arg.attr == "status"
+    (_, positional), (_, keyword) = args
+    assert isinstance(positional, ast.Constant) and positional.value == 404
+    assert isinstance(keyword, ast.Constant) and keyword.value == 409
+
+    # And the compliant spellings, so the ban's accept side is driven too.
+    clean = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        "    raise HTTPException(exc.status, str(exc)) from exc\n"
+    )
+    handler = next(n for n in ast.walk(clean) if isinstance(n, ast.ExceptHandler))
+    ((_, arg),) = _http_status_args(handler)
+    assert isinstance(arg, ast.Attribute) and arg.attr == "status"
+
+    # A raise that is not an HTTPException contributes nothing, so a `raise` re-raising the
+    # original cannot be read as an arm that stopped answering.
+    bare = ast.parse("try:\n    pass\nexcept InstanceError:\n    raise\n")
+    handler = next(n for n in ast.walk(bare) if isinstance(n, ast.ExceptHandler))
+    assert _http_status_args(handler) == []
