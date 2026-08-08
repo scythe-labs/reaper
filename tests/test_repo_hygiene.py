@@ -1967,6 +1967,66 @@ def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() ->
     )
 
 
+#: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand:
+#: `codeql.yml` filters both its triggers, and `docs-deploy.yml` filters its one. `ci.yml` has
+#: none, deliberately -- it runs on everything and classifies the diff inside a job, so its
+#: verdict can be read by other jobs and a skipped lane still publishes a check run.
+#:
+#: The number is here because two sentences describe this arrangement in prose and both were
+#: wrong: `ci.yml`'s `changes` comment and CLAUDE.md's "which jobs appear" paragraph each said
+#: nothing else in the repository restated the path list, while three lists sat in two files
+#: (rule 7/24). A count is what turns that from something a reader has to notice into
+#: something a fourth list cannot get past (rule 145).
+_EXPECTED_WORKFLOW_PATH_FILTERS = 3
+
+
+def test_the_workflows_that_filter_themselves_by_path_are_the_ones_the_prose_names() -> None:
+    """A `paths` filter decides whether a workflow starts, so it cannot read `ci.yml`.
+
+    That is the whole reason more than one list exists, and it is not going away: a workflow
+    skipped by its own filter publishes no check run at all, which is safe here only while
+    neither of these two is a required check. `ci.yml` answers the same question the other
+    way, inside a job, which is why `CI gate` can report a skipped lane as a pass.
+
+    **Two prose copies say how many lists there are** -- `.github/workflows/ci.yml`'s `changes`
+    comment and CLAUDE.md's "Which jobs appear depends on what the commit touched" paragraph.
+    Both are named in the failure below, because a count that moves without them is the same
+    falsehood arriving a second time (rule 144).
+    """
+    found: dict[str, list[str]] = {}
+    workflows = REPO / ".github" / "workflows"
+    # Both extensions, because GitHub reads both and the tree happens to use one. A walk
+    # matching only what is there today reports a clean repository for a filter added in the
+    # spelling it does not look for (rule 147).
+    for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")]):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        # `on` is YAML 1.1's boolean true, which is why the key is read both ways.
+        triggers = workflow.get("on", workflow.get(True)) or {}
+        for event, spec in triggers.items():
+            if not isinstance(spec, dict):
+                continue
+            for key in ("paths", "paths-ignore"):
+                if key in spec:
+                    found[f"{path.name}:{event}:{key}"] = spec[key]
+
+    assert len(found) == _EXPECTED_WORKFLOW_PATH_FILTERS, (
+        f"expected {_EXPECTED_WORKFLOW_PATH_FILTERS} path filters across the workflows, found "
+        f"{len(found)}:\n"
+        + "\n".join(f"  {where} -> {globs}" for where, globs in found.items())
+        + "\n\nA NEW one needs both prose copies corrected in the same commit: the `changes`\n"
+        "job's comment in .github/workflows/ci.yml, and CLAUDE.md's paragraph on which jobs\n"
+        "appear. One that went away: drop it from both, then lower this number."
+    )
+
+    codeql = {where: tuple(globs) for where, globs in found.items() if where.startswith("codeql")}
+    assert len(set(codeql.values())) == 1, (
+        "codeql.yml's two triggers ignore different paths:\n"
+        + "\n".join(f"  {where} -> {list(globs)}" for where, globs in codeql.items())
+        + "\n\nThey are one list written twice, so a push and a pull request on the same\n"
+        "commit would otherwise analyze different trees."
+    )
+
+
 BINARIES_WORKFLOW = REPO / ".github" / "workflows" / "binaries.yml"
 
 
