@@ -139,7 +139,6 @@ async def start_plex_login(
         session.add(
             PendingPlexLogin(
                 pin_id=pin.pin_id,
-                pin_code=pin.code,
                 purpose="login",
                 created_at=utcnow(),
                 expires_at=expiry(PLEX_LOGIN_TTL),

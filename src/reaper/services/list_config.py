@@ -225,7 +225,6 @@ async def ensure_defaults(session: AsyncSession) -> None:
                 source=source.value,
                 config_json=json.dumps(config),
                 enabled=True,
-                built_in=False,
                 created_at=utcnow(),
             )
         )
@@ -357,7 +356,6 @@ async def create(
         source=kind.value,
         config_json=_clean_config(kind, config),
         enabled=True,
-        built_in=False,
         created_at=utcnow(),
     )
     session.add(row)

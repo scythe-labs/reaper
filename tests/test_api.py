@@ -194,7 +194,6 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     name="Example Server",
                     connection_uri="http://plex.local:32400",
                     token_enc="enc",
-                    owner_plex_account_id=1,
                     created_at=now,
                 ),
             ]

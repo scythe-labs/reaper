@@ -312,7 +312,6 @@ async def complete_link(
             ]
         )
         row.token_enc = token_enc
-        row.owner_plex_account_id = account.account_id
         # The certificate-check choice made while linking sticks to the server row;
         # every later client (scan, reap gateway, Leaving Soon) reads it from here.
         row.verify_tls = verify_tls
@@ -421,7 +420,6 @@ async def start_link(
         session.add(
             PendingPlexLogin(
                 pin_id=pin.pin_id,
-                pin_code=pin.code,
                 purpose="link",
                 created_at=utcnow(),
                 expires_at=expiry(LINK_TTL),

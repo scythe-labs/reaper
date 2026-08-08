@@ -126,14 +126,11 @@ class _ConfigureCalled(Exception):  # noqa: N818 -- a control-flow signal, not a
         self.kwargs = kwargs
 
 
-def _env_py_configure_kwargs(
-    *, as_sql: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> dict[str, Any]:
+def _env_py_configure_kwargs(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Run the real ``alembic/env.py`` and return what it passed to ``context.configure()``.
 
     env.py cannot be imported -- Alembic execs it by path -- so this drives it the
-    way Alembic itself does and intercepts the one call that matters. ``as_sql``
-    picks the branch: True runs ``run_migrations_offline``, False the online one.
+    way Alembic itself does and intercepts the one call that matters.
 
     Nothing is migrated: ``configure`` raises as soon as it has the keyword
     arguments, which also means a future env.py that never calls it fails here
@@ -155,17 +152,14 @@ def _env_py_configure_kwargs(
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
     with (
-        EnvironmentContext(config, script, as_sql=as_sql),
+        EnvironmentContext(config, script),
         pytest.raises(_ConfigureCalled) as caught,
     ):
         script.run_env()
     return caught.value.kwargs
 
 
-@pytest.mark.parametrize("as_sql", [True, False], ids=["offline", "online"])
-def test_env_py_configures_batch_mode(
-    as_sql: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_env_py_configures_batch_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """What alembic/env.py actually passes -- not what a test hand-configures.
 
     ``test_batch_mode_can_drop_a_named_constraint`` proves batch mode plus the
@@ -173,10 +167,14 @@ def test_env_py_configures_batch_mode(
     This one reads the shipped env.py, so flipping ``render_as_batch`` to False
     fails here instead of years later, in the first migration that needs it.
 
-    Both call sites are covered: env.py configures once per branch, and only the
-    branch under test runs.
+    **One call site, and it used to be parametrized over two.** env.py had an offline
+    (``--sql``) branch with no invoker anywhere in the tree, and it could not have run:
+    8 of the 23 revisions call ``op.get_bind()``, so ``alembic upgrade head --sql`` exits
+    1 at revision 3. It is gone. The parametrize went with it rather than staying as a
+    second id driving the same branch, which would have read as twice the coverage
+    (rule 118).
     """
-    kwargs = _env_py_configure_kwargs(as_sql=as_sql, tmp_path=tmp_path, monkeypatch=monkeypatch)
+    kwargs = _env_py_configure_kwargs(tmp_path=tmp_path, monkeypatch=monkeypatch)
 
     assert kwargs.get("render_as_batch") is True, (
         "alembic/env.py must pass render_as_batch=True. Without it SQLite cannot "
@@ -1060,15 +1058,25 @@ class TestTheListConfigShapeHeal:
     ) -> None:
         """Every fresh install takes the guard's other arm: nothing to rebuild, and the
         shape at head is already the model's -- which is also what keeps ``alembic check``
-        green in CI."""
+        green in CI.
+
+        ``built_in`` is excluded from the stray-default sweep, and the exclusion is the point
+        rather than an escape: release M gave it ``server_default=false()`` deliberately
+        (``e6f7a8b9c0d1``) so an INSERT can omit a column whose ORM attribute has retired.
+        That is a default this heal is not allowed to remove, unlike the three it was written
+        for -- which is exactly the distinction a blanket loop cannot make."""
         config = _alembic_config(tmp_path, monkeypatch)
         command.upgrade(config, "head")
         engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
 
         columns = {c["name"]: c for c in inspect(engine).get_columns("list_config")}
         assert isinstance(columns["created_at"]["type"], Integer)
-        for name in ("config_json", "enabled", "built_in"):
+        for name in ("config_json", "enabled"):
             assert columns[name]["default"] is None, name
+        assert columns["built_in"]["default"] is not None, (
+            "release M's server default for built_in is gone, so a fresh install's first "
+            "list save will fail on a NOT NULL column nothing writes any more"
+        )
         engine.dispose()
 
 

@@ -742,6 +742,28 @@ own revision chained onto head: an add, a new table, a backfill, or a guarded re
 always *widening* — the one exception is that same heal migration also dropping a stray server
 default, safe only because the ORM carries the Python-side default. `cache.db` stays disposable.
 
+**Schema still has to be able to leave, and it leaves in two releases** (rule 148). Release M
+removes the reads, the writes and the ORM attribute, and ships whatever the column needs to keep
+working without Python holding it up; release M+1 drops the column. `e6f7a8b9c0d1` is the first
+release M, for six write-only columns. What it taught, none of it visible in the shape of the
+migration:
+
+- **A `NOT NULL` foreign key cannot take a `server_default`.** `PRAGMA foreign_keys` is ON, so
+  defaulting `profile.active_policy_id` to `0` points every new row at a policy that does not
+  exist and the insert fails — the exact first-save break the revision exists to prevent. It went
+  nullable instead. A NULL foreign key is permitted and checks clean.
+- **A batch rebuild silently drops a collation.** SQLite reflection does not report one, so a
+  `batch_alter_table` on `list_config` for an unrelated column recreated `name` case-*sensitive*
+  and two lists differing only in case could both exist. The behavioral test caught it; nothing in
+  the diff would have. Any rebuild of that table restates `COLLATE NOCASE`.
+- **Hiding a retired column from autogenerate does not hide its foreign key.** `include_name`
+  needs a second arm for `foreign_key_constraint`, or `alembic check` — a CI gate — reports
+  `remove_fk` on every commit.
+
+The exclusion list in `alembic/env.py` is a one-release bridge and empties with the M+1 sweep. A
+column that outlives its sweep is how a dead column becomes permanent behind a growing list of
+silencers, which is the direction rule 148 exists to refuse.
+
 ## Gate retirement
 
 **Choice: the upgrade persists the heal where it can, a load-time shim covers what it cannot,

@@ -680,8 +680,8 @@ class TestTheRegistryFingerprint:
         with sync_engine.begin() as conn:
             conn.execute(
                 text(
-                    "INSERT INTO list_config (name, source, config_json, enabled, built_in,"
-                    " created_at) VALUES ('Keep', 'arr_tag', '{\"tags\": [\"keep\"]}', 1, 0, 0)"
+                    "INSERT INTO list_config (name, source, config_json, enabled,"
+                    " created_at) VALUES ('Keep', 'arr_tag', '{\"tags\": [\"keep\"]}', 1, 0)"
                 )
             )
         sync_engine.dispose()

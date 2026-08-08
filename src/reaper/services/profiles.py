@@ -475,12 +475,10 @@ async def save_profile_settings(
     and the scheduler alike. Tightening a cap here is always safe: it cannot void a
     pending approval, because the caps are not part of the policy hash.
 
-    The row this creates carries ``Profile.enabled = False`` and this function never flips
-    it -- but do not read that as the interlock. Nothing in ``src/`` reads the column: it is
-    written at creation and never consulted, so there is no on-step and no consumer, and it
-    gates nothing. What actually keeps a saved cap from acting is that the scheduler never
-    deletes and the one route that does (``api.runs.execute_run``) needs the host armed and
-    the typed content-bound phrase.
+    **There is no on-step here and never was.** The row used to carry an ``enabled`` flag
+    written False at creation and read by nothing; it retired in release M (rule 148). What
+    keeps a saved cap from acting is that the scheduler never deletes and the one route that
+    does (``api.runs.execute_run``) needs the host armed and the typed content-bound phrase.
     """
     profile = (
         await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
@@ -488,10 +486,14 @@ async def save_profile_settings(
 
     now = utcnow()
     if profile is None:
+        # Called for its effect, not its id: `Profile.active_policy_id` retired in release M
+        # (rule 148), and the policy in force is resolved by pure recency. The row it
+        # persists is still wanted -- a fresh install runs on the in-code default until this
+        # writes it, and dropping the call would leave the first save with no policy row at
+        # all, which is a state change this schema retirement has no business making.
+        await _ensure_active_policy_row(session)
         profile = Profile(
             name=DEFAULT_PROFILE_NAME,
-            enabled=False,
-            active_policy_id=await _ensure_active_policy_row(session),
             settings_json=settings.model_dump_json(),
             created_at=now,
             updated_at=now,
