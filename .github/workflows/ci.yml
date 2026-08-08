@@ -51,8 +51,15 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # The single source of truth for which lane a change belongs to. Everything downstream
-  # reads these two outputs; nothing else in the repository restates the path list.
+  # The single source of truth for which lane a change belongs to: every job in this file
+  # reads these three outputs rather than carrying globs of its own.
+  #
+  # It is not the repository's only path list, and saying so was wrong for as long as it
+  # was written (rule 7/24). Two other workflows filter themselves and neither can read an
+  # output of this one, because a `paths` filter decides whether a workflow starts at all:
+  # `codeql.yml` restates the prose globs below as `paths-ignore`, twice, once per trigger;
+  # `docs-deploy.yml` carries its own list, which is the `site` lane by another spelling.
+  # `tests/test_repo_hygiene.py` counts all three so a fourth cannot arrive quietly.
   changes:
     name: Decide what to run
     runs-on: ubuntu-latest
