@@ -181,7 +181,7 @@ row moving is indistinguishable from one that never started.
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
 | 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
-| 4 | Drift corrections | **in progress** | 0 of 4 | |
+| 4 | Drift corrections | **in progress** | 1 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
 | 6 | Structural motion | not started | 0 of 8 | C6 outstanding |
 | 7 | Wire contract | not started | 0 of ~4 | C7 outstanding |
@@ -239,6 +239,7 @@ here first and never reconstructed later.
 | #588 | 3 | W6-5, audit | `_imported_modules` | no | `from reaper import services` produced no edge, so an upward import read as clean. Driven: passes at #583, fails here |
 | #591 | 3 | W6-6, audit | `_WORKFLOW_PATH_FILTERS` | no | On `dev`. The gate pinned a count, which cannot see a filter moving between files; now a set. `ci.yml`'s header contradicted the comment #586 fixed, 50 lines up. Opened #589, #590 |
 | #592 | 3 | W6-8, audit | `_is_allowed`, `_owner`, `_real_resolvers` | no | 3 hooks to 10. Five resolver siblings and both UDP forms escaped a live probe; `_host_of` crashed on an unhashable address and allowlisted a bare string. Every hook now driven refused and allowed, and a refusal names the test that owns it |
+| #593 | 4 | W10-2 | `InstanceError.status` | no | Latent as the correction says: the two 404 arms covered the base class and were right only against today's callees. Five arms now read one declaration. The gate walks `api/` by AST, pins 6 handlers and 5 responses, and bans a literal status; three routes had no status test at all |
 
 ### Killed while executing
 
