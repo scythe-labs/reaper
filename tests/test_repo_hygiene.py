@@ -3878,7 +3878,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 76
+_EXPECTED_LAYERED_MODULES = 77
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
@@ -4053,8 +4053,14 @@ def test_the_four_packages_import_only_downward() -> None:
     modules = _layered_modules()
     assert len(modules) == _EXPECTED_LAYERED_MODULES, (
         f"expected {_EXPECTED_LAYERED_MODULES} modules under {'/, '.join(_LAYERS)}/, walked "
-        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number. If you did not, the\n"
-        "walk lost part of the tree -- and every assertion below passes on what it cannot see."
+        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number -- AND the two prose\n"
+        "copies of it, which nothing else asserts (rule 144): docs/SIMPLIFICATION_PLAN.md's S7\n"
+        "paragraph names this constant and restates the figure, and its C3 checkpoint row does\n"
+        "too. Both were already stale by two when this message was written. Leave the *Landed*\n"
+        "rows alone -- their figures are historical deltas, and editing one makes a correct\n"
+        "record false.\n"
+        "If you did not add or delete one, the walk lost part of the tree -- and every\n"
+        "assertion below passes on what it cannot see."
     )
     rank = {layer: i for i, layer in enumerate(_LAYERS)}
     upward = [e for e in _cross_package_edges() if rank[e.dst] < rank[e.src]]

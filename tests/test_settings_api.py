@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.settings import PlexUpdateIn, update_plex_settings
+from reaper.api.plex import PlexUpdateIn, update_plex_settings
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.clock import utcnow
