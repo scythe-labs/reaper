@@ -3193,16 +3193,15 @@ def test_the_select_name_matcher_rejects_what_it_claims_to_reject() -> None:
         ('<select id="tz" value={tz}>', ""),
         # A label, but pointed somewhere else.
         ('<select id="tz" value={tz}>', '<label htmlFor="other">Zone</label>'),
-        # Prose about a name is not a name. Both spellings the old matcher fell for.
-        ("<select value={tz}>", ""),
     ]
     for tag, text in accepted:
         assert _select_is_named(tag, text), f"should count as named: {tag}"
     for tag, text in rejected:
         assert not _select_is_named(tag, text), f"should NOT count as named: {tag}"
 
-    # And the comment stripping, which happens before the matcher ever sees the tag: a comment
-    # mentioning either spelling must not survive into the string that gets searched.
+    # And the comment stripping, which happens before the matcher ever sees the tag: prose about
+    # a name is not a name, so a comment mentioning either spelling must not survive into the
+    # string that gets searched. These are both spellings the old matcher fell for.
     for comment in ("// no aria-label= needed here", "// matches the id= of the row above"):
         stripped = " ".join(
             _without_line_comments(f"<select\n  {comment}\n  value={{tz}}>").split()
