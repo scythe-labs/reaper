@@ -32,6 +32,7 @@ the real delay for a client retry or a poll loop only burns wall clock for no si
 """
 
 import asyncio
+import contextvars
 import logging
 import socket
 import sys
@@ -125,8 +126,12 @@ def pytest_configure() -> None:
     """
     crypto._derive_fernet_key = _cheap_derive_fernet_key
     socket.getaddrinfo = _guarded_getaddrinfo
+    for name in _real_resolvers:
+        setattr(socket, name, _guarded_resolver(name))
     socket.socket.connect = _guarded_connect  # type: ignore[assignment]
     socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[assignment]
+    socket.socket.sendto = _guarded_sendto  # type: ignore[assignment]
+    socket.socket.sendmsg = _guarded_sendmsg  # type: ignore[assignment]
 
 
 # --------------------------------------------------------------------------------------
@@ -162,9 +167,25 @@ _LOOPBACK_HOSTS = frozenset(
 #: raise alone is not enough -- see `NetworkReached`.
 _network_attempts: list[str] = []
 
+#: Which test a refusal belongs to. A `ContextVar` rather than a plain global because a refusal
+#: can happen on a thread: `asyncio.to_thread` copies the context, so a worker is attributed to
+#: the test that spawned it, and a bare `threading.Thread` starts with an empty one and reads
+#: the default. Either is honest. A plain global reads whatever test is running NOW, which for
+#: a thread outliving its test is a different test's name -- a red run pointing at innocent code.
+_owner: contextvars.ContextVar[str] = contextvars.ContextVar("owner", default="<collection>")
+
 _real_getaddrinfo = socket.getaddrinfo
 _real_connect = socket.socket.connect
 _real_connect_ex = socket.socket.connect_ex
+_real_sendto = socket.socket.sendto
+_real_sendmsg = socket.socket.sendmsg
+#: The resolver siblings. Each answers the same question `getaddrinfo` does and each reaches
+#: the same resolver, so guarding one and not the rest is rule 72's own failure mode -- all
+#: five escaped a live probe of the first version of this guard.
+_real_resolvers = {
+    name: getattr(socket, name)
+    for name in ("gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo", "getfqdn")
+}
 
 
 class NetworkReached(BaseException):
@@ -180,12 +201,19 @@ class NetworkReached(BaseException):
 
     The teardown assertion below is the second half, for the case something catches
     ``BaseException`` or the attempt happens on a thread whose exception nobody re-raises.
+
+    **What this guard does NOT cover**, measured by driving each one rather than reasoned
+    about. ``_socket.socket.connect`` is the C base class and cannot be patched, so code
+    reaching past ``socket.socket`` for it connects; nothing in the tree or the environment
+    does. A raw ``SOCK_RAW``/``AF_PACKET`` socket needs root and is out of scope. And a
+    subprocess has its own address space -- the one test that shells out patches
+    ``subprocess.run`` and never launches anything.
     """
 
 
 def _refuse(what: str, target: object) -> NoReturn:
     attempt = f"{what} {target!r}"
-    _network_attempts.append(attempt)
+    _network_attempts.append(f"{_owner.get()}: {attempt}")
     raise NetworkReached(
         f"a test reached the network: {attempt}\n"
         "Tests are hermetic. Mock the client (respx for httpx) or stub the seam -- and note "
@@ -194,48 +222,103 @@ def _refuse(what: str, target: object) -> NoReturn:
 
 
 def _host_of(address: object) -> object:
-    """The host half of a socket address, for the shapes ``connect`` accepts.
+    """The host half of a socket address, for every shape ``connect`` accepts.
 
-    AF_INET is ``(host, port)`` and AF_INET6 is ``(host, port, flowinfo, scope_id)``; an
-    AF_UNIX address is a path, as a `str` or `bytes`, and reaches no network at all.
+    AF_INET is ``(host, port)`` and AF_INET6 is ``(host, port, flowinfo, scope_id)``. Anything
+    else is handed back whole and refused on its own account, which is the fail-closed
+    direction: this used to return ``None`` for a bare `str`/`bytes` -- an unwanted second
+    AF_UNIX exemption, since ``None`` is on the allowlist -- and to raise ``TypeError`` out of
+    the guard on an unhashable address like ``["192.0.2.1", 80]``, which is a crash where a
+    refusal belongs.
     """
     if isinstance(address, tuple) and address:
         return address[0]
-    return None if isinstance(address, (str, bytes)) else address
+    return address
+
+
+def _is_allowed(host: object) -> bool:
+    """Whether ``host`` is somewhere a test may reach.
+
+    Membership, never a prefix or a parse: **every loopback spelling outside the seven exact
+    strings is refused**, including real ones (`127.0.0.2`, `127.1`, `2130706433`, `[::1]`,
+    `LOCALHOST`, a trailing-dot `localhost.`, `b"127.0.0.1"`). That is the fail-closed
+    direction and it is written down here because the failure it produces reads as a network
+    violation: a test that genuinely wants a second loopback address adds it above, on purpose.
+    """
+    try:
+        return host in _LOOPBACK_HOSTS
+    except TypeError:  # an unhashable address is not on any allowlist
+        return False
 
 
 def _guarded_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
-    if host not in _LOOPBACK_HOSTS:
+    if not _is_allowed(host):
         _refuse("resolved", host)
     return _real_getaddrinfo(host, port, *args, **kwargs)
 
 
+def _guarded_resolver(name: str) -> Any:
+    """One of `getaddrinfo`'s siblings, guarded on its first argument."""
+    real = _real_resolvers[name]
+
+    def guarded(host: Any = None, *args: Any, **kwargs: Any) -> Any:
+        if not _is_allowed(_host_of(host)):
+            _refuse(f"resolved via {name}", host)
+        return real(host, *args, **kwargs) if host is not None else real()
+
+    return guarded
+
+
 def _guarded_connect(self: socket.socket, address: Any) -> None:
-    if self.family != socket.AF_UNIX and _host_of(address) not in _LOOPBACK_HOSTS:
+    if self.family != socket.AF_UNIX and not _is_allowed(_host_of(address)):
         _refuse("connected to", address)
     return _real_connect(self, address)
 
 
 def _guarded_connect_ex(self: socket.socket, address: Any) -> int:
-    if self.family != socket.AF_UNIX and _host_of(address) not in _LOOPBACK_HOSTS:
+    if self.family != socket.AF_UNIX and not _is_allowed(_host_of(address)):
         _refuse("connected to", address)
     return _real_connect_ex(self, address)
 
 
+def _guarded_sendto(self: socket.socket, *args: Any) -> int:
+    # UDP reaches a host with no connect and no lookup, so the address arrives here instead.
+    # Driven against the first version of this guard, `sendto` put five bytes on the wire.
+    if self.family != socket.AF_UNIX and args and not _is_allowed(_host_of(args[-1])):
+        _refuse("sent to", args[-1])
+    return _real_sendto(self, *args)
+
+
+def _guarded_sendmsg(self: socket.socket, *args: Any) -> int:
+    if self.family != socket.AF_UNIX and len(args) > 3 and not _is_allowed(_host_of(args[3])):
+        _refuse("sent to", args[3])
+    return _real_sendmsg(self, *args)
+
+
 @pytest.fixture(autouse=True)
-def _no_network() -> Iterator[None]:
-    """Fail the test that reached out, even if its own code swallowed the refusal."""
-    _network_attempts.clear()
+def _no_network(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Fail the test that reached out, even if its own code swallowed the refusal.
+
+    **Nothing is cleared on the way in**, deliberately. A refusal during collection, or on a
+    thread that outlived the test that started it, lands in the list with no teardown of its
+    own left to read it -- so the next teardown reports it, and each line carries the test it
+    belongs to rather than the one that happened to be running.
+    """
+    _owner.set(request.node.nodeid)
     yield
-    attempts = list(_network_attempts)
-    _network_attempts.clear()
+    attempts, _network_attempts[:] = list(_network_attempts), []
+    mine = request.node.nodeid
     assert not attempts, (
-        "this test reached the network:\n"
-        + "\n".join(f"  {a}" for a in attempts)
+        "the network was reached:\n"
+        + "\n".join(
+            f"  {a}" if not a.startswith(f"{mine}: ") else f"  {a[len(mine) + 2 :]}"
+            for a in attempts
+        )
         + "\n\nIt was refused, so nothing left the machine. This runs in teardown so that a "
         "refusal\nsomething caught on the way out still fails the test rather than being "
-        "logged and\nforgotten. Mock the client or stub the seam: respx covers httpx and does "
-        "NOT cover\nplexapi, which speaks requests."
+        "logged and\nforgotten -- so a line above naming ANOTHER test is that test's fault, "
+        "reported here\nbecause its own teardown had already run. Mock the client or stub the "
+        "seam: respx\ncovers httpx and does NOT cover plexapi, which speaks requests."
     )
 
 

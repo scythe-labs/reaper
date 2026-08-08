@@ -17,8 +17,11 @@ directly, and the population it allows is written out and driven member by membe
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import socket
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -30,7 +33,10 @@ from tests.conftest import (
     _guarded_connect,
     _guarded_connect_ex,
     _guarded_getaddrinfo,
+    _guarded_sendmsg,
+    _guarded_sendto,
     _network_attempts,
+    _real_resolvers,
 )
 
 #: A name that cannot resolve even if the guard is gone, so a regression here is a failed
@@ -41,10 +47,39 @@ UNREACHABLE = "nothing.invalid"
 #: resolution entirely and hand `connect` a literal.
 UNREACHABLE_IP = "192.0.2.1"
 
-#: Every place the guard is installed. Three, because two of them see nothing on their own:
-#: `getaddrinfo` is where all of this suite's outbound traffic actually goes, and `connect`
-#: and `connect_ex` are for the address that never needs resolving.
-_HOOKS = 3
+#: Name of the test whose recorded attempt is asserted verbatim below.
+_THIS_TEST = "test_a_refusal_is_written_down_even_when_something_catches_it"
+
+#: The other test that asserts its own recorded attempt verbatim.
+_OWNER_TEST = "test_a_refusal_on_a_worker_thread_is_blamed_on_the_test_that_started_it"
+
+#: Every exit the guard is installed on, each driven below. `getaddrinfo` is where all of this
+#: suite's outbound traffic actually goes; the five siblings answer the same question through
+#: the same resolver and every one of them escaped the first version of this guard; `connect`
+#: and `connect_ex` are for the address that never needs resolving; `sendto` and `sendmsg` are
+#: for UDP, which reaches a host with neither a lookup nor a connect and really did put bytes
+#: on the wire while unhooked.
+#:
+#: **A count of hooks INSTALLED is not a count of what is covered**, which is why
+#: `_REFUSED_THROUGH` and `_ALLOWED_THROUGH` exist: every entry point that reads the allowlist
+#: is driven with a refused host AND an allowed one, so narrowing the check inside any one of
+#: them cannot leave this file green (rule 145).
+_HOOKS = 10
+
+
+def _hook_state() -> dict[str, bool]:
+    """Which of the guard's entry points are the guarded functions rather than the originals."""
+    installed = {
+        "getaddrinfo": socket.getaddrinfo is _guarded_getaddrinfo,
+        "connect": socket.socket.connect is _guarded_connect,
+        "connect_ex": socket.socket.connect_ex is _guarded_connect_ex,
+        "sendto": socket.socket.sendto is _guarded_sendto,
+        "sendmsg": socket.socket.sendmsg is _guarded_sendmsg,
+    }
+    installed.update(
+        {name: getattr(socket, name) is not real for name, real in _real_resolvers.items()}
+    )
+    return installed
 
 
 def test_the_guard_is_installed_process_wide_rather_than_per_test() -> None:
@@ -55,16 +90,55 @@ def test_the_guard_is_installed_process_wide_rather_than_per_test() -> None:
     is exactly the setup a network guard would want to be watching. Installing at configure
     time means there is no window at all.
     """
-    installed = [
-        socket.getaddrinfo is _guarded_getaddrinfo,
-        socket.socket.connect is _guarded_connect,
-        socket.socket.connect_ex is _guarded_connect_ex,
-    ]
-    assert sum(installed) == _HOOKS, (
-        f"{sum(installed)} of {_HOOKS} network hooks are installed: {installed}.\n"
-        "An uninstalled hook refuses nothing, and every assertion in this file that does not\n"
-        "drive that particular call still passes."
+    installed = _hook_state()
+    assert sum(installed.values()) == _HOOKS, (
+        f"{sum(installed.values())} of {_HOOKS} network hooks are installed:\n"
+        + "\n".join(f"  {name}: {on}" for name, on in sorted(installed.items()))
+        + "\n\nAn uninstalled hook refuses nothing, and every assertion in this file that does\n"
+        "not drive that particular call still passes."
     )
+
+
+#: Every entry point that refuses a host, as (label, call). Driven against an address that must
+#: be refused, and again against each allowlist member, which is what covers the case a hook
+#: count cannot: a check narrowed inside one of them while the others stay right.
+_REFUSED_THROUGH: dict[str, Callable[[Any], object]] = {
+    "getaddrinfo": lambda host: socket.getaddrinfo(host, 443),
+    "gethostbyname": lambda host: socket.gethostbyname(host),
+    "gethostbyname_ex": lambda host: socket.gethostbyname_ex(host),
+    "gethostbyaddr": lambda host: socket.gethostbyaddr(host),
+    "getnameinfo": lambda host: socket.getnameinfo((host, 0), 0),
+    "getfqdn": lambda host: socket.getfqdn(host),
+    "connect": lambda host: _tcp().connect((host, 80)),
+    "connect_ex": lambda host: _tcp().connect_ex((host, 80)),
+    "sendto": lambda host: _udp().sendto(b"probe", (host, 9)),
+    "sendmsg": lambda host: _udp().sendmsg([b"probe"], [], 0, (host, 9)),
+}
+
+
+def _tcp() -> socket.socket:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.2)
+    return sock
+
+
+def _udp() -> socket.socket:
+    return socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+
+@pytest.mark.parametrize("entry", sorted(_REFUSED_THROUGH))
+def test_every_entry_point_refuses_a_host_off_the_loopback(entry: str) -> None:
+    """Each hook, driven with an address it must refuse.
+
+    `getfqdn` is the reason this is a sweep rather than one call: it swallows its own errors
+    and returns the name unchanged, so it would have gone on answering forever without ever
+    looking like a failure. All five resolver siblings escaped the first version of this guard,
+    and `sendto` put five bytes on the wire, because only `getaddrinfo` and the two `connect`
+    forms were hooked (rule 72 -- the siblings of the thing you fixed).
+    """
+    with pytest.raises(NetworkReached):
+        _REFUSED_THROUGH[entry](UNREACHABLE_IP)
+    _network_attempts.clear()
 
 
 def test_a_name_lookup_off_the_loopback_is_refused() -> None:
@@ -106,6 +180,23 @@ def test_every_allowed_host_really_is_allowed(host: str | None) -> None:
     with contextlib.suppress(socket.gaierror):
         socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM)
     assert not _network_attempts, f"{host!r} is on the allowlist and was refused anyway"
+
+
+@pytest.mark.parametrize("entry", ["connect", "connect_ex", "sendto", "sendmsg"])
+def test_the_allowlist_is_read_the_same_way_by_the_socket_hooks(entry: str) -> None:
+    """The allowlist reaches `connect`, `connect_ex` and `sendto`, not `getaddrinfo` alone.
+
+    This is the gap a hook count leaves open. `_HOOKS` says nine entry points are installed and
+    the test above drives seven allowlist members, but only through `getaddrinfo` -- so
+    narrowing the check inside `connect` to, say, `127.0.0.1` alone left every assertion in
+    this file green while the guard refused a loopback address a test was entitled to use.
+
+    Driven on `127.0.0.1` because it is the one member every hook can actually be handed: the
+    wildcards are bind addresses and a lookup form, not somewhere to send a packet.
+    """
+    with contextlib.suppress(OSError):
+        _REFUSED_THROUGH[entry]("127.0.0.1")
+    assert not _network_attempts, f"{entry} refused 127.0.0.1, which is on the allowlist"
 
 
 def test_the_allowlist_is_the_loopback_and_the_wildcard_and_nothing_else() -> None:
@@ -172,5 +263,59 @@ def test_a_refusal_is_written_down_even_when_something_catches_it() -> None:
     """
     with contextlib.suppress(BaseException):
         socket.getaddrinfo(UNREACHABLE, 443)
-    assert _network_attempts == [f"resolved '{UNREACHABLE}'"]
+    assert _network_attempts == [
+        f"tests/test_network_guard.py::{_THIS_TEST}: resolved '{UNREACHABLE}'"
+    ]
+    _network_attempts.clear()
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        pytest.param(["192.0.2.1", 80], id="a-list-instead-of-a-tuple"),
+        pytest.param(bytearray(b"/tmp/sock"), id="an-unhashable-path"),
+        pytest.param("192.0.2.1", id="a-bare-string"),
+        pytest.param(b"192.0.2.1", id="bare-bytes"),
+    ],
+)
+def test_an_address_the_guard_cannot_parse_is_refused_rather_than_raised_through(
+    address: object,
+) -> None:
+    """An address shape the guard does not recognize fails closed, like everything here.
+
+    Two ways this went the other way. An unhashable address (`["192.0.2.1", 80]`) raised
+    `TypeError` straight out of the guard -- a crash where a refusal belongs, and one that
+    reads as a bug in the test rather than as a blocked call. And a bare `str`/`bytes` was
+    mapped to `None`, which is on the allowlist: a second, silent AF_UNIX exemption stacked
+    on the explicit family check, allowing anything spelled that way whatever its family.
+    """
+    with (
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock,
+        pytest.raises(NetworkReached),
+    ):
+        sock.connect(address)  # type: ignore[arg-type]
+    _network_attempts.clear()
+
+
+async def test_a_refusal_on_a_worker_thread_is_blamed_on_the_test_that_started_it() -> None:
+    """`_network_attempts` outlives the test, so what it records has to name an owner.
+
+    A refusal is written down before it is raised, and the list is read in teardown -- so an
+    attempt made on a thread that outlives its test lands in the NEXT test's teardown. Recorded
+    against whatever test was running at the time, that reads as a red run pointing at innocent
+    code, which is the worst shape a guard can fail in.
+
+    The owner is a `ContextVar`, and `asyncio.to_thread` copies the context, so the worker below
+    is attributed here rather than to the thread it happens to run on. A bare `threading.Thread`
+    inherits no context and reads the default instead, which is honest rather than wrong.
+    """
+
+    def dial() -> None:
+        with contextlib.suppress(BaseException):
+            socket.getaddrinfo(UNREACHABLE, 443)
+
+    await asyncio.to_thread(dial)
+    assert _network_attempts == [
+        f"tests/test_network_guard.py::{_OWNER_TEST}: resolved '{UNREACHABLE}'"
+    ]
     _network_attempts.clear()
