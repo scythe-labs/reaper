@@ -1432,3 +1432,10 @@ class ListConfigOut(BaseModel):
     """How the policies use this list right now: one entry per keep rule naming it
     (``services.list_rules.usage``). Empty means no rule does, which the screen renders as
     a warning -- a defined list that protects nothing."""
+
+    authorable_media: list[Literal["movie", "tv"]] = Field(default_factory=list)
+    """The media types a keep rule on this list can be authored for -- the set the Policy
+    editor's list picker offers it on (``policy.authorable_media_scope``). A Plex collection
+    takes its library's kind and a watchlist both, known before any sync; a tag or IMDb list is
+    known only once a sync has read it. Empty means offer on neither: the type is not known, so
+    a rule could keep nothing (rule 38, #549)."""
