@@ -737,6 +737,17 @@ class TestConnectionTestsHonorTheTlsChoice:
             return instances_service.TestResult(ok=True, detail="Connected.")
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
+
+        # A passing test goes on to read the folder list, so this arm has to be stubbed too or
+        # the route really dials ``a.local``. It passed anyway -- the connect failure is caught
+        # into ``map_error`` -- but on nothing better than that host not resolving here
+        # (rule 119). Its three siblings below already carry this.
+        async def folders(
+            *_a: object, **_k: object
+        ) -> list[instances_service.RootFolderSuggestion]:
+            return []
+
+        monkeypatch.setattr(instances_service, "probe_root_folders", folders)
         resp = client.post(
             "/api/settings/instances/test",
             json={
