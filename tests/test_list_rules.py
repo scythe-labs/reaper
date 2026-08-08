@@ -17,7 +17,7 @@ Policy naming it. These pin the two maintenance moves and the fail-safe around t
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
@@ -44,7 +44,7 @@ from tests._auth import login
 
 
 @pytest.fixture
-async def session(tmp_path: Path) -> Iterator[AsyncSession]:
+async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
     settings = Settings(data_dir=tmp_path, secret_key="k")
     sync = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(sync)

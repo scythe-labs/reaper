@@ -37,6 +37,7 @@ def client(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> Iterator[Test
     """One Tautulli configured, and its artwork reads stubbed to return bytes."""
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
+    assert settings.secret_key is not None
     box = SecretBox(settings.secret_key.get_secret_value())
     with Session(engine) as session:
         session.add(
@@ -137,6 +138,7 @@ class TestItHasAnOwner:
         """Kept across requests means kept until something closes it. The lifespan does."""
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
+        assert settings.secret_key is not None
         box = SecretBox(settings.secret_key.get_secret_value())
         with Session(engine) as session:
             session.add(

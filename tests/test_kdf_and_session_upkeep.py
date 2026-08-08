@@ -8,6 +8,7 @@ the expired-session sweep (PR-13) and the sign-in poll's deadline (S2-2).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import pytest
@@ -157,7 +158,7 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
 
 
 @pytest.fixture
-async def session() -> AsyncSession:
+async def session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

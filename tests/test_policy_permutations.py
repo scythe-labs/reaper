@@ -83,7 +83,7 @@ def default_gates(media_type: str) -> list[dict[str, Any]]:
     return MOVIE_GATES if media_type == "movie" else TV_GATES
 
 
-def mutated(policy: PolicyBody, **changes) -> PolicyBody:
+def mutated(policy: PolicyBody, **changes: Any) -> PolicyBody:
     """A policy with fields replaced, re-validated -- never a validation bypass.
 
     ``model_copy(update=...)`` skips validators, which would let a test exercise a policy
@@ -124,7 +124,7 @@ def balanced(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return signals
 
 
-def with_rule(policy: PolicyBody, rule: dict) -> PolicyBody:
+def with_rule(policy: PolicyBody, rule: dict[str, Any]) -> PolicyBody:
     """``policy`` plus one custom rule, funded from the heaviest built-in signal.
 
     Removal weights total exactly 100 (``PolicyBody._weights_total_one_hundred``), so a
@@ -321,7 +321,7 @@ class TestFixtureStaysDeidentified:
         data = json.loads(raw)
         forbidden = {"title", "media_key", "group_key", "rating_key", "host", "path", "user"}
 
-        def walk(obj) -> None:
+        def walk(obj: Any) -> None:
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     assert key not in forbidden, f"identifying key {key!r} in fixture"
@@ -509,10 +509,10 @@ def _saveable(key: str, op: Op, value: object) -> bool:
     return True
 
 
-def values_for(key: str, op: Op) -> list:
+def values_for(key: str, op: Op) -> list[Any]:
     spec = BY_KEY[key]
     if key in NUMERIC_VALUES:
-        pool: list = NUMERIC_VALUES[key]
+        pool: list[Any] = NUMERIC_VALUES[key]
     elif key in TEXT_VALUES:
         pool = TEXT_VALUES[key]
     elif spec.type.value == "bool":
@@ -1224,7 +1224,7 @@ class TestPolicyHash:
 # ---------------------------------------------------------------------------
 
 
-def _mutant_body(rng: random.Random) -> dict:
+def _mutant_body(rng: random.Random) -> dict[str, Any]:
     """A near-valid policy body: the shipped defaults with a few random mutations, some
     legal and some not. Mirrors what an operator's UI edits actually produce."""
     body = rng.choice((DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY)).model_dump(mode="json")

@@ -15,7 +15,7 @@ pinned in ``tests/test_list_rules.py``.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +48,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 @pytest.fixture
-async def session(tmp_path: Path) -> Iterator[AsyncSession]:
+async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
     settings = Settings(data_dir=tmp_path, secret_key="k")
     sync = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(sync)

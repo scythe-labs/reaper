@@ -68,7 +68,8 @@ def schema(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
             login(client, settings)
             response = client.get("/api/openapi.json")
             assert response.status_code == 200
-            return response.json()
+            schema: dict[str, Any] = response.json()
+    return schema
 
 
 def _operations(schema: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:

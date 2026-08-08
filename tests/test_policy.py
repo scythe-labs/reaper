@@ -1822,7 +1822,7 @@ def _over_budget(weights: Sequence[int]) -> dict[str, Any]:
     }
 
 
-def _signal_configs(body: dict) -> list[SignalConfig]:
+def _signal_configs(body: dict[str, Any]) -> list[SignalConfig]:
     """The same translation ``services.snapshot`` and ``api.routes`` do, so these tests
     score through the real scorer rather than a transcription of it (rule 22)."""
     return [
@@ -1836,7 +1836,7 @@ def _signal_configs(body: dict) -> list[SignalConfig]:
     ]
 
 
-def _rounding_slack(before_body: dict, repaired: dict) -> float:
+def _rounding_slack(before_body: dict[str, Any], repaired: dict[str, Any]) -> float:
     """The most the rounding can move a score: the total weight it handed *upward*.
 
     ``score' - score = Σ (w'ᵢ - wᵢ·100/T)·fillᵢ`` with every ``fill`` in ``[0, 1]``, and the
