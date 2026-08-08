@@ -160,8 +160,8 @@ row moving is indistinguishable from one that never started.
 
 | # | Phase | Status | Landed | Notes |
 | --- | --- | --- | --- | --- |
-| 0 | Correct the plan | **done** | — | Third pass folded in. C1 outstanding |
-| 1 | Behavioral baseline | **done** | 2 of 2 | C13 is due before phase 2 and only the owner can settle it |
+| 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
+| 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
 | 2 | Test-suite wall clock | not started | 0 of ~6 | |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
@@ -186,8 +186,9 @@ forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: it
 
 | Checkpoint | Status | Settled by |
 | --- | --- | --- |
-| C13 | **due** | Nobody yet. Phase 2 may not start until the owner reads what the two tiers cover and what they redact |
-| C1, C2 to C12, C14 | not started | — |
+| C1 | **settled** | Owner, 2026-08-07. Six decisions, each recorded on the finding it governs: delete the whitelist routes (not shipped, so S4 has no reader to protect yet); delete the poster chain whole; move the flat-AND reasoning to `DECISIONS.md`; delete `run_migrations_offline`; keep `backtest_passed` and correct its docstring; and schema now leaves under rule 148 rather than accumulating |
+| C13 | **part settled** | Owner, 2026-08-07, on redaction: the capture ships as cut. The coverage half stands open — both tiers hold `Facts` fixed, so a carrier that widens what is prunable on a real library moves nothing in either. S3's driven pass is the only thing that reaches it |
+| C2 to C12, C14 | not started | — |
 
 Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
 C7, C9, C11, C13, C14) records **what the owner decided**, not that they looked. The decision is
@@ -202,6 +203,7 @@ here first and never reconstructed later.
 | --- | --- | --- | --- | --- | --- |
 | #562 | 1 | Tier A | `_policy_lab.pinned_baseline` | n/a, it is the baseline | 880 blocks re-pinned, every leaf additive. Fixture 754 KB → 1,574 KB |
 | #563 | 1 | Tier B | `scripts/baseline_capture.py` | n/a, it is the baseline | Snapshot 86, 5,965 items, 592 planned. Source database digest unchanged |
+| #568 | 0 | C1 | the six decisions | no | Recorded on each finding. Rule 148 landed separately on `dev` (#567) |
 
 ### Killed while executing
 
@@ -550,11 +552,42 @@ Four PRs, in order:
    columns, and **W1.1-i's poster chain**, which terminates at the `Candidate.poster_url` column
    and so belongs here rather than in PR 1. One PR because they are one `include_name` and one
    `server_default` revision. S2 governs it.
+
+   > **Decided 2026-08-07 (C1): this PR is release M of rule 148, and the drop is release M+1.**
+   > S2's `server_default` revision *is* the deprecation half — it lets the previous image keep
+   > inserting after the attribute goes. So this PR removes the attributes and ships that
+   > revision; a later release drops the seven columns in one sweep, under rule 148's three
+   > obligations. The exclusion arm is a bridge for one release, never the permanent registry
+   > this plan originally assumed.
+   >
+   > **Two things gate the sweep, both filed**: #565, an older image must refuse a newer
+   > database at boot rather than fail at query time, and #566, a snapshot before a destructive
+   > revision. **#564 gates it harder** and is not about schema removal at all: a failed batch
+   > migration strands `_alembic_tmp_<table>` and every later boot fails. Reproduced; four
+   > shipped migrations are exposed today, so it lands on `dev` regardless of this plan.
+   >
+   > **`run_migrations_offline` goes, and the reason is stronger than the finding's.** Measured:
+   > `alembic upgrade head --sql` exits 1 today, dying at revision 3 of 23, because 8 of the 23
+   > call `op.get_bind()` and offline mode has no connection. Those are rule 81's reflection
+   > guards, so the capability cannot be restored without giving them up. The deletion also
+   > corrects `CONTRIBUTING.md:305-312`, which claims the test covers both call sites (rule 64).
+   >
+   > **The poster chain goes whole.** It stored the *arr's remote cover so the queue could show
+   > a poster without a second sweep; that was replaced by the Plex proxy route before this
+   > repository's first commit, and both halves were removed at once, leaving the plumbing.
+   > Eight sites, zero readers, no test pins any link. The column is nullable, so it needs the
+   > `include_name` arm and no `server_default` revision, and rule 148's symmetry does not bind
+   > it: a nullable dead column can be abandoned for free.
 4. **The whitelist routes** (W1.1-n), on its own because it is an external contract change (S4)
    touching six test files. Those edits are the reason it is separate: the verification protocol
    below says a pinning test that has to change means the finding was wrong about the mechanism,
    and that rule is about *behavioral* pins. These six assert the routes exist, so removing them is
    the change, not a symptom of a bad one. Say that in the PR body.
+
+   > **Decided 2026-08-07 (C1): delete them.** S4's caution is that an operator's script is not
+   > in this repository. Reaper has not shipped, so there is no operator and no script — the
+   > published contract has no reader outside the SPA yet. Deleting is cheaper now than at any
+   > later point, and this is the window. S4 still governs every route touched after release.
 
 W7-1's `ListMode` is separate and safe: `protection_list` is raw DDL on `cache.db`, and both
 columns carry server defaults.
@@ -748,6 +781,11 @@ commit. This wave is the one to run first because it shrinks the surface every l
 > a live `TestCustomProtectGate` at `:239` between them. `docs/STATUS.md:78`'s "Flat AND of typed
 > conditions" loses its only code expression and carries no dagger, so the reasoning survives
 > nowhere unless the commit moves it.
+>
+> **Decided 2026-08-07 (C1): move it.** The deleting commit daggers that row and writes its
+> `docs/DECISIONS.md` section, bumping `DECISION_SECTIONS` at `tests/test_repo_hygiene.py:59`
+> (S6 and S7 both apply). A design choice whose last written trace is the code implementing it
+> dies with the code, and this one is the shape of the whole rule lane.
 
 > **Corrected: W1.1-k is false. `history_sync.state` is live.** `services/snapshot.py:618` calls
 > it on every scan. Only `latest` is test-only. Applying this row as written breaks scanning.
@@ -1307,6 +1345,20 @@ model class leaves existing databases with an inert empty table and keeps `alemb
 > promising the backtest (rule 25). `include_name` is at `:55`. No `RETIRED_TABLES` registry exists
 > yet. `docs/DECISIONS.md` needs no edit either way: the dagger test walks only rows under
 > `## Decisions locked`.
+
+> **Decided 2026-08-07 (C1): keep the column, correct the docstring, and the successors already
+> exist.** The rule 25 concern is narrower than the correction reads: #553 and #554 are open, so
+> the feature is not code-less and planless, only unbuilt. What must change is `db/models.py`'s
+> class docstring, which promises the backtest and justifies itself on "pre-release, single
+> migration baseline" — false since revision 2 of 23. `docs/STATUS.md`'s M3c, M3f and M3g rows
+> and open item 2 carry the same correction, in the same commit.
+>
+> **Do not drop this column alone, now or at rule 148's release M+1.** `backtest_passed = 1` and
+> `min_supervised_runs >= 3` are one fail-closed pair that makes a dishonest grant row
+> unconstructible; removing one leg weakens an inert table rather than removing it. The whole
+> table is unreachable — no import, no query, no insert anywhere — so if it goes, it goes
+> together, and that is a decision about M3b rather than about dead schema. Rule 148's sweep
+> covers the other six columns.
 
 **2. `AuthSession.user_agent`: keep it, and give it the reader it was missing.** Written once at
 `auth/sessions.py:69` and read by nothing today, having been threaded through seven sites to get
