@@ -93,11 +93,18 @@ def test_every_allowed_host_really_is_allowed(host: str | None) -> None:
     """Each member of the allowlist, driven.
 
     The set is the population this guard is reconciled against, and a set-equality assertion
-    over it would not tell a member that resolves from one that raises (rule 145). A wildcard
+    over it would not tell a member the guard allows from one it refuses (rule 145). A wildcard
     (``0.0.0.0``, ``::``, ``None``, ``""``) is a listener rather than a destination, which is
     why it is on the list at all.
+
+    **What is asserted is that the guard let the call through, not that the call succeeded**,
+    and the two come apart on ``""``: glibc raises ``gaierror`` for an empty host where macOS
+    resolves it to the loopback. Either answer is the real resolver answering, which is the
+    whole claim. A refusal is a ``NetworkReached``, which is not caught here and fails the
+    test on the spot.
     """
-    socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM)
+    with contextlib.suppress(socket.gaierror):
+        socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM)
     assert not _network_attempts, f"{host!r} is on the allowlist and was refused anyway"
 
 
