@@ -20,7 +20,6 @@ so it carries a drift guard in both directions.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -35,18 +34,41 @@ from reaper.main import create_app
 from tests._auth import login
 
 
-@pytest.fixture
-def schema(tmp_path: Path) -> Iterator[dict[str, Any]]:
-    """The served schema, read the way the reference page reads it: signed in, over HTTP."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    with TestClient(create_app(settings)) as client:
-        login(client, settings)
-        response = client.get("/api/openapi.json")
-        assert response.status_code == 200
-        yield response.json()
+async def _no_catch_up(*_args: object, **_kwargs: object) -> None:
+    return None
+
+
+@pytest.fixture(scope="session")
+def schema(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    """The served schema, read the way the reference page reads it: signed in, over HTTP.
+
+    Session-scoped, because the document is a pure function of the routers and all eleven
+    consumers only read it. Per test it was eleven app boots, eleven logins and eleven fetches
+    for one identical answer -- 3.80s of setup against 0.37s of assertions.
+
+    **It boots hermetically on its own rather than under ``_hermetic``**, which is the part the
+    scope change makes load-bearing. That fixture is function-scoped, and pytest sets a
+    session-scoped fixture up *first*: measured here, this body would see the real
+    ``catch_up_on_startup``, the real ``load_raw_env`` and ``env_file`` still pointing at
+    ``.env``/``.env.local``, so the app would read the developer's own credentials and start the
+    ~280 MB IMDb download (rule 37). On CI, where neither dotenv exists, it would do none of
+    that and read green. The patches are undone before the yield, so nothing here outlives the
+    boot -- what the tests get is a plain dict and no live app.
+    """
+    tmp_path = tmp_path_factory.mktemp("openapi")
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setitem(Settings.model_config, "env_file", None)
+        patched.setattr("reaper.main.load_raw_env", lambda _s: {})
+        patched.setattr("reaper.main.catch_up_on_startup", _no_catch_up)
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        engine.dispose()
+        with TestClient(create_app(settings)) as client:
+            login(client, settings)
+            response = client.get("/api/openapi.json")
+            assert response.status_code == 200
+            return response.json()
 
 
 def _operations(schema: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
