@@ -162,7 +162,7 @@ row moving is indistinguishable from one that never started.
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
-| 2 | Test-suite wall clock | **done** | 9 of 9 | C2 is the checkpoint and gates nothing downstream. The gate went 83.44s to 38.74s |
+| 2 | Test-suite wall clock | **done** | 9 of 9 | C2 settled: the cheap KDF stays. The gate went 83.44s to 38.74s |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
@@ -188,7 +188,7 @@ forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: it
 | --- | --- | --- |
 | C1 | **settled** | Owner, 2026-08-07. Six decisions, each recorded on the finding it governs: delete the whitelist routes (not shipped, so S4 has no reader to protect yet); delete the poster chain whole; move the flat-AND reasoning to `DECISIONS.md`; delete `run_migrations_offline`; keep `backtest_passed` and correct its docstring; and schema now leaves under rule 148 rather than accumulating |
 | C13 | **part settled** | Owner, 2026-08-07, on redaction: the capture ships as cut. The coverage half stands open — both tiers hold `Facts` fixed, so a carrier that widens what is prunable on a real library moves nothing in either. S3's driven pass is the only thing that reaches it |
-| C2 | ready, not yet read | Owner. Its three questions are already answered in writing, so this is a read rather than an investigation: the before/after is in [Phase 2](#phase-2--test-suite-wall-clock), and #571's body carries both `crypto.py` staying untouched and the injectivity guard demonstrated red against a deliberately collapsing wrapper |
+| C2 | **settled** | Owner, 2026-08-08. The cheap KDF stays: a test that needs an encryption key to exist should not pay 124ms to prove nothing. Both proofs accepted, the collapse demonstration being the load-bearing one. **The standing cost is recorded rather than fixed**: no test now exercises the real 64 MiB derivation, so its own correctness rests on `crypto.py` being unchanged, not on being run |
 | C3 to C12, C14 | not started | — |
 
 Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
