@@ -74,8 +74,7 @@ from reaper.logging import configure_logging
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import app_settings
 from reaper.services.scheduler import (
-    apply_maintenance_schedule,
-    apply_scan_schedule,
+    apply_stored_schedules,
     build_scheduler,
     catch_up_on_startup,
     track_running_jobs,
@@ -367,43 +366,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.start()
     app.state.scheduler = scheduler
 
-    # Restore the owner's automatic-scan schedule, if they set one. A scan is read-only,
-    # so this is the one scheduled job that produces new review candidates; the rest is
-    # cache upkeep. A stored-but-malformed cron is logged and skipped rather than crashing
-    # startup.
-    if scan_cron:
-        try:
-            apply_scan_schedule(
-                scheduler,
-                scan_cron,
-                settings=settings,
-                session_factory=factory,
-                cache_engine=cache_engine,
-                secret_box=box,
-                timezone=scheduler_tz,
-            )
-        except ValueError:
-            log.warning("scheduler.bad_scan_cron", cron=scan_cron)
-
-    # Restore any upkeep-job schedule the owner changed from the built-in default -- a new
-    # cron, or off entirely. build_scheduler already wired the defaults; this overrides only
-    # the jobs with a stored value. A malformed stored cron leaves the default in place.
-    for job_id, cron in maintenance_schedules.items():
-        try:
-            apply_maintenance_schedule(
-                scheduler,
-                job_id,
-                cron,
-                cache_engine=cache_engine,
-                data_dir=settings.data_dir,
-                session_factory=factory,
-                secret_box=box,
-                settings=settings,
-                update_checker=app.state.update_checker,
-                timezone=scheduler_tz,
-            )
-        except (ValueError, KeyError):
-            log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)
+    # Restore what the owner stored: the automatic-scan cron if they set one, and any upkeep
+    # job they moved off its built-in default or turned off. A scan is read-only, so it is the
+    # one scheduled job that produces new review candidates; the rest is cache upkeep.
+    #
+    # The same call the timezone save makes, which is the point -- this used to be the same two
+    # ladders written out again here, and a guard that boot survives is only worth anything if
+    # the runtime replay of the same data survives it too (rule 87). A stored-but-malformed
+    # cron is logged and skipped in there rather than crashing startup.
+    apply_stored_schedules(
+        scheduler,
+        scheduler_tz,
+        settings=settings,
+        session_factory=factory,
+        cache_engine=cache_engine,
+        secret_box=box,
+        update_checker=app.state.update_checker,
+        data_dir=settings.data_dir,
+        scan_cron=scan_cron,
+        maintenance=maintenance_schedules,
+    )
 
     # Every registered job with its next firing, after the stored schedules have been
     # applied so this is the table that will actually run. Without it "why did my nightly
