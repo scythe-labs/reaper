@@ -311,8 +311,8 @@ def build_facts(
         # input that still looks readable when the plays behind it are not.
         dormancy = Unknown(reason=watch_blind_reason, source="tautulli")
     else:
-        # Through the one shared derivation (engine/dormancy.py), so the season scan, the
-        # backtest and the prior calibration all measure this the same way (rule 3) -- and
+        # Through the one shared derivation (engine/dormancy.py), so the season scan
+        # measures this the same way (rule 3) -- and
         # since #272 the *thaw* is shared too, so a missing arrival date resolves identically
         # on both lanes. A play alone is enough: `reference_instant` measures from it, and
         # only an item with neither a play nor an arrival date comes back with nothing to

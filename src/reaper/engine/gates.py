@@ -308,8 +308,8 @@ class Facts:
     retired."""
 
     # --- fields authorable in custom rules (the weighting feature) --------------------
-    # Given fail-safe defaults so the non-production Facts builders (backtest
-    # reconstruction, calibration, test fixtures) need not enumerate them; the live scan
+    # Given fail-safe defaults so a Facts built outside the scan (a test fixture, a thawed
+    # snapshot) need not enumerate them; the live scan
     # builders set them explicitly, which they must -- ``Absent`` is fail-closed on the
     # condemn and gate lanes but not on the keep lane. See ``_UNSET``.
     requested: Observation[bool] = _UNSET
@@ -382,8 +382,7 @@ class Facts:
     """Every interpretable rating the scan froze for this item, one per source (IMDb,
     TMDb, Rotten Tomatoes critics/audience, Metacritic). Read only by the multi-source
     ``RatingFloorGate``, a protection, so a missing or unreadable source can only ever
-    fail to keep a title, never condemn one. Empty by default and for the historical
-    reconstruction (backtest/calibration have no rating source), which simply means the
+    fail to keep a title, never condemn one. Empty by default, which simply means the
     gate does not fire. Not hashed (Facts is evidence, not policy)."""
 
 
@@ -760,22 +759,20 @@ class MinDormancyGate:
     The default threshold is not a guess; it comes from the shape of the rewatch
     curve. That probability **roughly halves at the one-year mark, then decays only
     slowly, and its tail never reaches zero** -- see ``docs/SIGNALS.md``, "There is no
-    cliff. Nothing is ever free to delete." Measured on one real library
-    (``backtest.FALLBACK_REWATCH_PRIOR``) it runs about 61% inside the first year, about
-    30% between two and three years, about 19% from three to five, and about 13% beyond
-    five. So a title one to three years dormant still has close to a one-in-three chance
-    of being played again within the year, and past 1,095 days the odds improve but never
-    reach free. Dormancy of a year or two means very little -- people circle back to
-    films on that timescale all the time.
+    cliff. Nothing is ever free to delete." Measured on one real library and tabulated
+    there under "Ground truth: rewatch probability by dormancy", it runs about 61% inside
+    the first year, about 30% between two and three years, about 19% from three to five,
+    and about 13% beyond five. So a title one to three years dormant still has close to a
+    one-in-three chance of being played again within the year, and past 1,095 days the odds
+    improve but never reach free. Dormancy of a year or two means very little -- people
+    circle back to films on that timescale all the time.
 
     That curve is a *property of an audience*, not a universal constant, and the figures
     above are documented defaults measured on one real library, not figures fitted to
-    this server. **The threshold this gate enforces is the operator's own stored number**
-    (``config.threshold``), read straight off the policy: nothing adjusts it.
-    ``engine.calibration`` derives a bucketed rewatch prior, which is the backtest's lift
-    baseline and not this threshold, and it has no caller in ``src/`` in any case (see the
-    note at the top of that module). The gate exists either way: the shallow tail is the
-    invariant, and the threshold is a default the operator may move.
+    this server. Nothing in Reaper fits one: **the threshold this gate enforces is the
+    operator's own stored number** (``config.threshold``), read straight off the policy,
+    and nothing adjusts it. The gate exists either way: the shallow tail is the invariant,
+    and the threshold is a default the operator may move.
     """
 
     config: GateConfig
@@ -834,8 +831,8 @@ class DataHorizonGate:
     lane, ``ServerPopularityGate`` refuses to report a protection as checked over a window
     its history does not span (``Facts.history_reach_days``). On the dormancy lane, which is
     the rest of this docstring, the defense lives in fact *derivation*:
-    dormancy is measured from ``max(added_at, horizon)`` (see ``services.snapshot.build_facts``,
-    ``engine.backtest.facts_as_of`` and ``engine.calibration.derive``), so a pre-horizon item
+    dormancy is measured from ``max(added_at, horizon)`` (``engine.dormancy.reference_instant``,
+    through ``services.snapshot.build_facts`` and its season twin), so a pre-horizon item
     is clamped to the horizon rather than read as decades dormant.
 
     This gate's only independent job, therefore, is to fail closed when dormancy is
@@ -863,7 +860,7 @@ class DataHorizonGate:
 # default in both shipped policies. It could not fire. Reaper builds its candidate list BY
 # asking Sonarr and Radarr what they hold, so a file neither owns can never reach the set this
 # gate filtered: every builder of ``Facts.is_managed`` writes a hardcoded ``Known(True)``
-# (`snapshot`, `season_scan`, `backtest`), and the only other place a `Facts` is constructed
+# (`snapshot`, `season_scan`), and the only other place a `Facts` is constructed
 # is `facts_codec.facts_from_dict`, which can thaw only what a builder already wrote. The
 # PROTECT branch
 # and the gate's half of ``verdict.STRUCTURAL_GATES`` were both unreachable while the operator
@@ -887,8 +884,8 @@ class DataHorizonGate:
 
 
 # An `OthersWatchingGate` ("the requester ignored it, but other people did not") lived here.
-# No fact builder ever produced a Known ``others_watching`` -- snapshot, season_scan and
-# backtest all wrote Absent -- so the count was always 0 against a floor of at least 1 and
+# No fact builder ever produced a Known ``others_watching`` -- every one wrote Absent -- so
+# the count was always 0 against a floor of at least 1 and
 # the gate could not PROTECT anything, while its ABSTAIN line read to the owner like a check
 # that ran. A protection that cannot fire is deleted, not stockpiled (rule 38): the evidence
 # it needs (per-user plays excluding the requester) is not gathered anywhere in the scan.

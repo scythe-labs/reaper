@@ -319,14 +319,23 @@ class AutonomyGrant(Base):
     the profile silently reverts to approval-required.** Autonomy cannot be
     inherited by a policy nobody has reviewed.
 
-    It is *earned*, not set: it requires a passing backtest and a run of clean
-    supervised executions, both recorded here.
+    It is *earned*, not set: a grant records a bar that was cleared, never a switch
+    somebody flipped.
 
-    **Not wired yet.** No route or flow creates or consults grants today -- the
-    backtest that must feed ``backtest_passed`` has no route or UI, so the check
-    constraints below mean no row can honestly exist until that ships. The schema is
-    kept (pre-release, single migration baseline) so the earned-autonomy design stays
-    enforced in the database from day one, and docs/STATUS.md tracks the wiring as open work.
+    **Not wired, and one of its two bars no longer has a candidate.**
+    ``clean_supervised_runs`` is measurable from the journal today.
+    ``backtest_passed`` is not: the replay engine that would have produced it was
+    deleted rather than wired, and its successors (#553, #554) answer different
+    questions, so **nothing can set that column to 1 and nothing is planned that
+    would.** The CHECK below therefore holds the table permanently empty, which is
+    the fail-closed direction and is why it is safe to leave standing.
+
+    The schema is kept because M3b sits at the top of ``docs/STATUS.md``'s open work
+    and this docstring is the only full record of the design; wiring it means
+    choosing what replaces the retired bar and dropping ``backtest_passed`` in the
+    same change, under rule 148. It is NOT kept on "pre-release, single migration
+    baseline" -- that premise expired at revision 2 and stating it here was #550's
+    class, a true conclusion resting on a false reason.
     """
 
     __tablename__ = "autonomy_grant"

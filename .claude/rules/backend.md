@@ -25,7 +25,7 @@ may coast on stored membership from a *recent* successful sync
 Past that bound, or with no record of a successful sync, degrade.
 
 **3 / 22. One decision function.** Condemn/abstain/protect lives only in
-`engine/verdict.decide_verdict`, and `snapshot`, `simulate`, and `backtest` import it. Never
+`engine/verdict.decide_verdict`, and `snapshot`, `simulate` and `condemned` import it. Never
 write `score >= threshold` or `coverage_bp >= floor` inline outside it, and never reimplement
 scoring, coverage, rounding, or floors anywhere they can drift.
 
@@ -134,8 +134,9 @@ response carrying a null or malformed body is not a genuine empty either.
   *withdraw* a protection never qualifies.
 
 **35. New `Facts` fields are populated — or explicitly `Absent` with a comment — in every fact
-builder**: snapshot movies, season_scan, backtest, calibration. Grep all builders when adding a
-field; one populated in a single path silently changes scores and coverage in the others.
+builder**: `snapshot.build_facts` and `season_scan.build_season_facts`, the only two. Grep all
+builders when adding a field; one populated in a single path silently changes scores and coverage
+in the other, and `facts_codec.facts_from_dict` can thaw only what a builder already wrote.
 
 **65 / 91. Silent recovery on operator-configured safety values is forbidden, and a config read
 *failure* is not "nothing configured."** A fallback replacing saved profile/policy values

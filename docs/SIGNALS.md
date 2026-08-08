@@ -125,18 +125,23 @@ countdown itself holds nothing back.)
 
 ## How to check any future signal
 
-The backtest reports **lift**: the regret rate of the condemned set versus what you
-would expect by picking randomly among films **of the same age**.
+Every number above came from **lift**: the regret rate of the condemned set versus what
+you would expect by picking randomly among films **of the same age**.
 
 ```
 lift = (age_matched_expected_regret − actual_regret) / age_matched_expected_regret
 ```
 
-- **lift > 0.05** — the scorer picks better than age alone. This is the code's own bar
-  (`backtest.beats_random`): at or below it the backtest prints "not beating age alone,
-  do not arm this policy," so a merely positive lift does not earn its keep.
+- **lift > 0.05** — the scorer picks better than age alone. Below that bar a signal does
+  not earn its keep, because it is not beating the one thing you get for free.
 - **lift ≈ 0** — the signal adds nothing dormancy was not already carrying.
 - **lift < 0** — the signal displaces dormancy, and the scorer does worse than age alone.
+
+**Reaper does not compute this, and there is no plan for it to.** The engine that did was a
+lab instrument for building Reaper, and it was deleted rather than wired: it had banked its
+finding, which is this file. Measuring a new signal means measuring it the way these were —
+off a real library's history, outside the app. #553 and #554 are the successors, and neither
+is this: they weigh a returned title down and estimate a future rewatch, both live.
 
 **Before believing any of it, check the population.** If the baseline is computed over
 a different set of items than the scorer judges, the number is not merely imprecise —
@@ -148,13 +153,12 @@ The rewatch curve varies with **the audience that produced it**: how many people
 how often they return. Every curve in this file was measured on one library, so its shape
 carries that library's viewing habits.
 
-**Today every prior in use is the one above.** `engine/calibration.derive` can fit a curve
-from the owner's own Tautulli history, and is tested, but it has **no caller anywhere in
-`src/`** — not even the backtest, which imports only `RewatchPrior` and `NotCalibratedError`
-from it. Its only callers are the tests, and the backtest that would consume it is itself
-unreachable (see `docs/STATUS.md`, M3c and M3g). So `backtest.FALLBACK_REWATCH_PRIOR` is
-what anything actually reads, and it is one library's curve.
+**The curve is borrowed, full stop.** Reaper fits nothing to your server and has no code
+that could: the module that could fit one from the owner's own Tautulli history was deleted
+with the backtest that would have consumed it (M3g in `docs/STATUS.md`, dropped). Every
+number Reaper reads is the table above, and it is one library's curve.
 
 Treat the numbers here as a shape to reason about, never as a measurement of *your* server.
-The machinery to label a borrowed curve exists (`backtest.prior_is_derived`) and will start
-reporting the moment the backtest gets a route.
+Nothing in the app labels them as borrowed, because nothing in the app can tell the
+difference. #554 is the successor if a per-operator answer is ever wanted, and it asks a
+different question.

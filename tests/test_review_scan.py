@@ -5,18 +5,15 @@ Covers the findings addressed in the scan lane of the code review:
 
 * the movie -> Plex join must fail closed on duplicate titles, exactly as the season
   path does, instead of last-write-wins into a title map;
-* the backtest must reach the condemn verdict the SAME way production does -- on the
-  rounded score and with the coverage floor -- so an honest replay does not diverge at
-  the boundary the owner is tuning;
-* ``expected_regret_rate`` must degrade to the fallback curve for a partially-calibrated
-  prior rather than crashing the whole report;
 * the grace clock must restart when a rescued item is re-condemned after a real gap.
+
+Three of this file's original findings were about the historical replay engine, which was
+deleted rather than wired; they left with it.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
@@ -32,15 +29,9 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import FirstFlagged
 from reaper.db.session import create_engine, create_session_factory
-from reaper.engine import backtest as bt
 from reaper.engine import identity
-from reaper.engine.backtest import BacktestResult, Item, run
-from reaper.engine.calibration import Bucket, RewatchPrior
-from reaper.engine.gates import Facts, GateId
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY
-from reaper.engine.signals import Score
 from reaper.ratings import Rating, RatingSource
-from reaper.services import history_sync, lists, watch_evidence
+from reaper.services import history_sync, lists
 from reaper.services.library_index import _RETIRED_DEGRADE_FLOOR, _RETIRED_DEGRADE_SHARE
 from reaper.services.season_scan import build_tv_index
 from reaper.services.snapshot import (
@@ -684,14 +675,14 @@ class TestRetiredSpineRows:
 
 
 # ---------------------------------------------------------------------------
-# The backtest verdict must match production: rounded score + coverage floor.
+# A cache database, for everything below that reads the watch mirror or the lists.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
-    await history_sync.ensure_schema(eng)  # the empty watch_event table _plays reads
+    await history_sync.ensure_schema(eng)  # the watch_event table the fold reads
     yield eng
     await eng.dispose()
 
@@ -822,292 +813,6 @@ class TestMergedWatchStatsFold:
         assert 100 not in last_played
         assert 100 not in window
         assert 100 not in ever
-
-
-def _bt_item() -> Item:
-    return Item(
-        rating_key=1,
-        title="A Film",
-        size_bytes=8_000_000_000,
-        added_at=NOW - timedelta(days=1000),
-        imdb_rating_tenths=70,
-        imdb_votes=1000,
-    )
-
-
-class TestTheBacktestVerdictMatchesProduction:
-    async def test_a_score_of_69_6_is_condemned_because_it_rounds_to_70(
-        self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Production condemns on ``round(69.6) == 70 >= 70``. A backtest that compared
-        the raw float would skip it and under-count regret at the exact boundary the
-        owner is tuning. It must round first, like production."""
-        monkeypatch.setattr(
-            bt, "score", lambda *a, **k: Score(value=69.6, coverage=1.0, results=[])
-        )
-        policy = DEFAULT_MOVIE_POLICY.model_copy(
-            update={"condemn_at": 70, "coverage_floor_bp": 5000}
-        )
-
-        result = await run(
-            cache_engine,
-            [_bt_item()],
-            policy,
-            gates=[],
-            cutoff=NOW - timedelta(days=365),
-            horizon=NOW - timedelta(days=3000),
-        )
-        assert len(result.condemned) == 1
-
-    async def test_a_low_coverage_item_is_abstained_by_the_floor(
-        self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Production abstains below ``coverage_floor_bp``; the backtest never checked
-        coverage and would over-count deletions. Now it honors the floor."""
-        monkeypatch.setattr(
-            bt, "score", lambda *a, **k: Score(value=95.0, coverage=0.40, results=[])
-        )
-        policy = DEFAULT_MOVIE_POLICY.model_copy(
-            update={"condemn_at": 70, "coverage_floor_bp": 5000}
-        )
-
-        result = await run(
-            cache_engine,
-            [_bt_item()],
-            policy,
-            gates=[],
-            cutoff=NOW - timedelta(days=365),
-            horizon=NOW - timedelta(days=3000),
-        )
-        assert result.condemned == []  # 4000bp coverage is below the 5000bp floor
-
-    @pytest.mark.parametrize("window", [1, 30, 90, 730, 1095])
-    async def test_the_window_scored_against_is_the_policy_s_own(
-        self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch, window: int
-    ) -> None:
-        """The span the count was taken over is the span its reach is checked against.
-
-        ``facts_as_of`` counts ``distinct_watchers`` over the policy's popularity window,
-        and since rule 140 every reader of that count checks ``Facts.history_reach_days``
-        against the span the count claims to cover. Passing one span to the fact builder
-        and a different one to ``score()`` compares a count to a reach it was never taken
-        over, and it fails OPEN: a 730-day window over a 400-day mirror scored against the
-        365-day default takes full FEW_WATCHERS pressure at coverage 1.0, where production
-        withholds it at coverage 0.0.
-
-        **Both consumers of the span are pinned, not just the one that was broken.** The
-        invariant is "one span, two readers": ``facts_as_of`` BUILDS the count over it and
-        ``score`` VALIDATES the reach against it, and either one drifting to its own 365
-        default reopens the same hole. Spying only on ``score`` would prove the fixed line
-        and nothing about the line four above it -- hardcoding ``popularity_window_days=365``
-        at the ``facts_as_of`` call leaves the whole suite green while withdrawing a PROTECT
-        and adding 20 points of pressure at coverage 1.0.
-
-        **365 is deliberately not in the sweep** (rule 141). It is the default of both
-        callees, so it is the one value that cannot tell a window that was passed from a
-        window that was omitted -- which is exactly why every other backtest fixture, all
-        of which pin 365, left this invisible behind a green suite. The low end is the 1
-        day the field actually allows (``GateSetting`` bounds ``window_days`` ``ge=1``).
-
-        Each spy reads its kwarg with ``.get`` rather than subscripting, so an omission
-        fails on the VALUE that was used. Subscripting would raise ``KeyError`` instead,
-        which passes for the wrong reason: it pins that an argument was passed at all, not
-        that the right span reached the callee.
-        """
-        scored: list[int | None] = []
-        built: list[int | None] = []
-        # Read through `bt` deliberately: the spy below rebinds this name IN backtest, so
-        # capturing it anywhere else would restore a different binding. `score` is
-        # imported rather than defined there, which is what mypy is objecting to.
-        real_score = bt.score  # type: ignore[attr-defined]
-        real_facts_as_of = bt.facts_as_of
-
-        def _score_spy(*args: object, **kwargs: object) -> Score:
-            scored.append(kwargs.get("window_days"))  # type: ignore[arg-type]
-            return real_score(*args, **kwargs)  # type: ignore[arg-type]
-
-        def _facts_spy(*args: object, **kwargs: object) -> Facts | None:
-            built.append(kwargs.get("popularity_window_days"))  # type: ignore[arg-type]
-            return real_facts_as_of(*args, **kwargs)  # type: ignore[arg-type]
-
-        monkeypatch.setattr(bt, "score", _score_spy)
-        monkeypatch.setattr(bt, "facts_as_of", _facts_spy)
-        policy = DEFAULT_MOVIE_POLICY.model_copy(
-            update={
-                "gates": [
-                    g.model_copy(update={"window_days": window, "enabled": True})
-                    if g.gate is GateId.SERVER_POPULARITY
-                    else g
-                    for g in DEFAULT_MOVIE_POLICY.gates
-                ]
-            }
-        )
-        assert policy.popularity_window_days() == window
-
-        await run(
-            cache_engine,
-            [_bt_item()],
-            policy,
-            gates=[],
-            cutoff=NOW - timedelta(days=365),
-            horizon=NOW - timedelta(days=3000),
-        )
-
-        # One span, both readers: the builder counted over it and the scorer checked the
-        # reach against it. Equal to each other is not enough -- both must equal the policy.
-        assert built == [window]
-        assert scored == [window]
-
-    async def test_a_window_the_mirror_cannot_cover_withholds_the_signal_in_rehearsal(
-        self, cache_engine: AsyncEngine
-    ) -> None:
-        """The sweep above proves the span travels; this proves it changes the outcome.
-
-        Its fixture deliberately reaches back 3000 days, past every window it sweeps, so
-        ``reach_shortfall`` returns ``None`` in all five cases and the withheld arm is never
-        entered. That is the arm the fix exists to reach, so it gets a case of its own: a
-        730-day window over a mirror that only goes back 500 days.
-        """
-        policy = DEFAULT_MOVIE_POLICY.model_copy(
-            update={
-                "gates": [
-                    g.model_copy(update={"window_days": 730, "enabled": True})
-                    if g.gate is GateId.SERVER_POPULARITY
-                    else g
-                    for g in DEFAULT_MOVIE_POLICY.gates
-                ]
-            }
-        )
-
-        deep = await run(
-            cache_engine,
-            [_bt_item()],
-            policy,
-            gates=[],
-            cutoff=NOW - timedelta(days=365),
-            horizon=NOW - timedelta(days=3000),
-        )
-        short = await run(
-            cache_engine,
-            [_bt_item()],
-            policy,
-            gates=[],
-            cutoff=NOW - timedelta(days=365),
-            horizon=NOW - timedelta(days=500),
-        )
-
-        # Same policy, same item, same cutoff. Only the mirror's depth differs, and the
-        # shallow one cannot establish the 730-day count, so the rehearsal declines to
-        # charge for it and says so by scoring the item lower.
-        assert deep.considered == short.considered == 1
-        assert short.condemned_bytes <= deep.condemned_bytes
-
-
-class TestTheRunCarriesTheBlindnessTheLiveScanWould:
-    """`run` hands each item's blind reason to the fact builder, and counts what it skipped.
-
-    The parameter is the caller's to supply because the high-water marks behind it live in
-    the database of record, which the engine layer does not open. That makes it exactly the
-    shape rule 141 warns about: unsupplied it defaults to None, which is also what a correct
-    pass produces for an unaffected item, so only a test that supplies a *different* value
-    can tell a plumbed argument from an omitted one.
-    """
-
-    async def test_the_blind_reason_reaches_the_fact_builder_for_its_item_alone(
-        self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Two items, one blind. Reading the kwarg with ``.get`` means an omission fails on
-        the VALUE that was used rather than raising KeyError, which would pass for the wrong
-        reason (rule 141). The second item pins that the map is consulted per item and not
-        applied to the whole run."""
-        seen: list[str | None] = []
-        real_facts_as_of = bt.facts_as_of
-
-        def _spy(*args: object, **kwargs: object) -> Facts | None:
-            seen.append(kwargs.get("watch_blind_reason"))  # type: ignore[arg-type]
-            return real_facts_as_of(*args, **kwargs)  # type: ignore[arg-type]
-
-        monkeypatch.setattr(bt, "facts_as_of", _spy)
-        other = replace(_bt_item(), rating_key=2, title="Another Film")
-
-        await run(
-            cache_engine,
-            [_bt_item(), other],
-            DEFAULT_MOVIE_POLICY,
-            gates=[],
-            cutoff=NOW - timedelta(days=365),
-            horizon=NOW - timedelta(days=3000),
-            watch_blind_reasons={1: watch_evidence.BLIND_REASON},
-        )
-
-        assert seen == [watch_evidence.BLIND_REASON, None]
-
-    async def test_a_record_with_nothing_to_measure_from_is_not_called_not_yet_added(
-        self, cache_engine: AsyncEngine
-    ) -> None:
-        """Two skips that mean different things (#277). One item arrived after the cutoff;
-        the other has no arrival date and no play at all, so dormancy has no instant to
-        count from. Folding both into ``skipped_not_yet_added`` would report the replay's
-        coverage as bounded by its date when it is really bounded by the evidence."""
-        too_new = replace(_bt_item(), rating_key=1, added_at=NOW - timedelta(days=10))
-        no_date = replace(_bt_item(), rating_key=2, added_at=None)
-
-        result = await run(
-            cache_engine,
-            [too_new, no_date],
-            DEFAULT_MOVIE_POLICY,
-            gates=[],
-            cutoff=NOW - timedelta(days=365),
-            horizon=NOW - timedelta(days=3000),
-        )
-
-        assert result.considered == 0
-        assert result.skipped_not_yet_added == 1
-        assert result.skipped_nothing_to_measure == 1
-        assert "no date to count from 1" in result.summary()
-
-
-# ---------------------------------------------------------------------------
-# A partially-calibrated prior degrades to the fallback rather than crashing.
-# ---------------------------------------------------------------------------
-
-
-class TestExpectedRegretRateDegradesGracefully:
-    def test_a_thin_bucket_prior_falls_back_instead_of_raising(self) -> None:
-        """A single condemned item landing in a thin bucket must not crash the whole
-        report (lift/beats_random/summary all funnel through here). An uncalibrated prior
-        degrades to the shared fallback curve, consistent with ``prior_is_derived``."""
-        thin = RewatchPrior(
-            buckets=(Bucket(low=1095, high=1825, samples=12, rewatched=3),),  # 12 < MIN_SAMPLES
-            population=12,
-            window_days=365,
-            computed_at=NOW,
-        )
-        assert thin.calibrated is False  # the danger the fix guards
-
-        result = BacktestResult(cutoff=NOW, condemn_at=70, prior=thin)
-        result.condemned_dormancy.append(1200.0)  # would raise NotCalibratedError via rate_for
-
-        # Must NOT raise, and must use the fallback curve (rewatch_prior(1200) == 0.19).
-        assert result.prior_is_derived is False
-        assert result.expected_regret_rate == pytest.approx(0.19)
-        _ = result.lift  # exercises the whole funnel without crashing
-
-    def test_a_calibrated_prior_is_still_used(self) -> None:
-        """When every bucket is thick, the derived prior is honored -- the fix only
-        changes behavior for the uncalibrated case."""
-        prior = RewatchPrior(
-            buckets=(Bucket(low=1095, high=1825, samples=100, rewatched=40),),
-            population=100,
-            window_days=365,
-            computed_at=NOW,
-        )
-        assert prior.calibrated is True
-
-        result = BacktestResult(cutoff=NOW, condemn_at=70, prior=prior)
-        result.condemned_dormancy.append(1200.0)
-        assert result.prior_is_derived is True
-        assert result.expected_regret_rate == pytest.approx(0.40)
 
 
 # ---------------------------------------------------------------------------

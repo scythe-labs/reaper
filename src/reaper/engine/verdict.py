@@ -3,9 +3,9 @@
 
 Every surface that answers "what happens to this item?" -- the scan
 (``services.snapshot``), the threshold simulator (``api.routes.simulate``) and the
-backtest (``engine.backtest``) -- imports THIS function. The rule exists because the
-decision once lived in three transcriptions, and a ``>`` for a ``>=`` at the exact
-threshold in one of them is the kind of drift no reviewer catches: the review queue and
+stored-row reap re-decision (``services.condemned``) -- imports THIS function. The rule
+exists because the decision once lived in three transcriptions, and a ``>`` for a ``>=`` at
+the exact threshold in one of them is the kind of drift no reviewer catches: the review queue and
 the policy editor disagreeing about a real title at the very boundary the owner is
 tuning.
 

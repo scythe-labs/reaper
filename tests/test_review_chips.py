@@ -1574,7 +1574,10 @@ class TestTheMatchStatusVocabulary:
         # assertion cannot tell that from a tree that complies. Bump it deliberately.
         # 42 -> 43: the placeholder a policy probe fills every unprobed fact with, so a
         # preview cannot quietly inherit a number from a fact it is not about.
-        assert walked == 43, (
+        # 43 -> 39: the retired replay engine's four, three of them its own copy of the
+        # watch-blind reason and one its no-arrival-date placeholder. Both reasons survive
+        # on the live lanes, so nothing lost its coverage with them.
+        assert walked == 39, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."
