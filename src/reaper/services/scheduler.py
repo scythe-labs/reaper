@@ -844,7 +844,7 @@ def build_scheduler(
     return scheduler
 
 
-def reschedule_timezone(
+def apply_stored_schedules(
     scheduler: AsyncIOScheduler,
     timezone: tzinfo,
     *,
@@ -857,18 +857,25 @@ def reschedule_timezone(
     scan_cron: str | None,
     maintenance: dict[str, str | None],
 ) -> None:
-    """Re-apply every timed job under a new server time zone, in place.
+    """Apply every timed job the owner has stored a schedule for, under ``timezone``.
 
-    Each cron trigger carries its own zone, so moving the clock means rebuilding every
-    trigger -- the scan and all upkeep jobs -- with the new one. The stored crons decide what
-    to rebuild: a job the owner turned off stays off, an overridden one keeps its override,
-    and an untouched one falls back to its default. Called when the time zone changes in the
-    UI so every "next run" recomputes immediately; startup wires the same jobs directly.
+    **Both replays of this data go through here** -- boot, and the timezone save -- because
+    they are one ladder and used to be two: `main.py` open-coded the same guards and the same
+    log events beside a docstring here claiming startup already shared them (rule 87, rule
+    7/24). What made them look different is that boot iterated the *stored* dict while this
+    iterated every known job; that difference is preserved below and is now the only place it
+    is written down.
 
-    Each ``apply_*`` is wrapped in the same ``ValueError`` guard startup uses (rule 87): a
-    stored-but-malformed cron (hand-edited, or a future parser tightening) is logged and
-    skipped, so one bad cron can never 500 the timezone save or half-apply the zone -- moving
-    some jobs and leaving the rest -- which is exactly what boot already survives.
+    The stored crons decide what runs: a job the owner turned off stays off, an overridden one
+    keeps its override, and an untouched one falls back to its built-in default. Each cron
+    trigger carries its own zone, so a zone change means rebuilding every trigger, which is
+    why re-applying a job already on its default is not wasted work -- at boot it re-wires
+    what ``build_scheduler`` set to the same value, and on a save it moves the clock.
+
+    Each ``apply_*`` is wrapped in a ``ValueError`` guard: a stored-but-malformed cron
+    (hand-edited, or a future parser tightening) is logged and skipped, so one bad cron can
+    never 500 the timezone save or half-apply the zone -- moving some jobs and leaving the
+    rest -- and boot serves a UI the owner can fix it from.
     """
     try:
         apply_scan_schedule(
@@ -882,6 +889,16 @@ def reschedule_timezone(
         )
     except ValueError:
         log.warning("scheduler.bad_scan_cron", cron=scan_cron)
+
+    # A stored row naming a job this build does not have -- a job retired between releases, or
+    # a hand-edited settings table. It cannot be applied and it is not an error the owner
+    # caused, but it is the answer to "I turned that off and it came back", so it is said out
+    # loud rather than skipped. Boot used to reach this as a `KeyError` out of
+    # `apply_maintenance_schedule` and the timezone save never saw it at all, which is the half
+    # of rule 87 a shared guard does not cover on its own.
+    for job_id in sorted(set(maintenance) - set(MAINTENANCE_JOB_IDS)):
+        log.warning("scheduler.unknown_maintenance_job", job=job_id, cron=maintenance[job_id])
+
     for job_id in MAINTENANCE_JOB_IDS:
         cron = effective_maintenance_cron(job_id, maintenance)
         try:
@@ -897,5 +914,9 @@ def reschedule_timezone(
                 update_checker=update_checker,
                 timezone=timezone,
             )
-        except (ValueError, KeyError):
+        except ValueError:
+            # `KeyError` is deliberately not caught: `apply_maintenance_schedule` raises it for
+            # a job id absent from `_maintenance_specs`, and `build_scheduler` dereferences
+            # `specs[job_id]` over this same population before either caller reaches here, so
+            # that mismatch is already a boot failure and cannot arrive at this line.
             log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)

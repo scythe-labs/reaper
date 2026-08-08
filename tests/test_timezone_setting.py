@@ -15,6 +15,7 @@ These pin the fix:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,10 +25,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
+from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
+from reaper.db.models import AppSetting
 from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.secrets import resolve_secret_key
@@ -125,7 +130,7 @@ class TestReschedulingMovesEveryJob:
         sched.start()
         try:
             ny = ZoneInfo("America/New_York")
-            scheduler.reschedule_timezone(
+            scheduler.apply_stored_schedules(
                 sched,
                 ny,
                 settings=settings,
@@ -157,9 +162,13 @@ class TestReschedulingMovesEveryJob:
         self, tmp_path: Path
     ) -> None:
         """PR-4: a stored-but-malformed cron must not raise out of the timezone save or leave
-        the scheduler half-moved. reschedule_timezone wraps each apply in the same ValueError
-        guard startup uses, so a bad scan cron and a bad upkeep override are logged and skipped
-        while every well-formed job still moves to the new zone."""
+        the scheduler half-moved. apply_stored_schedules wraps each apply in a ValueError
+        guard, so a bad scan cron and a bad upkeep override are logged and skipped while every
+        well-formed job still moves to the new zone.
+
+        This used to say "the same guard startup uses", which was the claim rule 87 wanted and
+        not what the tree did: startup had its own copy. Startup is now the same call, and the
+        boot half is driven in ``TestBootAppliesWhatIsStored`` rather than asserted here."""
         settings = _settings(tmp_path)
         engine = create_engine(settings)
         async_factory = create_session_factory(engine)
@@ -179,7 +188,7 @@ class TestReschedulingMovesEveryJob:
             bad_job = scheduler.MAINTENANCE_JOB_IDS[0]
             ny = ZoneInfo("America/New_York")
             # Must not raise, though both the scan cron and one upkeep override are malformed.
-            scheduler.reschedule_timezone(
+            scheduler.apply_stored_schedules(
                 sched,
                 ny,
                 settings=settings,
@@ -204,6 +213,149 @@ class TestReschedulingMovesEveryJob:
         finally:
             sched.shutdown(wait=False)
             await engine.dispose()
+
+    async def test_a_stored_row_naming_a_job_this_build_lacks_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        """A retired job id left behind in the settings table is said out loud, not skipped.
+
+        Boot reached this as a ``KeyError`` out of ``apply_maintenance_schedule``, because it
+        iterated the stored rows; the timezone save iterated the known jobs and so never saw
+        it at all. Sharing one function is what makes both paths report it, which is the half
+        of rule 87 that a shared *guard* does not cover on its own: the guards already matched,
+        the populations did not.
+
+        Every real job still moves, so an unreadable row cannot cost the zone change.
+        """
+        settings = _settings(tmp_path)
+        engine = create_engine(settings)
+        async_factory = create_session_factory(engine)
+        box = SecretBox(resolve_secret_key(settings))
+        sched = scheduler.build_scheduler(
+            engine,
+            tmp_path,
+            session_factory=async_factory,
+            secret_box=box,
+            settings=settings,
+            update_checker=UpdateChecker(),
+            timezone=ZoneInfo("UTC"),
+            reap_running=lambda: False,
+        )
+        sched.start()
+        try:
+            with capture_logs() as events:
+                scheduler.apply_stored_schedules(
+                    sched,
+                    ZoneInfo("America/New_York"),
+                    settings=settings,
+                    session_factory=async_factory,
+                    cache_engine=engine,
+                    secret_box=box,
+                    update_checker=UpdateChecker(),
+                    data_dir=tmp_path,
+                    scan_cron=None,
+                    maintenance={"refresh_ratings": "0 5 * * *", "retired_job": "0 6 * * *"},
+                )
+            unknown = [e for e in events if e["event"] == "scheduler.unknown_maintenance_job"]
+            assert [e["job"] for e in unknown] == ["retired_job"]
+            # It is reported, never wired: a job this build has no callable for cannot run.
+            assert sched.get_job("retired_job") is None
+            for job_id in scheduler.MAINTENANCE_JOB_IDS:
+                assert str(sched.get_job(job_id).trigger.timezone) == "America/New_York"
+        finally:
+            sched.shutdown(wait=False)
+            await engine.dispose()
+
+
+class TestBootAppliesWhatIsStored:
+    """What a restart puts in the job table, which is the thing nothing pinned.
+
+    The startup replay used to be its own copy of the ladder in ``main.py``, and the finding
+    that it was a copy also recorded that only the shared function had a test. Boot now calls
+    that function, so these pin the wiring *and* the answer to the question the merge raises:
+    a job the owner never touched still runs on its built-in default, and one they turned off
+    stays off across the restart.
+    """
+
+    def _boot(self, tmp_path: Path, stored: dict[str, object]) -> TestClient:
+        settings = _settings(tmp_path)
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            for key, value in stored.items():
+                session.add(AppSetting(key=key, value_json=json.dumps(value), updated_at=utcnow()))
+            session.commit()
+        engine.dispose()
+        return TestClient(create_app(settings))
+
+    def test_an_override_is_applied_a_default_is_kept_and_an_off_job_stays_off(
+        self, tmp_path: Path
+    ) -> None:
+        """Three states in one boot, because they are three different code paths.
+
+        ``refresh_ratings`` carries an override, ``check_for_updates`` is stored as off, and
+        ``refresh_curated_lists`` and ``full_history_sweep`` were never touched. Before this
+        change boot iterated the stored rows, so the two untouched jobs were left on the
+        triggers ``build_scheduler`` wired; it now re-applies them from the same declaration.
+        The trigger is identical either way, and asserting the cron proves that rather than
+        assuming it.
+        """
+        prefix = app_settings.MAINTENANCE_SCHEDULE_PREFIX
+        with self._boot(
+            tmp_path,
+            {
+                app_settings.SCAN_SCHEDULE_KEY: "0 2 * * *",
+                f"{prefix}refresh_ratings": "15 1 * * *",
+                f"{prefix}check_for_updates": None,
+            },
+        ) as client:
+            sched = client.app.state.scheduler  # type: ignore[attr-defined]
+
+            def cron_of(job_id: str) -> str:
+                job = sched.get_job(job_id)
+                fields = {f.name: str(f) for f in job.trigger.fields}
+                return f"{fields['minute']} {fields['hour']}"
+
+            assert cron_of(scheduler.SCAN_JOB_ID) == "0 2"
+            assert cron_of("refresh_ratings") == "15 1"  # the override won
+            # Untouched, so still on the built-in default -- and read from the declaration,
+            # not transcribed, or the assertion would pin a copy of the value (rule 119).
+            for job_id in ("refresh_curated_lists", "full_history_sweep"):
+                default = scheduler.DEFAULT_MAINTENANCE_CRONS[job_id].split()
+                assert cron_of(job_id) == f"{default[0]} {default[1]}"
+            # Stored as off. `build_scheduler` wires every default, so this job exists until
+            # the replay removes it -- which is exactly the work boot's own loop was doing.
+            assert sched.get_job("check_for_updates") is None
+
+    def test_a_malformed_stored_cron_does_not_stop_the_boot(self, tmp_path: Path) -> None:
+        """Rule 87's guard, driven through the real boot rather than the shared function.
+
+        A hand-edited or newly-rejected cron string must leave an app the owner can log in to
+        and fix it from, so the bad job keeps its default and every other job is scheduled.
+
+        A second, *well-formed* override rides along deliberately. Without it this test cannot
+        fail: delete the replay entirely and the bad cron is never parsed, so "no scan job" and
+        "refresh_ratings still has a trigger" both hold for the wrong reason -- rule 119's
+        environmental accident, and rule 118's rule that a test which cannot discriminate must
+        not read as a proof. The good override is what makes the guard's survival mean the
+        replay ran and kept going.
+        """
+        prefix = app_settings.MAINTENANCE_SCHEDULE_PREFIX
+        with self._boot(
+            tmp_path,
+            {
+                app_settings.SCAN_SCHEDULE_KEY: "not a cron",
+                f"{prefix}refresh_ratings": "also not a cron",
+                f"{prefix}full_history_sweep": "40 2 * * *",
+            },
+        ) as client:
+            sched = client.app.state.scheduler  # type: ignore[attr-defined]
+            assert sched.get_job(scheduler.SCAN_JOB_ID) is None  # skipped, not crashed
+            assert sched.get_job("refresh_ratings") is not None  # kept its default
+            # The replay reached past the bad row: this override is applied, not defaulted.
+            swept = {f.name: str(f) for f in sched.get_job("full_history_sweep").trigger.fields}
+            assert f"{swept['minute']} {swept['hour']}" == "40 2"
+            assert client.get("/api/health").status_code == 200
 
 
 class TestTheApiSavesAndReschedules:

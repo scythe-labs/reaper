@@ -81,8 +81,8 @@ from reaper.services.scheduler import (
     SCHEDULABLE_JOB_IDS,
     apply_maintenance_schedule,
     apply_scan_schedule,
+    apply_stored_schedules,
     effective_maintenance_cron,
-    reschedule_timezone,
     run_maintenance_now,
 )
 
@@ -1880,7 +1880,7 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
     async with _factory(request)() as session:
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance = await app_settings.get_maintenance_schedules(session)
-    reschedule_timezone(
+    apply_stored_schedules(
         scheduler,
         ZoneInfo(name),
         settings=_settings(request),
