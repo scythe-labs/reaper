@@ -104,7 +104,12 @@ class TestTheGuardReachesEveryLoggerInTheTree:
         return found
 
     def test_the_count_is_the_one_reconciled_by_hand(self) -> None:
-        assert len(self._modules_declaring_a_logger()) == 47
+        declared = self._modules_declaring_a_logger()
+        assert len(declared) == 48, (
+            f"expected 48 modules declaring a logger, found {len(declared)}. Bump the number "
+            "here AND in docs/SIMPLIFICATION_PLAN.md's *Landed* row for #599, which restates "
+            "it and which nothing asserts (rule 144)."
+        )
 
     def test_every_declared_logger_is_reachable_from_the_walk(self) -> None:
         """Imported first, because the walk can only see loaded modules -- which is also

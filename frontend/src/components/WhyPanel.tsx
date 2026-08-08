@@ -1274,7 +1274,7 @@ export function WhyPanel({
   // Accept what Reaper can see today for THIS title, the narrow twin of Settings' global
   // Forget. It discards the high-water record and nothing else: no file is deleted and no
   // removal is approved, the title simply goes back to being judged on its current plays
-  // (`api.settings.forget_watch_evidence_for`).
+  // (`api.plex.forget_watch_evidence_for`).
   const queryClient = useQueryClient();
   // The same handoff the global Forget makes, through the same hook (rule 72): that one is this
   // control's whole-library twin and already pairs the sentence with a place to stand.

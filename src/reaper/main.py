@@ -40,6 +40,7 @@ from reaper.api.middleware import (
     api_key_scope_description,
     no_credential_needed,
 )
+from reaper.api.plex import router as plex_router
 from reaper.api.plex_trash import router as plex_trash_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
@@ -726,6 +727,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(setup_router)
     app.include_router(settings_router)
+    # Right after its parent, so the Plex routes keep their place in `paths`.
+    app.include_router(plex_router)
     app.include_router(backup_router)
     app.include_router(router)
     app.include_router(scan_router)

@@ -413,7 +413,7 @@ async def probe_connection(
     that does not report one impossible to link at all -- a real capability traded away
     for a check this path does not need.
 
-    The caller that does need it is ``api/settings.plex_set_connection``, where the
+    The caller that does need it is ``api/plex.plex_set_connection``, where the
     address is typed by hand and could be any server on the network; it calls
     ``connection_identity`` and compares. Rule 24: this docstring used to say the check
     happened here, and it never did.
