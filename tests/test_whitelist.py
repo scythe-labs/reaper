@@ -211,7 +211,10 @@ class TestTimedSpare:
         t_show = utcnow() + timedelta(days=10)
         t_season = utcnow() + timedelta(days=3)
         decisions = {"sonarr:1:88": "spare", "sonarr:1:88:3": "spare"}
-        expiries = {"sonarr:1:88": t_show, "sonarr:1:88:3": t_season}
+        expiries: dict[str, datetime | None] = {
+            "sonarr:1:88": t_show,
+            "sonarr:1:88:3": t_season,
+        }
         # A season's own spare wins over its show's, expiry and all.
         assert whitelist.effective_spare_expiry("sonarr:1:88:3", decisions, expiries) == t_season
         # A season with no spare of its own inherits the show spare's expiry.

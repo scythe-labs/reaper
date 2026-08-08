@@ -27,6 +27,17 @@ from reaper.db.models import AppUser, AuthProvider, AuthSession
 SALT = b"0123456789abcdef"
 
 
+def _record(seen: list[int], cost: int, derived: bytes) -> bytes:
+    """Note the scrypt cost that was used, and hand the key straight back.
+
+    `(seen.append(n), derived)[1]` said the same thing, but `append` returns None and mypy
+    reads the tuple's first element as that -- so the expression only looked like it had a
+    value. A named function says which half is the record and which is the answer.
+    """
+    seen.append(cost)
+    return derived
+
+
 def _legacy_box(n: int, *, salt: bytes | None) -> object:
     """A SecretBox pinned to an older scrypt cost, standing in for an older Reaper."""
     from cryptography.fernet import Fernet, MultiFernet
@@ -121,7 +132,7 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
         monkeypatch.setattr(
             crypto,
             "_derive_fernet_key",
-            lambda secret, salt, n=crypto._SCRYPT_N: (calls.append(n), real(secret, salt, n))[1],
+            lambda secret, salt, n=crypto._SCRYPT_N: _record(calls, n, real(secret, salt, n)),
         )
 
         SecretBox("the-key", salt=SALT)
@@ -138,7 +149,7 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
         monkeypatch.setattr(
             crypto,
             "_derive_fernet_key",
-            lambda secret, salt, n=crypto._SCRYPT_N: (built.append(n), real(secret, salt, n))[1],
+            lambda secret, salt, n=crypto._SCRYPT_N: _record(built, n, real(secret, salt, n)),
         )
 
         assert box.decrypt(fresh) == "x"

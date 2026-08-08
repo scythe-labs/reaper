@@ -14,6 +14,7 @@ properties, each pinned here:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import httpx
 import httpx2

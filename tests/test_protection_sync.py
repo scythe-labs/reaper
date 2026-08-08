@@ -326,8 +326,9 @@ class TestOneFailingListDoesNotSinkTheScan:
 
         synced = await sync_protection_lists(engine, definitions=[IMDB])
 
-        assert isinstance(synced[IMDB_SLUG], str)
-        assert "error" in synced[IMDB_SLUG]
+        outcome = synced[IMDB_SLUG]
+        assert isinstance(outcome, str)
+        assert "error" in outcome
 
     async def test_a_truncated_list_is_refused(
         self, engine: AsyncEngine, httpx2_mock: respx.Router
@@ -341,8 +342,9 @@ class TestOneFailingListDoesNotSinkTheScan:
 
         synced = await sync_protection_lists(engine, definitions=[IMDB])
 
-        assert isinstance(synced[IMDB_SLUG], str)
-        assert "error" in synced[IMDB_SLUG]
+        outcome = synced[IMDB_SLUG]
+        assert isinstance(outcome, str)
+        assert "error" in outcome
 
 
 class _CollectionServer:

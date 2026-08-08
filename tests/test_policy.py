@@ -299,7 +299,7 @@ class TestEvidenceHash:
         of the nine still refusing (rule 141: the fixture values are all off the default, so
         an edit that does nothing cannot pass this).
         """
-        edits: list[dict[str, object]] = [
+        edits: list[dict[str, Any]] = [
             {"keep_last_seasons": 4},
             {"keep_first_season": False},
             {"keep_last_scope": "requested"},
@@ -959,7 +959,7 @@ class TestTheDangerousConfigDetector:
         self,
         anchor: str,
         kind: str,
-        build: Callable[[str], dict[str, object]],
+        build: Callable[[str], dict[str, Any]],
         media_type: str,
         unreadable: str,
         label: str,
@@ -2012,7 +2012,7 @@ class TestRebalancingAnOldPolicy:
         assert rebalance(raw) is None
 
 
-def _legacy_rating_body(**gate: object) -> dict[str, object]:
+def _legacy_rating_body(**gate: object) -> dict[str, Any]:
     """A stored body from before the rating bar moved off the RATING_FLOOR gate row.
 
     The shape that matters: no ``keep_rating_rules`` key at all, and the bar still on the
@@ -2116,7 +2116,7 @@ class TestRestoringALostRatingBar:
         ],
     )
     def test_numbers_the_old_validator_would_have_refused_are_not_restored(
-        self, gate: dict[str, object]
+        self, gate: dict[str, Any]
     ) -> None:
         """Only a bar the old gate would have accepted is put back. Anything else would be
         inventing a protection value on the operator's behalf, and ``RatingRuleSpec`` would
@@ -2132,9 +2132,7 @@ class TestRestoringALostRatingBar:
         ],
         ids=["lowest-floor", "highest-floor", "one-vote"],
     )
-    def test_the_bars_the_old_validator_accepted_are_restored(
-        self, gate: dict[str, object]
-    ) -> None:
+    def test_the_bars_the_old_validator_accepted_are_restored(self, gate: dict[str, Any]) -> None:
         """The inclusive edges of the accepted range, which the refusals above cannot pin.
 
         The old validator took ``1 <= threshold <= 100`` and ``secondary >= 1``, so every one
@@ -2626,7 +2624,7 @@ class TestTheCondemnLanesCoverage:
             if w.field in ("signals", "custom_condemn")
         ]
 
-    def _gate_off(self, **overrides: object) -> dict[str, object]:
+    def _gate_off(self, **overrides: object) -> dict[str, Any]:
         """The gate off, so the window is the 365-day fallback, beside a dormancy floor the
         reach clears. Without the second the floor keeps every item on age alone and every
         warning in this family is correctly silent."""
@@ -2946,7 +2944,7 @@ class TestAHoldTheWatchHistoryCannotEstablish:
     DORMANCY = 30
 
     def _tv(self, **overrides: object) -> PolicyBody:
-        base: dict[str, object] = {
+        base: dict[str, Any] = {
             "media_type": "tv",
             "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
         }
@@ -3111,7 +3109,7 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
     DORMANCY = 30
 
     def _tv(self, **overrides: object) -> PolicyBody:
-        base: dict[str, object] = {
+        base: dict[str, Any] = {
             "media_type": "tv",
             "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
             # The 90-day reach these tests use spans this hold, so the mid-binge lane is
@@ -3865,7 +3863,7 @@ class TestConvertListProtections:
     """
 
     @staticmethod
-    def _legacy(**over: object) -> dict[str, object]:
+    def _legacy(**over: object) -> dict[str, Any]:
         body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         body["protect_conditions"] = []
         body["keep_tags"] = ["reaper-keep"]
@@ -3887,7 +3885,7 @@ class TestConvertListProtections:
         imdb: str | None = "Top",
         collections: tuple[str, ...] = (),
         collection_scope: dict[str, frozenset[str]] | None = None,
-    ) -> dict[str, object] | None:
+    ) -> dict[str, Any] | None:
         return convert_list_protections(
             raw,
             media_type=media_type,
@@ -3907,7 +3905,7 @@ class TestConvertListProtections:
         assert "whitelisted" not in self._gate_ids(converted)
 
     @staticmethod
-    def _rules(body: dict[str, object]) -> list[str]:
+    def _rules(body: dict[str, Any]) -> list[str]:
         return [
             str(c["value"])
             for c in body.get("protect_conditions") or []
@@ -3915,7 +3913,7 @@ class TestConvertListProtections:
         ]
 
     @staticmethod
-    def _gate_ids(body: dict[str, object]) -> set[str]:
+    def _gate_ids(body: dict[str, Any]) -> set[str]:
         return {str(g.get("gate")) for g in body.get("gates") or [] if isinstance(g, dict)}
 
     def test_enabled_gates_become_rules_and_the_keys_leave(self) -> None:

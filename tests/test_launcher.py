@@ -379,7 +379,8 @@ class TestServeWithTray:
         while not created and time.monotonic() < deadline:
             time.sleep(0.005)
         assert created, "the icon was never built"
-        return next(item for item in created[0].menu if item.label == label)
+        found: _FakeMenuItem = next(i for i in created[0].menu if i.label == label)
+        return found
 
     def test_quit_stops_the_server_then_the_icon(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The quit path of #431: the menu only sets should_exit (uvicorn's graceful
@@ -572,7 +573,8 @@ class TestMain:
         ) -> BaseException | None:
             captured["tray_port"] = port
             captured["dock_icon"] = dock_icon
-            return captured["tray_error"]
+            error: BaseException | None = captured["tray_error"]
+            return error
 
         monkeypatch.setattr(launcher, "_serve_with_tray", fake_tray)
         return captured

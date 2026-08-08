@@ -128,7 +128,7 @@ def _healthy(**overrides: Any) -> str:
 #: Signals whose contributions are stored as three different types. Only one is a number,
 #: and it is deliberately not first: a sort that cannot compare the three raised a
 #: TypeError, and one that silently kept the stored order would pick the wrong reason.
-MIXED_SIGNALS = [
+MIXED_SIGNALS: list[dict[str, Any]] = [
     {
         "id": "unwatched",
         "contribution": "not a number",

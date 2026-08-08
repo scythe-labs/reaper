@@ -2115,6 +2115,7 @@ class TestNothingCanDelete:
 
         for route in client.app.routes:  # type: ignore[attr-defined]
             if isinstance(route, APIRoute):
+                assert route.methods is not None
                 assert route.methods <= {"GET", "POST", "HEAD", "OPTIONS"}
                 assert "delete" not in route.path.lower()
                 assert "execute" not in route.path.lower()
