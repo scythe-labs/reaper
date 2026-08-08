@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { announce } from "../announce";
 import { api, type PlexResourceConnection, type SetupStatus } from "../api";
+import { invalidateAllPlex } from "../plexServerQueries";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { Notice } from "./Notice";
 import { StaleReadNotice } from "./StaleReadNotice";
@@ -48,11 +49,14 @@ export function SetupPlexStep({ setup, onNext }: { setup: SetupStatus; onNext: (
   const [error, setError] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
 
+  // Linking here changes which server is linked exactly as the settings panel's link does, so
+  // it drops the same set. It used to name three of the six keys, which cost nothing only
+  // because the wizard renders in place of the app: the consumers of the missing three are
+  // unmounted while it is up. That is a reason it never showed, not a reason to keep a second
+  // copy of the list -- `setup` is this component's own and is not part of the set.
   const refreshPlex = async () => {
     await queryClient.invalidateQueries({ queryKey: ["setup"] });
-    await queryClient.invalidateQueries({ queryKey: ["plex"] });
-    await queryClient.invalidateQueries({ queryKey: ["plex-resources"] });
-    await queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
+    invalidateAllPlex(queryClient);
   };
 
   const pin = usePlexPinPoll({
@@ -193,11 +197,11 @@ function PlexLinked({ onError }: { onError: (m: string | null) => void }) {
 
   const switchServer = useMutation({
     mutationFn: (machineId: string) => api.plexSwitchServer(machineId),
-    onSuccess: async () => {
+    // The panel's switch and this one are the same change, so they drop the same set. `setup`
+    // stays untouched: switching servers does not make the install any more or less configured.
+    onSuccess: () => {
       onError(null);
-      await queryClient.invalidateQueries({ queryKey: ["plex"] });
-      await queryClient.invalidateQueries({ queryKey: ["plex-resources"] });
-      await queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
+      invalidateAllPlex(queryClient);
     },
     onError: (e: Error) => onError(e.message),
   });
