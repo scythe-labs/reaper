@@ -110,6 +110,20 @@ surface is nil. That is W1.3's `lru_cache`, W12's scrypt wrapper (with its injec
 node` docblocks, and W6-6's two-sentence rule 7/24 correction. **W1.4's scaffolding stays here** —
 it is a real refactor and phase 8 depends on it.
 
+**"Its conflict surface is nil" was measured once and is not nil.** W6-6 grew a gate on the way
+out, and that gate landed at the same anchor in `test_repo_hygiene.py` as one this branch already
+had, so the return merge conflicted. Both blocks were kept and the file went to 74 tests, which
+is the resolution working — but note the second half, because it is the one nobody sees coming:
+**the sub-PR that carries the merge back is itself squashed, which flattens the merge out of this
+branch's history.** The tree was correct and `git merge-base --is-ancestor origin/dev HEAD` was
+false, so the next weekly merge would have replayed the same commit into a file that already held
+it. The repair is `git merge -s ours origin/dev`, pushed to this branch **directly**: it records
+the ancestry and touches no file, and it cannot go through a pull request, because a squash would
+flatten it exactly as it flattened the first one. So an escape-hatch item costs one anchor
+conflict and one ancestry repair, and both are cheap while somebody remembers. Send an item to
+`dev` when what it corrects is read by every session — CLAUDE.md was, here — and keep it here when
+it is not.
+
 **Splitting whole phases off is the version that does not work**, and it was considered and
 rejected rather than never raised. Every sub-PR edits this document under S10 and `docs/STATUS.md`
 under S6; both append at a fixed position, which is the one construct git cannot merge.
