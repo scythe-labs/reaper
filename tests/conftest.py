@@ -336,7 +336,7 @@ def settings(tmp_path: Path) -> Settings:
     app's own lifespan reads it on the way up -- it seeds instances and checks a local admin
     exists -- so a ``create_app`` against an empty file fails before any test body runs.
     """
-    resolved = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    resolved = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = sa_create_engine(resolved.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()

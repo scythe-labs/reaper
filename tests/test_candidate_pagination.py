@@ -34,7 +34,7 @@ N_PROTECT = 40
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 
@@ -143,7 +143,7 @@ N_SEASONS = 6
 def tv_client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot where one show's condemned seasons straddle any small page: six
     seasons at descending scores, padded with condemned movies between them."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 

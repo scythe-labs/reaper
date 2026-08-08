@@ -34,7 +34,7 @@ _AUTH_TABLE_HINTS = ("auth", "session", "login", "recovery", "token", "credentia
 
 
 def _settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    return Settings(data_dir=tmp_path, secret_key="k")
 
 
 def _sqlite_file(path: Path) -> None:
@@ -60,7 +60,9 @@ def _stage(tmp_path: Path, *, with_db: bool, swapping: str | None = None) -> Pat
 
 
 class TestAnInterruptedSwapIsFinished:
-    def test_the_staged_key_survives_and_lands(self, tmp_path: Path, capsys) -> None:
+    def test_the_staged_key_survives_and_lands(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """The exact interrupted state: the staged database has already been renamed into
         ``data/`` and the key has not. Discarding here deletes the key that opens the
         database now serving, so the install boots on a restored database, mints a fresh
@@ -78,7 +80,9 @@ class TestAnInterruptedSwapIsFinished:
         assert (tmp_path / SALT_FILENAME).read_text() == "00112233\n"
         assert not pending.exists()
 
-    def test_it_says_the_restore_already_happened(self, tmp_path: Path, capsys) -> None:
+    def test_it_says_the_restore_already_happened(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """The old message asserted "current data kept" in a state where the current data
         had already been replaced. Copy that is wrong about a restore is worse than none:
         it is read while deciding whether to panic."""
@@ -223,7 +227,7 @@ class TestAnUnusableStagingIsStillDiscarded:
     def test_the_live_data_is_untouched_and_the_message_is_true(
         self,
         tmp_path: Path,
-        capsys,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """With no swap marker nothing has been moved, so "current data kept" IS true."""
         settings = _settings(tmp_path)

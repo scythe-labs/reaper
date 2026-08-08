@@ -20,7 +20,6 @@ from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import insert, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from reaper import buildinfo
 from reaper.buildinfo import install_kind
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -67,7 +66,7 @@ def _make(
 
     ``revision`` writes the ``alembic_version`` row that ``create_all`` never makes, so the
     banner's revision field can be pinned to a value that is not the default (rule 141)."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     if revision is not None:
@@ -183,15 +182,13 @@ class TestTheInstallFingerprint:
         """Docker plants the first, Podman the second."""
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)
         monkeypatch.delenv("REAPER_HOME", raising=False)
-        monkeypatch.setattr(
-            buildinfo.Path, "exists", lambda self: str(self) == marker, raising=False
-        )
+        monkeypatch.setattr(Path, "exists", lambda self: str(self) == marker, raising=False)
         assert install_kind() == "container"
 
     def test_no_signal_at_all_is_a_source_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delattr(sys, "_MEIPASS", raising=False)
         monkeypatch.delenv("REAPER_HOME", raising=False)
-        monkeypatch.setattr(buildinfo.Path, "exists", lambda self: False, raising=False)
+        monkeypatch.setattr(Path, "exists", lambda self: False, raising=False)
         assert install_kind() == "source"
 
 

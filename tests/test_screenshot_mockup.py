@@ -18,6 +18,7 @@ import importlib.util
 import re
 import struct
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -26,7 +27,7 @@ SCRIPT = ROOT / "scripts" / "gen_screenshot_mockup.py"
 SHOT = ROOT / "docs" / "media" / "review-queue.png"
 
 
-def _generator():
+def _generator() -> ModuleType:
     """The script, imported as a module. It lives in `scripts/`, which is not a package."""
     spec = importlib.util.spec_from_file_location("gen_screenshot_mockup", SCRIPT)
     assert spec and spec.loader
@@ -36,16 +37,19 @@ def _generator():
 
 
 @pytest.fixture(scope="module")
-def gen():
+def gen() -> ModuleType:
     return _generator()
 
 
 @pytest.fixture(scope="module")
-def html(gen) -> str:
-    return gen.page()
+def html(gen: ModuleType) -> str:
+    page: str = gen.page()
+    return page
 
 
-def test_the_generator_builds_a_page_from_the_current_stylesheet(gen, html: str) -> None:
+def test_the_generator_builds_a_page_from_the_current_stylesheet(
+    gen: ModuleType, html: str
+) -> None:
     """It inlines `frontend/src/index.css`, so a renamed style file breaks this, not the README.
 
     The page carries no <link>, so the stylesheet has to arrive by this path or not at all.
@@ -78,7 +82,7 @@ def test_nothing_in_the_picture_comes_off_a_real_server(html: str) -> None:
     )
 
 
-def test_the_account_and_the_titles_are_invented(gen, html: str) -> None:
+def test_the_account_and_the_titles_are_invented(gen: ModuleType, html: str) -> None:
     """Named here so a later edit that pastes in a real library has to delete a test to land."""
     assert gen.ACCOUNT == "reaper-demo"
     assert gen.ACCOUNT in html
@@ -88,7 +92,7 @@ def test_the_account_and_the_titles_are_invented(gen, html: str) -> None:
         assert item["title"] in html
 
 
-def test_the_shipped_png_is_the_size_this_generator_shoots(gen) -> None:
+def test_the_shipped_png_is_the_size_this_generator_shoots(gen: ModuleType) -> None:
     """The drift that actually happens: the capture box moves and the committed PNG does not.
 
     Re-shoot with `uv run python scripts/gen_screenshot_mockup.py --render`. Read straight from

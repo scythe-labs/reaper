@@ -16,6 +16,7 @@ import re
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -639,7 +640,7 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
 
     from reaper.engine.policy import ProfileSettings
 
-    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)
+    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)  # type: ignore[arg-type]
     reads = {
         name
         for name in re.findall(r"self\.(\w+)", validator)
@@ -676,7 +677,7 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
             caps[name] = raw == "true" if raw in ("true", "false") else int(raw.replace("_", ""))
         assert caps, f"parsed no fields out of a caps block in {_PRESETS_TS.relative_to(REPO)}"
         # A ValidationError here is the defect, stated by the server in its own words.
-        ProfileSettings(**caps)  # type: ignore[arg-type]
+        ProfileSettings(**caps)
 
 
 # ``pkill``/``killall`` select processes by PATTERN, which is machine-wide: nothing in the
@@ -1382,7 +1383,7 @@ _EXPECTED_MANIFEST_KINDS = {
 }
 
 
-def _dependabot_updates() -> list[dict]:
+def _dependabot_updates() -> list[dict[str, Any]]:
     """Every ``updates:`` entry in ``.github/dependabot.yml``.
 
     A parsed list, not a text scan, so unlike the walks elsewhere in this file its population
@@ -1916,17 +1917,19 @@ _MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md", "docs/SIMPLIFICATION_PLAN
 
 
 def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
-    """`tests/_fakes.py` rides on the mypy run, and three files say so independently.
+    """`tests/` rides on the mypy run, and four files say so independently.
 
-    The fakes there inherit the real clients, which is what turns a client signature change
-    they no longer match into a build failure. That only works while the invocation actually
-    names the file -- and the invocation is written three times, by three different authors
-    reading each other. A developer running CONTRIBUTING's list would then get a narrower
-    check than CI runs and see a clean tree that CI rejects, or the reverse: the widening
-    lands in CONTRIBUTING alone and the gate everyone quotes is not the gate that runs.
+    Two things have to hold, and each is checked below. **`tests/` is named**, or nothing in
+    it is type-checked and the structural fakes that inherit their real client prove nothing
+    by doing so (#580). And **`src/reaper` is named alongside it**, or mypy resolves `reaper`
+    from site-packages, finds no py.typed marker, and reports 731 import errors while
+    silently checking almost none of the tree -- a run that looks like it did the work.
 
-    Rule 144, and the direction is the dangerous one: a stale copy reads as the shorter,
-    safer-looking command, so nothing about it looks wrong.
+    The invocation is written four times, by four authors reading each other. A developer
+    running CONTRIBUTING's list would otherwise get a narrower check than CI runs and see a
+    clean tree that CI rejects, or the reverse. Rule 144, and the direction is the dangerous
+    one: a stale copy reads as the shorter, safer-looking command, so nothing about it looks
+    wrong.
     """
     sites = [
         (path.relative_to(REPO), lineno, " ".join(match.group(1).split()))
@@ -1949,10 +1952,17 @@ def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() ->
         "CI rejects, or CI runs a check nobody can reproduce."
     )
     (targets_run,) = targets
-    assert "tests/_fakes.py" in targets_run, (
-        f"the typecheck gate runs `{targets_run}`, which no longer includes tests/_fakes.py.\n"
-        "Those fakes inherit the real clients so that a signature change they stop matching\n"
-        "fails the build; off the gate they are unchecked, and inheriting proves nothing."
+    named = targets_run.split()
+    assert any(target.startswith("tests") for target in named), (
+        f"the typecheck gate runs `{targets_run}`, which no longer covers tests/.\n"
+        "The structural fakes inherit their real client so that a signature change they stop\n"
+        "matching fails the build; off the gate they are unchecked, and inheriting proves\n"
+        "nothing (#580)."
+    )
+    assert "src/reaper" in named, (
+        f"the typecheck gate runs `{targets_run}`, which no longer names src/reaper.\n"
+        "Without it mypy resolves `reaper` from site-packages, finds no py.typed marker, and\n"
+        "answers with import errors instead of checking the tree -- green-looking, and blind."
     )
 
 
@@ -3630,7 +3640,8 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     the next author to remember.
     """
     from reaper.clock import humanize_days
-    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, SignalId
+    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+    from reaper.engine.signals import SignalId
 
     page = (FRONTEND_SRC / "docs" / "content" / "understandingPolicy.ts").read_text()
     shipped = {

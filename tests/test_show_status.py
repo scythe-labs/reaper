@@ -97,7 +97,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     show 1 has the status on its first season, show 4 on its last, so an implementation
     that reads whichever season sorts first cannot pass both.
     """
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -50,8 +50,8 @@ from reaper.db.models import (
 )
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
-from reaper.services import executor as executor_module
 from reaper.services import list_config, whitelist
+from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -127,7 +127,7 @@ async def _seed_instances(session: AsyncSession, media_keys: Iterable[str]) -> N
     await session.flush()
 
 
-async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int | None]]) -> int:
+async def _snapshot_with(session: AsyncSession, condemned: Sequence[tuple[str, int | None]]) -> int:
     """A snapshot plus a set of condemned movie candidates: (media_key, size_bytes).
 
     A ``None`` size is an item nothing would measure, which is not the same as a zero."""
@@ -1444,7 +1444,7 @@ class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
                 snapshot_id=snapshot_id,
                 approved_by="admin",
                 max_unmeasured=5,
-                only_media_keys=["radarr:1:3"],
+                only_media_keys={"radarr:1:3"},
             )
 
     async def test_a_selection_keeping_one_measured_item_still_plans(
@@ -1462,7 +1462,7 @@ class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
             snapshot_id=snapshot_id,
             approved_by="admin",
             max_unmeasured=5,
-            only_media_keys=["radarr:1:1", "radarr:1:3"],
+            only_media_keys={"radarr:1:1", "radarr:1:3"},
         )
 
         ordered = [s.media_key for s in await _steps(session, run.id)]
@@ -3069,7 +3069,8 @@ class FakeTautulli:
         if self._raise:
             raise IntegrationError("tautulli", "history unavailable")
         if self._body is not None:
-            return self._body
+            body: dict[str, Any] = self._body
+            return body
         if self._rows_by_key is not None:
             key = rating_key if rating_key is not None else parent_rating_key
             return {"data": list(self._rows_by_key.get(key or 0, []))}
@@ -3123,7 +3124,7 @@ class TestJournalDurability:
     never roll back to PLANNED as if no file were gone."""
 
     async def test_a_crash_mid_run_leaves_a_durable_journal(self, tmp_path: Path) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_engine(settings)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -3175,7 +3176,7 @@ class TestTheExecutingClaimIsAtomic:
     mid-run is refused, instead of re-running the plan over the first one's journal."""
 
     async def test_a_second_execute_while_one_is_in_flight_is_refused(self, tmp_path: Path) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_engine(settings)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -3243,7 +3244,7 @@ class TestRollingThirtyDayCaps:
             "max_bytes_per_30d": 500 * 10**9,
         }
         base.update(overrides)
-        return ProfileSettings(**base)  # type: ignore[arg-type]
+        return ProfileSettings(**base)
 
     async def _execute(
         self, session: AsyncSession, run_id: int, settings: ProfileSettings, *, dry: bool = False
@@ -3708,7 +3709,7 @@ class TestAnOverrideChangedMidRun:
                 raise RuntimeError("the database went away")
             return await real_overrides(sess)
 
-        with mock.patch.object(executor_module.whitelist, "overrides", flaky):
+        with mock.patch.object(whitelist_module, "overrides", flaky):
             report = await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert report.state is RunState.ABORTED
@@ -3740,7 +3741,7 @@ class TestAnOverrideChangedMidRun:
             reads["n"] += 1
             return await real_overrides(sess)
 
-        with mock.patch.object(executor_module.whitelist, "overrides", counted):
+        with mock.patch.object(whitelist_module, "overrides", counted):
             report = await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert report.state is RunState.COMPLETED
@@ -4506,7 +4507,7 @@ async def _fresh_engine(tmp_path: Path) -> tuple[Any, async_sessionmaker[AsyncSe
     """An engine of this test's own, so durable state can be read back through a session the
     executor never touched. The run's own session answers from its identity map
     (``expire_on_commit=False``) and cannot tell a durable write from a discarded one."""
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

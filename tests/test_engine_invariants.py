@@ -68,9 +68,9 @@ def _imdb(value: float, votes: int) -> tuple[Rating, ...]:
 # --- generators -------------------------------------------------------------
 
 
-def observations(
-    value_strategy: st.SearchStrategy[object],
-) -> st.SearchStrategy[Observation[object]]:
+def observations[T](
+    value_strategy: st.SearchStrategy[T],
+) -> st.SearchStrategy[Observation[T]]:
     """All three arms, with Unknown well represented."""
     return st.one_of(
         value_strategy.map(lambda v: Known(value=v, source="test")),
@@ -230,7 +230,7 @@ class TestUnknownNeverCondemns:
             "imdb_rating_tenths",
             "season_rank",
         ):
-            degraded = replace(item, **{field_name: Unknown(reason="outage", source="test")})
+            degraded = replace(item, **{field_name: Unknown(reason="outage", source="test")})  # type: ignore[arg-type]
             degraded_score = score(ALL_SIGNALS, degraded).value
 
             assert degraded_score <= baseline + 1e-9, (
@@ -764,7 +764,7 @@ class TestRatingGate:
         assert gate.evaluate(facts).blocked is False  # Absent: nothing to keep it on
 
         result = gate.evaluate(
-            replace(facts, **{unreadable: Unknown(reason="dataset down", source="imdb")})
+            replace(facts, **{unreadable: Unknown(reason="dataset down", source="imdb")})  # type: ignore[arg-type]
         )
 
         assert result.blocked is True
@@ -1462,7 +1462,7 @@ def _observed_fields() -> tuple[str, ...]:
     need. Out by choice: ``_GATE_ONLY``.
     """
     names = [f.name for f in dataclass_fields(Facts) if f.name not in ("title", "ratings")]
-    probe = Facts(title="probe", **{n: Known(value=n, source="probe") for n in names})
+    probe = Facts(title="probe", **{n: Known(value=n, source="probe") for n in names})  # type: ignore[arg-type]
     readable = {
         obs.value for spec in fields.BY_KEY.values() if isinstance(obs := spec.read(probe), Known)
     }
@@ -1498,7 +1498,7 @@ class TestLosingEvidenceCannotCondemn:
         """
         probe = Facts(
             title="probe",
-            **{
+            **{  # type: ignore[arg-type]
                 f.name: Known(value=f.name, source="probe")
                 for f in dataclass_fields(Facts)
                 if f.name not in ("title", "ratings")
@@ -1531,7 +1531,7 @@ class TestLosingEvidenceCannotCondemn:
 
         for field_name in _OBSERVED_FIELDS:
             degraded = _full_score(
-                replace(item, **{field_name: Unknown(reason="outage", source="test")})
+                replace(item, **{field_name: Unknown(reason="outage", source="test")})  # type: ignore[arg-type]
             ).value
 
             assert degraded <= baseline + 1e-9, (
@@ -1596,7 +1596,7 @@ class TestLosingEvidenceCannotCondemn:
 
         for field_name in _OBSERVED_FIELDS:
             degraded = _full_score(
-                replace(item, **{field_name: Unknown(reason="outage", source="test")})
+                replace(item, **{field_name: Unknown(reason="outage", source="test")})  # type: ignore[arg-type]
             ).coverage
 
             assert degraded <= baseline + 1e-9, (

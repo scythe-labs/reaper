@@ -746,7 +746,7 @@ class TestUnmatched:
 
 @pytest.fixture
 async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_cache_engine(settings)
     await history_sync.ensure_schema(engine)
     yield engine
@@ -826,7 +826,7 @@ async def report_env(
 ) -> AsyncIterator[tuple[async_sessionmaker[AsyncSession], AsyncEngine]]:
     """A session factory holding one snapshot with a single condemned movie at tmdb=1, plus
     a cache engine, so ``build_report`` has a real scan to sit on."""
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     main = create_engine(settings)
     async with main.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -871,8 +871,8 @@ class TestBuildReportMergesSeerrs:
         first = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         second = FakeSeerr([_req(plex_id=2, name="Bob", tmdb=1, request_id=2)])
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[first, second],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[first, second],
             cache_engine=cache,
         )
         assert {r.name for r in report.rows} == {"Alice", "Bob"}
@@ -890,8 +890,8 @@ class TestBuildReportMergesSeerrs:
             titles={42: TitleInfo(title="Some Requested Film", year=2021)},
         )
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[seerr],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[seerr],
             cache_engine=cache,
         )
         assert report.not_in_scan == 1
@@ -908,8 +908,8 @@ class TestBuildReportMergesSeerrs:
         factory, cache = report_env
         seerr = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=77, imdb=None)])  # no titles
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[seerr],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[seerr],
             cache_engine=cache,
         )
         (u,) = report.unmatched
@@ -925,8 +925,8 @@ class TestBuildReportMergesSeerrs:
         good = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         with pytest.raises(IntegrationError):
             await fairness.build_report(
-                session_factory=factory,  # type: ignore[arg-type]
-                seerrs=[good, FakeSeerr(unreachable=True)],  # type: ignore[list-item]
+                session_factory=factory,
+                seerrs=[good, FakeSeerr(unreachable=True)],
                 cache_engine=cache,
             )
 
@@ -949,8 +949,8 @@ class TestBuildReportMergesSeerrs:
             )
             await session.commit()
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])],
             cache_engine=cache,
         )
         (row,) = report.rows
@@ -978,8 +978,8 @@ class TestBuildReportMergesSeerrs:
         shared = fairness.RequestCache()
         for _ in range(3):
             await fairness.build_report(
-                session_factory=factory,  # type: ignore[arg-type]
-                seerrs=[seerr],  # type: ignore[list-item]
+                session_factory=factory,
+                seerrs=[seerr],
                 cache_engine=cache,
                 cache=shared,
             )
@@ -1011,7 +1011,7 @@ class TestEnrichAccounts:
             users=[_user(seerr_id=20, plex_id=1, name="Alex", count=69)],
             quotas={20: UserQuota(movie=_UNLIMITED, tv=_q(1, 60, False))},
         )
-        out = await fairness._enrich_accounts([a, b], {1})  # type: ignore[list-item]
+        out = await fairness._enrich_accounts([a, b], {1})
         pq = out[1]
         assert pq.seerr_total == 169
         assert (pq.movie.limit, pq.movie.days, pq.movie.at_limit) == (1, 14, True)
@@ -1019,12 +1019,12 @@ class TestEnrichAccounts:
 
     async def test_a_broken_portal_is_skipped_not_fatal(self) -> None:
         good = FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
-        out = await fairness._enrich_accounts([good, FakeSeerr(unreachable=True)], {1})  # type: ignore[list-item]
+        out = await fairness._enrich_accounts([good, FakeSeerr(unreachable=True)], {1})
         assert out[1].seerr_total == 5
 
     async def test_an_unmatched_requester_has_no_seerr_account(self) -> None:
         good = FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
-        out = await fairness._enrich_accounts([good], {None})  # type: ignore[list-item]
+        out = await fairness._enrich_accounts([good], {None})
         assert out == {}
 
 
@@ -1055,8 +1055,8 @@ class TestBuildReportReadsNoAccounts:
             quotas={1: UserQuota(movie=_q(1, 14, True), tv=_UNLIMITED)},
         )
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
         )
         assert len(report.rows) == 1
@@ -1074,8 +1074,8 @@ class TestBuildReportReadsNoAccounts:
 
         portal = _RequestsOnly([_req(plex_id=1, name="Alice", tmdb=1)])
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
         )
         (row,) = report.rows
@@ -1095,8 +1095,8 @@ class TestBuildPersonDetail:
             users=[_user(seerr_id=1, plex_id=1, name="Alice", count=169)],
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1124,8 +1124,8 @@ class TestBuildPersonDetail:
             instance_key="p1",
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1146,8 +1146,8 @@ class TestBuildPersonDetail:
             instance_key="p1",
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1162,8 +1162,8 @@ class TestBuildPersonDetail:
         factory, cache = report_env
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1, seerr_id=0)])
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1176,8 +1176,8 @@ class TestBuildPersonDetail:
         factory, cache = report_env
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:999",
         )
@@ -1190,8 +1190,8 @@ class TestBuildPersonDetail:
         await _insert_event(cache, rating_key=555, user_id=1)  # Alice (plex 1) played it
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1214,8 +1214,8 @@ class TestBuildPersonDetail:
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
 
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1233,8 +1233,8 @@ class TestBuildPersonDetail:
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
 
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1255,8 +1255,8 @@ class TestBuildPersonDetail:
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
 
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1282,8 +1282,8 @@ class TestBuildPersonDetail:
             titles={2: TitleInfo(title="A Title The Scan Missed", year=2020)},
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1311,7 +1311,7 @@ class TestBuildPersonDetail:
         """B-6 at the drawer: a show has two condemned seasons (S1=4 GiB key 770, S2=6 GiB key
         771). Alice asked for S1 ONLY. Her granted/reclaimable bytes and her watched figure must
         cover S1 alone -- never the whole show, and never S2 she played but never asked for."""
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         main = create_engine(settings)
         async with main.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -1361,8 +1361,8 @@ class TestBuildPersonDetail:
             ]
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1382,7 +1382,7 @@ class TestBuildPersonDetail:
         it opens divides by ``requests_in_scan``. Alice asked for a season the scan has and a
         season of another show it does not, and watched the first. The two surfaces must reach
         the same number; they used to read 50% and 100% for the same person and the same scan."""
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         main = create_engine(settings)
         async with main.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -1444,13 +1444,13 @@ class TestBuildPersonDetail:
             ]
         )
         report = await fairness.build_report(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
         )
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )
@@ -1509,8 +1509,8 @@ class TestTheDrawerFateMatchesTheQueueLane:
         """The drawer's word for the fixture's title, and the queue's lane for the same row."""
         portal = FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
         detail = await fairness.build_person_detail(
-            session_factory=factory,  # type: ignore[arg-type]
-            seerrs=[portal],  # type: ignore[list-item]
+            session_factory=factory,
+            seerrs=[portal],
             cache_engine=cache,
             identity="plex:1",
         )

@@ -213,7 +213,7 @@ def _report(items: list[GraceItem], *, grace_days: int = 14) -> GraceReport:
         grace_days=grace_days,
         in_grace=items,
         ready=[],
-        total_bytes_in_grace=sum(i.size_bytes for i in items),
+        total_bytes_in_grace=sum(i.size_bytes or 0 for i in items),
         total_bytes_ready=0,
     )
 

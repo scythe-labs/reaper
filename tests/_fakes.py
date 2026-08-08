@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Client stand-ins that the type checker holds to the real client's shape.
 
-Every fake here **inherits the client it stands for**, and this module is the one part of
-``tests/`` on the mypy gate (``uv run mypy src/reaper tests/_fakes.py``). Both halves are
-load-bearing, and neither works alone:
+Every fake here **inherits the client it stands for**, and the whole of ``tests/`` is on the
+mypy gate (``uv run mypy src/reaper tests/``). Both halves are load-bearing, and neither works
+alone:
 
 * Inheriting means an override whose parameter types no longer match the real method is a
   Liskov violation, which mypy reports.
-* Being on the gate is what makes that report reach anybody. The rest of ``tests/`` is not
-  type-checked, so a ``# type: ignore`` written there suppresses nothing and proves nothing.
+* Being on the gate is what makes that report reach anybody. Until #580 nothing under
+  ``tests/`` was checked, so the 252 ``# type: ignore`` comments there suppressed nothing.
 
 **What that buys, precisely, is the drift a test run cannot see.** A change to a method's
 *shape* -- a parameter added, renamed or removed -- already fails loudly today: the production
@@ -17,7 +17,14 @@ Measured on this tree: adding one keyword-only argument to ``TautulliClient.chil
 turned 44 tests red while ``mypy src/reaper`` stayed green. What nothing caught was a change to
 a *type* alone, since Python does not enforce annotations at runtime and the fake was checked by
 nobody. That is the gap these classes close, and it is the one phase 8's ``clients/arr.py`` work
-needs closed before it starts.
+needs closed before it starts. It caught one the moment it was switched on: ``test_launcher``'s
+``_FakeServer.run()`` took no ``sockets`` argument, where the ``uvicorn.Server`` it stands in
+for does.
+
+**A structural fake anywhere in ``tests/`` inherits its real class for this reason**, not only
+the ones in this module -- ``test_degraded_side_effects``'s ``_RawLibraries`` and
+``test_kdf_and_session_upkeep``'s ``_Client`` are the same pattern kept beside the cases that
+need a shape this module cannot build.
 
 The constructors deliberately do **not** call ``super().__init__``, so no fake owns an
 ``httpx2.AsyncClient`` and none can reach the network. A method that is inherited rather than

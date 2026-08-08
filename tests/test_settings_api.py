@@ -14,6 +14,7 @@ properties, each pinned here:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import httpx
 import httpx2
@@ -37,7 +38,7 @@ pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 
 def _make(tmp_path: Path, **overrides: object) -> Settings:
-    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[arg-type]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -541,14 +542,15 @@ class TestTheStoredTestResultDescribesWhatWasTested:
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
 
     @staticmethod
-    def _row(client: TestClient, instance_id: int) -> dict[str, object]:
+    def _row(client: TestClient, instance_id: int) -> dict[str, Any]:
         listed = client.get("/api/settings/instances").json()
-        return next(row for row in listed if row["id"] == instance_id)  # type: ignore[no-any-return]
+        row: dict[str, Any] = next(r for r in listed if r["id"] == instance_id)
+        return row
 
     def _saved_and_tested(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> dict[str, object]:
-        made = client.post(
+    ) -> dict[str, Any]:
+        made: dict[str, Any] = client.post(
             "/api/settings/instances",
             json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
         ).json()
@@ -1253,7 +1255,9 @@ class TestPlexLinkChoice:
         from reaper.services import plex_link
 
         captured: dict[str, object] = {}
-        real_probe = plex_link.probe_connection
+        # Through `plex_link` for the same reason the spy is installed there: the module
+        # under test reads this name, and rebinding any other copy patches nothing.
+        real_probe = plex_link.probe_connection  # type: ignore[attr-defined]
 
         async def spying_probe(
             connection: object, token: str, *, timeout: float = 5.0, verify: bool = True

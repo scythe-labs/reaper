@@ -26,7 +26,7 @@ from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource
 
 
-def _obs(value_strategy: st.SearchStrategy[object]) -> st.SearchStrategy[Observation[object]]:
+def _obs[T](value_strategy: st.SearchStrategy[T]) -> st.SearchStrategy[Observation[T]]:
     return st.one_of(
         value_strategy.map(lambda v: Known(value=v, source="s")),
         st.just(Absent(source="s")),

@@ -180,18 +180,18 @@ class TestPasswordChangeRevokesSessions:
 
 class TestNestedRedaction:
     def test_a_secret_nested_in_a_dict_value_is_redacted(self) -> None:
-        out = redact_secrets(None, "info", {"params": {"apikey": "SECRET", "page": 2}})  # type: ignore[arg-type]
+        out = redact_secrets(None, "info", {"params": {"apikey": "SECRET", "page": 2}})
         assert out["params"]["apikey"] == REDACTED
         assert out["params"]["page"] == 2
 
     def test_a_secret_nested_in_a_list_of_dicts_is_redacted(self) -> None:
-        out = redact_secrets(None, "info", {"headers": [{"x-plex-token": "T"}]})  # type: ignore[arg-type]
+        out = redact_secrets(None, "info", {"headers": [{"x-plex-token": "T"}]})
         assert out["headers"][0]["x-plex-token"] == REDACTED
 
     def test_a_query_string_secret_in_a_bytes_value_is_redacted(self) -> None:
-        out = redact_secrets(None, "info", {"body": b"?apikey=LEAK&x=1"})  # type: ignore[arg-type]
+        out = redact_secrets(None, "info", {"body": b"?apikey=LEAK&x=1"})
         assert "LEAK" not in str(out["body"])
 
     def test_binary_without_a_secret_is_left_alone(self) -> None:
-        out = redact_secrets(None, "info", {"body": b"\xff\xfe raw"})  # type: ignore[arg-type]
+        out = redact_secrets(None, "info", {"body": b"\xff\xfe raw"})
         assert out["body"] == b"\xff\xfe raw"

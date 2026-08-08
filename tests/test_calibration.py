@@ -33,6 +33,7 @@ from reaper.engine.calibration import (
     MIN_SAMPLES,
     Bucket,
     NotCalibratedError,
+    RewatchPrior,
     derive,
 )
 from reaper.services.history_sync import SCHEMA
@@ -44,7 +45,7 @@ HORIZON = NOW - timedelta(days=3000)
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     async with eng.begin() as conn:
         for statement in SCHEMA.strip().split(";"):
             if statement.strip():
@@ -273,8 +274,8 @@ class TestTheBacktestUsesTheDerivedPrior:
         assert "measured on your library" in result.summary()
 
 
-def _prior(*, rate: float) -> object:
-    from reaper.engine.calibration import BUCKETS, RewatchPrior
+def _prior(*, rate: float) -> RewatchPrior:
+    from reaper.engine.calibration import BUCKETS
 
     return RewatchPrior(
         buckets=tuple(

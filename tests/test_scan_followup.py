@@ -63,11 +63,15 @@ async def test_a_start_request_mid_scan_queues_exactly_one_followup(
     await request.app.state.scan_task
 
     assert calls == [0, 1]  # exactly two runs: the original plus ONE follow-up
-    assert status.running is False
-    assert status.followup_queued is False
-    assert status.phase == "complete"
+    # A fresh binding, because the background task mutated `status` IN PLACE while this
+    # coroutine was suspended -- something the type checker cannot follow across the await,
+    # so narrowing from the `is True` above would otherwise read these as dead.
+    finished = request.app.state.scan_status
+    assert finished.running is False
+    assert finished.followup_queued is False
+    assert finished.phase == "complete"
     # The reported snapshot is the follow-up's -- the one that saw the saved policy.
-    assert status.snapshot_id == 2
+    assert finished.snapshot_id == 2
 
 
 async def test_running_stays_true_across_the_handoff(
@@ -131,7 +135,8 @@ async def test_an_errored_run_drops_the_queued_followup(
     await request.app.state.scan_task
 
     assert calls == [0]  # the follow-up never ran
-    assert status.running is False
-    assert status.followup_queued is False
-    assert status.phase == "error"
-    assert status.error is not None
+    finished = request.app.state.scan_status  # mutated in place, as above
+    assert finished.running is False
+    assert finished.followup_queued is False
+    assert finished.phase == "error"
+    assert finished.error is not None

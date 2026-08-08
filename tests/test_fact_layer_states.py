@@ -22,11 +22,12 @@ from structlog.testing import capture_logs
 
 from reaper.clock import utcnow
 from reaper.engine import identity
-from reaper.engine.gates import GateConfig, GateId, ServerPopularityGate
+from reaper.engine.gates import Facts, GateConfig, GateId, ServerPopularityGate
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.verdict import decide_verdict
 from reaper.services import lists
+from reaper.services.imdb_dataset import ImdbRating
 from reaper.services.snapshot import RawItem, ScanContext, _reported_size, build_facts
 
 _EMPTY_INDEX = lists.MembershipIndex({}, {}, {}, {})
@@ -52,15 +53,15 @@ def _raw(**overrides: object) -> RawItem:
 def _facts(
     item: RawItem,
     *,
-    imdb: dict[str, object] | None = None,
+    imdb: dict[str, ImdbRating] | None = None,
     membership_index: lists.MembershipIndex | None = None,
     last_played: dict[int, datetime] | None = None,
-):
+) -> Facts:
     return build_facts(
         item,
         ScanContext(horizon=datetime(2019, 1, 1, tzinfo=UTC)),
         membership_index=membership_index or _EMPTY_INDEX,
-        imdb=imdb or {},  # type: ignore[arg-type]
+        imdb=imdb or {},
         last_played=last_played if last_played is not None else {},
         watchers_window={10: 0},
         watchers_all_time={10: 0},

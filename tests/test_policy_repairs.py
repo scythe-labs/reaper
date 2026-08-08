@@ -140,7 +140,9 @@ class TestTheResponseCarriesThem:
     def test_policy_out_serializes_repairs_as_plain_strings(self) -> None:
         """The browser reads these as strings, so an enum that serialized as an object would
         make every id in `REPAIR_NOTICES` a miss and every notice the unknown fallback."""
-        out = PolicyOut.model_construct(repairs=[PolicyRepair.LISTS_MIGRATED])
+        # `model_construct` skips validation by design, which is the point here -- the plugin
+        # types it as needing every field anyway.
+        out = PolicyOut.model_construct(repairs=[PolicyRepair.LISTS_MIGRATED])  # type: ignore[call-arg]
         assert json.loads(out.model_dump_json())["repairs"] == ["lists_migrated"]
 
     def test_repairs_defaults_to_empty(self) -> None:

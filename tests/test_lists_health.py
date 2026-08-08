@@ -98,7 +98,7 @@ class TestHealth:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -284,4 +284,4 @@ class TestRoute:
         assert row["server"] is None
 
     def test_the_route_needs_a_session(self, client: TestClient) -> None:
-        assert TestClient(client.app).get("/api/lists").status_code == 401  # type: ignore[arg-type]
+        assert TestClient(client.app).get("/api/lists").status_code == 401

@@ -29,7 +29,7 @@ from reaper.secrets import (
 
 
 def _settings(tmp_path: Path, key: str | None = None) -> Settings:
-    return Settings(  # type: ignore[call-arg]
+    return Settings(
         data_dir=tmp_path,
         secret_key=SecretStr(key) if key else None,
     )

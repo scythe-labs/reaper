@@ -8,6 +8,9 @@ error and never a guess. This surface informs; nothing may gate on it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 import httpx
 import pytest
 import respx
@@ -334,7 +337,7 @@ class TestDebugNarration:
     """
 
     @staticmethod
-    def _mine(logs: list[dict[str, object]]) -> list[dict[str, object]]:
+    def _mine(logs: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
         return [entry for entry in logs if str(entry["event"]).startswith("update_check.")]
 
     @pytest.mark.usefixtures("_release_build")

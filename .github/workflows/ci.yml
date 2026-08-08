@@ -180,11 +180,10 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Typecheck
-        # `tests/_fakes.py` rides along because its classes INHERIT the real clients
-        # (see its module docstring): checking it is what makes a client signature
-        # change that a fake no longer matches a build failure. The rest of tests/ is
-        # still unchecked.
-        run: uv run mypy src/reaper tests/_fakes.py
+        # `src/reaper` is passed alongside `tests/` rather than left implicit: without
+        # it mypy resolves `reaper` from site-packages, finds no py.typed marker, and
+        # reports 731 import errors while silently checking almost nothing.
+        run: uv run mypy src/reaper tests/
 
       # The full suite includes tests/test_repo_hygiene.py, which is why `hygiene` below
       # runs only for the prose lane: a commit touching code has already proved it here.

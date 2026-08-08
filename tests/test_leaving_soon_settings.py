@@ -32,7 +32,7 @@ from reaper.services import app_settings, leaving_soon
 
 @pytest.fixture
 async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -165,7 +165,7 @@ class TestTheSettingsRoutes:
 
         # Seed a stored list the way a sync would, then choose through the API. (The
         # sync route itself needs a live server; the merge rule is a client concern.)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory = create_session_factory(engine)
         async with factory() as session:

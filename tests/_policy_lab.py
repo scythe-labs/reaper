@@ -86,7 +86,8 @@ VERDICT_RANK = {"protect": 0, "abstain": 1, "condemn": 2}
 
 def load_fixture() -> dict[str, Any]:
     with FIXTURE.open() as f:
-        return json.load(f)
+        loaded: dict[str, Any] = json.load(f)
+        return loaded
 
 
 def reach_of(vectors: Any) -> float:

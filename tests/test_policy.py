@@ -13,6 +13,7 @@ import json
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
@@ -20,6 +21,7 @@ from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
 
 from reaper.api.schemas import GateSettingIn, PolicyIn
+from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.fields import RECENT_WATCHERS, Op, ReachSpan
@@ -62,7 +64,7 @@ from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 from reaper.services.scan_runner import GATE_TYPES, ScanConfigError, build_gates
-from reaper.services.season_pruning import SeasonStats, plan_series_prune
+from reaper.services.season_pruning import plan_series_prune
 
 #: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
 #: ``GATE_TYPES`` because it takes a set of per-source bars rather than one GateConfig, so
@@ -85,7 +87,7 @@ def _policy(**overrides: object) -> PolicyBody:
         # single-signal policy carries the whole budget.
         "signals": (SignalSetting(signal=SignalId.UNWATCHED, weight=100, saturate_at=730),),
     }
-    return PolicyBody(**{**base, **overrides})  # type: ignore[arg-type]
+    return PolicyBody(**{**base, **overrides})
 
 
 def _split(unwatched: int, few_watchers: int) -> tuple[SignalSetting, ...]:
@@ -297,7 +299,7 @@ class TestEvidenceHash:
         of the nine still refusing (rule 141: the fixture values are all off the default, so
         an edit that does nothing cannot pass this).
         """
-        edits: list[dict[str, object]] = [
+        edits: list[dict[str, Any]] = [
             {"keep_last_seasons": 4},
             {"keep_first_season": False},
             {"keep_last_scope": "requested"},
@@ -957,7 +959,7 @@ class TestTheDangerousConfigDetector:
         self,
         anchor: str,
         kind: str,
-        build: Callable[[str], dict[str, object]],
+        build: Callable[[str], dict[str, Any]],
         media_type: str,
         unreadable: str,
         label: str,
@@ -1306,11 +1308,13 @@ class TestADormancyFloorDeeperThanTheWatchHistory:
         added_early = reference_instant(
             last_played=None, added_at=now - timedelta(days=5000), horizon=horizon
         )
+        assert added_early is not None
         assert dormancy_days(added_early, now=now) == 90
         # Added after the horizon: measured from arrival, which is nearer still.
         added_late = reference_instant(
             last_played=None, added_at=now - timedelta(days=10), horizon=horizon
         )
+        assert added_late is not None
         assert dormancy_days(added_late, now=now) == 10
 
     def test_a_floor_the_history_cannot_reach_is_flagged(self) -> None:
@@ -1380,7 +1384,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
     def _pop(self, **overrides: object) -> PolicyBody:
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
-        return _policy(gates=(GateSetting(**{**base, **overrides}),))  # type: ignore[arg-type]
+        return _policy(gates=(GateSetting(**{**base, **overrides}),))
 
     def _pop_with_dormancy_floor(self, threshold: int) -> PolicyBody:
         """The same gate beside a dormancy floor, which decides whether the window matters."""
@@ -1403,7 +1407,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
-            gates=(GateSetting(**{**base, "enabled": False, **overrides}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False, **overrides}),),
             protect_conditions=(ConditionSpec(field="recent_watchers", op=op, value=1),),
         )
 
@@ -1483,7 +1487,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
-            gates=(GateSetting(**{**base, "enabled": False}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False}),),
             protect_conditions=(
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=5),
@@ -1534,7 +1538,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         with_bystanders = _policy(
-            gates=(GateSetting(**{**base, "enabled": False}),),  # type: ignore[arg-type]
+            gates=(GateSetting(**{**base, "enabled": False}),),
             protect_conditions=(
                 ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),
                 ConditionSpec(field="recent_watchers", op=Op.LTE, value=9),
@@ -1805,7 +1809,7 @@ _RESCALE_SHAPES: tuple[tuple[str, int, int], ...] = (
 )
 
 
-def _over_budget(weights: Sequence[int]) -> dict:
+def _over_budget(weights: Sequence[int]) -> dict[str, Any]:
     """A legacy body: the first ``len(weights)`` signal shapes, totalling anything at all."""
     return {
         "media_type": "tv",
@@ -1818,7 +1822,7 @@ def _over_budget(weights: Sequence[int]) -> dict:
     }
 
 
-def _signal_configs(body: dict) -> list[SignalConfig]:
+def _signal_configs(body: dict[str, Any]) -> list[SignalConfig]:
     """The same translation ``services.snapshot`` and ``api.routes`` do, so these tests
     score through the real scorer rather than a transcription of it (rule 22)."""
     return [
@@ -1832,7 +1836,7 @@ def _signal_configs(body: dict) -> list[SignalConfig]:
     ]
 
 
-def _rounding_slack(before_body: dict, repaired: dict) -> float:
+def _rounding_slack(before_body: dict[str, Any], repaired: dict[str, Any]) -> float:
     """The most the rounding can move a score: the total weight it handed *upward*.
 
     ``score' - score = Σ (w'ᵢ - wᵢ·100/T)·fillᵢ`` with every ``fill`` in ``[0, 1]``, and the
@@ -1842,7 +1846,10 @@ def _rounding_slack(before_body: dict, repaired: dict) -> float:
     """
     weights = [s["weight"] for s in before_body["signals"]]
     exact = [w * 100 / sum(weights) for w in weights]
-    return sum(max(0.0, s["weight"] - e) for s, e in zip(repaired["signals"], exact, strict=True))
+    slack: float = sum(
+        max(0.0, s["weight"] - e) for s, e in zip(repaired["signals"], exact, strict=True)
+    )
+    return slack
 
 
 def _evidence(days: float, watchers: int, rank: int, rating: int, size_gb: float) -> Facts:
@@ -2008,7 +2015,7 @@ class TestRebalancingAnOldPolicy:
         assert rebalance(raw) is None
 
 
-def _legacy_rating_body(**gate: object) -> dict[str, object]:
+def _legacy_rating_body(**gate: object) -> dict[str, Any]:
     """A stored body from before the rating bar moved off the RATING_FLOOR gate row.
 
     The shape that matters: no ``keep_rating_rules`` key at all, and the bar still on the
@@ -2112,7 +2119,7 @@ class TestRestoringALostRatingBar:
         ],
     )
     def test_numbers_the_old_validator_would_have_refused_are_not_restored(
-        self, gate: dict[str, object]
+        self, gate: dict[str, Any]
     ) -> None:
         """Only a bar the old gate would have accepted is put back. Anything else would be
         inventing a protection value on the operator's behalf, and ``RatingRuleSpec`` would
@@ -2128,9 +2135,7 @@ class TestRestoringALostRatingBar:
         ],
         ids=["lowest-floor", "highest-floor", "one-vote"],
     )
-    def test_the_bars_the_old_validator_accepted_are_restored(
-        self, gate: dict[str, object]
-    ) -> None:
+    def test_the_bars_the_old_validator_accepted_are_restored(self, gate: dict[str, Any]) -> None:
         """The inclusive edges of the accepted range, which the refusals above cannot pin.
 
         The old validator took ``1 <= threshold <= 100`` and ``secondary >= 1``, so every one
@@ -2622,7 +2627,7 @@ class TestTheCondemnLanesCoverage:
             if w.field in ("signals", "custom_condemn")
         ]
 
-    def _gate_off(self, **overrides: object) -> dict[str, object]:
+    def _gate_off(self, **overrides: object) -> dict[str, Any]:
         """The gate off, so the window is the 365-day fallback, beside a dormancy floor the
         reach clears. Without the second the floor keeps every item on age alone and every
         warning in this family is correctly silent."""
@@ -2942,7 +2947,7 @@ class TestAHoldTheWatchHistoryCannotEstablish:
     DORMANCY = 30
 
     def _tv(self, **overrides: object) -> PolicyBody:
-        base: dict[str, object] = {
+        base: dict[str, Any] = {
             "media_type": "tv",
             "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
         }
@@ -3107,7 +3112,7 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
     DORMANCY = 30
 
     def _tv(self, **overrides: object) -> PolicyBody:
-        base: dict[str, object] = {
+        base: dict[str, Any] = {
             "media_type": "tv",
             "gates": (GateSetting(gate=GateId.MIN_DORMANCY, threshold=self.DORMANCY),),
             # The 90-day reach these tests use spans this hold, so the mid-binge lane is
@@ -3861,7 +3866,7 @@ class TestConvertListProtections:
     """
 
     @staticmethod
-    def _legacy(**over: object) -> dict[str, object]:
+    def _legacy(**over: object) -> dict[str, Any]:
         body = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         body["protect_conditions"] = []
         body["keep_tags"] = ["reaper-keep"]
@@ -3872,7 +3877,8 @@ class TestConvertListProtections:
             *body["gates"],
         ]
         body.update(over)
-        return body
+        merged: dict[str, Any] = body
+        return merged
 
     @staticmethod
     def _convert(
@@ -3883,7 +3889,7 @@ class TestConvertListProtections:
         imdb: str | None = "Top",
         collections: tuple[str, ...] = (),
         collection_scope: dict[str, frozenset[str]] | None = None,
-    ) -> dict[str, object] | None:
+    ) -> dict[str, Any] | None:
         return convert_list_protections(
             raw,
             media_type=media_type,
@@ -3903,16 +3909,16 @@ class TestConvertListProtections:
         assert "whitelisted" not in self._gate_ids(converted)
 
     @staticmethod
-    def _rules(body: dict[str, object]) -> list[str]:
+    def _rules(body: dict[str, Any]) -> list[str]:
         return [
             str(c["value"])
-            for c in body.get("protect_conditions") or []  # type: ignore[union-attr]
+            for c in body.get("protect_conditions") or []
             if isinstance(c, dict) and c.get("field") == "on_list"
         ]
 
     @staticmethod
-    def _gate_ids(body: dict[str, object]) -> set[str]:
-        return {str(g.get("gate")) for g in body.get("gates") or [] if isinstance(g, dict)}  # type: ignore[union-attr]
+    def _gate_ids(body: dict[str, Any]) -> set[str]:
+        return {str(g.get("gate")) for g in body.get("gates") or [] if isinstance(g, dict)}
 
     def test_enabled_gates_become_rules_and_the_keys_leave(self) -> None:
         converted = self._convert(self._legacy())
@@ -3928,7 +3934,7 @@ class TestConvertListProtections:
         """The operator had the protection off; the Lists screen now says "not used by
         your policy" where the switch used to be."""
         legacy = self._legacy()
-        for gate in legacy["gates"]:  # type: ignore[union-attr]
+        for gate in legacy["gates"]:
             if gate["gate"] in ("whitelisted", "curated_list"):
                 gate["enabled"] = False
 
