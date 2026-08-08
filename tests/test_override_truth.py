@@ -23,7 +23,7 @@ confirmation counts and the executor all read it. Pinned here:
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -47,7 +47,6 @@ from reaper.db.models import (
     InstanceKind,
     Snapshot,
 )
-from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 from reaper.services import grace, whitelist
 from reaper.services.condemned import (
@@ -391,16 +390,6 @@ class TestReapOverrideVerdict:
 # --- fixtures over a real database ------------------------------------------
 
 
-@pytest.fixture
-async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-    engine = create_engine(settings)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield create_session_factory(engine)
-    await engine.dispose()
-
-
 async def _snapshot(session: AsyncSession) -> int:
     snap = Snapshot(
         created_at=NOW, policy_hash="p" * 64, scoring_hash="s" * 64, horizon_at=NOW, item_count=0
@@ -457,9 +446,9 @@ async def _row(
 
 class TestEffectiveCondemned:
     async def test_spares_leave_and_honored_reaps_join(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             await _row(session, snap, "radarr:1:1", verdict="condemn")
             await _row(session, snap, "radarr:1:2", verdict="condemn")
@@ -481,9 +470,9 @@ class TestEffectiveCondemned:
         assert sorted(effective) == ["radarr:1:1", "radarr:1:3"]
 
     async def test_a_show_level_reap_reaches_seasons_but_not_a_spared_one(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             show = "sonarr:1:42"
             await _row(
@@ -511,9 +500,9 @@ class TestEffectiveCondemned:
         assert sorted(effective) == [f"{show}:1"]
 
     async def test_grace_starts_the_moment_the_owner_reaps(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             await _row(session, snap, "radarr:1:5", verdict="protect", explanation=CAUTIOUS)
             await whitelist.set_override(
@@ -525,9 +514,9 @@ class TestEffectiveCondemned:
         assert [i.media_key for i in report.in_grace] == ["radarr:1:5"]
 
     async def test_the_plan_includes_an_honored_reap_and_refuses_a_refused_one(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             await _row(session, snap, "radarr:1:6", verdict="condemn")
             await _row(session, snap, "radarr:1:7", verdict="protect", explanation=CAUTIOUS)
@@ -561,9 +550,9 @@ class TestEffectiveCondemned:
                 )
 
     async def test_reap_is_effective_reads_the_frozen_row(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        async with factory() as session:
+        async with async_factory() as session:
             snap = await _snapshot(session)
             await _row(session, snap, "radarr:1:9", verdict="condemn")
             await _row(session, snap, "radarr:1:10", verdict="protect", explanation=STRUCTURAL)

@@ -168,15 +168,6 @@ class TestAStaleCookieCannotShadowALiveSession:
 
 
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    s = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-    engine = sa_create_engine(s.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    return s
-
-
-@pytest.fixture
 def client(settings: Settings) -> Iterator[TestClient]:
     with TestClient(create_app(settings)) as c:
         yield c

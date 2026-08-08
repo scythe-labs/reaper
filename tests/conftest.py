@@ -29,12 +29,17 @@ the real delay for a client retry or a poll loop only burns wall clock for no si
 import asyncio
 import logging
 import sys
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import pytest
 import structlog
+from fastapi.testclient import TestClient
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
+from sqlalchemy import Engine
+from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # Private, because structlog exposes no public name for the proxy ``get_logger`` returns
 # and no public way to un-freeze one. ``tests/test_capturable_loggers.py`` drives the real
@@ -51,7 +56,12 @@ from reaper.auth.ratelimit import (
     recover_throttle,
 )
 from reaper.config import Settings
+from reaper.db.base import Base
+from reaper.db.session import create_engine as create_async_engine
+from reaper.db.session import create_session_factory
 from reaper.logging import _NOISY_LOGGERS
+from reaper.main import create_app
+from tests._auth import login
 
 _passwords._hasher = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),))
 
@@ -296,3 +306,74 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
     recover_throttle.reset()
     password_throttle.reset()
     argon2_gate.reset()
+
+
+# --------------------------------------------------------------------------------------
+# Booting a throwaway install
+#
+# Four fixtures, layered, because the boot preamble was written by hand in 25 files: the
+# sync boot 44 times, the async boot 27, and ``TestClient(create_app(...)) + login(...)``
+# 32, seven of them byte for byte. What varies between those files is what they SEED, and
+# that is what a file-local ``client`` should be left holding -- so these take the boot and
+# nothing else, and a file with its own seeding overrides ``client`` and asks for
+# ``settings`` or ``sync_db`` instead of rewriting the four lines above it.
+#
+# **Every one of them is function-scoped, and that is load-bearing rather than a default.**
+# ``_hermetic`` above is function-scoped and takes a function-scoped ``monkeypatch``, so
+# anything higher-scoped is set up BEFORE it: measured, such a fixture sees the real
+# ``catch_up_on_startup`` and ``env_file`` still pointing at the developer's dotenv files,
+# and an app booted there reads their credentials and starts the IMDb download (rule 37).
+# The one fixture in the suite that is session-scoped, ``test_openapi_tags.schema``, applies
+# those three patches itself for exactly this reason.
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def settings(tmp_path: Path) -> Settings:
+    """A throwaway install rooted at ``tmp_path``, with its schema already created.
+
+    The schema is made here rather than by whatever opens the database first, because the
+    app's own lifespan reads it on the way up -- it seeds instances and checks a local admin
+    exists -- so a ``create_app`` against an empty file fails before any test body runs.
+    """
+    resolved = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    engine = sa_create_engine(resolved.sync_database_url)
+    Base.metadata.create_all(engine)
+    engine.dispose()
+    return resolved
+
+
+@pytest.fixture
+def sync_db(settings: Settings) -> Iterator[Engine]:
+    """A sync engine on that install, for a test that seeds rows before the app boots."""
+    engine = sa_create_engine(settings.sync_database_url)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+async def async_factory(settings: Settings) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """The app's own session factory on that install, built the way production builds it.
+
+    ``create_session_factory`` sets ``expire_on_commit=False``, so a row read back through
+    the session that wrote it comes out of the identity map without touching the database.
+    A test asserting on durable state opens a SECOND session from this factory (#340).
+    """
+    engine = create_async_engine(settings)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield create_session_factory(engine)
+    await engine.dispose()
+
+
+@pytest.fixture
+def client(settings: Settings) -> Iterator[TestClient]:
+    """A signed-in client on that install, with the CSRF header defaulted.
+
+    Signed in, because the API is behind the auth gate and almost every test that reaches a
+    route only cares that it is through. A test about the gate itself builds its own client
+    on ``settings`` and stays out.
+    """
+    with TestClient(create_app(settings)) as booted:
+        login(booted, settings)
+        yield booted

@@ -13,7 +13,6 @@ properties, each pinned here:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
@@ -30,10 +29,9 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import InstanceKind, PlexServer, Snapshot
-from reaper.main import create_app
 from reaper.services import instances as instances_service
 
-from ._auth import TEST_PASSWORD, clear_admin_password, login
+from ._auth import TEST_PASSWORD, clear_admin_password
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -44,16 +42,6 @@ def _make(tmp_path: Path, **overrides: object) -> Settings:
     Base.metadata.create_all(engine)
     engine.dispose()
     return settings
-
-
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    # Startup seeding and the catch-up network fetch are stubbed for every test by the
-    # autouse ``_hermetic`` fixture in conftest.py, so booting the app here is safe.
-    settings = _make(tmp_path)
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)  # seeds a local admin whose password is TEST_PASSWORD
-        yield c
 
 
 def _add_snapshot(client: TestClient) -> None:

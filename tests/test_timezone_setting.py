@@ -15,7 +15,7 @@ These pin the fix:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -41,15 +41,6 @@ def _settings(tmp_path: Path, **overrides: object) -> Settings:
 
 
 @pytest.fixture
-async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    engine = create_engine(_settings(tmp_path))
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield create_session_factory(engine)
-    await engine.dispose()
-
-
-@pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over an empty database: exactly a fresh install."""
     settings = _settings(tmp_path)
@@ -63,39 +54,39 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 class TestTheEffectiveZoneResolves:
     async def test_a_fresh_install_uses_a_real_host_zone(
-        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+        self, async_factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
         """Nothing stored and no seed: the host's own zone answers, and it is always a real
         one -- so the scheduler can build a ZoneInfo from it without a fallback."""
-        async with factory() as session:
+        async with async_factory() as session:
             resolved = await app_settings.get_timezone(session, _settings(tmp_path))
         assert app_settings.is_valid_timezone(resolved)
 
     async def test_the_env_seed_answers_until_a_value_is_stored(
-        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+        self, async_factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
         seeded = _settings(tmp_path, timezone="Asia/Tokyo")
-        async with factory() as session:
+        async with async_factory() as session:
             assert await app_settings.get_timezone(session, seeded) == "Asia/Tokyo"
             # Once stored, the stored value wins -- even over the seed.
             await app_settings.set_timezone(session, "Europe/Paris")
             assert await app_settings.get_timezone(session, seeded) == "Europe/Paris"
 
     async def test_a_bad_stored_value_falls_through_to_the_seed(
-        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+        self, async_factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
         """Fail safe: a corrupt stored zone (only reachable by a hand-edited DB) must not
         crash the resolver -- it falls through to the seed, which is valid."""
         seeded = _settings(tmp_path, timezone="Asia/Tokyo")
-        async with factory() as session:
+        async with async_factory() as session:
             await app_settings.set_timezone(session, "Bogus/Nowhere")
             assert await app_settings.get_timezone(session, seeded) == "Asia/Tokyo"
 
     async def test_a_bad_seed_falls_through_to_the_host_zone(
-        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+        self, async_factory: async_sessionmaker[AsyncSession], tmp_path: Path
     ) -> None:
         bad_seed = _settings(tmp_path, timezone="Not/AZone")
-        async with factory() as session:
+        async with async_factory() as session:
             resolved = await app_settings.get_timezone(session, bad_seed)
         assert app_settings.is_valid_timezone(resolved)
 
@@ -119,12 +110,12 @@ class TestReschedulingMovesEveryJob:
         """
         settings = _settings(tmp_path)
         engine = create_engine(settings)
-        factory = create_session_factory(engine)
+        async_factory = create_session_factory(engine)
         box = SecretBox(resolve_secret_key(settings))
         sched = scheduler.build_scheduler(
             engine,
             tmp_path,
-            session_factory=factory,
+            session_factory=async_factory,
             secret_box=box,
             settings=settings,
             update_checker=UpdateChecker(),
@@ -138,7 +129,7 @@ class TestReschedulingMovesEveryJob:
                 sched,
                 ny,
                 settings=settings,
-                session_factory=factory,
+                session_factory=async_factory,
                 cache_engine=engine,
                 secret_box=box,
                 update_checker=UpdateChecker(),
@@ -171,12 +162,12 @@ class TestReschedulingMovesEveryJob:
         while every well-formed job still moves to the new zone."""
         settings = _settings(tmp_path)
         engine = create_engine(settings)
-        factory = create_session_factory(engine)
+        async_factory = create_session_factory(engine)
         box = SecretBox(resolve_secret_key(settings))
         sched = scheduler.build_scheduler(
             engine,
             tmp_path,
-            session_factory=factory,
+            session_factory=async_factory,
             secret_box=box,
             settings=settings,
             update_checker=UpdateChecker(),
@@ -192,7 +183,7 @@ class TestReschedulingMovesEveryJob:
                 sched,
                 ny,
                 settings=settings,
-                session_factory=factory,
+                session_factory=async_factory,
                 cache_engine=engine,
                 secret_box=box,
                 update_checker=UpdateChecker(),

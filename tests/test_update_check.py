@@ -8,22 +8,13 @@ error and never a guess. This surface informs; nothing may gate on it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-
 import httpx
 import pytest
 import respx
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
 from structlog.testing import capture_logs
 
-from reaper.config import Settings
-from reaper.db.base import Base
-from reaper.main import create_app
 from reaper.services.update_check import _MAX_NOTES, DEFAULT_REPO, UpdateChecker, _newer
-
-from ._auth import login
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -473,16 +464,6 @@ class TestDevChannel:
 
 
 class TestRoute:
-    @pytest.fixture
-    def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-        engine = sa_create_engine(settings.sync_database_url)
-        Base.metadata.create_all(engine)
-        engine.dispose()
-        with TestClient(create_app(settings)) as c:
-            login(c, settings)
-            yield c
-
     @pytest.mark.usefixtures("_dev_build")
     def test_the_route_answers_from_the_shared_checker(
         self, client: TestClient, httpx2_mock: respx.Router

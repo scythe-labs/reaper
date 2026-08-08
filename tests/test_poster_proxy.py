@@ -14,7 +14,6 @@ through the old connection), and it must be CLOSED at shutdown rather than leake
 from __future__ import annotations
 
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,11 +30,6 @@ from reaper.main import create_app
 from ._auth import login
 
 PNG = (b"\x89PNG\r\n\x1a\n", "image/png")
-
-
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    return Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
 
 
 @pytest.fixture

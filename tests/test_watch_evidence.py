@@ -14,7 +14,7 @@ monotonic write -- including the SQLite trap where ``max()`` of anything and NUL
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -32,11 +32,10 @@ from reaper.db.models import WatchHighWater
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Known, Unknown
-from reaper.main import create_app
 from reaper.services import lists, season_scan, watch_evidence
 from reaper.services.snapshot import RawItem, ScanContext, build_facts
 from reaper.services.watch_evidence import Mark, Reading, went_blind
-from tests._auth import TEST_PASSWORD, clear_admin_password, login
+from tests._auth import TEST_PASSWORD, clear_admin_password
 
 # Whole seconds. ``UtcTimestamp`` stores epoch seconds (``db.types.EpochDateTime``), so a
 # microsecond here would survive in memory and not in the row, and every round-trip
@@ -44,18 +43,6 @@ from tests._auth import TEST_PASSWORD, clear_admin_password, login
 # sees it: both sides of the comparison come from epoch seconds already.
 NOW = utcnow().replace(microsecond=0)
 EARLIER = NOW - timedelta(days=30)
-
-
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    """A logged-in client over an empty database, exactly a fresh install."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
 
 
 @pytest.fixture
