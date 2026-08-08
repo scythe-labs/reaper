@@ -217,6 +217,39 @@ class TestInstancesCrud:
         missing = client.put("/api/settings/instances/9999", json={"name": "Whatever"})
         assert missing.status_code == 404  # a genuinely absent instance still 404s
 
+    def test_every_route_answers_the_status_the_error_class_declares(
+        self, client: TestClient
+    ) -> None:
+        """The three reads that had no status test, on both arms each.
+
+        ``services.instances`` declares one status per subclass and the routes read it off the
+        exception, so the mapping is one fact -- but a fact stated once is still worth driving,
+        because nothing else here would notice the declaration itself going wrong. A missing
+        instance is 404 on all three; a real instance of the wrong kind is 422, since the
+        request named something that exists and asked it for a thing that kind does not have.
+        Neither arm reaches the network: both refuse before a client is constructed.
+        """
+        tautulli = client.post(
+            "/api/settings/instances",
+            json={"kind": "tautulli", "name": "T", "base_url": "http://t.local", "api_key": "k"},
+        )
+        assert tautulli.status_code == 200, tautulli.text
+        wrong_kind = tautulli.json()["id"]
+
+        for path in (
+            "/api/settings/instances/9999/root-folders",
+            "/api/settings/instances/9999/seerr-services",
+        ):
+            assert client.get(path).status_code == 404, path
+        assert client.post("/api/settings/instances/9999/test").status_code == 404
+
+        for path in (
+            f"/api/settings/instances/{wrong_kind}/root-folders",
+            f"/api/settings/instances/{wrong_kind}/seerr-services",
+        ):
+            response = client.get(path)
+            assert response.status_code == 422, f"{path}: {response.text}"
+
     def test_updating_without_a_key_keeps_the_stored_one(self, client: TestClient) -> None:
         created = client.post(
             "/api/settings/instances",
