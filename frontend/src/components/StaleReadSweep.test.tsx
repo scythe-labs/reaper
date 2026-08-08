@@ -13,7 +13,6 @@
 //
 // `AppStaleRead.test.tsx`, `SettingsStaleRead.test.tsx` and the describe appended to
 // `PlexPanel.test.tsx` are the same pass over the setup gates and the settings panels.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import type { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
@@ -32,6 +31,7 @@ import type {
 } from "../api";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, IDLE_SCAN, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Fairness } from "./Fairness";
 import { NotInScanPanel } from "./NotInScanPanel";
 import { RemoveRulesEditor } from "./PolicyRuleEditors";
@@ -39,22 +39,8 @@ import { ReviewQueue } from "./ReviewQueue";
 import { ServiceModal } from "./ServiceModal";
 import { ServicesPanel } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    candidates: vi.fn(),
-    fairness: vi.fn(),
-    general: vi.fn(),
-    group: vi.fn(),
-    instanceRootFolders: vi.fn(),
-    instanceSeerrServices: vi.fn(),
-    instances: vi.fn(),
-    plexLibraries: vi.fn(),
-    profile: vi.fn(),
-    scanStatus: vi.fn(),
-    updateInstance: vi.fn(),
-    vocabulary: vi.fn(),
-    vocabularyValues: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -90,7 +76,7 @@ const WHAT_HINT =
 
 function renderWithClient(ui: ReactElement): QueryClient {
   const client = seedSettings(testQueryClient());
-  render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  renderWithProviders(ui, { client });
   return client;
 }
 

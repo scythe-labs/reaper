@@ -29,6 +29,7 @@ from __future__ import annotations
 import itertools
 import json
 import random
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
@@ -36,7 +37,7 @@ from hypothesis import strategies as st
 
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine.fields import BY_KEY, Condition, Lane, Op
-from reaper.engine.gates import GateId
+from reaper.engine.gates import Gate, GateId
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
@@ -53,11 +54,14 @@ from tests._policy_lab import (
     DEGRADABLE,
     FIXTURE,
     VERDICT_RANK,
+    baseline_differences,
     degraded,
     judge,
     lane_gates,
     lane_policy,
+    leaves,
     load_fixture,
+    pinned_baseline,
     with_watchers_window,
 )
 
@@ -75,11 +79,11 @@ def default_policy(media_type: str) -> PolicyBody:
     return DEFAULT_MOVIE_POLICY if media_type == "movie" else DEFAULT_TV_POLICY
 
 
-def default_gates(media_type: str) -> list:
+def default_gates(media_type: str) -> list[Gate]:
     return MOVIE_GATES if media_type == "movie" else TV_GATES
 
 
-def mutated(policy: PolicyBody, **changes) -> PolicyBody:
+def mutated(policy: PolicyBody, **changes: Any) -> PolicyBody:
     """A policy with fields replaced, re-validated -- never a validation bypass.
 
     ``model_copy(update=...)`` skips validators, which would let a test exercise a policy
@@ -91,7 +95,7 @@ def mutated(policy: PolicyBody, **changes) -> PolicyBody:
     return PolicyBody.model_validate(body)
 
 
-def balanced(signals: list[dict]) -> list[dict]:
+def balanced(signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drawn weights rescaled to total exactly 100, keeping their relative shape.
 
     The generators below draw each weight independently, which no longer validates: the
@@ -120,7 +124,7 @@ def balanced(signals: list[dict]) -> list[dict]:
     return signals
 
 
-def with_rule(policy: PolicyBody, rule: dict) -> PolicyBody:
+def with_rule(policy: PolicyBody, rule: dict[str, Any]) -> PolicyBody:
     """``policy`` plus one custom rule, funded from the heaviest built-in signal.
 
     Removal weights total exactly 100 (``PolicyBody._weights_total_one_hundred``), so a
@@ -177,20 +181,25 @@ class TestPinnedBaseline:
 
     @staticmethod
     def _check(key: str, policy_for: object, gates_for: object) -> None:
+        """Compare the WHOLE pinned block, leaf by leaf.
+
+        The verdict triple alone was what this compared, and it reads a much larger
+        conclusion coarsely: which protections were checked, what each signal contributed
+        and whether it could be evaluated all move under a refactor that still rounds to the
+        same score against the same threshold. ``pinned_baseline`` is the same function the
+        regeneration script writes with, so the comparison and the write cannot disagree
+        about what a baseline is (rule 119).
+        """
         mismatches = []
         for v in VECTORS:
-            verdict, score, coverage_bp, _, _ = judge(
+            fresh = pinned_baseline(
                 v,
                 policy_for(v["media_type"]),  # type: ignore[operator]
                 gates_for(v["media_type"]),  # type: ignore[operator]
             )
-            base = v[key]
-            if (verdict, score, coverage_bp) != (
-                base["verdict"],
-                base["score"],
-                base["coverage_bp"],
-            ):
-                mismatches.append(f"{v['id']} {key}: {base} -> ({verdict}, {score}, {coverage_bp})")
+            mismatches += [
+                f"{v['id']} {key}.{line}" for line in baseline_differences(v[key], fresh)
+            ]
         assert not mismatches, "\n".join(mismatches[:10])
 
     def test_the_fixture_names_the_scorer_its_baselines_were_cut_under(self) -> None:
@@ -206,6 +215,95 @@ class TestPinnedBaseline:
             f"fixture was cut under scorer {FIX.get('scorer_version')}, running scorer is "
             f"{SCORER_VERSION}; re-run scripts/policy_lab_extract.py --rebaseline"
         )
+
+    @pytest.mark.parametrize("key", ["baseline", "lane_baseline"])
+    def test_every_vector_pins_the_whole_block_rather_than_a_subset_of_it(self, key: str) -> None:
+        """Rule 145: the field list is a population, reconciled by hand here.
+
+        A field dropped from ``pinned_baseline`` alone goes red above, because the committed
+        fixture still carries it. A field dropped from both -- removed from the builder and
+        then re-pinned -- is silent: the comparison stops covering it and every test in this
+        class stays green while the conclusion it claims to freeze got smaller. This is the
+        only thing that notices.
+        """
+        expected = {
+            "verdict",
+            "score",
+            "coverage_bp",
+            "base_score",
+            "keep_discount",
+            "threshold",
+            "coverage_floor_bp",
+            "watch_blind",
+            "signals",
+            "protectors",
+            "checked_and_did_not_fire",
+            "could_not_be_checked",
+        }
+        wrong = [v["id"] for v in VECTORS if set(v[key]) != expected]
+        assert not wrong, f"{len(wrong)} vector(s) carry a different {key} shape: {wrong[:5]}"
+
+    def test_the_fixture_pins_no_operator_copy(self) -> None:
+        """``detail`` is rule 21 copy on every one of these blocks, it is roughly 60% of the
+        explanation by bytes, and phases 4, 7 and 9 of the simplification plan all edit it.
+        Pinned, every wording change would land as a baseline stop -- and a stop that fires on
+        rewording is one that stops being read.
+
+        Walks the committed fixture rather than the builder, because the fixture is what a
+        future regeneration would carry it in.
+        """
+        carried = [
+            v["id"]
+            for v in VECTORS
+            for key in ("baseline", "lane_baseline")
+            for path, _ in leaves(v[key])
+            if path.endswith("detail")
+        ]
+        assert not carried, f"{len(carried)} pinned detail string(s), first: {carried[:5]}"
+
+
+class TestTheBaselineComparisonCanReportAMove:
+    """``TestPinnedBaseline`` is worth its bytes only if the comparison behind it can fail.
+
+    ``baseline_differences`` returning an empty list for everything would leave both baseline
+    tests green against any engine change at all, and nothing would say a word -- the fixture
+    would keep being re-pinned and keep reading as a trip-wire (rule 118).
+    """
+
+    def test_a_moved_scalar_names_both_values(self) -> None:
+        assert baseline_differences({"score": 70}, {"score": 52}) == ["score: 70 -> 52"]
+
+    def test_a_moved_leaf_inside_a_list_is_named_by_index(self) -> None:
+        """The failure a reader needs. Twelve signal rows compared as one blob would say
+        only that ``signals`` moved, which is where a session starts guessing."""
+        was = {"signals": [{"id": "unwatched", "contribution": 12.0}]}
+        fresh = {"signals": [{"id": "unwatched", "contribution": 9.0}]}
+
+        assert baseline_differences(was, fresh) == ["signals[0].contribution: 12.0 -> 9.0"]
+
+    def test_a_gate_dropped_from_a_list_is_reported_rather_than_ignored(self) -> None:
+        """A shortened list is the shape the "checked and did not fire" promise fails in:
+        the entries that remain still match, so a comparison that walked only the shorter
+        side would report nothing."""
+        was = {"checked_and_did_not_fire": ["streaming_now", "data_horizon"]}
+        fresh = {"checked_and_did_not_fire": ["streaming_now"]}
+
+        assert baseline_differences(was, fresh) == [
+            "checked_and_did_not_fire[1]: 'data_horizon' -> <absent>"
+        ]
+
+    def test_a_null_is_a_value_rather_than_an_absence(self) -> None:
+        """``watch_blind`` is pinned as ``None`` on every vector, so a comparison treating
+        absent and null alike would let the key leave ``_explain`` unnoticed -- which is the
+        one thing pinning that field buys."""
+        assert baseline_differences({"watch_blind": None}, {}) == ["watch_blind: None -> <absent>"]
+
+    def test_identical_blocks_report_nothing(self) -> None:
+        """The other direction: a comparison that always reported something would make every
+        re-pin look like an engine change and teach people to reach for ``--unbumped``."""
+        block = {"score": 70, "signals": [{"id": "unwatched", "contribution": 12.0}]}
+
+        assert baseline_differences(block, dict(block)) == []
 
 
 class TestFixtureStaysDeidentified:
@@ -223,7 +321,7 @@ class TestFixtureStaysDeidentified:
         data = json.loads(raw)
         forbidden = {"title", "media_key", "group_key", "rating_key", "host", "path", "user"}
 
-        def walk(obj) -> None:
+        def walk(obj: Any) -> None:
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     assert key not in forbidden, f"identifying key {key!r} in fixture"
@@ -411,10 +509,10 @@ def _saveable(key: str, op: Op, value: object) -> bool:
     return True
 
 
-def values_for(key: str, op: Op) -> list:
+def values_for(key: str, op: Op) -> list[Any]:
     spec = BY_KEY[key]
     if key in NUMERIC_VALUES:
-        pool: list = NUMERIC_VALUES[key]
+        pool: list[Any] = NUMERIC_VALUES[key]
     elif key in TEXT_VALUES:
         pool = TEXT_VALUES[key]
     elif spec.type.value == "bool":
@@ -665,7 +763,7 @@ class TestTheLabJudgesWithTheScansOwnCode:
     ground truth (rule 22).
     """
 
-    def _season_with_a_keep_rule_conflict(self, override: str | None) -> dict:
+    def _season_with_a_keep_rule_conflict(self, override: str | None) -> dict[str, Any]:
         """A season the keep rule would prune but that was watched more than one it keeps.
 
         The scan flags this for a human rather than auto-approving it: a *blocked* abstain
@@ -741,7 +839,7 @@ class TestTheLabJudgesWithTheScansOwnCode:
 #: Every field the row does not name takes ``_DECISION_BASE``: nothing protected, nothing
 #: blocked, no override, full coverage against no floor, a zero score against a threshold of
 #: 70 -- i.e. a plain abstain, so each row's own fields are the only reason its answer differs.
-_DECISION_BASE: dict[str, object] = {
+_DECISION_BASE: dict[str, Any] = {
     "protected": False,
     "blocked": False,
     "safety_protected": False,
@@ -752,7 +850,7 @@ _DECISION_BASE: dict[str, object] = {
     "coverage_floor_bp": 0,
 }
 
-_DECISION_TABLE: tuple[tuple[str, dict[str, object], str], ...] = (
+_DECISION_TABLE: tuple[tuple[str, dict[str, Any], str], ...] = (
     # 5. At or above the threshold condemns; below it, abstain.
     ("one point below the threshold", {"score": 69, "condemn_at": 70}, "abstain"),
     ("exactly at the threshold", {"score": 70, "condemn_at": 70}, "condemn"),
@@ -836,7 +934,7 @@ _DECISION_TABLE: tuple[tuple[str, dict[str, object], str], ...] = (
 class TestDecideVerdictMatrix:
     @pytest.mark.parametrize(("label", "row", "expected"), _DECISION_TABLE, ids=lambda x: x)
     def test_the_decision_matches_its_spec(
-        self, label: str, row: dict[str, object], expected: str
+        self, label: str, row: dict[str, Any], expected: str
     ) -> None:
         """One row of the hand-written spec table, not a re-derivation of the function.
 
@@ -846,7 +944,7 @@ class TestDecideVerdictMatrix:
         ``blocked_holds_reap``, the one parameter that can flip a reap from protect to
         condemn, while claiming to cover every boundary.
         """
-        assert decide_verdict(**{**_DECISION_BASE, **row}) == expected  # type: ignore[arg-type]
+        assert decide_verdict(**{**_DECISION_BASE, **row}) == expected
 
     def test_a_protection_that_fired_is_never_condemned_without_a_hand_reap(self) -> None:
         """A property over the whole space, asserted in one direction only.
@@ -1061,7 +1159,11 @@ class TestSequentialGuardPermutations:
         from datetime import UTC, datetime, timedelta
 
         now = datetime(2026, 1, 1, tzinfo=UTC)
-        progress = {"a": {3: 2}, "b": {5: 1}, "c": {2: None}}
+        progress: dict[str, dict[int, int | None]] = {
+            "a": {3: 2},
+            "b": {5: 1},
+            "c": {2: None},
+        }
         last = {
             "a": now - timedelta(days=60),
             "b": None,  # unreadable timestamp: the hold survives
@@ -1084,7 +1186,7 @@ class TestPolicyHash:
         policy = DEFAULT_MOVIE_POLICY
         base_hash, base_scoring = policy.policy_hash(), policy.scoring_hash()
         post_score_fields = {"condemn_at", "coverage_floor_bp"}
-        flips: dict[str, object] = {
+        flips: dict[str, Any] = {
             "condemn_at": policy.condemn_at % 100 + 1,
             "coverage_floor_bp": (policy.coverage_floor_bp + 1) % 10_000,
             "keep_last_seasons": policy.keep_last_seasons + 1,
@@ -1126,7 +1228,7 @@ class TestPolicyHash:
 # ---------------------------------------------------------------------------
 
 
-def _mutant_body(rng: random.Random) -> dict:
+def _mutant_body(rng: random.Random) -> dict[str, Any]:
     """A near-valid policy body: the shipped defaults with a few random mutations, some
     legal and some not. Mirrors what an operator's UI edits actually produce."""
     body = rng.choice((DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY)).model_dump(mode="json")

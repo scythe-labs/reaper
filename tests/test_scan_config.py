@@ -29,7 +29,7 @@ from reaper.services.scan_runner import ScanConfigError, build_sources
 async def env(
     tmp_path: Path,
 ) -> AsyncIterator[tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

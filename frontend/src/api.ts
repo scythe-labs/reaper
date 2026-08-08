@@ -466,10 +466,10 @@ export type PolicyProbe = SignalProbe;
 
 /** One answer, the same shape for every probe kind, so a new kind needs no new rendering. */
 export interface PolicyProbeResult {
-  /** What the rule moves the score by, in its own direction. */
+  /** What the rule moves the score by, in its own direction. The only field: the engine's
+   *  own wording used to ride beside it and nothing rendered it, because `signalRamp.ts`
+   *  words both the editor's sentence and the panel's row. */
   points: number;
-  /** The engine's own words for it, the sentence the panel's row would carry. */
-  detail: string;
 }
 
 export interface Condition {

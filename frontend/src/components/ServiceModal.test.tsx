@@ -4,32 +4,19 @@
 // a suggested-but-unconfirmed pick wears a "suggested" tag that clears once they choose, saving
 // sends the map they see, and a list that could not be read fails to a visible notice, never a
 // silent empty list.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Instance, PlexLibrary, RootFolder, SeerrService } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { ServiceModal } from "./ServiceModal";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    instanceRootFolders: vi.fn(),
-    instanceSeerrServices: vi.fn(),
-    instances: vi.fn(),
-    plexLibraries: vi.fn(),
-    // The modal reads the library list through `usePlexLibraries`, which SYNCS a list that came
-    // back empty rather than telling the operator to go press Sync somewhere else (#384). An
-    // unmocked sync would throw out of the one test that renders an empty list.
-    syncPlexLibraries: vi.fn(),
-    updateInstance: vi.fn(),
-    createInstance: vi.fn(),
-    testInstance: vi.fn(),
-    testSavedInstance: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
@@ -91,12 +78,7 @@ function renderModal(
   apiMock.syncPlexLibraries.mockResolvedValue(libraries instanceof Error ? [] : libraries);
   apiMock.updateInstance.mockResolvedValue(instance);
   const onClose = vi.fn();
-  const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
-      <ServiceModal kind="sonarr" instance={instance} onClose={onClose} />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<ServiceModal kind="sonarr" instance={instance} onClose={onClose} />);
   return { onClose };
 }
 
@@ -215,11 +197,9 @@ describe("ServiceModal HD/4K library map", () => {
       apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
       apiMock.updateInstance.mockResolvedValue(instance);
       const queryClient = testQueryClient();
-      render(
-        <QueryClientProvider client={queryClient}>
-          <ServiceModal kind="sonarr" instance={instance} onClose={vi.fn()} />
-        </QueryClientProvider>,
-      );
+      renderWithProviders(<ServiceModal kind="sonarr" instance={instance} onClose={vi.fn()} />, {
+        client: queryClient,
+      });
       return queryClient;
     }
 
@@ -292,11 +272,7 @@ describe("ServiceModal HD/4K library map", () => {
     apiMock.plexLibraries.mockResolvedValue([]);
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
     apiMock.updateInstance.mockResolvedValue(sonarr());
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        <ServiceModal kind="sonarr" instance={sonarr()} onClose={vi.fn()} />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<ServiceModal kind="sonarr" instance={sonarr()} onClose={vi.fn()} />);
     await waitFor(() => expect(apiMock.syncPlexLibraries).toHaveBeenCalledTimes(1));
     // And the pickers it fills really do offer the synced libraries.
     await waitFor(() =>
@@ -388,12 +364,7 @@ function renderSeerrModal(
   if (arrs instanceof Error) apiMock.instances.mockRejectedValue(arrs);
   else apiMock.instances.mockResolvedValue(arrs);
   apiMock.updateInstance.mockResolvedValue(instance);
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ServiceModal kind="seerr" instance={instance} onClose={vi.fn()} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<ServiceModal kind="seerr" instance={instance} onClose={vi.fn()} />);
 }
 
 /** What each service row SHOWS, in document order.
@@ -640,12 +611,11 @@ describe("what a screen reader hears when a connection is tested", () => {
   async function renderWithAnnouncer() {
     apiMock.instanceRootFolders.mockResolvedValue([]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
-      </QueryClientProvider>,
+      </>,
     );
     const user = userEvent.setup();
     await fill(user, screen.getByLabelText(/Hostname or IP/), "10.0.0.5");
@@ -706,11 +676,11 @@ describe("what the connection badge vouches for", () => {
     });
     apiMock.instanceRootFolders.mockResolvedValue([]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
-    render(
-      <QueryClientProvider client={testQueryClient()}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
-      </QueryClientProvider>,
+      </>,
     );
     const user = userEvent.setup();
     await fill(user, hostBox(), "10.0.0.5");
@@ -772,12 +742,7 @@ describe("why 'Add service' will not act", () => {
   function renderAdd() {
     apiMock.instanceRootFolders.mockResolvedValue([]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />);
     return userEvent.setup();
   }
 
@@ -874,11 +839,11 @@ describe("what a failed folder read must not do", () => {
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
     apiMock.updateInstance.mockResolvedValue(sonarr(saved));
-    render(
-      <QueryClientProvider client={testQueryClient()}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ServiceModal kind="sonarr" instance={sonarr(saved)} onClose={vi.fn()} />
-      </QueryClientProvider>,
+      </>,
     );
     return userEvent.setup();
   }
@@ -921,11 +886,11 @@ describe("what a failed folder read must not do", () => {
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
     const saved = sonarr({ plex_library_map: { "/tv": "TV" } });
     apiMock.updateInstance.mockResolvedValue(saved);
-    render(
-      <QueryClientProvider client={testQueryClient()}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ServiceModal kind="sonarr" instance={saved} onClose={vi.fn()} />
-      </QueryClientProvider>,
+      </>,
     );
     const user = userEvent.setup();
     await waitFor(() => expect(selectForFolder("/tv").value).toBe("TV"));
@@ -960,11 +925,7 @@ describe("what a failed folder read must not do", () => {
     apiMock.instanceRootFolders.mockResolvedValue([]);
     apiMock.plexLibraries.mockResolvedValue(LIBRARIES);
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        <ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<ServiceModal kind="sonarr" instance={null} onClose={vi.fn()} />);
     expect(
       await screen.findByText(/Your folders appear here once Reaper reaches/i),
     ).toBeInTheDocument();
@@ -980,11 +941,7 @@ describe("what a failed folder read must not do", () => {
     apiMock.syncPlexLibraries.mockResolvedValue(LIBRARIES);
     const saved = sonarr({ base_url: "https://tv.example.com", plex_library_map: { "/tv": "TV" } });
     apiMock.updateInstance.mockResolvedValue(saved);
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        <ServiceModal kind="sonarr" instance={saved} onClose={vi.fn()} />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<ServiceModal kind="sonarr" instance={saved} onClose={vi.fn()} />);
     const user = userEvent.setup();
     await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
 

@@ -172,7 +172,7 @@ deletion path on the strength of it trades a hypothetical bug for a real diff. I
 question instead, per *Opening issues*. Say which ones you skipped and why.
 
 Run the gates the change touches before you hand back — for backend edits at minimum
-`uv run ruff format .`, `uv run ruff check .`, `uv run mypy src/reaper`, and the test files
+`uv run ruff format .`, `uv run ruff check .`, `uv run mypy src/reaper tests/`, and the test files
 covering what you changed. A fix that breaks a test means the finding was wrong about the
 mechanism: return the corrected variant, or withdraw the finding to `references/refuted.md`.
 

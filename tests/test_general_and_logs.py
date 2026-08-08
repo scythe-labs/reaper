@@ -96,7 +96,7 @@ class TestScanProgressPercent:
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over an empty database: exactly a fresh install."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -109,7 +109,7 @@ def _store_raw(tmp_path: Path, key: str, value: object) -> None:
     """Put an app-setting row straight into the database the ``client`` fixture is on,
     holding whatever shape an older build left there. Goes around the API deliberately: the
     point is a stored value today's request models would never let through."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     with SyncSession(engine) as session:
         session.merge(
@@ -121,7 +121,7 @@ def _store_raw(tmp_path: Path, key: str, value: object) -> None:
 
 def _bare(client: TestClient) -> TestClient:
     """A second client over the SAME app: no cookies, no CSRF header, no session."""
-    return TestClient(client.app)  # type: ignore[arg-type]
+    return TestClient(client.app)
 
 
 class TestGeneralSettings:
@@ -389,7 +389,7 @@ class TestReverseProxyEnvSeed:
     switch. A declarative deployment can ship trust configured with no UI visit."""
 
     def _seeded(self, tmp_path: Path) -> Settings:
-        settings = Settings(  # type: ignore[call-arg]
+        settings = Settings(
             data_dir=tmp_path,
             secret_key="k",
             proxy_trust_enabled=True,

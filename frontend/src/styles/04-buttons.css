@@ -102,10 +102,20 @@ button.link:hover:not(:disabled) {
 /* Reserve the ACTIVE (600) width at every weight, so selecting an item -- which bumps 500 -> 600
    -- never widens it and shoves its neighbors sideways (the tab/nav "wiggle"). A hidden,
    zero-height copy of the label at the bold weight sets the width; the visible text rides above
-   it. `visibility: hidden` keeps the strut out of the accessibility tree. Applied to every
-   control that bolds when active (queue lane tabs `.tab`, policy toggle `.seg`, the
-   settings/policy rails `.settings-tab`, the docs index `.docs-index-item`); each needs a
-   `data-label` of its visible text, and one without simply keeps the old behavior. */
+   it. `visibility: hidden` keeps the strut out of the accessibility tree. Each control needs a
+   `data-label` of its visible text, and one without simply keeps the old behavior.
+
+   Applied to every control that bolds when active AND sits in a ROW, which is five: queue lane
+   tabs `.tab`, policy toggle `.seg`, the settings/policy rails `.settings-tab`, the docs index
+   `.docs-index-item`, and the masthead sections `.view-tab`. That last one is strutted in
+   `02-masthead.css` rather than here, because it is the masthead's control and its phone bar
+   turns the strut back off; the rule there is byte-identical to this one, so a change to the
+   strut is a change to both. `.filter-mi` bolds when selected and is deliberately NOT here: it
+   is a vertical menu item, so the extra weight has no neighbor to shove.
+
+   This list read as four for as long as `.view-tab` existed, which is the failure rule 144
+   describes -- so `test_repo_hygiene.py` now reconciles the sentence against the selectors
+   both ways, and names the file when they disagree. */
 .tab[data-label]::after,
 .seg[data-label]::after,
 .settings-tab[data-label]::after,

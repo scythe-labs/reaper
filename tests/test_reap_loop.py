@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -50,8 +50,8 @@ from reaper.db.models import (
 )
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
-from reaper.services import executor as executor_module
 from reaper.services import list_config, whitelist
+from reaper.services import whitelist as whitelist_module
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
@@ -80,37 +80,19 @@ GB = 1024**3
 
 
 @pytest.fixture
-async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """The engine behind ``session``, so a test can open a SECOND session on the same file.
-
-    A run's durable state cannot be read back through the session that wrote it. The factory
-    is built ``expire_on_commit=False`` (``db/session.py``), so ``session.get(ReapRun, ...)``
-    answers out of the identity map without going to the database: the row it returns is the
-    one already in memory, and the assertion holds whether or not anything was ever committed
-    (#340). Take this fixture beside ``session`` and read through ``_stored_run``.
-    """
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-    engine = create_engine(settings)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield create_session_factory(engine)
-    await engine.dispose()
-
-
-@pytest.fixture
-async def session(factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:
-    async with factory() as s:
+async def session(async_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:
+    async with async_factory() as s:
         yield s
 
 
-async def _stored_run(factory: async_sessionmaker[AsyncSession], run_id: int) -> ReapRun:
+async def _stored_run(async_factory: async_sessionmaker[AsyncSession], run_id: int) -> ReapRun:
     """The run row as the DATABASE has it, read through a session nothing in the test wrote.
 
     The point of the second session is its empty identity map: this ``get`` issues a SELECT,
     so a terminal state the executor only ever set in memory reads as the value on disk.
     Detached on return, with every column already loaded (rule 118).
     """
-    async with factory() as fresh:
+    async with async_factory() as fresh:
         stored = await fresh.get(ReapRun, run_id)
         assert stored is not None, f"run {run_id} is not on disk at all"
         return stored
@@ -145,7 +127,7 @@ async def _seed_instances(session: AsyncSession, media_keys: Iterable[str]) -> N
     await session.flush()
 
 
-async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int | None]]) -> int:
+async def _snapshot_with(session: AsyncSession, condemned: Sequence[tuple[str, int | None]]) -> int:
     """A snapshot plus a set of condemned movie candidates: (media_key, size_bytes).
 
     A ``None`` size is an item nothing would measure, which is not the same as a zero."""
@@ -447,7 +429,7 @@ class TestASeasonDryRunsAsAWholeSequence:
     and the executor treats the three steps as one item, not three."""
 
     async def test_all_three_steps_are_skipped_and_shown(
-        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         snapshot_id = await _snapshot_with(session, [("sonarr:1:42:3", 4 * GB)])
         run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
@@ -474,8 +456,8 @@ class TestASeasonDryRunsAsAWholeSequence:
         # the plan can still be dry-run again and, crucially, executed for real afterwards.
         # Read through a session the executor never touched, since its own would answer both
         # of these from its identity map without asking the database (#340).
-        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
-        async with factory() as fresh:
+        assert (await _stored_run(async_factory, run.id)).state is RunState.PLANNED
+        async with async_factory() as fresh:
             steps = await _steps(fresh, run.id)
         assert steps and all(s.state is StepState.PENDING for s in steps)
 
@@ -526,7 +508,7 @@ class TestTheManifestGuard:
 
 class TestCapsAbortNeverTruncate:
     async def test_a_run_over_the_item_cap_aborts_entirely(
-        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """The whole run stops -- it does not delete the part that fits. Truncating would
         make *which* items die depend on sort order."""
@@ -546,7 +528,7 @@ class TestCapsAbortNeverTruncate:
         assert report.deleted_items == 0
         # This is a DRY run, so the abort is a *finding*, not a consumed run: the row stays
         # PLANNED and re-runnable, so raising the cap and running again just works.
-        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
+        assert (await _stored_run(async_factory, run.id)).state is RunState.PLANNED
 
     async def test_caps_off_lets_a_run_over_the_cap_proceed(self, session: AsyncSession) -> None:
         """With the caps switched off, a plan larger than the per-run cap no longer aborts:
@@ -590,7 +572,7 @@ class TestCapsAbortNeverTruncate:
         assert report.aborted_reason is None
 
     async def test_a_real_run_over_the_cap_marks_the_run_aborted(
-        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """A REAL run over the cap, by contrast, does consume the run: the row is marked
         ABORTED **on disk** (and still nothing is deleted)."""
@@ -609,7 +591,7 @@ class TestCapsAbortNeverTruncate:
         ).execute(run.id)
 
         assert report.state is RunState.ABORTED
-        assert (await _stored_run(factory, run.id)).state is RunState.ABORTED
+        assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED
 
     async def test_a_run_over_the_byte_cap_aborts(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_with(
@@ -1462,7 +1444,7 @@ class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
                 snapshot_id=snapshot_id,
                 approved_by="admin",
                 max_unmeasured=5,
-                only_media_keys=["radarr:1:3"],
+                only_media_keys={"radarr:1:3"},
             )
 
     async def test_a_selection_keeping_one_measured_item_still_plans(
@@ -1480,7 +1462,7 @@ class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
             snapshot_id=snapshot_id,
             approved_by="admin",
             max_unmeasured=5,
-            only_media_keys=["radarr:1:1", "radarr:1:3"],
+            only_media_keys={"radarr:1:1", "radarr:1:3"},
         )
 
         ordered = [s.media_key for s in await _steps(session, run.id)]
@@ -1693,7 +1675,7 @@ class TestStopMidRun:
         assert radarr.delete_calls == [1]  # it ran to completion, not halted on the blip
 
     async def test_a_hard_cancel_marks_aborted_and_defers_the_trash_purge(
-        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """A hard cancel mid-run (the app shutting down, or a force-stop) is not the graceful
         Stop -- it arrives as CancelledError, not ExecutionError -- and the executor must still
@@ -1701,7 +1683,7 @@ class TestStopMidRun:
         run EXECUTING.
 
         What it must NOT do is finish tidying Plex. The purge polls each affected section for
-        up to ``_plex_settle_attempts * _plex_settle_delay`` before it can even decide, so
+        up to ``_PLEX_SETTLE_ATTEMPTS * _plex_settle_delay`` before it can even decide, so
         honoring it here holds the container's shutdown open for tens of seconds per section
         and can empty a section's trash while the process is being torn down. The purge is
         cosmetic; the state commit is not, so the state is made durable and the purge is
@@ -1735,7 +1717,7 @@ class TestStopMidRun:
 
         # On disk, not merely on the session's copy of the row: a shutdown is exactly when
         # an in-memory terminal state buys nothing.
-        assert (await _stored_run(factory, run.id)).state is RunState.ABORTED  # not EXECUTING
+        assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED  # not EXECUTING
         # The path-scoped refresh already fired with the delete, mid-run -- that is not part
         # of the shutdown work.
         assert plex.refreshed == [("Movies", "/movies/One (2001)")]  # the first item's path
@@ -3087,7 +3069,8 @@ class FakeTautulli:
         if self._raise:
             raise IntegrationError("tautulli", "history unavailable")
         if self._body is not None:
-            return self._body
+            body: dict[str, Any] = self._body
+            return body
         if self._rows_by_key is not None:
             key = rating_key if rating_key is not None else parent_rating_key
             return {"data": list(self._rows_by_key.get(key or 0, []))}
@@ -3141,14 +3124,14 @@ class TestJournalDurability:
     never roll back to PLANNED as if no file were gone."""
 
     async def test_a_crash_mid_run_leaves_a_durable_journal(self, tmp_path: Path) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_engine(settings)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        async_factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
 
         try:
-            async with factory() as session:
+            async with async_factory() as session:
                 snapshot_id = await _snapshot_many(
                     session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
                 )
@@ -3156,7 +3139,7 @@ class TestJournalDurability:
                 run_id = run.id
                 await session.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 executor = Executor(
                     run_session,
                     safety=_armed(),
@@ -3172,7 +3155,7 @@ class TestJournalDurability:
                 # Deliberately no commit: the process "died" here.
 
             # A fresh session -- a restart -- must see the durable truth.
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 run_row = await fresh.get(ReapRun, run_id)
                 assert run_row is not None
                 assert run_row.state is RunState.EXECUTING, (
@@ -3193,14 +3176,14 @@ class TestTheExecutingClaimIsAtomic:
     mid-run is refused, instead of re-running the plan over the first one's journal."""
 
     async def test_a_second_execute_while_one_is_in_flight_is_refused(self, tmp_path: Path) -> None:
-        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")
         engine = create_engine(settings)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        async_factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
 
         try:
-            async with factory() as session:
+            async with async_factory() as session:
                 snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
                 run = await _plan(session, snapshot_id)
                 run_id = run.id
@@ -3209,7 +3192,7 @@ class TestTheExecutingClaimIsAtomic:
             plex = _BlockingPlex()
             radarr = FakeRadarr()
 
-            async with factory() as first_session, factory() as second_session:
+            async with async_factory() as first_session, async_factory() as second_session:
                 first = Executor(
                     first_session,
                     safety=_armed(),
@@ -3261,7 +3244,7 @@ class TestRollingThirtyDayCaps:
             "max_bytes_per_30d": 500 * 10**9,
         }
         base.update(overrides)
-        return ProfileSettings(**base)  # type: ignore[arg-type]
+        return ProfileSettings(**base)
 
     async def _execute(
         self, session: AsyncSession, run_id: int, settings: ProfileSettings, *, dry: bool = False
@@ -3314,7 +3297,7 @@ class TestRollingThirtyDayCaps:
         assert radarr.delete_calls == []  # nothing was deleted: abort, never truncate
 
     async def test_a_dry_run_reports_the_same_rolling_refusal(
-        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         settings = self._settings()
         first_snapshot = await _snapshot_one(
@@ -3333,7 +3316,7 @@ class TestRollingThirtyDayCaps:
         assert report.state is RunState.ABORTED
         assert "30 days" in (report.aborted_reason or "")
         # And the dry run did not consume the plan -- on disk, not in the session's copy.
-        assert (await _stored_run(factory, second.id)).state is RunState.PLANNED
+        assert (await _stored_run(async_factory, second.id)).state is RunState.PLANNED
 
     async def test_the_rolling_item_cap_counts_past_verified_items(
         self, session: AsyncSession
@@ -3409,7 +3392,7 @@ class TestAPolicyEditVoidsAPendingPlan:
         assert report.state is RunState.COMPLETED
 
     async def test_tightening_the_policy_after_approval_refuses_the_run(
-        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
         run = await _plan(session, snapshot_id)
@@ -3425,7 +3408,7 @@ class TestAPolicyEditVoidsAPendingPlan:
         assert radarr.delete_calls == []  # nothing was sent
         # On disk: a refused run that claimed EXECUTING and could not roll it back is exactly
         # the state that would make "still runnable after a re-scan" false.
-        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
+        assert (await _stored_run(async_factory, run.id)).state is RunState.PLANNED
 
     async def test_the_dry_run_proves_the_same_refusal(self, session: AsyncSession) -> None:
         """A simulation that still said "would delete" would send the operator to the real
@@ -3488,7 +3471,7 @@ class TestAListEditVoidsAPendingPlan:
         assert report.state is RunState.COMPLETED
 
     async def test_retagging_a_list_after_approval_refuses_the_run(
-        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         """The edit that moves neither hash above, so this is the single variable."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
@@ -3506,7 +3489,7 @@ class TestAListEditVoidsAPendingPlan:
             await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert radarr.delete_calls == []
-        assert (await _stored_run(factory, run.id)).state is RunState.PLANNED
+        assert (await _stored_run(async_factory, run.id)).state is RunState.PLANNED
 
     async def test_the_dry_run_proves_the_same_refusal(self, session: AsyncSession) -> None:
         """Or the operator meets the refusal only after typing the confirmation phrase."""
@@ -3591,10 +3574,10 @@ class TestAnOverrideChangedMidRun:
     ) -> None:
         """Record (or withdraw) a decision on a SECOND session against the same database,
         the way the review queue's own request does, and commit it there."""
-        factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        async_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             session.bind, expire_on_commit=False, autoflush=False
         )
-        async with factory() as other:
+        async with async_factory() as other:
             if decision is None:
                 await whitelist.remove_override(other, media_key=media_key)
             else:
@@ -3726,7 +3709,7 @@ class TestAnOverrideChangedMidRun:
                 raise RuntimeError("the database went away")
             return await real_overrides(sess)
 
-        with mock.patch.object(executor_module.whitelist, "overrides", flaky):
+        with mock.patch.object(whitelist_module, "overrides", flaky):
             report = await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert report.state is RunState.ABORTED
@@ -3758,7 +3741,7 @@ class TestAnOverrideChangedMidRun:
             reads["n"] += 1
             return await real_overrides(sess)
 
-        with mock.patch.object(executor_module.whitelist, "overrides", counted):
+        with mock.patch.object(whitelist_module, "overrides", counted):
             report = await _real(session, run, _gateway(radarr={1: radarr}))
 
         assert report.state is RunState.COMPLETED
@@ -4331,7 +4314,7 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
         return await _plan(session, snapshot_id)
 
     async def test_a_raw_error_journals_the_item_and_halts_the_run(
-        self, session: AsyncSession, factory: async_sessionmaker[AsyncSession]
+        self, session: AsyncSession, async_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         run = await self._three(session)
 
@@ -4359,7 +4342,7 @@ class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
         assert steps["radarr:1:2"].file_removed_at is not None  # and the removal is charged
         # The terminal state on disk, which is the half of "not wedged" that outlives the
         # process holding the session.
-        assert (await _stored_run(factory, run.id)).state is RunState.ABORTED
+        assert (await _stored_run(async_factory, run.id)).state is RunState.ABORTED
 
     async def test_a_mapped_failure_still_lets_the_run_carry_on(
         self, session: AsyncSession
@@ -4524,7 +4507,7 @@ async def _fresh_engine(tmp_path: Path) -> tuple[Any, async_sessionmaker[AsyncSe
     """An engine of this test's own, so durable state can be read back through a session the
     executor never touched. The run's own session answers from its identity map
     (``expire_on_commit=False``) and cannot tell a durable write from a discarded one."""
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -4569,14 +4552,14 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         later run spends past what the operator set (rule 5/30). That is the part of a failed
         commit that outlives the run.
         """
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 run = await self._three(setup)
                 run_id = run.id
                 await setup.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 lock = _CommitsThatFail(run_session, run_id)
                 radarr = _RadarrThatLosesTheDatabase(lock, on_movie=2)
                 report = await Executor(
@@ -4595,7 +4578,7 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             assert report.deleted_items == 3
             assert radarr.delete_calls == [1, 2, 3]
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 stored = await fresh.get(ReapRun, run_id)
                 assert stored is not None
                 assert stored.state is RunState.COMPLETED
@@ -4612,14 +4595,14 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         """The wedge itself. One retry is what the executor offers, not a promise, so when the
         write still will not land the run stops -- and the run row says ABORTED on disk rather
         than EXECUTING forever, which is the whole of #327."""
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 run = await self._three(setup)
                 run_id = run.id
                 await setup.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 lock = _CommitsThatFail(run_session, run_id, times=2)
                 radarr = _RadarrThatLosesTheDatabase(lock, on_movie=1)
                 report = await Executor(
@@ -4641,7 +4624,7 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             assert "could not save its record" in reason
             assert "stays removed" in reason
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 stored = await fresh.get(ReapRun, run_id)
                 assert stored is not None
                 assert stored.state is RunState.ABORTED, "the run was left wedged in EXECUTING"
@@ -4667,14 +4650,14 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         tried once more there. Losing it leaves a file gone with nothing on disk saying so,
         and those bytes never charge the rolling 30-day budget (rule 5/30).
         """
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 run = await self._three(setup)
                 run_id = run.id
                 await setup.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 lock = _CommitsThatFail(run_session, run_id, times=2)
                 radarr = _RadarrThatLosesTheDatabase(lock, on_movie=1)
                 report = await Executor(
@@ -4699,7 +4682,7 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             assert report.removed_unconfirmed == 1
             assert report.library_changed is True
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 steps = {s.media_key: s for s in await _steps(fresh, run_id)}
                 assert steps["radarr:1:1"].file_removed_at is not None, (
                     "the stamp was dropped, so the rolling budget never charges these bytes"
@@ -4726,14 +4709,14 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         the walk at all. What this pins is that the run halts AT the unwritten journal and
         says so, rather than wandering on to fail for some unrelated reason.
         """
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 run = await self._three(setup)
                 run_id = run.id
                 await setup.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 lock = _CommitsThatFail(run_session, run_id, times=2)
                 radarr = _RadarrThatFailsTheItemAndTheDatabase(lock, on_movie=2)
                 report = await Executor(
@@ -4754,7 +4737,7 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             assert report.state is RunState.ABORTED
             assert "could not save its record" in (report.aborted_reason or "")
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 stored = await fresh.get(ReapRun, run_id)
                 assert stored is not None
                 assert stored.state is RunState.ABORTED
@@ -4773,14 +4756,14 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         writing NOTHING, and the step is left PENDING on disk: a journal that reads as an
         interrupted run with work still to do, for an item that was deliberately kept.
         """
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 run = await self._three(setup)
                 run_id = run.id
                 await setup.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 lock = _CommitsThatFail(run_session, run_id)
                 radarr = FakeRadarr()
                 plex = _PlexThatLosesTheDatabase(lock, streams=[_stream(rating_key=701)])
@@ -4800,7 +4783,7 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             assert report.skipped == 1
             assert radarr.delete_calls == [2, 3]  # the run carried on past the recovery
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 steps = {s.media_key: s for s in await _steps(fresh, run_id)}
                 assert steps["radarr:1:1"].state is StepState.SKIPPED, (
                     "the spare was discarded by the recovery rollback and never replayed"
@@ -4817,14 +4800,14 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         veto writes no marks of its own, so the per-item commit in ``_run_deletes`` is the one
         that fails -- and a skip returns to the top of the loop, so it needs its own check or
         the run walks on with an unwritable database."""
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 run = await self._three(setup)
                 run_id = run.id
                 await setup.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 lock = _CommitsThatFail(run_session, run_id, times=2)
                 radarr = FakeRadarr()
                 plex = _PlexThatLosesTheDatabase(lock, streams=[_stream(rating_key=701)])
@@ -4844,7 +4827,7 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
             assert radarr.delete_calls == []  # nothing was ever sent
             assert "could not save its record" in (report.aborted_reason or "")
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 stored = await fresh.get(ReapRun, run_id)
                 assert stored is not None and stored.state is RunState.ABORTED
         finally:
@@ -4862,16 +4845,16 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         ``await self._session.commit()`` under ``except Exception: log.warning``, so it raised
         ``PendingRollbackError`` and the warning swallowed it.
         """
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 snapshot_id = await _snapshot_one(setup, media_key="radarr:1:1", rating_key=701)
                 run = await _plan(setup, snapshot_id)
                 run_id = run.id
                 run.state = RunState.EXECUTING
                 await setup.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 executor = Executor(
                     run_session,
                     safety=_armed(),
@@ -4904,7 +4887,7 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
                     run_id, _Terminal(RunState.ABORTED, "the run stopped early", utcnow())
                 )
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 stored = await fresh.get(ReapRun, run_id)
                 assert stored is not None
                 assert stored.state is RunState.ABORTED
@@ -4928,9 +4911,9 @@ class TestAFailedJournalCommitDoesNotWedgeTheRun:
         (WAL readers do not block on a writer). The handler is live either way, and an
         unreachable branch with no test is one refactor from silently gone (rule 118).
         """
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as session:
+            async with async_factory() as session:
                 executor = Executor(
                     session, safety=_armed(), settings=ProfileSettings(), dry_run=False
                 )
@@ -4987,15 +4970,15 @@ class TestTwoMarksInARowBothReachTheDisk:
     async def test_the_second_mark_does_not_write_the_first_ones_values_back(
         self, tmp_path: Path
     ) -> None:
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 snapshot_id = await _snapshot_one(setup, media_key="radarr:1:1", rating_key=701)
                 run = await _plan(setup, snapshot_id)
                 run_id = run.id
                 await setup.commit()
 
-            async with factory() as run_session:
+            async with async_factory() as run_session:
                 executor = Executor(
                     run_session,
                     safety=_armed(),
@@ -5011,7 +4994,7 @@ class TestTwoMarksInARowBothReachTheDisk:
                 await executor._mark_sent(step)
                 await executor._mark_verified(step, {"gone": True})
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 stored = await fresh.get(ActionStep, step_id)
                 assert stored is not None
                 # Not SENT with a verified_at beside it, which is what the flush wrote back.
@@ -5127,15 +5110,15 @@ class TestARecoveredWriteCarriesEveryColumn:
         its identity map (``expire_on_commit=False``) and would report a discarded write as a
         durable one, which is a test that cannot fail for the reason it names (#340).
         """
-        engine, factory = await _fresh_engine(tmp_path)
+        engine, async_factory = await _fresh_engine(tmp_path)
         try:
-            async with factory() as setup:
+            async with async_factory() as setup:
                 snapshot_id = await _snapshot_many(setup, [("radarr:1:1", 1 * GB, 701)])
                 run = await _plan(setup, snapshot_id)
                 run_id = run.id
                 await setup.commit()
 
-            async with factory() as writer:
+            async with async_factory() as writer:
                 step = (await _steps(writer, run_id))[0]
                 step_id = step.id
                 for column, sentinel in _REPLAYED_STEP_COLUMNS.items():
@@ -5147,7 +5130,7 @@ class TestARecoveredWriteCarriesEveryColumn:
                 await writer.execute(captured.replay())
                 await writer.commit()
 
-            async with factory() as fresh:
+            async with async_factory() as fresh:
                 stored = await fresh.get(ActionStep, step_id)
                 assert stored is not None
                 assert {

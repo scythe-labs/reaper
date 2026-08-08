@@ -73,12 +73,10 @@ class DiscordNotifier:
         self,
         webhook_url: str,
         *,
-        client: httpx2.AsyncClient | None = None,
         app_name: str = "Reaper",
         app_url: str | None = None,
     ) -> None:
         self._url = webhook_url
-        self._client = client
         self._app_name = app_name
         self._app_url = app_url
 
@@ -88,33 +86,33 @@ class DiscordNotifier:
         The URL is not logged on success or failure -- only the outcome and the status
         code, which carry everything useful without carrying the token.
         """
-        client = self._client or httpx2.AsyncClient(timeout=_TIMEOUT)
         payload = embed.to_payload()
         payload["username"] = self._app_name
-        try:
-            response = await client.post(self._url, json=payload)
-            # A 429 is not a real failure -- the same message can land moments later. Honor
-            # Retry-After and retry once (bounded) rather than silently dropping the warning.
-            if response.status_code == 429:
-                response = await self._retry_after_429(client, payload, embed.title, response)
-            response.raise_for_status()
-            log.info("discord.posted", status=response.status_code, title=embed.title)
-            return True
-        except httpx2.HTTPStatusError as exc:
-            log.warning("discord.rejected", status=exc.response.status_code, title=embed.title)
-            return False
-        except Exception as exc:
-            # Broad on purpose. The module's guarantee is that *nothing here raises into a
-            # scan, a plan, or a run*, and httpx2.InvalidURL is NOT an HTTPError -- it
-            # subclasses Exception directly -- so a malformed webhook (an embedded newline,
-            # a control char, a bad IPv6 host) would slip past a narrower ``except
-            # httpx2.HTTPError``. We log the type name only: str(exc) can carry the request
-            # URL, and the URL is the credential.
-            log.warning("discord.unreachable", error=type(exc).__name__, title=embed.title)
-            return False
-        finally:
-            if self._client is None:
-                await client.aclose()
+        # The client is built here and closed here, on every path (rule 34). It used to be
+        # injectable, and nothing ever injected one.
+        async with httpx2.AsyncClient(timeout=_TIMEOUT) as client:
+            try:
+                response = await client.post(self._url, json=payload)
+                # A 429 is not a real failure -- the same message can land moments later.
+                # Honor Retry-After and retry once (bounded) rather than silently dropping
+                # the warning.
+                if response.status_code == 429:
+                    response = await self._retry_after_429(client, payload, embed.title, response)
+                response.raise_for_status()
+                log.info("discord.posted", status=response.status_code, title=embed.title)
+                return True
+            except httpx2.HTTPStatusError as exc:
+                log.warning("discord.rejected", status=exc.response.status_code, title=embed.title)
+                return False
+            except Exception as exc:
+                # Broad on purpose. The module's guarantee is that *nothing here raises into
+                # a scan, a plan, or a run*, and httpx2.InvalidURL is NOT an HTTPError -- it
+                # subclasses Exception directly -- so a malformed webhook (an embedded
+                # newline, a control char, a bad IPv6 host) would slip past a narrower
+                # ``except httpx2.HTTPError``. We log the type name only: str(exc) can carry
+                # the request URL, and the URL is the credential.
+                log.warning("discord.unreachable", error=type(exc).__name__, title=embed.title)
+                return False
 
     async def _retry_after_429(
         self,
@@ -192,25 +190,19 @@ def _parse_retry_after(raw: str | None) -> float | None:
 
 
 async def build_notifier(
-    session: AsyncSession,
-    box: SecretBox,
-    settings: Settings,
-    *,
-    client: httpx2.AsyncClient | None = None,
+    session: AsyncSession, box: SecretBox, settings: Settings
 ) -> DiscordNotifier | None:
     """A notifier if a webhook is configured, else ``None`` (notifications off).
 
     The webhook lives in the database (Fernet-encrypted, edited in the web UI), so it is
     read through ``app_settings`` from a live session rather than off ``Settings`` --
-    ``REAPER_DISCORD_WEBHOOK`` is only a first-boot seed. ``client`` is injectable so tests
-    can drive it with pytest-httpx2 without a real network.
+    ``REAPER_DISCORD_WEBHOOK`` is only a first-boot seed.
     """
     webhook = await app_settings.get_discord_webhook(session, box, settings)
     if webhook is None:
         return None
     return DiscordNotifier(
         webhook,
-        client=client,
         app_name=await app_settings.get_application_name(session),
         app_url=await app_settings.get_application_url(session),
     )

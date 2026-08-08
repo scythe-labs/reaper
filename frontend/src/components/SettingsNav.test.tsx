@@ -4,8 +4,7 @@
 // false and every other suite in this tree exercises the rail; the picker is only reachable with
 // the query stubbed, which is what these do. Only one of the two is ever rendered, so each test
 // also asserts the absence of the other -- a CSS-hidden twin would leave both in the tree.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
@@ -18,52 +17,11 @@ import {
 } from "../test/apiFixtures";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { PANELS as DECLARED_PANELS, Settings } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    update: vi.fn(),
-    about: vi.fn(),
-    safety: vi.fn(),
-    general: vi.fn(),
-    saveGeneral: vi.fn(),
-    // Plex and Notifications hold drafts of their own, so the switch guard is exercised on
-    // those panels too and both trees mount here. Rule 135: a module mock answers everything
-    // the tree under test reads, including the reads no test in the file names.
-    plexStatus: vi.fn(),
-    plexResources: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-    setPlexLibraries: vi.fn(),
-    watchEvidence: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    setLeavingSoonSettings: vi.fn(),
-    syncLeavingSoon: vi.fn(),
-    setPlexSettings: vi.fn(),
-    plexSetConnection: vi.fn(),
-    plexSwitchServer: vi.fn(),
-    plexUnlink: vi.fn(),
-    plexLinkStart: vi.fn(),
-    plexLinkPoll: vi.fn(),
-    // Lists renders on every panel switch this file drives, so its read is answered here
-    // too. Rule 135: an omitted key is `undefined`, which React Query files as a failed
-    // read, and the panel would render its error branch with nothing saying so.
-    lists: vi.fn(),
-    notifications: vi.fn(),
-    setWebhook: vi.fn(),
-    testWebhook: vi.fn(),
-    clearWebhook: vi.fn(),
-    // Security and Backup hold drafts inside a child component, so both trees mount here too.
-    setAdminPassword: vi.fn(),
-    // Security's password form reads ["me"] for the recovery mark that excuses the current
-    // password. Rule 135: answer it, or the form renders its strict branch off a failed read.
-    me: vi.fn(),
-    backupInfo: vi.fn(),
-    restorePrepare: vi.fn(),
-    restoreConfirm: vi.fn(),
-    restoreCancel: vi.fn(),
-    downloadBackup: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -167,12 +125,9 @@ function renderSettings(
   // Seeded, not just mocked: the General panel renders its fields from this read, and a mocked
   // answer lands a microtask later -- after a synchronous assertion, which would then be about
   // the "Loading…" panel rather than the one an operator types into (rule 136).
-  const queryClient = seedSettings(testQueryClient());
-  render(
-    <QueryClientProvider client={queryClient}>
-      <Settings initialPanel={initialPanel} />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<Settings initialPanel={initialPanel} />, {
+    client: seedSettings(testQueryClient()),
+  });
   return userEvent.setup();
 }
 

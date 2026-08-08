@@ -8,6 +8,7 @@ the expired-session sweep (PR-13) and the sign-in poll's deadline (S2-2).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import pytest
@@ -24,6 +25,17 @@ from reaper.db.base import Base
 from reaper.db.models import AppUser, AuthProvider, AuthSession
 
 SALT = b"0123456789abcdef"
+
+
+def _record(seen: list[int], cost: int, derived: bytes) -> bytes:
+    """Note the scrypt cost that was used, and hand the key straight back.
+
+    `(seen.append(n), derived)[1]` said the same thing, but `append` returns None and mypy
+    reads the tuple's first element as that -- so the expression only looked like it had a
+    value. A named function says which half is the record and which is the answer.
+    """
+    seen.append(cost)
+    return derived
 
 
 def _legacy_box(n: int, *, salt: bytes | None) -> object:
@@ -120,7 +132,7 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
         monkeypatch.setattr(
             crypto,
             "_derive_fernet_key",
-            lambda secret, salt, n=crypto._SCRYPT_N: (calls.append(n), real(secret, salt, n))[1],
+            lambda secret, salt, n=crypto._SCRYPT_N: _record(calls, n, real(secret, salt, n)),
         )
 
         SecretBox("the-key", salt=SALT)
@@ -137,7 +149,7 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
         monkeypatch.setattr(
             crypto,
             "_derive_fernet_key",
-            lambda secret, salt, n=crypto._SCRYPT_N: (built.append(n), real(secret, salt, n))[1],
+            lambda secret, salt, n=crypto._SCRYPT_N: _record(built, n, real(secret, salt, n)),
         )
 
         assert box.decrypt(fresh) == "x"
@@ -157,7 +169,7 @@ class TestTheCostIsPaidOnceAndOnlyWhenNeeded:
 
 
 @pytest.fixture
-async def session() -> AsyncSession:
+async def session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -236,7 +248,10 @@ class TestTheSignInPollHonorsItsDeadline:
     whatever a 429 named. A ``Retry-After`` of hours parked ``reaper-admin link-plex`` on a
     sleep with the terminal stuck on "Waiting..." (S2-2)."""
 
-    class _Client:
+    class _Client(plextv.PlexTvClient):
+        """Inherits the real client so an override that stops matching it fails the build,
+        and never calls its `__init__`, so it owns no HTTP client and cannot reach out."""
+
         def __init__(self, retry_after: float | None) -> None:
             self.calls = 0
             self._retry_after = retry_after
@@ -251,7 +266,7 @@ class TestTheSignInPollHonorsItsDeadline:
         self, retry_after: float | None, timeout: float
     ) -> tuple[object, TestTheSignInPollHonorsItsDeadline._Client]:
         client = self._Client(retry_after)
-        token = await plextv.PlexTvClient.wait_for_pin(client, 1, timeout=timeout)  # type: ignore[arg-type]
+        token = await plextv.PlexTvClient.wait_for_pin(client, 1, timeout=timeout)
         return token, client
 
     async def test_an_outrageous_retry_after_does_not_outlive_the_deadline(

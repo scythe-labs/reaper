@@ -11,8 +11,7 @@
 // Each gate is pinned in BOTH directions, because a fix that simply deleted the `isError` arm
 // would pass a one-sided test while dropping a fresh install onto an empty Dashboard with no way
 // back to the wizard. The never-loaded case is the reason those arms were written.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,6 +24,7 @@ import {
   IDLE_SCAN,
 } from "./test/apiFixtures";
 import { testQueryClient } from "./test/queryClient";
+import { renderWithProviders } from "./test/renderWithProviders";
 import { expectNoA11yViolations } from "./test/a11y";
 import { App } from "./App";
 
@@ -32,38 +32,8 @@ import { App } from "./App";
 // `App` all the way through means the shell, the review queue it opens on, and the hooks each of
 // those reads on its own -- a gap in any of them renders that subtree's failed-read branch and
 // would leave this file asserting on the wrong screen for the wrong reason.
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    update: vi.fn(),
-    me: vi.fn(),
-    setupStatus: vi.fn(),
-    safety: vi.fn(),
-    latestSnapshot: vi.fn(),
-    scanStatus: vi.fn(),
-    general: vi.fn(),
-    profile: vi.fn(),
-    candidates: vi.fn(),
-    vocabularyValues: vi.fn(),
-    group: vi.fn(),
-    reapBreakdown: vi.fn(),
-    reapStatus: vi.fn(),
-    plexTrash: vi.fn(),
-    fairness: vi.fn(),
-    authContext: vi.fn(),
-    instances: vi.fn(),
-    plexStatus: vi.fn(),
-    plexResources: vi.fn(),
-    plexLibraries: vi.fn(),
-    watchEvidence: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    // Mutations. Never called on a render, but a missing name is still a hole in the module.
-    logout: vi.fn(),
-    override: vi.fn(),
-    clearOverride: vi.fn(),
-    createRun: vi.fn(),
-    startScan: vi.fn(),
-    stopRun: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("./test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("./api", async (importOriginal) => ({
@@ -182,11 +152,7 @@ beforeEach(() => {
 
 function renderApp(): QueryClient {
   const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<App />, { client: queryClient });
   return queryClient;
 }
 

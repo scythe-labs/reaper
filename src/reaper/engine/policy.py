@@ -120,8 +120,8 @@ class GateSetting(Frozen):
     popularity gate protects anything anyone has *ever* played, and on a long-lived
     server that is very nearly the whole library -- only a fraction of those titles
     still have watchers in the last year. Measured against real history, the
-    unwindowed version silently disabled the entire scorer: a backtest at every
-    threshold then finds almost nothing to delete, and the tool looks "safe" while
+    unwindowed version silently disabled the entire scorer: rehearsed at every
+    threshold it found almost nothing to delete, and the tool looks "safe" while
     actually being broken.
     """
 
@@ -639,8 +639,8 @@ class PolicyBody(Frozen):
         Reads the SERVER_POPULARITY gate's window only while that gate is ENABLED: a
         disabled gate's leftover window must not keep steering the ``distinct_watchers``
         fact, where a short stale window quietly raises FEW_WATCHERS pressure across the
-        whole library. Falls back to the 365-day default otherwise. Snapshot and backtest
-        both read the window from here, so the default lives in exactly one place.
+        whole library. Falls back to the 365-day default otherwise. Every reader of the
+        window comes here, so the default lives in exactly one place.
         """
         return next(
             (g.window_days for g in self.gates if g.gate is GateId.SERVER_POPULARITY and g.enabled),
@@ -2641,9 +2641,10 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
     ),
     signals=(
         # Dormancy dominates, and the numbers come from the measured rewatch curve
-        # (backtest.FALLBACK_REWATCH_PRIOR): floor at 365 (below which ~61% of films are
-        # played again within the year) and saturating at 1825 (beyond which the rate is
-        # still ~13%, never zero -- nothing is ever free to delete).
+        # (docs/SIGNALS.md, "Ground truth: rewatch probability by dormancy"): floor at 365
+        # (below which ~61% of films are played again within the year) and saturating at
+        # 1825 (beyond which the rate is still ~13%, never zero -- nothing is ever free
+        # to delete).
         SignalSetting(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365),
         SignalSetting(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
         # 6.0, and it was briefly 8.0 on the way here. Raising it makes an average rating

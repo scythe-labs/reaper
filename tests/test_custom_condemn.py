@@ -78,7 +78,7 @@ def _policy(**over: object) -> PolicyBody:
             ),
         ),
     }
-    return PolicyBody(**{**base, **over})  # type: ignore[arg-type]
+    return PolicyBody(**{**base, **over})
 
 
 def _boolean(**over: object) -> CustomSignalConfig:

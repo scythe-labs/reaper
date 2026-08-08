@@ -12,30 +12,19 @@
 // difference between the green "In use" chip and the gray "Not in use"; the live-vs-cached
 // count; and the definition-to-membership join, which is what lets a row carry Edit and Check
 // now at all.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import type { ListConfig, ListPolicyUse, ProtectionList } from "../api";
 import { ListsPanel } from "./ListsPanel";
 
 // Rule 135: every read the tree under test performs, including the modal's, or React Query
 // renders a failed read and the test passes against the fallback.
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    lists: vi.fn(),
-    listConfigs: vi.fn(),
-    syncLists: vi.fn(),
-    addList: vi.fn(),
-    editList: vi.fn(),
-    removeList: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-    startScan: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 
@@ -118,11 +107,7 @@ function tagRow(slug: string, over: Partial<ProtectionList> = {}): ProtectionLis
 }
 
 function renderPanel(onGoToPolicy = vi.fn()) {
-  render(
-    <QueryClientProvider client={testQueryClient()}>
-      <ListsPanel onGoToPolicy={onGoToPolicy} />
-    </QueryClientProvider>,
-  );
+  renderWithProviders(<ListsPanel onGoToPolicy={onGoToPolicy} />);
   return { onGoToPolicy };
 }
 

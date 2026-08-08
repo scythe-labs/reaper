@@ -5,8 +5,10 @@ Four of the same shape, each low severity on its own and each a way for two part
 engine to disagree about one number:
 
 * the frozen-evidence field list was hand-maintained beside the dataclass it mirrors (R-1);
-* "days dormant" was floored in the calibration and floated in the backtest, so an item
-  could bucket one side of a threshold and score the other (R-2);
+* "days dormant" was derived twice and the two disagreed at a boundary -- one floored, the
+  other floated -- so an item could bucket one side of a threshold and score the other (R-2);
+  both readers were the retired lab engines, and what R-2 left behind is the single
+  ``engine.dormancy`` derivation every surviving lane takes;
 * the streamed dataset download opted out of the retry every other read gets (I-5);
 * a whole second condemn/protect/abstain decision function sat in the engine, reachable
   only from its own tests (H-2).
@@ -16,7 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -28,7 +30,6 @@ from reaper.clients.base import IntegrationError
 from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
 from reaper.engine import facts_codec
-from reaper.engine.backtest import Item, facts_as_of
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import Facts
 from reaper.engine.observation import Absent, Known, Observation, Unknown
@@ -104,8 +105,9 @@ class TestTheFrozenFieldListFollowsTheDataclass:
 
         thawed, _ = facts_codec.facts_from_dict(frozen)
 
+        # `Unknown` and `Absent` are disjoint, so this one assert carries both halves:
+        # a second `not isinstance(..., Absent)` beside it could never fail (rule 118).
         assert isinstance(thawed.requested, Unknown)
-        assert not isinstance(thawed.requested, Absent)
         # And the fields that ARE recorded still come back exactly as they went in.
         assert thawed.days_observed_unwatched == Known(value=400, source="tautulli")
 
@@ -179,54 +181,6 @@ class TestDormancyIsDerivedOnce:
         """A play after the cutoff means the evidence and the clock disagree. Callers treat
         that as "cannot be judged"; inventing a 0 would score an item on a contradiction."""
         assert dormancy_days(NOW + timedelta(days=2), now=NOW) < 0
-
-    def test_the_backtest_scores_the_same_number_the_calibration_buckets(self) -> None:
-        """The dual derivation this fixes: the backtest computed
-        ``total_seconds() / 86_400`` while the calibration used ``.days``, so at a bucket
-        boundary the same item bucketed one way and scored the other."""
-        cutoff = NOW - timedelta(days=365)
-        horizon = NOW - timedelta(days=3000)
-        added = cutoff - timedelta(days=9, hours=23)
-        item = Item(
-            rating_key=1,
-            title="A Film",
-            size_bytes=8_000_000_000,
-            added_at=added,
-            imdb_rating_tenths=73,
-            imdb_votes=500_000,
-        )
-
-        facts = facts_as_of(item, [], cutoff=cutoff, horizon=horizon)
-
-        assert facts is not None
-        assert isinstance(facts.days_observed_unwatched, Known)
-        scored = facts.days_observed_unwatched.value
-        assert scored == dormancy_days(
-            reference_instant(last_played=None, added_at=added, horizon=horizon), now=cutoff
-        )
-        assert scored == 9, "9.96 days must read as 9, the bound that argues for keeping"
-
-    def test_the_backtest_reads_plays_as_bare_id_and_instant(self) -> None:
-        """A guard, not a proof: ``_plays`` returned a third element documented as a friendly
-        name and populated with ``str(user_id)``, which ``run`` never used -- it resolves
-        names from the Tautulli user list. Dropping it is what mypy enforces; this pins that
-        the reader is happy with the two-element shape."""
-        plays: list[tuple[int, datetime]] = [(7, NOW - timedelta(days=30))]
-        facts = facts_as_of(
-            Item(
-                rating_key=1,
-                title="A Film",
-                size_bytes=1,
-                added_at=NOW - timedelta(days=900),
-                imdb_rating_tenths=None,
-                imdb_votes=None,
-            ),
-            plays,
-            cutoff=NOW,
-            horizon=NOW - timedelta(days=3000),
-        )
-        assert facts is not None
-        assert facts.days_observed_unwatched == Known(value=30, source="tautulli")
 
 
 # ---------------------------------------------------------------------------

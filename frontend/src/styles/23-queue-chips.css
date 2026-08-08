@@ -31,10 +31,6 @@
   background: var(--media-movie-soft);
   color: var(--media-movie);
 }
-.chip-reap {
-  background: var(--condemn-soft);
-  color: var(--condemn);
-}
 /* Hand decisions wear SOLID chips: outlined chips are Reaper's verdicts, filled ones
    are yours. The reap the engine can't honor yet (chip-reap-refused) is dashed red: still
    in the reap family you chose, but hollow and dashed so it never reads as a done removal,

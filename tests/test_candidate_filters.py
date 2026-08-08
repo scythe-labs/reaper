@@ -39,12 +39,12 @@ def _candidate(**kw: object) -> Candidate:
         "created_at": utcnow(),
     }
     base.update(kw)
-    return Candidate(**base)  # type: ignore[arg-type]
+    return Candidate(**base)
 
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 
@@ -414,7 +414,7 @@ class TestYearInSearch:
 
     @pytest.fixture
     def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         now = utcnow()
@@ -494,7 +494,7 @@ class TestSearchIsLiteralText:
 
     @pytest.fixture
     def client(self, tmp_path: Path) -> Iterator[TestClient]:
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         now = utcnow()

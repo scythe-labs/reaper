@@ -11,8 +11,8 @@ toward *keeping the file* at every ambiguity.
 
 ## Why this module is pure
 
-There is exactly one production join, reachable from the movie path, the season path, the
-backtest and the planner without any of them importing a client (rule #3: never
+There is exactly one production join, reachable from the movie path, the season path and
+the planner without any of them importing a client (rule #3: never
 reimplement the decision in a second place where it can drift). So this module holds only
 data types and pure functions; the *index builders* that call Tautulli/Plex live in
 ``services`` and hand the frozen types in.

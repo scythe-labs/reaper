@@ -26,10 +26,11 @@ import signal
 import sqlite3
 import stat
 import tarfile
-from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy import text
@@ -43,7 +44,7 @@ from reaper.db.base import Base
 from reaper.main import create_app
 from reaper.services import app_settings, restore
 from reaper.services.restore import RestoreError
-from tests._auth import TEST_PASSWORD, clear_admin_password, login
+from tests._auth import TEST_PASSWORD, clear_admin_password
 
 # A revision this build actually ships, so the schema gate accepts it. Iteration order of
 # the frozenset is unimportant: any shipped revision is one boot's migrations can serve.
@@ -153,7 +154,7 @@ def _make_archive(
 
 
 def _settings(tmp_path: Path) -> Settings:
-    s = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    s = Settings(data_dir=tmp_path, secret_key="k")
     s.ensure_data_dir()
     return s
 
@@ -576,17 +577,6 @@ class TestApplyPendingRestore:
 # --- the API surface ---------------------------------------------------------
 
 
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)  # seeds the admin whose password is TEST_PASSWORD
-        yield c
-
-
 class TestApi:
     def test_prepare_stages_and_confirm_arms(self, client: TestClient, tmp_path: Path) -> None:
         archive = _make_archive(tmp_path / "up.reaper").read_bytes()
@@ -831,7 +821,8 @@ class TestRestartNow:
         has a graceful Stop of its own, and the staged restore will wait as long as it takes.
         """
         _arm(client, tmp_path)
-        client.app.state.reap_status = ReapStatus(running=True, run_id=1)
+        app = cast(FastAPI, client.app)
+        app.state.reap_status = ReapStatus(running=True, run_id=1)
 
         response = client.post("/api/settings/backup/restore/restart")
 
@@ -854,7 +845,7 @@ class TestRestartNow:
         signal number IS the behavior, and any other one is a different shutdown or none.
         """
         sent: list[tuple[int, int]] = []
-        monkeypatch.setattr(backup_api.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+        monkeypatch.setattr(os, "kill", lambda pid, sig: sent.append((pid, sig)))
 
         backup_api._stop_this_process()
 
@@ -880,7 +871,7 @@ class TestRestartNow:
         to reach the same await. It commits through the app's OWN session factory, so a
         disposal that landed too early fails here.
         """
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()
@@ -938,7 +929,7 @@ class TestApiKeyIsFenced:
 
 
 def test_prepare_needs_a_session(tmp_path: Path) -> None:
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()

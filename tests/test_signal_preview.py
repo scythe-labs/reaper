@@ -11,13 +11,27 @@ the number it responds with is the number a scan would produce.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
-from reaper.engine.preview import READS, UnprobableSignalError, probe_signal
+from reaper.api.schemas import SignalProbeIn
+from reaper.engine.preview import (
+    MAX_PROBE_WINDOW_DAYS,
+    READS,
+    UnprobableSignalError,
+    probe_signal,
+)
 from reaper.engine.signals import SignalConfig, SignalId, evaluate_signal
 
 from .test_signal_state import _facts
 
 LOW_RATING = SignalConfig(signal=SignalId.LOW_RATING, weight=10, saturate_at=60)
+
+
+def _probe_in(*, window_days: int) -> SignalProbeIn:
+    """The wire request a probe arrives as, varying only the window."""
+    return SignalProbeIn(
+        signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3, value=0, window_days=window_days
+    )
 
 
 class TestTheProbeAgreesWithTheScorer:
@@ -35,7 +49,6 @@ class TestTheProbeAgreesWithTheScorer:
         probed = probe_signal(LOW_RATING, tenths, window_days=365)
 
         assert probed.points == pytest.approx(scanned.pressure)
-        assert probed.detail == scanned.detail
 
     def test_the_shipped_rating_ramp_pays_what_it_is_documented_to_pay(self) -> None:
         # The one place a literal belongs: these are the numbers the operator is shown, and
@@ -65,6 +78,24 @@ class TestWhatTheProbeDeliberatelyIgnores:
 
         assert probe_signal(few, 3, window_days=365).points == 0
         assert probe_signal(few, 0, window_days=365).points == 20
+
+    def test_it_still_answers_at_the_widest_window_the_wire_accepts(self) -> None:
+        """The reach check clears only because the preview's mirror is set to exactly the
+        ceiling ``SignalProbeIn.window_days`` allows, and those are one declaration
+        (rule 131). Driven at the boundary rather than asserted on the constants: raise the
+        wire's bound past the mirror and every value on this ramp reports 0, which the editor
+        renders as "adds 0 of these 20 points" with nothing on the wire to say the count was
+        withheld rather than earned.
+
+        The value above the ceiling is refused by the schema, not by the engine, so the wire
+        bound is asserted here too -- otherwise this test pins the mirror alone and a widened
+        bound is exactly what it would miss."""
+        few = SignalConfig(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3)
+
+        assert probe_signal(few, 0, window_days=MAX_PROBE_WINDOW_DAYS).points == 20
+        assert _probe_in(window_days=MAX_PROBE_WINDOW_DAYS).window_days == MAX_PROBE_WINDOW_DAYS
+        with pytest.raises(ValidationError):
+            _probe_in(window_days=MAX_PROBE_WINDOW_DAYS + 1)
 
     def test_no_other_fact_can_move_the_answer(self) -> None:
         # Everything but the probed value is Unknown, so a probe cannot quietly inherit a

@@ -12,14 +12,17 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import uvicorn
 
 from reaper import launcher
 
@@ -205,7 +208,7 @@ class TestLoopbackGuard:
         """The dialog is for the double-clicked binary that has no readable stderr;
         a source run must never pop native UI."""
         calls: list[object] = []
-        monkeypatch.setattr(launcher.subprocess, "run", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
         launcher._say("a plain refusal", frozen=False)
         assert "a plain refusal" in capsys.readouterr().err
         assert calls == []
@@ -343,16 +346,20 @@ class _FakeIcon:
         self.stopped.set()
 
 
-class _FakeServer:
+class _FakeServer(uvicorn.Server):
     """uvicorn's seam: ``run()`` blocks until ``should_exit``, or dies with the
-    scripted error. Self-terminating, so a failed assertion cannot hang the suite."""
+    scripted error. Self-terminating, so a failed assertion cannot hang the suite.
+
+    Inherits the real `Server` so `_serve_with_tray`'s parameter type holds, and skips its
+    `__init__` so no `Config` is built and nothing binds a port.
+    """
 
     def __init__(self, error: BaseException | None = None) -> None:
         self.should_exit = False
         self.running = threading.Event()
         self._error = error
 
-    def run(self) -> None:
+    def run(self, sockets: list[socket.socket] | None = None) -> None:
         self.running.set()
         if self._error is not None:
             raise self._error
@@ -377,7 +384,8 @@ class TestServeWithTray:
         while not created and time.monotonic() < deadline:
             time.sleep(0.005)
         assert created, "the icon was never built"
-        return next(item for item in created[0].menu if item.label == label)
+        found: _FakeMenuItem = next(i for i in created[0].menu if i.label == label)
+        return found
 
     def test_quit_stops_the_server_then_the_icon(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The quit path of #431: the menu only sets should_exit (uvicorn's graceful
@@ -393,7 +401,7 @@ class TestServeWithTray:
 
         presser = threading.Thread(target=press_quit)
         presser.start()
-        error = launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)  # type: ignore[arg-type]
+        error = launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)
         presser.join(timeout=10)
         assert error is None
         assert server.should_exit is True
@@ -409,7 +417,7 @@ class TestServeWithTray:
         boom = RuntimeError("bind failed")
         error = launcher._serve_with_tray(
             module, _FakeServer(error=boom), 8437, object(), dock_icon=False
-        )  # type: ignore[arg-type]
+        )
         assert error is boom
         assert created[0].stopped.is_set()
 
@@ -419,7 +427,7 @@ class TestServeWithTray:
         """default=True is what makes a double-click on the Windows tray icon open
         the UI rather than only the right-click menu."""
         opened: list[str] = []
-        monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url))
+        monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
         module, created = self._module()
         server = _FakeServer()
 
@@ -432,7 +440,7 @@ class TestServeWithTray:
 
         driver = threading.Thread(target=drive)
         driver.start()
-        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)  # type: ignore[arg-type]
+        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=False)
         driver.join(timeout=10)
         assert opened == ["http://127.0.0.1:8437"]
 
@@ -448,7 +456,7 @@ class TestServeWithTray:
 
         presser = threading.Thread(target=press_quit)
         presser.start()
-        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=True)  # type: ignore[arg-type]
+        launcher._serve_with_tray(module, server, 8437, object(), dock_icon=True)
         presser.join(timeout=10)
         assert docked == [True]
 
@@ -570,7 +578,8 @@ class TestMain:
         ) -> BaseException | None:
             captured["tray_port"] = port
             captured["dock_icon"] = dock_icon
-            return captured["tray_error"]
+            error: BaseException | None = captured["tray_error"]
+            return error
 
         monkeypatch.setattr(launcher, "_serve_with_tray", fake_tray)
         return captured

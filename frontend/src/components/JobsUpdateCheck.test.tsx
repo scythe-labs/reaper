@@ -4,30 +4,19 @@
 // chip's light all read `["update"]`, which holds its answer for half an hour and has nothing
 // else to invalidate it. So a finished run has to refresh that query, or the two surfaces
 // disagree about the same fact with the newer one on the page the operator is not looking at.
-import { QueryClientProvider } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { About, Schedule, ScheduledJob } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { useUpdateStatus } from "../updateStatus";
 import { Settings } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    // Rule 135: the mock answers everything the shell mounts, not only the row under test.
-    about: vi.fn(),
-    update: vi.fn(),
-    safety: vi.fn(),
-    schedule: vi.fn(),
-    latestSnapshot: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    general: vi.fn(),
-    scanStatus: vi.fn(),
-    notifications: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -90,11 +79,12 @@ function UpdateProbe() {
 
 function renderJobs(): QueryClient {
   const queryClient = testQueryClient();
-  render(
-    <QueryClientProvider client={queryClient}>
+  renderWithProviders(
+    <>
       <UpdateProbe />
       <Settings initialPanel="jobs" />
-    </QueryClientProvider>,
+    </>,
+    { client: queryClient },
   );
   return queryClient;
 }

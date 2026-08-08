@@ -3,40 +3,19 @@
 // manual-address editor for an address they typed earlier, getting out of a sign-in whose
 // plex.tv tab never opened, seeing a failed sign-in as a failure, and -- for anyone driving
 // this panel by ear -- being able to tell one box on it from another.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlexResourceConnection, PlexStatus } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { PlexPanel } from "./PlexPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    plexStatus: vi.fn(),
-    plexResources: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-    setPlexLibraries: vi.fn(),
-    watchEvidence: vi.fn(),
-    resetWatchEvidence: vi.fn(),
-    // Read by `useSafety`, which the watch-history group consults for `has_password` before it
-    // offers the reset at all. A mock that omitted it would hand the hook `undefined` and the
-    // group would render its "couldn't check" branch in every test here (rule 135).
-    safety: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    setLeavingSoonSettings: vi.fn(),
-    syncLeavingSoon: vi.fn(),
-    setPlexSettings: vi.fn(),
-    plexSetConnection: vi.fn(),
-    plexSwitchServer: vi.fn(),
-    plexUnlink: vi.fn(),
-    plexLinkStart: vi.fn(),
-    plexLinkPoll: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
@@ -101,14 +80,15 @@ function renderPanel(
   });
   const queryClient = testQueryClient();
   if (cached) queryClient.setQueryData(["plex"], cached);
-  return render(
-    <QueryClientProvider client={queryClient}>
+  return renderWithProviders(
+    <>
       {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when no
           region is listening -- so without it here this panel's sentences are dropped and a test
           about them passes against silence. */}
       <Announcer />
       <PlexPanel onDirtyChange={onDirtyChange} />
-    </QueryClientProvider>,
+    </>,
+    { client: queryClient },
   );
 }
 
@@ -243,12 +223,7 @@ describe("when plex.tv's list comes back without the linked server", () => {
         },
       ],
     });
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />);
 
     // The row says what happened, and names the server Reaper is actually linked to.
     const notice = await screen.findByText(/came back without the server Reaper uses/);
@@ -314,10 +289,16 @@ describe("linking with Plex", () => {
 
 // Every read below the connection form means "of the currently LINKED server", and not one of the
 // four is qualified by a machine identifier, so a row cached against the old server answers for
-// the new one. All three paths that change which server that is therefore have to refresh the
-// whole set; two of them refreshed the status row alone, so unlinking and then linking a DIFFERENT
+// the new one. Every path that changes which server that is therefore has to refresh the whole
+// set; two of them refreshed the status row alone, so unlinking and then linking a DIFFERENT
 // server painted the previous server's libraries and their enabled flags -- and "Movies" and
 // "TV Shows" collide across servers, so the wrong list looked like the right one (#205).
+//
+// **Three of the five such paths are on this panel.** The setup wizard holds the other two, and
+// this file is where the claim used to be checked, which is how the wizard came to open-code a
+// three-key version of the set (W10-7). The keys now live in `plexServerQueries.ts` and
+// `plexServerQueries.test.ts` bans any handler from restating them; these stay because they drive
+// the panel's three paths through the UI, which a source scan cannot do.
 //
 // **These pin the invalidation, not the symptom, and the symptom is not reachable from here.** It
 // needs a cached row to still be FRESH when the query re-enables, and freshness is the one thing
@@ -361,11 +342,7 @@ describe("changing which server is linked", () => {
       invalidated.push(JSON.stringify(filters?.queryKey));
       return passThrough(filters);
     });
-    render(
-      <QueryClientProvider client={client}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />, { client });
     return invalidated;
   }
 
@@ -440,12 +417,7 @@ describe("the signed-in account label", () => {
           resolveResources = resolve;
         }),
     );
-    const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />);
 
     // Past the fast, local status query, the account row is up, but the live plex.tv
     // account lookup is still in flight.
@@ -753,11 +725,7 @@ describe("the groups below the form, through a failed refetch", () => {
       ],
     });
     const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <PlexPanel />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<PlexPanel />, { client: queryClient });
     return queryClient;
   }
 
@@ -926,13 +894,14 @@ describe("forgetting the recorded watch history", () => {
       ],
     });
     const queryClient = testQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         {/* `announce()` returns early when no region is listening, so without this the
             sentence below is dropped and the test passes against silence. */}
         <Announcer />
         <PlexPanel />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
     return queryClient;
   }

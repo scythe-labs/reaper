@@ -15,6 +15,7 @@ sizes and vote counts, genre tokens, season numbers. No titles, ids, keys, or ho
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,12 @@ from reaper.engine.policy import (
 from reaper.engine.signals import SignalConfig, SignalId
 from reaper.ratings import Rating, RatingSource
 from reaper.services.scan_runner import build_gates
-from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
+from reaper.services.snapshot import (
+    HAND_SPARE_DETAIL,
+    PolicyJudgment,
+    effective_fate,
+    judge_facts,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "policy_lab_vectors.json"
 
@@ -80,7 +86,8 @@ VERDICT_RANK = {"protect": 0, "abstain": 1, "condemn": 2}
 
 def load_fixture() -> dict[str, Any]:
     with FIXTURE.open() as f:
-        return json.load(f)
+        loaded: dict[str, Any] = json.load(f)
+        return loaded
 
 
 def reach_of(vectors: Any) -> float:
@@ -338,23 +345,22 @@ def lane_gates(media_type: str) -> list[Any]:
     return build_gates(lane_policy(media_type))
 
 
-def judge(
+def judged_by_the_scan(
     vector: dict[str, Any],
     policy: PolicyBody,
     gates: list[Any] | None = None,
     *,
     facts: Facts | None = None,
     reach: float | None = None,
-) -> tuple[str, int, int, Evaluation, Any]:
-    """Judge one vector with the SCAN's own pipeline: ``snapshot.judge_facts``.
+) -> PolicyJudgment:
+    """One vector through the SCAN's own pipeline: ``snapshot.judge_facts``.
 
-    Returns ``(fate, score, coverage_bp, evaluation, score_object)``, where ``fate`` is the
-    EFFECTIVE one -- the hand override applied on top of the pure-policy verdict, exactly as
-    ``snapshot._judge_item`` returns it. ``gates`` may be passed to reuse a built list across
-    many vectors; ``facts`` to reuse or perturb them.
+    The one place this file builds a judgment, so the sweep and the pinned baseline cannot
+    be judging two different things. ``judge`` reads the decision off it; ``pinned_baseline``
+    reads the explanation off it.
 
-    This function used to rebuild the pipeline by hand, and had already drifted twice in ways
-    that only a vector the fixture does not happen to contain would expose: it decided without
+    This used to rebuild the pipeline by hand, and had already drifted twice in ways that only
+    a vector the fixture does not happen to contain would expose: it decided without
     ``blocked_holds_reap`` (so a hand reap on a keep-rule conflict protected here and condemned
     in production), and it pushed the override straight through ``decide_verdict`` rather than
     deriving the reap's fate from the frozen explanation the way every read-side consumer does.
@@ -375,7 +381,7 @@ def judge(
         extra.append(GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL))
     if (g := guard_result(vector)) is not None:
         extra.append(g)
-    judged = judge_facts(
+    return judge_facts(
         facts,
         gates,
         policy,
@@ -388,8 +394,129 @@ def judge(
         window_days=policy.popularity_window_days(),
         extra_results=extra,
     )
+
+
+def judge(
+    vector: dict[str, Any],
+    policy: PolicyBody,
+    gates: list[Any] | None = None,
+    *,
+    facts: Facts | None = None,
+    reach: float | None = None,
+) -> tuple[str, int, int, Evaluation, Any]:
+    """The decision for one vector: ``(fate, score, coverage_bp, evaluation, score_object)``.
+
+    ``fate`` is the EFFECTIVE one -- the hand override applied on top of the pure-policy
+    verdict, exactly as ``snapshot._judge_item`` returns it. ``gates`` may be passed to reuse
+    a built list across many vectors; ``facts`` to reuse or perturb them.
+    """
+    judged = judged_by_the_scan(vector, policy, gates, facts=facts, reach=reach)
     fate = effective_fate(judged, vector.get("override"))
     return fate, judged.score, judged.coverage_bp, judged.evaluation, judged.item_score
+
+
+#: The signal fields the baseline pins, and deliberately not ``weight``, ``floor`` or
+#: ``saturate_at``: those three are the policy's own numbers restated, so they move when a
+#: shipped default moves and say nothing about what the engine did with them. ``contribution``
+#: and ``state`` are what the engine decided; ``evaluated`` is whether it could look at all.
+_PINNED_SIGNAL_FIELDS = ("id", "contribution", "state", "evaluated")
+
+
+def pinned_baseline(
+    vector: dict[str, Any],
+    policy: PolicyBody,
+    gates: list[Any] | None = None,
+    *,
+    reach: float | None = None,
+) -> dict[str, Any]:
+    """What the fixture pins per vector: the decision, the gate lists, and the arithmetic.
+
+    The verdict triple alone was the whole baseline, and it is a coarse reading of a much
+    larger conclusion: a refactor can move which protections were checked, what each signal
+    contributed and whether it could be evaluated at all, and still round to the same score
+    against the same threshold. The three gate lists are the part that matters most -- "checked
+    and did not fire" is the product promise, and it is the half a refactor drops silently,
+    because nothing downstream of the panel reads it.
+
+    **Read off the serialized explanation, never recomputed here.** The numbers below all exist
+    on ``item_score`` and the policy, and rebuilding them would be a second implementation of
+    ``_explain``'s rounding whose output this fixture then pins as ground truth (rule 119, and
+    the same trap ``judged_by_the_scan``'s docstring records). Reading production's own payload
+    also makes the pin cover the serialization: a key dropped from ``_explain`` raises a
+    ``KeyError`` here rather than thawing to ``None`` and comparing equal.
+
+    **``detail`` is never pinned, on any of these.** It is rule 21 operator copy, it is roughly
+    60% of the payload by bytes, and phases 4, 7 and 9 of the simplification plan all edit it --
+    pinning it would turn every copy edit into a baseline stop, which is how a stop stops being
+    read.
+
+    ``watch_blind`` is ``None`` for every vector the replay produces: the scan derives it from
+    the watch mirror going blind between runs (``watch_evidence.went_blind``), which is not a
+    property of a fact vector and has no fixture field. It is pinned for the shape rather than
+    the value -- the key leaving ``_explain`` is what this catches -- and rule 141 applies to
+    the rest of it: a value that cannot move proves nothing about a caller.
+    """
+    judged = judged_by_the_scan(vector, policy, gates, reach=reach)
+    explanation = json.loads(judged.explanation)
+    return {
+        "verdict": effective_fate(judged, vector.get("override")),
+        "score": judged.score,
+        "coverage_bp": judged.coverage_bp,
+        "base_score": explanation["base_score"],
+        "keep_discount": explanation["keep_discount"],
+        "threshold": explanation["threshold"],
+        "coverage_floor_bp": explanation["coverage_floor_bp"],
+        "watch_blind": explanation["watch_blind"],
+        "signals": [
+            {field: row[field] for field in _PINNED_SIGNAL_FIELDS} for row in explanation["signals"]
+        ],
+        # Gate ids in the order the gates ran, which is ``build_gates``' order with the
+        # season guard ahead of it. Named for ``Evaluation``'s three properties and read off
+        # the blocks ``_explain`` builds from them, so one pin covers both the evaluation and
+        # the payload the panel renders.
+        "protectors": [r["gate"] for r in explanation["protections_fired"]],
+        "checked_and_did_not_fire": [r["gate"] for r in explanation["protections_checked"]],
+        "could_not_be_checked": [r["gate"] for r in explanation["protections_unknown"]],
+    }
+
+
+#: A leaf that is present in one baseline and absent from the other. Spelled as an object
+#: rather than ``None``, because ``None`` is a value ``watch_blind`` genuinely holds.
+class _Missing:
+    def __repr__(self) -> str:
+        return "<absent>"
+
+
+_MISSING = _Missing()
+
+
+def leaves(value: Any, path: str = "") -> Iterator[tuple[str, Any]]:
+    """Every scalar in a baseline block, keyed by its path (``signals[2].contribution``)."""
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            yield from leaves(inner, f"{path}.{key}" if path else str(key))
+    elif isinstance(value, list):
+        for index, inner in enumerate(value):
+            yield from leaves(inner, f"{path}[{index}]")
+    else:
+        yield path, value
+
+
+def baseline_differences(was: dict[str, Any], fresh: dict[str, Any]) -> list[str]:
+    """One line per leaf that moved, as ``path: old -> new``.
+
+    Shared by the regeneration script and ``TestPinnedBaseline`` so the two report the same
+    thing (rule 119). A whole-block dump would be unreadable at this size and would hide which
+    signal moved inside a list of twelve; the failure a reader needs is
+    ``signals[2].contribution: 12.0 -> 9.0``.
+    """
+    old = dict(leaves(was))
+    new = dict(leaves(fresh))
+    return [
+        f"{path}: {old.get(path, _MISSING)!r} -> {new.get(path, _MISSING)!r}"
+        for path in sorted(old.keys() | new.keys())
+        if old.get(path, _MISSING) != new.get(path, _MISSING)
+    ]
 
 
 def degraded(vector: dict[str, Any], names: list[str]) -> dict[str, Any]:

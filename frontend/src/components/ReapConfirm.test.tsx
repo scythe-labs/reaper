@@ -5,27 +5,19 @@
 // in flight the sheet shows live progress and a graceful Stop -- and, because the run is
 // now detached on the server, the sheet closes freely (the app-wide bar keeps the count
 // and Stop), and reopening shows the report.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { expectNoA11yViolations } from "../test/a11y";
 import { Announcer } from "../announce";
 import { ReapConfirm } from "./ReapConfirm";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    safety: vi.fn(),
-    run: vi.fn(),
-    dryRun: vi.fn(),
-    executeRun: vi.fn(),
-    reapStatus: vi.fn(),
-    stopRun: vi.fn(),
-    plexTrash: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 // Everything but `api` is real -- the sheet reads `ApiError` to tell a moved phrase (409)
@@ -90,11 +82,9 @@ function renderSheet(onClose: () => void = () => {}, seedStatus?: ReapStatus) {
   // The status cache is shared with the app-wide bar and is already warm when this sheet is
   // opened from it. Seeding it reproduces that, which is what the dry-run skip reads.
   if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);
-  const utils = render(
-    <QueryClientProvider client={queryClient}>
-      <ReapConfirm run={run} onClose={onClose} />
-    </QueryClientProvider>,
-  );
+  const utils = renderWithProviders(<ReapConfirm run={run} onClose={onClose} />, {
+    client: queryClient,
+  });
   return { ...utils, queryClient };
 }
 
@@ -423,11 +413,12 @@ describe("what a screen reader hears while a reap runs", () => {
   function renderWithAnnouncer(seedStatus?: ReapStatus) {
     const queryClient = testQueryClient();
     if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);
-    const utils = render(
-      <QueryClientProvider client={queryClient}>
+    const utils = renderWithProviders(
+      <>
         <Announcer />
         <ReapConfirm run={run} onClose={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
     return { ...utils, queryClient };
   }

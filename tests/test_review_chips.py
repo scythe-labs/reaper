@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -238,11 +239,11 @@ def _exp(
     score: float,
     *,
     threshold: int = 70,
-    fired: list[dict[str, str]] | None = None,
-    unknown: list[dict[str, str]] | None = None,
+    fired: list[dict[str, Any]] | None = None,
+    unknown: list[dict[str, Any]] | None = None,
     match_status: str | None = None,
-) -> dict[str, object]:
-    body: dict[str, object] = {
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
         "score": score,
         "threshold": threshold,
         "coverage": 1.0,
@@ -394,10 +395,9 @@ class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
             # horizon is not what is being measured here -- the arrival date is.
             horizon=now - timedelta(days=400),
         )
+        assert reference is not None
         facts = _never_played_facts(dormancy_days(reference, now=now))
-        result = MinDormancyGate(
-            GateConfig(GateId.MIN_DORMANCY, threshold=self.WAITS_DAYS)
-        ).evaluate(facts)
+        result = MinDormancyGate(GateConfig(threshold=self.WAITS_DAYS)).evaluate(facts)
 
         assert result.outcome == PROTECT, "the gate must fire for this chip to exist at all"
         return _kept_phrase("min_dormancy", result.detail)
@@ -952,9 +952,9 @@ class TestChip:
         by the gate id -- so this chip and ``WhyPanel``'s check/cause split are the only
         places a reword shows up, which is why the assertion lives here.
         """
-        result = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-        ).evaluate(_popularity_short_history_facts())
+        result = ServerPopularityGate(GateConfig(threshold=3, window_days=365)).evaluate(
+            _popularity_short_history_facts()
+        )
         assert result.blocked is True
 
         chip = _chip(
@@ -1189,7 +1189,7 @@ class TestChipWhy:
         ],
     )
     def test_every_blocked_lane_words_its_own_clause(
-        self, explanation: str, verdict: str, score: int, why: str
+        self, explanation: dict[str, Any], verdict: str, score: int, why: str
     ) -> None:
         chip = _chip(explanation, verdict, score)
         assert chip is not None
@@ -1203,7 +1203,7 @@ class TestChipWhy:
         ],
     )
     def test_a_chip_about_the_score_names_no_refusal(
-        self, explanation: str, verdict: str, score: int
+        self, explanation: dict[str, Any], verdict: str, score: int
     ) -> None:
         """None is a real answer, not a gap. An item that merely scored low is reaped
         when the owner asks; nothing is holding it, so there is no clause to say."""
@@ -1251,7 +1251,9 @@ class TestChipWhy:
             ),
         ],
     )
-    def test_a_clause_reads_mid_sentence(self, explanation: str, verdict: str, score: int) -> None:
+    def test_a_clause_reads_mid_sentence(
+        self, explanation: dict[str, Any], verdict: str, score: int
+    ) -> None:
         """It follows a colon, so it starts lowercase and carries no chip furniture: no
         capital lead, and none of the chip's own lead riding along inside the clause.
 
@@ -1286,7 +1288,7 @@ class TestSeasonNumber:
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot holding one show whose three seasons landed in three different
     lanes, plus a movie -- the shape the group view exists to show whole."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k")
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
 
@@ -1442,7 +1444,7 @@ class TestGroupDetail:
     def test_the_group_view_is_behind_auth(self, tmp_path: Path) -> None:
         authless_dir = tmp_path / "authless"
         authless_dir.mkdir()
-        settings = Settings(data_dir=authless_dir, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=authless_dir, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()
@@ -1572,7 +1574,10 @@ class TestTheMatchStatusVocabulary:
         # assertion cannot tell that from a tree that complies. Bump it deliberately.
         # 42 -> 43: the placeholder a policy probe fills every unprobed fact with, so a
         # preview cannot quietly inherit a number from a fact it is not about.
-        assert walked == 43, (
+        # 43 -> 39: the retired replay engine's four, three of them its own copy of the
+        # watch-blind reason and one its no-arrival-date placeholder. Both reasons survive
+        # on the live lanes, so nothing lost its coverage with them.
+        assert walked == 39, (
             f"the Unknown(reason=...) population moved to {walked}. If you added one, name\n"
             "its reason as a *_REASON constant and bump this count; if one left, check it\n"
             "did not take its only coverage with it."
@@ -1634,9 +1639,12 @@ class TestTheMatchStatusVocabulary:
             for name, value in sorted(
                 {
                     **checked,
-                    **{f"_NO_KEY_REASONS[{s.name}]": r for s, r in MOVIE_NO_KEY_REASONS.items()},
                     **{
-                        f"season _NO_KEY_REASONS[{s.name}]": r
+                        f"_NO_KEY_REASONS[{s.name if s else None}]": r
+                        for s, r in MOVIE_NO_KEY_REASONS.items()
+                    },
+                    **{
+                        f"season _NO_KEY_REASONS[{s.name if s else None}]": r
                         for s, r in SEASON_NO_KEY_REASONS.items()
                     },
                 }.items()

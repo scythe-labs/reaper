@@ -29,7 +29,7 @@ from sqlalchemy import create_engine as sa_create_engine
 
 from reaper.api import tags as api_tags
 from reaper.config import Settings
-from reaper.db.models import Base
+from reaper.db.base import Base
 from reaper.main import create_app
 from tests._auth import login
 
@@ -60,7 +60,7 @@ def schema(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         patched.setitem(Settings.model_config, "env_file", None)
         patched.setattr("reaper.main.load_raw_env", lambda _s: {})
         patched.setattr("reaper.main.catch_up_on_startup", _no_catch_up)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()
@@ -68,7 +68,8 @@ def schema(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
             login(client, settings)
             response = client.get("/api/openapi.json")
             assert response.status_code == 200
-            return response.json()
+            schema: dict[str, Any] = response.json()
+    return schema
 
 
 def _operations(schema: dict[str, Any]) -> list[tuple[str, str, dict[str, Any]]]:
@@ -193,7 +194,7 @@ class TestOneProducerOfTheSchema:
         instead of the reference silently degrading to a flat scroll under an auth box
         that does not authenticate. Driven the way the trap would spring -- build the
         schema before the first request, then read what the reference page is served."""
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = sa_create_engine(settings.sync_database_url)
         Base.metadata.create_all(engine)
         engine.dispose()

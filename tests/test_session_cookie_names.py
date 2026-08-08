@@ -108,7 +108,7 @@ class TestReadingReturnsEveryName:
 
 @pytest.fixture
 async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -165,15 +165,6 @@ class TestAStaleCookieCannotShadowALiveSession:
             assert await resolve_session_from_cookies(
                 session, {SECURE_NAME: "dead-one", PLAIN_NAME: "dead-two"}
             ) == (None, None)
-
-
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    s = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
-    engine = sa_create_engine(s.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    return s
 
 
 @pytest.fixture

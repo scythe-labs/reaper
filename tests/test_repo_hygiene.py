@@ -10,12 +10,14 @@ These are filesystem checks -- no app boot, no fixtures, no network.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import pytest
 import yaml
@@ -26,7 +28,6 @@ import yaml
 from reaper.engine.gates import (
     Facts,
     GateConfig,
-    GateId,
     MinDormancyGate,
     ServerPopularityGate,
 )
@@ -57,7 +58,7 @@ DECISIONS_DOC = DOCS / "DECISIONS.md"
 # Rows of "Decisions locked" carrying the dagger, reconciled by hand against DECISIONS.md's
 # sections (rule 145: a set-equality assertion cannot tell a member that complies from one that
 # dropped out of the walk).
-DECISION_SECTIONS = 17
+DECISION_SECTIONS = 18
 
 
 def _live_docs() -> list[Path]:
@@ -639,7 +640,7 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
 
     from reaper.engine.policy import ProfileSettings
 
-    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)
+    validator = inspect.getsource(ProfileSettings._run_cap_within_rolling_cap)  # type: ignore[arg-type]
     reads = {
         name
         for name in re.findall(r"self\.(\w+)", validator)
@@ -676,7 +677,7 @@ def test_a_caps_preset_writes_every_field_its_validator_reads() -> None:
             caps[name] = raw == "true" if raw in ("true", "false") else int(raw.replace("_", ""))
         assert caps, f"parsed no fields out of a caps block in {_PRESETS_TS.relative_to(REPO)}"
         # A ValidationError here is the defect, stated by the server in its own words.
-        ProfileSettings(**caps)  # type: ignore[arg-type]
+        ProfileSettings(**caps)
 
 
 # ``pkill``/``killall`` select processes by PATTERN, which is machine-wide: nothing in the
@@ -1382,7 +1383,7 @@ _EXPECTED_MANIFEST_KINDS = {
 }
 
 
-def _dependabot_updates() -> list[dict]:
+def _dependabot_updates() -> list[dict[str, Any]]:
     """Every ``updates:`` entry in ``.github/dependabot.yml``.
 
     A parsed list, not a text scan, so unlike the walks elsewhere in this file its population
@@ -1895,6 +1896,76 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
     )
 
 
+#: Every spelling of the typecheck invocation: the workflow step, CONTRIBUTING's gate list, and
+#: the review skill's apply-the-fixes list. Matched on the whole argument run rather than on a
+#: fixed prefix, because a matcher anchored on ``mypy src/reaper`` reads a site that has NOT been
+#: widened as agreeing (rule 147).
+_MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|$))", re.M)
+
+#: `.github/workflows/ci.yml`, `CONTRIBUTING.md`, `.claude/skills/reaper-review/SKILL.md`, and
+#: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
+#: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
+#: gate was at the time, so it is skipped rather than counted; `docs/I18N_PLAN.md` proposes a
+#: gate for a plan nothing has started, and `docs/SIMPLIFICATION_PLAN.md` records the command as
+#: it stood when a change landed and moves to `docs/history/` when it retires.
+_EXPECTED_MYPY_SITES = 4
+
+#: Files that quote the command as a record rather than as the instruction to follow. A record
+#: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
+#: every time the gate moves.
+_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md", "docs/SIMPLIFICATION_PLAN.md")
+
+
+def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
+    """`tests/` rides on the mypy run, and four files say so independently.
+
+    Two things have to hold, and each is checked below. **`tests/` is named**, or nothing in
+    it is type-checked and the structural fakes that inherit their real client prove nothing
+    by doing so (#580). And **`src/reaper` is named alongside it**, or mypy resolves `reaper`
+    from site-packages, finds no py.typed marker, and reports 731 import errors while
+    silently checking almost none of the tree -- a run that looks like it did the work.
+
+    The invocation is written four times, by four authors reading each other. A developer
+    running CONTRIBUTING's list would otherwise get a narrower check than CI runs and see a
+    clean tree that CI rejects, or the reverse. Rule 144, and the direction is the dangerous
+    one: a stale copy reads as the shorter, safer-looking command, so nothing about it looks
+    wrong.
+    """
+    sites = [
+        (path.relative_to(REPO), lineno, " ".join(match.group(1).split()))
+        for path, text in _repo_text_files()
+        if not any(rec in path.relative_to(REPO).as_posix() for rec in _MYPY_RECORDS)
+        for lineno, line in enumerate(text.splitlines(), 1)
+        if (match := _MYPY_INVOCATION.search(line))
+    ]
+    assert len(sites) == _EXPECTED_MYPY_SITES, (
+        f"expected {_EXPECTED_MYPY_SITES} spellings of the typecheck gate, found "
+        f"{len(sites)}:\n" + "\n".join(f"  {p}:{n} -> {t}" for p, n, t in sites) + "\n\n"
+        "If you ADDED one, bump the number so it is covered. If you did not, one dropped out\n"
+        "of the walk and the agreement below no longer reads it."
+    )
+    targets = {t for _, _, t in sites}
+    assert len(targets) == 1, (
+        "the typecheck gate names different targets in different files:\n"
+        + "\n".join(f"  {p}:{n} -> {t}" for p, n, t in sites)
+        + "\n\nMove them together. A developer running the narrow one sees a clean tree that\n"
+        "CI rejects, or CI runs a check nobody can reproduce."
+    )
+    (targets_run,) = targets
+    named = targets_run.split()
+    assert any(target.startswith("tests") for target in named), (
+        f"the typecheck gate runs `{targets_run}`, which no longer covers tests/.\n"
+        "The structural fakes inherit their real client so that a signature change they stop\n"
+        "matching fails the build; off the gate they are unchecked, and inheriting proves\n"
+        "nothing (#580)."
+    )
+    assert "src/reaper" in named, (
+        f"the typecheck gate runs `{targets_run}`, which no longer names src/reaper.\n"
+        "Without it mypy resolves `reaper` from site-packages, finds no py.typed marker, and\n"
+        "answers with import errors instead of checking the tree -- green-looking, and blind."
+    )
+
+
 #: Every `paths:` / `paths-ignore:` list under `.github/workflows/`, reconciled by hand and
 #: **named, not counted**. `codeql.yml` filters both its triggers, `docs-deploy.yml` filters its
 #: one, and `ci.yml` has none deliberately -- it runs on everything and classifies the diff
@@ -2135,6 +2206,56 @@ def test_the_documented_status_budget_matches_the_enforced_one() -> None:
     )
 
 
+#: The rewatch curve, as the two source comments quote it: dormancy band -> the percentage each
+#: states. Both are prose justifying a shipped default (the 1,095-day dormancy floor, and the
+#: 365/1825 UNWATCHED ramp), and the measurement behind them lives only in `docs/SIGNALS.md`.
+#: The constant that used to tie the three together went with the engine that measured it.
+_REWATCH_CURVE_CLAIMS = {
+    "engine/gates.py": ("61%", "30%", "19%", "13%"),
+    "engine/policy.py": ("61%", "13%"),
+}
+
+
+def test_the_rewatch_percentages_in_source_are_the_ones_signals_md_measured() -> None:
+    """Rule 144, for the file's most-quoted table.
+
+    Two docstrings in ``src/`` state percentages off the rewatch curve as the measured reason a
+    shipped default is what it is, and neither is generated from anything. Nothing else in the
+    tree carries those numbers: the constant that did was deleted with the replay engine, and
+    the test that pinned the constant went with it. So a re-measurement that edits
+    ``docs/SIGNALS.md`` alone leaves two confident sentences quoting the old curve as
+    justification for a floor derived from it -- and the operator reading the why-panel is
+    told a number nobody stands behind any more.
+
+    Checked against the "Ground truth" table rather than against a copy here, so this test
+    cannot drift from the measurement either. It names both source files in the failure, which
+    is the whole of rule 144's remedy: a comment asking the next author to remember does
+    nothing, and a failure message costs one line.
+    """
+    table = (DOCS / "SIGNALS.md").read_text(encoding="utf-8")
+    heading = "## Ground truth: rewatch probability by dormancy"
+    assert heading in table, f"{heading!r} is gone from docs/SIGNALS.md, so nothing anchors this"
+    ground_truth = table.split(heading, 1)[1].split("###", 1)[0]
+
+    offenders = []
+    for rel, percentages in _REWATCH_CURVE_CLAIMS.items():
+        source = (SRC / rel).read_text(encoding="utf-8")
+        for percent in percentages:
+            # `~61%` in the table, "about 61%" or "~61% of films" in the source.
+            if percent not in source:
+                offenders.append(f"{rel} no longer states {percent}")
+            elif percent not in ground_truth:
+                offenders.append(f"docs/SIGNALS.md's ground-truth table no longer states {percent}")
+    assert not offenders, (
+        "the rewatch curve is written in three places and they disagree:\n  "
+        + "\n  ".join(sorted(set(offenders)))
+        + "\n\nThe measurement is docs/SIGNALS.md's 'Ground truth' table. If it was re-measured, "
+        "correct src/reaper/engine/gates.py's MinDormancyGate docstring and "
+        "src/reaper/engine/policy.py's DEFAULT_MOVIE_POLICY signal comment in the same change -- "
+        "both quote it as the reason a shipped default is the number it is."
+    )
+
+
 def test_every_decisions_section_matches_a_locked_decision_row() -> None:
     """``docs/STATUS.md`` and ``docs/DECISIONS.md`` name the same decisions, both ways.
 
@@ -2188,10 +2309,8 @@ def _checked_examples() -> dict[str, list[Path]]:
     the docs do not all illustrate the same lane: the panel's own worked example is the
     dormancy sentence, and the manual's is the popularity one.
     """
-    dormancy = MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1_095))
-    popularity = ServerPopularityGate(
-        GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-    )
+    dormancy = MinDormancyGate(GateConfig(threshold=1_095))
+    popularity = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
     examples = {
         dormancy.evaluate(_worked_example_facts(watchers=0)).detail: [
             REPO / "README.md",
@@ -3187,16 +3306,15 @@ def test_the_select_name_matcher_rejects_what_it_claims_to_reject() -> None:
         ('<select id="tz" value={tz}>', ""),
         # A label, but pointed somewhere else.
         ('<select id="tz" value={tz}>', '<label htmlFor="other">Zone</label>'),
-        # Prose about a name is not a name. Both spellings the old matcher fell for.
-        ("<select value={tz}>", ""),
     ]
     for tag, text in accepted:
         assert _select_is_named(tag, text), f"should count as named: {tag}"
     for tag, text in rejected:
         assert not _select_is_named(tag, text), f"should NOT count as named: {tag}"
 
-    # And the comment stripping, which happens before the matcher ever sees the tag: a comment
-    # mentioning either spelling must not survive into the string that gets searched.
+    # And the comment stripping, which happens before the matcher ever sees the tag: prose about
+    # a name is not a name, so a comment mentioning either spelling must not survive into the
+    # string that gets searched. These are both spellings the old matcher fell for.
     for comment in ("// no aria-label= needed here", "// matches the id= of the row above"):
         stripped = " ".join(
             _without_line_comments(f"<select\n  {comment}\n  value={{tz}}>").split()
@@ -3234,7 +3352,10 @@ _A11Y_RENDERS_NO_SURFACE_OF_ITS_OWN = {
 # own and carries its own audit rather than being covered by the panel that opens it.
 # +1 for `JobsShelfSkip.test.tsx`, which mounts the Jobs panel to drive the shelf row's
 # skipped-scan branch and audits that branch, since the row draws copy no other test renders.
-_EXPECTED_RENDERING_TEST_FILES = 53
+# +1 for `SetupPlexStep.test.tsx`, the wizard's Plex step, which had no test of its own while the
+# settings panel's copy of the same behavior had a careful one (W10-7). It audits its linked
+# state, where the server and connection pickers are.
+_EXPECTED_RENDERING_TEST_FILES = 54
 
 
 def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
@@ -3254,7 +3375,14 @@ def test_every_rendered_surface_is_audited_or_says_why_not() -> None:
     rendering: dict[str, int] = {}
     for path in sorted(FRONTEND_SRC.rglob("*.test.tsx")):
         body = path.read_text(encoding="utf-8")
-        if not re.search(r"\brender\(", body):
+        # Every spelling of "mounts a tree" the suite uses, not just the bare one (rule 147):
+        # testing-library's `render(` and `renderHook(`, the shared `renderWithProviders(` and
+        # `renderHookWithProviders(`, and the file-local `renderPanel(`/`renderQueue(` helpers
+        # that wrap them. `\b` keeps `rerender(` out, which mounts nothing new. This matched
+        # `render(` alone until the provider trees moved onto the shared helper, and 29 of the
+        # 53 files below silently left the walk in one commit -- caught by the count, which is
+        # what it is here for.
+        if not re.search(r"\brender[A-Za-z]*\(", body):
             continue
         rel = path.relative_to(FRONTEND_SRC).as_posix()
         rendering[rel] = len(re.findall(r"\bexpectNoA11yViolations\(", body))
@@ -3627,7 +3755,8 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     the next author to remember.
     """
     from reaper.clock import humanize_days
-    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY, SignalId
+    from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
+    from reaper.engine.signals import SignalId
 
     page = (FRONTEND_SRC / "docs" / "content" / "understandingPolicy.ts").read_text()
     shipped = {
@@ -3725,3 +3854,687 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
         "Add the title/desc/offWarning to JOB_META, or drop the stale entry. The off-warning "
         "states what stops happening when the job is off (rule 55)."
     )
+
+
+# --- the layering CLAUDE.md's *Architecture* section describes ------------------------------
+
+#: The four packages *Architecture* names, top of the stack first. An import that reaches a
+#: package LATER in this tuple runs downward and is fine; one that reaches a package EARLIER
+#: runs upward, and refusing that is the whole of the test below.
+#:
+#: **`clients` above `engine` is the one position the prose does not hand you**, and the live
+#: edge is what fixes it: `clients/plex.py` takes `PlexFile`, `PlexItem`, `parse_guids` and
+#: `to_basename` from `engine/identity.py`, whose own *Why this module is pure* section says it
+#: holds data types and pure functions while the index builders that call Plex and Tautulli live
+#: above it and hand the frozen types in. So that edge is the shape the module was designed for,
+#: and the one that would be wrong is its reverse -- the decision engine reaching for a client,
+#: which is zero today and which this ordering is what holds at zero.
+#:
+#: **Scoped to these four deliberately.** `notify` and `services` are a real runtime two-cycle
+#: (`notify/discord.py` <-> `services/leaving_soon.py`), so a gate that swept every package under
+#: `src/reaper` would be red the day it landed and would get deleted rather than fixed.
+_LAYERS = ("api", "services", "clients", "engine")
+
+#: Every `.py` file under those four, which is the population the walk parses. It moves when a
+#: module is added, split or deleted, and it is pinned because a walk that quietly stopped
+#: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
+_EXPECTED_LAYERED_MODULES = 76
+
+#: Every ordered pair where one of the four imports another, reconciled by hand: all six
+#: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,
+#: so a pair that goes to zero is a change someone declares here rather than one nobody sees.
+_EXPECTED_LAYER_EDGES = frozenset(
+    {
+        ("api", "services"),
+        ("api", "clients"),
+        ("api", "engine"),
+        ("services", "clients"),
+        ("services", "engine"),
+        ("clients", "engine"),
+    }
+)
+
+#: Every cross-package import that does NOT run at module import time, by importing file, target
+#: and how it is deferred. Three, and all three are ones `docs/SIMPLIFICATION_PLAN.md`'s wave 9
+#: proposes to delete -- which is why they are written out rather than counted. A deferred import
+#: is how a layering violation hides from a runtime graph, so a new one is a decision made here
+#: by hand, never a number bumped to make a red test go green.
+_DEFERRED_CROSS_PACKAGE_IMPORTS = frozenset(
+    {
+        ("reaper/api/routes.py", "reaper.services.scan_runner", "function-local"),
+        ("reaper/services/executor.py", "reaper.clients.plex", "TYPE_CHECKING"),
+        ("reaper/services/scan_runner.py", "reaper.engine.fields", "function-local"),
+    }
+)
+
+
+class _Edge(NamedTuple):
+    """One import statement, resolved to the packages it leaves and reaches."""
+
+    #: Repo-relative path of the importing file, posix-spelled.
+    path: str
+    lineno: int
+    #: The importing package and the imported one, both members of `_LAYERS`.
+    src: str
+    dst: str
+    #: The full dotted module the import names.
+    target: str
+    #: "" when the import runs at module import time, else how it is deferred.
+    deferred: str
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    """``if TYPE_CHECKING:`` and ``if typing.TYPE_CHECKING:``, and nothing else.
+
+    ``if not TYPE_CHECKING:`` is deliberately not one of them: it runs, so whatever it imports
+    is a runtime edge however it is spelled.
+    """
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    return isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+
+
+def _deferred_import_lines(tree: ast.Module) -> dict[int, str]:
+    """Line -> how it is deferred, for every import that does not run at module import time.
+
+    Two spellings defer one and the tree uses both: inside a ``def``/``async def``, which runs
+    on the first call, and inside ``if TYPE_CHECKING:``, which never runs. TYPE_CHECKING wins
+    where they nest, since that import has no runtime existence to defer.
+    """
+    deferred: dict[int, str] = {}
+    for scope in ast.walk(tree):
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for node in ast.walk(scope):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    deferred[node.lineno] = "function-local"
+    for scope in ast.walk(tree):
+        if isinstance(scope, ast.If) and _is_type_checking(scope.test):
+            for node in ast.walk(scope):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    deferred[node.lineno] = "TYPE_CHECKING"
+    return deferred
+
+
+def _imported_modules(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
+    """Every dotted module ``node`` reaches, made absolute against its containing ``package``.
+
+    ``import a.b`` and ``import a.b as c`` both name ``a.b``. ``from a.b import c`` names
+    ``a.b``, the ``c`` being a symbol rather than a module in every case but one.
+
+    **The exception is ``from reaper import services``**, where the `from` clause is the
+    parent and the imported NAME is the package. Reading the clause alone made that edge
+    vanish, which is a layering violation the gate reported as clean, and the idiom is live
+    in the tree: `api/logs.py` and `api/settings.py` both spell it, and both are non-edges
+    today only because `logbuffer` and `launcher` are not among the four. One package over
+    and it is silent. So each name is checked too, whenever the clause resolves to `reaper`
+    itself. `from a.b import c` is left alone: `c` there really is a symbol, and a package
+    that deep would already have been named by the clause.
+
+    A relative ``from . import x`` resolves against ``package``: the four hold none today,
+    and one that arrives must not drop out of the walk unseen (rule 147).
+    """
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    base = node.module or ""
+    if node.level:
+        parent = package.rsplit(".", node.level - 1)[0]
+        base = f"{parent}.{node.module}" if node.module else parent
+    if base == "reaper":
+        return [f"reaper.{alias.name}" for alias in node.names]
+    return [base] if base else []
+
+
+def _edges_in(source: str, path: str) -> list[_Edge]:
+    """Every cross-package import in ``source``, for a file at repo-relative ``path``.
+
+    Split out from the walk so the classifier can be run against the import forms the tree
+    does not currently spell as well as the ones it does (rule 147).
+    """
+    parts = Path(path).with_suffix("").parts
+    src = parts[1]
+    # The containing package, which is what a relative import resolves against. The same
+    # expression serves `__init__.py`, where `.` means the package the file *is* rather than
+    # the one above it, because dropping the last part gets there from either side.
+    package = ".".join(parts[:-1])
+    tree = ast.parse(source)
+    deferred = _deferred_import_lines(tree)
+    edges: list[_Edge] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _imported_modules(node, package):
+            bits = target.split(".")
+            if len(bits) < 2 or bits[0] != "reaper" or bits[1] not in _LAYERS:
+                continue
+            if bits[1] == src:
+                continue
+            edges.append(
+                _Edge(path, node.lineno, src, bits[1], target, deferred.get(node.lineno, ""))
+            )
+    return edges
+
+
+@lru_cache(maxsize=1)
+def _layered_modules() -> tuple[tuple[str, str], ...]:
+    """Every module under the four packages, as (repo-relative posix path, source)."""
+    return tuple(
+        (p.relative_to(SRC.parent).as_posix(), p.read_text(encoding="utf-8"))
+        for layer in _LAYERS
+        for p in sorted((SRC / layer).rglob("*.py"))
+    )
+
+
+@lru_cache(maxsize=1)
+def _cross_package_edges() -> tuple[_Edge, ...]:
+    """Every import that leaves one of the four packages for another."""
+    return tuple(edge for path, source in _layered_modules() for edge in _edges_in(source, path))
+
+
+def test_the_four_packages_import_only_downward() -> None:
+    """CLAUDE.md's *Architecture* section describes a stack, and nothing held it to one.
+
+    The claim it makes is a dependency direction: routers sit on services, services compose
+    the decision engine and the HTTP clients, and neither of those two reaches back up. That
+    is true today and was true only because everyone who touched it happened to keep it true.
+    The failure it prevents is not a crash -- Python imports a cycle happily until it does
+    not -- it is `engine/` growing a reason to know about `services/`, at which point the one
+    place a fate is decided stops being separable from the code that acts on it.
+
+    **The pinned module count is the load-bearing half** (rule 145). A direction assertion is
+    a flag: it cannot tell a module that complies from one the walk never opened, so a scan
+    scoped to the wrong root, or one that stopped parsing, reports a clean stack while reading
+    nothing. Same for `_EXPECTED_LAYER_EDGES`, which is an equality for the same reason.
+
+    The plan this landed under expected the test to skip deferred imports to be green on day
+    one. Measured, it does not need to: all three cross-package imports that do not run at
+    module import time run downward, so they are held to the same rule as the rest and pinned
+    by name in the test below.
+    """
+    modules = _layered_modules()
+    assert len(modules) == _EXPECTED_LAYERED_MODULES, (
+        f"expected {_EXPECTED_LAYERED_MODULES} modules under {'/, '.join(_LAYERS)}/, walked "
+        f"{len(modules)}.\n\nIf you ADDED or DELETED one, bump the number. If you did not, the\n"
+        "walk lost part of the tree -- and every assertion below passes on what it cannot see."
+    )
+    rank = {layer: i for i, layer in enumerate(_LAYERS)}
+    upward = [e for e in _cross_package_edges() if rank[e.dst] < rank[e.src]]
+    assert not upward, (
+        "these imports run UP the stack:\n"
+        + "\n".join(f"  {e.path}:{e.lineno}  {e.src} -> {e.dst}  ({e.target})" for e in upward)
+        + "\n\nThe order is "
+        + " -> ".join(_LAYERS)
+        + ", and a package may only import one to its right. If the\n"
+        "import is right and the order is wrong, move _LAYERS and say why -- but read\n"
+        "engine/identity.py's 'Why this module is pure' section first: it is the reason the\n"
+        "decision engine is at the bottom and takes nothing from anywhere."
+    )
+    found = frozenset((e.src, e.dst) for e in _cross_package_edges())
+    assert found == _EXPECTED_LAYER_EDGES, (
+        "the set of package pairs that import each other moved.\n"
+        f"  new:  {sorted(found - _EXPECTED_LAYER_EDGES) or 'none'}\n"
+        f"  gone: {sorted(_EXPECTED_LAYER_EDGES - found) or 'none'}\n\n"
+        "A new pair is a layer boundary being crossed for the first time; one that went away\n"
+        "is a dependency the stack no longer has. Both are worth a sentence in the pull\n"
+        "request, and both are declared here rather than discovered later."
+    )
+
+
+def test_every_deferred_cross_package_import_is_named() -> None:
+    """An import that does not run at module import time is invisible to a runtime graph.
+
+    That is what makes the escape hatch worth pinning rather than counting. `if TYPE_CHECKING:`
+    and a `def`-local import are both legitimate -- they are how a genuine cycle gets broken --
+    and they are also exactly where a layering violation would go to hide, since the module
+    graph a tool draws does not have the edge at all.
+
+    All three of these are ones `docs/SIMPLIFICATION_PLAN.md`'s wave 9 proposes to delete,
+    having measured that none of them breaks the cycle it looks like it was written for. This
+    list is what makes that deletion visible: without it the walk skips the sites, the count
+    never moves, and the gate is blind to the one change it exists to watch.
+    """
+    deferred = frozenset(
+        (e.path, e.target, e.deferred) for e in _cross_package_edges() if e.deferred
+    )
+    assert deferred == _DEFERRED_CROSS_PACKAGE_IMPORTS, (
+        "the deferred cross-package imports moved.\n"
+        f"  new:  {sorted(deferred - _DEFERRED_CROSS_PACKAGE_IMPORTS) or 'none'}\n"
+        f"  gone: {sorted(_DEFERRED_CROSS_PACKAGE_IMPORTS - deferred) or 'none'}\n\n"
+        "One that went away is wave 9 landing, and the entry comes out. A NEW one needs a\n"
+        "reason written down: it is a cross-package dependency that no import graph will show,\n"
+        "so if it is here to break a cycle, name the cycle."
+    )
+
+
+def test_the_import_classifier_reads_every_form_the_tree_spells_an_import() -> None:
+    """The walk above is worth what its parser can resolve, so the forms are run, not assumed.
+
+    Rule 147: a matcher ships with the spellings it accepts AND the ones it rejects. The
+    relative forms are the sharp ones -- the four packages hold none today, so nothing in the
+    tree would notice `from ..engine import x` silently resolving to nothing and dropping out
+    of the walk, which is a layering violation the gate reports as clean.
+    """
+    cases = {
+        "from reaper.engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
+        "from reaper.engine import gates": ("engine", "reaper.engine", ""),
+        "import reaper.clients.plex": ("clients", "reaper.clients.plex", ""),
+        "import reaper.clients.plex as plex": ("clients", "reaper.clients.plex", ""),
+        "from ..engine.gates import Facts": ("engine", "reaper.engine.gates", ""),
+        "from ..engine import gates": ("engine", "reaper.engine", ""),
+        # The `from` clause is the PARENT, so the package is the imported name. Reading the
+        # clause alone dropped this edge entirely, and `from reaper import <name>` is spelled
+        # in two of the four packages already -- for modules outside them, which is the only
+        # reason it was not a live hole.
+        "from reaper import engine": ("engine", "reaper.engine", ""),
+        "from .. import engine": ("engine", "reaper.engine", ""),
+        "from reaper import engine as e": ("engine", "reaper.engine", ""),
+        "if TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "TYPE_CHECKING",
+        ),
+        "if typing.TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "TYPE_CHECKING",
+        ),
+        "def f():\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        "async def f():\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        "class C:\n    def m(self):\n        from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "function-local",
+        ),
+        # It runs, so it is a runtime edge whatever the condition is called.
+        "if not TYPE_CHECKING:\n    from reaper.engine import gates": (
+            "engine",
+            "reaper.engine",
+            "",
+        ),
+        # A class body runs at import time too.
+        "class C:\n    from reaper.engine import gates": ("engine", "reaper.engine", ""),
+    }
+    for source, (dst, target, deferred) in cases.items():
+        edges = _edges_in(source, "reaper/services/thing.py")
+        assert len(edges) == 1, f"expected one edge from {source!r}, got {edges}"
+        assert (edges[0].dst, edges[0].target, edges[0].deferred) == (dst, target, deferred), (
+            f"{source!r} classified as {edges[0].dst}/{edges[0].target}/"
+            f"{edges[0].deferred!r}, expected {dst}/{target}/{deferred!r}"
+        )
+
+    # And the forms that are correctly NOT an edge: the package importing itself, a package
+    # outside the four, and a third-party module whose name merely starts the same way.
+    for source in (
+        "from reaper.services.planner import MediaRef",
+        "from reaper.notify.discord import DiscordNotifier",
+        "from reaper.config import Settings",
+        "import structlog",
+        # The `from reaper import <name>` arm above must not turn a module OUTSIDE the four
+        # into an edge. Both of these are spelled in the tree today.
+        "from reaper import logbuffer",
+        "from reaper import launcher, crypto",
+    ):
+        assert not _edges_in(source, "reaper/services/thing.py"), f"should be no edge: {source}"
+
+
+# --- the HTTP status an InstanceError means is declared once (rule 144) ---------------
+
+#: Every `except` arm in `api/` that catches one of the `services.instances` errors. Pinned
+#: because the ban below can only judge the handlers the walk collected, and a walk that
+#: stopped reading the tree would pass by finding none (rule 145). Six today: five map the
+#: error to a response, and `test_new_instance`'s arm reports it as `map_error` copy beside a
+#: passed connection test instead, which is why the second number is not the first.
+_EXPECTED_INSTANCE_ERROR_HANDLERS = 6
+_EXPECTED_INSTANCE_ERROR_RESPONSES = 5
+
+#: The three the walk recognizes, by the trailing name. Spelled as a suffix set rather than
+#: matched on the dotted path, so `instances.InstanceError` and a bare `InstanceError` are one
+#: case and a future subclass is caught by being named here rather than by being missed.
+_INSTANCE_ERROR_NAMES = frozenset(
+    {"InstanceError", "InstanceNotFoundError", "InstanceConflictError"}
+)
+
+
+def _names_an_instance_error(node: ast.expr | None) -> bool:
+    """Whether an ``except`` clause catches one of them, in any form the tree may spell it.
+
+    Four forms reach here: a bare ``InstanceError``, a dotted ``instances.InstanceError``, a
+    tuple holding either beside an unrelated error (``(IntegrationError,
+    instances.InstanceError)``, live in the tree), and a bare ``except:`` -- which names
+    nothing and so catches these too, but cannot be told apart from any other blanket catch
+    and is banned elsewhere. Reading the trailing name is what makes the first two one case;
+    anchoring on the dotted spelling would have read only the one the tree happens to use
+    (rule 147).
+    """
+    if node is None:
+        return False
+    if isinstance(node, ast.Tuple):
+        return any(_names_an_instance_error(el) for el in node.elts)
+    if isinstance(node, ast.Attribute):
+        return node.attr in _INSTANCE_ERROR_NAMES
+    return isinstance(node, ast.Name) and node.id in _INSTANCE_ERROR_NAMES
+
+
+def _http_status_args(handler: ast.ExceptHandler) -> list[tuple[int, ast.expr]]:
+    """The status argument of every ``HTTPException(...)`` raised inside ``handler``.
+
+    Collected from the whole handler body rather than from its first statement, so an arm that
+    branches before raising is read too, and returned in source order -- ``ast.walk`` is
+    breadth-first, so a raise nested inside an ``if`` comes back after one written below it.
+
+    **Both spellings of the status, because the tree spells it both ways**: positionally, which
+    is what every arm here uses, and as ``status_code=``, which ``api/lists.py`` uses twice. A
+    reader of the positional form alone does not report a keyword-spelled arm as a violation --
+    it drops that arm out of the population entirely, so the count below fails saying an arm
+    stopped answering when the truth is that it answered in a spelling nobody could read
+    (rule 147).
+    """
+    out: list[tuple[int, ast.expr]] = []
+    for node in ast.walk(handler):
+        if not isinstance(node, ast.Raise) or node.exc is None:
+            continue
+        exc = node.exc
+        if not isinstance(exc, ast.Call):
+            continue
+        callee = exc.func
+        name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+        if name != "HTTPException":
+            continue
+        keyword = next((kw.value for kw in exc.keywords if kw.arg == "status_code"), None)
+        status = exc.args[0] if exc.args else keyword
+        if status is not None:
+            out.append((node.lineno, status))
+    return sorted(out, key=lambda pair: pair[0])
+
+
+def _instance_error_handlers() -> list[tuple[str, int, ast.ExceptHandler]]:
+    """Every such arm across ``api/``, as (repo-relative path, line, node)."""
+    found: list[tuple[str, int, ast.ExceptHandler]] = []
+    for path in sorted((SRC / "api").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler) and _names_an_instance_error(node.type):
+                found.append((path.relative_to(REPO).as_posix(), node.lineno, node))
+    return found
+
+
+def test_no_route_hand_writes_the_status_an_instance_error_already_declares() -> None:
+    """The status comes from ``exc.status``, never from a number typed at the ``except``.
+
+    ``services.instances`` declares one status per subclass -- 422 for the base, 404 for
+    not-found, 409 for a name clash -- and each subclass's docstring says why. The five arms
+    that answer these used to hand-write the number instead, and two of them wrote 404 for the
+    base class: correct only because those callees can raise nothing but ``InstanceNotFound``
+    today, so a service that grew a blank-field guard the way ``create_instance`` has would
+    have told the operator the instance did not exist. Reading the declaration is what makes
+    that unable to happen again, and this is what keeps a sixth arm from reintroducing it
+    (rule 144).
+    """
+    handlers = _instance_error_handlers()
+    assert len(handlers) == _EXPECTED_INSTANCE_ERROR_HANDLERS, (
+        f"{len(handlers)} `except InstanceError` arms under api/, expected "
+        f"{_EXPECTED_INSTANCE_ERROR_HANDLERS}. Update the count once the new arm reads "
+        f"`exc.status`: {[(p, n) for p, n, _ in handlers]}"
+    )
+
+    answered = 0
+    for path, _, handler in handlers:
+        for lineno, arg in _http_status_args(handler):
+            answered += 1
+            assert isinstance(arg, ast.Attribute) and arg.attr == "status", (
+                f"{path}:{lineno} raises HTTPException with a hand-written status. "
+                f"Use `exc.status`, which services/instances.py declares per subclass."
+            )
+    assert answered == _EXPECTED_INSTANCE_ERROR_RESPONSES, (
+        f"{answered} of those arms answer with an HTTPException, expected "
+        f"{_EXPECTED_INSTANCE_ERROR_RESPONSES}"
+    )
+
+
+def test_the_instance_error_matcher_reads_every_form_the_clause_can_take() -> None:
+    """The four forms it must collect, and the ones it must leave alone (rule 147).
+
+    The ban above is only as wide as this classifier: an arm it does not collect is absent
+    from the count and from the assertion at once, so the two agree while disagreeing with the
+    tree. Only one of the accepted forms is live in `api/` today.
+    """
+    accepted = (
+        "except InstanceError as exc: pass",
+        "except instances.InstanceError as exc: pass",
+        "except (IntegrationError, instances.InstanceError) as exc: pass",
+        "except (instances.InstanceNotFoundError, ValueError): pass",
+        "except InstanceConflictError: pass",
+        "except services.instances.InstanceError: pass",
+    )
+    for clause in accepted:
+        tree = ast.parse(f"try:\n    pass\n{clause}")
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        assert _names_an_instance_error(handler.type), f"should be collected: {clause}"
+
+    for clause in (
+        "except IntegrationError as exc: pass",
+        "except (ValueError, KeyError): pass",
+        "except restore.RestoreError as exc: pass",
+        # Catches one, and is indistinguishable from any other blanket catch.
+        "except Exception: pass",
+    ):
+        tree = ast.parse(f"try:\n    pass\n{clause}")
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        assert not _names_an_instance_error(handler.type), f"should be left alone: {clause}"
+
+
+def test_the_status_reader_finds_a_hand_written_one_wherever_it_sits() -> None:
+    """``_http_status_args`` reads the raise, not the handler's first line.
+
+    An arm that logs first, or branches before raising, still raises a status -- and a reader
+    that only inspected ``handler.body[0]`` would call both of those clean. Driven against a
+    nested raise, since that is the shape a future arm most plausibly takes, and against
+    ``status_code=``, which is a live spelling in ``api/lists.py`` and reaches the ban only
+    because the reader takes it (rule 147).
+    """
+    nested = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        "    log.warning('x')\n"
+        "    if exc.status:\n"
+        "        raise HTTPException(404, str(exc)) from exc\n"
+        "    raise HTTPException(status_code=409, detail=str(exc)) from exc\n"
+    )
+    handler = next(n for n in ast.walk(nested) if isinstance(n, ast.ExceptHandler))
+    args = _http_status_args(handler)
+    assert len(args) == 2, f"both raises should be read, got {len(args)}"
+    (_, positional), (_, keyword) = args
+    assert isinstance(positional, ast.Constant) and positional.value == 404
+    assert isinstance(keyword, ast.Constant) and keyword.value == 409
+
+    # And the compliant spellings, so the ban's accept side is driven too.
+    clean = ast.parse(
+        "try:\n"
+        "    pass\n"
+        "except InstanceError as exc:\n"
+        "    raise HTTPException(exc.status, str(exc)) from exc\n"
+    )
+    handler = next(n for n in ast.walk(clean) if isinstance(n, ast.ExceptHandler))
+    ((_, arg),) = _http_status_args(handler)
+    assert isinstance(arg, ast.Attribute) and arg.attr == "status"
+
+    # A raise that is not an HTTPException contributes nothing, so a `raise` re-raising the
+    # original cannot be read as an arm that stopped answering.
+    bare = ast.parse("try:\n    pass\nexcept InstanceError:\n    raise\n")
+    handler = next(n for n in ast.walk(bare) if isinstance(n, ast.ExceptHandler))
+    assert _http_status_args(handler) == []
+
+
+# --- the bold-when-active strut, and the sentence enumerating it (rule 144) -----------
+
+_STYLES = FRONTEND_SRC / "styles"
+
+#: Selecting a control bumps its label 500 -> 600, which would widen it and shove its
+#: neighbors sideways. A hidden bold copy of the label reserves the wider width at every
+#: weight. `04-buttons.css` holds the rule for four of the five controls carrying one and a
+#: comment enumerating all five; `02-masthead.css` holds `.view-tab`'s, byte-identical.
+_STRUT_ENUMERATION = _STYLES / "04-buttons.css"
+
+#: Every control that bolds when active or selected. Pinned because both assertions below
+#: are set comparisons, and a walk that stopped reading the tree satisfies a set comparison
+#: by finding nothing on both sides at once (rule 145).
+_EXPECTED_BOLD_WHEN_ACTIVE = 6
+
+#: The one that bolds and deliberately carries no strut, with the reason -- classified in
+#: writing rather than silenced, since the assertion below is an equality and would otherwise
+#: just be relaxed. A vertical list has no sideways neighbor to shove.
+_BOLDS_WITHOUT_A_STRUT = {".filter-mi": "a vertical menu item, so nothing sits beside it"}
+
+#: A selector carrying a chosen state. `.sel` and `.active` are both live spellings here.
+_ACTIVE_STATE = re.compile(r"\.active\b|\.sel\b|\[aria-selected|\[data-active")
+_CSS_RULE = re.compile(r"(?m)^([^{}/@]+?)\{([^{}]*)\}")
+#: The leading class of a selector, which is the control the rule is about.
+_LEAD_CLASS = re.compile(r"^\s*(\.[a-z0-9-]+)")
+
+
+def _css_rules() -> list[tuple[str, int, str, str]]:
+    """Every flat CSS rule under `styles/`, as (file, line, selector, body).
+
+    Flat, so a rule nested in `@media` is read too -- ``10-layout.css`` turns `.view-tab`'s
+    strut back off inside one, and a walk that skipped media queries would not see it.
+    """
+    out: list[tuple[str, int, str, str]] = []
+    for path in sorted(_STYLES.glob("*.css")):
+        text = path.read_text(encoding="utf-8")
+        for match in _CSS_RULE.finditer(text):
+            line = text[: match.start()].count("\n") + 1
+            out.append((path.name, line, " ".join(match.group(1).split()), match.group(2)))
+    return out
+
+
+def _lead_classes(selector: str) -> set[str]:
+    """The control each comma-separated part of ``selector`` is about."""
+    found = set()
+    for part in selector.split(","):
+        lead = _LEAD_CLASS.match(part)
+        if lead:
+            found.add(lead.group(1))
+    return found
+
+
+def _bolding_and_strutted() -> tuple[set[str], set[str]]:
+    """(controls that bold when chosen, controls carrying a strut), by leading class."""
+    bolding: set[str] = set()
+    strutted: set[str] = set()
+    for _, _, selector, body in _css_rules():
+        if "font-weight" in body and _ACTIVE_STATE.search(selector):
+            bolding |= _lead_classes(selector)
+        # `content: none` is the phone bar turning the strut OFF, not a control carrying one.
+        if "[data-label]" in selector and "::after" in selector and "content: none" not in body:
+            strutted |= _lead_classes(selector)
+    return bolding, strutted
+
+
+#: The sentence in ``04-buttons.css`` that makes the claim. The matcher anchors on it rather
+#: than on the comment block, and the block rather than the file, because both wider readings
+#: are satisfied by prose: the file mentions `.seg2` and `.intent-band` in unrelated comments,
+#: and the block's own closing paragraph names `.view-tab` while narrating the drift -- so
+#: deleting the name from the list left the test green (rule 147). Reading the claim itself is
+#: the only scope where a name's presence means what the test says it means.
+_STRUT_CLAIM_OPENER = "Applied to every control that bolds when active"
+
+
+def _strut_comment() -> str:
+    """The enumeration sentence, from its opener to the end of that paragraph."""
+    text = _STRUT_ENUMERATION.read_text(encoding="utf-8")
+    start = text.find(_STRUT_CLAIM_OPENER)
+    assert start != -1, (
+        f"{_STRUT_ENUMERATION.name} no longer contains the sentence enumerating the "
+        f"bold-width strut ({_STRUT_CLAIM_OPENER!r}). Restore it or retarget this gate: "
+        f"without it nothing reconciles the comment against the selectors"
+    )
+    end = text.find("\n\n", start)
+    return text[start : end if end != -1 else len(text)]
+
+
+def test_every_control_that_bolds_when_chosen_reserves_the_bold_width() -> None:
+    """A control that bolds on selection carries the strut, or is classified as not needing it.
+
+    Without one the label widens on click and shoves its neighbors sideways. The exemption is
+    written out rather than the assertion relaxed, so a sixth control that quietly stops
+    reserving its width fails here instead of being covered by a subset check.
+    """
+    bolding, strutted = _bolding_and_strutted()
+    assert len(bolding) == _EXPECTED_BOLD_WHEN_ACTIVE, (
+        f"{len(bolding)} controls bold when chosen, expected {_EXPECTED_BOLD_WHEN_ACTIVE}: "
+        f"{sorted(bolding)}. A new one either gets a `[data-label]::after` strut or a line in "
+        f"_BOLDS_WITHOUT_A_STRUT saying why it does not need one"
+    )
+    assert bolding - strutted == set(_BOLDS_WITHOUT_A_STRUT), (
+        f"unstrutted: {sorted(bolding - strutted)}, exempt: {sorted(_BOLDS_WITHOUT_A_STRUT)}"
+    )
+
+
+def test_the_strut_comment_names_every_control_that_carries_one() -> None:
+    """The enumeration in ``04-buttons.css`` and the selectors are one fact, checked both ways.
+
+    It claimed to cover "every control that bolds when active" and listed four, while five
+    carried a strut: `.view-tab`'s rule lives in ``02-masthead.css``, so the author of either
+    file could read their own and be right. That is rule 144's shape -- one sentence about what
+    the app does, stated where the code it describes is not -- and the direction it failed in
+    is the reassuring one, since a reader checking whether a control needs a strut was told the
+    list was complete.
+
+    Both directions, because they fail differently: a strutted control missing from the
+    sentence is the drift that happened, and a name in the sentence with no rule behind it is a
+    strut someone deleted while leaving the claim standing (rule 7/24).
+    """
+    _, strutted = _bolding_and_strutted()
+    named = {f".{name}" for name in re.findall(r"`\.([a-z0-9-]+)`", _strut_comment())}
+
+    missing = strutted - named
+    assert not missing, (
+        f"{_STRUT_ENUMERATION.name} enumerates the controls carrying the bold-width strut and "
+        f"does not name {sorted(missing)}. Add them to the comment above "
+        f"`.tab[data-label]::after`, or the next author reads a list that says it is complete"
+    )
+    claimed = named - set(_BOLDS_WITHOUT_A_STRUT)
+    assert claimed <= strutted, (
+        f"{_STRUT_ENUMERATION.name} names {sorted(claimed - strutted)} as carrying a strut, and "
+        f"no `[data-label]::after` rule does"
+    )
+
+
+def test_the_css_walk_reads_the_forms_the_stylesheets_spell(tmp_path: Path) -> None:
+    """The two assertions above are only as wide as this walk (rule 147).
+
+    Driven against the spellings `styles/` uses -- a grouped selector, a rule nested in a media
+    query, a state class other than `.active` -- and against the one that must NOT count, the
+    phone bar's `content: none`, which turns a strut off rather than declaring one. A walk that
+    counted that would report `.view-tab` strutted on a build where it is not.
+    """
+    assert _lead_classes(".tab[data-label]::after, .seg[data-label]::after") == {".tab", ".seg"}
+    assert _lead_classes(".view-tab.active:hover:not(:disabled)") == {".view-tab"}
+    assert _lead_classes(".filter-mi.sel") == {".filter-mi"}
+    assert _lead_classes("  .settings-tab[data-label]::after") == {".settings-tab"}
+
+    scratch = tmp_path / "styles"
+    scratch.mkdir()
+    (scratch / "x.css").write_text(
+        ".a.active {\n  font-weight: var(--weight-semi);\n}\n"
+        "@media (max-width: 40rem) {\n"
+        "  .a[data-label]::after {\n    content: none;\n  }\n}\n"
+        ".b[data-label]::after {\n  content: attr(data-label);\n}\n"
+    )
+    global _STYLES
+    real, _STYLES = _STYLES, scratch
+    try:
+        bolding, strutted = _bolding_and_strutted()
+    finally:
+        _STYLES = real
+    assert bolding == {".a"}, bolding
+    # `.a`'s only `[data-label]` rule is the media query switching it off, so it is not strutted.
+    assert strutted == {".b"}, strutted

@@ -284,8 +284,7 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     stops firing and the signal takes full pressure at full coverage on a count the true
     window could not establish. Measured on a 180-day mirror against a count taken over the
     real 365-day window: 0.00/20 at coverage 0.00 when passed 365, and 20.00/20 at coverage
-    1.00 when passed 180 or 90. ``score()``'s docstring names the same hazard, and
-    ``backtest.run`` was a live instance of it.
+    1.00 when passed 180 or 90. ``score()``'s docstring names the same hazard.
 
     The span is named in the withheld arm too, where the shortfall clause that follows it
     says why it could not be checked.

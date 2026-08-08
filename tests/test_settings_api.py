@@ -13,8 +13,8 @@ properties, each pinned here:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, NoReturn
 
 import httpx
 import httpx2
@@ -26,34 +26,24 @@ from sqlalchemy.orm import Session
 
 from reaper.api.settings import PlexUpdateIn, update_plex_settings
 from reaper.clients.base import IntegrationError
+from reaper.clients.plex import PlexClient, PlexError
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import InstanceKind, PlexServer, Snapshot
-from reaper.main import create_app
 from reaper.services import instances as instances_service
 
-from ._auth import TEST_PASSWORD, clear_admin_password, login
+from ._auth import TEST_PASSWORD, clear_admin_password
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 
 def _make(tmp_path: Path, **overrides: object) -> Settings:
-    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[arg-type]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()
     return settings
-
-
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    # Startup seeding and the catch-up network fetch are stubbed for every test by the
-    # autouse ``_hermetic`` fixture in conftest.py, so booting the app here is safe.
-    settings = _make(tmp_path)
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)  # seeds a local admin whose password is TEST_PASSWORD
-        yield c
 
 
 def _add_snapshot(client: TestClient) -> None:
@@ -226,6 +216,39 @@ class TestInstancesCrud:
 
         missing = client.put("/api/settings/instances/9999", json={"name": "Whatever"})
         assert missing.status_code == 404  # a genuinely absent instance still 404s
+
+    def test_every_route_answers_the_status_the_error_class_declares(
+        self, client: TestClient
+    ) -> None:
+        """The three reads that had no status test, on both arms each.
+
+        ``services.instances`` declares one status per subclass and the routes read it off the
+        exception, so the mapping is one fact -- but a fact stated once is still worth driving,
+        because nothing else here would notice the declaration itself going wrong. A missing
+        instance is 404 on all three; a real instance of the wrong kind is 422, since the
+        request named something that exists and asked it for a thing that kind does not have.
+        Neither arm reaches the network: both refuse before a client is constructed.
+        """
+        tautulli = client.post(
+            "/api/settings/instances",
+            json={"kind": "tautulli", "name": "T", "base_url": "http://t.local", "api_key": "k"},
+        )
+        assert tautulli.status_code == 200, tautulli.text
+        wrong_kind = tautulli.json()["id"]
+
+        for path in (
+            "/api/settings/instances/9999/root-folders",
+            "/api/settings/instances/9999/seerr-services",
+        ):
+            assert client.get(path).status_code == 404, path
+        assert client.post("/api/settings/instances/9999/test").status_code == 404
+
+        for path in (
+            f"/api/settings/instances/{wrong_kind}/root-folders",
+            f"/api/settings/instances/{wrong_kind}/seerr-services",
+        ):
+            response = client.get(path)
+            assert response.status_code == 422, f"{path}: {response.text}"
 
     def test_updating_without_a_key_keeps_the_stored_one(self, client: TestClient) -> None:
         created = client.post(
@@ -553,14 +576,15 @@ class TestTheStoredTestResultDescribesWhatWasTested:
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
 
     @staticmethod
-    def _row(client: TestClient, instance_id: int) -> dict[str, object]:
+    def _row(client: TestClient, instance_id: int) -> dict[str, Any]:
         listed = client.get("/api/settings/instances").json()
-        return next(row for row in listed if row["id"] == instance_id)  # type: ignore[no-any-return]
+        row: dict[str, Any] = next(r for r in listed if r["id"] == instance_id)
+        return row
 
     def _saved_and_tested(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> dict[str, object]:
-        made = client.post(
+    ) -> dict[str, Any]:
+        made: dict[str, Any] = client.post(
             "/api/settings/instances",
             json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
         ).json()
@@ -1209,6 +1233,23 @@ class TestPlexLinkChoice:
     API contract the PlexPanel picker consumes. The login-time twin of this flow is
     pinned in test_sessions; this pins the in-app route."""
 
+    @pytest.fixture(autouse=True)
+    def _plex_server_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A finished link fires a library autosync, and that one goes over plexapi.
+
+        `httpx2_mock` covers httpx. plexapi speaks `requests`, so nothing here mocked it and
+        seven of these tests really resolved the connection host on every run -- swallowed by
+        `_sync_libraries_after_link`, which catches every exception because its docstring
+        promises a sign-in never strands on a failed library refresh. The outcome pinned below
+        is the one those runs already had, minus the name lookup: `PlexClient._connect` maps
+        any failure to `PlexError`, which is what an unreachable server produced.
+        """
+
+        async def _unreachable(_self: PlexClient) -> NoReturn:
+            raise PlexError("no Plex server in these tests")
+
+        monkeypatch.setattr(PlexClient, "_connect", _unreachable)
+
     def _mock_plextv(self, httpx2_mock: respx.Router) -> None:
         httpx2_mock.post("https://plex.tv/api/v2/pins").mock(
             return_value=httpx.Response(201, json={"id": 42, "code": "ABCD"})
@@ -1265,7 +1306,9 @@ class TestPlexLinkChoice:
         from reaper.services import plex_link
 
         captured: dict[str, object] = {}
-        real_probe = plex_link.probe_connection
+        # Through `plex_link` for the same reason the spy is installed there: the module
+        # under test reads this name, and rebinding any other copy patches nothing.
+        real_probe = plex_link.probe_connection  # type: ignore[attr-defined]
 
         async def spying_probe(
             connection: object, token: str, *, timeout: float = 5.0, verify: bool = True

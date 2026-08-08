@@ -104,12 +104,16 @@ read it starts, so a synchronous query after it asserts on markup that has not a
 
 **141. A fixture that pins the same value as the production default cannot prove the value was
 passed.** An omission and a correct pass produce identical output, so the assertion holds either
-way: `backtest.run` used `score()`'s 365-day default while every fixture pinned that same 365,
-behind 2,578 green tests. So **choose fixture values that differ from the default, and sweep more
-than one.** One non-default value proves the argument reaches the callee; a sweep proves the
-*right* one does, and catches a caller passing a constant. Exclude the default from a sweep
-deliberately and say why, or it silently
-contributes a case that cannot fail. Read the captured value with `.get` and assert on the value,
+way: a caller used `score()`'s 365-day default while every fixture pinned that same 365,
+behind 2,578 green tests, and the omission was found by reading the caller rather than by any
+test. So **choose fixture values that differ from the default, and sweep more than one.** One
+non-default value proves the argument reaches the callee; a sweep proves the *right* one does,
+and catches a caller passing a constant. Exclude the default from a sweep deliberately and say
+why, or it silently contributes a case that cannot fail. **A sweep that lives on the wrong lane
+is the same hole** — that 365 sat on a lab engine, and deleting it left the live scan with no
+non-default window under test at all until one was written
+(`test_scan_pipeline.py::TestTheWindowScoredAgainstIsThePolicysOwn`).
+Read the captured value with `.get` and assert on the value,
 never `kwargs["name"]`: an omission there raises `KeyError`, failing for the wrong reason and
 pinning *that* an argument was passed rather than *which* (rule 118, for defaulted arguments).
 

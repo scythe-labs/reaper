@@ -6,18 +6,19 @@
 // bar. Both of those are visual, the disable drops focus to `<body>`, and a `role="progressbar"`
 // announces nothing by itself -- so for an operation that runs for minutes the next thing an
 // operator using a screen reader heard was the finish (#177).
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Snapshot } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { ScanRow } from "./ScanBar";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { scanStatus: vi.fn(), startScan: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 
@@ -55,24 +56,24 @@ const DEGRADED: Snapshot = {
   unknown_size_items: 0,
 };
 
-function rowTree(snapshot: Snapshot | undefined, client: QueryClient) {
+/** The row alone. `rerender` re-wraps it in the providers `renderRow` mounted it under, so a
+ *  re-render keeps reading the same cache rather than being handed a fresh one. */
+function rowTree(snapshot: Snapshot | undefined) {
   return (
-    <QueryClientProvider client={client}>
-      <ScanRow
-        snapshot={snapshot}
-        scanJob={undefined}
-        title="Library scan"
-        desc="Reads your library and scores it."
-        scheduleText="Every day at 4am"
-        onEdit={() => {}}
-        canEdit
-      />
-    </QueryClientProvider>
+    <ScanRow
+      snapshot={snapshot}
+      scanJob={undefined}
+      title="Library scan"
+      desc="Reads your library and scores it."
+      scheduleText="Every day at 4am"
+      onEdit={() => {}}
+      canEdit
+    />
   );
 }
 
 function renderRow(snapshot?: Snapshot, client: QueryClient = testQueryClient()) {
-  return render(rowTree(snapshot, client));
+  return renderWithProviders(rowTree(snapshot), { client });
 }
 
 describe("starting a library scan", () => {
@@ -173,7 +174,7 @@ describe("starting a library scan", () => {
 
     const fresh = { ...DEGRADED, id: 8, item_count: 11, degraded_reason: "Radarr didn't answer." };
     client.setQueryData(["snapshot"], fresh);
-    rerender(rowTree(fresh, client));
+    rerender(rowTree(fresh));
 
     expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
     expect(screen.getByText(/radarr didn't answer/i)).toBeInTheDocument();

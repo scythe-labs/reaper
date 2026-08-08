@@ -121,7 +121,7 @@ and it is the one that has to be green before a pull request can merge. Seeing j
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy src/reaper                 # src only; tests are not type-checked
+uv run mypy src/reaper tests/          # both trees; pass src/reaper, or tests/ checks nothing
 uv run pytest -n auto                  # what CI runs; ~80s on 8 cores, minutes on one
 uv run alembic upgrade head            # then `alembic check` for model/migration drift
 

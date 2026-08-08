@@ -20,9 +20,11 @@ function harness() {
     invalidated.push(JSON.stringify(filters?.queryKey));
     return Promise.resolve();
   });
-  // `Announcer` inside the wrapper because `announce()` returns early when no region is
-  // listening -- without it the hook's sentence is dropped and a test about it passes against
-  // silence. The app mounts it above every route, so this is the shipped arrangement.
+  // The one provider tree still built by hand, and `renderHookWithProviders` is why it stays
+  // one: `Announcer` has to be a SIBLING above the hook, because `announce()` returns early
+  // when no region is listening -- without it the hook's sentence is dropped and a test about
+  // it passes against silence. The app mounts it above every route, so this is the shipped
+  // arrangement, and the shared helper wraps the hook alone.
   const wrapper = ({ children }: { children: ReactNode }) =>
     createElement(QueryClientProvider, { client }, createElement(Announcer), children);
   const view = renderHook(

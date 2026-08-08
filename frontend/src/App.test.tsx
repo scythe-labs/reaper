@@ -6,13 +6,13 @@
 // wrong one). UserMenu's sign-out failure notice has to survive the focus move that
 // disabling its own button causes. SectionNav keeps its section names when the phone bar drops
 // to icons, and its armed mark must not read as "off" when the safety state is unreadable.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, DEFAULT_UPDATE, IDLE_SCAN } from "./test/apiFixtures";
 import { expectNoA11yViolations } from "./test/a11y";
 import { testQueryClient } from "./test/queryClient";
+import { renderWithProviders } from "./test/renderWithProviders";
 import { App, ReapBar, ScanFreshness, SectionNav, UserMenu, WhyPanelFallback } from "./App";
 import { ScanLine } from "./components/ScanLine";
 import { announce, Announcer } from "./announce";
@@ -25,26 +25,8 @@ import {
   type Snapshot,
 } from "./api";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    logout: vi.fn(),
-    update: vi.fn(),
-    safety: vi.fn(),
-    me: vi.fn(),
-    authContext: vi.fn(),
-    reapStatus: vi.fn(),
-    stopRun: vi.fn(),
-    setupStatus: vi.fn(),
-    scanStatus: vi.fn(),
-    latestSnapshot: vi.fn(),
-    fairness: vi.fn(),
-    candidates: vi.fn(),
-    general: vi.fn(),
-    profile: vi.fn(),
-    reapBreakdown: vi.fn(),
-    person: vi.fn(),
-    candidate: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("./test/apiMock")).makeApiMock(),
 }));
 
 // Partial mock: ApiError and the types stay real, because ScanFreshness branches on a real
@@ -191,12 +173,7 @@ const user: AuthUser = {
 };
 
 function renderMenu(onGoToAbout: () => void = () => {}) {
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <UserMenu user={user} onGoToAbout={onGoToAbout} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<UserMenu user={user} onGoToAbout={onGoToAbout} />);
 }
 
 describe("UserMenu", () => {
@@ -275,11 +252,7 @@ const SAFETY: Safety = {
 };
 
 function renderNav(view: "review" | "reap" = "review") {
-  return render(
-    <QueryClientProvider client={testQueryClient()}>
-      <SectionNav view={view} onChange={() => {}} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<SectionNav view={view} onChange={() => {}} />);
 }
 
 /** The section nav is the one control that exists at every width, and under 900px it is drawn
@@ -389,11 +362,7 @@ describe("the announcer's mount point", () => {
 
   it("mounts two polite regions while the gate is still deciding", async () => {
     apiMock.me.mockReturnValue(new Promise(() => {}));
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        <App />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<App />);
 
     await screen.findByText("Loading Reaper…");
     expect(regions()).toHaveLength(2);
@@ -406,11 +375,7 @@ describe("the announcer's mount point", () => {
 
   it("keeps them mounted on the signed-out branch", async () => {
     apiMock.me.mockRejectedValue(new ApiError(401, "nope"));
-    render(
-      <QueryClientProvider client={testQueryClient()}>
-        <App />
-      </QueryClientProvider>,
-    );
+    renderWithProviders(<App />);
 
     await waitFor(() => expect(regions()).toHaveLength(2));
     act(() => announce("Settings saved."));
@@ -448,11 +413,12 @@ describe("the app-wide reap bar", () => {
   function renderBar() {
     const queryClient = testQueryClient();
     queryClient.setQueryData(["reapStatus"], runningAt(1, 4));
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ReapBar onView={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
     return queryClient;
   }
@@ -537,11 +503,12 @@ describe("the app-wide reap bar", () => {
     };
     apiMock.reapStatus.mockResolvedValue(finished);
     queryClient.setQueryData(["reapStatus"], finished);
-    render(
-      <QueryClientProvider client={queryClient}>
+    renderWithProviders(
+      <>
         <Announcer />
         <ReapBar onView={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: queryClient },
     );
 
     await screen.findByText(/Reaped\./);
@@ -581,11 +548,7 @@ describe("the authenticated app's heading outline", () => {
     apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
     apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
     apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: true, will_reap: 0, condemned_by: [] });
-    return render(
-      <QueryClientProvider client={testQueryClient()}>
-        <App />
-      </QueryClientProvider>,
-    );
+    return renderWithProviders(<App />);
   }
 
   it("opens with an h1 naming the app", async () => {

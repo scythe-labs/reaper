@@ -7,7 +7,6 @@
 //      looked and it was fine", and a row with nothing recorded must never be drawn as if
 //      it argued for keeping the file.
 //   3. The rules that did not apply are tucked away, never dropped.
-import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +21,7 @@ import { Announcer } from "../announce";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { CSS } from "../test/stylesheet";
 import { Synopsis, WhyPanel, allocateShares } from "./WhyPanel";
 
@@ -150,12 +150,9 @@ function detail(
 }
 
 function show(item: CandidateDetail) {
-  const client = seedSettings(testQueryClient());
-  return render(
-    <QueryClientProvider client={client}>
-      <WhyPanel item={item} onClose={() => {}} />
-    </QueryClientProvider>,
-  );
+  return renderWithProviders(<WhyPanel item={item} onClose={() => {}} />, {
+    client: seedSettings(testQueryClient()),
+  });
 }
 
 /** The group box a heading sits in, so a row's points can be read in context. */
@@ -1211,11 +1208,12 @@ describe("the watch-record escape", () => {
    *  test would make `findByText` ambiguous in the one above that reads it off the page. Here
    *  the region is read as a region, which is the idiom the other announcement tests use. */
   function showSpeaking(item: CandidateDetail) {
-    return render(
-      <QueryClientProvider client={seedSettings(testQueryClient())}>
+    return renderWithProviders(
+      <>
         <Announcer />
         <WhyPanel item={item} onClose={() => {}} />
-      </QueryClientProvider>,
+      </>,
+      { client: seedSettings(testQueryClient()) },
     );
   }
 

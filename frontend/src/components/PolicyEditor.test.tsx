@@ -5,38 +5,18 @@
 // to fix them: a policy that could not be read showed no way to replace it, and a preset
 // click left the removal lane over budget with Save disabled. Each test here fails if
 // either fix is reverted.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import type { WarningAnchor, WarningAnchorId, WarningGuard } from "./PolicyEditor";
 import { PolicyEditor, REPAIR_NOTICES, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    policy: vi.fn(),
-    probePolicy: vi.fn(),
-    profile: vi.fn(),
-    safety: vi.fn(),
-    scanStatus: vi.fn(),
-    seasonShape: vi.fn(),
-    simulate: vi.fn(),
-    validatePolicy: vi.fn(),
-    vocabulary: vi.fn(),
-    vocabularyValues: vi.fn(),
-    // Read by the keep-rules composer's list picker, but only while the protect vocabulary
-    // offers `on_list`; answered anyway so a fixture that adds the field cannot render a
-    // failed read (rule 135).
-    listConfigs: vi.fn(),
-    savePolicy: vi.fn(),
-    saveProfile: vi.fn(),
-    setDeletion: vi.fn(),
-    startScan: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => {
@@ -49,7 +29,7 @@ vi.mock("../api", async (importOriginal) => {
 // an unmocked one would sit silent until the first test that waits long enough. Seeded HERE
 // rather than inside `renderEditor`, which runs after a test's own mock and would overwrite it.
 beforeEach(() => {
-  apiMock.probePolicy.mockResolvedValue({ points: 0.8, detail: "a value" });
+  apiMock.probePolicy.mockResolvedValue({ points: 0.8 });
 });
 
 function body(custom: CustomCondemn[] = []): PolicyBody {
@@ -180,13 +160,10 @@ function renderEditor(
     examples_newly_condemned: [],
     protected_by: [],
   });
-  const queryClient = testQueryClient();
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <DocsProvider>
-        <PolicyEditor />
-      </DocsProvider>
-    </QueryClientProvider>,
+  return renderWithProviders(
+    <DocsProvider>
+      <PolicyEditor />
+    </DocsProvider>,
   );
 }
 
@@ -1587,7 +1564,7 @@ describe("where a signal starts earning", () => {
 // only ever shows what the server said, and says so plainly when it has not said it yet.
 describe("trying a value against a signal's range", () => {
   it("shows what the engine answered, not a number worked out here", async () => {
-    apiMock.probePolicy.mockResolvedValue({ points: 3.5, detail: "IMDb 3.0" });
+    apiMock.probePolicy.mockResolvedValue({ points: 3.5 });
     renderEditor({ body: body() });
 
     await screen.findByText("How low it's rated");
@@ -1647,7 +1624,7 @@ describe("what the dormancy ramp can actually reach", () => {
   it("describes a title the history caps, when the history is the shorter of the two", async () => {
     // 200 days of history against a far end of 365: nothing can present more than 200, so
     // that is both a moving example and the ceiling the mirror imposes.
-    apiMock.probePolicy.mockResolvedValue({ points: 38.4, detail: "not watched in 6 months" });
+    apiMock.probePolicy.mockResolvedValue({ points: 38.4 });
     renderEditor({ body: body(), history_reach_days: 200 });
 
     await waitFor(() =>

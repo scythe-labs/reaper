@@ -30,7 +30,7 @@ GB = 1024**3
 
 @pytest.fixture
 async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -107,10 +107,10 @@ class TestService:
         assert len(spared) == 1
         assert spared[0].note == "two"
 
-    async def test_unspare_removes_and_reports(self, session: AsyncSession) -> None:
+    async def test_remove_override_removes_a_spare_and_reports(self, session: AsyncSession) -> None:
         await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note=None)
-        assert await whitelist.unspare(session, media_key="radarr:1:7") is True
-        assert await whitelist.unspare(session, media_key="radarr:1:7") is False
+        assert await whitelist.remove_override(session, media_key="radarr:1:7") is True
+        assert await whitelist.remove_override(session, media_key="radarr:1:7") is False
         assert await whitelist.overrides(session) == {}
 
 
@@ -132,8 +132,8 @@ class TestOverrideService:
             session, media_key="radarr:1:7", title="Kept", decision="reap", note=None
         )
         assert await whitelist.overrides(session) == {"radarr:1:7": "reap"}
-        # is_spared reflects the decision, not mere presence.
-        assert await whitelist.is_spared(session, "radarr:1:7") is False
+        # The decision is what is read back, not mere presence in the table.
+        assert await whitelist.override_for(session, "radarr:1:7") == "reap"
 
     async def test_remove_override_clears_either_decision(self, session: AsyncSession) -> None:
         await whitelist.set_override(
@@ -211,7 +211,10 @@ class TestTimedSpare:
         t_show = utcnow() + timedelta(days=10)
         t_season = utcnow() + timedelta(days=3)
         decisions = {"sonarr:1:88": "spare", "sonarr:1:88:3": "spare"}
-        expiries = {"sonarr:1:88": t_show, "sonarr:1:88:3": t_season}
+        expiries: dict[str, datetime | None] = {
+            "sonarr:1:88": t_show,
+            "sonarr:1:88:3": t_season,
+        }
         # A season's own spare wins over its show's, expiry and all.
         assert whitelist.effective_spare_expiry("sonarr:1:88:3", decisions, expiries) == t_season
         # A season with no spare of its own inherits the show spare's expiry.

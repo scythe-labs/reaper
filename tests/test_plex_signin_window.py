@@ -17,18 +17,15 @@ is pinned by ``test_repo_hygiene``, which also checks the two agree on the path.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 import respx
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
 
 from reaper.api.schemas import PLEX_FORWARD_PATH, PlexStartIn
 from reaper.config import Settings
-from reaper.db.base import Base
 from reaper.main import create_app
 
 from ._auth import login
@@ -82,15 +79,6 @@ class TestTheOriginTheBrowserNames:
     def test_anything_that_is_not_a_bare_http_origin_is_refused(self, value: str) -> None:
         with pytest.raises(ValueError):
             PlexStartIn(forward_origin=value)
-
-
-@pytest.fixture
-def settings(tmp_path: Path) -> Settings:
-    made = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(made.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    return made
 
 
 @pytest.fixture

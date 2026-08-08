@@ -16,26 +16,23 @@ under Settings -> Plex. The rules pinned here:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
-from reaper.main import create_app
 from reaper.services import app_settings, leaving_soon
-from tests._auth import login
 
 
 @pytest.fixture
 async def factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")
     engine = create_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -106,19 +103,6 @@ class TestTheLibraryStore:
         assert [lib["key"] for lib in enabled] == [2]
 
 
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
-    """A logged-in client over an EMPTY database: no Plex server, no snapshot. Exactly a
-    fresh install, which is the state the defaults are promised for."""
-    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-    engine = sa_create_engine(settings.sync_database_url)
-    Base.metadata.create_all(engine)
-    engine.dispose()
-    with TestClient(create_app(settings)) as c:
-        login(c, settings)
-        yield c
-
-
 class TestTheSettingsRoutes:
     def test_defaults_read_off_and_never_updated(self, client: TestClient) -> None:
         body = client.get("/api/settings/leaving-soon").json()
@@ -181,7 +165,7 @@ class TestTheSettingsRoutes:
 
         # Seed a stored list the way a sync would, then choose through the API. (The
         # sync route itself needs a live server; the merge rule is a client concern.)
-        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings = Settings(data_dir=tmp_path, secret_key="k")
         engine = create_engine(settings)
         factory = create_session_factory(engine)
         async with factory() as session:

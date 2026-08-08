@@ -68,7 +68,7 @@ from reaper.engine.signals import (
     SignalId,
     score,
 )
-from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
+from reaper.engine.verdict import decide_verdict
 from reaper.ratings import Rating, RatingSource, from_radarr, merge_by_source
 from reaper.services import (
     history_sync,
@@ -199,7 +199,6 @@ class RawItem:
     tmdb_id: int | None
     plex_rating_key: int | None
     added_at: datetime | None
-    has_file: bool
     # Display fields, carried onto the candidate so the review queue can show a poster and
     # a blurb without a second data source. None of them influence the verdict.
     year: int | None = None
@@ -312,8 +311,8 @@ def build_facts(
         # input that still looks readable when the plays behind it are not.
         dormancy = Unknown(reason=watch_blind_reason, source="tautulli")
     else:
-        # Through the one shared derivation (engine/dormancy.py), so the season scan, the
-        # backtest and the prior calibration all measure this the same way (rule 3) -- and
+        # Through the one shared derivation (engine/dormancy.py), so the season scan
+        # measures this the same way (rule 3) -- and
         # since #272 the *thaw* is shared too, so a missing arrival date resolves identically
         # on both lanes. A play alone is enough: `reference_instant` measures from it, and
         # only an item with neither a play nor an arrival date comes back with nothing to
@@ -1401,7 +1400,7 @@ def judge_facts(
         item_score=item_score,
         score=score_value,
         coverage_bp=coverage_bp,
-        verdict=_verdict(evaluation, score_value, coverage_bp, policy, override=None),
+        verdict=_verdict(evaluation, score_value, coverage_bp, policy),
         # One explanation, two uses: the frozen record stored on the row, and the same string
         # the effective-reap fate is read back from -- so the scan and every read-time
         # consumer replay the identical evidence.
@@ -1578,8 +1577,6 @@ def _verdict(
     score_value: int,
     coverage_bp: int,
     policy: PolicyBody,
-    *,
-    override: str | None = None,
 ) -> str:
     """The scan's adapter onto the ONE decision function, ``engine.verdict``.
 
@@ -1589,29 +1586,20 @@ def _verdict(
     answer the same question must answer it the same way, and the cheapest way to
     guarantee that is to give them the same function and the same inputs.
 
-    A manual ``"reap"`` override forces CONDEMN -- the owner looked and decided -- but never
-    past a hard safety gate (streaming now; also ``unmanaged``, whose gate is retired, so only
-    a stored explanation can still carry one). A protection that could not be *checked* no
-    longer holds it either: a block means Reaper could not answer a question, and the owner
-    reading the panel that names which check came back empty is better placed to answer it
-    than the scan was. The block still does its real job one line down, forcing ABSTAIN so
-    nothing automatic touches the item. A ``"spare"`` override arrives as an extra PROTECT
-    result and so is already handled by ``evaluation.protected``.
+    **No hand override reaches here**, so this passes none of ``decide_verdict``'s reap
+    arguments. A ``"spare"`` arrives as an extra PROTECT result and is already counted by
+    ``evaluation.protected``; a ``"reap"`` is applied after the freeze, by ``effective_fate``
+    off the stored explanation, and re-decided later by
+    ``condemned.reap_override_verdict_decoded`` -- which is the one function that answers what
+    a hand reap may overrule.
     """
     return decide_verdict(
         protected=evaluation.protected,
         blocked=evaluation.blocked,
-        # No gate block holds a hand reap, so there is nothing to compute from the results
-        # here -- the structural stops ride on ``safety_protected`` below, and the scan has
-        # no bad-match or unreadable-explanation case (those exist only on the stored-row
-        # path, ``condemned.reap_override_verdict_decoded``).
-        blocked_holds_reap=False,
-        safety_protected=any(r.fired and r.gate in STRUCTURAL_GATES for r in evaluation.results),
         score=score_value,
         coverage_bp=coverage_bp,
         condemn_at=policy.condemn_at,
         coverage_floor_bp=policy.coverage_floor_bp,
-        override=override,
     )
 
 
@@ -1874,17 +1862,6 @@ async def record_first_flagged_bulk(
 # ---------------------------------------------------------------------------
 
 
-def _as_year(value: Any) -> int | None:
-    """A Plex row's release year, or ``None`` -- used only to disambiguate duplicate titles.
-
-    Mirrors ``season_scan._as_year`` so the movie join reads years exactly as the show join
-    does (Tautulli returns them as ints or numeric strings).
-    """
-    if isinstance(value, int | str) and str(value).isdigit():
-        return int(value)
-    return None
-
-
 async def build_movie_index(
     tautulli: TautulliClient,
     plex: PlexClient | None,
@@ -2142,9 +2119,9 @@ def _raw_items(
                 media_key=f"radarr:{instance_id}:{movie['id']}",
                 title=str(movie.get("title") or ""),
                 media_type="movie",
-                # `or 0` here would turn a partial payload into a 0-byte file. Radarr
-                # says it holds a file (has_file below), so a missing size means we
-                # could not read it, not that there is nothing to read.
+                # `or 0` here would turn a partial payload into a 0-byte file. Every movie
+                # reaching this loop cleared the `hasFile` filter above, so a missing size
+                # means we could not read it, not that there is nothing to read.
                 size_bytes=_reported_size(movie),
                 imdb_id=movie.get("imdbId") or None,
                 tmdb_id=tmdb_id,
@@ -2152,7 +2129,6 @@ def _raw_items(
                 # dormancy floor exactly as before.
                 plex_rating_key=resolution.rating_key,
                 added_at=matched.added_at if matched is not None else None,
-                has_file=True,
                 year=int(movie["year"]) if movie.get("year") else None,
                 summary=_summary(movie.get("overview")),
                 # poster_url is derived from the Plex rating key at read time (api/poster.py),

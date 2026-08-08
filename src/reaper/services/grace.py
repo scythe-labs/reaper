@@ -74,14 +74,10 @@ class GraceReport:
     """The countdown has run out. **No more deletable than** ``in_grace`` -- the planner
     takes both -- so the split says who has had their notice, not what has unlocked."""
     total_bytes_in_grace: int
-    total_bytes_ready: int
-    unknown_size_in_grace: int = 0
-    """How many of the above could not be measured. The totals are sums of what IS known,
-    with this count carried beside them rather than folded in as zeros. One unmeasured
-    item in a sum makes the total quietly low; a total plus a count says the same thing
-    honestly, and both surfaces hide the count at zero."""
+    """A sum of what IS known. An item the *arr could not size is left out rather than folded
+    in as zero, so a total sitting beside an unmeasured item is low by that item."""
 
-    unknown_size_ready: int = 0
+    total_bytes_ready: int
 
 
 async def grace_report(
@@ -162,6 +158,4 @@ async def grace_report(
         ready=ready,
         total_bytes_in_grace=sum(i.size_bytes for i in in_grace if i.size_bytes is not None),
         total_bytes_ready=sum(i.size_bytes for i in ready if i.size_bytes is not None),
-        unknown_size_in_grace=sum(1 for i in in_grace if i.size_bytes is None),
-        unknown_size_ready=sum(1 for i in ready if i.size_bytes is None),
     )

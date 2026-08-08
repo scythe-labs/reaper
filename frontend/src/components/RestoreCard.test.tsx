@@ -2,29 +2,18 @@
 // The restore card takes the admin password, so it holds one only while it is being used.
 // The card is local to Settings.tsx, so these drive it the way an operator reaches it: the
 // Backup panel, a staged file, then the password box that appears with the summary.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectNoA11yViolations } from "../test/a11y";
 import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import { Announcer } from "../announce";
 import { RestoreFlow } from "./RestoreCard";
 import { Settings } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    backupInfo: vi.fn(),
-    restorePrepare: vi.fn(),
-    restoreConfirm: vi.fn(),
-    // Sent by the card's own unmount, not by anything an operator clicks, so nothing in this file
-    // names it and it was still missing when the card started sending it (rule 135).
-    restoreCancel: vi.fn(),
-    // Pressed only from the armed card, which most of this file never reaches -- so it is
-    // declared here rather than where a test happens to name it (rule 135).
-    restoreRestart: vi.fn(),
-    downloadBackup: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -52,14 +41,15 @@ const SUMMARY = {
 
 function renderBackupPanel() {
   const queryClient = testQueryClient();
-  const { unmount } = render(
-    <QueryClientProvider client={queryClient}>
+  const { unmount } = renderWithProviders(
+    <>
       {/* The app mounts this above every route (`App.tsx`), and `announce()` returns early when no
           region is listening -- so without it here the card's sentences are dropped and a test
           about them passes against silence. */}
       <Announcer />
       <Settings initialPanel="backup" />
-    </QueryClientProvider>,
+    </>,
+    { client: queryClient },
   );
   return { person: userEvent.setup(), unmount, queryClient };
 }
@@ -68,11 +58,11 @@ function renderBackupPanel() {
  *  The panel above cannot stand in for that: `Settings` mounts one card, and the state #387
  *  turns on needs two live at once, each holding the summary it staged. */
 function renderFlow() {
-  const { container, unmount } = render(
-    <QueryClientProvider client={testQueryClient()}>
+  const { container, unmount } = renderWithProviders(
+    <>
       <Announcer />
       <RestoreFlow armed={false} />
-    </QueryClientProvider>,
+    </>,
   );
   return { container, unmount };
 }

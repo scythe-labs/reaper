@@ -189,14 +189,7 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
                 "protection you asked for."
             )
         gates.append(
-            gate_type(
-                GateConfig(
-                    gate=setting.gate,
-                    enabled=True,
-                    threshold=setting.threshold,
-                    window_days=setting.window_days,
-                )
-            )
+            gate_type(GateConfig(threshold=setting.threshold, window_days=setting.window_days))
         )
 
     # The owner's own protections, on top of the built-in gates. Each condition is its own

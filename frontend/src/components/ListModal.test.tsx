@@ -10,24 +10,17 @@
 //
 // The library picker is the #483 fix at the surface: the library stops being a name Reaper
 // guessed ("Movies") and becomes one picked off the operator's own server.
-import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y";
-import { testQueryClient } from "../test/queryClient";
+import { renderWithProviders } from "../test/renderWithProviders";
 import type { ListConfig } from "../api";
 import { ListModal } from "./ListModal";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    addList: vi.fn(),
-    editList: vi.fn(),
-    removeList: vi.fn(),
-    plexLibraries: vi.fn(),
-    syncPlexLibraries: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 
@@ -43,10 +36,8 @@ function renderModal(editing: ListConfig | null = null) {
   const onClose = vi.fn();
   const onSaved = vi.fn();
   const onChanged = vi.fn();
-  render(
-    <QueryClientProvider client={testQueryClient()}>
-      <ListModal editing={editing} onClose={onClose} onSaved={onSaved} onChanged={onChanged} />
-    </QueryClientProvider>,
+  renderWithProviders(
+    <ListModal editing={editing} onClose={onClose} onSaved={onSaved} onChanged={onChanged} />,
   );
   return { onClose, onSaved, onChanged };
 }

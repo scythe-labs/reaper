@@ -8,10 +8,10 @@ items this tool exists to find, and every naive implementation coerces that null
 least about. So the reference instant is chosen deliberately (:func:`reference_instant`) and
 the day count is floored (:func:`dormancy_days`).
 
-The live scan, the season scan, the backtest and the prior calibration all answer the same
-question, and each used to answer it in its own arithmetic. That is the dual derivation rule
-3 warns about: calibration bucketed on an integer floor while the backtest scored a float, so
-one item could bucket one side of a boundary and score the other. One helper, four callers.
+The live scan and the season scan answer the same question, and there used to be four
+answerers, each with its own arithmetic. That is the dual derivation rule 3 warns about: the
+two retired lab engines bucketed on an integer floor and scored a float respectively, so one
+item could bucket one side of a boundary and score the other. One helper, every caller.
 
 **Floored, never rounded or ceiled** (rule 31). Dormancy sits on the condemn lane, so
 reducing its precision must move it toward *less* pressure: 9.9 days dormant is 9, and an
@@ -50,15 +50,14 @@ def reference_instant(
     types -- that arm was reached zero times, so no observed verdict moved
     (`docs/LEARNINGS.md`).
 
-    **All four callers take the same thaw**, which is what makes this one derivation rather
-    than one helper with four dialects. The two rehearsal engines used to be the exception:
-    `engine/backtest.py` and `engine/calibration.py` each dropped a record with no arrival
-    date *before* asking, so a `datetime` overload existed to spare them a None-check that
-    could not fire. That narrowing was itself the second thaw rule -- a movie with no arrival
-    date and a play 400 days ago is condemned by a live scan and never entered the rehearsal
-    at all, so the replay under-reported exactly what production would remove. Both now ask
-    here and read ``None`` as the answer, the overload has no caller left, and the signature
-    says the one true thing about every lane.
+    **Every caller takes the same thaw**, which is what makes this one derivation rather
+    than one helper with several dialects. The two retired lab engines used to be the
+    exception: each dropped a record with no arrival date *before* asking, so a `datetime`
+    overload existed to spare them a None-check that could not fire. That narrowing was itself
+    a second thaw rule -- a movie with no arrival date and a play 400 days ago is condemned by
+    a live scan and never entered the rehearsal at all, so the replay under-reported exactly
+    what production would remove. The overload is gone, and the signature says the one true
+    thing about every lane.
     """
     if last_played is not None:
         return last_played

@@ -30,6 +30,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clients.plex import PlexClient, collecting_incomplete_reads
+from reaper.clients.tautulli import TautulliClient
 from reaper.config import RuntimeSafety, Settings
 from reaper.db.session import create_engine
 from reaper.services import library_index
@@ -37,34 +38,21 @@ from reaper.services.list_config import ListDefinition
 from reaper.services.lists import ListSource, load_membership_index
 from reaper.services.season_scan import SonarrSource
 from reaper.services.snapshot import sync_protection_lists
+from tests._fakes import FakeSonarr
 
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
+    eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))
     yield eng
     await eng.dispose()
 
 
-class _TaggedSonarr:
-    service = "sonarr"
-
-    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
-        self._tags = tags
-        self._series = series
-
-    async def tags(self) -> list[dict[str, object]]:
-        return self._tags
-
-    async def series(self) -> list[dict[str, object]]:
-        return self._series
-
-
 def _sonarr() -> SonarrSource:
     return SonarrSource(
-        client=_TaggedSonarr(  # type: ignore[arg-type]
-            [{"id": 1, "label": "keep"}],
-            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        client=FakeSonarr(
+            tag_rows=[{"id": 1, "label": "keep"}],
+            series_rows=[{"title": "A", "tvdbId": 10, "tags": [1]}],
         ),
         instance_id=1,
         name="hd",
@@ -207,14 +195,14 @@ class TestAShortRatingsReadDegradesTheScan:
                 "</MediaContainer>",
             }
         )
-        tautulli = _FakeTautulli(
+        tautulli = _RawLibraries(
             [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
             [{"rating_key": "41", "title": "One", "year": 1999}],
         )
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             _client_with(server),
             section_type="movie",
             degrade=reasons.append,
@@ -225,7 +213,15 @@ class TestAShortRatingsReadDegradesTheScan:
         assert set(index.by_rating_key) == {41, 42}  # the sweep was kept
 
 
-class _FakeTautulli:
+class _RawLibraries(TautulliClient):
+    """Serves a library list exactly as written, malformed rows included.
+
+    Not `tests._fakes.FakeTautulli`: that one builds its `libraries()` from the keys of a
+    section map, so it can only ever emit a well-formed integer `section_id`. These cases
+    need the shapes it cannot produce, which is the whole subject here -- a section with a
+    string id, and a section carrying no id at all.
+    """
+
     def __init__(self, libraries: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
         self._libraries = libraries
         self._rows = rows
@@ -234,7 +230,13 @@ class _FakeTautulli:
         return self._libraries
 
     async def library_media_info(
-        self, section_id: int, *, start: int = 0, length: int = 100
+        self,
+        section_id: int,
+        *,
+        start: int = 0,
+        length: int = 100,
+        order_column: str = "added_at",
+        order_dir: str = "desc",
     ) -> dict[str, Any]:
         return {"data": self._rows if start == 0 else []}
 
@@ -245,11 +247,11 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
     rating key is not a number, used to raise straight out of the spine read."""
 
     async def test_a_library_with_no_id_is_skipped_and_degrades(self) -> None:
-        tautulli = _FakeTautulli([{"section_type": "movie", "section_name": "Movies"}], [])
+        tautulli = _RawLibraries([{"section_type": "movie", "section_name": "Movies"}], [])
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             None,
             section_type="movie",
             degrade=reasons.append,
@@ -260,7 +262,7 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
         assert any("without an id" in r for r in reasons)
 
     async def test_an_item_with_an_unusable_rating_key_is_skipped_and_degrades(self) -> None:
-        tautulli = _FakeTautulli(
+        tautulli = _RawLibraries(
             [{"section_id": "1", "section_type": "movie", "section_name": "Movies"}],
             [
                 {"rating_key": "not-a-number", "title": "Bad", "year": 1999},
@@ -270,7 +272,7 @@ class TestAMalformedLibraryRowDegradesInsteadOfRaising:
         reasons: list[str] = []
 
         index = await library_index.build_index(
-            tautulli,  # type: ignore[arg-type]
+            tautulli,
             None,
             section_type="movie",
             degrade=reasons.append,
