@@ -12,19 +12,8 @@ import { Announcer } from "../announce";
 import { RestoreFlow } from "./RestoreCard";
 import { Settings } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    backupInfo: vi.fn(),
-    restorePrepare: vi.fn(),
-    restoreConfirm: vi.fn(),
-    // Sent by the card's own unmount, not by anything an operator clicks, so nothing in this file
-    // names it and it was still missing when the card started sending it (rule 135).
-    restoreCancel: vi.fn(),
-    // Pressed only from the armed card, which most of this file never reaches -- so it is
-    // declared here rather than where a test happens to name it (rule 135).
-    restoreRestart: vi.fn(),
-    downloadBackup: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

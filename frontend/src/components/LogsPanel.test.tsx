@@ -11,8 +11,8 @@ import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { LogsPanel } from "./LogsPanel";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { logs: vi.fn(), setLogLevel: vi.fn(), downloadLogs: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

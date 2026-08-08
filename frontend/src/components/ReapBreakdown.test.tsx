@@ -10,8 +10,8 @@ import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { ReapBreakdown } from "./ReapBreakdown";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: { reapBreakdown: vi.fn(), profile: vi.fn(), scanStatus: vi.fn(), startScan: vi.fn() },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", () => ({ api: apiMock }));
 

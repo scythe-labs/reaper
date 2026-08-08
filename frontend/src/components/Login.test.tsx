@@ -11,18 +11,17 @@ import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { Login } from "./Login";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    authContext: vi.fn(async () => ({
-      setup_needed: false,
-      plex_linked: true,
-      local_login_available: true,
-    })),
-    localLogin: vi.fn(),
-    plexStart: vi.fn(),
-    plexPoll: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
+
+// The one read every case here shares: the sign-in page branches on it before it draws a form,
+// so it carries a default rather than being set per test.
+apiMock.authContext.mockResolvedValue({
+  setup_needed: false,
+  plex_linked: true,
+  local_login_available: true,
+});
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),

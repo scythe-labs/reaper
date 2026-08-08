@@ -20,17 +20,8 @@ import { expectNoA11yViolations } from "../test/a11y";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { SetupConnectStep } from "./SetupConnectStep";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    instances: vi.fn(),
-    backupInfo: vi.fn(),
-    restorePrepare: vi.fn(),
-    restoreConfirm: vi.fn(),
-    // Sent by the flow's own unmount rather than by anything an operator clicks, so nothing
-    // below names it and it would still be missing without this line (rule 135).
-    restoreCancel: vi.fn(),
-    deleteInstance: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),

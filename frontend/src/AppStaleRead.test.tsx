@@ -32,38 +32,8 @@ import { App } from "./App";
 // `App` all the way through means the shell, the review queue it opens on, and the hooks each of
 // those reads on its own -- a gap in any of them renders that subtree's failed-read branch and
 // would leave this file asserting on the wrong screen for the wrong reason.
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    update: vi.fn(),
-    me: vi.fn(),
-    setupStatus: vi.fn(),
-    safety: vi.fn(),
-    latestSnapshot: vi.fn(),
-    scanStatus: vi.fn(),
-    general: vi.fn(),
-    profile: vi.fn(),
-    candidates: vi.fn(),
-    vocabularyValues: vi.fn(),
-    group: vi.fn(),
-    reapBreakdown: vi.fn(),
-    reapStatus: vi.fn(),
-    plexTrash: vi.fn(),
-    fairness: vi.fn(),
-    authContext: vi.fn(),
-    instances: vi.fn(),
-    plexStatus: vi.fn(),
-    plexResources: vi.fn(),
-    plexLibraries: vi.fn(),
-    watchEvidence: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    // Mutations. Never called on a render, but a missing name is still a hole in the module.
-    logout: vi.fn(),
-    override: vi.fn(),
-    clearOverride: vi.fn(),
-    createRun: vi.fn(),
-    startScan: vi.fn(),
-    stopRun: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("./test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("./api", async (importOriginal) => ({

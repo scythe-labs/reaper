@@ -25,26 +25,8 @@ import {
   type Snapshot,
 } from "./api";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    logout: vi.fn(),
-    update: vi.fn(),
-    safety: vi.fn(),
-    me: vi.fn(),
-    authContext: vi.fn(),
-    reapStatus: vi.fn(),
-    stopRun: vi.fn(),
-    setupStatus: vi.fn(),
-    scanStatus: vi.fn(),
-    latestSnapshot: vi.fn(),
-    fairness: vi.fn(),
-    candidates: vi.fn(),
-    general: vi.fn(),
-    profile: vi.fn(),
-    reapBreakdown: vi.fn(),
-    person: vi.fn(),
-    candidate: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("./test/apiMock")).makeApiMock(),
 }));
 
 // Partial mock: ApiError and the types stay real, because ScanFreshness branches on a real

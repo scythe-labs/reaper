@@ -39,22 +39,8 @@ import { ReviewQueue } from "./ReviewQueue";
 import { ServiceModal } from "./ServiceModal";
 import { ServicesPanel } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    candidates: vi.fn(),
-    fairness: vi.fn(),
-    general: vi.fn(),
-    group: vi.fn(),
-    instanceRootFolders: vi.fn(),
-    instanceSeerrServices: vi.fn(),
-    instances: vi.fn(),
-    plexLibraries: vi.fn(),
-    profile: vi.fn(),
-    scanStatus: vi.fn(),
-    updateInstance: vi.fn(),
-    vocabulary: vi.fn(),
-    vocabularyValues: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

@@ -13,11 +13,8 @@ import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { AboutPanel } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    about: vi.fn(),
-    update: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

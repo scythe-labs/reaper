@@ -16,16 +16,8 @@ import { expectNoA11yViolations } from "../test/a11y";
 import { Announcer } from "../announce";
 import { ReapConfirm } from "./ReapConfirm";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    safety: vi.fn(),
-    run: vi.fn(),
-    dryRun: vi.fn(),
-    executeRun: vi.fn(),
-    reapStatus: vi.fn(),
-    stopRun: vi.fn(),
-    plexTrash: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 // Everything but `api` is real -- the sheet reads `ApiError` to tell a moved phrase (409)

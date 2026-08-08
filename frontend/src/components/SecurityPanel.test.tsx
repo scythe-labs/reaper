@@ -12,17 +12,13 @@ import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { SecurityPanel } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    safety: vi.fn(),
-    setAdminPassword: vi.fn(async () => ({ ok: true })),
-    // The form reads ["me"] to learn whether a recovery code opened this session, which is the
-    // one case the server takes a new password without the current one. Omitting it would hand
-    // the query `undefined`, and the form would render its strict branch off a FAILED read
-    // rather than off a real answer -- the shape rule 135 exists to fail the run on.
-    me: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
+
+// A save that succeeds is what every case that is not about failure assumes, so it is the
+// default here rather than a line in each of them.
+apiMock.setAdminPassword.mockResolvedValue({ ok: true });
 
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),

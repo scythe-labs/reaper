@@ -16,18 +16,8 @@ import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { GeneralPanel } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    general: vi.fn(),
-    saveGeneral: vi.fn(),
-    revealApiKey: vi.fn(),
-    generateApiKey: vi.fn(),
-    // Read at `Settings.tsx`'s `removeKey`. Absent from this mock until the Remove path needed
-    // driving, and absent SILENTLY: the `setup.ts` gate covers a query with no `queryFn`, not a
-    // mutation with no `mutationFn`, so a test pressing Remove would have failed on an undefined
-    // call rather than on the thing it was checking (rule 135).
-    removeApiKey: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

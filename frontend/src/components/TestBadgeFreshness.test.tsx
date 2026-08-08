@@ -21,18 +21,8 @@ import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { NotificationsPanel, ServicesPanel } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    // Rule 135: everything the two trees read, not only what a test here names.
-    instances: vi.fn(),
-    testSavedInstance: vi.fn(),
-    deleteInstance: vi.fn(),
-    plexLibraries: vi.fn(),
-    notifications: vi.fn(),
-    setWebhook: vi.fn(),
-    testWebhook: vi.fn(),
-    clearWebhook: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({

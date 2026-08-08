@@ -16,20 +16,8 @@ import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { Settings } from "./Settings";
 
-const { apiMock } = vi.hoisted(() => ({
-  apiMock: {
-    // Rule 135: the mock answers everything the shell mounts, not only the panel under test.
-    // The masthead's safety read and the scan snapshot ride along on every panel.
-    about: vi.fn(),
-    update: vi.fn(),
-    safety: vi.fn(),
-    schedule: vi.fn(),
-    latestSnapshot: vi.fn(),
-    leavingSoonSettings: vi.fn(),
-    general: vi.fn(),
-    scanStatus: vi.fn(),
-    notifications: vi.fn(),
-  },
+const { apiMock } = await vi.hoisted(async () => ({
+  apiMock: (await import("../test/apiMock")).makeApiMock(),
 }));
 
 vi.mock("../api", async (importOriginal) => ({
