@@ -162,7 +162,7 @@ row moving is indistinguishable from one that never started.
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
-| 2 | Test-suite wall clock | in progress | 5 of ~6 | The five wall-clock items landed on `dev`. W1.4's scaffolding is the remainder and lands here |
+| 2 | Test-suite wall clock | not started | 6 of 9 | Unclaimed, not unstarted. The five wall-clock items are on `dev` and W1.4's boot fixtures are here; W1.4's other three bullets remain |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
@@ -209,6 +209,7 @@ here first and never reconstructed later.
 | #572 | 2 | W12a-2 | `test_the_pre_save_test_carries_the_checkbox_value` | no | On `dev`. 15.04s to 0.01s, and off rule 119's environmental accident |
 | #573 | 2 | W12a-3 | `test_openapi_tags.schema` | no | On `dev`. 4.70s to 1.32s. The fixture boots hermetically itself, since `_hermetic` runs after it |
 | #574 | 2 | W12a-4 | twelve `@vitest-environment node` docblocks | no | On `dev`. Frontend environment CPU 37.25s to 29.56s |
+| #575 | 2 | W1.4, first bullet | `settings`, `sync_db`, `async_factory`, `client` | no | 16 hand-written boots retired across 15 files. The other three bullets are untouched |
 
 ### Killed while executing
 
@@ -499,8 +500,16 @@ because `_fakes.py` retires the 65 `# type: ignore[arg-type]` suppressions that 
 a client signature change fails the build — which phase 8's `clients/plex.py` and `clients/arr.py`
 work depends on.
 
-Five or six PRs. No production code changes. The scrypt wrapper is `conftest`-only, must not touch
-`crypto.py`'s constant, and ships with the injectivity guard its correction names.
+**W1.4 is four independent refactors, not one, and each is its own session.** The first landed
+(#575): `settings`, `sync_db`, `async_factory` and `client` in `conftest.py`, and the 16 boots
+that were exactly one of them deleted from 15 files. The bespoke `client` fixtures that survive
+are the ones that SEED, which is what a file-local fixture should hold; they now compose on
+`settings` or `sync_db` rather than rewriting the preamble. The other three bullets —
+`renderWithProviders`, `tests/_fakes.py`, the complete api mock — are untouched, and the api mock
+is the one that carries a `coverage-loss` risk worth reading before starting.
+
+Six PRs so far, and three left. No production code changes. The scrypt wrapper is `conftest`-only,
+must not touch `crypto.py`'s constant, and ships with the injectivity guard its correction names.
 
 **Wave 12's figures are single-threaded and the documented gate is not.** `uv run pytest -n auto`
 measured **81.97s** for 4,040 tests on 8 cores, against the ~268s single-threaded figure the wave
