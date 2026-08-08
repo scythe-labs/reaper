@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,13 @@ INSTRUCTION_FILES = [REPO / "CLAUDE.md", *sorted((REPO / ".claude" / "rules").gl
 _ALLOWED_CONTROL_BYTES = frozenset(b"\t\n\r")
 
 
+# Cached because the two walks in this file are its whole runtime: eleven call sites re-globbed
+# the tree, and seven of them re-read every byte of it. The staleness question is answered by
+# what this file is -- filesystem checks over a checkout nothing here mutates, so the tree cannot
+# change under the cache mid-session. Every caller builds a new list from the result and none
+# sorts or appends in place, so the cached value needs no defensive copy. Cost: the text walk
+# pins about 23 MiB per xdist worker for the session.
+@lru_cache
 def _source_files_to_scan() -> list[Path]:
     """Every hand-written source and instruction file, for the byte-level scan below."""
     trees = [
@@ -887,6 +895,8 @@ def test_the_log_path_matcher_reads_every_spelling_it_claims() -> None:
     )
 
 
+# Cached for the reason stated above ``_source_files_to_scan``, and this is the walk that costs.
+@lru_cache
 def _repo_text_files() -> list[tuple[Path, str]]:
     """Every readable text file in THIS checkout, with its contents.
 
