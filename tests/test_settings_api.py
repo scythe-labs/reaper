@@ -37,7 +37,7 @@ pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 
 def _make(tmp_path: Path, **overrides: object) -> Settings:
-    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)
+    settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[arg-type]
     engine = sa_create_engine(settings.sync_database_url)
     Base.metadata.create_all(engine)
     engine.dispose()

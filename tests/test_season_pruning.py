@@ -1278,8 +1278,8 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
                 # widest holding cause beside it. Classified rather than skipped (rule 103):
                 # the reason it names still has to be one UNANSWERABLE_REASONS knows, or the
                 # hold it re-words renders green.
-                **({"progress_established": False} if name in _HOLDS_NOTHING_ALONE else {}),
-                **{name: not default},
+                **({"progress_established": False} if name in _HOLDS_NOTHING_ALONE else {}),  # type: ignore[arg-type]
+                **{name: not default},  # type: ignore[arg-type]
             )
             assert plan.prunable == [], f"{name} did not hold the seasons"
             held = _reasons(plan)[1]

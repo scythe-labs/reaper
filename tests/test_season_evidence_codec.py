@@ -77,7 +77,7 @@ def _bundle(**edits: object) -> season_evidence.SeasonPruneInput:
         "reach_days": 2000,
         "now": AT,
     }
-    return season_evidence.SeasonPruneInput(**{**base, **edits})
+    return season_evidence.SeasonPruneInput(**{**base, **edits})  # type: ignore[arg-type]
 
 
 def _round_trip(inp: season_evidence.SeasonPruneInput) -> season_evidence.SeasonPruneInput:

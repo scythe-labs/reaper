@@ -85,7 +85,7 @@ class TestFactsAreRebuiltAsOfTheCutoff:
     def test_a_play_after_the_cutoff_is_invisible_to_the_scorer(self) -> None:
         """The item was watched a month ago -- but we are judging it as of a year
         ago, when it had sat untouched. The scorer must not see the future."""
-        plays = [(100, NOW - timedelta(days=30), "alice")]
+        plays = [(100, NOW - timedelta(days=30))]
 
         facts = facts_as_of(_item(), plays, cutoff=CUTOFF, horizon=HORIZON)
 
@@ -94,7 +94,7 @@ class TestFactsAreRebuiltAsOfTheCutoff:
         assert facts.distinct_watchers.value == 0  # nobody had watched it *by then*
 
     def test_days_unwatched_is_measured_from_the_cutoff_not_from_today(self) -> None:
-        plays = [(100, NOW - timedelta(days=500), "alice")]  # 135 days before cutoff
+        plays = [(100, NOW - timedelta(days=500))]  # 135 days before cutoff
 
         facts = facts_as_of(_item(), plays, cutoff=CUTOFF, horizon=HORIZON)
 
@@ -202,9 +202,9 @@ class TestPopularityIsWindowed:
 
     def test_old_watchers_do_not_count_toward_recent_popularity(self) -> None:
         plays = [
-            (1, CUTOFF - timedelta(days=1500), "a"),  # long before the window
-            (2, CUTOFF - timedelta(days=1400), "b"),
-            (3, CUTOFF - timedelta(days=1300), "c"),
+            (1, CUTOFF - timedelta(days=1500)),  # long before the window
+            (2, CUTOFF - timedelta(days=1400)),
+            (3, CUTOFF - timedelta(days=1300)),
         ]
 
         facts = facts_as_of(
@@ -225,8 +225,8 @@ class TestPopularityIsWindowed:
 
     def test_recent_watchers_do_count(self) -> None:
         plays = [
-            (1, CUTOFF - timedelta(days=30), "a"),
-            (2, CUTOFF - timedelta(days=60), "b"),
+            (1, CUTOFF - timedelta(days=30)),
+            (2, CUTOFF - timedelta(days=60)),
         ]
 
         facts = facts_as_of(
@@ -243,8 +243,8 @@ class TestPopularityIsWindowed:
 
     def test_the_same_user_twice_is_one_watcher(self) -> None:
         plays = [
-            (1, CUTOFF - timedelta(days=30), "a"),
-            (1, CUTOFF - timedelta(days=20), "a"),
+            (1, CUTOFF - timedelta(days=30)),
+            (1, CUTOFF - timedelta(days=20)),
         ]
 
         facts = facts_as_of(_item(added_days_ago=2000), plays, cutoff=CUTOFF, horizon=HORIZON)

@@ -15,6 +15,7 @@ import sqlite3
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -66,7 +67,7 @@ DEFAULT_GATES = [
 DEFAULT_SIGNALS = [{"signal": "unwatched", "weight": 100, "saturate_at": 1825, "floor": 365}]
 
 
-def _policy(condemn_at: int = 70, **overrides: object) -> dict[str, object]:
+def _policy(condemn_at: int = 70, **overrides: object) -> dict[str, Any]:
     return {
         "condemn_at": condemn_at,
         "gates": DEFAULT_GATES,
@@ -1226,7 +1227,7 @@ class TestTheSimulator:
     """Re-scores the last snapshot under a candidate policy with ZERO API calls, so the
     knob and its blast radius sit in the same viewport."""
 
-    def _simulate(self, client: TestClient, condemn_at: int) -> dict[str, object]:
+    def _simulate(self, client: TestClient, condemn_at: int) -> dict[str, Any]:
         return client.post(
             "/api/policy/simulate",
             json={
@@ -1422,7 +1423,7 @@ class TestASnapshotWithNoFrozenFactsRefusesToGuess:
     ``tests/test_simulate_hardening.py``'s question, and a gate is no longer one of them.
     """
 
-    def _simulate(self, client: TestClient, policy: dict[str, object]) -> dict[str, object]:
+    def _simulate(self, client: TestClient, policy: dict[str, Any]) -> dict[str, Any]:
         return client.post("/api/policy/simulate", json=policy).json()
 
     def test_the_premise(self, client: TestClient) -> None:
@@ -1825,7 +1826,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
             # handle leaked to teardown as a ResourceWarning (#541).
             conn.close()
 
-    def _policy_body(self, **overrides: object) -> dict[str, object]:
+    def _policy_body(self, **overrides: object) -> dict[str, Any]:
         """``DEFAULT_GATES`` with the dormancy floor lowered beneath the mirror seeded here.
 
         ``inspect`` stays silent while the floor alone empties the list, because there the
@@ -1836,7 +1837,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         gates = [
             {**g, "threshold": 30} if g["gate"] == "min_dormancy" else g for g in DEFAULT_GATES
         ]
-        return _policy(gates=gates, **overrides)
+        return _policy(gates=gates, **overrides)  # type: ignore[arg-type]
 
     def _window_warnings(self, client: TestClient) -> list[dict[str, str]]:
         # The server_popularity gate takes the default 365-day window.

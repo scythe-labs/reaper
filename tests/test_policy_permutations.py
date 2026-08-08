@@ -29,6 +29,7 @@ from __future__ import annotations
 import itertools
 import json
 import random
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
@@ -838,7 +839,7 @@ class TestTheLabJudgesWithTheScansOwnCode:
 #: Every field the row does not name takes ``_DECISION_BASE``: nothing protected, nothing
 #: blocked, no override, full coverage against no floor, a zero score against a threshold of
 #: 70 -- i.e. a plain abstain, so each row's own fields are the only reason its answer differs.
-_DECISION_BASE: dict[str, object] = {
+_DECISION_BASE: dict[str, Any] = {
     "protected": False,
     "blocked": False,
     "safety_protected": False,
@@ -849,7 +850,7 @@ _DECISION_BASE: dict[str, object] = {
     "coverage_floor_bp": 0,
 }
 
-_DECISION_TABLE: tuple[tuple[str, dict[str, object], str], ...] = (
+_DECISION_TABLE: tuple[tuple[str, dict[str, Any], str], ...] = (
     # 5. At or above the threshold condemns; below it, abstain.
     ("one point below the threshold", {"score": 69, "condemn_at": 70}, "abstain"),
     ("exactly at the threshold", {"score": 70, "condemn_at": 70}, "condemn"),
@@ -933,7 +934,7 @@ _DECISION_TABLE: tuple[tuple[str, dict[str, object], str], ...] = (
 class TestDecideVerdictMatrix:
     @pytest.mark.parametrize(("label", "row", "expected"), _DECISION_TABLE, ids=lambda x: x)
     def test_the_decision_matches_its_spec(
-        self, label: str, row: dict[str, object], expected: str
+        self, label: str, row: dict[str, Any], expected: str
     ) -> None:
         """One row of the hand-written spec table, not a re-derivation of the function.
 
@@ -1181,7 +1182,7 @@ class TestPolicyHash:
         policy = DEFAULT_MOVIE_POLICY
         base_hash, base_scoring = policy.policy_hash(), policy.scoring_hash()
         post_score_fields = {"condemn_at", "coverage_floor_bp"}
-        flips: dict[str, object] = {
+        flips: dict[str, Any] = {
             "condemn_at": policy.condemn_at % 100 + 1,
             "coverage_floor_bp": (policy.coverage_floor_bp + 1) % 10_000,
             "keep_last_seasons": policy.keep_last_seasons + 1,

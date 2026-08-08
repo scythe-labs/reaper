@@ -218,7 +218,7 @@ _DISPLAY_ONLY_SPEC_ATTRS = frozenset(
 _PROBE_FACTS = Facts(
     title="probe",
     ratings=(),
-    **{
+    **{  # type: ignore[arg-type]
         field.name: Known(value=field.name, source="probe")
         for field in dataclasses.fields(Facts)
         if field.name not in ("title", "ratings")
