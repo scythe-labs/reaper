@@ -376,9 +376,9 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
   describes: several of these decisions were reversed once already, and the reversal is the part
   a future reader needs most.
 - `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. `SIGNALS.md` is cited from
-  five places in `src/`: `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py`, and
-  `api/routes.py`. Read it before touching any of them, and before the rewatch curve in
-  `engine/backtest.py`.
+  six places in `src/`: `engine/signals.py`, `engine/policy.py` (three times), `engine/gates.py`,
+  and `api/routes.py`. Read it before touching any of them: it is also the only place the rewatch
+  curve is written down, now that the engines that measured it are gone.
 - The live plans: `docs/CSS_SPLIT_PLAN.md` (4 optional stages remain) and `docs/I18N_PLAN.md` (a
   proposal, nothing landed), neither committed to. `docs/SIMPLIFICATION_PLAN.md` is committed to
   and being executed: its own `Progress` table is the status, every change lands on

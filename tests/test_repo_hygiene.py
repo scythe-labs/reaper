@@ -2206,6 +2206,56 @@ def test_the_documented_status_budget_matches_the_enforced_one() -> None:
     )
 
 
+#: The rewatch curve, as the two source comments quote it: dormancy band -> the percentage each
+#: states. Both are prose justifying a shipped default (the 1,095-day dormancy floor, and the
+#: 365/1825 UNWATCHED ramp), and the measurement behind them lives only in `docs/SIGNALS.md`.
+#: The constant that used to tie the three together went with the engine that measured it.
+_REWATCH_CURVE_CLAIMS = {
+    "engine/gates.py": ("61%", "30%", "19%", "13%"),
+    "engine/policy.py": ("61%", "13%"),
+}
+
+
+def test_the_rewatch_percentages_in_source_are_the_ones_signals_md_measured() -> None:
+    """Rule 144, for the file's most-quoted table.
+
+    Two docstrings in ``src/`` state percentages off the rewatch curve as the measured reason a
+    shipped default is what it is, and neither is generated from anything. Nothing else in the
+    tree carries those numbers: the constant that did was deleted with the replay engine, and
+    the test that pinned the constant went with it. So a re-measurement that edits
+    ``docs/SIGNALS.md`` alone leaves two confident sentences quoting the old curve as
+    justification for a floor derived from it -- and the operator reading the why-panel is
+    told a number nobody stands behind any more.
+
+    Checked against the "Ground truth" table rather than against a copy here, so this test
+    cannot drift from the measurement either. It names both source files in the failure, which
+    is the whole of rule 144's remedy: a comment asking the next author to remember does
+    nothing, and a failure message costs one line.
+    """
+    table = (DOCS / "SIGNALS.md").read_text(encoding="utf-8")
+    heading = "## Ground truth: rewatch probability by dormancy"
+    assert heading in table, f"{heading!r} is gone from docs/SIGNALS.md, so nothing anchors this"
+    ground_truth = table.split(heading, 1)[1].split("###", 1)[0]
+
+    offenders = []
+    for rel, percentages in _REWATCH_CURVE_CLAIMS.items():
+        source = (SRC / rel).read_text(encoding="utf-8")
+        for percent in percentages:
+            # `~61%` in the table, "about 61%" or "~61% of films" in the source.
+            if percent not in source:
+                offenders.append(f"{rel} no longer states {percent}")
+            elif percent not in ground_truth:
+                offenders.append(f"docs/SIGNALS.md's ground-truth table no longer states {percent}")
+    assert not offenders, (
+        "the rewatch curve is written in three places and they disagree:\n  "
+        + "\n  ".join(sorted(set(offenders)))
+        + "\n\nThe measurement is docs/SIGNALS.md's 'Ground truth' table. If it was re-measured, "
+        "correct src/reaper/engine/gates.py's MinDormancyGate docstring and "
+        "src/reaper/engine/policy.py's DEFAULT_MOVIE_POLICY signal comment in the same change -- "
+        "both quote it as the reason a shipped default is the number it is."
+    )
+
+
 def test_every_decisions_section_matches_a_locked_decision_row() -> None:
     """``docs/STATUS.md`` and ``docs/DECISIONS.md`` name the same decisions, both ways.
 
@@ -3828,7 +3878,7 @@ _LAYERS = ("api", "services", "clients", "engine")
 #: Every `.py` file under those four, which is the population the walk parses. It moves when a
 #: module is added, split or deleted, and it is pinned because a walk that quietly stopped
 #: reading the tree would satisfy every assertion below by finding nothing at all (rule 145).
-_EXPECTED_LAYERED_MODULES = 78
+_EXPECTED_LAYERED_MODULES = 76
 
 #: Every ordered pair where one of the four imports another, reconciled by hand: all six
 #: downward pairs are live, and no upward pair is. Asserted as an equality rather than a subset,

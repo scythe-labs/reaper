@@ -703,8 +703,8 @@ def build_season_facts(
         # and using the show's date would read a just-added season as decades dormant and
         # condemn a file nobody has had a chance to watch. This mirrors the movie path,
         # which floors on each item's own added_at. Through the one shared derivation
-        # (engine/dormancy.py), the same one the movie scan, the backtest and the prior
-        # calibration use (rule 3); we never fabricate a Known dormancy from the horizon.
+        # (engine/dormancy.py), the same one the movie scan uses (rule 3); we never
+        # fabricate a Known dormancy from the horizon.
         #
         # A play is enough on its own: with no arrival date but a play in scope
         # `reference_instant` measures from that play and the season is judged. The movie path
@@ -959,12 +959,11 @@ async def season_watch_stats(
     # Every reader of this mirror that a scan can reach carries the guard (rule 72):
     # `snapshot._watch_stats` and `fairness._evidence_index` call it directly, and
     # `snapshot._fold_merged_watch_stats` / `fairness._distinct_episodes` inherit it by running
-    # after a guarded sibling over a subset of its keys. `backtest._plays` and
-    # `calibration.derive` do NOT have it, and have no route, CLI or schedule reaching them.
-    # Deferred rather than swept (rule 72, issue #283) for a reason worth writing down: both
-    # sit in `engine/`, which imports nothing from `services/`, so the one-line fix its four
-    # siblings took is not available there. Whoever wires a backtest route calls this from the
-    # route, where the layering allows it; docs/STATUS.md open item 3 carries that obligation.
+    # after a guarded sibling over a subset of its keys. The two readers that did NOT have it
+    # were the retired lab engines, and they left with the rest of #283's subject: both sat in
+    # `engine/`, which imports nothing from `services/`, so the one-line fix its four siblings
+    # took was not available there. Any future reader in `engine/` inherits that constraint and
+    # calls this from the route instead, where the layering allows it.
     # Today the season task also always runs after `scan()` has touched the mirror, so the
     # table exists; this does not depend on that ordering holding.
     await history_sync.ensure_schema(engine)

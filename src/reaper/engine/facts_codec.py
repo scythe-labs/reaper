@@ -173,8 +173,8 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
 
 #: Why a field is unreadable on a snapshot written before that field existed.
 #:
-#: The one reason in ``src/`` with NO ``CAUSE_COPY`` entry, deliberately, and the reasoning is
-#: the same as ``backtest.NO_ADDED_AT_REASON``'s: ``facts_from_dict`` has a single caller, the
+#: One of seven reasons in ``src/`` with NO ``CAUSE_COPY`` entry, and the reasoning here is
+#: about where it can be READ: ``facts_from_dict`` has a single caller, the
 #: policy simulator (``api.routes``), which reads a re-decided score and verdict and never
 #: builds or stores an ``Explanation``. So this string reaches a reader only through a stored
 #: explanation that does not exist, and giving it panel copy would claim a route it cannot

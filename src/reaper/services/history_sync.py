@@ -2,9 +2,8 @@
 """A local mirror of Tautulli's watch history.
 
 Reaper needs to ask questions Tautulli's API cannot answer in one call: *"as of a
-year ago, who had watched this, and how long had it sat untouched?"* -- and then,
-*"who watched it afterwards?"* That is the backtest, and it needs the whole history
-in a form we can query, not paginate.
+year ago, who had watched this, and how long had it sat untouched?"* Answering those over a
+whole library needs the whole history in a form we can query, not paginate.
 
 A mature Tautulli install holds hundreds of thousands of rows. The first pull walks all
 of them, once, in large pages. After that it is genuinely incremental: it asks Tautulli

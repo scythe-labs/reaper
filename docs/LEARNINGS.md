@@ -96,15 +96,16 @@ been watched by *someone*, eventually; only a fraction still have watchers this 
 A play shortly after condemnation is often a rescue rather than a failure, and counting
 rescues as failures slanders the policy.
 
-⇒ In `engine/backtest.py`, regrets and rescues are split at the grace boundary.
+⇒ The replay split regrets from rescues at the grace boundary.
 
-**Superseded in reasoning, not in split.** The justification above ("still in quarantine")
-described a hold that does not exist: nothing on the deletion path reads the grace window,
-so an item is deletable from the moment it is condemned. What actually spares a late play
-is the executor's live per-item vetoes, which fire on a play *after the plan was approved* —
-not on a boundary N days out. The backtest still splits on the boundary, so its `rescued`
-count is a best case; `BacktestResult.rescued` says so, and M3c must fix or label it before
-any of these figures reach an operator.
+**Superseded in reasoning, and the code is gone.** The justification above ("still in
+quarantine") described a hold that does not exist: nothing on the deletion path reads the
+grace window, so an item is deletable from the moment it is condemned. What actually spares
+a late play is the executor's live per-item vetoes, which fire on a play *after the plan was
+approved* — not on a boundary N days out. The replay never stopped splitting on the boundary,
+so every `rescued` figure it produced was a best case. It was deleted rather than corrected
+(M3c, dropped), so **the rescue split is not a number Reaper reports anywhere**; #553 is the
+successor and it weighs a returned title down instead of counting it.
 
 ### 6. SQLite stores timezones — **it does not**
 
@@ -117,11 +118,11 @@ any of these figures reach an operator.
 Shipping one library's rewatch rates as a hardcoded prior makes every lift number on
 every *other* library meaningless.
 
-⇒ **Intended, not shipped.** `engine/calibration.derive` can fit the prior from the
-operator's own history and `backtest.prior_is_derived` can label which prior was used, but
-neither has a caller in `src/`: every number in use is `backtest.FALLBACK_REWATCH_PRIOR`,
-one library's curve. Tracked as M3g in `docs/STATUS.md`, blocked behind the unwired
-backtest (M3c).
+⇒ **Intended, never shipped, and now not planned.** A module existed that could fit the
+prior from the operator's own history, and another that could label which prior was used;
+neither ever had a caller in `src/`, and both were deleted rather than wired (M3c and M3g,
+dropped). Every number in use is the one library's curve tabulated in `docs/SIGNALS.md`, and
+nothing in the app can tell you it is borrowed. #554 is the successor.
 
 ### 8. The simulator can re-decide a snapshot under any policy — **only what the frozen evidence still answers**
 
@@ -692,7 +693,7 @@ the new test does.
 ### An unused argument is invisible to the type checker
 
 `run(..., prior=prior)` accepted the argument and then never passed it into the result.
-`mypy --strict` was perfectly happy — an unused parameter is legal — and the backtest
+`mypy --strict` was perfectly happy — an unused parameter is legal — and the replay engine
 quietly kept using the hardcoded fallback while reporting a lift number that *looked*
 fine.
 
@@ -791,10 +792,10 @@ library looks like, and it is why the grace period and the human approval gate a
 decoration.
 
 ⇒ This curve is a property of *an audience*, not a constant, so never ship someone else's
-rewatch curve as if it were physics. **Reaper still does**: `engine/calibration.derive`
-exists to fit the curve per operator but has no caller in `src/`, so the hardcoded
-`backtest.FALLBACK_REWATCH_PRIOR` is what every number reads today. Wiring it is M3g in
-`docs/STATUS.md`.
+rewatch curve as if it were physics. **Reaper still does, and now deliberately**: the module
+that could have fitted one per operator never had a caller and was deleted with the replay it
+served (M3g, dropped). The curve in `docs/SIGNALS.md` is what every default reads, it is one
+library's, and #554 is the successor if a fitted answer is ever wanted.
 
 ---
 
@@ -1803,10 +1804,11 @@ it survives until you ask what `reference_instant` does with the horizon.
 
 ## A span passed to one consumer and defaulted at the next (2026-07-27)
 
-Measured while reviewing the rule 140 sweep. `backtest.run` computes the operator's popularity
-window once, hands it to `facts_as_of` to count `distinct_watchers` over, and then called
-`score()` without it — so the count was built over the operator's span and validated against
-the shipped 365-day default. On a 730-day window over a 400-day mirror:
+Measured while reviewing the rule 140 sweep, in the replay engine since deleted. It computed
+the operator's popularity window once, handed it to the fact builder to count
+`distinct_watchers` over, and then called `score()` without it — so the count was built over
+the operator's span and validated against the shipped 365-day default. The shape is what
+survives, and rule 141 is where it lives. On a 730-day window over a 400-day mirror:
 
 | policy weights | window passed | window defaulted |
 | --- | --- | --- |
@@ -1824,8 +1826,8 @@ withholding. A reviewer caught it by sweeping the value instead of reading the s
 Two general forms, both cheap to check and both missed by a green suite of 2,578 tests:
 
 - **A fixture that pins the same value as the production default cannot prove the value was
-  passed.** Every backtest fixture used 365, which is exactly `score()`'s default, so an omitted
-  argument and a correct one produced identical output. Now rule 141.
+  passed.** Every fixture on that path used 365, which is exactly `score()`'s default, so an
+  omitted argument and a correct one produced identical output. Now rule 141.
 - **One span with two consumers needs both pinned.** The first fix spied on `score` alone, which
   proved the repaired line and nothing about the sibling call four lines above it: hardcoding
   `facts_as_of(popularity_window_days=365)` left the entire suite green while withdrawing a

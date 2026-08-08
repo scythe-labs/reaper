@@ -99,7 +99,7 @@ def _split(unwatched: int, few_watchers: int) -> tuple[SignalSetting, ...]:
 
 
 class TestPopularityWindow:
-    """The one place snapshot and backtest read the recent-watchers window from."""
+    """The one place every reader takes the recent-watchers window from."""
 
     def test_reads_the_enabled_gates_window(self) -> None:
         body = _policy(
