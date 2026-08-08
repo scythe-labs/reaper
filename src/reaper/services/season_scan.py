@@ -1669,10 +1669,10 @@ def _judge_series(
     # cost a file: some seasons resolved and some did not, so the resolved ones carry fully
     # readable facts and condemn at full confidence on a viewer the missing ones hid. Where the
     # SHOW never bound, every season takes Unknown from its own branch
-    # (`season_evidence.no_key_reason`) and
-    # abstains, so there is no readable sibling to endanger. That case is answered below
-    # instead, by saying so rather than by holding: holding it would move every unmatched show
-    # out of the review queue and protect nothing further (#486).
+    # (`season_evidence.no_key_reason`) and abstains, so there is no readable sibling to
+    # endanger. That case is answered below instead, by saying so rather than by holding:
+    # holding it would move every unmatched show out of the review queue and protect nothing
+    # further (#486).
     #
     # Content-bearing only: an announced season with no files is one nobody can be part way
     # through, and counting it would hold every show with a season Sonarr has listed and not

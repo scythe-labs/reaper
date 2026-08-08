@@ -5,11 +5,14 @@
 them are the operator's policy; the rest are evidence a scan gathered. This module is the
 seam: :class:`SeasonPruneInput` holds the evidence half for one show, :func:`plan_from_frozen`
 supplies the policy half and calls the real planner, and the scan freezes the bundle so the
-policy simulator can call the same function again under an edited policy. :func:`guard_result`
-turns one season's verdict into the gate result the why-panel reads, and
-:func:`no_key_reason` names why a season has no Plex rating key; both are pure and both are
-read by the scan and by the simulator's replay, which is why they sit here rather than inside
-the 2,000-line I/O module that used to hold them.
+policy simulator can call the same function again under an edited policy. Two pure derivations
+off that plan sit here for the same reason the planner call does. :func:`guard_result` turns one
+season's verdict into the gate result the why-panel reads, and the scan and the replay both call
+it, so there is no second implementation to drift. :func:`no_key_reason` is called by the scan
+alone: it produces ``progress_unknown_reason``, which is :func:`guard_result`'s input and is
+frozen onto the bundle, so the replay reads the scan's wording rather than re-deriving it off a
+live match status. That is the same "one derivation, not two" this module exists for, reached
+from the freeze side.
 
 **One derivation, not two.** Every plan whose result is *stored* -- the scan's and the
 simulator's alike -- reaches ``plan_series_prune`` through :func:`plan_from_frozen`, so the
@@ -387,9 +390,8 @@ def no_key_reason(show_match_status: identity.MatchStatus | None) -> str:
     One derivation for both readers (rule 104): ``season_scan.build_season_facts`` stamps it
     on every Unknown observation, and ``season_scan._judge_series`` hands the same string to
     the mid-binge guard so the panel groups all of them under one cause. Two ``.get`` calls
-    with two fallbacks
-    is how the guard's sentence would come to name a different cause from the four gates
-    printed beside it.
+    with two fallbacks is how the guard's sentence would come to name a different cause from
+    the four gates printed beside it.
     """
     return _NO_KEY_REASONS.get(show_match_status, "Plex has not matched this season")
 

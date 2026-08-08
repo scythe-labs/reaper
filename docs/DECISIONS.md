@@ -175,8 +175,9 @@ bound on the mirror, so where the reach does not span it — 0 included, an unbo
 finite mirror supports — the viewer set is **un-establishable rather than empty** and every season
 on disk is held ("your watch history is too short to tell who is part-way through") instead of an
 unseeable viewer reading as an absent one. That hold is a **blocked** PROTECT, not a plain one
-(`ProtectedSeason.unestablishable` → `season_evidence.guard_result`), because it is a check that could
-not be *answered* rather than a protection that fired, and the operator is entitled to see which
+(`ProtectedSeason.unestablishable` → `season_evidence.guard_result`), because it is a check that
+could not be *answered* rather than a protection that fired, and the operator is entitled to see
+which
 (rule 93). The reason it was ORIGINALLY encoded that way — `blocked` held a hand reap where a
 plain PROTECT on this gate did not, so emptying `prunable` would have retired the keep-rule
 conflict and turned a season a hand reap was refused on into one it deletes — has lapsed with the

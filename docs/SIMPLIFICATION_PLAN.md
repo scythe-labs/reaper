@@ -188,7 +188,7 @@ row moving is indistinguishable from one that never started.
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
-| 6 | Structural motion | in progress | 0 of 8 | C6 outstanding, and it blocks the `routes.py` row alone |
+| 6 | Structural motion | in progress | 1 of 8 | C6 settled: five modules, `routes.py` cut at `:1853` and *Vocabulary* on its own |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
@@ -213,7 +213,7 @@ forever while being genuinely complete. Phase 6 tops out at 6 of 8 by design: it
 | C2 | **settled** | Owner, 2026-08-08. The cheap KDF stays: a test that needs an encryption key to exist should not pay 124ms to prove nothing. Both proofs accepted, the collapse demonstration being the load-bearing one. **The standing cost is recorded rather than fixed**: no test now exercises the real 64 MiB derivation, so its own correctness rests on `crypto.py` being unchanged, not on being run |
 | C3 | **counts settled by audit, owner read outstanding** | Three independent auditors re-derived every count without being shown it first, and **every one held exactly** — including the socket guard's 7 violations, re-measured in a detached worktree. **What did not hold is the matcher beside each count**, which is the half rule 145 says a count cannot cover: the layering walk could not see `from reaper import services` (#588), the path-filter gate pinned a number where the prose names files (#591), and the network guard hooked 3 of 10 exits (#592). All three fixed and driven. The lesson for later phases: re-deriving a count is cheap and confirmed it; what the count could not answer is whether the *walk* sees the tree, and that needed a second party. Below is what each gate now covers. **W6-5**: 78 modules under the four packages, 6 directed pairs, 3 deferred imports; the reconciliation is that all 14 `engine/` modules and 8 of 9 `clients/` produce no cross-package edge at all. **W6-8**: 2,023 socketpairs across 1,674 tests allowed, 9 `getaddrinfo` calls seen, 7 of them real violations; the allowlist is 7 hosts and every one is driven. **W6-6**: 3 path filters across 9 workflows, counted twice by two different matchers. W1.5-c landed no gate, so nothing there to check |
 | C12 | **settled** | Owner, 2026-08-08: **the boot log keeps the added lines.** The one cost put to them was ~2 lines per restart saying a job runs on its built-in default, and they took it — a boot that states every job's schedule out loud is worth more than a quiet one, which is the same argument `main.py`'s per-job "next firing" table already rests on. Nothing to change; #594 ships as merged. The evidence behind the read follows. Two questions, both measured rather than argued. **What startup now applies: the same job table, byte for byte.** The same stored config booted on the phase-3 tip and on the phase-4 tip gives six jobs with identical ids and triggers; the boot log differs by exactly three lines, and the `scheduler.*` event diff is the whole behavioral surface of #594 — an orphaned stored row's warning renamed from `bad_maintenance_cron` to `unknown_maintenance_job` and moved earlier, plus one `maintenance_scheduled` line each for the two jobs still on their built-in defaults, which the replay now re-applies from the same constant `build_scheduler` used. The interval sweeps are outside `MAINTENANCE_JOB_IDS`, so `sweep_old_snapshots` keeps its start delay and jitter. **The deliberate re-freeze is a no-op, and that is the finding.** Tier A: 114 replay tests pass and `tests/_policy_lab.py` is untouched. Tier B: re-captured against snapshot 86 and **byte-for-byte identical** to the committed file — 5,965 items, protect 4,261 / condemn 543 / abstain 1,161, same plan and manifest hash. The phase text expected corrected behavior to move the baseline; the corrections are why it did not, since all four items proved latent or off the decision surface entirely |
-| C6 | **settled** | Owner, 2026-08-08: **five modules, and *Vocabulary* gets its own.** `api/review.py` (1,315, the *Snapshots and candidates* banner), `api/policy.py` (~485), `api/simulate.py` (~841), `api/vocabulary.py` (85), `api/about.py` (47), off a ~150-line shared preamble. So the *Policy* banner is cut at `:1854` (`_SIM_YIELD_EVERY`), a seam the file does not draw, and the 85-line *Vocabulary* banner stands alone rather than riding under the POLICY tag it shares with the editor. **Two cross-module edges are created and were measured before the read, not after**: `_to_body` is called by both the policy routes and `simulate`, so `simulate.py` imports `policy.py`; and `_replayed_evidence` is defined inside the simulate block yet called at `routes.py:1287` from `_deep_links`, which is *review*, so `review.py` imports `simulate.py`. Neither is a design problem at two import lines, but the wave's "pure motion" framing does not predict them, and phase 8 plans against this graph. One route is filed under a banner its tag disagrees with: `season_shape` (`:208`) is POLICY-tagged and sits in *Snapshots and candidates*. It moves by banner, to `review.py`, because `test_openapi_tags.py` keys on method and path and the served tag is unchanged either way |
+| C6 | **settled** | Owner, 2026-08-08: **five modules, and *Vocabulary* gets its own.** `api/review.py` (1,315, the *Snapshots and candidates* banner), `api/policy.py` (~485), `api/simulate.py` (~841), `api/vocabulary.py` (85), `api/about.py` (47), off a ~150-line shared preamble. So the *Policy* banner is cut at `:1853` (`_SIM_YIELD_EVERY`), a seam the file does not draw, and the 85-line *Vocabulary* banner stands alone rather than riding under the POLICY tag it shares with the editor. **Two cross-module edges are created and were measured before the read, not after**: `_to_body` is called by both the policy routes and `simulate`, so `simulate.py` imports `policy.py`; and `_replayed_evidence` is defined inside the simulate block yet called at `routes.py:1286` from `_deep_links`, which is *review*, so `review.py` imports `simulate.py`. Neither is a design problem at two import lines, but the wave's "pure motion" framing does not predict them, and phase 8 plans against this graph. One route is filed under a banner its tag disagrees with: `season_shape` (`:208`) is POLICY-tagged and sits in *Snapshots and candidates*. It moves by banner, to `review.py`, because `test_openapi_tags.py` keys on method and path and the served tag is unchanged either way |
 | C4, C5, C7 to C11, C14 | not started | — |
 
 Replace this row with one row per checkpoint as it is reached. A mandatory checkpoint (C4, C5,
@@ -761,8 +761,8 @@ phase `done` in *Progress* only once that is finished. `services/snapshot.py` is
 carries eight phase-7/8/9 citations that all shift when phase 5 deletes at `:202`; `executor.py`
 carries five, `main.py` four. Re-anchor to the **symbol plus a quoted fragment**: eight of these sit
 hundreds of lines inside `scan`, `simulate`, `list_candidates` or `ReviewQueue`, where the symbol
-alone locates nothing, and two pairs share a symbol (`season_scan.py:1254`/`:1302` in `gather`,
-`routes.py:567`/`:610` in `_group_rollups`), so a bare symbol silently merges two sites into one and
+alone locates nothing, and two pairs share a symbol (`season_scan.py:1099`/`:1147` in `gather`,
+`routes.py:566`/`:609` in `_group_rollups`), so a bare symbol silently merges two sites into one and
 under-scopes W6-2's sweep. Phases 7 and 8 read those bodies, and a session that reads a stale line
 number edits the wrong code with green tests behind it.
 
@@ -893,7 +893,7 @@ The worst individual units, which is where waves 2 and 3 point:
 | --- | --- | --- | --- |
 | `engine/policy.py:1600 inspect` | 988 | 52 | 4 |
 | `services/snapshot.py:570 scan` | 714 | 43 | 17 |
-| `services/season_scan.py:1243 gather` | 478 | 34 | 25 |
+| `services/season_scan.py:1088 gather` | 478 | 34 | 25 |
 | `services/planner.py:315 build_plan` | 375 | 27 | 5 |
 | `services/snapshot.py:1447 _judge_item` | 111 | n/a | **27** |
 | `components/PolicyEditor.tsx:1238` | 1,408 | n/a | n/a |
@@ -922,7 +922,7 @@ below. Read the *Landed* row before acting on a line number in this table.
 | `services/snapshot.py:1582` | `_verdict`'s `override` parameter: the one call site passes `None` unconditionally, and 8 docstring lines describe the unreachable branch | 11 | `none` |
 | `services/snapshot.py:202` | `RawItem.has_file`: constructed as literal `True`, read nowhere | 5 | `none` |
 | `services/whitelist.py:242,337` | `is_spared`, `unspare`: superseded by `override_for` and `remove_override` | 12 | `none` |
-| `services/season_scan.py:256,198` | `_SeriesWork.plan` (assigned, never read; the plan is recomputed) and `SeasonJudgment.poster_url` (never set) | 10 | `none` |
+| `services/season_scan.py:254,196` | `_SeriesWork.plan` (assigned, never read; the plan is recomputed) and `SeasonJudgment.poster_url` (never set) | 10 | `none` |
 | `db/session.py:83` | `session_scope`: zero references anywhere; all 30 call sites open the factory by hand | 5 | `none` |
 | `services/history_sync.py:542,550` | `state` (a bare forwarder to `_state`) and `latest` (test-only, superseded by `last_synced_at`) | 20 | `none` |
 | `clients/tautulli.py:270` | `metadata`, plus the `get_metadata` entry in `READ_COMMANDS` that exists only for it | 12 | `none` |
@@ -949,7 +949,7 @@ below. Read the *Landed* row before acting on a line number in this table.
 > **Corrected: W1.1-i's `poster_url` has a reader.** `snapshot.py:1162` passes
 > `judgment.poster_url` into `Display`, which reaches `Candidate.poster_url`. It is a three-hop
 > chain, not a field drop. `RawItem.poster_url` is never assigned either, so the stored column is
-> always `NULL` and `api/routes.py:1197` recomputes the poster and ignores it. Delete the whole
+> always `NULL` and `api/routes.py:1196` recomputes the poster and ignores it. Delete the whole
 > chain or none of it. `_SeriesWork.plan` is confirmed dead and unaffected.
 
 > **Corrected: W1.1-n is an external contract change, and two of its claims are wrong.** Only one
@@ -1239,7 +1239,7 @@ Each of these files draws its own seams already, in banner comments or in the fa
 | `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | The file draws the seams as banner comments, and the rule-146 dirty contract is computed from connection-section drafts only, so the other three cannot break it |
 | `App.tsx` | 1,225 | 5 components to `components/` (~520) | Three carry a comment saying they are "exported for its tests" |
 | `components/ReviewQueue.tsx` | 2,654 | `QueueFilterBar` (~330), `queueChips.tsx` (~60), delete the re-export shim | The filter block never reads `override`, `verdict` or a candidate. The shim's own comment calls itself transitional |
-| `services/season_scan.py` | 2,060 | `guard_result` + `no_key_reason` to `season_evidence.py` (~145) | Both are pure. `api/routes.py:2113` imports the 2k-line I/O module solely to call one of them |
+| `services/season_scan.py` | 2,060 | `guard_result` + `no_key_reason` to `season_evidence.py` (~145) | **Landed.** Both are pure, and `api/routes.py` imported the 2k-line I/O module solely to call `guard_result`; that import is gone. The move was 152 lines and the served OpenAPI document is byte-identical either side |
 
 **One caveat that applies only to `routes.py`.** Roughly ten cross-module comments cite
 `api.routes._chip`, `api.routes.simulate`, `api.routes._season_guard_replay` and
@@ -1373,7 +1373,7 @@ here is preventing a future divergence.
 
 **Parameter objects.** Six functions take a cohesive record apart and rebuild it:
 `snapshot._judge_item` (**27 parameters**), `season_scan.gather` (**25**, and it reconstructs a
-`SeasonPolicy` that `SeasonPolicy.from_body` already builds; `season_evidence.py:121` names this
+`SeasonPolicy` that `SeasonPolicy.from_body` already builds; `season_evidence.py:131` names this
 as rule 144's shape in its own comment), `build_season_facts` (24), `plan_series_prune` (20),
 `snapshot.scan` (17), the Plex match record threaded as **6 loose parameters through 4
 signatures**. `snapshot.py:928` is the sharp case: 12 parallel `movie_*`/`tv_*` locals with
@@ -1783,10 +1783,10 @@ added to the first.
 | --- | --- | --- | --- |
 | `snapshot.py:1606` vs `engine/explanation.py:31` | The stored explanation built as a 110-line hand-typed dict on the write side, declared as Pydantic models on the read side. The reader's own docstring records that `keeps` and `match` were **silently dropped** here until the fields were declared, which is why the panel's keep breakdown never rendered. `facts_codec.py:39` is the in-tree precedent that raises at import on an unhandled field | ~30 net | `behavior` |
 | `snapshot.py:1286` `Display` | The 15-field carrier exists; `RawItem` and `SeasonJudgment` both re-declare its fields flat, then `:1057` and `:1157` re-pack them field for field, then `_judge_item` unpacks it again | ~60 | `none` |
-| `season_scan.py:1254` `gather` | Nine loose policy fields taken one frame above the `SeasonPolicy` that groups them, re-packed at `:1302`. This is the sole reason the second road exists: `SeasonPolicy.from_body` is the same nine assignments written again, and `season_evidence.py:130` already names it "rule 144's shape" | ~40 | `behavior` |
-| `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:224`, `api/fairness.py:159`, `api/settings.py:748` **and** `:831` (written twice), `api/runs.py:776`, `api/routes.py:1290` | ~180 | `none` |
+| `season_scan.py:1099` `gather` | Nine loose policy fields taken one frame above the `SeasonPolicy` that groups them, re-packed at `:1147`. This is the sole reason the second road exists: `SeasonPolicy.from_body` is the same nine assignments written again, and `season_evidence.py:140` already names it "rule 144's shape" | ~40 | `behavior` |
+| `api/breakdown.py:22` + 6 siblings | 18 identically named fields copied by hand from the service dataclass to the wire model, plus a nested list re-packed 4 for 4. Same shape at `api/backup.py:224`, `api/fairness.py:159`, `api/settings.py:748` **and** `:831` (written twice), `api/runs.py:776`, `api/routes.py:1289` | ~180 | `none` |
 | `api/runs.py:741`/`:775` `ProfileSettingsIO` | A 7-field record declared twice, **including re-typed `ge`/`le` bounds**, with a hand-written converter in each direction. Rule 131 wants a consumer's bound derived from the producer's; here it is transcribed | ~16 | `none` |
-| `routes.py:1968`, `:2299`, `:2611` | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded at `schemas.py:860` | ~25 | `none` |
+| `routes.py:1967`, `:2298`, `:2610` | `SimulationOut`'s 14-field constructor assembled verbatim at three sites. `no_longer_condemned` already went wrong exactly this way once, recorded at `schemas.py:860` | ~25 | `none` |
 | `auth.py:220` vs `settings.py:259` | `PlexServerChoiceOut` **declared twice under the same class name in two modules**. Pydantic collapses them in `components.schemas` today; the moment either gains a field both operations get module-qualified component names and any generated client breaks silently | 8 | `none` |
 
 **One caveat, and it is the reason this wave is not risk-free.** Building the explanation from the
@@ -1819,7 +1819,7 @@ test asserts a fired entry's key set, so the pinning test has to be written firs
 > W5-5's site in the reverse direction, and its real population is ~13 sites, not 7. W5-5 is not
 > `none`: these are the deletion caps, and collapsing the models changes the 422 the operator sees,
 > because FastAPI's own validation fires before `update_profile`'s hand-formatting. W5-6 has two
-> verbatim copies, not three — `routes.py:1968` is the refusal shape. W5-7's line numbers are both
+> verbatim copies, not three — `routes.py:1967` is the refusal shape. W5-7's line numbers are both
 > wrong (`auth.py:232`, `settings.py:274`), and the duplicate **masks the mirror test**:
 > `_server_models` buckets on `__name__`, so the two classes collide into one key and a future
 > divergence is checked against only the survivor.
@@ -1866,9 +1866,9 @@ enforced by nothing but the next author's memory.
 > name or it flags two correct values.
 >
 > **The sweep is nine `IN` sites, not five.** The row inherits the plan's "three bare `500`
-> literals" and that is short by four: `_KEY_CHUNK` (`routes.py:635`), `_WATCH_KEY_CHUNK`
-> (`snapshot.py:1319`), and bare literals at `routes.py:567`, `:610`, `snapshot.py:1844`,
-> `imdb_dataset.py:341`, `fairness.py:888`, `:916` and `season_scan.py:1028`. Under-scoping a sweep
+> literals" and that is short by four: `_KEY_CHUNK` (`routes.py:634`), `_WATCH_KEY_CHUNK`
+> (`snapshot.py:1319`), and bare literals at `routes.py:566`, `:609`, `snapshot.py:1844`,
+> `imdb_dataset.py:341`, `fairness.py:888`, `:916` and `season_scan.py:873`. Under-scoping a sweep
 > is rule 72's own failure mode, so count before extracting.
 >
 > **W6-8's guard finds nothing at the obvious hook point.** The 15-second test never reaches
@@ -1922,7 +1922,7 @@ fields and a fail-open guard.
   check. Those two point fail-*open*, which is the direction that matters here. `protection_list`
   lives in `cache.db`, which is disposable by contract, so there is no migration. ~35 lines.
 - **`CandidateOut.spared`** is a dead second name for `override == "spare"`, set literally that
-  way at `routes.py:1212`. No production frontend code reads it; every render site asks `override`
+  way at `routes.py:1211`. No production frontend code reads it; every render site asks `override`
   directly. It is the one of the item's spare-shaped fields that rules 120 to 122 do not justify.
   ~12 lines.
 - **`HealthOut` (`schemas.py:1260`)** is an orphan model describing a response the route stopped
@@ -1951,7 +1951,7 @@ fields and a fail-open guard.
 
 > **Corrected: W7-5's `window_days` is read, W7-7 has an invoker, and W7-8 needs a migration.**
 >
-> **`SignalProbeIn.window_days` reaches the engine.** `routes.py:1807` passes it into
+> **`SignalProbeIn.window_days` reaches the engine.** `routes.py:1806` passes it into
 > `probe_signal` → `evaluate_signal`, where it reaches `signals.py:399` (the detail wording) and
 > `:403` (`reach_shortfall`). The frontend omits it so the default always stands, which is why it
 > looks inert. Removing `PolicyProbeOut.detail` first makes it genuinely dead; removing it alone
@@ -1995,7 +1995,7 @@ fields and a fail-open guard.
 
 An axis no pass has measured. Two of these are the largest single wins in either document.
 
-- **`/api/candidates` repeats every show-level field once per season row.** `routes.py:498` stamps
+- **`/api/candidates` repeats every show-level field once per season row.** `routes.py:497` stamps
   `group_seasons`, `group_condemned_count`, `group_condemned_bytes`, `group_unknown_size`,
   `group_title` and `show_status` onto every member, and `ReviewQueue.tsx` reads all six off
   `group.items[0]`. Measured: **157 KiB per 100-row page against 15.7 KiB**. An envelope (`{items,
@@ -2005,13 +2005,13 @@ An axis no pass has measured. Two of these are the largest single wins in either
 
 > **Corrected: only four of the six fields can move, and the rollup is not `items[0]`.**
 > `group_title` and `show_status` are read off a **flat** `CandidateDetail` at `WhyPanel.tsx:1312`
-> and `:1365`, and `routes.py:1462` derives `GroupOut.show_status` by iterating the nested season
+> and `:1365`, and `routes.py:1461` derives `GroupOut.show_status` by iterating the nested season
 > list, so both must stay on `CandidateOut`. `show_status` is deliberately
 > `items.find(s => s.show_status)` at `ReviewQueue.tsx:1132`, not `[0]`, because a snapshot
 > predating the field carries `null` on some rows; an envelope reproduces that rollup or blanks
 > the chip. `ReviewQueue.tsx:2007` is a second `group_condemned_count` read feeding the bulk bar's
 > count beside a destructive action. Six backend tests assert the four headers, and
-> `routes.py:329` has an early-return branch setting only two of them. The ~15-line estimate does
+> `routes.py:328` has an early-return branch setting only two of them. The ~15-line estimate does
 > not survive any of this.
 - **`GET /api/runs/{id}` ships the whole journal to render 50 rows**, including each step's `body`
   dict, the literal request payload. `ReapPlan.tsx:50`'s own comment says a 500-item plan is 1,500
@@ -2086,7 +2086,7 @@ the question is which breaks earn their keep, and most do not.
 - **Three cycle-breaking workarounds in `scan_runner.py` break no cycle** (a `TYPE_CHECKING`
   import, the same symbol imported again inside a function, and a third function-local import),
   verified empirically. `executor.py:135` `TYPE_CHECKING`-imports a module already imported at
-  `:117`. `routes.py:2172`'s function-local import breaks nothing and carries no comment, unlike
+  `:117`. `routes.py:2171`'s function-local import breaks nothing and carries no comment, unlike
   `launcher.py:551` and `:569`, which name their reasons and stay.
 - **Both frontend cycles are one borrowed symbol each.** `PolicyEditor ↔ PolicyRuleEditors` exists
   because the deliberate split left three lookup tables behind, and the same file re-exports
@@ -2397,7 +2397,7 @@ The register above holds. This pass adds:
 
 Three items are stated as questions, with no `Reviewed/` claim behind them:
 
-1. **`_kept_season_phrase` (`routes.py:884`) recovers a discriminant by prefix-matching the
+1. **`_kept_season_phrase` (`routes.py:883`) recovers a discriminant by prefix-matching the
    producer's own sentence.** Rule 92/142's shape, and its docstring records that a reword already
    stranded three of these on older snapshots. Could the frozen explanation carry a reason id,
    leaving the prefix tests as the legacy-row fallback? The stored-schema cost was not measured.
