@@ -22,7 +22,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api import tags as api_tags
-from reaper.api.schemas import OverrideIn, SpareIn, WhitelistEntryOut
+from reaper.api.schemas import OverrideIn, WhitelistEntryOut
 from reaper.clock import utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot, WhitelistEntry
 from reaper.services import retention, whitelist
@@ -178,12 +178,6 @@ async def _sync_grace_clocks(
     await session.flush()
 
 
-@router.get("/whitelist")
-async def list_whitelist(request: Request) -> list[WhitelistEntryOut]:
-    async with _sessions(request)() as session:
-        return [_out(e) for e in await whitelist.list_spared(session)]
-
-
 def _log_override(
     media_key: str, decision: str, *, prior: str | None, spare_days: int | None
 ) -> None:
@@ -207,26 +201,6 @@ def _log_override(
         prior=prior,
         spare_days=spare_days,
     )
-
-
-@router.post("/whitelist")
-async def spare_item(request: Request, payload: SpareIn) -> WhitelistEntryOut:
-    """Spare an item so it is never reaped -- the common-case shorthand for an override."""
-    async with _sessions(request)() as session:
-        title = await _resolve_title(session, payload.media_key)
-        prior = await whitelist.override_for(session, payload.media_key)
-        entry = await whitelist.spare(
-            session,
-            media_key=payload.media_key,
-            title=title,
-            note=payload.note,
-            spare_days=payload.spare_days,
-        )
-        await _sync_grace_clocks(session, payload.media_key)
-        out = _out(entry)
-        await session.commit()
-        _log_override(payload.media_key, "spare", prior=prior, spare_days=payload.spare_days)
-        return out
 
 
 @router.post("/override")
@@ -254,20 +228,6 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
             payload.media_key, payload.decision, prior=prior, spare_days=payload.spare_days
         )
         return out
-
-
-@router.delete("/whitelist/{media_key}")
-async def unspare_item(request: Request, media_key: str) -> dict[str, bool]:
-    """Remove any override (spare or reap). Returns whether one existed. This does not delete
-    the file -- it lets the item be judged by the policy again on the next scan."""
-    async with _sessions(request)() as session:
-        prior = await whitelist.override_for(session, media_key)
-        removed = await whitelist.remove_override(session, media_key=media_key)
-        await _sync_grace_clocks(session, media_key, cleared_spare=prior == "spare")
-        await session.commit()
-    if removed:
-        _log_override(media_key, "cleared", prior=prior, spare_days=None)
-    return {"removed": removed}
 
 
 @router.delete("/override/{media_key}")

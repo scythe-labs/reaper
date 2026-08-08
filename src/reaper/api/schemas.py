@@ -1178,17 +1178,6 @@ class WhitelistEntryOut(BaseModel):
 _MAX_SPARE_DAYS = 3650
 
 
-class SpareIn(BaseModel):
-    """Spare an item. The title is looked up server-side from the latest snapshot, so
-    the client sends only what identifies the file and, optionally, why."""
-
-    media_key: str = Field(max_length=_MAX_MEDIA_KEY)
-    note: str | None = Field(default=None, max_length=500)
-    spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
-    """How long to keep it: ``0`` (default) keeps it forever, a positive count keeps it that
-    many days and then the next scan re-judges it."""
-
-
 class OverrideIn(BaseModel):
     """Override an item's verdict by hand -- spare it (keep) or reap it (force onto the list).
 

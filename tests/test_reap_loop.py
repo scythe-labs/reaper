@@ -375,7 +375,9 @@ class TestARestrictedPlanReapsOnlyTheChosenItems:
         from reaper.services import whitelist
 
         snapshot_id = await _snapshot_with(session, [("radarr:1:1", 1 * GB)])
-        await whitelist.spare(session, media_key="radarr:1:1", title="Kept", note=None)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="Kept", decision="spare", note=None
+        )
         with pytest.raises(PlanError, match="spared"):
             await build_plan(
                 session,
@@ -1998,7 +2000,9 @@ class TestTheCanaryIsTheFirstRealDelete:
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
         )
         run = await _plan(session, snapshot_id)
-        await whitelist.spare(session, media_key="radarr:1:1", title="Spared", note=None)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="Spared", decision="spare", note=None
+        )
         # The promoted canary (movie 2) fails its exclusion.
         radarr = FakeRadarr(fail_ids={2})
 
@@ -2020,7 +2024,9 @@ class TestTheCanaryIsTheFirstRealDelete:
             [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 5 * GB, 702), ("radarr:1:3", 9 * GB, 703)],
         )
         run = await _plan(session, snapshot_id)
-        await whitelist.spare(session, media_key="radarr:1:1", title="Spared", note=None)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="Spared", decision="spare", note=None
+        )
         radarr = FakeRadarr(fail_ids={3})  # the last, largest item fails
 
         report = await _real(session, run, _gateway(radarr={1: radarr}))
@@ -2300,7 +2306,9 @@ class TestASpareIsHonoredAtExecuteTime:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
         # The owner changes their mind during grace and spares it.
-        await whitelist.spare(session, media_key="radarr:1:1", title="Worthless", note=None)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="Worthless", decision="spare", note=None
+        )
 
         radarr = FakeRadarr()
         report = await _real(session, run, _gateway(radarr={1: radarr}))
@@ -2322,7 +2330,9 @@ class TestASpareIsHonoredAtExecuteTime:
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
         )
-        await whitelist.spare(session, media_key="radarr:1:2", title="Keep me", note=None)
+        await whitelist.set_override(
+            session, media_key="radarr:1:2", title="Keep me", decision="spare", note=None
+        )
         run = await _plan(session, snapshot_id)
 
         # Only the non-spared item has steps.
@@ -2345,7 +2355,9 @@ class TestASpareIsHonoredAtExecuteTime:
         )
         run = await _plan(session, snapshot_id)
         # Spare the SHOW; it must cover the condemned season under it.
-        await whitelist.spare(session, media_key="sonarr:1:42", title="A Show", note=None)
+        await whitelist.set_override(
+            session, media_key="sonarr:1:42", title="A Show", decision="spare", note=None
+        )
 
         sonarr = FakeSonarr()
         report = await _real(session, run, _gateway(sonarr={1: sonarr}))
@@ -2358,7 +2370,9 @@ class TestASpareIsHonoredAtExecuteTime:
 
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
-        await whitelist.spare(session, media_key="radarr:1:1", title="Worthless", note=None)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="Worthless", decision="spare", note=None
+        )
 
         report = await Executor(
             session, safety=_read_only(), settings=ProfileSettings(), dry_run=True

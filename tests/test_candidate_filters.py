@@ -263,7 +263,7 @@ class TestOverrideFilter:
         """
         assert (
             client.post(
-                "/api/whitelist",
+                "/api/override",
                 json={"media_key": "sonarr:1:5:5", "title": "Season 5", "decision": "spare"},
             ).status_code
             < 300
@@ -295,7 +295,7 @@ class TestOverrideFilter:
         ):
             assert (
                 client.post(
-                    "/api/whitelist",
+                    "/api/override",
                     json={
                         "media_key": key,
                         "title": title,
@@ -322,7 +322,7 @@ class TestOverrideFilter:
         """
         assert (
             client.post(
-                "/api/whitelist",
+                "/api/override",
                 json={
                     "media_key": "sonarr:1:5:5",
                     "title": "Season 5",

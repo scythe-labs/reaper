@@ -692,15 +692,14 @@ class TestTheApiKeyLane:
         assert _api_key_allowed("PUT", "/api/settings/safety") is False
         assert _api_key_allowed("PUT", "/api/settings/general") is False
         assert _api_key_allowed("PUT", "/api/settings/plex/connection") is False
-        # Recording a decision by hand is a signed-in act, not an automation one, and the
-        # read is the only part of the keep list a key gets. Pinned because #326 rests on
-        # it: the 404 those two writes can raise is reachable from no script, which is what
-        # settled it as a wording fix rather than a behavior one.
-        assert _api_key_allowed("GET", "/api/whitelist") is True
-        assert _api_key_allowed("POST", "/api/whitelist") is False
+        # Recording a decision by hand is a signed-in act, not an automation one. Pinned
+        # because #326 rests on it: the 404 these writes can raise is reachable from no
+        # script, which is what settled it as a wording fix rather than a behavior one.
+        # The keep list's own READ route went with `GET /api/whitelist`; the queue reads it
+        # through `/api/candidates`, which a key may call.
         assert _api_key_allowed("POST", "/api/override") is False
-        assert _api_key_allowed("DELETE", "/api/whitelist/{media_key}") is False
         assert _api_key_allowed("DELETE", "/api/override/{media_key}") is False
+        assert _api_key_allowed("GET", "/api/candidates") is True
 
 
 class TestTheDocsLockdown:
@@ -866,7 +865,6 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             if op.get("security") == [{"Session": []}]
         }
         for refused in (
-            ("POST", "/api/whitelist"),
             ("POST", "/api/override"),
             ("DELETE", "/api/override/{media_key}"),
             ("PUT", "/api/settings/plex"),
@@ -921,7 +919,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         # The half a bare cookie is enough for.
         assert panel.get("/api/candidates").status_code == 200
         # The same credential, one unsafe method, no header.
-        refused = panel.post("/api/whitelist", json={})
+        refused = panel.post("/api/override", json={})
         assert refused.status_code == 403
         assert "CSRF" in refused.json()["detail"]
 
@@ -1044,13 +1042,13 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
     def test_the_note_does_not_displace_what_the_route_does(self, client: TestClient) -> None:
         """Prepended, never substituted: a route's own description is the reason someone
         is reading the entry at all."""
-        _, _, spare = next(
+        _, _, override = next(
             (m, p, op)
             for m, p, op in self._operations(client)
-            if (m, p) == ("POST", "/api/whitelist")
+            if (m, p) == ("POST", "/api/override")
         )
-        assert "Spare an item" in spare["description"]
-        assert "—" not in spare["description"]  # rule 21
+        assert "Override an item's verdict by hand" in override["description"]
+        assert "—" not in override["description"]  # rule 21
 
 
 def _request(

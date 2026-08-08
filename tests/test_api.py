@@ -370,7 +370,12 @@ class TestTheRunsApi:
         payload, and it should never reach a query."""
         long_key = "radarr:1:" + "9" * 200
 
-        assert client.post("/api/whitelist", json={"media_key": long_key}).status_code == 422
+        assert (
+            client.post(
+                "/api/override", json={"media_key": long_key, "decision": "spare"}
+            ).status_code
+            == 422
+        )
         assert (
             client.post(
                 "/api/override", json={"media_key": long_key, "decision": "spare"}
@@ -395,7 +400,7 @@ class TestTheRunsApi:
         monkeypatch.setattr(retention, "KEEP_SNAPSHOTS", 7)
 
         for route, payload in (
-            ("/api/whitelist", {"media_key": "radarr:1:never-scanned"}),
+            ("/api/override", {"media_key": "radarr:1:never-scanned", "decision": "spare"}),
             ("/api/override", {"media_key": "radarr:1:never-scanned", "decision": "spare"}),
         ):
             refused = client.post(route, json=payload)

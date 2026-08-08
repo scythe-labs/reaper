@@ -226,7 +226,10 @@ class TestGroupCondemnedTotals:
     def test_a_hand_spared_season_leaves_the_plan_totals(self, tv_client: TestClient) -> None:
         """The totals must match the planner exactly, and the planner drops hand-spares:
         sparing one season shrinks the card's numbers by exactly that season."""
-        spare = tv_client.post("/api/whitelist", json={"media_key": f"sonarr:1:42:{N_SEASONS}"})
+        spare = tv_client.post(
+            "/api/override",
+            json={"media_key": f"sonarr:1:42:{N_SEASONS}", "decision": "spare"},
+        )
         assert spare.status_code == 200, spare.text
 
         page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
@@ -237,7 +240,9 @@ class TestGroupCondemnedTotals:
             assert row["group_condemned_bytes"] == (N_SEASONS - 1) * SEASON_SIZE
 
     def test_sparing_the_whole_show_zeroes_the_plan(self, tv_client: TestClient) -> None:
-        spare = tv_client.post("/api/whitelist", json={"media_key": "sonarr:1:42"})
+        spare = tv_client.post(
+            "/api/override", json={"media_key": "sonarr:1:42", "decision": "spare"}
+        )
         assert spare.status_code == 200, spare.text
 
         # A whole-show spare moves its seasons onto the Kept lane (their stored verdict stays pure

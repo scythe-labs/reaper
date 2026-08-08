@@ -131,7 +131,9 @@ class TestExclusions:
         frozen snapshot still says condemn."""
         snap = await _snapshot(session)
         await _condemn(session, snapshot_id=snap, media_key="radarr:1:1", flagged_days_ago=2)
-        await whitelist.spare(session, media_key="radarr:1:1", title="Item", note=None)
+        await whitelist.set_override(
+            session, media_key="radarr:1:1", title="Item", decision="spare", note=None
+        )
 
         report = await grace.grace_report(session, grace_days=14, now=NOW)
 
@@ -146,7 +148,9 @@ class TestExclusions:
         a season "ready" would be a false alarm about a file nothing will touch."""
         snap = await _snapshot(session)
         await _condemn(session, snapshot_id=snap, media_key="sonarr:1:5:s2", flagged_days_ago=30)
-        await whitelist.spare(session, media_key="sonarr:1:5", title="Show", note=None)
+        await whitelist.set_override(
+            session, media_key="sonarr:1:5", title="Show", decision="spare", note=None
+        )
 
         report = await grace.grace_report(session, grace_days=14, now=NOW)
 
