@@ -175,7 +175,7 @@ bound on the mirror, so where the reach does not span it — 0 included, an unbo
 finite mirror supports — the viewer set is **un-establishable rather than empty** and every season
 on disk is held ("your watch history is too short to tell who is part-way through") instead of an
 unseeable viewer reading as an absent one. That hold is a **blocked** PROTECT, not a plain one
-(`ProtectedSeason.unestablishable` → `season_scan.guard_result`), because it is a check that could
+(`ProtectedSeason.unestablishable` → `season_evidence.guard_result`), because it is a check that could
 not be *answered* rather than a protection that fired, and the operator is entitled to see which
 (rule 93). The reason it was ORIGINALLY encoded that way — `blocked` held a hand reap where a
 plain PROTECT on this gate did not, so emptying `prunable` would have retired the keep-rule
@@ -335,7 +335,7 @@ than claiming an empty list**, for the identical reason: the span is each item's
 `inspect` is handed one reach and never a list of arrival dates, so "nothing will be flagged"
 would be false in the reassuring direction for a library the mirror covers outright. It also says
 where those shows go, because they are not lost: every conflict carries `shortfall`, so
-`season_scan.guard_result` marks each as a comparison Reaper did not make and the show waits in
+`season_evidence.guard_result` marks each as a comparison Reaper did not make and the show waits in
 "Needs a look", where a hand reap still condemns it. Beyond the dormancy guard the four share, it
 is silenced by the **mid-binge hold** as well, which is rule 143's shape rather than tidiness:
 where that guard cannot be established `plan_series_prune` holds every season *on disk*, so

@@ -2341,7 +2341,7 @@ def inspect(
     # on is each item's age, and ``inspect`` is handed one reach and never a list of arrival
     # dates. "Nothing will be flagged" would be false in the reassuring direction for a library
     # the mirror covers outright (rules 7/24). It also says where those shows go, because they
-    # are not lost: every conflict carries ``shortfall``, so ``season_scan.guard_result`` marks
+    # are not lost: every conflict carries ``shortfall``, so ``season_evidence.guard_result`` marks
     # each as a comparison Reaper did not make and the show waits in "Needs a look", where a
     # hand reap still condemns it. That is the string already on the operator's screen, from
     # the switch's own help text one row up (rule 144).

@@ -659,7 +659,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
         a lower bound and more history can always lift it above the others. Nothing is
         auto-approvable, so TV pruning is inert on such a show until the mirror catches up
         or a human decides -- and because every conflict carries ``shortfall``,
-        ``season_scan.guard_result`` marks all of them as comparisons it did not make, which
+        ``season_evidence.guard_result`` marks all of them as comparisons it did not make, which
         is what the operator's chip says on the card.
 
         This is the prime directive's answer, not a defect -- but the docstring of
@@ -1096,7 +1096,7 @@ class TestTheMirrorMustSpanTheHold:
 
         A season kept because a protection *fired* is a definite keep. A season kept because
         the guard could not be ANSWERED is Unknown (rule 93), and only the second may hold a
-        hand reap -- `season_scan.guard_result` reads this flag to mark the result blocked.
+        hand reap -- `season_evidence.guard_result` reads this flag to mark the result blocked.
         Pinned on a plan carrying both, so a fix that flags every protected season fails.
         """
         plan = plan_series_prune(
@@ -1285,7 +1285,7 @@ class TestASeasonWithNoPlexKeyHidesItsViewer:
             held = _reasons(plan)[1]
             assert held in UNANSWERABLE_REASONS, (
                 f"{name} holds seasons with {held!r}, which UNANSWERABLE_REASONS does not "
-                "name, so season_scan.guard_result renders that hold as a definite keep"
+                "name, so season_evidence.guard_result renders that hold as a definite keep"
             )
 
 

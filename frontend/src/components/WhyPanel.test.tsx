@@ -901,7 +901,7 @@ describe("the verdict headline", () => {
     "seasons your rule keeps. Left for you to decide instead of removing it.";
 
   // The message and the flag come from the same conflict, exactly as the producer emits them
-  // (`season_scan.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
+  // (`season_evidence.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
   // refused one `false`. Passing them independently would let a test pin a pairing the backend
   // cannot produce.
   //
@@ -1008,7 +1008,7 @@ describe("the verdict headline", () => {
   it("does not read a mid-binge check that never ran as a conflict (#486)", () => {
     // A show Plex never resolved: no season carries a rating key, so the guard answered
     // "is anyone part-way through this" having asked nobody. Both details are verbatim
-    // producer output -- `season_scan.guard_result`'s unestablishable arm and
+    // producer output -- `season_evidence.guard_result`'s unestablishable arm and
     // `engine.gates._blocked` -- and they carry the SAME cause on purpose, which is what
     // makes them one box (rule 119).
     //

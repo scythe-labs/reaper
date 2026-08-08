@@ -3152,7 +3152,7 @@ class TestAKeepRuleConflictTheWatchHistoryCannotSettle:
 
     def test_it_says_where_the_held_shows_go(self) -> None:
         """They are not lost, and a warning that did not say so would read far worse than the
-        truth. Every conflict carries ``shortfall``, so ``season_scan.guard_result`` marks each
+        truth. Every conflict carries ``shortfall``, so ``season_evidence.guard_result`` marks each
         as a comparison Reaper did not make and the show waits in "Needs a look", where a hand
         reap still condemns it. That is the string the switch's own help text one row up already
         puts on the operator's screen (rule 144)."""

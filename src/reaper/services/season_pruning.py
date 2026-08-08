@@ -137,7 +137,7 @@ class ProtectedSeason:
     because a protection fired.
 
     A typed flag, never the wording (rule 142). It is what lets
-    :func:`services.season_scan.guard_result` mark the result ``blocked``: an unanswerable
+    :func:`services.season_evidence.guard_result` mark the result ``blocked``: an unanswerable
     check is ``Unknown``, not a definite keep (rule 93), so the panel shows it amber
     ("couldn't check") rather than green ("checked and passed"), and the operator can see
     which of the two they are looking at.
@@ -203,7 +203,7 @@ class PruneConflict:
     own words (``engine.gates.lifetime_shortfall``, the same sentence every other reader of
     a truncated count prints).
 
-    Typed, not inferred from the wording (rule 142): ``season_scan.guard_result`` reads it
+    Typed, not inferred from the wording (rule 142): ``season_evidence.guard_result`` reads it
     exactly as it reads ``kept_watchers is None``, and both mean "we could not establish
     this". It used to decide whether a hand reap could overrule the block; it no longer
     does, because no blocked gate holds a hand reap (see ``engine.verdict``). What it
@@ -444,8 +444,9 @@ def plan_series_prune(
     # its plays were never queried and a viewer part way through THAT season is invisible. The
     # season itself abstains on its own Unknown facts; its siblings do not, and one of them is
     # the season that viewer is about to watch. Neither flag above expresses it -- the mirror
-    # spans the hold and nothing fell, there is simply no address to read (``season_scan``'s
-    # ``_NO_KEY_REASONS``). True holds every season on disk, for the identical reason: the
+    # spans the hold and nothing fell, there is simply no address to read
+    # (``season_evidence``'s ``_NO_KEY_REASONS``). True holds every season on disk, for the
+    # identical reason: the
     # viewer set is unreadable, not empty.
     progress_seasons_unmatched: bool = False,
     # The whole show, rather than one of its seasons: nothing here bound to Plex at all, so
