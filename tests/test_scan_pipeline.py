@@ -62,6 +62,7 @@ from reaper.services.condemned import reap_is_effective
 from reaper.services.planner import MediaRef
 from reaper.services.scan_runner import _allowed_sections, build_gates
 from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, scan
+from tests._fakes import FakeRadarr, FakeSonarr, FakeTautulli, scan_library
 
 
 async def candidates(
@@ -102,69 +103,16 @@ SEASONS_ADDED = NOW - timedelta(days=1500)
 # ---------------------------------------------------------------------------
 
 
-class _FakeTautulli:
-    def __init__(
-        self,
-        *,
-        movies: list[dict[str, Any]],
-        shows: list[dict[str, Any]] | None = None,
-        children: dict[int, list[dict[str, Any]]] | None = None,
-        sessions: list[dict[str, Any]] | None = None,
-    ) -> None:
-        self._movies = movies
-        self._shows = shows or []
-        self._children = children or {}
-        self._sessions = sessions or []
+class _GriddedSonarr(FakeSonarr):
+    """Five seasons of five episodes for every series, whatever it was asked about.
 
-    async def activity(self) -> dict[str, Any]:
-        return {"sessions": self._sessions}
-
-    async def libraries(self) -> list[dict[str, Any]]:
-        return [
-            {"section_id": 1, "section_type": "movie"},
-            {"section_id": 3, "section_type": "show"},
-        ]
-
-    async def library_media_info(
-        self, section_id: int, *, start: int = 0, length: int = 1000
-    ) -> dict[str, Any]:
-        rows = self._movies if section_id == 1 else self._shows
-        return {"data": rows if start == 0 else []}
-
-    async def children_metadata(self, rating_key: int) -> list[dict[str, Any]]:
-        return self._children.get(rating_key, [])
-
-
-class _FakeRadarr:
-    def __init__(self, movies: list[dict[str, Any]]) -> None:
-        self._movies = movies
-
-    async def movies(self) -> list[dict[str, Any]]:
-        return self._movies
-
-    async def root_folders(self) -> list[dict[str, Any]]:
-        return [{"path": "/data/movies", "accessible": True}]
-
-
-class _BrokenRadarr:
-    async def movies(self) -> list[dict[str, Any]]:
-        raise IntegrationError("radarr", "unreachable (boom)")
-
-    async def root_folders(self) -> list[dict[str, Any]]:
-        raise IntegrationError("radarr", "unreachable (boom)")
-
-
-class _FakeSonarr:
-    def __init__(self, series: list[dict[str, Any]]) -> None:
-        self._series = series
-
-    async def series(self) -> list[dict[str, Any]]:
-        return self._series
-
-    async def root_folders(self) -> list[dict[str, Any]]:
-        return [{"path": "/data/tv", "accessible": True}]
+    The scan spine wants a season map for series it was never handed rows for, which a
+    payload-driven fake cannot answer -- so the grid lives here rather than widening the
+    shared fake with a mode only this suite drives.
+    """
 
     async def episodes(self, series_id: int) -> list[dict[str, Any]]:
+        await super().episodes(series_id)
         return [
             {"seasonNumber": season, "episodeNumber": ep, "hasFile": True}
             for season in range(1, 6)
@@ -172,7 +120,7 @@ class _FakeSonarr:
         ]
 
 
-class _MuteEpisodesSonarr(_FakeSonarr):
+class _MuteEpisodesSonarr(_GriddedSonarr):
     """Answers `series()` and refuses `episodes()`, which the scan logs rather than degrading.
 
     The one shape that leaves a scan holding season statistics and no episode map while the
@@ -476,7 +424,7 @@ class TestScanPipelineEndToEnd:
             kind=lists.ListKind.WHITELIST,
         )
 
-        tautulli = _FakeTautulli(
+        tautulli = scan_library(
             movies=_movie_spine(), shows=_show_spine(), children=_show_children()
         )
         seen: list[Progress] = []
@@ -485,14 +433,16 @@ class TestScanPipelineEndToEnd:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -625,21 +575,23 @@ class TestScanPipelineEndToEnd:
         )
         await session.flush()
 
-        tautulli = _FakeTautulli(
+        tautulli = scan_library(
             movies=_movie_spine(), shows=_show_spine(), children=_show_children()
         )
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -672,15 +624,17 @@ class TestScanPipelineEndToEnd:
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000)})
 
-        tautulli = _FakeTautulli(movies=_movie_spine())
+        tautulli = scan_library(movies=_movie_spine())
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd"),  # type: ignore[arg-type]
-                RadarrSource(client=_BrokenRadarr(), instance_id=2, name="uhd"),  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                ),  # type: ignore[arg-type]
+                RadarrSource(client=FakeRadarr(fail_movies=True), instance_id=2, name="uhd"),
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -720,9 +674,9 @@ class TestAStoredSizeSaysWhereItCameFrom:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(payloads), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(client=FakeRadarr(movie_rows=payloads), instance_id=1, name="hd")
             ],
-            tautulli=_FakeTautulli(movies=_movie_spine()),  # type: ignore[arg-type]
+            tautulli=scan_library(movies=_movie_spine()),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -754,11 +708,11 @@ class TestAStoredSizeSaysWhereItCameFrom:
             session,
             radarrs=[],
             sonarrs=[
-                season_scan.SonarrSource(client=_FakeSonarr(series), instance_id=1, name="tv")
+                season_scan.SonarrSource(
+                    client=_GriddedSonarr(series_rows=series), instance_id=1, name="tv"
+                )
             ],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
-                movies=[], shows=_show_spine(), children=_show_children()
-            ),
+            tautulli=scan_library(movies=[], shows=_show_spine(), children=_show_children()),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -804,12 +758,10 @@ class TestAStoredSizeSaysWhereItCameFrom:
             radarrs=[],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
-                movies=[], shows=_show_spine(), children=children
-            ),
+            tautulli=scan_library(movies=[], shows=_show_spine(), children=children),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -870,12 +822,14 @@ class TestTheScanCountsHowOftenItCouldNotMeasure:
                 cache_engine,
                 session,
                 radarrs=[
-                    RadarrSource(client=_FakeRadarr(movies), instance_id=1, name="hd")  # type: ignore[arg-type]
+                    RadarrSource(client=FakeRadarr(movie_rows=movies), instance_id=1, name="hd")
                 ],
                 sonarrs=[
-                    season_scan.SonarrSource(client=_FakeSonarr(series), instance_id=1, name="tv")
+                    season_scan.SonarrSource(
+                        client=_GriddedSonarr(series_rows=series), instance_id=1, name="tv"
+                    )
                 ],
-                tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                tautulli=scan_library(
                     movies=_movie_spine(), shows=_show_spine(), children=_show_children()
                 ),
                 movie_policy=DEFAULT_MOVIE_POLICY,
@@ -949,10 +903,12 @@ class TestAStaleMirrorDegradesTheSnapshot:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+            tautulli=scan_library(
                 movies=_movie_spine(), shows=_show_spine(), children=_show_children()
             ),
             movie_policy=DEFAULT_MOVIE_POLICY,
@@ -1027,18 +983,20 @@ class TestADegradedSnapshotDoesNotActOnItsOwnCondemnSet:
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         await _seed_play(cache_engine, row_id=1, rating_key=99)
         radarrs = [
-            RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            RadarrSource(client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd")
         ]
         if degrade:
             # A second, unreachable Radarr: one failed source, snapshot degraded, and the
             # first instance's items still judged. The same shape as the loud-failure test.
-            radarrs.append(RadarrSource(client=_BrokenRadarr(), instance_id=2, name="uhd"))  # type: ignore[arg-type]
+            radarrs.append(
+                RadarrSource(client=FakeRadarr(fail_movies=True), instance_id=2, name="uhd")
+            )  # type: ignore[arg-type]
         return await scan(
             cache_engine,
             session,
             radarrs=radarrs,
             sonarrs=[],
-            tautulli=_FakeTautulli(movies=_movie_spine()),  # type: ignore[arg-type]
+            tautulli=scan_library(movies=_movie_spine()),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -1117,7 +1075,9 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[],
             tautulli=tautulli,
@@ -1131,7 +1091,7 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
         snapshot = await self._scan_with(
-            session, cache_engine, _FakeTautulli(movies=_movie_spine(), sessions=[])
+            session, cache_engine, scan_library(movies=_movie_spine(), sessions=[])
         )
 
         assert snapshot.degraded is False, snapshot.degraded_reason
@@ -1146,12 +1106,12 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
         the only thing left between that and deleting a file mid-stream.
         """
 
-        class _NullSessions(_FakeTautulli):
+        class _NullSessions(FakeTautulli):
             async def activity(self) -> dict[str, Any]:
                 return {"sessions": None}
 
         snapshot = await self._scan_with(
-            session, cache_engine, _NullSessions(movies=_movie_spine())
+            session, cache_engine, _NullSessions(sections={1: _movie_spine()})
         )
 
         assert snapshot.degraded is True
@@ -1160,12 +1120,12 @@ class TestTheStreamingVetoNeedsAReadableAnswer:
     async def test_an_unreachable_tautulli_still_degrades(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        class _BrokenActivity(_FakeTautulli):
+        class _BrokenActivity(FakeTautulli):
             async def activity(self) -> dict[str, Any]:
                 raise IntegrationError("tautulli", "unreachable (boom)")
 
         snapshot = await self._scan_with(
-            session, cache_engine, _BrokenActivity(movies=_movie_spine())
+            session, cache_engine, _BrokenActivity(sections={1: _movie_spine()})
         )
 
         assert snapshot.degraded is True
@@ -1190,16 +1150,18 @@ class TestAnUnreadableRatingsDatasetKeepsInsteadOfCondemning:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()),  # type: ignore[arg-type]
+                    client=_GriddedSonarr(series_rows=_series_payloads()),
                     instance_id=1,
                     name="tv",
                 )
             ],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+            tautulli=scan_library(
                 movies=_movie_spine(), shows=_show_spine(), children=_show_children()
             ),
             movie_policy=DEFAULT_MOVIE_POLICY,
@@ -1347,7 +1309,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
         from reaper.engine.policy import ProfileSettings
         from reaper.services import scan_runner
 
-        class _ScanTautulli(_FakeTautulli):
+        class _ScanTautulli(FakeTautulli):
             """The scan's Tautulli surface plus the user list run_scan checks."""
 
             async def users(self) -> list[dict[str, Any]]:
@@ -1355,9 +1317,13 @@ class TestARepairedPolicyCannotBeReapedFrom:
 
         async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
             return (
-                [RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")],
+                [
+                    RadarrSource(
+                        client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                    )
+                ],
                 [],
-                _ScanTautulli(movies=_movie_spine()),
+                _ScanTautulli(sections={1: _movie_spine()}),
                 [],
                 None,
             )
@@ -1711,17 +1677,6 @@ class TestOneScanAtATime:
 # ---------------------------------------------------------------------------
 
 
-class _UsersTautulli:
-    def __init__(self, rows: list[dict[str, Any]] | None = None, *, raise_error: bool = False):
-        self._rows = rows or []
-        self._raise = raise_error
-
-    async def users(self) -> list[dict[str, Any]]:
-        if self._raise:
-            raise IntegrationError("tautulli", "users unavailable")
-        return list(self._rows)
-
-
 class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
     """The library listing is the scan's spine, and it had no handler at all.
 
@@ -1738,18 +1693,16 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         await _seed_play(cache_engine, row_id=1, rating_key=99)
 
-        class _BrokenSpine(_FakeTautulli):
-            async def libraries(self) -> list[dict[str, Any]]:
-                raise IntegrationError("tautulli", "libraries timed out")
-
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[],
-            tautulli=_BrokenSpine(movies=_movie_spine()),  # type: ignore[arg-type]
+            tautulli=scan_library(movies=_movie_spine(), fail_libraries=True),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -1778,23 +1731,21 @@ class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
         await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
         await _seed_play(cache_engine, row_id=1, rating_key=99)
 
-        class _BrokenSpine(_FakeTautulli):
-            async def libraries(self) -> list[dict[str, Any]]:
-                raise IntegrationError("tautulli", "libraries timed out")
-
         # Both lanes populated, so both reach `build_index` and the duplicate can occur.
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=_BrokenSpine(movies=_movie_spine()),  # type: ignore[arg-type]
+            tautulli=scan_library(movies=_movie_spine(), fail_libraries=True),
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=DEFAULT_TV_POLICY,
@@ -1824,8 +1775,8 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli(
-                [
+            FakeTautulli(
+                user_rows=[
                     {"username": "user-one", "is_active": 1, "keep_history": 1},
                     {"username": "user-two", "is_active": 1, "keep_history": 0},
                 ]
@@ -1839,8 +1790,8 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli(
-                [
+            FakeTautulli(
+                user_rows=[
                     {"username": "user-one", "is_active": 1, "keep_history": 1},
                     {"username": "user-two", "is_active": True, "keep_history": "1"},
                 ]
@@ -1855,8 +1806,8 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli(
-                [
+            FakeTautulli(
+                user_rows=[
                     {"username": "user-one", "is_active": 1, "keep_history": 1},
                     {"username": "departed", "is_active": 0, "keep_history": 0},
                 ]
@@ -1903,8 +1854,8 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli(
-                [
+            FakeTautulli(
+                user_rows=[
                     {"username": "user-one", "is_active": 1, "keep_history": 1},
                     {"username": "user-two", "is_active": 1, "keep_history": "maybe"},
                 ]
@@ -1919,7 +1870,9 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli([{"username": "user-two", "is_active": 1, "keep_history": "false"}])  # type: ignore[arg-type]
+            FakeTautulli(
+                user_rows=[{"username": "user-two", "is_active": 1, "keep_history": "false"}]
+            )  # type: ignore[arg-type]
         )
 
         assert any("user-two" in r for r in reasons)
@@ -1927,9 +1880,7 @@ class TestKeepHistoryCoverage:
     async def test_an_unreadable_user_list_degrades(self) -> None:
         from reaper.services.scan_runner import _keep_history_degradations
 
-        reasons = await _keep_history_degradations(
-            _UsersTautulli(raise_error=True)  # type: ignore[arg-type]
-        )
+        reasons = await _keep_history_degradations(FakeTautulli(fail_users=True))
 
         assert any("could not check" in r for r in reasons)
 
@@ -1939,7 +1890,7 @@ class TestKeepHistoryCoverage:
         from reaper.services.scan_runner import _keep_history_degradations
 
         reasons = await _keep_history_degradations(
-            _UsersTautulli([{"username": "user-one", "is_active": 1}])  # type: ignore[arg-type]
+            FakeTautulli(user_rows=[{"username": "user-one", "is_active": 1}])
         )
 
         assert any("cannot confirm" in r for r in reasons)
@@ -1960,9 +1911,11 @@ class TestKeepHistoryCoverage:
             captured.update(kwargs)
             return SimpleNamespace(id=1, item_count=0, degraded=False)
 
-        class _OffTautulli(_UsersTautulli):
+        class _OffTautulli(FakeTautulli):
             def __init__(self) -> None:
-                super().__init__([{"username": "user-two", "is_active": 1, "keep_history": 0}])
+                super().__init__(
+                    user_rows=[{"username": "user-two", "is_active": 1, "keep_history": 0}]
+                )
 
             async def __aenter__(self) -> Any:
                 return self
@@ -2044,14 +1997,16 @@ class TestTheWatchBlindnessGuardThroughAWholeScan:
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+            tautulli=scan_library(
                 movies=_movie_spine(), shows=_show_spine(), children=_show_children()
             ),
             movie_policy=DEFAULT_MOVIE_POLICY,
@@ -2216,21 +2171,23 @@ class TestAProtectionSwitchDoesNotMoveTheEvidence:
     async def _scan_under(
         self, session: AsyncSession, cache_engine: AsyncEngine, movie_policy: Any
     ) -> dict[str, Candidate]:
-        tautulli = _FakeTautulli(
+        tautulli = scan_library(
             movies=_movie_spine(), shows=_show_spine(), children=_show_children()
         )
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                    client=_GriddedSonarr(series_rows=_series_payloads()), instance_id=1, name="tv"
                 )
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=movie_policy,
             movie_gates=build_gates(movie_policy),
             tv_policy=DEFAULT_TV_POLICY,
@@ -2469,21 +2426,25 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         *,
         sonarr: Any = None,
     ) -> tuple[Snapshot, dict[str, Candidate]]:
-        tautulli = _FakeTautulli(
+        tautulli = scan_library(
             movies=_movie_spine(), shows=_show_spine(), children=self._children()
         )
         snapshot = await scan(
             cache_engine,
             session,
             radarrs=[
-                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+                RadarrSource(
+                    client=FakeRadarr(movie_rows=_movie_payloads()), instance_id=1, name="hd"
+                )  # type: ignore[arg-type]
             ],
             sonarrs=[
                 season_scan.SonarrSource(
-                    client=sonarr or _FakeSonarr(self._series()), instance_id=1, name="tv"
+                    client=sonarr or _GriddedSonarr(series_rows=self._series()),
+                    instance_id=1,
+                    name="tv",
                 )
             ],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             movie_policy=DEFAULT_MOVIE_POLICY,
             movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
             tv_policy=tv_policy,
@@ -2750,7 +2711,10 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(
-            session, cache_engine, self._tv(), sonarr=_MuteEpisodesSonarr(self._series())
+            session,
+            cache_engine,
+            self._tv(),
+            sonarr=_MuteEpisodesSonarr(series_rows=self._series()),
         )
 
         (payload,) = (await self._bundles_json(session, first.id)).values()
@@ -2766,7 +2730,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
         edited = self._tv(keep_last_seasons=1)
         _, after = await self._scan_under(
-            session, cache_engine, edited, sonarr=_MuteEpisodesSonarr(self._series())
+            session, cache_engine, edited, sonarr=_MuteEpisodesSonarr(series_rows=self._series())
         )
         assert self._scanned_guards(before) != self._scanned_guards(after), (
             "the edit moved no guard even with the episode reads refused, so comparing a "

@@ -42,6 +42,7 @@ from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
 from reaper.services.snapshot import _explain, _verdict
+from tests._fakes import FakeSonarr, FakeTautulli, show_library
 
 GB = 1024**3
 
@@ -1115,47 +1116,6 @@ class TestLastWatchedByUser:
 # ---------------------------------------------------------------------------
 
 
-class _FakeSonarr:
-    def __init__(
-        self, series: list[dict[str, Any]], episodes: dict[int, list[dict[str, Any]]] | None = None
-    ) -> None:
-        self._series = series
-        self._episodes = episodes or {}
-        self.episodes_called: list[int] = []
-
-    async def series(self) -> list[dict[str, Any]]:
-        return self._series
-
-    async def root_folders(self) -> list[dict[str, Any]]:
-        return [{"path": "/data/tv", "accessible": True}]
-
-    async def episodes(self, series_id: int) -> list[dict[str, Any]]:
-        self.episodes_called.append(series_id)
-        return self._episodes.get(series_id, [])
-
-
-class _FakeTautulli:
-    def __init__(
-        self,
-        *,
-        shows: list[dict[str, Any]],
-        children: dict[int, list[dict[str, Any]]],
-    ) -> None:
-        self._shows = shows
-        self._children = children
-
-    async def libraries(self) -> list[dict[str, Any]]:
-        return [{"section_id": 3, "section_type": "show"}]
-
-    async def library_media_info(
-        self, section_id: int, *, start: int = 0, length: int = 1000
-    ) -> dict[str, Any]:
-        return {"data": self._shows if start == 0 else []}
-
-    async def children_metadata(self, rating_key: int) -> list[dict[str, Any]]:
-        return self._children.get(rating_key, [])
-
-
 def _degrade_sink() -> tuple[list[str], Any]:
     reasons: list[str] = []
     return reasons, reasons.append
@@ -1261,16 +1221,16 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],  # 1..5
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+        tautulli = show_library(
+            rows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
             children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
         )
         _reasons, degrade = _degrade_sink()
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
@@ -1312,8 +1272,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+        tautulli = show_library(
+            rows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
             children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
         )
         # Plex is linked and matches the show, but the season sweep is empty for it.
@@ -1333,8 +1293,8 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
@@ -1370,8 +1330,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+        tautulli = show_library(
+            rows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
             children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
         )
         plex = _FakePlexGuids(
@@ -1390,8 +1350,8 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
@@ -1427,9 +1387,11 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        sonarr = _FakeSonarr(series, episodes={42: [{"seasonNumber": 3, "episodeNumber": 8}]})
-        tautulli = _FakeTautulli(
-            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+        sonarr = FakeSonarr(
+            series_rows=series, episode_rows={42: [{"seasonNumber": 3, "episodeNumber": 8}]}
+        )
+        tautulli = show_library(
+            rows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
             children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
         )
         _reasons, degrade = _degrade_sink()
@@ -1437,7 +1399,7 @@ class TestGatherEndToEnd:
         off = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(sonarr)],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
@@ -1454,11 +1416,13 @@ class TestGatherEndToEnd:
         assert "sonarr:1:42:3" in {j.media_key for j in off}  # seasons still resolve
 
         # Companion: with the guard ON, the fan-out runs, so the skip above is a real branch.
-        sonarr_on = _FakeSonarr(series, episodes={42: [{"seasonNumber": 3, "episodeNumber": 8}]})
+        sonarr_on = FakeSonarr(
+            series_rows=series, episode_rows={42: [{"seasonNumber": 3, "episodeNumber": 8}]}
+        )
         await season_scan.gather(
             cache_engine,
             sonarrs=[_source(sonarr_on)],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
@@ -1491,8 +1455,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[
+        tautulli = show_library(
+            rows=[
                 {
                     "rating_key": 800,
                     "title": "Duplicated Show",
@@ -1542,8 +1506,8 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
@@ -1583,8 +1547,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[
+        tautulli = show_library(
+            rows=[
                 {"rating_key": 800, "title": "Reality Show", "year": 2020, "added_at": "1000000"}
             ],
             children={800: [{"media_index": n, "rating_key": 800 + n} for n in range(1, 6)]},
@@ -1617,8 +1581,8 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
@@ -1679,10 +1643,8 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(
-            shows=[
-                {"rating_key": 700, "title": "Tagged Show", "year": 2018, "added_at": "1000000"}
-            ],
+        tautulli = show_library(
+            rows=[{"rating_key": 700, "title": "Tagged Show", "year": 2018, "added_at": "1000000"}],
             children={700: [{"media_index": n, "rating_key": 700 + n} for n in range(1, 6)]},
         )
         keep_row = lists.Membership(
@@ -1699,8 +1661,8 @@ class TestGatherEndToEnd:
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
@@ -1734,13 +1696,13 @@ class TestGatherEndToEnd:
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
-        tautulli = _FakeTautulli(shows=[], children={})
+        tautulli = show_library([])
         _reasons, degrade = _degrade_sink()
 
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=tautulli,  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=tautulli,
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
@@ -1773,8 +1735,8 @@ class TestGatherEndToEnd:
         _reasons, degrade = _degrade_sink()
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=show_library([]),
             # Deep enough to span the default hold, so the two keep floors this test is
             # about are what hold these seasons. At reach 0 the mid-binge guard is
             # un-establishable and holds EVERY season on its own, which made the assertion
@@ -1813,8 +1775,8 @@ class TestGatherEndToEnd:
         with capture_logs() as logs:
             await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                sonarrs=[_source(FakeSonarr(series_rows=series))],
+                tautulli=show_library([]),
                 horizon=utcnow() - timedelta(days=4000),
                 reach_days=4000,
                 active_rating_keys=set(),
@@ -1858,8 +1820,8 @@ class TestGatherEndToEnd:
         with capture_logs() as logs:
             await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                sonarrs=[_source(FakeSonarr(series_rows=series))],
+                tautulli=show_library([]),
                 horizon=utcnow(),
                 reach_days=0,
                 active_rating_keys=set(),
@@ -1931,9 +1893,9 @@ class TestGatherEndToEnd:
             _reasons, degrade = _degrade_sink()
             return await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(  # type: ignore[arg-type]
-                    shows=[
+                sonarrs=[_source(FakeSonarr(series_rows=series))],
+                tautulli=show_library(
+                    rows=[
                         {
                             "rating_key": 800,
                             "title": "Five Seasons",
@@ -2051,9 +2013,9 @@ class TestGatherEndToEnd:
             _reasons, degrade = _degrade_sink()
             judgments = await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series, episodes))],
-                tautulli=_FakeTautulli(  # type: ignore[arg-type]
-                    shows=[
+                sonarrs=[_source(FakeSonarr(series_rows=series, episode_rows=episodes))],
+                tautulli=show_library(
+                    rows=[
                         {
                             "rating_key": 900,
                             "title": "Long Show",
@@ -2125,7 +2087,7 @@ class TestGatherEndToEnd:
             }
         ]
 
-        class _DeadChildren(_FakeTautulli):
+        class _DeadChildren(FakeTautulli):
             async def children_metadata(self, rating_key: int) -> list[dict[str, Any]]:
                 raise IntegrationError("tautulli", "connection refused")
 
@@ -2141,12 +2103,19 @@ class TestGatherEndToEnd:
         _reasons, degrade = _degrade_sink()
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=_DeadChildren(  # type: ignore[arg-type]
-                shows=[
-                    {"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}
-                ],
-                children={},
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=_DeadChildren(
+                sections={
+                    3: [
+                        {
+                            "rating_key": 900,
+                            "title": "Long Show",
+                            "year": 2005,
+                            "added_at": "1000000",
+                        }
+                    ]
+                },
+                section_types={3: "show"},
             ),
             # The show binds to Plex; only its season list is unreadable, so the sweep is empty
             # and every season falls to the per-show read that raises.
@@ -2201,8 +2170,8 @@ class TestGatherEndToEnd:
         _reasons, degrade = _degrade_sink()
         judgments = await season_scan.gather(
             cache_engine,
-            sonarrs=[_source(_FakeSonarr(series))],
-            tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+            sonarrs=[_source(FakeSonarr(series_rows=series))],
+            tautulli=show_library([]),
             horizon=utcnow() - timedelta(days=4000),
             reach_days=4000,
             active_rating_keys=set(),
@@ -2248,8 +2217,8 @@ class TestGatherEndToEnd:
         with capture_logs() as logs:
             await season_scan.gather(
                 cache_engine,
-                sonarrs=[_source(_FakeSonarr(series))],
-                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                sonarrs=[_source(FakeSonarr(series_rows=series))],
+                tautulli=show_library([]),
                 horizon=utcnow(),
                 reach_days=0,
                 active_rating_keys=set(),
@@ -2283,7 +2252,7 @@ class TestGatherEndToEnd:
         judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_DeadSonarr())],
-            tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+            tautulli=show_library([]),
             horizon=utcnow(),
             reach_days=0,
             active_rating_keys=set(),

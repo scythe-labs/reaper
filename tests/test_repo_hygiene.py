@@ -1895,6 +1895,67 @@ def test_the_node_major_is_one_supported_lts_line_in_the_image_and_in_ci() -> No
     )
 
 
+#: Every spelling of the typecheck invocation: the workflow step, CONTRIBUTING's gate list, and
+#: the review skill's apply-the-fixes list. Matched on the whole argument run rather than on a
+#: fixed prefix, because a matcher anchored on ``mypy src/reaper`` reads a site that has NOT been
+#: widened as agreeing (rule 147).
+_MYPY_INVOCATION = re.compile(r"uv run mypy ((?:[\w./\[\]*-]+ ?)+?)(?=\s*(?:#|`|$))", re.M)
+
+#: `.github/workflows/ci.yml`, `CONTRIBUTING.md`, `.claude/skills/reaper-review/SKILL.md`, and
+#: `tests/_fakes.py`'s own docstring -- which is the copy most likely to go stale, since it is
+#: the file arguing for its place on the gate. `docs/history/**` is frozen and records what the
+#: gate was at the time, so it is skipped rather than counted; `docs/I18N_PLAN.md` proposes a
+#: gate for a plan nothing has started, and `docs/SIMPLIFICATION_PLAN.md` records the command as
+#: it stood when a change landed and moves to `docs/history/` when it retires.
+_EXPECTED_MYPY_SITES = 4
+
+#: Files that quote the command as a record rather than as the instruction to follow. A record
+#: is pinned to its moment, so holding it to today's gate would ask a finished plan to be edited
+#: every time the gate moves.
+_MYPY_RECORDS = ("docs/history/", "docs/I18N_PLAN.md", "docs/SIMPLIFICATION_PLAN.md")
+
+
+def test_the_typecheck_gate_names_the_same_targets_everywhere_it_is_written() -> None:
+    """`tests/_fakes.py` rides on the mypy run, and three files say so independently.
+
+    The fakes there inherit the real clients, which is what turns a client signature change
+    they no longer match into a build failure. That only works while the invocation actually
+    names the file -- and the invocation is written three times, by three different authors
+    reading each other. A developer running CONTRIBUTING's list would then get a narrower
+    check than CI runs and see a clean tree that CI rejects, or the reverse: the widening
+    lands in CONTRIBUTING alone and the gate everyone quotes is not the gate that runs.
+
+    Rule 144, and the direction is the dangerous one: a stale copy reads as the shorter,
+    safer-looking command, so nothing about it looks wrong.
+    """
+    sites = [
+        (path.relative_to(REPO), lineno, " ".join(match.group(1).split()))
+        for path, text in _repo_text_files()
+        if not any(rec in path.relative_to(REPO).as_posix() for rec in _MYPY_RECORDS)
+        for lineno, line in enumerate(text.splitlines(), 1)
+        if (match := _MYPY_INVOCATION.search(line))
+    ]
+    assert len(sites) == _EXPECTED_MYPY_SITES, (
+        f"expected {_EXPECTED_MYPY_SITES} spellings of the typecheck gate, found "
+        f"{len(sites)}:\n" + "\n".join(f"  {p}:{n} -> {t}" for p, n, t in sites) + "\n\n"
+        "If you ADDED one, bump the number so it is covered. If you did not, one dropped out\n"
+        "of the walk and the agreement below no longer reads it."
+    )
+    targets = {t for _, _, t in sites}
+    assert len(targets) == 1, (
+        "the typecheck gate names different targets in different files:\n"
+        + "\n".join(f"  {p}:{n} -> {t}" for p, n, t in sites)
+        + "\n\nMove them together. A developer running the narrow one sees a clean tree that\n"
+        "CI rejects, or CI runs a check nobody can reproduce."
+    )
+    (targets_run,) = targets
+    assert "tests/_fakes.py" in targets_run, (
+        f"the typecheck gate runs `{targets_run}`, which no longer includes tests/_fakes.py.\n"
+        "Those fakes inherit the real clients so that a signature change they stop matching\n"
+        "fails the build; off the gate they are unchecked, and inheriting proves nothing."
+    )
+
+
 BINARIES_WORKFLOW = REPO / ".github" / "workflows" / "binaries.yml"
 
 

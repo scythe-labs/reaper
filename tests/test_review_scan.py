@@ -52,6 +52,7 @@ from reaper.services.snapshot import (
     protection_sync_degradations,
     record_first_flagged_bulk,
 )
+from tests._fakes import FakeTautulli, movie_library, show_library
 
 # Second precision: the timestamp columns round-trip through SQLite at whole-second
 # precision, so a microsecond-bearing utcnow() would not compare equal after a fetch.
@@ -284,50 +285,6 @@ class TestTheMovieJoinAtTheScanLane:
 # ---------------------------------------------------------------------------
 
 
-class _FakeTautulli:
-    """The minimum of the Tautulli client the index builders touch."""
-
-    def __init__(self, rows: list[dict[str, object]], section_type: str = "movie") -> None:
-        self._rows = rows
-        self._section_type = section_type
-
-    async def libraries(self) -> list[dict[str, object]]:
-        return [{"section_type": self._section_type, "section_id": 1}]
-
-    async def library_media_info(
-        self, section_id: int, *, start: int = 0, length: int = 1000, **_: object
-    ) -> dict[str, object]:
-        return {"data": self._rows if start == 0 else []}
-
-
-class _SectionedTautulli:
-    """The same client across SEVERAL libraries, keyed by section id.
-
-    ``_FakeTautulli`` reports one section, which is the shape that cannot exercise a
-    per-library bound: with a single bucket the share is the overall share, so a test built
-    on it passes whether the count is bucketed or not.
-    """
-
-    def __init__(self, sections: dict[int, list[dict[str, object]]], section_type: str = "movie"):
-        self._sections = sections
-        self._section_type = section_type
-
-    async def libraries(self) -> list[dict[str, object]]:
-        return [
-            {
-                "section_type": self._section_type,
-                "section_id": sid,
-                "section_name": f"Library {sid}",
-            }
-            for sid in self._sections
-        ]
-
-    async def library_media_info(
-        self, section_id: int, *, start: int = 0, length: int = 1000, **_: object
-    ) -> dict[str, object]:
-        return {"data": self._sections.get(section_id, []) if start == 0 else []}
-
-
 class _FakePlexSweep:
     def __init__(self, items: dict[int, identity.PlexItem]) -> None:
         self._items = items
@@ -374,7 +331,7 @@ class TestBuildMovieIndex:
             )
         }
         index = await build_movie_index(
-            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            movie_library(_SPINE_ROWS),
             _FakePlexSweep(swept),  # type: ignore[arg-type]
             degrade=lambda _r: None,
         )
@@ -414,7 +371,7 @@ class TestBuildMovieIndex:
             200: fresh,
         }
         index = await build_movie_index(
-            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            movie_library(_SPINE_ROWS),
             _FakePlexSweep(swept),  # type: ignore[arg-type]
             degrade=lambda _r: None,
         )
@@ -436,7 +393,7 @@ class TestBuildMovieIndex:
         incomplete-scan notice: no "GUID", no "un-executable" (rule 21)."""
         reasons: list[str] = []
         index = await build_movie_index(
-            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            movie_library(_SPINE_ROWS),
             _FakePlexBrokenSweep(),  # type: ignore[arg-type]
             degrade=reasons.append,
         )
@@ -452,7 +409,7 @@ class TestBuildMovieIndex:
         sweep (it was already un-executable, since a real reap refuses without Plex)."""
         reasons: list[str] = []
         index = await build_movie_index(
-            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            movie_library(_SPINE_ROWS),
             None,
             degrade=reasons.append,
         )
@@ -493,7 +450,7 @@ class TestRetiredSpineRows:
         phantom's stale added-at. Unmatched is the right answer, and it keeps the file."""
         reasons: list[str] = []
         index = await build_movie_index(
-            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            movie_library([self._RETIRED]),
             _FakePlexSweep({300: self._REAL}),  # type: ignore[arg-type]
             degrade=reasons.append,
         )
@@ -514,7 +471,7 @@ class TestRetiredSpineRows:
         row, the phantom's title named itself, the two disagreed and the item abstained as
         'more than one thing in your Plex' over a library holding exactly one copy."""
         index = await build_movie_index(
-            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            movie_library([self._RETIRED]),
             _FakePlexSweep({300: self._REAL}),  # type: ignore[arg-type]
             degrade=lambda _r: None,
         )
@@ -534,7 +491,7 @@ class TestRetiredSpineRows:
         read that never happened. The pre-fix behavior stands, and the snapshot degrades."""
         reasons: list[str] = []
         index = await build_movie_index(
-            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            movie_library([self._RETIRED]),
             _FakePlexBrokenSweep(),  # type: ignore[arg-type]
             degrade=reasons.append,
         )
@@ -545,7 +502,7 @@ class TestRetiredSpineRows:
         """The other silent-empty: nothing swept because nothing was asked."""
         reasons: list[str] = []
         index = await build_movie_index(
-            _FakeTautulli([self._RETIRED]),  # type: ignore[arg-type]
+            movie_library([self._RETIRED]),
             None,
             degrade=reasons.append,
         )
@@ -572,7 +529,7 @@ class TestRetiredSpineRows:
             file_basename="example show",
         )
         index = await build_tv_index(
-            _FakeTautulli([retired_show], section_type="show"),  # type: ignore[arg-type]
+            show_library([retired_show]),
             _FakePlexSweep({300: real_show}),  # type: ignore[arg-type]
             degrade=lambda _r: None,
         )
@@ -633,7 +590,7 @@ class TestRetiredSpineRows:
         }
         reasons: list[str] = []
         index = await build_movie_index(
-            _FakeTautulli(rows),  # type: ignore[arg-type]
+            movie_library(rows),
             _FakePlexSweep(swept),  # type: ignore[arg-type]
             degrade=reasons.append,
         )
@@ -674,7 +631,7 @@ class TestRetiredSpineRows:
         }
         reasons: list[str] = []
         index = await build_movie_index(
-            _SectionedTautulli({1: healthy, 2: vanished}),  # type: ignore[arg-type]
+            FakeTautulli(sections={1: healthy, 2: vanished}),
             _FakePlexSweep(swept),  # type: ignore[arg-type]
             degrade=reasons.append,
         )
@@ -718,7 +675,7 @@ class TestRetiredSpineRows:
                 )
         reasons: list[str] = []
         await build_movie_index(
-            _SectionedTautulli(sections),  # type: ignore[arg-type]
+            FakeTautulli(sections=sections),
             _FakePlexSweep(swept),  # type: ignore[arg-type]
             degrade=reasons.append,
         )

@@ -29,48 +29,10 @@ from reaper.config import Settings
 from reaper.db.session import create_engine
 from reaper.services import history_sync
 from reaper.services.history_sync import HistoryRegressionError, sync
+from tests._fakes import PagingTautulli
 
 NOW = int(utcnow().timestamp())
 DAY = 86_400
-
-
-class FakeTautulli:
-    """Records the ``after`` argument of each history() call and serves canned rows.
-
-    ``rows`` is the full history newest-first (as Tautulli returns it). When ``after`` is
-    given, only rows on/after that date are served -- mimicking the real filter -- so a
-    test can assert an incremental sync fetched few rows, not all of them.
-    """
-
-    def __init__(self, rows: list[dict[str, Any]], *, total: int | None = None) -> None:
-        self.rows = rows
-        self.total = total if total is not None else len(rows)
-        self.after_calls: list[str | None] = []
-
-    async def history(
-        self, *, length: int = 100, start: int = 0, after: str | None = None, **_: Any
-    ) -> dict[str, Any]:
-        # The length=1 probe used by the regression check does not count as a page fetch.
-        if length > 1:
-            self.after_calls.append(after)
-
-        served = self.rows
-        if after is not None:
-            cutoff = _date_to_epoch(after)
-            served = [r for r in self.rows if int(r["date"]) >= cutoff]
-
-        window = served[start : start + length]
-        return {
-            "data": window,
-            "recordsFiltered": len(served),
-            "recordsTotal": self.total,
-        }
-
-
-def _date_to_epoch(date_str: str) -> int:
-    from datetime import UTC, datetime
-
-    return int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC).timestamp())
 
 
 def _row(row_id: int | None, days_ago: int) -> dict[str, Any]:
@@ -99,7 +61,7 @@ async def _count(engine: AsyncEngine) -> int:
 
 class TestIncrementalSyncFetchesOnlyTheDelta:
     async def test_the_first_sync_walks_everything(self, engine: AsyncEngine) -> None:
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 11)])
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)])
 
         await sync(engine, fake)  # type: ignore[arg-type]
 
@@ -111,7 +73,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         """The incremental sync must pass an ``after`` date, so Tautulli returns the
         delta instead of the full history."""
         history = [_row(i, days_ago=i) for i in range(1, 11)]
-        fake = FakeTautulli(history)
+        fake = PagingTautulli(history)
         await sync(engine, fake)  # type: ignore[arg-type]
 
         # A new play arrives; re-sync.
@@ -127,7 +89,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
 
     async def test_a_full_sync_re_walks_everything(self, engine: AsyncEngine) -> None:
         """The nightly sweep that catches backfilled old events must NOT use `after`."""
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 6)])
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 6)])
         await sync(engine, fake)  # type: ignore[arg-type]
         fake.after_calls.clear()
 
@@ -137,7 +99,7 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
 
     async def test_a_live_session_with_no_row_id_is_skipped(self, engine: AsyncEngine) -> None:
         """row_id is null only for in-progress sessions -- not history yet."""
-        fake = FakeTautulli([_row(None, days_ago=0), _row(1, days_ago=1), _row(2, days_ago=2)])
+        fake = PagingTautulli([_row(None, days_ago=0), _row(1, days_ago=1), _row(2, days_ago=2)])
 
         await sync(engine, fake)  # type: ignore[arg-type]
 
@@ -157,7 +119,7 @@ class TestThePageLoopFetchesEveryRow:
         and 0 ended the loop after page one, silently keeping a single page of history."""
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
 
-        class _NoTotal(FakeTautulli):
+        class _NoTotal(PagingTautulli):
             async def history(self, **kwargs: Any) -> dict[str, Any]:
                 page = await super().history(**kwargs)
                 page.pop("recordsFiltered")
@@ -174,7 +136,7 @@ class TestThePageLoopFetchesEveryRow:
         """Advancing by the constant walked `start` past rows nobody had fetched."""
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
 
-        class _ShortSecondPage(FakeTautulli):
+        class _ShortSecondPage(PagingTautulli):
             def __init__(self, rows: list[dict[str, Any]]) -> None:
                 super().__init__(rows)
                 self.pages = 0
@@ -201,7 +163,7 @@ class TestThePageLoopFetchesEveryRow:
         monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
         monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
 
-        class _Endless(FakeTautulli):
+        class _Endless(PagingTautulli):
             async def history(self, **kwargs: Any) -> dict[str, Any]:
                 page = await super().history(**kwargs)
                 if kwargs.get("length", 100) > 1:
@@ -219,39 +181,39 @@ class TestRegressionDetection:
     async def test_the_first_sync_sets_a_baseline_and_does_not_raise(
         self, engine: AsyncEngine
     ) -> None:
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 6)], total=5)
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 6)], total=5)
         await sync(engine, fake)  # type: ignore[arg-type]  # must not raise
         assert await history_sync._last_tautulli_total(engine) == 5
 
     async def test_a_shrunk_history_raises(self, engine: AsyncEngine) -> None:
         """Tautulli's total drops sharply -- reset, prune or restore. Every 'never
         watched' verdict is now suspect, so the sync stops before writing."""
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
         await sync(engine, fake)  # type: ignore[arg-type]
 
         # Tautulli now reports far fewer rows.
-        shrunk = FakeTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
+        shrunk = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
 
         with pytest.raises(HistoryRegressionError, match="shrank from 100"):
             await sync(engine, shrunk)  # type: ignore[arg-type]
 
     async def test_a_small_wobble_does_not_raise(self, engine: AsyncEngine) -> None:
         """Grouping can nudge the reported count by a row or two; that is not a reset."""
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
         await sync(engine, fake)  # type: ignore[arg-type]
 
-        nudged = FakeTautulli([_row(i, days_ago=i) for i in range(1, 100)], total=98)
+        nudged = PagingTautulli([_row(i, days_ago=i) for i in range(1, 100)], total=98)
         await sync(engine, nudged)  # type: ignore[arg-type]  # 98 >= 100*0.95, fine
 
     async def test_the_check_is_not_fooled_by_our_growing_mirror(self, engine: AsyncEngine) -> None:
         """The old check compared our mirror's row count, which only grows -- so a real
         Tautulli shrink was invisible. This asserts the check keys on Tautulli's total:
         our mirror still has 100 rows, but Tautulli reporting 10 must still raise."""
-        fake = FakeTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
+        fake = PagingTautulli([_row(i, days_ago=i) for i in range(1, 101)], total=100)
         await sync(engine, fake)  # type: ignore[arg-type]
         assert await _count(engine) == 100
 
-        shrunk = FakeTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
+        shrunk = PagingTautulli([_row(i, days_ago=i) for i in range(1, 11)], total=10)
         with pytest.raises(HistoryRegressionError):
             await sync(engine, shrunk)  # type: ignore[arg-type]
 
@@ -266,7 +228,7 @@ class TestOverlapNeverDropsARow:
         """`after` is date-granular, so the overlap must re-ask for our newest day, or a
         play recorded later that same day would fall in the gap and be lost forever."""
         newest = _row(1, days_ago=0)
-        fake = FakeTautulli([newest])
+        fake = PagingTautulli([newest])
         await sync(engine, fake)  # type: ignore[arg-type]
 
         # Another play the SAME day, a few hours later (higher row_id, same date bucket).
@@ -291,7 +253,7 @@ class TestTheIngestClockIsSeparateFromTheWatchingClock:
     ) -> None:
         """Nobody watched anything, so `latest` stays empty. The ingest ran, so the sync
         clock moves. Degrading a scan on `latest` would call this library broken."""
-        await sync(engine, FakeTautulli([]))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli([]))
 
         assert await history_sync.latest(engine) is None
         synced = await history_sync.last_synced_at(engine)
@@ -321,20 +283,20 @@ class TestAnUnreportedCompletionIsStoredAsUnknown:
     async def test_a_missing_status_is_stored_as_null(self, engine: AsyncEngine) -> None:
         row = _row(1, days_ago=1)
         del row["watched_status"]
-        await sync(engine, FakeTautulli([row]))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli([row]))
 
         assert await self._status(engine, 1) is None
 
     async def test_an_empty_status_is_stored_as_null(self, engine: AsyncEngine) -> None:
         """Tautulli sends "" rather than omitting the key on some rows."""
-        await sync(engine, FakeTautulli([dict(_row(1, days_ago=1), watched_status="")]))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli([dict(_row(1, days_ago=1), watched_status="")]))
 
         assert await self._status(engine, 1) is None
 
     async def test_a_reported_zero_round_trips_as_zero(self, engine: AsyncEngine) -> None:
         """The other direction: a real "started it, did not finish" must not become
         unknown. Pinning only the NULL side would let `None` swallow both facts."""
-        await sync(engine, FakeTautulli([dict(_row(1, days_ago=1), watched_status=0)]))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli([dict(_row(1, days_ago=1), watched_status=0)]))
 
         assert await self._status(engine, 1) == 0.0
 
@@ -344,7 +306,7 @@ class TestAnUnreportedCompletionIsStoredAsUnknown:
         del unknown["watched_status"]
         rows = [unknown, dict(_row(2, days_ago=2), watched_status=0)]
 
-        await sync(engine, FakeTautulli(rows))  # type: ignore[arg-type]
+        await sync(engine, PagingTautulli(rows))
 
         assert await self._status(engine, 1) is None
         assert await self._status(engine, 2) == 0.0
