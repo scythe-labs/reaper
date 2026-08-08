@@ -438,33 +438,6 @@ async def live_policy_hash(session: AsyncSession) -> str:
     return combine_hashes(movie.body.policy_hash(), tv.body.policy_hash())
 
 
-async def _ensure_active_policy_row(session: AsyncSession) -> int:
-    """The id of a persisted policy row, creating one from the default if none exists.
-
-    A profile references a policy by foreign key, but a fresh install has never saved
-    one -- it runs on ``DEFAULT_MOVIE_POLICY``, which lives in code, not the table. So we
-    persist it (append-only, content-addressed like any policy) and point the profile at
-    it. Idempotent: the ``latest`` check writes only when the table has no rows at all.
-    """
-    latest = (
-        await session.execute(select(PolicyModel).order_by(PolicyModel.id.desc()).limit(1))
-    ).scalar_one_or_none()
-    if latest is not None:
-        return latest.id
-
-    body: PolicyBody = DEFAULT_MOVIE_POLICY
-    row = PolicyModel(
-        policy_hash=body.policy_hash(),
-        body_json=body.model_dump_json(),
-        media_type=body.media_type,
-        name=DEFAULT_PROFILE_NAME,
-        created_at=utcnow(),
-    )
-    session.add(row)
-    await session.flush()
-    return row.id
-
-
 async def save_profile_settings(
     session: AsyncSession, settings: ProfileSettings
 ) -> ProfileSettings:
@@ -479,6 +452,13 @@ async def save_profile_settings(
     written False at creation and read by nothing; it retired in release M (rule 148). What
     keeps a saved cap from acting is that the scheduler never deletes and the one route that
     does (``api.runs.execute_run``) needs the host armed and the typed content-bound phrase.
+
+    **And nothing here writes a policy row.** It used to, to satisfy the foreign key that
+    retired alongside ``enabled``, and the body it persisted was the bare shipped default --
+    so the first save silently replaced the wider body ``active_policy`` computes for an
+    unsaved install, and an operator's Plex keep collection stopped protecting the moment
+    they touched Pace, with ``repaired`` False and nothing degraded. Leaving the table empty
+    is what keeps that computation live until the operator saves a policy of their own.
     """
     profile = (
         await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
@@ -486,12 +466,6 @@ async def save_profile_settings(
 
     now = utcnow()
     if profile is None:
-        # Called for its effect, not its id: `Profile.active_policy_id` retired in release M
-        # (rule 148), and the policy in force is resolved by pure recency. The row it
-        # persists is still wanted -- a fresh install runs on the in-code default until this
-        # writes it, and dropping the call would leave the first save with no policy row at
-        # all, which is a state change this schema retirement has no business making.
-        await _ensure_active_policy_row(session)
         profile = Profile(
             name=DEFAULT_PROFILE_NAME,
             settings_json=settings.model_dump_json(),

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -169,8 +170,8 @@ def test_env_py_configures_batch_mode(tmp_path: Path, monkeypatch: pytest.Monkey
 
     **One call site, and it used to be parametrized over two.** env.py had an offline
     (``--sql``) branch with no invoker anywhere in the tree, and it could not have run:
-    8 of the 23 revisions call ``op.get_bind()``, so ``alembic upgrade head --sql`` exits
-    1 at revision 3. It is gone. The parametrize went with it rather than staying as a
+    9 revisions call ``op.get_bind()``, so ``alembic upgrade head --sql`` exits 1 at
+    revision 3. It is gone. The parametrize went with it rather than staying as a
     second id driving the same branch, which would have read as twice the coverage
     (rule 118).
     """
@@ -1583,3 +1584,249 @@ class TestPersistingTheListConversion:
             rows = session.execute(select(PolicyModel).order_by(PolicyModel.id)).scalars().all()
         assert isinstance(rows[-1].created_at, datetime)
         engine.dispose()
+
+
+# Release M for six write-only columns, and the revision just before it.
+_PRIOR_RELEASE_M = "d5e6f7a8b9c0"
+_RELEASE_M = "e6f7a8b9c0d1"
+
+#: What ``e6f7a8b9c0d1`` gives each column so a fresh install's first INSERT can omit it, now
+#: that its ORM attribute has retired (rule 148, release M). Written from the revision's own
+#: contract rather than transcribed from a shape read back, so a change to either side shows up
+#: here: ``True`` means the column must carry a server default, ``False`` means it must be
+#: nullable and carry none. Five entries, one per column the revision alters; the sixth
+#: retiring attribute, ``candidate.poster_url``, was already nullable and is asserted below
+#: beside them so the population is the six and not the five that needed DDL.
+_RELEASE_M_COLUMNS: dict[tuple[str, str], bool] = {
+    ("profile", "enabled"): True,
+    ("list_config", "built_in"): True,
+    ("profile", "active_policy_id"): False,
+    ("pending_plex_login", "pin_code"): False,
+    ("plex_server", "owner_plex_account_id"): False,
+}
+
+
+class TestReleaseMLetsTheRetiredColumnsBeOmitted:
+    """Six columns lost their ORM attributes, so nothing in Python writes them any more. Five
+    were ``NOT NULL`` with no server default, and this revision is the only thing standing
+    between that and a fresh install failing its first Plex link or its first settings save.
+
+    **Nothing else can catch a missing ``alter_column`` here.** ``conftest.py`` builds every
+    test schema from ``Base.metadata``, which no longer declares these columns, so no
+    functional test ever inserts against the production shape -- that comes only from
+    ``docker-entrypoint.sh``'s ``alembic upgrade head``. And ``alembic check`` is blind to them
+    by construction: ``RETIRED_COLUMNS`` hides them from both sides of the comparison. Delete
+    any one of the five ``alter_column`` calls and the suite stayed green while the app broke
+    on first use (rules 118, 145, 148).
+    """
+
+    @staticmethod
+    def _at_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engine:
+        command.upgrade(_alembic_config(tmp_path, monkeypatch), "head")
+        return create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    def test_every_retired_column_can_be_omitted_by_an_insert(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shape, per column, against the contract table rather than against itself."""
+        engine = self._at_head(tmp_path, monkeypatch)
+        inspector = inspect(engine)
+
+        for (table, column), wants_default in _RELEASE_M_COLUMNS.items():
+            found = {c["name"]: c for c in inspector.get_columns(table)}[column]
+            if wants_default:
+                assert found["default"] is not None, (
+                    f"{table}.{column} lost its server default, so a fresh install's first "
+                    f"write to {table} fails on a NOT NULL column nothing writes any more"
+                )
+            else:
+                assert found["nullable"], (
+                    f"{table}.{column} is NOT NULL again, so a fresh install's first write "
+                    f"to {table} fails on a column nothing writes any more"
+                )
+        # The sixth retiring attribute needed no DDL, and this is what says so out loud.
+        poster = {c["name"]: c for c in inspector.get_columns("candidate")}["poster_url"]
+        assert poster["nullable"]
+        engine.dispose()
+
+    def test_the_foreign_key_hidden_from_autogenerate_is_still_on_the_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``RETIRED_CONSTRAINTS`` hides ``fk_profile_active_policy_id_policy`` from
+        ``alembic check``, which is the only reason the check passes with the attribute gone.
+        Hiding it must not mean dropping it: ``PRAGMA foreign_keys`` is ON, and the previous
+        image still inserts a real policy id here."""
+        engine = self._at_head(tmp_path, monkeypatch)
+
+        names = {fk["name"] for fk in inspect(engine).get_foreign_keys("profile")}
+
+        assert "fk_profile_active_policy_id_policy" in names
+        engine.dispose()
+
+    def test_the_previous_image_can_still_write_every_column(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The half of rule 148 that makes a rollback survivable: release M-1 carries every
+        attribute and writes every column, and it keeps working against this database. Raw
+        SQL, because the ORM in this tree is release M's and cannot express the writes."""
+        engine = self._at_head(tmp_path, monkeypatch)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                    " VALUES ('h', '{}', 'movie', 'mine', 1750000000)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO profile (name, settings_json, enabled, active_policy_id,"
+                    " created_at, updated_at) VALUES ('default', '{}', 1,"
+                    " (SELECT MIN(id) FROM policy), 1750000000, 1750000000)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO pending_plex_login (pin_id, pin_code, purpose, created_at,"
+                    " expires_at) VALUES (1, 'ABCD', 'login', 1750000000, 1750003600)"
+                )
+            )
+        with engine.begin() as conn:
+            enabled = conn.execute(text("SELECT enabled FROM profile")).scalar_one()
+            pin = conn.execute(text("SELECT pin_code FROM pending_plex_login")).scalar_one()
+        assert (enabled, pin) == (1, "ABCD")
+        engine.dispose()
+
+    def test_a_rollback_leaves_the_case_insensitive_name_constraint_standing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A batch rebuild copies the table from SQLite's reflection, and reflection does not
+        report collations -- so the ``built_in`` rebuild in ``downgrade()`` silently recreated
+        ``list_config.name`` case-SENSITIVE until it restated the collation too.
+
+        The damage compounds rather than merely reverting #508. Two rows differing only in case
+        get in, and the re-upgrade's rebuild then dies on ``UNIQUE constraint failed`` with
+        ``e5f6a7b8c9d0``'s disambiguation pass long since applied and never re-run, so the
+        container fails its migration on every restart. Rule 148 asks for a surviving
+        constraint to be asserted rather than eyeballed; this is the downgrade half of it
+        (rule 72).
+        """
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+        command.downgrade(config, _PRIOR_RELEASE_M)
+
+        with pytest.raises(IntegrityError):
+            TestAListNameIsUniqueWithoutRegardToCase._add(engine, "Keepers", "keepers")
+        engine.dispose()
+
+    def test_the_named_constraints_and_indexes_survive_both_directions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Four batch rebuilds up and four back down, each a full copy of its table from
+        reflection. Rule 148's third obligation asks for the survivors to be asserted rather
+        than eyeballed, and the collation this class already pins is the proof that eyeballing
+        misses one: reflection reports these four and does not report that."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+        def present() -> set[str]:
+            inspector = inspect(engine)
+            found = {fk["name"] for fk in inspector.get_foreign_keys("profile")}
+            for table in ("profile", "pending_plex_login", "plex_server", "list_config"):
+                found |= {ix["name"] for ix in inspector.get_indexes(table)}
+                found |= {u["name"] for u in inspector.get_unique_constraints(table)}
+            return {name for name in found if name}
+
+        expected = {
+            "fk_profile_active_policy_id_policy",
+            "ix_pending_plex_login_pin_id",
+            "uq_profile_name",
+            "uq_plex_server_machine_identifier",
+        }
+        assert expected <= present(), "an upgrade rebuild dropped one"
+
+        command.downgrade(config, _PRIOR_RELEASE_M)
+
+        assert expected <= present(), "a downgrade rebuild dropped one"
+        engine.dispose()
+
+    def test_a_rollback_restores_the_not_null_columns_over_a_backfill(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A row release M wrote holds NULLs the old shape forbids, so the downgrade backfills
+        before it re-imposes ``NOT NULL``. Without that it raises and the operator is stranded
+        on an image they were trying to leave."""
+        config = _alembic_config(tmp_path, monkeypatch)
+        command.upgrade(config, "head")
+        engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO policy (policy_hash, body_json, media_type, name, created_at)"
+                    " VALUES ('h', '{}', 'movie', 'mine', 1750000000)"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO profile (name, settings_json, created_at, updated_at)"
+                    " VALUES ('default', '{}', 1750000000, 1750000000)"
+                )
+            )
+
+        command.downgrade(config, _PRIOR_RELEASE_M)
+
+        with engine.begin() as conn:
+            pointed_at = conn.execute(text("SELECT active_policy_id FROM profile")).scalar_one()
+            oldest = conn.execute(text("SELECT MIN(id) FROM policy")).scalar_one()
+        assert pointed_at == oldest
+        engine.dispose()
+
+
+#: Every file stating how many revisions call ``op.get_bind()``. The sentence is the reason
+#: ``run_migrations_offline`` was deleted rather than kept, and it is written in four places by
+#: four different authors reading each other -- so it was already off by one the moment this
+#: file added a revision, in all four at once, in the direction that reads as measured
+#: (rule 144). Removing a copy means removing it from this tuple, which is a deliberate edit.
+_GET_BIND_CLAIM_SITES = (
+    "alembic/env.py",
+    "CONTRIBUTING.md",
+    "tests/test_migrations.py",
+    "docs/SIMPLIFICATION_PLAN.md",
+)
+
+#: Matches the claim in every spelling the four files use, anchored on the words rather than on
+#: a delimiter only one spelling puts there (rule 147): one backtick pair in markdown, two in
+#: reStructuredText, and a line break anywhere in the sentence -- which is not hypothetical.
+#: Every one of these files is hard-wrapped, two of them behind a comment or blockquote marker,
+#: so the first version of this matcher read three sites and silently skipped the fourth.
+_GET_BIND_CLAIM = re.compile(r"(\d+)[\s>#]+revisions call[\s>#]+`+op\.get_bind\(\)`+")
+
+
+def test_every_statement_of_the_get_bind_count_is_the_count_the_revisions_have() -> None:
+    """One measured fact, four prose copies, none generated from the other.
+
+    ``alembic upgrade head --sql`` cannot work because these revisions ask for a connection
+    offline mode does not have, and each file states the count as evidence. A revision added
+    anywhere makes every copy wrong at once, and a wrong count still reads as measured, which
+    is what makes this worth a gate rather than a comment.
+    """
+    versions = sorted((PROJECT_ROOT / "alembic" / "versions").glob("*.py"))
+    measured = sum(1 for p in versions if "op.get_bind()" in p.read_text(encoding="utf-8"))
+    assert measured, "no revision calls op.get_bind(), so the claim itself no longer holds"
+
+    for site in _GET_BIND_CLAIM_SITES:
+        text_of = (PROJECT_ROOT / site).read_text(encoding="utf-8")
+        found = _GET_BIND_CLAIM.search(text_of)
+        assert found is not None, (
+            f"{site} no longer states how many revisions call op.get_bind(). If the sentence "
+            f"was removed on purpose, remove {site} from _GET_BIND_CLAIM_SITES in "
+            "tests/test_migrations.py; the other copies still say it."
+        )
+        assert int(found.group(1)) == measured, (
+            f"{site} says {found.group(1)} revisions call op.get_bind(); "
+            f"alembic/versions/ has {measured} of {len(versions)}. The same sentence is in "
+            f"{', '.join(s for s in _GET_BIND_CLAIM_SITES if s != site)} -- correct every one, "
+            "not just this file."
+        )

@@ -9,10 +9,18 @@ column SQLite will refuse. That is a fresh install failing its first Plex link o
 first settings save, which is why the schema moves BEFORE the attributes and not with
 them.
 
-**Nothing is dropped here, deliberately.** One release where both images work is what
-makes the operator's rollback survivable: release M-1 still carries every attribute and
-still writes every column, and it keeps working against this database unchanged. Release
-M+1 drops the six, under rule 148's three obligations.
+**Nothing is dropped here, deliberately.** One release where both images work is what makes
+the operator's rollback survivable: every column release M-1 writes is still there, still
+holds its old values, and still accepts the writes that image makes.
+
+**Rolling back is two steps, and the second alone does not work.** Run ``alembic downgrade
+d5e6f7a8b9c0`` from the M image FIRST, then start M-1. Going straight to M-1 leaves a
+database stamped at a revision that image's script directory does not contain, so its boot
+migration exits with ``Can't locate revision`` and ``docker-entrypoint.sh`` stops the
+container. Fail-closed, and recoverable by coming back to M and downgrading, but it is not
+the unchanged-start this paragraph used to promise.
+
+Release M+1 drops the six, under rule 148's three obligations.
 
 **Two shapes, chosen per column rather than uniformly.**
 
@@ -121,6 +129,18 @@ def downgrade() -> None:
     cannot be reversed honestly, and says so rather than guessing.
     """
     with op.batch_alter_table("list_config", schema=None) as batch_op:
+        # Restated here for the same reason the upgrade restates it, and forgetting it here is
+        # worse than forgetting it there. A rollback would leave `name` case-SENSITIVE, admit
+        # "Holiday" beside "holiday", and the re-upgrade's rebuild would then die on `UNIQUE
+        # constraint failed` with the disambiguation pass (`e5f6a7b8c9d0`) already applied and
+        # never re-run -- so the container fails its migration on every restart until someone
+        # renames a row by hand.
+        batch_op.alter_column(
+            "name",
+            existing_type=sa.String(length=100),
+            type_=sa.String(length=100, collation="NOCASE"),
+            existing_nullable=False,
+        )
         batch_op.alter_column(
             "built_in",
             existing_type=sa.Boolean(),

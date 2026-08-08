@@ -308,7 +308,7 @@ migrations fail and the only repair is rewriting the entire migration history.
 `tests/test_migrations.py` guards both halves. It imports the real naming convention and
 proves a named constraint can be dropped under batch mode, and it runs the real
 `alembic/env.py` to capture what that file passes to `context.configure()`. There is one call
-site: the offline (`--sql`) branch had no invoker and could not have worked, since 8 of the 23
+site: the offline (`--sql`) branch had no invoker and could not have worked, since 9
 revisions call `op.get_bind()`, so it was removed rather than kept as a second path nothing
 exercises. Flipping `render_as_batch` to `False` fails that test today, which is a great deal
 better than discovering it years from now in the first migration that needs it.

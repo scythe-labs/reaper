@@ -759,6 +759,20 @@ migration:
 - **Hiding a retired column from autogenerate does not hide its foreign key.** `include_name`
   needs a second arm for `foreign_key_constraint`, or `alembic check` — a CI gate — reports
   `remove_fk` on every commit.
+- **The downgrade rebuilds the same tables and needs the same care, and getting it wrong there is
+  worse.** A rollback that dropped the collation would admit the colliding pair, and the
+  re-upgrade would then die on `UNIQUE constraint failed` with the disambiguation pass already
+  applied and never re-run: the container fails its migration on every restart. Rule 148's
+  assert-the-survivors obligation covers both directions.
+- **Rolling back is two steps, and the migration says so.** `alembic downgrade` from the M image
+  first, *then* start M-1. Starting M-1 against an M database leaves it stamped at a revision that
+  image has never heard of, and its boot migration stops the container. Fail-closed, but the
+  operator needs the recipe rather than the property.
+- **A column retiring takes the code that existed only to satisfy it.** `active_policy_id` had a
+  writer whose whole job was giving the foreign key something to point at, and it persisted the
+  bare shipped policy — so the first Pace save replaced the wider body `active_policy` computes
+  for an unsaved install, and an operator's Plex keep collection silently stopped protecting.
+  Rule 64's supply chain reaches the thing that *fed* the column, not only the thing that read it.
 
 The exclusion list in `alembic/env.py` is a one-release bridge and empties with the M+1 sweep. A
 column that outlives its sweep is how a dead column becomes permanent behind a growing list of

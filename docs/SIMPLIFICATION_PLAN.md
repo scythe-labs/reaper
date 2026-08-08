@@ -677,8 +677,8 @@ Four PRs, in order:
    > measurement.
    >
    > **`run_migrations_offline` goes, and the reason is stronger than the finding's.** Measured:
-   > `alembic upgrade head --sql` exits 1 today, dying at revision 3 of 23, because 8 of the 23
-   > call `op.get_bind()` and offline mode has no connection. Those are rule 81's reflection
+   > `alembic upgrade head --sql` exits 1 today, dying at revision 3, because 9
+   > revisions call `op.get_bind()` and offline mode has no connection. Those are rule 81's reflection
    > guards, so the capability cannot be restored without giving them up. The deletion also
    > corrects `CONTRIBUTING.md:305-312`, which claims the test covers both call sites (rule 64).
    >
