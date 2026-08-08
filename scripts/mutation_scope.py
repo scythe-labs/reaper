@@ -648,17 +648,14 @@ print(json.dumps({"order": order, "cases": cases}))
 GATES_PROBE = r"""
 import json
 from reaper.engine.gates import (
-    CuratedListGate,
     DataHorizonGate,
     Facts,
     GateConfig,
-    GateId,
     MinDormancyGate,
     RatingFloorGate,
     RatingRule,
     ServerPopularityGate,
     StreamingNowGate,
-    WhitelistGate,
     history_shortfall,
     lifetime_shortfall,
     progress_is_establishable,
@@ -699,9 +696,6 @@ def gate_case(name, gate, **facts):
         is_whitelisted=Absent(source="x"),
     )
     record(name, verdict(lambda: gate.evaluate(Facts(**(base | facts)))))
-
-def cfg(gate_id, **kw):
-    return GateConfig(gate=gate_id, **kw)
 
 # --- RatingFloorGate: the empty set, the IMDb fail-closed guard, and the bar itself ---
 imdb_bar = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
@@ -751,7 +745,7 @@ gate_case("rating-any-one-cleared-one-missed",
           **readable)
 
 # --- ServerPopularityGate: the watcher floor, the pluralization, and the reach bound ---
-pop = ServerPopularityGate(cfg(GateId.SERVER_POPULARITY, threshold=3, window_days=365))
+pop = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
 # "well-over" matters as much as "at-floor": every case sitting at or below the floor left
 # `count >= floor` free to become `count == floor`, which stops protecting the most-watched
 # titles on the server and changes nothing a probe can see.
@@ -761,7 +755,7 @@ for label, n in (("at-floor", 3), ("well-over-floor", 10), ("one-under", 2),
               history_reach_days=Known(value=400.0, source="x"))
 # A floor of 1 is the only way to reach the PROTECT arm's singular, and an Absent count is
 # the only way to reach the `else 0` fallback.
-solo = ServerPopularityGate(cfg(GateId.SERVER_POPULARITY, threshold=1, window_days=365))
+solo = ServerPopularityGate(GateConfig(threshold=1, window_days=365))
 gate_case("popularity-single-watcher-protects", solo,
           distinct_watchers=Known(value=1, source="x"),
           history_reach_days=Known(value=400.0, source="x"))
@@ -783,7 +777,7 @@ gate_case("popularity-reach-unreadable", pop,
           history_reach_days=Unknown(reason="r", source="x"))
 
 # --- MinDormancyGate: the floor, at it and either side ---
-dorm = MinDormancyGate(cfg(GateId.MIN_DORMANCY, threshold=1095))
+dorm = MinDormancyGate(GateConfig(threshold=1095))
 for label, days in (("at-floor", 1095.0), ("one-under", 1094.0), ("well-under", 400.0),
                     ("well-over", 1500.0)):
     gate_case(f"dormancy-{label}", dorm, days_observed_unwatched=Known(value=days, source="x"))
@@ -793,17 +787,12 @@ gate_case("dormancy-absent", dorm, days_observed_unwatched=Absent(source="x"))
 
 # --- the three switch-shaped gates ---
 for name, gate, field in (
-    ("streaming", StreamingNowGate(cfg(GateId.STREAMING_NOW)), "is_streaming_now"),
-    ("whitelist", WhitelistGate(cfg(GateId.WHITELISTED)), "is_whitelisted"),
+    ("streaming", StreamingNowGate(GateConfig()), "is_streaming_now"),
 ):
     gate_case(f"{name}-true", gate, **{field: Known(value=True, source="x")})
     gate_case(f"{name}-false", gate, **{field: Known(value=False, source="x")})
     gate_case(f"{name}-unreadable", gate, **{field: Unknown(reason="r", source="x")})
-curated = CuratedListGate(cfg(GateId.CURATED_LIST))
-gate_case("curated-on-a-list", curated, in_curated_list=Known(value="a list", source="x"))
-gate_case("curated-on-no-list", curated, in_curated_list=Absent(source="x"))
-gate_case("curated-unreadable", curated, in_curated_list=Unknown(reason="r", source="x"))
-gate_case("horizon-unreadable", DataHorizonGate(cfg(GateId.DATA_HORIZON)),
+gate_case("horizon-unreadable", DataHorizonGate(GateConfig()),
           days_observed_unwatched=Unknown(reason="r", source="x"))
 
 # --- the three pure span helpers, at and either side of every boundary ---
@@ -1168,8 +1157,6 @@ ZONES: dict[str, Zone] = {
             "lifetime_shortfall",
             "progress_is_establishable",
             "ServerPopularityGate.evaluate",
-            "WhitelistGate.evaluate",
-            "CuratedListGate.evaluate",
             "MinDormancyGate.evaluate",
             "DataHorizonGate.evaluate",
             "evaluate_all",

@@ -19,7 +19,7 @@ from reaper.engine.backtest import (
     rewatch_prior,
 )
 from reaper.engine.calibration import Bucket, RewatchPrior
-from reaper.engine.gates import GateConfig, GateId, ServerPopularityGate
+from reaper.engine.gates import GateConfig, ServerPopularityGate
 from reaper.engine.observation import Known, Unknown
 
 NOW = utcnow()
@@ -148,9 +148,7 @@ class TestFactsAreRebuiltAsOfTheCutoff:
         assert isinstance(facts.history_reach_days, Known)
         assert round(facts.history_reach_days.value) == 135
 
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
         assert gate.evaluate(facts).blocked is True
 
         result = BacktestResult(cutoff=CUTOFF, condemn_at=70, considered=4, blocked_unreadable=4)

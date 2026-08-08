@@ -1683,7 +1683,7 @@ class TestStopMidRun:
         run EXECUTING.
 
         What it must NOT do is finish tidying Plex. The purge polls each affected section for
-        up to ``_plex_settle_attempts * _plex_settle_delay`` before it can even decide, so
+        up to ``_PLEX_SETTLE_ATTEMPTS * _plex_settle_delay`` before it can even decide, so
         honoring it here holds the container's shutdown open for tens of seconds per section
         and can empty a section's trash while the process is being torn down. The purge is
         cosmetic; the state commit is not, so the state is made durable and the purge is

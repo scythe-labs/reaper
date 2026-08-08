@@ -331,7 +331,6 @@ def _movie_facts(*, blind: str | None, added_at: datetime = JUST_ADDED) -> Facts
         tmdb_id=1,
         plex_rating_key=10,
         added_at=added_at,
-        has_file=True,
     )
     return build_facts(
         item,

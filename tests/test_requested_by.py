@@ -21,7 +21,6 @@ def _req(**kw: object) -> MediaRequest:
         "request_id": 1,
         "media_type": "movie",
         "is_4k": False,
-        "status": 5,
         "requested_at": None,
         "requester": Requester(
             seerr_user_id=1, plex_id=1, username="alice", display_name="Alice", email=None

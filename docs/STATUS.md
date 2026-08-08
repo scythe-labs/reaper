@@ -75,7 +75,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 
 | Decision | Choice |
 |---|---|
-| Condemn logic | **Flat AND** of typed conditions. No OR, no nesting, no NOT. |
+| Condemn logic | **One typed condition per rule**, weighted. No OR, no nesting, no NOT. † |
 | Protections | **Gates with no CONDEMN constructor** — structurally cannot delete |
 | Protect authoring | **Catalog + user-authored protect rules** (worst case is nothing deleted) |
 | Signals | **Unsigned**, fixed denominator including unknown weights |

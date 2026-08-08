@@ -389,10 +389,15 @@ class Facts:
 
 @dataclass(frozen=True, slots=True)
 class GateConfig:
-    """The user-tunable part of a gate. Integers only -- see ``policy``."""
+    """The user-tunable part of a gate. Integers only -- see ``policy``.
 
-    gate: GateId
-    enabled: bool = True
+    No ``gate`` id and no ``enabled`` flag. Both were written at the one construction site
+    (``services.scan_runner.build_gates``) and read by no gate: each gate class carries its
+    own ``id``, and a gate the operator switched off is never built at all, so the flag was
+    only ever ``True``. A config that could say ``enabled=False`` invites a reader to think
+    something checks it.
+    """
+
     threshold: int = 0
     #: No ``secondary`` here. It carried the rating gate's vote floor until that bar moved to
     #: ``PolicyBody.keep_rating_rules``, where it is now ``RatingRule.min_votes``, read by

@@ -547,26 +547,15 @@ async def horizon(engine: AsyncEngine) -> datetime | None:
     return (await _state(engine)).earliest
 
 
-async def latest(engine: AsyncEngine) -> datetime | None:
-    """The newest event in the local mirror, or ``None`` when there is nothing at all.
-
-    "Did anybody watch anything?", where :func:`horizon` is the reach question. This
-    **cannot** answer "is the ingest still running?": a stalled Tautulli ingest and a
-    genuinely quiet library produce the identical ``MAX(watched_at)``, so degrading a scan
-    on this reads users who went away for the weekend as a broken pipeline. Ask
-    :func:`last_synced_at` for that.
-    """
-    return (await _state(engine)).latest
-
-
 async def last_synced_at(engine: AsyncEngine) -> datetime | None:
     """When the ingest last ran, or ``None`` if it never has.
 
-    The liveness signal :func:`latest` is not. ``history_sync_state.synced_at`` is written
-    by :func:`_store_tautulli_total` whenever Tautulli answered and its history had not
-    shrunk, so this moves on a quiet library while ``MAX(watched_at)`` stands still. That
-    is the whole difference, and it is what the scan's staleness guard degrades on
-    (``services.snapshot``).
+    The liveness signal ``HistoryState.latest`` is not. ``history_sync_state.synced_at`` is
+    written by :func:`_store_tautulli_total` whenever Tautulli answered and its history had
+    not shrunk, so this moves on a quiet library while ``MAX(watched_at)`` stands still.
+    A stalled ingest and a quiet library share the same newest event, so degrading a scan on
+    that reads users who went away for the weekend as a broken pipeline. This is what the
+    scan's staleness guard degrades on instead (``services.snapshot``).
 
     Precise about what it marks: ``_store_tautulli_total`` is called from
     ``_check_regression``, which runs *before* the page walk, so this says "the source

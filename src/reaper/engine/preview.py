@@ -67,9 +67,19 @@ NOT_PROBED_REASON = "not part of this preview"
 
 _NOTHING = Unknown(source="preview", reason=NOT_PROBED_REASON)
 
+#: The widest popularity window a probe may be asked about. A boundary bound rather than a real
+#: one (rule 95): a century, above any history anyone has.
+#:
+#: ``api.schemas.SignalProbeIn.window_days`` reads THIS rather than restating the number, because
+#: the mirror below is set to exactly it and the two only work as a pair (rule 131). Raise the
+#: wire's bound alone and every ``FEW_WATCHERS`` probe takes the shortfall arm and reports zero at
+#: every value on the ramp, which reads to the operator as a rule that does nothing.
+MAX_PROBE_WINDOW_DAYS = 36_500
+
 #: Long enough that the watch mirror never withholds a watcher count here. See the module
 #: docstring: the probe is about the ramp, and the shortfall has its own warning elsewhere.
-_REACH_DAYS = 36_500.0
+#: ``history_shortfall`` returns ``None`` at ``reach >= needed``, so equality is enough.
+_REACH_DAYS = float(MAX_PROBE_WINDOW_DAYS)
 
 
 def _bare_facts(field: str, value: float) -> Facts:
@@ -100,14 +110,13 @@ class ProbeResult:
 
     ``points`` is what the rule moves the score by in its own direction -- pressure for a
     signal, and a discount for a keep rule when one is added -- so the editor renders any
-    kind the same way. ``detail`` is the engine's own words for the answer. Nothing renders it
-    today: ``signalRamp.ts`` words both the editor's sentence and the panel's row, so that is
-    where the two are held in step, and a second wording arriving over the wire would be a
+    kind the same way. It is the only field: the engine's own wording for the answer used to
+    ride beside it and no surface ever rendered it, because ``signalRamp.ts`` words both the
+    editor's sentence and the panel's row, and a second wording over the wire would be a
     third copy rather than the thing that reconciles them.
     """
 
     points: float
-    detail: str
 
 
 class UnprobableSignalError(LookupError):
@@ -126,4 +135,4 @@ def probe_signal(config: SignalConfig, value: float, *, window_days: int) -> Pro
     if field is None:
         raise UnprobableSignalError(config.signal)
     result = evaluate_signal(config, _bare_facts(field, value), window_days=window_days)
-    return ProbeResult(points=result.pressure, detail=result.detail)
+    return ProbeResult(points=result.pressure)

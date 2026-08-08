@@ -29,7 +29,7 @@ vi.mock("../api", async (importOriginal) => {
 // an unmocked one would sit silent until the first test that waits long enough. Seeded HERE
 // rather than inside `renderEditor`, which runs after a test's own mock and would overwrite it.
 beforeEach(() => {
-  apiMock.probePolicy.mockResolvedValue({ points: 0.8, detail: "a value" });
+  apiMock.probePolicy.mockResolvedValue({ points: 0.8 });
 });
 
 function body(custom: CustomCondemn[] = []): PolicyBody {
@@ -1564,7 +1564,7 @@ describe("where a signal starts earning", () => {
 // only ever shows what the server said, and says so plainly when it has not said it yet.
 describe("trying a value against a signal's range", () => {
   it("shows what the engine answered, not a number worked out here", async () => {
-    apiMock.probePolicy.mockResolvedValue({ points: 3.5, detail: "IMDb 3.0" });
+    apiMock.probePolicy.mockResolvedValue({ points: 3.5 });
     renderEditor({ body: body() });
 
     await screen.findByText("How low it's rated");
@@ -1624,7 +1624,7 @@ describe("what the dormancy ramp can actually reach", () => {
   it("describes a title the history caps, when the history is the shorter of the two", async () => {
     // 200 days of history against a far end of 365: nothing can present more than 200, so
     // that is both a moving example and the ceiling the mirror imposes.
-    apiMock.probePolicy.mockResolvedValue({ points: 38.4, detail: "not watched in 6 months" });
+    apiMock.probePolicy.mockResolvedValue({ points: 38.4 });
     renderEditor({ body: body(), history_reach_days: 200 });
 
     await waitFor(() =>

@@ -22,7 +22,7 @@ from structlog.testing import capture_logs
 
 from reaper.clock import utcnow
 from reaper.engine import identity
-from reaper.engine.gates import Facts, GateConfig, GateId, ServerPopularityGate
+from reaper.engine.gates import Facts, GateConfig, ServerPopularityGate
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.verdict import decide_verdict
@@ -44,7 +44,6 @@ def _raw(**overrides: object) -> RawItem:
         "tmdb_id": 1,
         "plex_rating_key": 10,
         "added_at": datetime(2020, 1, 1, tzinfo=UTC),
-        "has_file": True,
     }
     base.update(overrides)
     return RawItem(**base)  # type: ignore[arg-type]
@@ -220,7 +219,7 @@ class TestASizeWeCouldNotReadIsUnknown:
     def test_an_unreadable_size_reaches_the_score_as_unknown(self) -> None:
         """As ``Known(0)`` it would read as a real measurement: maximum pressure on a
         size signal, and any "keep large files" rule silently stops protecting it."""
-        facts = _facts(_raw(size_bytes=None, has_file=True))
+        facts = _facts(_raw(size_bytes=None))
 
         assert isinstance(facts.size_bytes, Unknown)
 
@@ -293,9 +292,7 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
         months ago, which is inside the year-long window and outside the mirror. The scan
         sees a zero, and must not call it one.
         """
-        gate = ServerPopularityGate(
-            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
-        )
+        gate = ServerPopularityGate(GateConfig(threshold=3, window_days=365))
         facts = build_facts(
             _raw(),
             ScanContext(horizon=utcnow() - timedelta(days=90)),

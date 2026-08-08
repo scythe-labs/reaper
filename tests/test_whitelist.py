@@ -107,10 +107,10 @@ class TestService:
         assert len(spared) == 1
         assert spared[0].note == "two"
 
-    async def test_unspare_removes_and_reports(self, session: AsyncSession) -> None:
+    async def test_remove_override_removes_a_spare_and_reports(self, session: AsyncSession) -> None:
         await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note=None)
-        assert await whitelist.unspare(session, media_key="radarr:1:7") is True
-        assert await whitelist.unspare(session, media_key="radarr:1:7") is False
+        assert await whitelist.remove_override(session, media_key="radarr:1:7") is True
+        assert await whitelist.remove_override(session, media_key="radarr:1:7") is False
         assert await whitelist.overrides(session) == {}
 
 
@@ -132,8 +132,8 @@ class TestOverrideService:
             session, media_key="radarr:1:7", title="Kept", decision="reap", note=None
         )
         assert await whitelist.overrides(session) == {"radarr:1:7": "reap"}
-        # is_spared reflects the decision, not mere presence.
-        assert await whitelist.is_spared(session, "radarr:1:7") is False
+        # The decision is what is read back, not mere presence in the table.
+        assert await whitelist.override_for(session, "radarr:1:7") == "reap"
 
     async def test_remove_override_clears_either_decision(self, session: AsyncSession) -> None:
         await whitelist.set_override(

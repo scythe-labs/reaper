@@ -1660,9 +1660,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert expected
 
         message = self._window_warnings(self._pop(), reach=reach)[0].message
-        blocked = ServerPopularityGate(
-            GateConfig(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=self.WINDOW)
-        ).evaluate(
+        blocked = ServerPopularityGate(GateConfig(threshold=2, window_days=self.WINDOW)).evaluate(
             replace(
                 _evidence(days=900, watchers=0, rank=1, rating=70, size_gb=1),
                 history_reach_days=Known(value=reach, source="t"),

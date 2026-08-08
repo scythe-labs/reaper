@@ -20,12 +20,10 @@ from reaper.engine.fields import (
     CustomProtectGate,
     Lane,
     Op,
-    RuleSet,
     evaluate,
-    evaluate_rules,
     vocabulary,
 )
-from reaper.engine.gates import ABSTAIN, PROTECT, Facts
+from reaper.engine.gates import ABSTAIN, PROTECT, Facts, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
 
 
@@ -122,82 +120,43 @@ class TestTheLaneAsymmetry:
         }
         assert "show_ended" in {s.key for s in vocabulary(Lane.CONDEMN)}
 
-    def test_a_ruleset_validates_its_lane_on_construction(self) -> None:
+    def test_a_protect_only_field_is_refused_in_the_condemn_lane(self) -> None:
+        # Through ``validate_for`` directly, which is where a real condemn rule meets it:
+        # ``policy.BooleanCondemnSpec`` calls exactly this on every rule the operator saves.
         with pytest.raises(ValueError, match="cannot be used to remove things"):
-            RuleSet(
-                lane=Lane.CONDEMN,
-                conditions=(Condition(field="whitelisted", op=Op.EQ, value=True),),
-            )
+            Condition(field="whitelisted", op=Op.EQ, value=True).validate_for(Lane.CONDEMN)
 
     def test_an_unsupported_operator_is_refused(self) -> None:
         with pytest.raises(ValueError, match="cannot be compared with"):
             Condition(field="days_unwatched", op=Op.CONTAINS, value="x").validate_for(Lane.CONDEMN)
 
 
-class TestCondemnIsAFlatAnd:
-    def test_every_condition_must_match(self) -> None:
-        rules = RuleSet(
-            lane=Lane.CONDEMN,
-            conditions=(
-                Condition(field="days_unwatched", op=Op.GTE, value=365),
-                Condition(field="recent_watchers", op=Op.LTE, value=0),
-            ),
-        )
-        # The window the count was taken over: "nobody watched it in the last year" is
-        # only a match the mirror can support once it reaches back a year (_facts does).
-        assert evaluate_rules(rules, _facts(), window_days=365).matched is True
-
-    def test_one_failing_condition_is_enough_to_spare_it(self) -> None:
-        rules = RuleSet(
-            lane=Lane.CONDEMN,
-            conditions=(
-                Condition(field="days_unwatched", op=Op.GTE, value=365),
-                Condition(field="recent_watchers", op=Op.LTE, value=0),
-                Condition(field="size_bytes", op=Op.GTE, value=50_000_000_000),  # 8GB < 50GB
-            ),
-        )
-        assert evaluate_rules(rules, _facts()).matched is False
-
-    def test_a_blocked_condition_never_condemns(self) -> None:
-        """Unknown is not evidence. If we could not check one of the conditions, we
-        cannot claim the item qualifies."""
-        rules = RuleSet(
-            lane=Lane.CONDEMN,
-            conditions=(
-                Condition(field="days_unwatched", op=Op.GTE, value=365),
-                Condition(field="recent_watchers", op=Op.LTE, value=0),
-            ),
-        )
-        blind = _facts(distinct_watchers=Unknown(reason="Tautulli timed out", source="t"))
-
-        result = evaluate_rules(rules, blind)
-
-        assert result.blocked is True
-        assert result.matched is False  # ...and therefore not condemned
-
-
 class TestProtectIsAnOr:
     """Any reason to keep a file is sufficient. Safe by construction -- which is
-    precisely why this lane may be user-authored."""
+    precisely why this lane may be user-authored.
+
+    Through the shape production uses: one ``CustomProtectGate`` per condition, all of them
+    handed to ``evaluate_all`` (``services.scan_runner.build_gates``). The OR is
+    ``Evaluation.protected``, not a combinator inside a rule -- there is no rule-set type
+    for the operator to compose, which is the whole of the condemn lane's asymmetry."""
 
     def test_a_single_matching_protection_is_enough(self) -> None:
-        rules = RuleSet(
-            lane=Lane.PROTECT,
-            conditions=(
-                Condition(field="imdb_rating", op=Op.GTE, value=90),  # 9.0 -- fails
-                Condition(field="imdb_votes", op=Op.GTE, value=500_000),  # 900k -- fires
-            ),
-        )
-        assert evaluate_rules(rules, _facts()).matched is True
+        gates = [
+            CustomProtectGate(Condition(field="imdb_rating", op=Op.GTE, value=90)),  # 9.0 -- fails
+            CustomProtectGate(
+                Condition(field="imdb_votes", op=Op.GTE, value=500_000)
+            ),  # 900k -- fires
+        ]
+        assert evaluate_all(gates, _facts()).protected is True
 
     def test_the_owners_own_protection_rule(self) -> None:
         """The rule the field registry exists to make expressible: 'never delete
         anything with more than half a million IMDb votes, however unwatched it is
         here.'
 
-        This is not hypothetical. Backtesting surfaced blockbusters -- famous, heavily
-        rated, dormant on this particular server -- that the default policy condemned
-        and that a user then watched months later. The item is globally beloved and
+        This is not hypothetical. Measurement on a real library surfaced blockbusters --
+        famous, heavily rated, dormant on this particular server -- that the default policy
+        condemned and that a user then watched months later. The item is globally beloved and
         locally quiet, which no built-in gate catches: the rating floor rejects it
         (its score is merely good, not great) and the popularity gate rejects it
         (nobody here watched it *recently*). Vote count is the signal that saves it,
@@ -209,12 +168,9 @@ class TestProtectIsAnOr:
             days_observed_unwatched=Known(value=700.0, source="tautulli"),
             distinct_watchers=Known(value=0, source="tautulli"),
         )
-        rules = RuleSet(
-            lane=Lane.PROTECT,
-            conditions=(Condition(field="imdb_votes", op=Op.GTE, value=500_000),),
-        )
+        gate = CustomProtectGate(Condition(field="imdb_votes", op=Op.GTE, value=500_000))
 
-        assert evaluate_rules(rules, famous_but_dormant).matched is True
+        assert evaluate_all([gate], famous_but_dormant).protected is True
 
 
 class TestUnitsAreRendered:
@@ -278,13 +234,10 @@ class TestSeasonPruningNeedsNoBooleanCleverness:
         older_season = _facts(season_rank=Known(value=5, source="sonarr"))
         newest_two = _facts(season_rank=Known(value=2, source="sonarr"))
 
-        rules = RuleSet(
-            lane=Lane.CONDEMN,
-            conditions=(Condition(field="season_rank", op=Op.GTE, value=3),),
-        )
+        condition = Condition(field="season_rank", op=Op.GTE, value=3)
 
-        assert evaluate_rules(rules, older_season).matched is True
-        assert evaluate_rules(rules, newest_two).matched is False
+        assert evaluate(condition, older_season).matched is True
+        assert evaluate(condition, newest_two).matched is False
 
 
 class TestTextMatchingIsForgiving:
