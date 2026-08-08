@@ -25,7 +25,10 @@ may coast on stored membership from a *recent* successful sync
 Past that bound, or with no record of a successful sync, degrade.
 
 **3 / 22. One decision function.** Condemn/abstain/protect lives only in
-`engine/verdict.decide_verdict`, and `snapshot`, `simulate` and `condemned` import it. Never
+`engine/verdict.decide_verdict`, and four callers import it: `snapshot`, `simulate`,
+`condemned`, and `policy.inspect` — which is the one every list of them has forgotten, and whose
+"nothing will be flagged for removal" warning rests on the decision being monotone in score and
+coverage. Never
 write `score >= threshold` or `coverage_bp >= floor` inline outside it, and never reimplement
 scoring, coverage, rounding, or floors anywhere they can drift.
 
@@ -134,9 +137,12 @@ response carrying a null or malformed body is not a genuine empty either.
   *withdraw* a protection never qualifies.
 
 **35. New `Facts` fields are populated — or explicitly `Absent` with a comment — in every fact
-builder**: `snapshot.build_facts` and `season_scan.build_season_facts`, the only two. Grep all
-builders when adding a field; one populated in a single path silently changes scores and coverage
-in the other, and `facts_codec.facts_from_dict` can thaw only what a builder already wrote.
+builder.** Two build from evidence — `snapshot.build_facts` and `season_scan.build_season_facts` —
+and one populated in a single path silently changes scores and coverage in the other. Two more
+construct a `Facts` and are just as easy to miss: `facts_codec.facts_from_dict`, which thaws only
+what a builder already wrote, and `preview._bare_facts`, whose `Facts(**observations)` raises at
+runtime for a field with no default and whose `# type: ignore` on the unpack hides that from mypy.
+Grep for `Facts(`, not for the two you remember.
 
 **65 / 91. Silent recovery on operator-configured safety values is forbidden, and a config read
 *failure* is not "nothing configured."** A fallback replacing saved profile/policy values

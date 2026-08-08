@@ -326,16 +326,19 @@ class AutonomyGrant(Base):
     ``clean_supervised_runs`` is measurable from the journal today.
     ``backtest_passed`` is not: the replay engine that would have produced it was
     deleted rather than wired, and its successors (#553, #554) answer different
-    questions, so **nothing can set that column to 1 and nothing is planned that
-    would.** The CHECK below therefore holds the table permanently empty, which is
-    the fail-closed direction and is why it is safe to leave standing.
+    questions, so **no honest writer of this table exists.**
+
+    **What keeps the table empty is that nothing constructs a grant** -- not the CHECK
+    below, which only refuses a row that admits ``backtest_passed = 0`` and would accept
+    one that simply asserts ``1``. So whoever wires M3b must decide what replaces the
+    retired bar rather than satisfy it: passing ``True`` for a check nothing performed
+    grants a profile unattended deletion on a policy nobody measured, and the database
+    will not stop them. Dropping the column is part of that change, under rule 148.
 
     The schema is kept because M3b sits at the top of ``docs/STATUS.md``'s open work
-    and this docstring is the only full record of the design; wiring it means
-    choosing what replaces the retired bar and dropping ``backtest_passed`` in the
-    same change, under rule 148. It is NOT kept on "pre-release, single migration
-    baseline" -- that premise expired at revision 2 and stating it here was #550's
-    class, a true conclusion resting on a false reason.
+    and this docstring is the only full record of the design. It is NOT kept on
+    "pre-release, single migration baseline" -- that premise expired at revision 2 and
+    stating it here was #550's class, a true conclusion resting on a false reason.
     """
 
     __tablename__ = "autonomy_grant"

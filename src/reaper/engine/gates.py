@@ -859,10 +859,12 @@ class DataHorizonGate:
 # An `UnmanagedGate` ("if no *arr owns it, Reaper cannot delete it") lived here, enabled by
 # default in both shipped policies. It could not fire. Reaper builds its candidate list BY
 # asking Sonarr and Radarr what they hold, so a file neither owns can never reach the set this
-# gate filtered: every builder of ``Facts.is_managed`` writes a hardcoded ``Known(True)``
-# (`snapshot`, `season_scan`), and the only other place a `Facts` is constructed
-# is `facts_codec.facts_from_dict`, which can thaw only what a builder already wrote. The
-# PROTECT branch
+# gate filtered: both evidence builders of ``Facts.is_managed`` write a hardcoded ``Known(True)``
+# (`snapshot`, `season_scan`), and neither of the two other `Facts` constructors can reach a gate
+# with anything else -- `facts_codec.facts_from_dict` thaws only what a builder already wrote, and
+# `preview._bare_facts` does write ``Unknown`` here but is handed to `evaluate_signal` alone,
+# never to `evaluate_all`. That last one is the load-bearing half, so it is stated rather than
+# left to a count of construction sites. The PROTECT branch
 # and the gate's half of ``verdict.STRUCTURAL_GATES`` were both unreachable while the operator
 # saw a switch, on by default, warned in red if they turned it off (rule 38/117).
 #
