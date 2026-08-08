@@ -562,9 +562,17 @@ Four PRs, in order:
    >
    > **Two things gate the sweep, both filed**: #565, an older image must refuse a newer
    > database at boot rather than fail at query time, and #566, a snapshot before a destructive
-   > revision. **#564 gates it harder** and is not about schema removal at all: a failed batch
-   > migration strands `_alembic_tmp_<table>` and every later boot fails. Reproduced; four
-   > shipped migrations are exposed today, so it lands on `dev` regardless of this plan.
+   > revision. **#564 gated it harder and is now fixed on `dev`** (#569), which is why it was
+   > never this branch's work: a failed batch migration stranded `_alembic_tmp_<table>` and
+   > every later boot failed. `alembic/env.py` now keeps DDL inside the migration's
+   > transaction, so a failed sweep rolls the temp table back with everything else.
+   > **The count in this paragraph was wrong and the direction matters**: it read "four shipped
+   > migrations are exposed," from a hand list of the migrations that visibly `alter_column`.
+   > Measured off the live statement stream, a fresh `alembic upgrade head` performs three
+   > recreates and **two are `add_column` calls** — Alembic rebuilds the table when
+   > `server_default` is a ClauseElement, and `sa.false()` is one. More was exposed than
+   > counted. Rule 148's M+1 obligation is corrected to match; `docs/LEARNINGS.md` carries the
+   > measurement.
    >
    > **`run_migrations_offline` goes, and the reason is stronger than the finding's.** Measured:
    > `alembic upgrade head --sql` exits 1 today, dying at revision 3 of 23, because 8 of the 23

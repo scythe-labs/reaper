@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,12 +34,13 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     create_engine,
+    event,
     inspect,
     select,
     text,
 )
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, NoSuchTableError
 from sqlalchemy.orm import Session
 
 from reaper.config import Settings
@@ -214,6 +216,138 @@ def _instance_has_import_exclusion(engine: Engine) -> bool:
 # carries it, so the additive migration's add_column must be guarded, not plain (B-8, rule 81).
 _BEFORE_IMPORT_EXCLUSION = "1f2a3b4c5d6e"
 _IMPORT_EXCLUSION = "2b3c4d5e6f70"
+
+
+def _table_names(engine: Engine) -> list[str]:
+    with engine.connect() as conn:
+        rows = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table'")
+        return sorted(str(name) for name in rows.scalars().all())
+
+
+@contextmanager
+def _recorded_statements() -> Iterator[list[str]]:
+    """Every statement any engine emits, for the duration of the block.
+
+    Class-level on ``Engine`` because the engine under test is the one alembic/env.py
+    builds internally and never hands back. Removed on the way out (rule 133).
+    """
+    seen: list[str] = []
+
+    def _record(
+        conn: Any, cursor: Any, statement: str, parameters: Any, ctx: Any, executemany: bool
+    ) -> None:
+        seen.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", _record)
+    try:
+        yield seen
+    finally:
+        event.remove(Engine, "before_cursor_execute", _record)
+
+
+def _built_a_temp_table_for(statements: list[str], table: str) -> bool:
+    return any(
+        s.lstrip().upper().startswith("CREATE TABLE") and f"_alembic_tmp_{table}" in s
+        for s in statements
+    )
+
+
+def test_a_failed_migration_strands_no_temp_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A migration that raises after a batch recreate leaves an install that still boots (#564).
+
+    pysqlite opens no transaction for DDL, so a batch recreate's ``CREATE TABLE
+    _alembic_tmp_X`` is autocommitted on the spot and the ``INSERT INTO ... SELECT``
+    after it opens the implicit transaction. Everything from the INSERT onward rolls
+    back; the temp table does not. No rows are lost, but the next boot re-runs the same
+    migration and dies on "table _alembic_tmp_candidate already exists" -- and migrations
+    run at container start, so it dies there every time after that too. Deleting
+    ``env.py``'s ``keep_ddl_in_the_transaction`` strands the temp table and fails the
+    first assertion after the precondition; the precondition itself still passes, since
+    the recreate runs either way and only its rollback is at issue.
+
+    Driven through the real runner over a real shipped migration, because the
+    transaction under test is one alembic opens per migration and nothing else opens it:
+    ``begin_transaction`` is a no-op on SQLite at env.py's outer call site
+    (``SQLiteImpl.transactional_ddl`` is False), so a test that stands in for a migration
+    body rather than being one probes no transaction at all and passes on a wedged tree.
+
+    The heal migration is made to raise the way an authoring mistake does, by handing it
+    a database with no ``reap_run`` -- its second guard reflects that table, after the
+    first recreate has already run. That "after" is the whole test, so it is proven and
+    not assumed: the recorded statements must show the temp table being built.
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    # The pre-freeze shape, minus reap_run. Same database as
+    # test_heal_migration_relaxes_old_not_null_size_bytes builds, so the recreate the
+    # heal performs here is the one that test proves reshapes the table.
+    md = MetaData(naming_convention=NAMING_CONVENTION)
+    Table("snapshot", md, Column("id", Integer, primary_key=True))
+    Table(
+        "candidate",
+        md,
+        Column("id", Integer, primary_key=True),
+        Column(
+            "snapshot_id", Integer, ForeignKey("snapshot.id", ondelete="CASCADE"), nullable=False
+        ),
+        Column("media_key", String(100), nullable=False),
+        Column("size_bytes", Integer, nullable=False),  # the old, un-healed shape
+        UniqueConstraint("snapshot_id", "media_key"),
+    )
+    md.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO snapshot (id) VALUES (1)"))
+        conn.execute(
+            text(
+                "INSERT INTO candidate (id, snapshot_id, media_key, size_bytes) VALUES "
+                "(1, 1, 'k1', 123)"
+            )
+        )
+    command.stamp(config, _PRIOR_HEAD)
+
+    with (
+        _recorded_statements() as statements,
+        pytest.raises(NoSuchTableError, match="reap_run"),
+    ):
+        command.upgrade(config, _HEAL_HEAD)
+
+    assert _built_a_temp_table_for(statements, "candidate"), (
+        "the migration never reached its first batch recreate, so this test proves nothing "
+        "about what a failure after one leaves behind"
+    )
+
+    # Nothing stranded, and the rollback was total rather than partial: the row is intact
+    # and the column is back to the shape it had before the recreate.
+    assert "_alembic_tmp_candidate" not in _table_names(engine)
+    assert _size_bytes_nullable(engine) is False
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT size_bytes FROM candidate WHERE id = 1")).scalar() == 123
+
+    # The half the operator feels: correcting the real cause is enough, where before the
+    # retry died on the leftover from the first attempt instead.
+    Table(
+        "reap_run",
+        md,
+        Column("id", Integer, primary_key=True),
+        Column(
+            "snapshot_id", Integer, ForeignKey("snapshot.id", ondelete="RESTRICT"), nullable=False
+        ),
+        Column("held_back_unknown_size", Integer, nullable=False, server_default="0"),
+    )
+    md.tables["reap_run"].create(engine)
+
+    command.upgrade(config, _HEAL_HEAD)
+
+    assert "_alembic_tmp_candidate" not in _table_names(engine)
+    assert _size_bytes_nullable(engine) is True
+    assert _held_back_default(engine) is None
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT size_bytes FROM candidate WHERE id = 1")).scalar() == 123
+
+    engine.dispose()
 
 
 def test_add_import_exclusion_upgrades_an_in_window_database(
