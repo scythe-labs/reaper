@@ -162,7 +162,7 @@ row moving is indistinguishable from one that never started.
 | --- | --- | --- | --- | --- |
 | 0 | Correct the plan | **done** | — | Third pass folded in. C1 settled |
 | 1 | Behavioral baseline | **done** | 2 of 2 | C13 settled on redaction; its coverage half is a standing limit, not a blocker |
-| 2 | Test-suite wall clock | not started | 6 of 9 | Unclaimed, not unstarted. The five wall-clock items are on `dev` and W1.4's boot fixtures are here; W1.4's other three bullets remain |
+| 2 | Test-suite wall clock | in progress | 6 of 9 | W1.4's last three bullets, one PR each: `renderWithProviders`, `tests/_fakes.py`, the complete api mock |
 | 3 | Gates that land green | not started | 0 of 4 | |
 | 4 | Drift corrections | not started | 0 of 4 | |
 | 5 | Deletions | not started | 0 of 4 | |
