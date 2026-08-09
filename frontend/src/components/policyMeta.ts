@@ -15,12 +15,45 @@ export type GateMeta = {
   help: string;
   unit?: "days" | "people";
   window?: { label: string; help: string };
-  /** No switch a policy can carry sits behind this id -- either a retired gate, or a
-   *  pseudo-id the API tallies under (`hand_spare`) -- but the server still emits it, in
-   *  stored explanations and in the simulator's spared-by counts, so its copy has to stay
-   *  readable. The docs' protections-table guard excludes these: they do not ship today. */
+  /** No switch a policy can carry sits behind this id -- a retired gate, a pseudo-id the API
+   *  tallies under (`hand_spare`), or one the engine emits with no policy row behind it --
+   *  but the server still emits it, in stored explanations and in the simulator's spared-by
+   *  counts, so its copy has to stay readable. The docs' protections-table guard excludes
+   *  these, because that table lists the switches an operator can set. **It does not mean
+   *  the id is inert**: `season_progression` fires on every TV scan and `custom` on every
+   *  keep rule the operator wrote, which is why they need copy at all. */
   retired?: boolean;
 };
+
+/** Every gate id the engine can emit, mirroring `GateId` in `src/reaper/engine/gates.py`.
+ *
+ *  It exists to make `GATE_META` complete: the `satisfies` clause below turns a gate added
+ *  to the engine without operator copy into a compile error, where before it was a raw id
+ *  printed at whoever was deciding what to delete (#551, rules 21 and 103).
+ *
+ *  The union is the mirror, so it needs its own guard: `tests/test_api_type_mirror.py`'s
+ *  `TestEveryGateIdHasOperatorCopy` pins it against the enum, both directions. */
+export type GateId =
+  | "whitelisted"
+  | "streaming_now"
+  | "rating_floor"
+  | "server_popularity"
+  | "others_watching"
+  | "curated_list"
+  | "data_horizon"
+  | "unmanaged"
+  | "min_dormancy"
+  | "season_progression"
+  | "custom";
+
+/** What the spared-by list calls a protection this build has no copy for.
+ *
+ *  Rule 66's fallback, and it handles an id the browser has never heard of only: every id
+ *  the engine emits today is named above. Honest rather than blank -- those titles really
+ *  were kept by something -- and it never prints the id, which is the whole of #551: a
+ *  `titleCase` of the slug put "Season Progression" and "Custom" in front of an operator
+ *  choosing what to delete (rule 21). */
+export const UNNAMED_GATE_LABEL = "Another protection";
 
 export const GATE_META: Record<string, GateMeta> = {
   min_dormancy: {
@@ -49,10 +82,11 @@ export const GATE_META: Record<string, GateMeta> = {
   // rule, and the loader converts a stored body still carrying either
   // (`engine/policy_migrations.py convert_list_protections`). Their copy stays, because the ids did not
   // stop being emitted: any upgraded install has stored explanations carrying both. Deleting
-  // the entries sent those through `titleCase` and printed "Whitelisted" and "Curated List"
-  // at the operator (rule 21). The backend's own `_kept_phrase` kept its two for exactly this
-  // reason; this is its twin (rules 64, 72). Rule 66's fallback is for an id the browser has
-  // never heard of, not one whose copy was removed while the server still sends it.
+  // the entries printed "Whitelisted" and "Curated List" at the operator (rule 21), which is
+  // what the fallback did with any id before #551. The backend's own `_kept_phrase` kept its
+  // two for exactly this reason; this is its twin (rules 64, 72). Rule 66's fallback is for an
+  // id the browser has never heard of, not one whose copy was removed while the server still
+  // sends it.
   //
   // Each label says what THAT gate meant, taken from the field it read. An earlier pass took
   // the two labels from `engine/fields.py` in source order and landed them on the wrong ids,
@@ -89,19 +123,65 @@ export const GATE_META: Record<string, GateMeta> = {
     label: "Stop if the unwatched time can't be read",
     help: "A title Reaper couldn't measure is left alone rather than judged. Either way, unwatched time is never counted further back than your history goes, so nothing older than it looks never-watched.",
   },
-  // `unmanaged` ("Only touch what Sonarr or Radarr manages") was here. Its gate is retired
-  // (see `engine/gates.py`): Reaper builds its candidate list by asking Sonarr and Radarr
-  // what they hold, so a file neither owns can never reach the set that protection filtered,
-  // and the switch did nothing in either position.
+  // The four below carry no switch either, and each was missing until #551. Two of them fire
+  // on ordinary scans -- a season guard, and every operator-authored protect rule -- so the
+  // spared-by list printed "Season Progression" and "Custom" as the reasons titles were kept,
+  // which is the engine's vocabulary in the panel read while deciding what to delete
+  // (rule 21). The other two are retired and reach the tally only out of an explanation an
+  // older scan stored.
   //
-  // Removing the entry is safe because neither reader can ask for it, NOT because of the
-  // `titleCase` fallback both readers carry. `PolicyEditor` maps the served policy body,
-  // which no longer holds the gate; `PolicySimulator` maps `protected_by`, which needs a
-  // PROTECT result this gate could never return. A stored explanation's protection rows do
-  // not come through here at all: `WhyPanel` renders the backend's own `detail` text. If the
-  // fallback were ever reached it would print a bare "Unmanaged" into operator copy, which
-  // rule 21 does not allow, so it is a backstop and not the reason this is safe.
-};
+  // The entry is no longer an argument about which reader can ask for which id: `GATE_META`
+  // is complete over `GateId` by construction (the `satisfies` below), so an id that cannot
+  // appear costs one label, and one that can is named. That is the trade the earlier removal
+  // of `unmanaged` got backwards -- it reasoned each reader out, correctly, and left the next
+  // id added to the engine to be printed raw.
+  //
+  // None of the four can reach `PolicyEditor`'s leftover-row notice, whose copy is about a
+  // gate whose LIST is gone: `PolicyBody._drop_retired_gates` strips `unmanaged` and
+  // `others_watching` from every stored body on load, and `GateSettingIn._must_be_authorable`
+  // refuses `season_progression` and `custom`, which no policy row builds. That notice is in
+  // fact unreachable for EVERY id right now, including the two it was written for:
+  // `api/policy.py`'s `_policy_out` rebuilds each row as a `GateSettingIn`, so the same
+  // validator rejects a stored `whitelisted` on the way OUT and the route 500s (#627). The
+  // point here is only that these four cannot make it say something wrong.
+  // NOT "Your season rules", which names a lever that does not always exist. Every season on
+  // disk is held under this id when the guard cannot be ANSWERED -- `progress_is_establishable`
+  // is False whenever the watch mirror reaches back less far than `in_progress_hold_days`,
+  // which is 180 by default, so a new install is in that state for its whole library. The hold
+  // is a blocked PROTECT (`season_evidence.guard_result`), `Evaluation.protectors` selects on
+  // the outcome alone, so it lands in `protections_fired` and tallies here like any keep. An
+  // operator told "your season rules" then loosens keep-last, keep-first and the partway-through
+  // guard in turn and watches the number hold still. `api/review.py`'s `_kept_phrase` already
+  // refuses to say it for the same rows ("your watch history is too short to tell"), so this is
+  // the wording that lets the two surfaces agree (rules 144, 21).
+  season_progression: {
+    label: "A season check",
+    help: "Your season rules kept it, or Reaper couldn't tell who is partway through.",
+    retired: true,
+  },
+  custom: {
+    label: "A rule you wrote",
+    help: "One of your own keep rules matched these titles.",
+    retired: true,
+  },
+  others_watching: {
+    // The help says no title was ever kept this way, because none was: no fact builder ever
+    // produced a Known count, so the gate's floor of at least 1 was never met and it could not
+    // PROTECT (`engine/gates.py`, where OthersWatchingGate used to be). The label is what a
+    // stored explanation would read as; the help must not invent the keep behind it (rule 25).
+    label: "Other people were watching it",
+    help: "An old protection Reaper no longer checks.",
+    retired: true,
+  },
+  unmanaged: {
+    // The wording the review queue's chip uses for the same id (`api/review.py`'s
+    // `_kept_phrase`), so the two surfaces say one thing (rule 144). Reaper builds its
+    // candidate list by asking Sonarr and Radarr what they hold, so nothing lands here now.
+    label: "Not managed by Sonarr or Radarr",
+    help: "Kept by a scan that looked outside what Sonarr and Radarr hold.",
+    retired: true,
+  },
+} satisfies Record<GateId | "hand_spare", GateMeta>;
 
 export const SIGNAL_META: Record<string, { label: string; help: string }> = {
   unwatched: {

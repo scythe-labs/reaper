@@ -1306,7 +1306,9 @@ describe("the controls a screen reader has to tell apart", () => {
   // protecting through an `on_list` keep rule. A stored draft can still carry the retired
   // gate, though -- the loader keeps an enabled row whose target list could not be created
   // rather than silently withdrawing cover -- so the editor renders it as a plain protection
-  // row by the `titleCase` fallback (rule 66) instead of dropping it or crashing.
+  // row from its `GATE_META` copy instead of dropping it or crashing. Rule 66's fallback
+  // beneath that no longer title-cases the id (#551): an id this build has no copy for reads
+  // "Another protection", never a slug.
   it("tolerates a stored draft still carrying the retired whitelisted gate", async () => {
     renderEditor({
       body: {

@@ -51,7 +51,7 @@ import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
 import { useDocs } from "../docs/DocsContext";
 import { bytes, count, humanDays } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
-import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
+import { GATE_META, SIGNAL_META, titleCase, UNNAMED_GATE_LABEL } from "./policyMeta";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 import {
   activePreset,
@@ -189,7 +189,12 @@ function GateRow({
    *  box at the wrong notice. */
   warnings: PolicyWarning[];
 }) {
-  const meta = GATE_META[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
+  // Sibling of the simulator's spared-by row, fixed with it (rule 72): both named a gate
+  // through `titleCase`, which prints the engine's slug at the operator (#551, rule 21).
+  // Unreachable for every id the engine has -- `GATE_META` covers all of `GateId` -- so this
+  // is rule 66's fallback for a policy served by a newer server, and it says nothing it
+  // cannot know about a protection whose copy this build does not carry.
+  const meta = GATE_META[gate.gate] ?? { label: UNNAMED_GATE_LABEL, help: "" };
   // What this row's boxes point `aria-describedby` at. The block rendering these sits under
   // the whole list, so reaching one meant browsing the page in document order: a keyboard
   // operator moving control to control never met it (#189). Every gate warning the server

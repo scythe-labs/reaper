@@ -73,7 +73,16 @@ allowance via `useHoldsBackUnmeasured()`, and every stored override state — he
 
 **66. Server-defined lists render from the server response.** A hardcoded frontend copy of a
 backend id list (jobs, phases, states) is a blocker when the server already returns the list;
-fallback copy handles unknown ids only.
+fallback copy handles unknown ids only. **A map from those ids to operator copy is the same
+mirror, and rule 103's drift guard binds it here** — that rule sits in `.claude/rules/backend.md`
+and never loads for the file carrying the copy, so the obligation is restated where the mirror
+lives: derive the keys from one declaration, or a test fails when the set changes. `GATE_META`
+is the worked case (`policyMeta.ts` types itself off a `GateId` union that
+`test_api_type_mirror.py` pins against the enum), and it is what four missing labels cost
+before it existed: two ids that fire on ordinary scans reached the fallback, so the simulator
+answered "why was this kept" with `season_progression` and `custom`, title-cased (#551, rule
+21). The fallback is not the safety net here — it is what makes a missing member silent.
+`SIGNAL_META`, `RAMPS` and `BUILTIN_SIGNAL_IDS` are the same shape and still unguarded.
 
 **85. Success copy fires on settled state.** A toast, timestamp, or "done" indicator is set only
 after the operation it describes has actually completed (refetch settled, final chunk streamed),

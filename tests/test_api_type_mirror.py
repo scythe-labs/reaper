@@ -466,3 +466,77 @@ class TestEverySimulatorRefusalReachesThePanel:
         )
         for value in self._declared():
             assert f"{value}:" in panel, f"{value} has no heading in STALE_HEADINGS"
+
+
+class TestEveryGateIdHasOperatorCopy:
+    """A gate id the browser has no copy for is printed at the operator as a slug.
+
+    ``GATE_META`` (``frontend/src/components/policyMeta.ts``) is the browser's one
+    declaration of what each protection is called. The policy simulator's "Why titles were
+    spared" list reads it by id, and until #551 an id it lacked fell through to a
+    ``titleCase`` of the slug -- so "Season Progression" and "Custom", both of which fire on
+    ordinary scans, were the reasons shown beside a count in the panel an operator reads
+    while deciding what to delete (rule 21).
+
+    ``tsc`` now keeps that map complete against a ``GateId`` union declared beside it, which
+    is the real guard: a gate added to the engine with no copy cannot compile. **This pins
+    the two things the compiler cannot see** -- that the union still says what the enum
+    says, and that the ``satisfies`` clause enforcing completeness is still there. Both are
+    rule 118's shape: without them the guard could be deleted and its proof stay green.
+
+    **The one sibling copy, named here rather than guarded** (rule 144): ``api/review.py``'s
+    ``_kept_phrase`` turns the same ids into the review queue's chip. It is deliberately not
+    covered, because its own fallback is already a sentence -- "a protection applies" -- so a
+    gate arriving without a branch there reads vaguely, never as a slug. Reword that fallback
+    into anything id-shaped and it needs a guard of its own.
+
+    Bounded per rule 147: the union is read however it is spaced and wrapped, but only while
+    it is spelled as quoted literals in one ``export type GateId = ...;`` statement. A
+    declaration this matcher stops finding asserts rather than matching nothing, and the set
+    comparison against the enum is the pin -- a partially-read union fails it.
+    """
+
+    POLICY_META_TS = REPO / "frontend" / "src" / "components" / "policyMeta.ts"
+    UNION = re.compile(r"export type GateId\s*=\s*([^;]+);")
+
+    def _source(self) -> str:
+        return self.POLICY_META_TS.read_text(encoding="utf-8")
+
+    def _declared(self) -> set[str]:
+        found = self.UNION.search(self._source())
+        assert found is not None, (
+            "frontend/src/components/policyMeta.ts no longer declares `export type GateId` "
+            "as one statement, so this guard is reading nothing. Re-point it at the new "
+            "spelling."
+        )
+        return set(re.findall(r'"([^"]+)"', found.group(1)))
+
+    def test_the_browser_names_every_gate_the_engine_can_emit(self) -> None:
+        from reaper.engine.gates import GateId
+
+        engine = {member.value for member in GateId}
+        assert self._declared() == engine, (
+            "engine.gates.GateId and policyMeta.ts's GateId union disagree. A gate the "
+            "browser does not know is printed as its raw id in the policy simulator's "
+            '"Why titles were spared" list (rule 21). Add it to the union, and to '
+            "GATE_META with a plain-language label (tsc requires it once the union moves)."
+        )
+
+    def test_the_map_still_has_to_cover_the_union(self) -> None:
+        """The ``satisfies`` clause is what makes a missing label a build failure.
+
+        A future author swapping it for a plain annotation would take that away with
+        nothing failing. The hand-spare id is generated from the server's own constant
+        rather than typed here (rule 144): the browser keys copy on what ``api/simulate.py``
+        tallies under, and the two spellings must be one fact.
+        """
+        from reaper.api.simulate import HAND_SPARE_TALLY_ID
+
+        source = self._source()
+        clause = f'satisfies Record<GateId | "{HAND_SPARE_TALLY_ID}", GateMeta>'
+        assert clause in source, (
+            f"policyMeta.ts no longer closes GATE_META with `{clause}`, so tsc has stopped "
+            "requiring a label for every gate id and for the hand-spare tally."
+        )
+        for gate in self._declared():
+            assert f"\n  {gate}: {{" in source, f"{gate} has no GATE_META entry"
