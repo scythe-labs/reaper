@@ -946,12 +946,20 @@ class LeavingSoonOut(BaseModel):
     applied: bool
     """Whether the shelf writes landed everywhere. False in read-only mode (the pass is
     computed and announced but not written), and false when any library failed."""
+    ok: bool
+    """Whether the pass did what it set out to do. Preview is not a failure; no library
+    turned on, or one that failed, is."""
+    result: str
+    """The one plain sentence describing this pass, worded by the service
+    (``LeavingSoonResult.summary``) and stored on the Jobs row in the same breath. The
+    browser renders it and never composes its own, which is how the row and this response
+    came to say different things about one pass (#555)."""
     notified: bool
     movies_on_shelves: int
     seasons_on_shelves: int
     problems: list[str]
     """Per-library failures, in plain words. One unreachable library never hides the
-    rest of the pass."""
+    rest of the pass, and ``result`` is the one-line summary over them."""
 
 
 class SignalCountOut(BaseModel):

@@ -2245,6 +2245,16 @@ disagreement.
    "Preview only, nothing written" with a green tick while the button's flash says "Some shelves
    didn't update" in red. **Neither sentence is pinned by any test, on either side.** Fix: compute
    the summary in the route after the merge, ship it in `LeavingSoonOut`, render both from it.
+
+   > **Fixed, #615. The summary is the service's, not the route's.** The route cannot own it:
+   > `after_scan` reaches `_run_pass` without passing through a route at all, so a summary
+   > computed at the edge leaves every automatic pass storing the sentence this item is about.
+   > `LeavingSoonResult` grew `no_libraries`, `ok` and `summary`, the no-libraries case moved
+   > into the service ahead of the store, and `LeavingSoonOut` ships `ok` and `result` off that
+   > same derivation. A **fourth** copy the item does not name was found and fixed with it:
+   > `PlexPanel.tsx`'s `lsStatus` worded the preview caveat itself off `applied`, on the very
+   > screen those libraries are turned on.
+
 2. **`InstanceError` maps to two different HTTP statuses.** `api/settings.py` hand-writes the
    mapping five times: 422 at three sites, 404 at two. The 404 arms are correct only by accident,
    because those callees can raise only `InstanceNotFoundError` today. The docstrings already

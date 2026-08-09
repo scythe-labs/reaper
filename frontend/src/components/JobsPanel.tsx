@@ -409,19 +409,13 @@ function LeavingSoonRow({
   // The manual-run confirmation for this row: the sync is a synchronous mutation, so its
   // result is read straight off the mutation when it settles (unlike the polled upkeep jobs).
   // Called before the early returns below, so the hook order never changes.
+  //
+  // Both halves are the server's, which words the pass once and stores that same sentence on
+  // the row below (rule 104). This used to re-derive them from `problems`, `applied` and the
+  // counts, and the flash then contradicted the row it sat on: with no libraries turned on it
+  // said the shelves had failed while the row rested green (#555).
   const syncResult = runSync.data
-    ? {
-        ok: runSync.data.problems.length === 0,
-        // A real per-library problem always wins the message, even in preview: "preview
-        // only" is a benign caveat, but it must never mask an actual failure that happened
-        // in the same pass.
-        text:
-          runSync.data.problems.length > 0
-            ? "Some shelves didn't update"
-            : !runSync.data.applied
-              ? "Preview only, nothing written"
-              : `${count(runSync.data.added_count)} added, ${count(runSync.data.cleared_count)} cleared`,
-      }
+    ? { ok: runSync.data.ok, text: runSync.data.result }
     : runSync.error
       ? { ok: false, text: "It didn't update" }
       : null;

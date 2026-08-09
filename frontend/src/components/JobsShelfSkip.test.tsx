@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// What the shelf row says about a scan that skipped it.
+// What the shelf row says about the pass behind it.
+//
+// Two things, and they are one subject: which record it answers with, and whose words it
+// answers in.
 //
 // Every skip in `leaving_soon.after_scan` returns before the pass writes its record, so this
 // row re-read the last COMPLETED pass and answered for the scan with it: a green dot, an old
@@ -7,9 +10,14 @@
 // separately and never cleared, so what retires it is a later pass carrying a later timestamp
 // -- which makes the row's own comparison the whole mechanism, and the reason both directions
 // are driven here rather than only the failing one.
-import { screen, waitFor } from "@testing-library/react";
+//
+// The words are the server's. The row used to compose its own sentence from the response's
+// counts and flags, so with no library turned on the flash said the shelves had failed while
+// the stored row it sits on rested green (#555).
+import { act, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { LeavingSoonSettings, Schedule } from "../api";
+import type { LeavingSoonResult, LeavingSoonSettings, Schedule } from "../api";
 import { expectNoA11yViolations } from "../test/a11y";
 import { DEFAULT_UPDATE, IDLE_SCAN } from "../test/apiFixtures";
 import { renderWithProviders } from "../test/renderWithProviders";
@@ -40,6 +48,25 @@ const COMPLETED = {
 /** Deliberately AFTER `COMPLETED`, since the row's whole decision is which is newer. A fixture
  *  sharing the completed pass's instant would make the comparison unfalsifiable (rule 141). */
 const SKIPPED = { at: "2026-08-04T20:06:00+00:00", result: "Reaper couldn't reach Plex" };
+
+/** The service's sentence for a pass with no library turned on, verbatim
+ *  (`LeavingSoonResult.summary`). */
+const NO_LIBRARIES = "No libraries are turned on, so no shelf was updated";
+
+/** What the route returns for that pass. Nothing was written and no library failed, so the
+ *  three fields the row used to reason over say "clean preview" between them: reverting the
+ *  fix flashes a green "Preview only, nothing written" against this exact payload. */
+const NO_LIBRARY_PASS: LeavingSoonResult = {
+  added_count: 0,
+  cleared_count: 0,
+  applied: false,
+  ok: false,
+  result: NO_LIBRARIES,
+  notified: false,
+  movies_on_shelves: 0,
+  seasons_on_shelves: 0,
+  problems: [],
+};
 
 function shelf(over: Partial<LeavingSoonSettings> = {}): LeavingSoonSettings {
   return { enabled: true, allow_unarmed: false, last: COMPLETED, last_skip: null, ...over };
@@ -120,6 +147,20 @@ describe("the shelf row after a scan that skipped the update", () => {
     expect(counts).toContain("280 movies and 311 seasons on the shelves");
   });
 
+  it("rests on the reason the pass stored, in the pass's own words", async () => {
+    // The stored end of #555: one pass, one sentence, and the row reads it rather than
+    // deriving a second one. Pins the wiring from the stored summary to the screen -- the
+    // sentence itself is the service's, and `tests/test_leaving_soon.py` owns its wording.
+    apiMock.leavingSoonSettings.mockResolvedValue(
+      shelf({ last: { ...COMPLETED, ok: false, result: NO_LIBRARIES } }),
+    );
+
+    const { status } = await shelfRow();
+
+    expect(status).toContain("Last run failed");
+    expect(status).toContain(NO_LIBRARIES);
+  });
+
   it("reports a skip on an install whose shelf has never completed a pass", async () => {
     // `last` is null until the first pass lands, and the row's comparison has no second
     // timestamp to make. It still has to speak: this is the shape where the shelf has been
@@ -133,5 +174,44 @@ describe("the shelf row after a scan that skipped the update", () => {
     // No completed pass means no counts to qualify, so that line is absent rather than
     // reporting a shelf nobody has ever measured.
     expect(counts).toBe("");
+  });
+});
+
+describe("the shelf row's confirmation after Update now", () => {
+  it("flashes what the pass said, and calls it a failure when the pass did", async () => {
+    // The live end of #555, and the one an operator meets first. The row derived this chip
+    // itself from `problems`, `applied` and the counts, which read this payload as a clean
+    // preview and flashed a green tick over a pass that updated nothing.
+    const user = userEvent.setup();
+    apiMock.leavingSoonSettings.mockResolvedValue(shelf({ last: null }));
+    // Held open, then released: the chip only exists on a running -> finished transition the
+    // row watched, so a mock that answers inside the click can land both states in one commit
+    // and there is nothing to flash.
+    let finish!: (result: LeavingSoonResult) => void;
+    apiMock.syncLeavingSoon.mockReturnValue(
+      new Promise<LeavingSoonResult>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    renderWithProviders(<Settings initialPanel="jobs" />);
+
+    // The enabled branch's own text, so the wait settles the read this button's existence
+    // depends on rather than racing it (the off branch draws a disabled "Update now" too).
+    await screen.findByText("Runs after every scan");
+    const button = screen.getByRole("button", { name: /^Update now/ });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    // The pass is in flight: the row disables its own button while it runs, and that is the
+    // state the chip below is a transition OUT of.
+    await waitFor(() => expect(button).toBeDisabled());
+    await act(async () => {
+      finish(NO_LIBRARY_PASS);
+    });
+
+    const chip = await screen.findByText(NO_LIBRARIES, { exact: false, selector: ".flash-chip" });
+    // The words, and the claim the tick makes about them. Both come off the response, so a
+    // sentence rendered under the wrong lead is as wrong as the wrong sentence.
+    expect(chip.textContent).toContain("Failed:");
+    expect(chip.closest(".jobrow-last")).toHaveClass("is-flash-fail");
   });
 });

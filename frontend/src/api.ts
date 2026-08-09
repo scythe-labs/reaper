@@ -972,10 +972,16 @@ export interface LeavingSoonResult {
   /** Whether the shelf writes landed everywhere. False in read-only preview, and false
    *  when any library failed. */
   applied: boolean;
+  /** Whether the pass did what it set out to do. Preview is not a failure; no library
+   *  turned on, or one that failed, is. */
+  ok: boolean;
+  /** The one plain sentence describing this pass, worded by the server and stored on the
+   *  Jobs row in the same breath. Render it; never compose one here (#555). */
+  result: string;
   notified: boolean;
   movies_on_shelves: number;
   seasons_on_shelves: number;
-  /** Per-library failures, in plain words. */
+  /** Per-library failures, in plain words. `result` is the one-line summary over them. */
   problems: string[];
 }
 
@@ -1002,10 +1008,10 @@ export interface LeavingSoonSettings {
     movies: number;
     seasons: number;
     applied: boolean;
-    /** Whether the last sync was actually clean: false only for a real per-library
-     *  problem, never merely because it ran in preview (unarmed). */
+    /** Whether the last sync did what it set out to do: no library failed, and there was
+     *  one turned on to update. Never false merely because it ran in preview (unarmed). */
     ok: boolean;
-    /** A short plain-language summary of the last sync. */
+    /** The pass's own one-line summary. Render it; never compose one here (#555). */
     result: string;
   } | null;
   /** A scan that finished without updating the shelf, and why. Reported beside `last`

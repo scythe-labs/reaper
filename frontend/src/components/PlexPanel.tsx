@@ -491,8 +491,11 @@ export function PlexPanel({
     if (!last) return "Not updated yet. It runs after every scan, or from the Jobs page.";
     const movies = `${count(last.movies)} movie${last.movies === 1 ? "" : "s"}`;
     const seasons = `${count(last.seasons)} season${last.seasons === 1 ? "" : "s"}`;
-    const wrote = last.applied ? "" : ", preview only, nothing was written in Plex";
-    return `Last updated ${since(last.at)}, ${movies} and ${seasons} on the shelves, next update after the next scan${wrote}`;
+    // How the pass went is the server's sentence, the same one the Jobs row rests on and the
+    // "Update now" flash shows (rule 72, and rule 104 for the derivation). This line used to
+    // read `applied` and word the caveat itself, which called a pass with no libraries turned
+    // on a preview, on the very screen those libraries are turned on (#555).
+    return `${last.result}. Last updated ${since(last.at)}, ${movies} and ${seasons} on the shelves, next update after the next scan.`;
   })();
 
   // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask

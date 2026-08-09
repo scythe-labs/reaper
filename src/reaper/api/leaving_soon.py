@@ -40,16 +40,18 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
     except PlexError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    problems = result.problems
-    if not result.outcomes:
-        problems = ["No libraries are turned on under Settings, Plex, so no shelf was updated."]
-
+    # ``ok`` and ``result`` are the pass's own words, already stored on the Jobs row by the
+    # same derivation (``LeavingSoonResult.summary``). This route used to add the
+    # no-libraries case here instead, after the row had been written, so the row and this
+    # response described one pass differently (#555).
     return LeavingSoonOut(
         added_count=result.added,
         cleared_count=result.removed,
         applied=result.applied,
+        ok=result.ok,
+        result=result.summary,
         notified=result.notified,
         movies_on_shelves=result.movies_on_shelves,
         seasons_on_shelves=result.seasons_on_shelves,
-        problems=problems,
+        problems=result.problems,
     )
