@@ -1057,8 +1057,10 @@ class ReapBreakdownOut(BaseModel):
     """What a reap built right now would remove, and why. Read-only; deletes nothing.
 
     Counts are the reap decision (measured and unmeasured together); the byte figures sum
-    only what has a size, with the unmeasured carried as a separate count. ``has_snapshot``
-    is false before the first scan, when every figure is zero."""
+    only what has a size. Three of them say how much they left out, in ``will_reap_unknown``,
+    ``movies_unknown`` and ``seasons_unknown``; the others do not, so a byte total beside a
+    count is not a claim that the count is fully measured. ``has_snapshot`` is false before the
+    first scan, when every figure is zero."""
 
     has_snapshot: bool
     policy_condemned: int

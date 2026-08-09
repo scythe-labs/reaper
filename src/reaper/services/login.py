@@ -79,7 +79,6 @@ class UserView:
     id: int
     username: str
     provider: str
-    email: str | None
     thumb_url: str | None
 
 
@@ -102,7 +101,6 @@ def _view(user: AppUser) -> UserView:
         id=user.id,
         username=user.username,
         provider=str(user.provider),
-        email=user.email,
         thumb_url=user.thumb_url,
     )
 

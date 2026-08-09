@@ -487,11 +487,15 @@ export function ServiceModal({
     // makes this more than cosmetic. `instances.py` never raises for a failed test, so an
     // unreachable host arrives as a 200 with `ok=False` and never reaches the shared error
     // notice -- the badge was the only report, and it announced nothing (#192).
-    // What this request is ABOUT, captured when it is issued. Both facts were read back at
-    // success time, and both are derived from boxes the operator can keep typing into while the
-    // request is in flight: `testedWith()` would then file the answer against an address it was
-    // never asked about, and `testsStored` would file a stored-instance verdict as a probe and
-    // let its empty lists pose as a folder read.
+    // What this request is ABOUT, captured when it is issued rather than read back at success
+    // time: `testedWith()` is derived from boxes the operator can keep typing into while the
+    // request is in flight, so reading it later would file the answer against an address it was
+    // never asked about.
+    //
+    // WHICH test answered is no longer carried alongside it. It used to be, as a boolean off
+    // `testsStored`, and getting that wrong let a saved-instance verdict's absent lists pose as
+    // a folder read. The answer now comes off the payload's own shape (`"map_error" in result`,
+    // where `probeResult` is derived), so it cannot be captured wrong.
     onMutate: () => ({ of: testedWith() }),
     onSuccess: (r, _v, issued) => {
       setTest({ result: r, of: issued.of });

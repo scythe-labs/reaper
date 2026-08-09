@@ -1489,7 +1489,6 @@ export interface RestoreSummary {
   app_version: string | null;
   /** When the backup was taken (ISO 8601, UTC), or null. */
   created_at: string | null;
-  /** The schema revision the backup sits at. */
   /** "current" when it matches this server, "older" when this server will update it on
    *  restart. Both are safe to restore. */
   verdict: string;

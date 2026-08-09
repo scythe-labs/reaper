@@ -42,7 +42,8 @@ class SignalCount:
 class ReapBreakdown:
     has_snapshot: bool
     # The ledger. Counts are the reap decision (measured and unmeasured together); the byte
-    # figures sum only what has a size, with the unmeasured carried as a separate count.
+    # figures sum only what has a size. Three of them carry their own unmeasured count
+    # (`will_reap`, `movies`, `seasons`); the rest do not.
     policy_condemned: int
     policy_condemned_bytes: int
     hand_spared: int
