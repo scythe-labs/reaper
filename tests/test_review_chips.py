@@ -1422,8 +1422,10 @@ class TestCandidatesCarryTheGroupShape:
         assert movie["group_key"] is None
         assert movie["season_number"] is None
         assert movie["chip"] is None  # condemned cards keep the amber pill instead
-        # No show, so nothing to roll up: a movie contributes no entry of its own.
-        assert all(g["group_key"] is not None for g in page["groups"])
+        # No show, so nothing to roll up. Asserted as the exact set the page carries: the
+        # rollup's own key is a required string, so "no entry is null" holds however many
+        # entries a movie contributed.
+        assert {g["group_key"] for g in page["groups"]} == {"sonarr:5:42"}
 
 
 class TestGroupDetail:

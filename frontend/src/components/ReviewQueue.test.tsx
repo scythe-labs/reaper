@@ -676,6 +676,42 @@ describe("select everything matching", () => {
     // The picks are exactly what they were: the two drawn cards, not the four claimed.
     expect(pickedCount()).toContain("2");
   });
+
+  it("gives a show first seen on a later page the rollup that arrived with it", async () => {
+    // A show's rollup rides the page its rows ride. Reading `pages[0].groups` would leave every
+    // show past the first page with none, and the card would then draw no strip and print the
+    // seasons this page happened to fetch under "would be removed", beside the control that
+    // reaps the whole show (rule 30). Six seasons across the show, two of them on this page.
+    const marks: GroupSeasonMark[] = [1, 2, 3, 4, 5, 6].map((n) => ({
+      id: n,
+      season: n,
+      verdict: n > 4 ? "protect" : "condemn",
+      override: null,
+      override_effective: null,
+      size_bytes: 1024 ** 3,
+      spare_expires_at: null,
+      spare_covers_until: null,
+    }));
+    apiMock.candidates.mockImplementation((_verdict, _filters, _limit, offset: number) =>
+      Promise.resolve(
+        offset === 0
+          ? page([movie(1), movie(2)], [], 4)
+          : page(
+              [season(1, "condemn"), season(2, "condemn")],
+              [rollup(marks, { condemned_count: 4, condemned_bytes: 4 * 1024 ** 3 })],
+              4,
+              offset,
+            ),
+      ),
+    );
+    // The queue pulls the next page itself once the drawn set is within one render page of the
+    // loaded one, so the second page arrives with no interaction.
+    const { container } = renderQueue("condemn");
+
+    // From the rollup that came with page two, not from the two rows on it, which read "2 of 2".
+    expect(await screen.findByText(/4 of 6 would be removed, 4\.0 GiB/)).toBeInTheDocument();
+    expect(container.querySelectorAll(".strip-sq")).toHaveLength(marks.length);
+  });
 });
 
 describe("a reap the engine refused", () => {

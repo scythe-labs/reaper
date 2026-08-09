@@ -1200,6 +1200,14 @@ const ShowCard = memo(function ShowCard({
   // decision does not take a season the operator spared individually, nor one the engine
   // refuses to reap. That helper says why, and keeps this number, the chip and the strip
   // squares reading the same `handFate` (rules 49/61).
+  //
+  // The three fallbacks below are a page-shaped answer, which the bulk bar deliberately does
+  // NOT take (it drops to "cards only" instead). They are kept here because this card must
+  // draw a line either way, and they cannot fire: `list_candidates` builds its rollups from
+  // the `group_key`s of the rows on the page, and `toGroups` gives a card to exactly those
+  // rows, so every show with a card has a rollup. A show first seen on a later page is the
+  // one way that could stop being true, which is why `toRollups` merges every page and a
+  // test drives it against reading `pages[0]`.
   const reapsWholeShow = showOverride === "reap";
   const reapedMarks = reapsWholeShow ? (marks ?? []).filter(showReapReaches) : [];
   const reapedUnknown = reapedMarks.filter((m) => m.size_bytes === null).length;
@@ -1635,10 +1643,12 @@ export function ReviewQueue({
       if (result.hasNextPage || result.isError || !result.data) {
         throw new Error("The rest of the list didn't load.");
       }
-      const pages = result.data.pages;
+      // No rollups: this folds the list into cards only to read each card's key, and
+      // `groupKeyOf` reads none of them. Walking every page to fill a field nothing reads
+      // would cost the whole filtered list for nothing.
       return toGroups(
-        pages.flatMap((p) => p.items),
-        toRollups(pages),
+        result.data.pages.flatMap((p) => p.items),
+        new Map(),
       ).map(groupKeyOf);
     },
     onSuccess: (keys) => {

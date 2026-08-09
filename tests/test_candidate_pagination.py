@@ -254,10 +254,12 @@ def tv_client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def _rollup(page: dict[str, Any], group_key: str) -> dict[str, Any]:
-    """The one rollup for a show, and proof there is exactly one.
+    """The show's rollup off the page, failing loudly when it is absent.
 
-    Sent once per show now, not stamped on each season row, so a duplicate would be the
-    regression this shape was made to remove.
+    The count is one because ``groups`` is built over a set of keys, so a duplicate cannot
+    be constructed and this cannot discriminate against one. What it does catch is a show
+    whose rows are on the page carrying no rollup at all, which is the state that leaves the
+    card counting its fetched seasons.
     """
     entries = [g for g in page["groups"] if g["group_key"] == group_key]
     assert len(entries) == 1, f"expected one rollup for {group_key}, got {len(entries)}"
