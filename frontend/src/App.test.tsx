@@ -13,7 +13,12 @@ import { DEFAULT_GENERAL, DEFAULT_PROFILE, DEFAULT_UPDATE, IDLE_SCAN } from "./t
 import { expectNoA11yViolations } from "./test/a11y";
 import { testQueryClient } from "./test/queryClient";
 import { renderWithProviders } from "./test/renderWithProviders";
-import { App, ReapBar, ScanFreshness, SectionNav, UserMenu, WhyPanelFallback } from "./App";
+import { App } from "./App";
+import { ReapBar } from "./components/ReapBar";
+import { ScanFreshness } from "./components/ScanFreshness";
+import { SectionNav } from "./components/SectionNav";
+import { UserMenu } from "./components/UserMenu";
+import { WhyPanelFallback } from "./components/WhyPanelFallback";
 import { ScanLine } from "./components/ScanLine";
 import { announce, Announcer } from "./announce";
 import {

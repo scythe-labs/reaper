@@ -188,7 +188,7 @@ row moving is indistinguishable from one that never started.
 | 3 | Gates that land green | **done** | 4 of 4 | C3's counts all held under an adversarial re-derivation; three of the four gates had a hole beside the count, each fixed and driven |
 | 4 | Drift corrections | **done** | 4 of 4 | Every item proved latent or off the decision surface, so the re-freeze moved nothing: Tier B re-captured byte-identical. C12 settled, boot log keeps the added lines |
 | 5 | Deletions | **done** | 4 of 4 | W1.1-l killed: `tautulli.metadata` has a caller in `scripts/`. Release M's review found a keep collection silently unprotected since the first Pace save. Tier B moved by one line, the recorded alembic head; every decision identical |
-| 6 | Structural motion | in progress | 2 of 8 | C6 settled: five modules, `routes.py` cut at `:1853` and *Vocabulary* on its own |
+| 6 | Structural motion | in progress | 3 of 8 | C6 settled: five modules, `routes.py` cut at `:1853` and *Vocabulary* on its own |
 | 7 | Wire contract | not started | 0 of ~5 | C7 outstanding. W7-5's `window_days` arrives from phase 5, its third-pass kill spent |
 | 8 | Dedup and carriers | not started | 0 of ~25 | |
 | 9 | Declaration tax | not started | 0 of 2 | C10 outstanding |
@@ -1246,7 +1246,7 @@ Each of these files draws its own seams already, in banner comments or in the fa
 | `components/Settings.tsx` | 3,086 | 6 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell (~180) | **The tests are already split per panel** (6 files). Three sibling panels were already extracted. Only the source never followed |
 | `api/settings.py` | 2,025 | `api/plex.py` (~630, 12 routes) | **Landed, and it is 14 routes as the correction says, not 12.** 698 lines out, settings 2,044 to 1,344. The **sorted** document is byte-identical either side, same 96 operations; the one thing that moves is `paths` insertion order, which nothing reads. Reported as plain "byte-identical" first, which is the reassuring direction rule 144 warns about. `plex.py` **imports** the request accessors from `settings.py` rather than copying them, so phase 8's `api/deps.py` still collapses five copies and not six |
 | `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | The file draws the seams as banner comments, and the rule-146 dirty contract is computed from connection-section drafts only, so the other three cannot break it |
-| `App.tsx` | 1,225 | 5 components to `components/` (~520) | Three carry a comment saying they are "exported for its tests" |
+| `App.tsx` | 1,225 | 5 components to `components/` (~520) | **Landed.** 497 lines out, 1,225 to 728. Two carry the "exported for its tests" comment, as the correction says, and both were false on arrival: in `components/` every file exports its component, so the export carries no signal, and `WhyPanelFallback` is no longer "below". `NAV` moves with `SectionNav`; `ReapSheetLoader` does not move, since `Dashboard` renders it and not `ReapBar`. The query-failure map moves App 8 to 7 and gains `SectionNav` 1, total conserved |
 | `components/ReviewQueue.tsx` | 2,654 | `QueueFilterBar` (~330), `queueChips.tsx` (~60), delete the re-export shim | The filter block never reads `override`, `verdict` or a candidate. The shim's own comment calls itself transitional |
 | `services/season_scan.py` | 2,060 | `guard_result` + `no_key_reason` to `season_evidence.py` (~145) | **Landed.** Both are pure, and `api/routes.py` imported the 2k-line I/O module solely to call `guard_result`; that import is gone. The move was 152 lines and the served OpenAPI document is byte-identical either side |
 
@@ -1379,7 +1379,7 @@ here is preventing a future divergence.
   comments already say they mirror each other), the upward dirty-report idiom **5 times**, the
   "a test result and the fingerprint it vouches for" pattern **3 times** (each fixed separately,
   in #178 twice and #264), the admin-password confirm form **twice** with a recorded drift.
-- `App.tsx:702` — three parallel focus slots whose own comment reads "Rule 72: three of these now,
+- `App.tsx:196` — three parallel focus slots whose own comment reads "Rule 72: three of these now,
   and a fourth belongs in the same three places". One value keyed on `view` retires the obligation.
 
 **Parameter objects.** Six functions take a cohesive record apart and rebuild it:
@@ -1541,7 +1541,7 @@ look like.
 > `default_spare_days` is a two-half draft, `trusted_proxies` is a string-to-list conversion
 > deliberately excluded from `pending` while counted in `hasDrafts` (rule 146), and `accent_color`
 > alone blocks the save. A descriptor covering six fields carries three escape hatches, which is
-> most of what it was meant to remove. The trace also misses `App.tsx:822` and, more importantly,
+> most of what it was meant to remove. The trace also misses `App.tsx:316` and, more importantly,
 > **`frontend/src/accent.ts`, which duplicates both `_HEX_COLOR` (`:25`) and the default (`:42`)**
 > — rule 144's shape, and a backend `SETTINGS` table does nothing about it. #90 was one shared
 > `> 0` condition across three echoes plus a fourth that did not handle the field, not two lists
@@ -2206,7 +2206,7 @@ disagreement.
 > skill makes the test of whether sites belong in one issue. It would add a frontend site with a
 > different fix shape to a backend checklist.
 >
-> **No symptom, verified rather than assumed.** `App.tsx:1155` returns `<SetupWizard>` *instead
+> **No symptom, verified rather than assumed.** `App.tsx:649` returns `<SetupWizard>` *instead
 > of* `<Dashboard>`, and `wasNeeded` latches, so the three missing keys have no mounted consumer
 > while the wizard is up. Reaching the wizard from a configured install means unlinking Plex,
 > which runs the full `invalidateAllPlex` on the way. "Symptomless" is a statement about
