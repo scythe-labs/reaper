@@ -187,6 +187,35 @@ reach, which is why this section once banned it and why `/code-review --comment`
 both now work, so a finding can also land as an inline PR comment where that fits better than
 an issue.
 
+**First, does it exist on `dev`?** Before anything else about a finding — before severity, before
+the class, before the duplicate check — establish which tree it lives on:
+
+```
+git show origin/dev:<path> | grep -n '<the thing>'
+```
+
+**A defect the diff under review introduced is fixed in that diff, not filed.** The tracker
+describes what an operator can hit, and nobody can hit an unlanded branch. Filing it ships a
+known-broken change and asks a stranger to notice.
+
+The failure this prevents is not hypothetical and it is not cheap. Three branch-created defects
+filed as issues drew a verification pass, which did the correct thing — measured `dev`, found all
+three absent, closed them `Reviewed/Invalid`, and opened a PR adding three rows to
+`references/refuted.md`. Two of the three were real on the branch. The third was real for a
+mechanism the refutation had not reached, and the `Invalid` label would have buried a
+`Priority/High` lockout behind a row asserting it could not happen — in the file a later pass
+reads *instead of* re-deriving. Nobody was careless; the issues never said which tree they
+described, so every reader answered the only question they could.
+
+**A verdict inherits the tree it was measured on.** Refuting a candidate means naming the ref you
+read (`refuted at <sha>` is already the index's third column) and checking that ref is the one the
+candidate was raised against. A refutation measured on a different tree is not a refutation.
+
+**When a branch defect genuinely needs an issue** — deferred, or spanning work someone else holds
+— the title says `on <branch>` and the body opens with `on <branch>, not on dev`, the base commit,
+and the `git show` output proving the contrast. Without that line it will be verified against
+`dev` and closed, correctly.
+
 **One issue per fix, not per finding.** This is `CLAUDE.md`'s commit rule pointed at the
 tracker: one commit tells one story, so one issue describes one commit. If two findings would
 be closed by the same edit, they are one issue.
