@@ -53,6 +53,7 @@ import structlog
 from reaper.buildinfo import build_version
 from reaper.clock import utcnow
 from reaper.config import Settings
+from reaper.db import schema_gate
 from reaper.launcher import LAUNCHER_CONF_NAME
 from reaper.secrets import (
     KEY_FILENAME,
@@ -134,21 +135,13 @@ def db_size_on_disk(base: Path) -> int:
     return total
 
 
-def _read_revision(db_path: Path) -> str | None:
-    """The Alembic revision a snapshot sits at, or ``None`` when the table is absent.
-
-    Production always has an ``alembic_version`` row; a database built straight from
-    the models in a test carries none. The restore side treats a missing revision
-    conservatively, so reporting ``None`` here is safe rather than a hard error.
-    """
-    con = sqlite3.connect(db_path)
-    try:
-        row = con.execute("SELECT version_num FROM alembic_version").fetchone()
-    except sqlite3.OperationalError:
-        return None
-    finally:
-        con.close()
-    return str(row[0]) if row and row[0] else None
+#: The Alembic revision a database file sits at, for the manifest this writes and for the
+#: gate the restore side runs against it. One reader, in ``reaper.db.schema_gate``, because
+#: the boot gate asks the same question of the LIVE database and a second copy of the query
+#: is a second answer to drift from (rule 104). ``None`` means no ``alembic_version`` row:
+#: production always has one, a database built straight from the models in a test has none,
+#: and the restore side treats a missing revision conservatively.
+_read_revision = schema_gate.stored_revision
 
 
 def _build_sync(settings: Settings, created_at: str) -> BackupArchive:

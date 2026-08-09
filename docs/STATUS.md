@@ -92,6 +92,7 @@ A **†** marks a row whose reasoning is a section of the same name in `docs/DEC
 | Peer trust | **`reaper.auth.proxy` alone believes a forwarded header** † |
 | ORM | **Plain SQLAlchemy, not SQLModel** † |
 | Migrations | **Frozen baseline; schema leaves in two releases, never one** † |
+| Rolling back | **A database a newer build migrated refuses to boot**, preflight and startup |
 | Gate retirement | **Persisted by the upgrade where it can be, healed on load where it can't** † |
 | Plex index retirement | **A row dropped only once the sweep has spoken** † |
 
