@@ -67,16 +67,41 @@ Mint a throwaway local admin; it prints a generated password once:
 uv run reaper-admin create-admin --username local-test
 ```
 
-## Drive headlessly (system Chrome, no download)
+## Drive headlessly
 
-The claude-in-chrome extension may be unavailable (OAuth account mismatch). Fall back to
-`playwright-core` against system Chrome, installed in a scratch dir so the repo stays clean:
+Two ways in, and **which one is available is a property of the box, so check before writing the
+script.** The claude-in-chrome extension needs a real Chrome with a logged-in profile, so on a
+headless host it is not merely unavailable, it cannot exist; Playwright is then the only route
+rather than the fallback.
+
+**Against a system Chrome** (a desktop machine that already has one), installed in a scratch dir
+so the repo stays clean:
 
 ```
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install playwright-core   # in a scratch dir
 ```
 
-`chromium.launch({ channel: "chrome", headless: true })`. Login = click `.auth-alt`, fill
+Then `chromium.launch({ channel: "chrome", headless: true })`.
+
+**Against Playwright's own chromium** (a headless VM, or any box with no Google Chrome). Drop the
+channel — `chromium.launch({ headless: true })` — because `channel: "chrome"` names the *Google
+Chrome* binary and fails outright where only Playwright's build exists, which is the ordinary
+shape of a fresh Linux host. Install `playwright` rather than `playwright-core` there, or bring
+your own browsers with `npx playwright install chromium`.
+
+Two things a minimal Linux host will not have, both of which fail in ways that read as a bug in
+the app:
+
+- `npx playwright install-deps chromium` — the shared libraries (`libnss3`, `libatk-bridge2.0`,
+  `libgbm1` and the rest). Without them the launch itself dies.
+- Fonts. A netinst Debian ships next to none, so every string screenshots as an empty box and the
+  capture is worthless for the one thing it is for. `fonts-liberation` plus
+  `fonts-noto-color-emoji` covers the UI.
+
+No display server is needed either way: Playwright's headless mode does not use one, so Xvfb is
+not part of this.
+
+Login = click `.auth-alt`, fill
 `input[autocomplete="username"]` + `input[type="password"]`, submit `.local-form button[type="submit"]`,
 wait for `nav.views button`. Start a scan with `fetch("/api/scan/start", {method:"POST",
 headers:{"X-Reaper-CSRF":"1"}, body:"{}"})`, then `page.reload()` so the shell picks up
