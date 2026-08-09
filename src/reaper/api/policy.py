@@ -12,7 +12,7 @@ cannot drift.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, assert_never
+from typing import assert_never
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
@@ -20,9 +20,6 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-
-if TYPE_CHECKING:
-    pass
 
 from reaper.api import tags as api_tags
 from reaper.api.review import _sessions

@@ -498,7 +498,7 @@ function structuralStop(item: CandidateDetail): "streaming_now" | "unmanaged" | 
   // Reads a STORED explanation, so it outlives the gate that wrote it. That gate is retired
   // (`engine/gates.py`) and no new scan can produce this, but a snapshot on disk is read back
   // by whatever version is running, and a wrong-but-specific sentence is worse than a right
-  // one. Kept for the same reason `api/routes.py` keeps its phrase for `others_watching`.
+  // one. Kept for the same reason `api/review.py` keeps its phrase for `others_watching`.
   if (fired.has("unmanaged")) return "unmanaged";
   return undefined;
 }

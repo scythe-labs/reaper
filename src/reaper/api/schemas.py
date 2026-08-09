@@ -804,7 +804,7 @@ class SimStale(enum.StrEnum):
     the re-scoped ``evidence_hash`` either, so it refuses one tier earlier as
     :attr:`GATHERS_DIFFERENTLY` (``api.simulate.simulate`` states the same thing at length).
     Like every refusal it zeroes the whole lane rather than the season card alone --
-    ``routes._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
+    ``simulate._SeasonEvidenceMissingError`` says why holding the rest at their scan-time
     verdicts would be worse."""
 
     IN_PROGRESS_NOT_READ = "in_progress_not_read"

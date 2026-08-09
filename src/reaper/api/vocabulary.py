@@ -11,13 +11,9 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Request
 from sqlalchemy import select
-
-if TYPE_CHECKING:
-    pass
 
 from reaper.api import tags as api_tags
 from reaper.api.review import _latest_snapshot, _sessions

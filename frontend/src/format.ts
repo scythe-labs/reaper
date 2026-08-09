@@ -227,7 +227,7 @@ export function carriesYear(title: string, year: number | null | undefined): boo
  *
  *  Spelled the way the QUEUE prints it ("Example Alpha 1979"), because the queue is where the
  *  jump lands and the seeded text sits above its cards. Scales prints the same fact in
- *  parentheses, and `list_candidates` (api/routes.py) understands either, so the two spellings
+ *  parentheses, and `list_candidates` (api/review.py) understands either, so the two spellings
  *  are a display choice rather than something that has to be reconciled. */
 export function titleWithYear(title: string, year: number | null | undefined): string {
   const name = title.trim();

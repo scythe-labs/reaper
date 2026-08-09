@@ -18,16 +18,12 @@ import json
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
-
-if TYPE_CHECKING:
-    pass
 
 from reaper.api import tags as api_tags
 from reaper.api.policy import _candidate_media_type, _to_body

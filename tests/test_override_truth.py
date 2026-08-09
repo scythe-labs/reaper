@@ -220,7 +220,7 @@ class TestReapOverrideVerdict:
         change what a hand reap does. It fails the moment any reader of this key re-appears
         on the decision path.
 
-        The ``is True`` strictness itself is still live one surface over -- ``routes._chip``
+        The ``is True`` strictness itself is still live one surface over -- ``review._chip``
         reads the same key the same way to pick the operator's chip, pinned in
         ``test_review_chips.py`` -- which is why the key is still written and still varied
         here rather than dropped."""
@@ -262,7 +262,7 @@ class TestReapOverrideVerdict:
         of three strings filtered down to an empty one, so ``blocked`` went False and the
         reap condemned a file whose kept-reasons nobody could read. Evidence we cannot see
         must never become evidence that nothing was wrong (rule 96).
-        ``routes._has_blocked_protections`` reads the same block with this posture already;
+        ``simulate._has_blocked_protections`` reads the same block with this posture already;
         the destructive reader was the permissive one.
 
         It survived the reversal for the same reason a bad match did, and the distinction is

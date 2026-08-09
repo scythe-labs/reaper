@@ -201,7 +201,7 @@ class RawItem:
     added_at: datetime | None
     # Display fields, carried onto the candidate so the review queue can show a blurb
     # without a second data source. None of them influence the verdict. No poster: it is
-    # derived from the Plex rating key at read time (`api/routes._candidate_out`), which is
+    # derived from the Plex rating key at read time (`api/review._candidate_out`), which is
     # why the stored column carried a NULL for its whole life and retired in release M.
     year: int | None = None
     summary: str | None = None

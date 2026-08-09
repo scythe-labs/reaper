@@ -1822,7 +1822,7 @@ def _over_budget(weights: Sequence[int]) -> dict[str, Any]:
 
 
 def _signal_configs(body: dict[str, Any]) -> list[SignalConfig]:
-    """The same translation ``services.snapshot`` and ``api.routes`` do, so these tests
+    """The same translation ``services.snapshot`` and ``api.simulate`` do, so these tests
     score through the real scorer rather than a transcription of it (rule 22)."""
     return [
         SignalConfig(

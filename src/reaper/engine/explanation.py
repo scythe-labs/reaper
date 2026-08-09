@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The frozen "why" record: the stored explanation document and how to read it.
 
-Written by ``services.snapshot._explain``, served by ``api.routes`` as the why panel, and
+Written by ``services.snapshot._explain``, served by ``api.review`` as the why panel, and
 consulted by ``services.condemned`` before a hand reap is honored. It lives here, below both,
 because those two readers must agree on one question -- **can this document be read at all?**
 -- and they answer it by running the same validation rather than by each testing a different
@@ -190,8 +190,8 @@ def thaw_threshold(value: object) -> int | None:
     """Read the stored score-to-beat, or nothing where the row carries no legible one.
 
     One derivation for all three readers of this byte (rule 104), which is the same shape #112
-    gave ``defers_to_owner`` and the twin rule 72 binds to it. ``routes._chip`` and
-    ``routes._primary_reason`` each tested it with ``isinstance(value, int)`` and coped with
+    gave ``defers_to_owner`` and the twin rule 72 binds to it. ``review._chip`` and
+    ``review._primary_reason`` each tested it with ``isinstance(value, int)`` and coped with
     anything else, while ``Explanation.threshold`` read it through pydantic's lax ``int | None``
     -- a different rule, which REFUSES ``70.5`` and ``"abc"``. A refusal does not degrade this
     one field: it fails the enclosing ``Explanation``, drops ``_explanation_out`` to its degraded
@@ -228,7 +228,7 @@ class Explanation(BaseModel):
     keep_discount: float | None = None
     threshold: int | None = None
     """The score an item had to beat. ``None`` only when the stored explanation could not
-    be read at all and the panel is showing the degraded fallback (routes._explanation_out):
+    be read at all and the panel is showing the degraded fallback (review._explanation_out):
     the panel omits its "your threshold is N" clause rather than print an invented figure."""
     coverage: float
     coverage_floor_bp: int | None = None
@@ -303,7 +303,7 @@ class Explanation(BaseModel):
     def _thaw_match(cls, value: object) -> object:
         """Read a match block that is not a mapping as absent, for the same reason (rule 72).
 
-        ``routes._match_status`` reads the stored match off the raw dict and copes with any
+        ``review._match_status`` reads the stored match off the raw dict and copes with any
         shape; refusing it here blanks every other block on the panel with it. ``None`` is a
         shape the panel already handles, being what a row scanned before the match block existed
         carries.

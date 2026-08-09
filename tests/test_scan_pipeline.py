@@ -25,7 +25,7 @@ from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from reaper.api import simulate as routes
+from reaper.api import simulate
 from reaper.api.schemas import SimStale, SimulationOut
 from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
@@ -2591,14 +2591,14 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
 
         # The same per-show memo the production loop keeps -- one thaw and one plan per show,
         # so a plan cached for one season is the plan its siblings are judged against here too.
-        seasons = routes._SeasonReplay(
-            await routes._season_payloads(session, snapshot_id=snapshot.id),
+        seasons = simulate._SeasonReplay(
+            await simulate._season_payloads(session, snapshot_id=snapshot.id),
             policy=season_evidence.SeasonPolicy.from_body(tv_policy),
         )
         out: dict[str, tuple[Any, ...]] = {}
         for key, row in rows.items():
             _, extra = facts_from_dict(json.loads(row.facts_json or "{}"))
-            replayed = routes._season_guard_replay(row, extra, seasons=seasons)
+            replayed = simulate._season_guard_replay(row, extra, seasons=seasons)
             guard = next(e for e in replayed if e.gate is GateId.SEASON_PROGRESSION)
             out[key] = (guard.outcome, guard.detail, guard.blocked, guard.unestablishable)
         return out
@@ -2715,12 +2715,12 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             "the edit moved no figure, so comparing the replay against it proves nothing"
         )
 
-        out = await routes._replay_simulation(
+        out = await simulate._replay_simulation(
             list(before.values()),
             edited,
             {},
             reach_days=history_reach_days(first.horizon_at, now=first.created_at),
-            season_payloads=await routes._season_payloads(session, snapshot_id=first.id),
+            season_payloads=await simulate._season_payloads(session, snapshot_id=first.id),
         )
 
         assert out.exact is True
@@ -2790,7 +2790,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
             "previews the mid-binge guard off a map nobody gathered"
         )
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv(keep_in_progress=True))
 
         assert caught.value.kind is SimStale.IN_PROGRESS_NOT_READ
@@ -2886,7 +2886,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv(keep_last_seasons=4))
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -2904,15 +2904,15 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         """
         await self._seed(cache_engine)
         first, before = await self._scan_under(session, cache_engine, self._tv())
-        seasons = routes._SeasonReplay(
-            await routes._season_payloads(session, snapshot_id=first.id),
+        seasons = simulate._SeasonReplay(
+            await simulate._season_payloads(session, snapshot_id=first.id),
             policy=season_evidence.SeasonPolicy.from_body(self._tv()),
         )
         row = next(iter(before.values()))
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             # A row whose frozen extras hold no season guard at all.
-            routes._season_guard_replay(row, (), seasons=seasons)
+            simulate._season_guard_replay(row, (), seasons=seasons)
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
 
@@ -2941,7 +2941,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -2966,7 +2966,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -2984,7 +2984,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED
@@ -3024,7 +3024,7 @@ class TestASeasonRuleReplaysExactlyOffTheFrozenBundle:
         )
         await session.commit()
 
-        with pytest.raises(routes._SeasonEvidenceMissingError) as caught:
+        with pytest.raises(simulate._SeasonEvidenceMissingError) as caught:
             await self._replayed_guards(session, first, before, self._tv())
 
         assert caught.value.kind is SimStale.SEASONS_NOT_RECORDED

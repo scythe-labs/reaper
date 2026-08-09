@@ -179,7 +179,7 @@ class TestTheBundleSurvivesTheFreeze:
     def test_a_payload_missing_a_field_raises_rather_than_defaulting(self) -> None:
         """No safe default exists here: every member is evidence, so absence is a refusal.
 
-        The route catches this and declines to preview (``routes._SeasonReplay``). Defaulting
+        The route catches this and declines to preview (``simulate._SeasonReplay``). Defaulting
         even one member would let a partial bundle produce a confident plan.
         """
         payload = season_evidence.to_dict(_bundle())

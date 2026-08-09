@@ -60,7 +60,7 @@ one habit that reliably refills it, and it feels like diligence while it happens
   **Negative results count** — "we tried X and it was worse" stops the next person re-trying X.
 - **You learned what predicts that nobody will watch a title** → `SIGNALS.md`. It is cited from
   six places in `src/` — `engine/signals.py`, `engine/policy.py` (three times), `engine/gates.py`
-  and `api/routes.py` — so read it before touching those. It is also the only home of the rewatch
+  and `api/review.py` — so read it before touching those. It is also the only home of the rewatch
   curve: the lab engines that measured and could have refitted it are deleted, so no constant in
   the tree carries those numbers and this file is the record.
 - **A review pass, a migration, a finished remediation** → `docs/history/`, with a banner

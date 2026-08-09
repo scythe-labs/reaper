@@ -4,12 +4,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Request
-
-if TYPE_CHECKING:
-    pass
 
 from reaper.api import tags as api_tags
 from reaper.api.schemas import (

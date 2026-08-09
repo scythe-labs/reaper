@@ -715,7 +715,7 @@ class TestChip:
     def test_a_match_block_of_the_wrong_shape_reads_as_absent(self, junk: str) -> None:
         """The other twin on the same model, and the same trade (rule 72).
 
-        ``routes._match_status`` reads the stored match off the raw dict and copes with any
+        ``review._match_status`` reads the stored match off the raw dict and copes with any
         shape. Refusing it at the wire boundary took every other block on the panel with it.
         ``None`` is a shape the panel already renders: it is what a row scanned before the
         match block existed carries.

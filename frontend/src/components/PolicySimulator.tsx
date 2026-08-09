@@ -76,7 +76,7 @@ export const APPLIES_ON_NEXT_SCAN =
  *
  *  A heading only. The paragraph under it is the server's own `stale_reason`, so the
  *  sentence the operator reads and the sentence a reviewer reads are one string
- *  (`api/routes.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
+ *  (`api/simulate.py`'s `_refused`, rule 144) -- they used to be two, and the frontend's copy
  *  was the only one anybody ever saw. An id this build does not know keeps the general
  *  heading and still renders that sentence, which is rule 66's "fallback handles unknown
  *  ids only": the server is always able to say what happened, even to an older browser. */
@@ -165,7 +165,7 @@ export function StaleNotice({
               to the hashed body leaves the recorded hash unmatchable until the next scan.
 
               It used to be a hardcoded paragraph here that named a keep tag, a season rule
-              and the watch span all at once, beside a second copy in api/routes.py that
+              and the watch span all at once, beside a second copy in api/simulate.py that
               nothing ever rendered. Three refusals now, each with its own remedy, and a
               season rule previews rather than reaching any of them. Keeping that as two
               hand-synced copies would have meant the reviewed sentence and the read sentence

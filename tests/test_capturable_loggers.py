@@ -88,8 +88,8 @@ class TestTheGuardReachesEveryLoggerInTheTree:
     It was 47 before ``services/list_config.py`` (the operator's own protection lists) landed
     with a logger and this number did not move with it, which is what the guard is for, then 49
     with ``services/list_rules.py`` (the keep rules a list acts through), 47 again once the two
-    retired lab engines left and took theirs, and 48 with ``api/plex.py``. Then 50, when
-    ``api/routes.py`` became five modules: three of the five log, so one logger left and three
+    retired lab engines left and took theirs, and 48 with ``api/plex.py``. Then 50, when the old
+    single API routes module became five: three of the five log, so one logger left and three
     arrived. ``api/vocabulary.py`` and ``api/about.py`` declare none, because neither logs --
     a split inherits its parent's logger only where it inherited something to say."""
 

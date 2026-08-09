@@ -666,7 +666,7 @@ class SeasonPruneEvidence(Base):
     """The show key, shared by every season of the show and equal to ``Candidate.group_key``
     for those rows.
 
-    Carries no index of its own: the only read is ``routes._season_payloads``' ``WHERE
+    Carries no index of its own: the only read is ``simulate._season_payloads``' ``WHERE
     snapshot_id = ?``, which the unique constraint above already covers on its leading column,
     and nothing filters a show key across snapshots. A second B-tree here would be written
     once per show per scan to serve nobody, in the table whose per-row cost the paragraph

@@ -1336,7 +1336,8 @@ unnamed constraint; Alembic rebuilds the table but can only drop a constraint it
 
 ### Alembic will silently produce a migration that creates nothing
 
-Autogenerate rendered a custom type as `reaper.db.types.EpochDateTime()` (`TZDateTime` at the time) **without emitting
+Autogenerate rendered a custom type as `reaper.db.types.EpochDateTime()`, named `TZDateTime`
+at the time, **without emitting
 the import**. `alembic upgrade head` reported success and created **zero tables**. Use a
 `render_item` hook to emit a stdlib type.
 

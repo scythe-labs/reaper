@@ -175,7 +175,7 @@ def facts_to_dict(facts: Facts, *, extra_results: tuple[GateResult, ...] = ()) -
 #:
 #: One of seven reasons in ``src/`` with NO ``CAUSE_COPY`` entry, and the reasoning here is
 #: about where it can be READ: ``facts_from_dict`` has a single caller, the
-#: policy simulator (``api.routes``), which reads a re-decided score and verdict and never
+#: policy simulator (``api.simulate``), which reads a re-decided score and verdict and never
 #: builds or stores an ``Explanation``. So this string reaches a reader only through a stored
 #: explanation that does not exist, and giving it panel copy would claim a route it cannot
 #: take (rule 25). Named anyway, so the ban on hand-typed reasons has no exception and the

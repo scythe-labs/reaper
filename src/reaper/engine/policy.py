@@ -438,7 +438,7 @@ class PolicyBody(Frozen):
         What it must NOT do is let a surface blame the operator for it. The simulator's stale
         notice once opened "You changed what the scan reads" at an install that had changed
         nothing; it now states the condition instead (``PolicySimulator.tsx``, and the matching
-        ``stale_reason`` in ``api.routes``). No post-upgrade code can reproduce the old hash,
+        ``stale_reason`` in ``api.simulate``). No post-upgrade code can reproduce the old hash,
         so the copy is the only thing that can carry the truth here.
         """
         kept = tuple(g for g in self.gates if g.gate not in self.RETIRED_GATES)
