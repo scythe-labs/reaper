@@ -149,6 +149,31 @@ class TestTheMinDormancyGate:
 
         assert (result.outcome == PROTECT) is protects
 
+    def test_dormancy_that_is_genuinely_absent_keeps_the_file_rather_than_raising(self) -> None:
+        """The one arm of this gate no fact builder can currently reach, tested anyway.
+
+        Both builders emit ``Known`` or ``Unknown`` for this field, so nothing in a scan
+        produces the ``Absent`` below, and ``_facts(None)`` above yields ``Unknown``, which
+        ``_blocked`` answers first with a different hold. The guard is still load-bearing:
+        delete it and the gate falls through to ``dormant.value``, which raises
+        ``AttributeError`` on an ``Absent`` and takes the item's whole verdict with it. Rule 118
+        -- an unreachable tripwire with no test is one refactor from silently becoming a
+        permissive ABSTAIN -- and it is driven against the gate directly because the builders
+        offer no route to it.
+
+        PROTECT rather than blocked is the point of the assertion. ``Absent`` is "we looked and
+        there is genuinely no watch history", a state we can describe, where ``Unknown`` is "we
+        could not look" (rule 93); either way we cannot establish that it has sat long enough,
+        so the file stays.
+        """
+        facts = replace(_facts(400), days_observed_unwatched=Absent(source="tautulli"))
+
+        result = GATE.evaluate(facts)
+
+        assert result.outcome == PROTECT
+        assert result.blocked is False
+        assert "dormancy cannot be established" in result.detail
+
     def test_a_gigantic_low_rated_film_is_still_protected_if_it_is_too_recent(
         self,
     ) -> None:
