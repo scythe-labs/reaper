@@ -43,9 +43,21 @@ export function usePlexTrash(enabled = true) {
 export function trashWarning(
   data: PlexTrash | undefined,
   isError: boolean,
-): { show: boolean; known: number; unreadable: boolean } {
-  if (isError) return { show: true, known: 0, unreadable: true };
-  if (!data || !data.configured) return { show: false, known: 0, unreadable: false };
+): { show: boolean; known: number; unreadable: boolean; autoEmpties: boolean } {
+  if (isError) return { show: true, known: 0, unreadable: true, autoEmpties: false };
+  if (!data || !data.configured)
+    return { show: false, known: 0, unreadable: false, autoEmpties: false };
   const unreadable = data.sections_unreadable > 0;
-  return { show: data.trashed > 0 || unreadable, known: data.trashed, unreadable };
+  return {
+    show: data.trashed > 0 || unreadable,
+    known: data.trashed,
+    unreadable,
+    // Deliberately NOT a reason to show the notice on its own. Plex ships this preference on
+    // and most servers never change it, so warning about it over an empty trash would put a
+    // standing amber block in front of every reap and teach the operator to click past the
+    // one that matters. It rides on a trash that already warrants a warning, where it says
+    // which mechanism will do the emptying. `null` means the preference could not be read and
+    // says nothing, rather than "Plex does not empty its own trash" (rule 93).
+    autoEmpties: data.empties_after_scan === true,
+  };
 }

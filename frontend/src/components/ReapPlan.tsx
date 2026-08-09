@@ -345,7 +345,11 @@ export function ReapPlan({
             {/* Informational here, and acknowledged in the sheet. Execute only opens the
                 sheet, so nothing irreversible is one click from this row. */}
             {planTrash.show && (
-              <PlexTrashNotice known={planTrash.known} unreadable={planTrash.unreadable} />
+              <PlexTrashNotice
+                known={planTrash.known}
+                unreadable={planTrash.unreadable}
+                autoEmpties={planTrash.autoEmpties}
+              />
             )}
             {staleRun && (
               // `standing`: this turns true when a newer scan lands under a plan already on
