@@ -110,6 +110,23 @@ rule narrating the gate that enforces it pays twice for one constraint.
   The `reaper-review` skill's *Opening issues* section holds every mechanic, label and cap, and
   binds every session rather than only a review pass — read it before filing. It is stated once,
   there, so nothing here can drift from it.
+- **A defect your own unlanded branch created is FIXED on that branch, never filed.** The
+  tracker describes what an operator can hit, and nobody can hit a branch. So the first question
+  about any candidate found while building is not "how severe" but **"is this on `dev`?"** —
+  `git show origin/dev:<path>` and read the line. If the branch introduced it, it belongs in the
+  diff that introduced it, with the test that pins it; filing it instead ships a known-broken
+  change and asks someone else to notice.
+  **Filing it costs more than the fix.** Three defects filed off one branch drew a verification
+  pass that measured `dev`, found all three absent, closed them `Reviewed/Invalid` and opened a
+  PR adding three refutations to `references/refuted.md` — the file that stops a future pass
+  re-raising a candidate, so the wrong row there is worse than no row. Two were real. The third
+  was real for a reason the refutation had not reached, and its `Invalid` label would have
+  buried a `Priority/High` lockout. Every verdict in that pass was correct about the tree it read.
+  **When a tracking issue is genuinely wanted anyway** — the fix is deferred, or it spans work
+  someone else holds — the title says so and the body opens with it: `on <branch>, not on dev`,
+  plus the base commit and the `git show` that proves the contrast. An issue that does not say
+  which tree it lives on will be verified against `dev`, because that is the only tree a reader
+  has, and it will be closed.
 - **Commit as you go, and keep the pull request focused — don't wait to be asked.** Branches
   are squash-merged, so a branch arrives on `dev` as one commit whose subject is the PR title
   and whose body is the PR description. **The pull request is the unit that tells one story**:
