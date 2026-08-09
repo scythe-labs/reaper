@@ -73,6 +73,7 @@ import structlog
 from sqlalchemy import Select, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.config import DATABASE_FILENAME
 from reaper.db.models import ReapRun, Snapshot
 
 log = structlog.get_logger(__name__)
@@ -228,4 +229,4 @@ async def compact_if_fragmented(data_dir: Path) -> bool:
     main file plus the wal plus the vacuum's temporary copy, so nearer three times the
     database than two.
     """
-    return await asyncio.to_thread(_compact_sync, data_dir / "reaper.db")
+    return await asyncio.to_thread(_compact_sync, data_dir / DATABASE_FILENAME)

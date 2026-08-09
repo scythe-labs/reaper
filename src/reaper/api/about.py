@@ -41,7 +41,7 @@ async def about(request: Request) -> AboutOut:
         version=build_version(),
         license="AGPL-3.0",
         data_dir=str(data_dir),
-        reaper_db_bytes=_db_bytes(data_dir / "reaper.db"),
+        reaper_db_bytes=_db_bytes(settings.database_path),
         cache_db_bytes=_db_bytes(data_dir / "cache.db"),
     )
 

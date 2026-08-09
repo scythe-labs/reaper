@@ -554,6 +554,10 @@ def main() -> None:
     if code:
         raise SystemExit(code)
 
+    # Preflight above is also what refuses a database this build cannot serve
+    # (``reaper.db.schema_gate.refusal``, called at the end of ``preflight.main``). It has
+    # to be that call and not one here: it runs after preflight's staged-restore swap, and
+    # restoring a backup is one of the two ways out the refusal names.
     _migrate(root)
     if _browser_wanted(os.environ, frozen=frozen):
         _open_browser_when_up(port)

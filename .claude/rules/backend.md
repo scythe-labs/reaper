@@ -470,8 +470,19 @@ Release M removes the reads, the writes and the ORM attribute, and ships whateve
 column needs to keep working without Python holding it up — for a `NOT NULL` column with no
 server default, an `alter_column` adding one, because the Python-side `default=` dies with the
 attribute and the next `INSERT` omits the column. Release M+1 drops the column. One release
-where both images work is what makes the operator's rollback survivable, and it is the only
-thing that does: a `downgrade()` recreating the column does not bring its data back.
+where both images *can read the same schema* is what makes the operator's rollback
+survivable, and it is the only thing that does: a `downgrade()` recreating the column does not
+bring its data back.
+
+**What "rollback" means here is putting the image back, not moving the database back**, and the
+distinction is the whole reason release M ships its revision rather than nothing. A database is
+only ever carried forward: it stays at whatever revision it reached, and the older image has to
+be able to serve *that*. So the sequence buys survivability exactly when M+1 shipped no new
+revision — which is the ordinary case, since M is where the schema work happens. When M+1 does
+ship one, its database sits at a revision M has never heard of, and `db/schema_gate.refusal`
+refuses the boot in plain words (#565); Alembic refused it before that too, with
+`Can't locate revision identified by …`. The way back is then M's own backup, not M's image, so
+say which of the two a removal costs when you write the release note.
 
 **Measure the cost against the alternative, not against zero.** Under `render_as_batch`, SQLite
 rebuilds the whole table for anything outside `add_column`/`create_index`/`drop_index` — so the

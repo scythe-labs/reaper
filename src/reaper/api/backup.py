@@ -119,7 +119,7 @@ async def backup_info(request: Request) -> BackupInfoOut:
     async with _factory(request)() as session:
         last = await app_settings.get_last_backup_at(session)
     return BackupInfoOut(
-        reaper_db_bytes=backup.db_size_on_disk(settings.data_dir / "reaper.db"),
+        reaper_db_bytes=backup.db_size_on_disk(settings.database_path),
         last_backup_at=last,
         # Self-sufficiency follows runtime precedence, not file existence: an env-supplied
         # key wins over any lingering secret.key, so it is not what a backup would bundle

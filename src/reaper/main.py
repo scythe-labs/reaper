@@ -19,8 +19,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper import __version__, logbuffer
@@ -68,6 +68,7 @@ from reaper.config import (
     parse_instance_seeds,
 )
 from reaper.crypto import SecretBox
+from reaper.db import schema_gate
 from reaper.db.models import Instance, InstanceKind, PlexServer
 from reaper.db.session import (
     create_cache_engine,
@@ -115,21 +116,27 @@ def _report_background_failure(task: asyncio.Task[Any]) -> None:
         log.warning("startup.background_task_failed", task=task.get_name(), error=str(exc))
 
 
-async def _schema_revision(session: AsyncSession) -> str | None:
-    """The Alembic revision this database sits at, for the boot log.
+def _refuse_unservable_schema(revision: str | None) -> None:
+    """Stop the boot rather than serve a schema this build does not know (#565).
 
-    Nothing else in the app reads it outside backup and restore, so "which schema is
-    this install on, and did the upgrade run" has no answer today -- migrations are
-    applied by a different process (the container entrypoint, or `launcher._migrate`)
-    whose output never reaches the log file the operator downloads. ``None`` is a
-    database built straight from the models, which is what a test carries.
+    ``schema_gate.refusal`` is the verdict; this is the app's half of it. Raising out of
+    the lifespan is what uvicorn turns into "Application startup failed" and a non-zero
+    exit, so no request is ever answered against a database an older build cannot read --
+    which is the alternative, and it fails item by item, hours later, mid-scan.
+
+    Preflight refuses the same database earlier on every boot that runs it (the container
+    entrypoint, ``scripts/dev-local.sh``, ``launcher.main``). This is the copy for a
+    process started without one, and it is the reason the claim covers *every* path into
+    the app rather than the packaged ones (rule 127).
+
+    The revision rides as its own log field, never inside the sentence: support wants the
+    hash and the operator cannot do anything with it (rule 21).
     """
-    try:
-        result = await session.execute(text("SELECT version_num FROM alembic_version"))
-    except OperationalError:
-        return None
-    row = result.first()
-    return str(row[0]) if row and row[0] else None
+    message = schema_gate.refusal(revision)
+    if message is None:
+        return
+    log.error("db.schema_refused", detail=message, revision=revision)
+    raise schema_gate.SchemaRefusedError(message)
 
 
 async def _integration_inventory(
@@ -164,6 +171,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = engine
     factory = create_session_factory(engine)
     app.state.session_factory = factory
+
+    # First, before the block below seeds instances and writes settings: a database at a
+    # revision this build never shipped is refused here rather than discovered later as SQL
+    # naming a column that is not there.
+    #
+    # Read through the gate's own reader rather than a second query beside it. There was one
+    # here -- an async `SELECT version_num` catching `OperationalError` alone -- and it fed
+    # this gate, so "no alembic_version table" and "could not read the database" arrived as
+    # the same `None`, which `refusal` unconditionally allows. That is rule 93's conflation
+    # sitting on the gate's input, and one reader with one error policy is the fix (rule 104).
+    # It also serves `db.ready` below, which is where the revision was first wanted.
+    revision = schema_gate.stored_revision(settings.database_path)
+    _refuse_unservable_schema(revision)
 
     # The caches live in their own file. See Settings.cache_database_url.
     cache_engine = create_cache_engine(settings)
@@ -256,7 +276,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         proxy_trust = await app_settings.proxy_trust_enabled(session, settings)
         offered = await app_settings.get_trusted_proxies(session, settings) if proxy_trust else []
         app.state.trusted_proxies = parse_proxy_networks(offered) if proxy_trust else ()
-        revision = await _schema_revision(session)
         integrations = await _integration_inventory(session, box, settings)
         await session.commit()
 
