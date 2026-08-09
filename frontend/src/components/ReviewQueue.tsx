@@ -30,7 +30,9 @@ import {
 import {
   api,
   type Candidate,
+  type CandidatePage,
   type Chip,
+  type GroupRollup,
   type GroupSeasonMark,
   type Override,
   type OverrideFilter,
@@ -386,6 +388,10 @@ type Group = {
   /** The Plex library the item lives in -- a show's is shared by all its seasons, so the
    *  first season sets it for the whole card. Null when unknown; the chip is hidden. */
   library: string | null;
+  /** The show's whole-snapshot rollup, sent once per show beside the rows. Null for a movie,
+   *  and for a show whose rollup did not arrive -- never a page-shaped substitute, since
+   *  every figure on it sits beside a destructive control. */
+  rollup: GroupRollup | null;
   items: Candidate[];
   isShow: boolean;
 };
@@ -397,10 +403,25 @@ function groupKeyOf(group: Group): string {
   return group.isShow ? group.key : group.items[0]!.media_key;
 }
 
+/** Every show's rollup across the pages fetched so far, keyed by group key.
+ *
+ *  Read from EVERY page, never `pages[0]`: a show first seen on page three has its rollup
+ *  on page three. Reading only the first page would leave those shows with no rollup at
+ *  all, and the count beside their Reap button is the one number that must come from the
+ *  set the server will act on (rule 30). A show straddling two pages carries the same
+ *  whole-snapshot figures in both, so which copy wins does not matter. */
+function toRollups(pages: CandidatePage[] | undefined): Map<string, GroupRollup> {
+  const byKey = new Map<string, GroupRollup>();
+  for (const page of pages ?? []) {
+    for (const rollup of page.groups) byKey.set(rollup.group_key, rollup);
+  }
+  return byKey;
+}
+
 /** Fold the flat candidate list into cards: a movie is its own card; every season of a
  *  show collapses under one show card. Order is preserved, so a group sits where its
  *  first (highest-scoring) member would. */
-function toGroups(items: Candidate[]): Group[] {
+function toGroups(items: Candidate[], rollups: Map<string, GroupRollup>): Group[] {
   const groups: Group[] = [];
   const index = new Map<string, Group>();
   for (const item of items) {
@@ -416,6 +437,7 @@ function toGroups(items: Candidate[]): Group[] {
           requestedBy: item.requested_by,
           dormantFor: item.dormant_for,
           library: item.library,
+          rollup: rollups.get(item.group_key) ?? null,
           items: [],
           isShow: true,
         };
@@ -433,6 +455,7 @@ function toGroups(items: Candidate[]): Group[] {
         requestedBy: item.requested_by,
         dormantFor: item.dormant_for,
         library: item.library,
+        rollup: null,
         items: [item],
         isShow: false,
       });
@@ -1122,8 +1145,8 @@ const ShowCard = memo(function ShowCard({
   }, [defaultOpen]);
   const first = group.items[0]!;
   // The whole show's shape, across every lane of the snapshot -- what the strip and the
-  // season count draw from. Null only on rows from before this field existed.
-  const marks = first.group_seasons;
+  // season count draw from. Null only when the show's rollup did not arrive with the page.
+  const marks = group.rollup?.seasons ?? null;
   // Whether the show has finished, from the first season row that carries it. This is a
   // fact about the series, stamped onto every one of its seasons in the same scan, so the
   // rows of one show cannot disagree; skipping the empty ones keeps a snapshot taken
@@ -1177,18 +1200,26 @@ const ShowCard = memo(function ShowCard({
   // decision does not take a season the operator spared individually, nor one the engine
   // refuses to reap. That helper says why, and keeps this number, the chip and the strip
   // squares reading the same `handFate` (rules 49/61).
+  //
+  // The three fallbacks below are a page-shaped answer, which the bulk bar deliberately does
+  // NOT take (it drops to "cards only" instead). They are kept here because this card must
+  // draw a line either way, and they cannot fire: `list_candidates` builds its rollups from
+  // the `group_key`s of the rows on the page, and `toGroups` gives a card to exactly those
+  // rows, so every show with a card has a rollup. A show first seen on a later page is the
+  // one way that could stop being true, which is why `toRollups` merges every page and a
+  // test drives it against reading `pages[0]`.
   const reapsWholeShow = showOverride === "reap";
   const reapedMarks = reapsWholeShow ? (marks ?? []).filter(showReapReaches) : [];
   const reapedUnknown = reapedMarks.filter((m) => m.size_bytes === null).length;
   const condemnedCount = reapsWholeShow
     ? reapedMarks.length - reapedUnknown
-    : (first.group_condemned_count ?? group.items.length);
+    : (group.rollup?.condemned_count ?? group.items.length);
   const condemnedBytes = reapsWholeShow
     ? reapedMarks.reduce((sum, m) => sum + (m.size_bytes ?? 0), 0)
-    : (first.group_condemned_bytes ?? fetchedSize);
+    : (group.rollup?.condemned_bytes ?? fetchedSize);
   const condemnedUnknown = reapsWholeShow
     ? reapedUnknown
-    : (first.group_unknown_size ?? fetchedUnknown);
+    : (group.rollup?.unknown_size ?? fetchedUnknown);
   const state =
     showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
   const { selectMode } = select;
@@ -1531,6 +1562,9 @@ export function ReviewQueue({
   // drag repaint) -- otherwise the sentinel observer below, keyed on `data`, would tear down
   // and rebuild every render and could re-fire while the sentinel sits in view.
   const data = useMemo(() => (pages ? pages.pages.flatMap((p) => p.items) : undefined), [pages]);
+  // Merged across every page, not read off the first: a show first seen on page three has
+  // its rollup on page three, and its card's count sits beside a destructive control.
+  const rollups = useMemo(() => toRollups(pages?.pages), [pages]);
   const totalItems = pages?.pages[0]?.total ?? 0;
   // Named apart from the `totalBytes` formatter, which this used to shadow -- which is
   // how the header kept rendering a bare sum while every other total had learned to say
@@ -1609,7 +1643,13 @@ export function ReviewQueue({
       if (result.hasNextPage || result.isError || !result.data) {
         throw new Error("The rest of the list didn't load.");
       }
-      return toGroups(result.data.pages.flatMap((p) => p.items)).map(groupKeyOf);
+      // No rollups: this folds the list into cards only to read each card's key, and
+      // `groupKeyOf` reads none of them. Walking every page to fill a field nothing reads
+      // would cost the whole filtered list for nothing.
+      return toGroups(
+        result.data.pages.flatMap((p) => p.items),
+        new Map(),
+      ).map(groupKeyOf);
     },
     onSuccess: (keys) => {
       setSelected(new Set(keys));
@@ -1827,7 +1867,7 @@ export function ReviewQueue({
   // Memoized on the loaded set. Without it, every render re-folded every fetched candidate
   // into groups -- and a drag-select across a long list renders once per `pointerenter`
   // (P-1). Everything derived from it is memoized on it, all the way to the card props.
-  const groups = useMemo(() => (data ? toGroups(data) : []), [data]);
+  const groups = useMemo(() => (data ? toGroups(data, rollups) : []), [data, rollups]);
 
   // The genre and library choices are what the latest scan actually saw, most common first --
   // the genre list is the same one the policy rule editors suggest from.
@@ -1997,15 +2037,14 @@ export function ReviewQueue({
   // and the bar says cards only -- off the condemned lane, where the bulk actions decide whole
   // cards rather than seasons, and whenever a picked card is not drawn, since its size is
   // unknown here.
+  //
+  // A show with no rollup falls into that same "cards only" arm rather than to the fetched
+  // season count, which is the number this figure exists to avoid printing beside Reap.
   let selectedItems: number | null = null;
   if (verdict === "condemn" && selected.size > 0) {
     const perKey = new Map(
       groups.map(
-        (g) =>
-          [
-            groupKeyOf(g),
-            g.isShow ? (g.items[0]?.group_condemned_count ?? g.items.length) : g.items.length,
-          ] as const,
+        (g) => [groupKeyOf(g), g.isShow ? g.rollup?.condemned_count : g.items.length] as const,
       ),
     );
     let total = 0;

@@ -22,6 +22,7 @@ import type {
   Candidate,
   FairnessReport,
   Group,
+  GroupRollup,
   Instance,
   PlexLibrary,
   RootFolder,
@@ -460,9 +461,6 @@ function showSeason(): Candidate {
     requested_by: null,
     group_key: "sonarr:5:42",
     group_title: "Example Show",
-    group_condemned_count: null,
-    group_condemned_bytes: null,
-    group_unknown_size: null,
     video_resolution: null,
     library: null,
     dormant_for: null,
@@ -477,20 +475,29 @@ function showSeason(): Candidate {
     chip: null,
     show_status: null,
     season_number: 3,
-    group_seasons: [
-      {
-        id: 3,
-        season: 3,
-        verdict: "abstain",
-        override: null,
-        override_effective: null,
-        size_bytes: 1024 ** 3,
-        spare_expires_at: null,
-        spare_covers_until: null,
-      },
-    ],
   };
 }
+
+/** The show's one season, which the strip draws. It belongs to the show, so it rides the
+ *  page's rollup rather than each row. */
+const SHOW_ROLLUP: GroupRollup = {
+  group_key: "sonarr:5:42",
+  condemned_count: 0,
+  condemned_bytes: 0,
+  unknown_size: 0,
+  seasons: [
+    {
+      id: 3,
+      season: 3,
+      verdict: "abstain",
+      override: null,
+      override_effective: null,
+      size_bytes: 1024 ** 3,
+      spare_expires_at: null,
+      spare_covers_until: null,
+    },
+  ],
+};
 
 const GROUP: Group = {
   group_key: "sonarr:5:42",
@@ -526,6 +533,7 @@ function renderQueue(firstRead: "ok" | Error = "ok"): QueryClient {
   else
     apiMock.candidates.mockResolvedValue({
       items,
+      groups: [SHOW_ROLLUP],
       total: items.length,
       total_bytes: 1024 ** 3,
       unknown_size: 0,

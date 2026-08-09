@@ -219,18 +219,6 @@ class CandidateOut(BaseModel):
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
-    group_condemned_count: int | None = None
-    """How many seasons "Reap now" on this show group would actually plan: its actable
-    seasons across the WHOLE snapshot (condemned minus hand-spares, plus effective hand
-    reaps) -- not just the fetched pages, which on a long sorted list can hold only some
-    of a show's seasons. None for movies."""
-    group_condemned_bytes: int | None = None
-    """The byte total over that same set. The show card must show the number the planner
-    will act on, never a partial page sum."""
-    group_unknown_size: int | None = None
-    """How many of the show's actable seasons have no size. They are excluded from both
-    numbers above, because the planner will not plan them, so the card can say what it is
-    leaving out rather than appearing to shrink. None for movies, and hidden at zero."""
     video_resolution: str | None = None
     """Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality
     badge. None hides the badge (TV seasons, unmatched items, pre-rescan rows)."""
@@ -298,9 +286,6 @@ class CandidateOut(BaseModel):
     season_number: int | None = None
     """The season this row is (from its media_key), for season rows. None for movies and
     for a key that did not parse -- display only, never identity."""
-    group_seasons: list[GroupSeasonMarkOut] | None = None
-    """The whole show's per-season verdict marks (every lane, whole snapshot), for the
-    show card's season strip. Set on rows that belong to a group; None for movies."""
     show_status: str | None = None
     """Whether the show is finished: ``"ended"``, ``"continuing"`` or ``"unknown"``. None
     for a movie, where the question does not apply. Three states, not a bool, so "the
@@ -322,6 +307,34 @@ class CandidateDetail(CandidateOut):
     genres: list[str] = Field(default_factory=list)
 
 
+class GroupRollupOut(BaseModel):
+    """What one show on this page looks like across the WHOLE snapshot.
+
+    Sent once per show rather than stamped onto each of its season rows. It used to be four
+    fields on ``CandidateOut``, so a show with twelve seasons on a page shipped its whole
+    season strip twelve times.
+
+    Every figure here spans the whole snapshot, never the fetched page: on a long sorted
+    list a page can hold some of a show's seasons and not the rest, and the card's numbers
+    sit beside "Reap now" (rule 5/30).
+    """
+
+    group_key: str
+    condemned_count: int
+    """How many seasons "Reap now" on this show would actually plan: its actable seasons,
+    condemned minus hand-spares, plus hand reaps the engine honors. The count the planner's
+    expansion produces, so the number beside the button is the number of files."""
+    condemned_bytes: int
+    """The byte total over that same set."""
+    unknown_size: int
+    """How many of those actable seasons have no size. The planner holds each one back, so
+    they are left out of both figures above and counted here instead -- the card says what
+    it is leaving out rather than quietly shrinking."""
+    seasons: list[GroupSeasonMarkOut]
+    """Every season of the show, all lanes, sorted by season number (unnumbered last). The
+    card's season strip, and what a whole-show Reap is judged against."""
+
+
 class CandidatePageOut(BaseModel):
     """One page of the review queue, plus the size of the whole filtered set.
 
@@ -332,6 +345,10 @@ class CandidatePageOut(BaseModel):
     """
 
     items: list[CandidateOut]
+    groups: list[GroupRollupOut]
+    """One entry per show with a row on this page. A show whose seasons straddle two pages
+    appears in both, carrying the same whole-snapshot figures either time, so a client that
+    merges pages by ``group_key`` cannot end up with a partial rollup."""
     total: int
     """How many rows the filters keep, across every page."""
     total_bytes: int

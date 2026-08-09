@@ -35,8 +35,9 @@ chosen decision is the solid hand-decision chip.
   the one place it lives; the show
   card's whole-show control and `ShowPanel` both call it, never a fourth inline copy.
 - **Every whole-show `hideReap` computation runs over the whole show, every lane.**
-  `showReapIsNoop` and `groupReapEffective` take `group.seasons` in the panel and `group_seasons`
-  (the strip marks, held as `showSeasons`) on the card, never the tab-filtered page — which on the
+  `showReapIsNoop` and `groupReapEffective` take `group.seasons` in the panel and the page's
+  per-show rollup (the strip marks, held as `showSeasons`) on the card, never the tab-filtered
+  page — which on the
   Condemned lane holds only the show's condemned seasons, and would hide the one control that
   reaps the show's kept seasons. The whole-show control's *lit* state is a separate question and
   is never an aggregate: it reads the show's OWN `show_override` (rule 50). `ShowPanel` carries

@@ -17,6 +17,7 @@ import {
   api,
   type Candidate,
   type CandidatePage,
+  type GroupRollup,
   type GroupSeasonMark,
   type Verdict,
 } from "../api";
@@ -58,9 +59,6 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     requested_by: null,
     group_key: null,
     group_title: null,
-    group_condemned_count: null,
-    group_condemned_bytes: null,
-    group_unknown_size: null,
     video_resolution: null,
     library: null,
     dormant_for: null,
@@ -75,7 +73,6 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     chip: null,
     show_status: null,
     season_number: null,
-    group_seasons: null,
     ...extra,
   };
   // Default an item's own decision to its effective one unless a test sets them apart (to
@@ -98,15 +95,39 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
   });
 }
 
+/** One show's whole-snapshot rollup, which the server sends once per show beside the rows.
+ *
+ *  The three figures default to zero rather than being derived from `seasons`: deriving them
+ *  would re-implement the server's actable-season rule here, and every test that asserts one
+ *  of these numbers would then pass whether or not it was ever sent (rules 119 and 141). A
+ *  test that is about a count states it. */
+function rollup(seasons: GroupSeasonMark[], extra: Partial<GroupRollup> = {}): GroupRollup {
+  return {
+    group_key: "sonarr:show:1",
+    condemned_count: 0,
+    condemned_bytes: 0,
+    unknown_size: 0,
+    seasons,
+    ...extra,
+  };
+}
+
 /** One page of candidates, with `total` deciding whether another page is claimed to exist and
  *  `snapshotId` naming which scan the page came from (so a refetch can land a newer one).
  *
  *  Annotated, so a field added to or renamed on the envelope fails the build here rather than
  *  reaching 57 call sites as `undefined`: `apiMock.candidates` is a bare `vi.fn()`, which
  *  checks nothing about what it is handed. */
-function page(items: Candidate[], total = items.length, offset = 0, snapshotId = 1): CandidatePage {
+function page(
+  items: Candidate[],
+  groups: GroupRollup[] = [],
+  total = items.length,
+  offset = 0,
+  snapshotId = 1,
+): CandidatePage {
   return {
     items,
+    groups,
     total,
     total_bytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
     unknown_size: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
@@ -215,8 +236,8 @@ describe("keeping the list in step with the latest scan", () => {
     // behind. Idle at the top (jsdom scrollY 0, nothing open or selected): it refreshes quietly,
     // the refetch lands snapshot 2, and only THEN does a toast say so -- never at issuance (PR-5).
     apiMock.candidates
-      .mockResolvedValueOnce(page([movie(1), movie(2)], 2, 0, 1))
-      .mockResolvedValue(page([movie(1), movie(2)], 2, 0, 2));
+      .mockResolvedValueOnce(page([movie(1), movie(2)], [], 2, 0, 1))
+      .mockResolvedValue(page([movie(1), movie(2)], [], 2, 0, 2));
     renderQueue("condemn", 2);
     expect(await screen.findByText("Updated to the latest scan.")).toBeInTheDocument();
     // Quiet means quiet: no mid-review nudge, no "one scan behind" marker.
@@ -229,7 +250,7 @@ describe("keeping the list in step with the latest scan", () => {
     // the refetch errors, so the list never reaches snapshot 2. The toast must not lie that it
     // did; a nudge appears so the reviewer is not left silently stale (PR-5).
     apiMock.candidates
-      .mockResolvedValueOnce(page([movie(1), movie(2)], 2, 0, 1))
+      .mockResolvedValueOnce(page([movie(1), movie(2)], [], 2, 0, 1))
       .mockRejectedValue(new Error("network blip"));
     renderQueue("condemn", 2);
     expect(
@@ -243,7 +264,7 @@ describe("keeping the list in step with the latest scan", () => {
     // quietly. Pressing Show latest must close the panel: its candidate id is from the old
     // snapshot, so keeping it open would leave the operator deciding from stale evidence (B-7).
     const onClearItemSelection = vi.fn();
-    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)], 2, 0, 1));
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)], [], 2, 0, 1));
     renderWithProviders(
       <ReviewQueue
         verdict="condemn"
@@ -393,9 +414,9 @@ describe("the whole-show override buttons", () => {
 
   it("keeps Reap when the kept seasons are on other lanes, absent from the Condemned page", async () => {
     // The real shape on the Condemned lane: every FETCHED row is condemned (the kept seasons
-    // sit on other lanes and never load here), but `group_seasons` still carries the whole
+    // sit on other lanes and never load here), but the show's rollup still carries the whole
     // show, including a kept one. A whole-show Reap takes that kept season, so Reap must stay
-    // -- the card judges over `group_seasons`, not the tab-filtered page.
+    // -- the card judges over the rollup's seasons, not the tab-filtered page.
     const marks: GroupSeasonMark[] = [
       {
         id: 1,
@@ -429,10 +450,7 @@ describe("the whole-show override buttons", () => {
       },
     ];
     apiMock.candidates.mockResolvedValue(
-      page([
-        season(1, "condemn", { group_seasons: marks }),
-        season(2, "condemn", { group_seasons: marks }),
-      ]),
+      page([season(1, "condemn"), season(2, "condemn")], [rollup(marks)]),
     );
     renderQueue("condemn");
     expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
@@ -441,7 +459,7 @@ describe("the whole-show override buttons", () => {
 
   it("does not light the whole-show Reap when only some seasons are reaped", async () => {
     // On the Condemned lane the fetched rows are the reaped/condemned seasons, which all agree
-    // "reap". But across the whole show (group_seasons) the override is mixed -- other seasons
+    // "reap". But across the whole show (the rollup) the override is mixed -- other seasons
     // are untouched -- so the whole-show control must NOT read as "Reaping" (its active state).
     const marks: GroupSeasonMark[] = [
       {
@@ -476,9 +494,7 @@ describe("the whole-show override buttons", () => {
       },
     ];
     apiMock.candidates.mockResolvedValue(
-      page([
-        season(8, "condemn", { override: "reap", override_effective: true, group_seasons: marks }),
-      ]),
+      page([season(8, "condemn", { override: "reap", override_effective: true })], [rollup(marks)]),
     );
     renderQueue("condemn");
     await screen.findByText("Example Show");
@@ -489,7 +505,7 @@ describe("the whole-show override buttons", () => {
 
   it("drops Reap once every season of the show is condemned", async () => {
     // Now a whole-show Reap would change nothing, so it falls away just as the movie's does.
-    // Every season condemned in `group_seasons` too, so the whole-show view agrees.
+    // Every season condemned in the rollup too, so the whole-show view agrees.
     const marks: GroupSeasonMark[] = [
       {
         id: 1,
@@ -513,10 +529,7 @@ describe("the whole-show override buttons", () => {
       },
     ];
     apiMock.candidates.mockResolvedValue(
-      page([
-        season(1, "condemn", { group_seasons: marks }),
-        season(2, "condemn", { group_seasons: marks }),
-      ]),
+      page([season(1, "condemn"), season(2, "condemn")], [rollup(marks)]),
     );
     renderQueue("condemn");
     expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
@@ -631,10 +644,7 @@ describe("the bulk bar's count", () => {
       },
     ];
     apiMock.candidates.mockResolvedValue(
-      page([
-        season(1, "condemn", { group_seasons: marks, group_condemned_count: 10 }),
-        season(2, "condemn", { group_seasons: marks, group_condemned_count: 10 }),
-      ]),
+      page([season(1, "condemn"), season(2, "condemn")], [rollup(marks, { condemned_count: 10 })]),
     );
     renderQueue("condemn");
     await selectAllDrawn();
@@ -653,7 +663,7 @@ describe("select everything matching", () => {
   it("selects nothing and says so when the rest of the list won't load", async () => {
     const first = [movie(1), movie(2)];
     apiMock.candidates.mockImplementation((_verdict, _filters, _limit, offset: number) =>
-      offset === 0 ? Promise.resolve(page(first, 4)) : Promise.reject(new Error("boom")),
+      offset === 0 ? Promise.resolve(page(first, [], 4)) : Promise.reject(new Error("boom")),
     );
     renderQueue();
     const user = await selectAllDrawn();
@@ -665,6 +675,42 @@ describe("select everything matching", () => {
     ).toBeInTheDocument();
     // The picks are exactly what they were: the two drawn cards, not the four claimed.
     expect(pickedCount()).toContain("2");
+  });
+
+  it("gives a show first seen on a later page the rollup that arrived with it", async () => {
+    // A show's rollup rides the page its rows ride. Reading `pages[0].groups` would leave every
+    // show past the first page with none, and the card would then draw no strip and print the
+    // seasons this page happened to fetch under "would be removed", beside the control that
+    // reaps the whole show (rule 30). Six seasons across the show, two of them on this page.
+    const marks: GroupSeasonMark[] = [1, 2, 3, 4, 5, 6].map((n) => ({
+      id: n,
+      season: n,
+      verdict: n > 4 ? "protect" : "condemn",
+      override: null,
+      override_effective: null,
+      size_bytes: 1024 ** 3,
+      spare_expires_at: null,
+      spare_covers_until: null,
+    }));
+    apiMock.candidates.mockImplementation((_verdict, _filters, _limit, offset: number) =>
+      Promise.resolve(
+        offset === 0
+          ? page([movie(1), movie(2)], [], 4)
+          : page(
+              [season(1, "condemn"), season(2, "condemn")],
+              [rollup(marks, { condemned_count: 4, condemned_bytes: 4 * 1024 ** 3 })],
+              4,
+              offset,
+            ),
+      ),
+    );
+    // The queue pulls the next page itself once the drawn set is within one render page of the
+    // loaded one, so the second page arrives with no interaction.
+    const { container } = renderQueue("condemn");
+
+    // From the rollup that came with page two, not from the two rows on it, which read "2 of 2".
+    expect(await screen.findByText(/4 of 6 would be removed, 4\.0 GiB/)).toBeInTheDocument();
+    expect(container.querySelectorAll(".strip-sq")).toHaveLength(marks.length);
   });
 });
 
@@ -796,7 +842,7 @@ describe("the score badge's color follows the fate", () => {
 });
 
 describe("the season strip's colors follow the fate", () => {
-  // A show card's strip draws one square per season from `group_seasons`. Each square must
+  // A show card's strip draws one square per season from the show's rollup. Each square must
   // agree with its row: solid for an effective hand decision, dashed red (with a scythe
   // mark) for a reap the engine can't honor yet, the scan verdict otherwise. Amber is never
   // used here -- it means only "left for you to decide".
@@ -823,10 +869,9 @@ describe("the season strip's colors follow the fate", () => {
       season(m.id, m.verdict, {
         override: m.override,
         override_effective: m.override_effective,
-        group_seasons: marks,
       }),
     );
-    apiMock.candidates.mockResolvedValue(page(rows));
+    apiMock.candidates.mockResolvedValue(page(rows, [rollup(marks)]));
     const { container } = renderQueue();
     await screen.findByText("Example Show");
     const squares = Array.from(container.querySelectorAll(".strip-sq"));
@@ -1281,13 +1326,11 @@ describe("what a card says after a hand decision", () => {
         spare_covers_until: null,
       },
     ];
-    const extra = {
-      group_seasons: marks,
-      group_condemned_count: 2,
-      group_condemned_bytes: 2 * 1024 ** 3,
-    };
     apiMock.candidates.mockResolvedValue(
-      page([season(1, "condemn", extra), season(2, "condemn", extra)]),
+      page(
+        [season(1, "condemn"), season(2, "condemn")],
+        [rollup(marks, { condemned_count: 2, condemned_bytes: 2 * 1024 ** 3 })],
+      ),
     );
     apiMock.override.mockResolvedValue({});
     const user = userEvent.setup();
@@ -1340,14 +1383,8 @@ describe("what a card says after a hand decision", () => {
         spare_covers_until: null,
       },
     ];
-    const extra = {
-      group_seasons: marks,
-      group_condemned_count: 0,
-      group_condemned_bytes: 0,
-      group_unknown_size: 0,
-    };
     apiMock.candidates.mockResolvedValue(
-      page([season(1, "protect", extra), season(2, "protect", extra), season(3, "protect", extra)]),
+      page([season(1, "protect"), season(2, "protect"), season(3, "protect")], [rollup(marks)]),
     );
     apiMock.override.mockResolvedValue({});
     const user = userEvent.setup();
@@ -1405,15 +1442,12 @@ describe("what a card says after a hand decision", () => {
         spare_covers_until: null,
       },
     ];
-    const extra = {
-      group_seasons: marks,
-      show_override: "reap" as const,
-      group_condemned_count: 1,
-      group_condemned_bytes: gb,
-      group_unknown_size: 0,
-    };
+    const extra = { show_override: "reap" as const };
     apiMock.candidates.mockResolvedValue(
-      page([season(1, "protect", extra), season(2, "protect", extra), season(3, "protect", extra)]),
+      page(
+        [season(1, "protect", extra), season(2, "protect", extra), season(3, "protect", extra)],
+        [rollup(marks, { condemned_count: 1, condemned_bytes: gb })],
+      ),
     );
     renderQueue("protect");
 
@@ -1452,15 +1486,12 @@ describe("what a card says after a hand decision", () => {
         spare_covers_until: past,
       },
     ];
-    const extra = {
-      group_seasons: marks,
-      show_override: "reap" as const,
-      group_condemned_count: 1,
-      group_condemned_bytes: gb,
-      group_unknown_size: 0,
-    };
+    const extra = { show_override: "reap" as const };
     apiMock.candidates.mockResolvedValue(
-      page([season(1, "protect", extra), season(2, "protect", extra)]),
+      page(
+        [season(1, "protect", extra), season(2, "protect", extra)],
+        [rollup(marks, { condemned_count: 1, condemned_bytes: gb })],
+      ),
     );
     renderQueue("protect");
 
