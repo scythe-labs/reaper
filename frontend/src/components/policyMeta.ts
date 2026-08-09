@@ -15,10 +15,13 @@ export type GateMeta = {
   help: string;
   unit?: "days" | "people";
   window?: { label: string; help: string };
-  /** No switch a policy can carry sits behind this id -- either a retired gate, or a
-   *  pseudo-id the API tallies under (`hand_spare`) -- but the server still emits it, in
-   *  stored explanations and in the simulator's spared-by counts, so its copy has to stay
-   *  readable. The docs' protections-table guard excludes these: they do not ship today. */
+  /** No switch a policy can carry sits behind this id -- a retired gate, a pseudo-id the API
+   *  tallies under (`hand_spare`), or one the engine emits with no policy row behind it --
+   *  but the server still emits it, in stored explanations and in the simulator's spared-by
+   *  counts, so its copy has to stay readable. The docs' protections-table guard excludes
+   *  these, because that table lists the switches an operator can set. **It does not mean
+   *  the id is inert**: `season_progression` fires on every TV scan and `custom` on every
+   *  keep rule the operator wrote, which is why they need copy at all. */
   retired?: boolean;
 };
 
@@ -136,10 +139,24 @@ export const GATE_META: Record<string, GateMeta> = {
   // None of the four can reach `PolicyEditor`'s leftover-row notice, whose copy is about a
   // gate whose LIST is gone: `PolicyBody._drop_retired_gates` strips `unmanaged` and
   // `others_watching` from every stored body on load, and `GateSettingIn._must_be_authorable`
-  // refuses `season_progression` and `custom`, which no policy row builds.
+  // refuses `season_progression` and `custom`, which no policy row builds. That notice is in
+  // fact unreachable for EVERY id right now, including the two it was written for:
+  // `api/policy.py`'s `_policy_out` rebuilds each row as a `GateSettingIn`, so the same
+  // validator rejects a stored `whitelisted` on the way OUT and the route 500s (#627). The
+  // point here is only that these four cannot make it say something wrong.
+  // NOT "Your season rules", which names a lever that does not always exist. Every season on
+  // disk is held under this id when the guard cannot be ANSWERED -- `progress_is_establishable`
+  // is False whenever the watch mirror reaches back less far than `in_progress_hold_days`,
+  // which is 180 by default, so a new install is in that state for its whole library. The hold
+  // is a blocked PROTECT (`season_evidence.guard_result`), `Evaluation.protectors` selects on
+  // the outcome alone, so it lands in `protections_fired` and tallies here like any keep. An
+  // operator told "your season rules" then loosens keep-last, keep-first and the partway-through
+  // guard in turn and watches the number hold still. `api/review.py`'s `_kept_phrase` already
+  // refuses to say it for the same rows ("your watch history is too short to tell"), so this is
+  // the wording that lets the two surfaces agree (rules 144, 21).
   season_progression: {
-    label: "Your season rules",
-    help: "The newest seasons you keep, a show still running, or someone partway through.",
+    label: "A season check",
+    help: "Your season rules kept it, or Reaper couldn't tell who is partway through.",
     retired: true,
   },
   custom: {
@@ -148,8 +165,12 @@ export const GATE_META: Record<string, GateMeta> = {
     retired: true,
   },
   others_watching: {
+    // The help says no title was ever kept this way, because none was: no fact builder ever
+    // produced a Known count, so the gate's floor of at least 1 was never met and it could not
+    // PROTECT (`engine/gates.py`, where OthersWatchingGate used to be). The label is what a
+    // stored explanation would read as; the help must not invent the keep behind it (rule 25).
     label: "Other people were watching it",
-    help: "Kept by a scan that counted who else was watching. Reaper no longer checks this.",
+    help: "An old protection Reaper no longer checks.",
     retired: true,
   },
   unmanaged: {

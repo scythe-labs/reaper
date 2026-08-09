@@ -329,8 +329,14 @@ describe("what the spared-by list calls each protection", () => {
 
   // The engine's id, then the words. Written from `GATE_META`'s intent rather than from its
   // source, so a label edited into engine vocabulary fails here (rule 119).
+  //
+  // `season_progression` is deliberately vague and pinned that way: the same id tallies a
+  // season held because the guard could not be ANSWERED (a watch mirror shallower than the
+  // partway-through hold, the ordinary state of a new install), so a label naming the
+  // operator's season rules would send them to controls that cannot move the number.
+  // `api/review.py`'s `_kept_phrase` refuses the same sentence for the same rows.
   it.each([
-    ["season_progression", "Your season rules", "Season Progression"],
+    ["season_progression", "A season check", "Season Progression"],
     ["custom", "A rule you wrote", "Custom"],
     ["min_dormancy", "Give every title time to be rewatched", "Min Dormancy"],
     ["hand_spare", "Spared by hand", "Hand Spare"],
