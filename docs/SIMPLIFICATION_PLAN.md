@@ -1571,7 +1571,7 @@ client-only shapes. The overlay is load-bearing: generation *loosens* unions the
 TypeScript deliberately narrows. **~1,100 TS lines and ~400 Python lines replaced by ~150**, and
 the guard upgrades from "names match" to "types and optionality match".
 
-### 4.3 Cross-language enums have no drift guard, and one is shipping wrong
+### 4.3 Cross-language enums have no drift guard, and one was shipping wrong
 
 Rule 103 requires a drift guard on a list mirroring a declaration. It lives in
 `.claude/rules/backend.md`, scoped to `src/reaper/**/*.py`, so **an agent editing the TypeScript
@@ -1580,7 +1580,7 @@ direction of the mirror.
 
 | Concept | Python | Mirrored in | Guard |
 | --- | --- | --- | --- |
-| Gate ids | `engine/gates.py:62` (11) | `policyMeta.ts` `GATE_META` (7 real), 2 components, the manual | Partial, and both sides are short by the same 4 (**issue #551**) |
+| Gate ids | `engine/gates.py` `GateId` (11) | `policyMeta.ts` `GATE_META`, 2 components, the manual | **Done (#551)**: a `GateId` union `GATE_META` `satisfies`, pinned against the enum |
 | Signal ids | `engine/signals.py:66` (5) | `SIGNAL_META`, `RAMPS`, `BUILTIN_SIGNAL_IDS`, 4 more | Partial: 3 TS maps unguarded |
 | Verdict | **none: bare `str`** | `api.ts:17` closed union, `reviewFate.ts` | Impossible, no declaration to compare |
 | Override | one model only | `api.ts:168`, `reviewFate.ts`, `StatusChip.tsx` | None |
@@ -1592,8 +1592,9 @@ Two fixes, both small:
 1. **`Verdict` and `Override` should be `Literal` types in Python.** The app's central vocabulary
    is currently declared only in TypeScript; `decide_verdict` returns `str`. Typing it makes mypy
    cover what no test does. Risk `safety-path` in location, typing-only in effect.
-2. **One cross-reference line** in `.claude/rules/frontend.md` under rule 66, pointing at rule 103.
-   No new rule number, and it closes the scoping gap for every row above.
+2. ~~**One cross-reference line** in `.claude/rules/frontend.md` under rule 66, pointing at rule
+   103.~~ **Landed with #551**, no new rule number, and it closes the scoping gap for every row
+   above.
 
 `SimStale` (`test_api_type_mirror.py:442`) is the exemplary case and is what the others should
 look like.
@@ -1637,8 +1638,10 @@ look like.
 > `export type` declarations — every enum in 4.3 — sit outside it, and nested inline objects are
 > compared at their top level only.
 >
-> **4.3's gate row is wrong in the plan's favor.** Python has all 11 gate ids; **TS is short by 4**
-> and Python by none. Everything else in the table is confirmed. On typing `Verdict`/`Override` as
+> **4.3's gate row is wrong in the plan's favor.** Python has all 11 gate ids; **TS was short by
+> 4** and Python by none — landed ahead of the phase as #551, since two of the four fired on
+> ordinary scans and the operator was reading their raw ids. Everything else in the table is
+> confirmed. On typing `Verdict`/`Override` as
 > `Literal`: safe on `decide_verdict`'s return, and **not** automatically safe in `schemas.py`,
 > where `verdict: str` and `override: str | None` validate rows read from the DB. Nothing
 > constrains those columns — no CHECK, no migration ever wrote an out-of-set value — but narrowing
@@ -1785,7 +1788,7 @@ either side.
 
 **The rules system.** 1,021 lines across five files, but the scoping works: an agent in
 `src/reaper/**/*.py` loads 822 and one in `frontend/src/**` loads 598. Only rule 103's placement
-is wrong, and that is one cross-reference line (4.3).
+was wrong, and that was one cross-reference line, landed under rule 66 with #551 (4.3).
 
 **`docs/history/`.** 9,437 frozen lines, never loaded by a scoped path, holding the finding IDs the
 rule numbers cite.

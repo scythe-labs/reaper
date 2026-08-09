@@ -12,7 +12,7 @@ import type { RefObject } from "react";
 import type { ProfileSettings, SimStale, Simulation } from "../api";
 import { useSuccessorFocus } from "../focus";
 import { bytes, count, totalBytes } from "../format";
-import { GATE_META, titleCase } from "./policyMeta";
+import { GATE_META, UNNAMED_GATE_LABEL } from "./policyMeta";
 import { Notice } from "./Notice";
 
 /** The histogram, with the threshold drawn across it.
@@ -284,9 +284,14 @@ export function Outcome({
         <>
           <h3>Why titles were spared</h3>
           <dl className="sim-delta">
+            {/* Every id the server can send is named in `GATE_META`, which `satisfies` keeps
+                complete over `GateId`. The fallback is rule 66's, for an id from a server
+                newer than this browser: it used to be `titleCase`, which printed the engine's
+                own slug ("Season Progression", "Custom") as the reason a title was kept, in
+                the panel read while deciding what to delete (#551, rule 21). */}
             {simulation.protected_by.map((g) => (
               <div key={g.gate}>
-                <dt>{GATE_META[g.gate]?.label ?? titleCase(g.gate)}</dt>
+                <dt>{GATE_META[g.gate]?.label ?? UNNAMED_GATE_LABEL}</dt>
                 <dd>{count(g.count)}</dd>
               </div>
             ))}
