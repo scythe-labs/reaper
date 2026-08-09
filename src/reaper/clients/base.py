@@ -25,7 +25,7 @@ from __future__ import annotations
 import contextlib
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, NoReturn, Self
 
 import httpx2
 import structlog
@@ -184,6 +184,26 @@ class SafetyViolationError(RuntimeError):
     """
 
 
+def refuse_mutation(event: str, method: str, path: str, *, reason: str, message: str) -> NoReturn:
+    """Record a blocked write, then raise it. Both guards refuse through here.
+
+    A refusal is the loudest thing either guard does and it was the quietest thing in the
+    log: nothing was written at the point of refusal, so the only trace was whatever the
+    caller made of the exception. Three callers make very little of it. ``sync_shelves``
+    catches ``PlexError`` per library and continues, and the executor's
+    ``_best_effort_refresh`` and ``_finalize_plex`` catch ``Exception`` deliberately,
+    because a reap must not fail on a follow-up. So a guard refusal could reach the
+    operator as one line naming Plex, indistinguishable from Plex being unreachable.
+
+    Raising from here rather than at each site is what makes that structural. A refusal
+    added later cannot arrive without its log line, and the ``reason`` is the discriminator
+    rules 92/93 ask for: something a reader matches on, never a sentence that will be
+    reworded. ``path`` is already token-free at both call sites (rule 13).
+    """
+    log.warning(event, method=method.upper(), path=path, reason=reason)
+    raise SafetyViolationError(message)
+
+
 class IntegrationError(RuntimeError):
     """An integration could not be reached, or returned an error."""
 
@@ -259,14 +279,24 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
                 intended = request.extensions.get("reaper_mutation_approved") is True
 
                 if not self._safety.destructive_allowed:
-                    raise SafetyViolationError(
-                        f"Blocked {request.method} {path}. {self._safety.why_blocked()}"
+                    refuse_mutation(
+                        "http.write_blocked",
+                        request.method,
+                        path,
+                        reason="not_armed",
+                        message=f"Blocked {request.method} {path}. {self._safety.why_blocked()}",
                     )
                 if not intended:
-                    raise SafetyViolationError(
-                        f"Blocked {request.method} {path}: this mutation was not declared "
-                        "to the action journal. Destructive calls must go through the "
-                        "action executor so that they are recorded before they are sent."
+                    refuse_mutation(
+                        "http.write_blocked",
+                        request.method,
+                        path,
+                        reason="not_declared",
+                        message=(
+                            f"Blocked {request.method} {path}: this mutation was not declared "
+                            "to the action journal. Destructive calls must go through the "
+                            "action executor so that they are recorded before they are sent."
+                        ),
                     )
 
         return await self._inner.handle_async_request(request)

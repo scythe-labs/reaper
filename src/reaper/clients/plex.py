@@ -44,7 +44,12 @@ from xml.etree.ElementTree import Element
 import requests
 import structlog
 
-from reaper.clients.base import SAFE_METHODS, SafetyViolationError, trace_call
+from reaper.clients.base import (
+    SAFE_METHODS,
+    SafetyViolationError,
+    refuse_mutation,
+    trace_call,
+)
 from reaper.config import RuntimeSafety
 from reaper.engine.identity import PlexFile, PlexItem, parse_guids, to_basename
 from reaper.ratings import Rating, from_plex
@@ -339,21 +344,37 @@ class GuardedSession(requests.Session):
                 # branch can NEVER permit a deletion: a verb+path outside _benign_shape
                 # does not match it and falls through to the armed-and-declared rule.
                 if not self._safety.leaving_soon_write_allowed:
-                    raise SafetyViolationError(
-                        f"Blocked {method} to Plex (Leaving Soon shelf). Turn deletion "
-                        'on, or turn on "Update while read-only" under Settings, Plex, '
-                        "Leaving Soon to allow this reversible shelf write while "
-                        "Reaper is read-only."
+                    refuse_mutation(
+                        "plex.write_blocked",
+                        method,
+                        path,
+                        reason="shelf_not_allowed",
+                        message=(
+                            f"Blocked {method} to Plex (Leaving Soon shelf). Turn deletion "
+                            'on, or turn on "Update while read-only" under Settings, Plex, '
+                            "Leaving Soon to allow this reversible shelf write while "
+                            "Reaper is read-only."
+                        ),
                     )
             elif not self._safety.destructive_allowed:
-                raise SafetyViolationError(
-                    f"Blocked {method} to Plex. {self._safety.why_blocked()}"
+                refuse_mutation(
+                    "plex.write_blocked",
+                    method,
+                    path,
+                    reason="not_armed",
+                    message=f"Blocked {method} to Plex. {self._safety.why_blocked()}",
                 )
             elif not _declared.get():
-                raise SafetyViolationError(
-                    f"Blocked {method} to Plex: this mutation was not declared to the "
-                    "action journal. Destructive calls must go through the action "
-                    "executor so that they are recorded before they are sent."
+                refuse_mutation(
+                    "plex.write_blocked",
+                    method,
+                    path,
+                    reason="not_declared",
+                    message=(
+                        f"Blocked {method} to Plex: this mutation was not declared to the "
+                        "action journal. Destructive calls must go through the action "
+                        "executor so that they are recorded before they are sent."
+                    ),
                 )
         # Trace only what passed the guard and reached the wire; a blocked mutation raised
         # above and never happened. plexapi puts X-Plex-Token in the query string (rule 13),
