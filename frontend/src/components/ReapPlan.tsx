@@ -119,7 +119,7 @@ function Steps({ run }: { run: Run }) {
 
 function Report({ report }: { report: RunReport }) {
   // "stopped", not "aborted": one word for one mechanism. The docs say caps stop the whole
-  // run, and the app-wide reap bar already reports this exact state as "Stopped." (App.tsx).
+  // run, and the app-wide reap bar already reports this exact state as "Stopped." (`ReapBar.tsx`).
   // "Abort" was operator vocabulary nowhere else in the product (U-15).
   if (report.state === "aborted") {
     return (

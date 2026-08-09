@@ -682,7 +682,8 @@ export function App() {
   // `!user` alone, never `isError || !user` (#181). A read that never landed leaves `user`
   // undefined and lands on Login by this same test, and a signed-out answer reaches the gate as
   // DATA rather than as an error, because every 401 outside `/api/auth/` writes `["me"] = null`
-  // (`main.tsx`) and a sign-out that worked writes it directly (`signOut.onSuccess`). So the
+  // (`main.tsx`) and a sign-out that worked writes it directly (`UserMenu`'s `signOut.onSuccess`).
+  // So the
   // `isError` arm only ever covered the TRANSIENT case: a refetch that failed while React Query
   // still held the signed-in user, answered by showing the login screen to somebody who is signed
   // in. A sign-out that failed on a flaky network reached it and signed the operator out of the
@@ -691,8 +692,9 @@ export function App() {
   // What this test canNOT see is a 401 on `["me"]` itself: the handler exempts the whole
   // `/api/auth/` prefix, so this key's own read arrives as an error with the last good user still
   // held. A writer that means to convey SIGNED OUT therefore has to put that state in, never
-  // refetch to discover it -- which is why the sign-out above writes on success. Invalidating is
-  // still right where the question is open rather than answered: `signOut.onError`, where the
+  // refetch to discover it -- which is why the sign-out in `UserMenu` writes on success.
+  // Invalidating is still right where the question is open rather than answered:
+  // `UserMenu`'s `signOut.onError`, where the
   // session may well still be live, and `Login`'s `onAuthed`, where the refetch is the sign-in.
   return (
     <>

@@ -134,7 +134,7 @@ export function ReapConfirm({
 
   // When the run ends, let the parent react (e.g. clear a selection). Refreshing the caches
   // the reap invalidated is NOT done here: this sheet is meant to be closed mid-run, so the
-  // work lives on the always-mounted reap bar (App.tsx), which cannot be unmounted out of it.
+  // work lives on the always-mounted reap bar (`ReapBar.tsx`), which cannot be unmounted out of it.
   const endedRef = useRef(false);
   useEffect(() => {
     if ((report || failed) && !endedRef.current) {

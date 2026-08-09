@@ -327,7 +327,7 @@ export function ScanRow({
             row, under its progress bar, where "This scan" reads as the one in flight -- and the
             operator starting a rescan has already answered it. The other two sit on pages with no
             scan in view and stay: `ReapPlan`'s is why Build is disabled over that snapshot, and
-            `App.tsx`'s freshness line is the age of the queue rendered below it, both still true
+            `ScanFreshness.tsx`'s freshness line is the age of the queue rendered below it, both still true
             for as long as that snapshot is the one on hand. */}
         {snapshot?.degraded && !supersededSnapshot && (
           <Notice tone="warn" standing>
