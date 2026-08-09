@@ -1210,7 +1210,6 @@ def _candidate_out(
         library=r.library_title,
         dormant_for=_dormant_for(explanation),
         reason=_primary_reason(explanation, r.verdict, r.score, r.media_type),
-        spared=override == "spare",
         override=override,
         override_own=override_own,
         show_override=show_override,

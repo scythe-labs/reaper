@@ -113,7 +113,6 @@ export interface Candidate {
   /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
    *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis. */
   reason: string | null;
-  spared: boolean;
   /** The manual decision *in effect* -- "spare", "reap", or null -- own or inherited from
    *  the show. It colors the row's chip and score (the item's real fate). Set the moment they
    *  click, so the card shows the pending intent before the next scan bakes it in. To decide

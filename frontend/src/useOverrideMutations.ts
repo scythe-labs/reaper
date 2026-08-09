@@ -143,7 +143,6 @@ export function useOverrideMutations() {
         patchInPlace(key, {
           override: decision,
           override_own: decision,
-          spared: decision === "spare",
           override_effective: null,
           spare_expires_at: spareExpiresAt,
           // The fate field the colors read. Deliberately the spare just set, not the server's
@@ -167,7 +166,6 @@ export function useOverrideMutations() {
         patchInPlace(key, {
           override: null,
           override_own: null,
-          spared: false,
           override_effective: null,
           spare_expires_at: null,
           // Read only alongside a "spare" decision, and this clears the decision, so nothing

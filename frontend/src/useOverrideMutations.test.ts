@@ -32,7 +32,6 @@ const row = (media_key: string, group_key: string | null) =>
     group_key,
     override: null,
     override_own: null,
-    spared: false,
     show_override: null,
     show_spare_expires_at: null,
   }) as never;
