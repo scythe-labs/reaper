@@ -1928,7 +1928,7 @@ gate instead."
 | --- | --- | --- | --- |
 | Rule 40's one control standard | `00-tokens.css:212`, in prose | 10 rule blocks re-declare the same 6 fields; 8 more re-declare the identical focus ring | One grouped base rule, ~70 lines, risk `visual` (source order) |
 | Rule 94's 500-key `IN` bound | prose only | `_KEY_CHUNK`, `_WATCH_KEY_CHUNK`, three bare `500` literals, one `_CHUNK = 200` whose comment already enumerates the others | One constant + a hygiene grep, ~10 lines |
-| Rule 56's paging contract | cited by all four loops | `clients/plex.py`'s `_iter_pages` hardened, `history_sync.py:380` with a backstop, `library_index.py:245` with **no backstop**, `seerr.py:345` and `:370` | One `paged()` iterator, ~60 lines, risk `safety-path` |
+| Rule 56's paging contract | cited by all four loops | `clients/plex.py`'s `_iter_pages` hardened, `history_sync.py:380` with a backstop, `library_index.py:284` with one since #559, `seerr.py:345` and `:370` with **no backstop** | One `paged()` iterator, ~60 lines, risk `safety-path` |
 | Rule 88's case-fold | 3 docstrings cross-referencing each other | `normalize_label`, `_tag_key`, `_name_key` are all `x.strip().casefold()`, plus ~28 inline copies across 10 modules | One `fold()`, so the rule is greppable by symbol, ~16 lines |
 | The layering in *Architecture* | CLAUDE.md prose | Holds today, measured: 0 top-level SCCs, no `engine/ → services`, no upward `api/` import | A ~30-line AST test lands **green** and pins it |
 | "The only path list in the repository" | `ci.yml:55` **and** `CLAUDE.md:280` | `codeql.yml` restates it twice, `docs-deploy.yml` once | Correct the two sentences, 2 lines (rule 7/24) |
@@ -1949,9 +1949,15 @@ enforced by nothing but the next author's memory.
 > different things across them; plex and `history_sync` advance by `len(page)` while both seerr
 > loops advance by the constant, and unifying either way reintroduces a bug one of them already
 > fixed; and plex is synchronous plexapi over XML. **Replace the row with: add a page backstop to
-> `library_index.py:246` and `seerr.py:345`/`:370`, modeled on `MAX_HISTORY_PAGES`, currently the
-> repo's only page cap.** ~10 lines, risk `none`. `library_index.py:246` having no backstop is
+> `library_index.py:284` and `seerr.py:345`/`:370`, modeled on `MAX_HISTORY_PAGES`, currently the
+> repo's only page cap.** ~10 lines, risk `none`. `library_index.py:284` having no backstop is
 > confirmed and is already **#559**; the row should point at it.
+>
+> **The `library_index.py` half landed early, with #559.** That walk was ending on a short page,
+> which reads part of a library as the whole of it, so paging it on Tautulli's reported count was
+> the fix — and that removed the short-page exit, which was the only thing bounding a server that
+> reports no count and ignores `start`. `_SPINE_MAX_PAGES` replaces it. Phase 8 inherits `seerr.py`
+> alone.
 >
 > **W6-2's `_CHUNK = 200` is not drift and must stay out of the shared constant.**
 > `watch_evidence.py:78-88` says why in source: it chunks a multi-row INSERT at four variables per
@@ -2516,7 +2522,9 @@ unchunked `IN` over the whole condemned set, the one site rule 94 actually bites
 scan and reap tasks have no failure callback, rule 102), **#558** (four `.env.example` keys a
 `.env.local` cannot deliver, plus the port the recovery link can get wrong), and **#559** (the
 Tautulli walk with no page backstop, filed as a question because nobody demonstrated a server that
-triggers it).
+triggers it). **#559 was re-headlined on evidence and fixed**: the unbounded spin needs a Tautulli
+bug and stayed a question, but the same walk ending on a short page is ordinary API behavior, and
+against the real `build_index` it read part of a library as the whole of it.
 
 One lane finding was **wrong and is recorded here so it is not re-raised**: `DiscordNotifier.post`
 was reported to leak an `httpx` client per notification. It does not; `discord.py:93`'s `async with`
