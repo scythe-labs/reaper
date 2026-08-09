@@ -189,11 +189,27 @@ class SeerrServiceOut(BaseModel):
 
 
 class TestOut(BaseModel):
+    """The verdict on one connection test: did it reach the service, and what to say about it.
+
+    What a test of a SAVED instance and a webhook test can both answer. The mapping a
+    pre-save probe reads is on :class:`InstanceProbeOut` below, because only that route can
+    answer it and a shared shape said otherwise: the published contract had a Discord webhook
+    test declaring it may return Sonarr root folders (rule 25)."""
+
     ok: bool
     detail: str
     version: str | None = None
-    # What this connection has to map, read on the same pass that proved the credentials. Only
-    # one is ever populated -- a test is for exactly one kind -- and both stay empty on a
+
+
+class InstanceProbeOut(TestOut):
+    """The pre-save test on the add form, which also reads what the connection has to map.
+
+    Only this route can: it is the only caller with no instance id, so the mapping has to come
+    back on the same pass that proved the credentials. That is what lets the form map a service
+    before it is saved.
+    """
+
+    # Only one is ever populated -- a test is for exactly one kind -- and both stay empty on a
     # failed test, since nothing was reached to read them from.
     root_folders: list[RootFolderOut] = []
     seerr_services: list[SeerrServiceOut] = []
@@ -522,7 +538,7 @@ async def _plex_section_paths(request: Request) -> dict[str, list[str]]:
 
 
 @router.post("/instances/test", tags=[api_tags.SERVICES])
-async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOut:
+async def test_new_instance(request: Request, payload: InstanceTestIn) -> InstanceProbeOut:
     """Test a URL and key before saving, and hand back what this connection has to map.
 
     The add form gates its Save on this passing, so a service can never be saved at an address
@@ -542,7 +558,7 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOu
     result = await instances.test_connection(
         kind, payload.base_url, payload.api_key, verify=payload.verify_tls
     )
-    out = TestOut(ok=result.ok, detail=result.detail, version=result.version)
+    out = InstanceProbeOut(ok=result.ok, detail=result.detail, version=result.version)
     if not result.ok:
         return out
     try:

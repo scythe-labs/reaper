@@ -549,6 +549,33 @@ class TestTheApiPathIsStoredAndUnreachable:
         assert client.post(f"/api/settings/instances/{instance_id}/test").status_code == 200
         assert prefixes == ["/api/v3"]
 
+    def test_a_saved_instance_test_answers_the_verdict_and_no_mapping(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The route has no instance-less pass to read folders on, so it cannot answer the
+        mapping fields and its published shape must not say it may. Nothing in either tree
+        asserted this body before, so a narrowing that went the wrong way had no guard."""
+        made = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "HD",
+                "base_url": "http://radarr.local:7878",
+                "api_key": "k",
+            },
+        )
+        assert made.status_code == 200, made.text
+        instance_id = made.json()["id"]
+
+        async def fake_test(*_a: object, **_k: object) -> instances_service.TestResult:
+            return instances_service.TestResult(ok=True, detail="Connected.", version="4.0.1")
+
+        monkeypatch.setattr(instances_service, "test_connection", fake_test)
+
+        body = client.post(f"/api/settings/instances/{instance_id}/test").json()
+
+        assert body == {"ok": True, "detail": "Connected.", "version": "4.0.1"}
+
 
 class TestTheStoredTestResultDescribesWhatWasTested:
     """A connection test's outcome is stored on the instance row and rendered as the service

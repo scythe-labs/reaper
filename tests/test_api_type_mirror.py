@@ -104,8 +104,12 @@ CLIENT_ONLY = {
 # through the ALIAS entry above. The third new name, `ListConfigBody`, is a type alias rather
 # than an interface and is counted by neither walk -- the same case the `PolicyProbe` note
 # above describes, and the reason these two numbers are reconciled against the tree separately.
-EXPECTED_INTERFACES = 91
-EXPECTED_PAIRS = 88
+# Both +1 again for W8-5's split of the connection test: `InstanceProbe` pairs with
+# `InstanceProbeOut` on the suffix rule, and needs no ALIAS entry. `InstanceTest` keeps its
+# own ALIAS to `TestOut`, and both sides narrow to the same three fields. The `TestVerdict`
+# alias it replaced was an `export type` and was counted by neither walk.
+EXPECTED_INTERFACES = 92
+EXPECTED_PAIRS = 89
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"//[^\n]*")
@@ -162,9 +166,10 @@ def _declarations(source: str) -> dict[str, tuple[list[str], list[str]]]:
 def _with_inherited(name: str, declarations: dict[str, tuple[list[str], list[str]]]) -> set[str]:
     """One interface's fields including everything it extends.
 
-    ``CandidateDetail extends Candidate`` is the only case today, and resolving it is not
-    optional: Pydantic reports inherited fields on the subclass, so leaving TS unresolved
-    reports every parent field as server-only and buries a real difference in the noise.
+    ``CandidateDetail extends Candidate`` and ``InstanceProbe extends InstanceTest`` are the
+    two cases today, and resolving them is not optional: Pydantic reports inherited fields on
+    the subclass, so leaving TS unresolved reports every parent field as server-only and buries
+    a real difference in the noise.
     """
     fields, bases = declarations[name]
     resolved = set(fields)
