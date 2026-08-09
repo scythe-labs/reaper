@@ -29,7 +29,6 @@ from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
 from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
 from reaper.engine.policy_migrations import PolicyRepair
-from reaper.engine.preview import MAX_PROBE_WINDOW_DAYS
 from reaper.engine.signals import SignalId
 from reaper.engine.verdict import Override
 
@@ -665,15 +664,6 @@ class SignalProbeIn(SignalSettingIn):
     rank, a rating in tenths, or bytes. The ceiling is a boundary bound rather than a real
     one (rule 95) -- above any file anyone has, and below where a float stops counting whole
     numbers."""
-
-    window_days: int = Field(default=365, ge=1, le=MAX_PROBE_WINDOW_DAYS)
-    """The policy's popularity window, phrasing "in the last ..." inside the engine.
-
-    It moves no number a probe returns, and the ceiling is what makes that true: a probe
-    answers about a RULE and not an item, so ``engine.preview`` hands the engine a mirror
-    reaching exactly ``MAX_PROBE_WINDOW_DAYS``, and the reach check can never come up short.
-    The bound is read from there rather than restated, because the two are one fact
-    (rule 131). The editor does not send this field and the default stands in."""
 
 
 #: What ``POST /api/policy/probe`` accepts.

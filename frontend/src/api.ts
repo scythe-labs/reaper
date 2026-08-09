@@ -458,7 +458,6 @@ export interface SignalProbe {
   /** In the units the signal stores: days, watchers, a season's rank, a rating in tenths,
    *  or bytes. */
   value: number;
-  window_days?: number;
 }
 
 /** What `POST /api/policy/probe` accepts. One member today; see `SignalProbe`. */

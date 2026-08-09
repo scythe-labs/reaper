@@ -404,7 +404,6 @@ async def probe_policy(payload: PolicyProbeIn) -> PolicyProbeOut:
                         floor=setting.floor,
                     ),
                     payload.value,
-                    window_days=payload.window_days,
                 )
             except UnprobableSignalError as exc:
                 raise HTTPException(422, "Reaper can't try values against that rule.") from exc

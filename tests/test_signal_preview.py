@@ -11,27 +11,13 @@ the number it responds with is the number a scan would produce.
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
-from reaper.api.schemas import SignalProbeIn
-from reaper.engine.preview import (
-    MAX_PROBE_WINDOW_DAYS,
-    READS,
-    UnprobableSignalError,
-    probe_signal,
-)
+from reaper.engine.preview import READS, UnprobableSignalError, probe_signal
 from reaper.engine.signals import SignalConfig, SignalId, evaluate_signal
 
 from .test_signal_state import _facts
 
 LOW_RATING = SignalConfig(signal=SignalId.LOW_RATING, weight=10, saturate_at=60)
-
-
-def _probe_in(*, window_days: int) -> SignalProbeIn:
-    """The wire request a probe arrives as, varying only the window."""
-    return SignalProbeIn(
-        signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3, value=0, window_days=window_days
-    )
 
 
 class TestTheProbeAgreesWithTheScorer:
@@ -46,25 +32,23 @@ class TestTheProbeAgreesWithTheScorer:
         scanned = evaluate_signal(
             LOW_RATING, _facts(imdb_rating_tenths=Known(value=tenths, source="imdb"))
         )
-        probed = probe_signal(LOW_RATING, tenths, window_days=365)
+        probed = probe_signal(LOW_RATING, tenths)
 
         assert probed.points == pytest.approx(scanned.pressure)
 
     def test_the_shipped_rating_ramp_pays_what_it_is_documented_to_pay(self) -> None:
         # The one place a literal belongs: these are the numbers the operator is shown, and
         # an agreement test alone would keep agreeing if BOTH sides moved.
-        assert probe_signal(LOW_RATING, 60, window_days=365).points == 0
-        assert probe_signal(LOW_RATING, 55, window_days=365).points == pytest.approx(
-            0.833, abs=1e-3
-        )
-        assert probe_signal(LOW_RATING, 0, window_days=365).points == 10
+        assert probe_signal(LOW_RATING, 60).points == 0
+        assert probe_signal(LOW_RATING, 55).points == pytest.approx(0.833, abs=1e-3)
+        assert probe_signal(LOW_RATING, 0).points == 10
 
     def test_a_dormancy_ramp_pays_half_way_across(self) -> None:
         unwatched = SignalConfig(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365)
 
-        assert probe_signal(unwatched, 365, window_days=365).points == 0
-        assert probe_signal(unwatched, 1095, window_days=365).points == pytest.approx(35)
-        assert probe_signal(unwatched, 1825, window_days=365).points == 70
+        assert probe_signal(unwatched, 365).points == 0
+        assert probe_signal(unwatched, 1095).points == pytest.approx(35)
+        assert probe_signal(unwatched, 1825).points == 70
 
 
 class TestWhatTheProbeDeliberatelyIgnores:
@@ -76,36 +60,18 @@ class TestWhatTheProbeDeliberatelyIgnores:
         beside the history it is actually about."""
         few = SignalConfig(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3)
 
-        assert probe_signal(few, 3, window_days=365).points == 0
-        assert probe_signal(few, 0, window_days=365).points == 20
-
-    def test_it_still_answers_at_the_widest_window_the_wire_accepts(self) -> None:
-        """The reach check clears only because the preview's mirror is set to exactly the
-        ceiling ``SignalProbeIn.window_days`` allows, and those are one declaration
-        (rule 131). Driven at the boundary rather than asserted on the constants: raise the
-        wire's bound past the mirror and every value on this ramp reports 0, which the editor
-        renders as "adds 0 of these 20 points" with nothing on the wire to say the count was
-        withheld rather than earned.
-
-        The value above the ceiling is refused by the schema, not by the engine, so the wire
-        bound is asserted here too -- otherwise this test pins the mirror alone and a widened
-        bound is exactly what it would miss."""
-        few = SignalConfig(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3)
-
-        assert probe_signal(few, 0, window_days=MAX_PROBE_WINDOW_DAYS).points == 20
-        assert _probe_in(window_days=MAX_PROBE_WINDOW_DAYS).window_days == MAX_PROBE_WINDOW_DAYS
-        with pytest.raises(ValidationError):
-            _probe_in(window_days=MAX_PROBE_WINDOW_DAYS + 1)
+        assert probe_signal(few, 3).points == 0
+        assert probe_signal(few, 0).points == 20
 
     def test_no_other_fact_can_move_the_answer(self) -> None:
         # Everything but the probed value is Unknown, so a probe cannot quietly inherit a
         # number from somewhere else and report it as this rule's doing.
-        rating = probe_signal(LOW_RATING, 30, window_days=365)
+        rating = probe_signal(LOW_RATING, 30)
         unwatched = SignalConfig(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365)
 
         assert rating.points == 5
         # Same probed number, a different signal, and no bleed between them.
-        assert probe_signal(unwatched, 30, window_days=365).points == 0
+        assert probe_signal(unwatched, 30).points == 0
 
 
 class TestEverySignalCanBeProbed:
@@ -125,4 +91,4 @@ class TestEverySignalCanBeProbed:
         stray = SignalConfig(signal="not_a_signal", weight=10, saturate_at=60)  # type: ignore[arg-type]
 
         with pytest.raises(UnprobableSignalError):
-            probe_signal(stray, 30, window_days=365)
+            probe_signal(stray, 30)

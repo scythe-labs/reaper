@@ -67,19 +67,15 @@ NOT_PROBED_REASON = "not part of this preview"
 
 _NOTHING = Unknown(source="preview", reason=NOT_PROBED_REASON)
 
-#: The widest popularity window a probe may be asked about. A boundary bound rather than a real
-#: one (rule 95): a century, above any history anyone has.
+#: Long enough that the watch mirror never withholds a watcher count here. A century, above any
+#: history anyone has. See the module docstring: the probe is about the ramp, and the shortfall
+#: has its own warning elsewhere. ``history_shortfall`` returns ``None`` at ``reach >= needed``,
+#: so this only has to out-reach the window the engine is handed.
 #:
-#: ``api.schemas.SignalProbeIn.window_days`` reads THIS rather than restating the number, because
-#: the mirror below is set to exactly it and the two only work as a pair (rule 131). Raise the
-#: wire's bound alone and every ``FEW_WATCHERS`` probe takes the shortfall arm and reports zero at
-#: every value on the ramp, which reads to the operator as a rule that does nothing.
-MAX_PROBE_WINDOW_DAYS = 36_500
-
-#: Long enough that the watch mirror never withholds a watcher count here. See the module
-#: docstring: the probe is about the ramp, and the shortfall has its own warning elsewhere.
-#: ``history_shortfall`` returns ``None`` at ``reach >= needed``, so equality is enough.
-_REACH_DAYS = float(MAX_PROBE_WINDOW_DAYS)
+#: It used to be half of a pair, with a ``MAX_PROBE_WINDOW_DAYS`` the wire read as the ceiling on
+#: a ``window_days`` a caller could send. The request field is gone, so the window is now the
+#: engine's own default and there is one number here rather than two held together by a rule.
+_REACH_DAYS = 36_500.0
 
 
 def _bare_facts(field: str, value: float) -> Facts:
@@ -123,7 +119,7 @@ class UnprobableSignalError(LookupError):
     """A signal with no fact mapped to it, so there is nothing to try a value against."""
 
 
-def probe_signal(config: SignalConfig, value: float, *, window_days: int) -> ProbeResult:
+def probe_signal(config: SignalConfig, value: float) -> ProbeResult:
     """What a title at ``value`` would earn from this signal, in ``[0, weight]``.
 
     Raises ``UnprobableSignalError`` for an id missing from ``READS``, which the route turns into
@@ -134,5 +130,5 @@ def probe_signal(config: SignalConfig, value: float, *, window_days: int) -> Pro
     field = READS.get(config.signal)
     if field is None:
         raise UnprobableSignalError(config.signal)
-    result = evaluate_signal(config, _bare_facts(field, value), window_days=window_days)
+    result = evaluate_signal(config, _bare_facts(field, value))
     return ProbeResult(points=result.pressure)
