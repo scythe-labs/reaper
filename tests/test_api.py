@@ -501,15 +501,7 @@ class TestTheRunsApi:
         """
         client.post("/api/runs")
         row = client.get("/api/runs").json()[0]
-        assert set(row) == {
-            "id",
-            "snapshot_id",
-            "state",
-            "approved_by",
-            "approved_at",
-            "aborted_reason",
-            "held_back_unknown_size",
-        }
+        assert set(row) == {"id", "state", "approved_at", "aborted_reason"}
         # ...and the detail route still answers with the whole thing.
         full = client.get(f"/api/runs/{row['id']}").json()
         assert full["confirmation_phrase"].startswith("REAP ")

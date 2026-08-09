@@ -226,7 +226,6 @@ async def _run_out(
     return RunOut(
         id=run.id,
         snapshot_id=run.snapshot_id,
-        policy_hash=run.policy_hash,
         state=run.state.value,
         item_count=len(planned),
         # The same set the phrase is derived from. The total covers the items that have
@@ -236,9 +235,6 @@ async def _run_out(
         total_bytes=plan_bytes(planned)[0],
         confirmation_phrase=confirmation_phrase(planned) if planned else "REAP 0 SOULS 0 GB",
         held_back_unknown_size=run.held_back_unknown_size,
-        approved_manifest_hash=run.approved_manifest_hash,
-        approved_by=run.approved_by,
-        approved_at=run.approved_at.isoformat(),
         steps=[
             ActionStepOut(
                 media_key=s.media_key,
@@ -279,8 +275,9 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
             raise HTTPException(404, "No scan has run yet, so there is nothing to plan.")
 
         try:
-            # approved_by is the authenticated admin once auth is wired into these routes;
-            # until then the plan records that it was built from the API, unattended.
+            # ``approved_by`` records that the plan was built through the API rather than
+            # naming a person: this route is reachable unattended, and every run therefore
+            # stores the same string. It is a column on the run, not a field on any response.
             run = await build_plan(
                 session,
                 snapshot_id=snapshot.id,
@@ -324,12 +321,9 @@ async def list_runs(
         return [
             RunSummaryOut(
                 id=r.id,
-                snapshot_id=r.snapshot_id,
                 state=r.state.value,
-                approved_by=r.approved_by,
                 approved_at=r.approved_at.isoformat(),
                 aborted_reason=r.aborted_reason,
-                held_back_unknown_size=r.held_back_unknown_size,
             )
             for r in runs
         ]

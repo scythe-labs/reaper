@@ -49,12 +49,10 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
     has_snapshot: true,
     policy_condemned: 543,
     policy_condemned_bytes: 4400 * GB,
-    policy_condemned_unknown: 0,
     hand_spared: 12,
     spares_expired: 0,
     hand_reaped: 38,
     hand_reaped_bytes: 300 * GB,
-    hand_reaped_unknown: 0,
     hand_reaped_held: 0,
     will_reap: 569,
     will_reap_bytes: 4500 * GB,
@@ -64,8 +62,8 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
     seasons: 167,
     seasons_unknown: 0,
     condemned_by: [
-      { id: "unwatched", count: 521, bytes: 0, unknown_size: 0 },
-      { id: "low_rating", count: 201, bytes: 0, unknown_size: 0 },
+      { id: "unwatched", count: 521 },
+      { id: "low_rating", count: 201 },
     ],
     ...overrides,
   };
@@ -292,7 +290,7 @@ describe("the by-reason bars", () => {
 
   it("shows a custom rule under its own name", async () => {
     apiMock.reapBreakdown.mockResolvedValue(
-      full({ condemned_by: [{ id: "My weekend rule", count: 9, bytes: 0, unknown_size: 0 }] }),
+      full({ condemned_by: [{ id: "My weekend rule", count: 9 }] }),
     );
     renderBreakdown();
     expect(await screen.findByText("My weekend rule")).toBeInTheDocument();

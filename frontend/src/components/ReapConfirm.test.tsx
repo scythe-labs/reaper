@@ -30,15 +30,11 @@ vi.mock("../api", async (importOriginal) => ({
 const run = {
   id: 7,
   snapshot_id: 1,
-  policy_hash: "p",
   state: "planned",
   item_count: 1,
   total_bytes: 1024 ** 3,
   held_back_unknown_size: 0,
   confirmation_phrase: "REAP 1 SOUL 1 GB",
-  approved_manifest_hash: "m",
-  approved_by: "admin",
-  approved_at: "2026-01-01T00:00:00+00:00",
   steps: [],
 } as Run;
 

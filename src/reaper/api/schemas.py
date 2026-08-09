@@ -450,7 +450,6 @@ class RunOut(BaseModel):
 
     id: int
     snapshot_id: int
-    policy_hash: str
     state: str
 
     item_count: int
@@ -464,10 +463,12 @@ class RunOut(BaseModel):
     size. Zero for a healthy library, and every surface hides it at zero, so an operator
     whose sources all answer never sees a new number anywhere."""
 
-    approved_manifest_hash: str
-    approved_by: str
-    approved_at: str
-
+    # The approval audit -- ``policy_hash``, ``approved_manifest_hash``, ``approved_by`` and
+    # ``approved_at`` -- is deliberately NOT on this response. Every interlock reads the stored
+    # row rather than the wire model, so nothing enforcing an approval loses anything: the
+    # manifest re-check and the policy re-check both read ``run.`` off the ORM object, and
+    # ``approved_at`` reaches ``_watched_since_approval`` the same way. ``approved_by`` was the
+    # constant string "api" on every response an operator could obtain.
     steps: list[ActionStepOut]
 
 
@@ -486,12 +487,9 @@ class RunSummaryOut(BaseModel):
     """
 
     id: int
-    snapshot_id: int
     state: str
-    approved_by: str
     approved_at: str
     aborted_reason: str | None = None
-    held_back_unknown_size: int = 0
 
 
 class RunCheckOut(BaseModel):
@@ -1030,11 +1028,6 @@ class VocabularyOut(BaseModel):
 class LeavingSoonOut(BaseModel):
     """The result of one shelf pass across every enabled library."""
 
-    added_count: int
-    cleared_count: int
-    applied: bool
-    """Whether the shelf writes landed everywhere. False in read-only mode (the pass is
-    computed and announced but not written), and false when any library failed."""
     ok: bool
     """Whether the pass did what it set out to do. Preview is not a failure; no library
     turned on, or one that failed, is."""
@@ -1043,9 +1036,6 @@ class LeavingSoonOut(BaseModel):
     (``LeavingSoonResult.summary``) and stored on the Jobs row in the same breath. The
     browser renders it and never composes its own, which is how the row and this response
     came to say different things about one pass (#555)."""
-    notified: bool
-    movies_on_shelves: int
-    seasons_on_shelves: int
     # `problems` used to ride here as a per-library list. It was only ever read as
     # `problems.length > 0`, never rendered, and the split that moved the wording into the
     # service took even that reader away -- so it shipped a field no operator could reach,
@@ -1055,14 +1045,12 @@ class LeavingSoonOut(BaseModel):
 
 
 class SignalCountOut(BaseModel):
-    """How many condemned titles one signal pushed toward removal, and their measured size.
-    ``id`` is a built-in signal id or a custom rule's name; the UI maps the built-ins to
-    plain labels and shows a custom rule under its own name."""
+    """How many condemned titles one signal pushed toward removal. ``id`` is a built-in signal
+    id or a custom rule's name; the UI maps the built-ins to plain labels and shows a custom rule
+    under its own name."""
 
     id: str
     count: int
-    bytes: int
-    unknown_size: int
 
 
 class ReapBreakdownOut(BaseModel):
@@ -1075,7 +1063,6 @@ class ReapBreakdownOut(BaseModel):
     has_snapshot: bool
     policy_condemned: int
     policy_condemned_bytes: int
-    policy_condemned_unknown: int
     hand_spared: int
     spares_expired: int = 0
     """The share of ``hand_spared`` a scan would hand back to policy: titles kept out of this
@@ -1088,7 +1075,6 @@ class ReapBreakdownOut(BaseModel):
     counted, because a scan would not release it."""
     hand_reaped: int
     hand_reaped_bytes: int
-    hand_reaped_unknown: int
     hand_reaped_held: int = 0
     """Hand reaps the engine won't honor yet, so they are not in ``will_reap``. The page shows
     one line when nonzero so the operator's held marks are not silently dropped."""
