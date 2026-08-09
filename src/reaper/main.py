@@ -68,6 +68,7 @@ from reaper.config import (
     parse_instance_seeds,
 )
 from reaper.crypto import SecretBox
+from reaper.db import schema_gate
 from reaper.db.models import Instance, InstanceKind, PlexServer
 from reaper.db.session import (
     create_cache_engine,
@@ -116,13 +117,12 @@ def _report_background_failure(task: asyncio.Task[Any]) -> None:
 
 
 async def _schema_revision(session: AsyncSession) -> str | None:
-    """The Alembic revision this database sits at, for the boot log.
+    """The Alembic revision this database sits at: the boot log's, and the gate's.
 
-    Nothing else in the app reads it outside backup and restore, so "which schema is
-    this install on, and did the upgrade run" has no answer today -- migrations are
-    applied by a different process (the container entrypoint, or `launcher._migrate`)
-    whose output never reaches the log file the operator downloads. ``None`` is a
-    database built straight from the models, which is what a test carries.
+    "Which schema is this install on, and did the upgrade run" otherwise has no answer in
+    the log the operator downloads -- migrations are applied by a different process (the
+    container entrypoint, or `launcher._migrate`) whose output never reaches it. ``None``
+    is a database built straight from the models, which is what a test carries.
     """
     try:
         result = await session.execute(text("SELECT version_num FROM alembic_version"))
@@ -130,6 +130,29 @@ async def _schema_revision(session: AsyncSession) -> str | None:
         return None
     row = result.first()
     return str(row[0]) if row and row[0] else None
+
+
+def _refuse_unservable_schema(revision: str | None) -> None:
+    """Stop the boot rather than serve a schema this build does not know (#565).
+
+    ``schema_gate.refusal`` is the verdict; this is the app's half of it. Raising out of
+    the lifespan is what uvicorn turns into "Application startup failed" and a non-zero
+    exit, so no request is ever answered against a database an older build cannot read --
+    which is the alternative, and it fails item by item, hours later, mid-scan.
+
+    Preflight refuses the same database earlier on every boot that runs it (the container
+    entrypoint, ``scripts/dev-local.sh``, ``launcher.main``). This is the copy for a
+    process started without one, and it is the reason the claim covers *every* path into
+    the app rather than the packaged ones (rule 127).
+
+    The revision rides as its own log field, never inside the sentence: support wants the
+    hash and the operator cannot do anything with it (rule 21).
+    """
+    message = schema_gate.refusal(revision)
+    if message is None:
+        return
+    log.error("db.schema_refused", detail=message, revision=revision)
+    raise schema_gate.SchemaRefusedError(message)
 
 
 async def _integration_inventory(
@@ -164,6 +187,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = engine
     factory = create_session_factory(engine)
     app.state.session_factory = factory
+
+    # First, in its own session, before the block below seeds instances and writes
+    # settings: a database at a revision this build never shipped is refused here rather
+    # than discovered later as SQL naming a column that is not there.
+    async with factory() as session:
+        revision = await _schema_revision(session)
+    _refuse_unservable_schema(revision)
 
     # The caches live in their own file. See Settings.cache_database_url.
     cache_engine = create_cache_engine(settings)
@@ -256,7 +286,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         proxy_trust = await app_settings.proxy_trust_enabled(session, settings)
         offered = await app_settings.get_trusted_proxies(session, settings) if proxy_trust else []
         app.state.trusted_proxies = parse_proxy_networks(offered) if proxy_trust else ()
-        revision = await _schema_revision(session)
         integrations = await _integration_inventory(session, box, settings)
         await session.commit()
 

@@ -32,10 +32,12 @@ its schema.
 
 The schema gate is the load-bearing safety check. A backup carries the Alembic
 revision it was cut at. This build knows a fixed set of revisions (the migration
-scripts shipped in the image). If the backup's revision is one we know, boot's
-``alembic upgrade head`` can carry it forward. If it is unknown, the backup came
-from a *newer* Reaper with migrations this build does not have -- restoring it would
-serve a schema the code cannot understand, so it is refused.
+scripts shipped in the image, :func:`reaper.db.schema_gate.known_revisions`). If the
+backup's revision is one we know, boot's ``alembic upgrade head`` can carry it
+forward. If it is unknown, the backup came from a *newer* Reaper with migrations this
+build does not have -- restoring it would serve a schema the code cannot understand,
+so it is refused. The same set answers the same question about the LIVE database at
+boot, which is why it is declared once, over there.
 """
 
 from __future__ import annotations
@@ -58,6 +60,7 @@ import structlog
 
 from reaper.clock import utcnow
 from reaper.config import Settings
+from reaper.db import schema_gate
 from reaper.db.models import AUTH_BEARING_TABLES
 from reaper.launcher import LAUNCHER_CONF_NAME
 from reaper.secrets import KEY_FILENAME, SALT_FILENAME
@@ -166,48 +169,12 @@ class RestoreSummary:
 # ---------------------------------------------------------------------------
 
 
-def _alembic_dir() -> Path:
-    """Locate the shipped ``alembic/`` directory in both dev and the container.
-
-    It sits at the project root beside ``src/`` (dev) or is copied to the image
-    workdir (``/app/alembic``). Walk up from this module until the migration
-    environment is found, so the gate never depends on the current directory.
-    """
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "alembic" / "env.py").is_file():
-            return parent / "alembic"
-    raise RestoreError(
-        "Reaper couldn't check this backup against its own version. Try again.",
-        status=500,
-    )
-
-
-def known_revisions() -> frozenset[str]:
-    """Every Alembic revision id this build ships, from the migration scripts.
-
-    The migration modules import only Alembic and SQLAlchemy, so walking them is
-    side-effect free. A backup whose revision is in this set can be carried forward
-    by ``alembic upgrade head``; one that is not came from a newer Reaper.
-    """
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    config = Config()
-    config.set_main_option("script_location", str(_alembic_dir()))
-    script = ScriptDirectory.from_config(config)
-    return frozenset(revision.revision for revision in script.walk_revisions())
-
-
-def _current_head() -> str | None:
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-
-    config = Config()
-    config.set_main_option("script_location", str(_alembic_dir()))
-    try:
-        return ScriptDirectory.from_config(config).get_current_head()
-    except Exception:  # head is cosmetic; a miss just reads as "older"
-        return None
+#: The one set of revisions this build can serve, shared with the boot gate that refuses a
+#: LIVE database at an unknown revision (:mod:`reaper.db.schema_gate`, #565). Both refusals
+#: answer the same question about the same build, so they read one declaration rather than
+#: two copies that can drift apart (rule 104). Re-exported under this module's name because
+#: the restore side is where the question was first asked and where callers look for it.
+known_revisions = schema_gate.known_revisions
 
 
 def _check_schema(revision: str | None) -> str:
@@ -225,8 +192,6 @@ def _check_schema(revision: str | None) -> str:
         )
     try:
         known = known_revisions()
-    except RestoreError:
-        raise
     except Exception as exc:  # any failure to read the migrations fails closed
         log.warning("restore.schema_unverifiable", error=str(exc))
         raise RestoreError(
@@ -239,7 +204,7 @@ def _check_schema(revision: str | None) -> str:
             "Update Reaper to that version or later, then restore.",
             status=409,
         )
-    return "current" if revision == _current_head() else "older"
+    return "current" if revision == schema_gate.current_head() else "older"
 
 
 # ---------------------------------------------------------------------------

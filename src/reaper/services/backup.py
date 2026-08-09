@@ -172,13 +172,12 @@ def _build_sync(settings: Settings, created_at: str) -> BackupArchive:
 
 def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArchive:
     """Build the archive inside an already-created temp dir (see :func:`_build_sync`)."""
-    data_dir = settings.data_dir
     snapshot = tmp_dir / DB_ARCNAME
 
     # A consistent, compacted copy of the live database. VACUUM INTO reads inside a
     # transaction, so a concurrent scan write cannot tear the snapshot; the short
     # busy timeout lets it wait out an in-flight write rather than failing at once.
-    con = sqlite3.connect(data_dir / "reaper.db")
+    con = sqlite3.connect(settings.database_path)
     try:
         con.execute("PRAGMA busy_timeout=5000")
         con.execute("VACUUM INTO ?", (str(snapshot),))

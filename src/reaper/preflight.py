@@ -21,6 +21,11 @@ button rather than as an instruction.
 applied.** The container entrypoint does; so does ``scripts/dev-local.sh``, which did
 not, and the restore banner there asked for a restart that could not finish however
 many times it was given one (#381).
+
+Last, it refuses a database this build cannot serve (:mod:`reaper.db.schema_gate`).
+Being the one thing every launcher runs *before* ``alembic upgrade head`` is exactly
+why the gate sits here: it is the last moment a rolled-back install can be stopped
+before anything is migrated.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from __future__ import annotations
 import sys
 
 from reaper.config import DataDirError, get_settings
+from reaper.db import schema_gate
 from reaper.services import backup, restore
 
 
@@ -65,6 +71,13 @@ def main() -> int:
         # state. The previous data is preserved in the pre-restore directory; stop the
         # container with a plain message rather than serving an uncertain database.
         sys.stderr.write(f"reaper: the restore could not be completed: {exc}\n")
+        return 1
+    # Last, and after the swap above rather than before it: the database the migrations are
+    # about to open is the RESTORED one, and restoring a backup is one of the two ways out
+    # this refusal names. Checking first would refuse the boot that was about to fix itself.
+    message = schema_gate.refusal(schema_gate.stored_revision(settings.database_path))
+    if message:
+        sys.stderr.write(message + "\n")
         return 1
     return 0
 

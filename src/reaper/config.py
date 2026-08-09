@@ -213,17 +213,27 @@ class Settings(BaseSettings):
         return self.data_dir
 
     @property
+    def database_path(self) -> Path:
+        """Where the precious database lives, spelled once (rule 104).
+
+        The two URLs below are two drivers reading this one file, and the boot schema gate
+        (``reaper.db.schema_gate``) opens it directly with ``sqlite3`` before either engine
+        exists. Three spellings of one filename is three places for it to drift.
+        """
+        return self.data_dir / "reaper.db"
+
+    @property
     def database_url(self) -> str:
         """Reaper's own state: policies, candidates, audit, credentials.
 
         Small, precious, migrated by Alembic. Losing it loses your decisions.
         """
-        return f"sqlite+aiosqlite:///{self.data_dir / 'reaper.db'}"
+        return f"sqlite+aiosqlite:///{self.database_path}"
 
     @property
     def sync_database_url(self) -> str:
         """Alembic runs migrations synchronously."""
-        return f"sqlite:///{self.data_dir / 'reaper.db'}"
+        return f"sqlite:///{self.database_path}"
 
     @property
     def cache_database_url(self) -> str:
