@@ -41,6 +41,16 @@ log = structlog.get_logger(__name__)
 # the rest do not exist.
 DEFAULT_PAGE_SIZE = 100
 
+#: Hard stop on both walks below. ``skip >= total`` is their only normal exit, and ``total`` is a
+#: number the portal re-picks on every page, so nothing else bounds them: a proxy serving one
+#: cached full page with a large ``pageInfo.results`` is answered forever. At DEFAULT_PAGE_SIZE
+#: rows a page this is 100,000 requests, past any real portal, so it binds only on a server that
+#: is not advancing through the listing (rule 56; ``history_sync.MAX_HISTORY_PAGES`` is the
+#: model). Tripping it RAISES, where that model stops and warns: both walks here are
+#: complete-or-raise, and returning short would leave ``requested_by.build_request_index``
+#: claiming it read every portal in full.
+MAX_PAGES = 1_000
+
 
 @dataclass(frozen=True)
 class Requester:
@@ -333,11 +343,15 @@ class SeerrClient(BaseClient):
         says why: a confident ``Known(value=False)`` off a partial view adds delete pressure
         to a title a blinded portal in fact holds a request for. Returning short and normal
         made that claim false without anything noticing (rules 56/89 and 7/24).
+
+        Bounded by :data:`MAX_PAGES`, which raises rather than returning short.
         """
         out: list[MediaRequest] = []
         skip = 0
+        pages = 0
         while True:
             page, total = await self.requests(take=DEFAULT_PAGE_SIZE, skip=skip, filter_=filter_)
+            pages += 1
             out.extend(page)
             skip += DEFAULT_PAGE_SIZE
             if skip >= total:
@@ -349,6 +363,14 @@ class SeerrClient(BaseClient):
                 raise IntegrationError(
                     self.service, f"/request stopped at {len(out)} of {total} requests"
                 )
+            if pages >= MAX_PAGES:
+                # Only reachable while the reported total keeps outrunning ``skip``, which is a
+                # portal that is not advancing through the listing.
+                raise IntegrationError(
+                    self.service,
+                    "the request list could not be read to the end: this portal kept sending "
+                    f"pages past {len(out)} requests",
+                )
         log.info("seerr.requests_loaded", count=len(out), filter=filter_)
         return out
 
@@ -358,11 +380,15 @@ class SeerrClient(BaseClient):
         ``take`` is sent explicitly for the same reason as :meth:`requests`: the server
         default is small, and relying on it would read only the first page of users and
         report the rest as absent.
+
+        Bounded by :data:`MAX_PAGES`, which raises rather than returning short.
         """
         out: list[SeerrUser] = []
         skip = 0
+        pages = 0
         while True:
             payload = await self.get_dict("/api/v1/user", params={"take": take, "skip": skip})
+            pages += 1
             results = payload.get("results")
             if not isinstance(results, list):
                 # Unreadable rows are not zero rows. Same defect as :meth:`requests`, and
@@ -380,6 +406,14 @@ class SeerrClient(BaseClient):
             if not results:
                 raise IntegrationError(
                     self.service, f"/user stopped at {len(out)} of {total} accounts"
+                )
+            if pages >= MAX_PAGES:
+                # The same loop, twenty lines up (rule 72). Also the only bound when a caller
+                # passes ``take=0``, where ``skip`` never advances at all.
+                raise IntegrationError(
+                    self.service,
+                    "the account list could not be read to the end: this portal kept sending "
+                    f"pages past {len(out)} accounts",
                 )
         log.info("seerr.users_loaded", count=len(out))
         return out
