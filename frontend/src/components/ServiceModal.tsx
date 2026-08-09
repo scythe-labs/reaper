@@ -21,8 +21,8 @@ import {
   api,
   type Instance,
   type InstanceKind,
+  type InstanceProbe,
   type InstanceTest,
-  type TestVerdict,
   type RootFolder,
   type SeerrService,
 } from "../api";
@@ -94,7 +94,7 @@ export function serviceKindLabel(kind: SeerrService["kind"]): string {
  *
  *  The one deliberate difference from the badge: the version is spoken as "version 4.0.1" where
  *  the badge shows "(v4.0.1)". A reader voices a bare "v" as a letter. */
-export function testSentence(result: TestVerdict): string {
+export function testSentence(result: InstanceTest): string {
   return `${testLead(result.ok)}: ${result.detail}${
     result.version ? ` (version ${result.version})` : ""
   }`;
@@ -106,7 +106,7 @@ function testLead(ok: boolean): string {
 }
 
 /** A small inline pill reporting the result of a connection test. */
-export function TestBadge({ result }: { result: TestVerdict | null }) {
+export function TestBadge({ result }: { result: InstanceTest | null }) {
   if (!result) return null;
   return (
     <span className={`test-badge ${result.ok ? "ok" : "bad"}`}>
@@ -244,13 +244,13 @@ export function ServiceModal({
   // screen vouching for an address that had never been tried (rule 85, #178). Clearing it from
   // each field's setter would be one more thing to remember every time a field joins `baseUrl()`;
   // comparing against what was tested cannot be forgotten.
+  // The result is the union of the two shapes the two test routes answer with. Which one
+  // arrived is read off the shape itself below, rather than carried beside it: only the
+  // pre-save probe reads the folder and service lists, and an empty list that was never read
+  // must not be mistaken for one that was.
   const [test, setTest] = useState<{
-    result: InstanceTest;
+    result: InstanceTest | InstanceProbe;
     of: string;
-    /** Whether this came from the pre-save probe, which is the only call that reads the folder
-     *  and service lists. A re-test of a saved instance answers the verdict with both lists
-     *  empty, and an empty list that was never read must not be mistaken for one that was. */
-    carriesMapping: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Kept apart from `error` above, which is the form's shared slot for a failed save and a
@@ -287,16 +287,19 @@ export function ServiceModal({
   // off this rather than off `test` directly: a held result whose `of` no longer matches is a
   // result for an address that is no longer typed, and must vouch for nothing.
   const passed = test !== null && test.of === testedWith() && test.result.ok ? test : null;
-  /** The folder / service lists this result actually read, or null when it read none.
+  /** The result of a pre-save PROBE, or null when the test that passed was not one.
    *
-   *  `carriesMapping` is the whole of it: only the pre-save probe answers those lists, and a
-   *  re-test of a SAVED instance answers the verdict alone with both lists empty. Reading
-   *  `result.root_folders` unconditionally would let that empty pair pose as "this instance has
-   *  no folders" and take the grid off the screen -- and then, at save, prune the stored map to
-   *  nothing. `map_error` is the same hazard from the other side: the probe RAN and failed, so
-   *  its empty list is a read that did not land, never an instance with nothing to map. Both
-   *  collapse to null here, once, rather than being re-derived at each of the five call sites. */
-  const probed = passed?.carriesMapping && !passed.result.map_error ? passed.result : null;
+   *  Only the probe answers the folder and service lists; a re-test of a saved instance answers
+   *  the verdict alone. Reading `root_folders` off that would let an absent pair pose as "this
+   *  instance has no folders", take the grid off the screen, and then prune the stored map to
+   *  nothing at save. The two shapes are told apart by the field only one of them has, so the
+   *  answer comes from the payload rather than from a flag captured beside it. */
+  const probeResult = passed !== null && "map_error" in passed.result ? passed.result : null;
+
+  /** The lists that were actually READ, or null. `map_error` is the same hazard from the other
+   *  side: the probe ran and failed, so its empty list is a read that did not land, never an
+   *  instance with nothing to map. Collapsed here once rather than at each of the five sites. */
+  const probed = probeResult && !probeResult.map_error ? probeResult : null;
 
   // The HD/4K library map: which Plex library each of this instance's root folders lands in.
   // `suggestedRoots` marks the rows still holding an auto-suggested value the operator has not
@@ -489,9 +492,9 @@ export function ServiceModal({
     // request is in flight: `testedWith()` would then file the answer against an address it was
     // never asked about, and `testsStored` would file a stored-instance verdict as a probe and
     // let its empty lists pose as a folder read.
-    onMutate: () => ({ of: testedWith(), carriesMapping: !testsStored }),
+    onMutate: () => ({ of: testedWith() }),
     onSuccess: (r, _v, issued) => {
-      setTest({ result: r, of: issued.of, carriesMapping: issued.carriesMapping });
+      setTest({ result: r, of: issued.of });
       announce(testSentence(r));
     },
     onError: (e: Error) => setError(e.message),
@@ -893,7 +896,7 @@ export function ServiceModal({
             {/* Divided on whether the folder list ever landed: any refetch while the modal is
                 open reaches this, and an undivided error traded the whole mapping grid for one
                 warning while React Query still held the folders (#190).
-                `passed.map_error` is the same division for the add form's source: the test
+                `probeResult.map_error` is the same division for the add form's source: the test
                 reached the service but could not read its folders, which is not the same as a
                 service that has none. */}
             {folders === null && (testConn.isPending || (editing && rootFolders.isPending)) ? (
@@ -903,12 +906,12 @@ export function ServiceModal({
                  read that was never started, and taking the sentence written for that exact
                  moment (below) off the screen entirely. */
               <p className="help">Reading this instance's folders…</p>
-            ) : folders === null && passed?.result.map_error ? (
+            ) : folders === null && probeResult?.map_error ? (
               /* Only when there is nothing to show. A probe that failed while the by-id read
                  still holds folders leaves the grid up and says this over it instead, because
                  the grid is the surface the operator needs and the failure is about a refresh
                  of it. */
-              <Notice tone="warn">{passed.result.map_error}</Notice>
+              <Notice tone="warn">{probeResult.map_error}</Notice>
             ) : folders === null && !editing ? (
               /* The add form before a test. Says where the list comes from rather than showing
                  an empty grid, because on this form the folders are a RESULT of the connection
@@ -938,7 +941,7 @@ export function ServiceModal({
                     REFRESH it, and the sentence sits over it like every other line about
                     something below. Rendered here as well as in the no-folders arm above, which
                     is the same fact in the two states it can be in. */}
-                {passed?.result.map_error && <Notice tone="warn">{passed.result.map_error}</Notice>}
+                {probeResult?.map_error && <Notice tone="warn">{probeResult.map_error}</Notice>}
                 {/* Over the grid, beside the folder line, because the shared sentence says what
                     is BELOW may be out of date and the stale library names are inside the pickers
                     under it. Emitted after the grid it pointed at the help paragraph instead,
@@ -1054,8 +1057,8 @@ export function ServiceModal({
             {services === null && (testConn.isPending || (editing && seerrServices.isPending)) ? (
               /* `editing &&` for the same reason as the folder slot above (rule 72). */
               <p className="help">Reading this portal's services…</p>
-            ) : services === null && passed?.result.map_error ? (
-              <Notice tone="warn">{passed.result.map_error}</Notice>
+            ) : services === null && probeResult?.map_error ? (
+              <Notice tone="warn">{probeResult.map_error}</Notice>
             ) : services === null && !editing ? (
               <p className="help">
                 This portal's services appear here once Reaper reaches it, each with a suggested
@@ -1073,7 +1076,7 @@ export function ServiceModal({
                   <StaleReadNotice what="this portal's services" />
                 )}
                 {/* Same as the folder grid above (rule 72). */}
-                {passed?.result.map_error && <Notice tone="warn">{passed.result.map_error}</Notice>}
+                {probeResult?.map_error && <Notice tone="warn">{probeResult.map_error}</Notice>}
                 {/* Over the grid, for the same reason as the library line above (rule 72): the
                     stale connection names are inside the pickers below it. */}
                 {arrInstances.error && services.some((s) => instanceOptions(s.kind).length > 0) && (
