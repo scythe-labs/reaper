@@ -51,7 +51,7 @@ import { REMOVES_ITS_ROW, useRemovalFocus, useSavebarFocus } from "../focus";
 import { useDocs } from "../docs/DocsContext";
 import { bytes, count, humanDays } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
-import { GATE_META, SIGNAL_META, titleCase, UNNAMED_GATE_LABEL } from "./policyMeta";
+import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
 import { KeepRulesEditor, RemoveRulesEditor } from "./PolicyRuleEditors";
 import {
   activePreset,
@@ -189,12 +189,17 @@ function GateRow({
    *  box at the wrong notice. */
   warnings: PolicyWarning[];
 }) {
-  // Sibling of the simulator's spared-by row, fixed with it (rule 72): both named a gate
-  // through `titleCase`, which prints the engine's slug at the operator (#551, rule 21).
-  // Unreachable for every id the engine has -- `GATE_META` covers all of `GateId` -- so this
-  // is rule 66's fallback for a policy served by a newer server, and it says nothing it
-  // cannot know about a protection whose copy this build does not carry.
-  const meta = GATE_META[gate.gate] ?? { label: UNNAMED_GATE_LABEL, help: "" };
+  // Sibling of the simulator's spared-by row (rule 72), and the two fallbacks deliberately
+  // DIFFER. There, an id appears once in a tally, so `UNNAMED_GATE_LABEL` reads correctly:
+  // "Another protection, 7". Here it names a switch, and two ids this build has no copy for
+  // would draw two controls carrying one name and no help, leaving the operator unable to
+  // tell which protection they were turning off -- so the label stays per-id. Prefer a
+  // title-cased slug the operator can at least tell apart over rule 21's nicer sentence,
+  // because a control has to be identifiable before it can be plain.
+  // Unreachable for every id the engine has (`GATE_META` covers all of `GateId`), and the SPA
+  // ships inside the server's own image, so reaching this at all needs a browser holding a
+  // stale bundle against a newer server. Rule 66's fallback, not a surface anyone should meet.
+  const meta = GATE_META[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
   // What this row's boxes point `aria-describedby` at. The block rendering these sits under
   // the whole list, so reaching one meant browsing the page in document order: a keyboard
   // operator moving control to control never met it (#189). Every gate warning the server

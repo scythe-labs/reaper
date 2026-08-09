@@ -12,7 +12,7 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import { announce } from "../announce";
 import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence } from "../api";
 import { useSuccessorFocus } from "../focus";
-import { count, since } from "../format";
+import { count, countBesideServerText, since } from "../format";
 import { invalidateAllPlex as invalidateAllPlexQueries } from "../plexServerQueries";
 import { shelfSkipIsCurrent } from "../shelfStatus";
 import { usePlexLibraries } from "../usePlexLibraries";
@@ -500,8 +500,11 @@ export function PlexPanel({
         ? "The last scan didn't update the shelves. The Jobs page says why."
         : "Not updated yet. It runs after every scan, or from the Jobs page.";
     }
-    const movies = `${count(last.movies)} movie${last.movies === 1 ? "" : "s"}`;
-    const seasons = `${count(last.seasons)} season${last.seasons === 1 ? "" : "s"}`;
+    // Not `count` -- `last.result` below is the service's own sentence and already carries
+    // comma-grouped numbers, so a browser-locale count beside it puts two thousands
+    // separators in one line. `countBesideServerText` is that rule; its docstring holds why.
+    const movies = `${countBesideServerText(last.movies)} movie${last.movies === 1 ? "" : "s"}`;
+    const seasons = `${countBesideServerText(last.seasons)} season${last.seasons === 1 ? "" : "s"}`;
     // How the pass went is the pass's own sentence (rule 104), never one worded here. This
     // line used to read `applied` and word the caveat itself, which called a pass with no
     // libraries turned on a preview, on the very screen those libraries are turned on (#555).

@@ -585,6 +585,34 @@ describe("the keep-last advisory", () => {
   });
 });
 
+describe("a protection this build has no copy for", () => {
+  it("gives each unknown gate a switch the operator can tell apart", async () => {
+    // The simulator's fallback is one shared string, and there it is right: an id appears
+    // once in a tally, where "Another protection, 7" reads correctly. A switch is the other
+    // case. Two unknown ids sharing that string would draw two controls with one name and no
+    // help, and turning a protection off is not a choice anyone can make blind.
+    //
+    // This is the assertion that fails on reverting to the shared constant (rule 118): the
+    // labels have to differ from EACH OTHER, so a per-id fallback is the only thing that
+    // satisfies it. Reachable only from a stale bundle -- the SPA ships inside the server's
+    // own image -- which is why the bar is "distinguishable", not rule 21's nicer sentence.
+    renderEditor({
+      body: {
+        ...body(),
+        gates: [
+          { gate: "brand_new_gate", enabled: true, threshold: 1, window_days: 30 },
+          { gate: "another_new_gate", enabled: false, threshold: 1, window_days: 30 },
+        ],
+      },
+    });
+
+    const first = await screen.findByLabelText("Brand New Gate");
+    const second = await screen.findByLabelText("Another New Gate");
+    expect(first).not.toBe(second);
+    expect(screen.queryAllByLabelText("Another protection")).toHaveLength(0);
+  });
+});
+
 describe("the gate that counts recent watchers", () => {
   it("offers the window its own warning tells the operator to change", async () => {
     // The server warns on gates.server_popularity.window_days and advises a year; until

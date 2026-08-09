@@ -215,7 +215,15 @@ class LeavingSoonResult:
         if self.no_libraries:
             return "No libraries are turned on, so no shelf was updated"
         if self.problems:
-            return "Some shelves didn't update"
+            # Named, not counted. "Some shelves didn't update" was the whole answer the
+            # operator got, on every surface, while the response carried the failing library
+            # per entry and nothing rendered it -- so one unreachable library out of five was
+            # indistinguishable from all five, and there was nowhere to go and look. The
+            # titles come from here rather than from ``problems`` because that string appends
+            # ``str(exc)``, which is a stack-shaped sentence rule 21 keeps off the screen; it
+            # stays the log's field, where a raw cause belongs.
+            failed = ", ".join(o.section_title for o in self.outcomes if o.error)
+            return f"These shelves didn't update: {failed}"
         if not self.applied:
             return "Preview only, nothing written"
         return f"{self.added:,} added, {self.removed:,} cleared"

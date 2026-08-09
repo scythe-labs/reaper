@@ -65,7 +65,6 @@ const NO_LIBRARY_PASS: LeavingSoonResult = {
   notified: false,
   movies_on_shelves: 0,
   seasons_on_shelves: 0,
-  problems: [],
 };
 
 function shelf(over: Partial<LeavingSoonSettings> = {}): LeavingSoonSettings {

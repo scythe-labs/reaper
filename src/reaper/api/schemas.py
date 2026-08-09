@@ -957,9 +957,12 @@ class LeavingSoonOut(BaseModel):
     notified: bool
     movies_on_shelves: int
     seasons_on_shelves: int
-    problems: list[str]
-    """Per-library failures, in plain words. One unreachable library never hides the
-    rest of the pass, and ``result`` is the one-line summary over them."""
+    # `problems` used to ride here as a per-library list. It was only ever read as
+    # `problems.length > 0`, never rendered, and the split that moved the wording into the
+    # service took even that reader away -- so it shipped a field no operator could reach,
+    # describing itself as "in plain words" while carrying `str(exc)`. `result` now names the
+    # failing libraries, which is the part they needed; the raw cause stays in the
+    # `leaving_soon.problems` log event, where a stack-shaped sentence belongs (rule 64).
 
 
 class SignalCountOut(BaseModel):
