@@ -6,7 +6,8 @@
 //
 // The population is three, and `ServiceModal`'s is pinned in ServiceModal.test.tsx ("what the
 // connection badge vouches for") because that form owns the Test button. This file drives the two
-// in Settings.tsx, which are the two an operator reaches from a row rather than from a form:
+// in ServicesPanel.tsx and NotificationsPanel.tsx, which are the two an operator reaches from a
+// row rather than from a form:
 //   - the saved service card, whose address changes underneath it when the modal saves;
 //   - the Discord row, whose URL box is editable right beside the badge.
 // Fix one of these and leave a sibling and the class is half-closed with no test saying so, which
@@ -19,7 +20,8 @@ import type { Instance } from "../api";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { NotificationsPanel, ServicesPanel } from "./Settings";
+import { NotificationsPanel } from "./NotificationsPanel";
+import { ServicesPanel } from "./ServicesPanel";
 
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),

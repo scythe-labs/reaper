@@ -14,7 +14,7 @@ import { expectNoA11yViolations } from "../test/a11y";
 import { fill } from "../test/forms";
 import { testQueryClient } from "../test/queryClient";
 import { renderWithProviders } from "../test/renderWithProviders";
-import { GeneralPanel } from "./Settings";
+import { GeneralPanel } from "./GeneralPanel";
 
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),

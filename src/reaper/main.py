@@ -597,7 +597,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         that is reach the session lacked, since the SPA holds the same cookie; what
         changes is that the SPA spends it behind its own confirmations and this page
         spends it on one click. Say it plainly wherever the link is handed out rather than
-        rounding it off here: the "API reference" row in ``Settings.tsx`` is the copy that
+        rounding it off here: the "API reference" row in ``GeneralPanel.tsx`` is the copy that
         has to carry it, and this paragraph existing is not a substitute for that one.
 
         The header itself is not a credential. It proves same-origin, which this page is,

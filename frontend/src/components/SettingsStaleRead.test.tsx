@@ -36,7 +36,7 @@ const ABOUT: About = {
 const SCHEDULE: Schedule = {
   jobs: [
     {
-      // The scan's REAL id (`SCAN_ID` in Settings.tsx). A fixture calling it "scan" leaves
+      // The scan's REAL id (`SCAN_ID` in JobsPanel.tsx). A fixture calling it "scan" leaves
       // `jobsById.get(SCAN_ID)` empty, so the scan row renders with no job at all and the branch
       // these tests are about is unreachable -- green either way (rule 141).
       id: "scheduled_scan",
@@ -87,11 +87,12 @@ const STALE_DISCORD = /Couldn't check whether Discord is connected just now/;
 // author to remember costs nothing and does nothing.
 const WHAT_HINT =
   "The stale line's noun is the `what` prop of StaleReadNotice.tsx, which owns the sentence. " +
-  'Sibling call sites in Settings.tsx: AboutPanel ("these details"), JobsPanel ("these jobs"), ' +
-  'LeavingSoonRow ("the shelf status"), NotificationsPanel ("whether Discord is connected"); ' +
-  'in PlexPanel.tsx: the library grid ("the library list") and the Leaving Soon group ("the ' +
-  'Leaving Soon settings"), pinned in PlexPanel.test.tsx. GeneralPanel, SecurityPanel, ' +
-  "BackupPanel and PlexPanel's own status read take the default.";
+  'Sibling call sites: AboutPanel.tsx ("these details"), JobsPanel.tsx ("these jobs" on the ' +
+  'panel, "the shelf status" on LeavingSoonRow), NotificationsPanel.tsx ("whether Discord is ' +
+  'connected"), ServicesPanel.tsx ("your connections"); in PlexPanel.tsx: the library grid ' +
+  '("the library list"), the watch history record and the Leaving Soon group ("the Leaving Soon ' +
+  'settings"), pinned in PlexPanel.test.tsx. GeneralPanel.tsx, SecurityPanel.tsx, ' +
+  "BackupPanel.tsx and PlexPanel's own status read take the default.";
 
 // The scan row's schedule line, from the fixture's cron. It is rendered from the same held row
 // the upkeep rows below it use, so a blinked read must not blank it.

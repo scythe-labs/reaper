@@ -442,7 +442,7 @@ async def check_for_updates(
     saying so rather than reading as a check that happened.
 
     The result strings are the Jobs page's own copy for these states; the About row
-    (`frontend/src/components/Settings.tsx`, ``UpdateCell``) says the same six things in
+    (`frontend/src/components/AboutPanel.tsx`, ``UpdateCell``) says the same six things in
     its own words, and the two are edited together (rule 144).
     """
     try:

@@ -33,7 +33,7 @@ const ABOUT: About = {
 };
 
 /** The server's own id for the job (`DEFAULT_MAINTENANCE_CRONS` in services/scheduler.py, and
- *  `UPDATE_CHECK_ID` in Settings.tsx). A fixture that misspells it renders an ordinary row and
+ *  `UPDATE_CHECK_ID` in JobsPanel.tsx). A fixture that misspells it renders an ordinary row and
  *  the branch this file is about is unreachable, green either way (rule 141). */
 const UPDATE_JOB = "check_for_updates";
 

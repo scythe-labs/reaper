@@ -120,7 +120,7 @@ export function SetupConnectStep({
           Sonarr, so an unbounded claim is false about two of the four services whose keys are
           being typed on this screen, and the next step says so itself ("It removes files
           through them, never on its own"). The scan bound is the one every correct sibling
-          already uses. Its twin is the services panel blurb in `Settings.tsx` (rule 72). */}
+          already uses. Its twin is the services panel blurb in `ServicesPanel.tsx` (rule 72). */}
       <p className="blurb">Scanning only reads from these. Nothing here can delete a file.</p>
 
       {/* Divided, so a failed refetch does not trade a working list for one sentence while

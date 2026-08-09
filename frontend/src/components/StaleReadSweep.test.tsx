@@ -37,7 +37,7 @@ import { NotInScanPanel } from "./NotInScanPanel";
 import { RemoveRulesEditor } from "./PolicyRuleEditors";
 import { ReviewQueue } from "./ReviewQueue";
 import { ServiceModal } from "./ServiceModal";
-import { ServicesPanel } from "./Settings";
+import { ServicesPanel } from "./ServicesPanel";
 
 const { apiMock } = await vi.hoisted(async () => ({
   apiMock: (await import("../test/apiMock")).makeApiMock(),
@@ -98,12 +98,12 @@ async function blink(
  *
  *  The shared sentence ends "so what's BELOW may be out of date", which is a claim about
  *  placement and not only about wording: a caller that emits it after its content points the
- *  operator at whatever follows instead. `Settings.tsx` moved the jobs line above its rows for
+ *  operator at whatever follows instead. `JobsPanel.tsx` moved the jobs line above its rows for
  *  this reason and states that every other call site does the same, so that sentence is only
  *  true while something checks it. */
 const PLACEMENT_HINT =
   "The stale line must render ABOVE the content it describes -- it says what's below may be " +
-  "out of date. See the note on the jobs line in Settings.tsx.";
+  "out of date. See the note on the jobs line in JobsPanel.tsx.";
 
 function precedes(first: Element, second: Element): boolean {
   return Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);

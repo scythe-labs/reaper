@@ -942,7 +942,7 @@ export function ServiceModal({
                 {/* Over the grid, beside the folder line, because the shared sentence says what
                     is BELOW may be out of date and the stale library names are inside the pickers
                     under it. Emitted after the grid it pointed at the help paragraph instead,
-                    which is the placement `Settings.tsx` fixed for the jobs rows and says every
+                    which is the placement `JobsPanel.tsx` fixed for the jobs rows and says every
                     other call site already keeps.
 
                     `libOptions.length === 0` is what tells the two failures apart: a refetch that

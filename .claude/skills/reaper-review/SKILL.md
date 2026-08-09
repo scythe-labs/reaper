@@ -313,7 +313,7 @@ work across sites** — grep it first, and reuse an existing class slug verbatim
 coining a synonym.
 
 A site-shaped fingerprint alone is why #203 and #204 were never linked:
-`Settings.tsx:api-key-row — stale-api-key-set-drops-the-confirm` and
+`GeneralPanel.tsx:api-key-row — stale-api-key-set-drops-the-confirm` and
 `PlexPanel.tsx:saveVerify — absolute-write-from-cached-value` are one mechanism, a cached value
 used as the input to a write or a gate, and share no matchable text. A shared
 `class: cached-value-drives-a-write` would have collided where neither `finding:` line could,

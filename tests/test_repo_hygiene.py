@@ -2844,8 +2844,16 @@ def test_every_silent_notice_says_why_it_is_silent() -> None:
 # does not care which way a site resolved, only that nobody added one without deciding.
 _QUERY_FAILURE_HANDLES = {
     "frontend/src/App.tsx": 7,
+    # The seven settings panels below held one entry between them, ``Settings.tsx: 8``, until the
+    # file became a shell and each panel got its own module. Nothing about any branch changed:
+    # the 8 redistribute exactly, and Settings.tsx leaves the walk because the shell binds no
+    # read at all.
+    "frontend/src/components/AboutPanel.tsx": 1,
+    "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
+    "frontend/src/components/GeneralPanel.tsx": 1,
+    "frontend/src/components/JobsPanel.tsx": 2,
     # Whether each protection list is still protecting anything (#475). Undivided on purpose,
     # like the safety reads above: this screen exists so an operator can tell a list that
     # stopped working from one that is simply not on a title's side, so an unreadable answer
@@ -2860,6 +2868,7 @@ _QUERY_FAILURE_HANDLES = {
     # for that reason, and each is driven into it on its own in the tests.
     "frontend/src/components/ListsPanel.tsx": 2,
     "frontend/src/components/LogsPanel.tsx": 1,
+    "frontend/src/components/NotificationsPanel.tsx": 1,
     # 5 -> 6 when the library list moved to ``usePlexLibraries``. No branch here changed: the
     # panel's JSX is untouched, and the extra handle is the walk seeing the bag's two members
     # where a directly-bound ``useQuery`` had been one. Counted rather than excused, because
@@ -2885,12 +2894,13 @@ _QUERY_FAILURE_HANDLES = {
     # the wizard states the regime from the same declaration.
     "frontend/src/components/SafetyBanner.tsx": 1,
     "frontend/src/components/SectionNav.tsx": 1,
+    "frontend/src/components/SecurityPanel.tsx": 1,
     # 6 -> 7: the library pickers now consult the SYNC's failure as well as the query's. A read
     # that lands empty while the sync that would fill it fails is the ordinary answer when Plex
     # is not linked at all, and with only the query consulted the panel stated as fact that the
     # server holds no libraries of this kind -- about a server nobody reached.
     "frontend/src/components/ServiceModal.tsx": 7,
-    "frontend/src/components/Settings.tsx": 8,
+    "frontend/src/components/ServicesPanel.tsx": 1,
     "frontend/src/components/SetupConnectStep.tsx": 1,
     # 1 -> 2: the same sync failure, on the step that renders the Libraries grid. It drew an
     # empty grid and said nothing at all, so "no libraries" and "we never got to look" were one
@@ -3076,9 +3086,13 @@ def test_every_query_failure_branch_is_counted() -> None:
 # on screen. What is left is here so the next one has to be classified rather than typed.
 #
 # Per file, and every entry is a deliberate keep:
+#   AboutPanel.tsx (1)       the About read's never-loaded branch
+#   BackupPanel.tsx (1)      the backup summary's never-loaded branch
 #   Fairness.tsx (1)         NOT advice: the Refresh button's ``title``, "Reload requests and
 #                            watch history". It is in the walk because the walk is of a word, and
 #                            dropping it by hand is how a matcher starts lying about its own scope
+#   GeneralPanel.tsx (1)     the general settings' never-loaded branch
+#   JobsPanel.tsx (2)        two never-loaded branches, the upkeep jobs and the shelf status
 #   NotInScanPanel.tsx (1)   a read-only panel with no draft, and now only on the arm where the
 #                            list never landed (#190)
 #   PlexPanel.tsx (1)        the panel's own never-loaded status read
@@ -3094,7 +3108,13 @@ def test_every_query_failure_branch_is_counted() -> None:
 #                            staged summary and the password typed against it went at the confirm,
 #                            two states earlier -- and what comes back is a different database
 #                            anyway, which is the point of pressing it (#386)
-#   Settings.tsx (6)         six never-loaded branches, each above a form that never rendered
+#   SecurityPanel.tsx (1)    the security settings' never-loaded branch
+#
+# The five settings panels above were one entry, ``Settings.tsx (6)``, until that file became a
+# shell holding no read of its own. Same six branches, each on a read that never landed with
+# nothing on screen to lose; only the file rendering each one is now named. The single entry said
+# "above a form that never rendered", which was never true of all six -- About is read-only and
+# the shelf-status branch sits above a status row.
 #
 # **#195's enumeration was not the whole population**, which is why this counts rather than
 # trusting the issue: it named 8 to fix and 9 to leave, called that 15, and did not reach the reap
@@ -3108,7 +3128,11 @@ def test_every_query_failure_branch_is_counted() -> None:
 # construction. Its line now points at the close the modal already has, and ``App.tsx`` is gone
 # from this dict.
 _RELOAD_ADVICE = {
+    "frontend/src/components/AboutPanel.tsx": 1,
+    "frontend/src/components/BackupPanel.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
+    "frontend/src/components/GeneralPanel.tsx": 1,
+    "frontend/src/components/JobsPanel.tsx": 2,
     "frontend/src/components/NotInScanPanel.tsx": 1,
     "frontend/src/components/PlexPanel.tsx": 1,
     "frontend/src/components/PolicyEditor.tsx": 1,
@@ -3116,7 +3140,7 @@ _RELOAD_ADVICE = {
     "frontend/src/components/ReapConfirm.tsx": 1,
     "frontend/src/components/ReapPlan.tsx": 1,
     "frontend/src/components/RestoreCard.tsx": 3,
-    "frontend/src/components/Settings.tsx": 6,
+    "frontend/src/components/SecurityPanel.tsx": 1,
 }
 
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -3799,7 +3823,7 @@ def test_the_manual_states_the_ramp_the_shipped_policy_actually_uses() -> None:
     )
 
 
-_SETTINGS_TSX = FRONTEND_SRC / "components" / "Settings.tsx"
+_JOBS_PANEL_TSX = FRONTEND_SRC / "components" / "JobsPanel.tsx"
 #: ``JOB_META`` read as the whole declaration up to the ``};`` that closes it, then picked
 #: apart inside, rather than anchored on a delimiter one spelling happens to put there
 #: (rule 147): a key may be a bare identifier or the computed ``[SCAN_ID]``, and both are
@@ -3827,13 +3851,15 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     Both directions. A stale entry for a job that no longer exists is dead copy nobody will
     ever see, and it is the half a hand-maintained map keeps longest.
     """
-    source = _SETTINGS_TSX.read_text(encoding="utf-8")
+    source = _JOBS_PANEL_TSX.read_text(encoding="utf-8")
     block_match = _JOB_META_BLOCK.search(source)
-    assert block_match, "parsed no JOB_META declaration out of Settings.tsx -- the matcher is stale"
+    assert block_match, (
+        "parsed no JOB_META declaration out of JobsPanel.tsx -- the matcher is stale"
+    )
     block = block_match.group(1)
 
     scan_id = _SCAN_ID_CONST.search(source)
-    assert scan_id, "parsed no SCAN_ID constant out of Settings.tsx -- the matcher is stale"
+    assert scan_id, "parsed no SCAN_ID constant out of JobsPanel.tsx -- the matcher is stale"
     constants = {"SCAN_ID": scan_id.group(1)}
 
     keys = {
@@ -3848,7 +3874,7 @@ def test_every_scheduled_job_has_operator_copy_on_the_jobs_page() -> None:
     )
 
     assert keys == set(SCHEDULABLE_JOB_IDS), (
-        "frontend/src/components/Settings.tsx's JOB_META and the jobs the server schedules "
+        "frontend/src/components/JobsPanel.tsx's JOB_META and the jobs the server schedules "
         "disagree.\n"
         f"  scheduled with no copy: {sorted(set(SCHEDULABLE_JOB_IDS) - keys) or 'none'}\n"
         f"  copy for no such job:   {sorted(keys - set(SCHEDULABLE_JOB_IDS)) or 'none'}\n"

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The restore card takes the admin password, so it holds one only while it is being used.
-// The card is local to Settings.tsx, so these drive it the way an operator reaches it: the
+// The card is local to BackupPanel.tsx, so these drive it the way an operator reaches it: the
 // Backup panel, a staged file, then the password box that appears with the summary.
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
