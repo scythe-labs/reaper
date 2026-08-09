@@ -249,9 +249,14 @@ async def _run_out(
         # `_planned_candidates` at send time. A LIMIT in either would shrink the phrase and the
         # server's expectation together, so the comparison would still pass -- while
         # `services.executor` loads its own steps and deletes every one. The operator would type
-        # REAP 50 SOULS and 500 would go. Slice the ITERABLE, never rebind `steps`: line 224 is
-        # a later use of that same name, and rebinding reproduces exactly the failure this
-        # comment exists to prevent. `GET /api/runs/{id}/steps` serves anything past the window.
+        # REAP 50 SOULS and 500 would go.
+        #
+        # So slice the ITERABLE below, and never rebind `steps`. Two later uses of that name
+        # read the full list and a rebinding breaks whichever it sits above: the
+        # `_planned_candidates` call, which is the failure this comment is about, and
+        # `step_count` just above, which would report the window as the plan and silently empty
+        # the "N more steps" line the operator reads instead of the rows.
+        # `GET /api/runs/{id}/steps` serves anything past the window.
         steps=[
             ActionStepOut(
                 media_key=s.media_key,
