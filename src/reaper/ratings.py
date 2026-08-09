@@ -161,7 +161,12 @@ class Rating:
         return self.value >= floor
 
     def describe(self) -> str:
-        """The string the why-panel shows. Provenance is not optional."""
+        """Provenance-carrying form for a log line or a debugger. Nothing renders this.
+
+        It used to say the why-panel showed it, which no code has done: the panel's rating
+        strings come from ``describe_for_user`` and the stored projection from
+        ``services.display_meta.build_ratings_json`` (rule 7/24).
+        """
         votes = describe_votes(self.votes)
         return f"{self.source.value} {self.value:.1f}/10{votes} (via {self.provider})"
 
