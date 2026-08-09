@@ -1369,6 +1369,19 @@ sign-in still works, the window just stops closing.
 """
 
 
+class PlexServerChoiceOut(BaseModel):
+    """One owned server the account could link. Both Plex poll routes answer with it.
+
+    Declared once because it was declared twice, under one name, in two routers. Pydantic
+    collapsed them into a single published component only while they stayed structurally
+    identical; the moment either gained a field, BOTH operations got module-qualified
+    component names, including the one nobody edited.
+    """
+
+    name: str
+    machine_identifier: str
+
+
 class PlexStartIn(BaseModel):
     """Where to send the sign-in window afterward. Both Plex start routes take it.
 

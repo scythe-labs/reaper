@@ -194,6 +194,8 @@ def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     """
     wire: dict[str, set[str]] = {}
     inner: dict[str, set[str]] = {}
+    homes: dict[str, type[BaseModel]] = {}
+    collisions: list[str] = []
     names = [f"{WIRE_PACKAGE}{m.name}" for m in pkgutil.iter_modules(reaper.api.__path__)]
     for module_name in [*names, *INNER_MODULES]:
         module = importlib.import_module(module_name)
@@ -205,7 +207,18 @@ def _server_models() -> tuple[dict[str, set[str]], dict[str, set[str]]]:
                 and value is not BaseModel
                 and value.__module__ == module_name
             ):
+                prior = homes.get(value.__name__)
+                if prior is not None and prior is not value:
+                    collisions.append(f"{value.__name__}: {prior.__module__} and {module_name}")
+                homes[value.__name__] = value
                 bucket[value.__name__] = set(value.model_fields)
+    assert collisions == [], (
+        "two different models share one class name, so this walk keeps only the one imported "
+        "last and every comparison below runs against it alone. FastAPI names the published "
+        "component off the class too, so both operations get module-qualified component names "
+        "the moment either side gains a field, including the operation nobody edited. Declare "
+        "it once, or give one a distinct name:\n  " + "\n  ".join(sorted(collisions))
+    )
     return wire, inner
 
 

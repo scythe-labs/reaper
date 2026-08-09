@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api import tags as api_tags
-from reaper.api.schemas import NO_PLEX_FORWARD, OkOut, PlexStartIn
+from reaper.api.schemas import NO_PLEX_FORWARD, OkOut, PlexServerChoiceOut, PlexStartIn
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
     clear_session_cookie,
@@ -225,11 +225,6 @@ class PlexPollIn(BaseModel):
     # First-run setup, multi-server accounts only: the machine identifier of the owned
     # server the user picked, echoed back from a "choose_server" response.
     machine_identifier: str | None = None
-
-
-class PlexServerChoiceOut(BaseModel):
-    name: str
-    machine_identifier: str
 
 
 class PlexPollOut(BaseModel):
