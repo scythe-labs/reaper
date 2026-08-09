@@ -55,8 +55,8 @@ export function PlexTrashNotice({
       {autoEmpties && (
         <>
           {" "}
-          Plex also empties its own trash after every scan, so Reaper's refresh clears it whether or
-          not you ask Reaper to.
+          Plex also empties its own trash after every scan, so Reaper's refresh clears it even when
+          Reaper's own checks would have left it alone.
         </>
       )}
       {onAck && (
