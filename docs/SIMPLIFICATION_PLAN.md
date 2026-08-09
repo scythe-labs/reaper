@@ -2246,7 +2246,7 @@ disagreement.
    didn't update" in red. **Neither sentence is pinned by any test, on either side.** Fix: compute
    the summary in the route after the merge, ship it in `LeavingSoonOut`, render both from it.
 
-   > **Fixed, #615. The summary is the service's, not the route's.** The route cannot own it:
+   > **Fixed, #617. The summary is the service's, not the route's.** The route cannot own it:
    > `after_scan` reaches `_run_pass` without passing through a route at all, so a summary
    > computed at the edge leaves every automatic pass storing the sentence this item is about.
    > `LeavingSoonResult` grew `no_libraries`, `ok` and `summary`, the no-libraries case moved
