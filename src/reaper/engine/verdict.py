@@ -51,7 +51,23 @@ as the scan that had everything in hand.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from reaper.engine.gates import GateId
+
+#: The three verdicts :func:`decide_verdict` returns, and the app's central vocabulary. It was
+#: declared only in TypeScript (``frontend/src/api.ts``'s ``Verdict``) while Python passed it
+#: around as a bare ``str``, so nothing on this side could disagree loudly. Typing it puts every
+#: ``return`` below under mypy, which is what lets ``scripts.baseline_capture`` read the set from
+#: here rather than re-deriving it from the AST (rule 103).
+Verdict = Literal["condemn", "protect", "abstain"]
+
+#: The owner's hand decision about one item. ``api.schemas.OverrideIn.decision`` reads this
+#: rather than restating the pair (rule 131), and ``frontend/src/api.ts``'s ``Override`` is its
+#: mirror. Kept out of the response models on purpose: those validate rows already on disk, and
+#: nothing constrains ``whitelist.decision`` or ``candidate.verdict`` at the database, so
+#: narrowing them would turn a legacy value into a 500 on the review queue.
+Override = Literal["spare", "reap"]
 
 #: The ONLY protections a manual "reap" override may not overrule, and the reason they are
 #: the only two: neither is a judgment about whether the file is WANTED. Deleting a file
@@ -84,10 +100,10 @@ def decide_verdict(
     coverage_bp: int,
     condemn_at: int,
     coverage_floor_bp: int,
-    override: str | None = None,
+    override: Override | None = None,
     safety_protected: bool = False,
     blocked_holds_reap: bool | None = None,
-) -> str:
+) -> Verdict:
     """PROTECT beats everything. Then blocked. Then coverage. Then the score.
 
     ``protected`` -- a protection fired. ``blocked`` -- a protection could not be checked,

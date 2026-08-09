@@ -31,6 +31,7 @@ from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSp
 from reaper.engine.policy_migrations import PolicyRepair
 from reaper.engine.preview import MAX_PROBE_WINDOW_DAYS
 from reaper.engine.signals import SignalId
+from reaper.engine.verdict import Override
 
 # The why-panel document moved to ``engine.explanation`` so the reap path could run the same
 # validation the panel does, which is the whole of #142; it may not import this layer. The
@@ -1263,7 +1264,7 @@ class OverrideIn(BaseModel):
     show's, in which case the decision applies to every one of its seasons."""
 
     media_key: str = Field(max_length=_MAX_MEDIA_KEY)
-    decision: Literal["spare", "reap"]
+    decision: Override
     note: str | None = Field(default=None, max_length=500)
     spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
     """For a spare, how long to keep it: ``0`` (default) forever, a positive count that many
