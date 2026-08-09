@@ -64,7 +64,8 @@ from reaper.ratings import RatingSource, is_percentage_source, source_label
 
 SCHEMA_VERSION = 3
 """Bumped when the stored SHAPE changes. 3 marks bodies written after the rating bar moved
-off the RATING_FLOOR gate row into ``keep_rating_rules`` (see ``recover_rating_rules``,
+off the RATING_FLOOR gate row into ``keep_rating_rules`` (see
+``policy_migrations.recover_rating_rules``,
 which backfills a body written before it)."""
 
 SCORER_VERSION = 2
@@ -105,8 +106,9 @@ class GateSetting(Frozen):
     #: ``e6f708192a3b`` had rewritten every stored body where the number was inert (issue
     #: #266). Two kinds of body still carry the key and neither reaches this model with it:
     #: a row the migration deliberately skipped, because the number is the last copy of a
-    #: rating bar ``recover_rating_rules`` has yet to put back, and any body predating the
-    #: migration on a database it has not reached. ``drop_retired_gate_keys`` strips it in
+    #: rating bar ``policy_migrations.recover_rating_rules`` has yet to put back, and any body
+    #: predating the migration on a database it has not reached.
+    #: ``policy_migrations.drop_retired_gate_keys`` strips it in
     #: both shims. Do not re-add a field here to accommodate a stored key: ``Frozen`` is
     #: ``extra="forbid"`` on purpose, and the strip is what keeps that honest.
 
@@ -547,7 +549,8 @@ class PolicyBody(Frozen):
     # ``keep_tags`` / ``keep_tags_match`` lived here: the *arr tags that spared a title,
     # configured on Policy while every other list lived on Settings -> Lists. They are a
     # LIST now -- defined once, on Lists, protecting through an ``on_list`` keep rule like
-    # every other list -- and ``convert_list_protections`` carries a stored body's tags
+    # every other list -- and ``policy_migrations.convert_list_protections`` carries a stored
+    # body's tags
     # into that shape on load.
 
     keep_rating_rules: tuple[RatingRuleSpec, ...] = ()

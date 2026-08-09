@@ -8,10 +8,13 @@ dict that validates, and returns ``None`` when it cannot: the caller
 ``PolicyRepair`` is the set of ways that can happen, and it is the declaration four surfaces
 derive their copy from.
 
-Split out of ``engine/policy.py``, which is the model and the hash over it. Nothing here is
-read by scoring: these run once, at load. The dependency runs one way -- this module imports
-``PolicyBody`` and ``SCHEMA_VERSION`` from ``policy`` and ``policy`` imports nothing back --
-so the pair cannot cycle whatever either gains later.
+Split out of ``engine/policy.py``, which is the model and the hash over it. Every SHIM here
+runs once, at load, and none is read by scoring. **One declaration is not a shim and is on
+the live path**: ``LIST_GATES_NOW_KEEP_RULES`` is read by ``scan_runner.build_gates`` on
+every scan, and is the membership the fail-closed abort tests -- so this file does not retire
+when every install has migrated, and that constant is the reason. The dependency runs one
+way -- this module imports ``PolicyBody`` and ``SCHEMA_VERSION`` from ``policy`` and
+``policy`` imports nothing back -- so the pair cannot cycle whatever either gains later.
 """
 
 from __future__ import annotations
@@ -230,9 +233,10 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
 LIST_GATES_NOW_KEEP_RULES: frozenset[GateId] = frozenset({GateId.WHITELISTED, GateId.CURATED_LIST})
 _LEGACY_LIST_GATES = frozenset(gate.value for gate in LIST_GATES_NOW_KEEP_RULES)
 
-#: What a fresh install's two lists are made of, beside the names below: the tag the seeded
-#: tag list carries and the preset its IMDb list names. Spelled here for the reason those
-#: names are, and read by ``list_config.DEFAULT_LISTS`` rather than respelled there, so the
+#: What a fresh install's two lists are made of, beside ``policy.DEFAULT_TAG_LIST_NAME`` and
+#: ``policy.DEFAULT_IMDB_LIST_NAME``: the tag the seeded tag list carries and the preset its
+#: IMDb list names. Spelled here for the reason those names are, and read by
+#: ``list_config.DEFAULT_LISTS`` rather than respelled there, so the
 #: row a fresh install seeds and the row a converted upgrade looks for are one declaration
 #: (rule 104).
 DEFAULT_KEEP_TAG = "reaper-keep"

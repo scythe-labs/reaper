@@ -742,8 +742,8 @@ def inspect(
     # mirror does not span that hold, an invisible viewer and an expired one are the same
     # viewer, so the set is UN-ESTABLISHABLE rather than empty and ``plan_series_prune`` holds
     # every season on disk. Nothing is left for the scoring lane to judge, and until now the
-    # page said nothing at all: ``in_progress_hold_days`` appeared in this module only as a
-    # field declaration.
+    # page said nothing at all: before this warning, ``in_progress_hold_days`` appeared in the
+    # policy layer only as a field declaration (``policy.PolicyBody``).
     #
     # The journey this closes is the one that reads as Reaper being broken. An operator on a
     # short mirror gets the popularity-window warning, follows it, lowers the window to match
