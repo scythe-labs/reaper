@@ -4734,6 +4734,16 @@ def test_the_css_walk_reads_the_forms_the_stylesheets_spell(tmp_path: Path) -> N
 #: ban that read only ``in_`` would miss half the population it claims to cover (rule 147).
 _MEMBERSHIP_CALLS = frozenset({"in_", "not_in", "notin_"})
 
+#: The third spelling, and the one that hides: a placeholder list built by hand and pasted into
+#: the SQL, which is neither an ORM operator nor an ``expanding`` bindparam.
+#: ``imdb_dataset.lookup`` does exactly this. A walk collecting only the first two reported 17
+#: functions and had no count to pin for the eighteenth, which is rule 147's shape -- a form
+#: that never enters the walk is missing from the ban and from the count alike.
+#:
+#: Read against string literals only, so the ``#:`` comments spelling ``IN (...)`` in prose are
+#: not sites. Upper-case with a word boundary, so ``MIN(``, ``JOIN (`` and the rest do not match.
+_RAW_IN = re.compile(r"\bIN\s*\(")
+
 
 class _Membership(NamedTuple):
     """What one function does with membership filters."""
@@ -4782,6 +4792,13 @@ class _MembershipWalk(ast.NodeVisitor):
             self._record(node)
         self.generic_visit(node)
 
+    def visit_Constant(self, node: ast.Constant) -> None:
+        # Hand-written SQL, including the constant halves of an f-string. Recorded against the
+        # innermost enclosing def, which is where the placeholder list is built.
+        if isinstance(node.value, str) and _RAW_IN.search(node.value):
+            self._record(node)
+        self.generic_visit(node)
+
     def _record(self, node: ast.AST) -> None:
         names = [getattr(n, "name", "") for n in self._stack]
         key = f"{self._rel}::{'.'.join(names) or '<module>'}"
@@ -4799,10 +4816,11 @@ class _MembershipWalk(ast.NodeVisitor):
 def _membership_sites(root: Path) -> dict[str, _Membership]:
     """Every ``IN``-shaped filter under ``root``, keyed by ``path::enclosing qualname``.
 
-    Two spellings reach one SQL construct and both are collected: the ORM operators above,
-    and ``bindparam(..., expanding=True)``, which is how the raw-SQL readers bind
-    ``IN :keys``. Keyed on the enclosing function rather than a line number, because line
-    numbers move and a reviewer needs to know which read is being classified.
+    Three spellings reach one SQL construct and all three are collected: the ORM operators
+    above, ``bindparam(..., expanding=True)``, which is how the raw-SQL readers bind
+    ``IN :keys``, and a hand-built placeholder list pasted into the SQL text. Keyed on the
+    enclosing function rather than a line number, because line numbers move and a reviewer
+    needs to know which read is being classified.
     """
     found: dict[str, _Membership] = {}
     for path in sorted(root.rglob("*.py")):
@@ -4839,6 +4857,7 @@ _MEMBERSHIP_INVENTORY: dict[str, tuple[int, str]] = {
     "src/reaper/services/fairness.py::_evidence_index": (1, "chunked"),
     "src/reaper/services/fairness.py::_distinct_episodes": (1, "chunked"),
     "src/reaper/services/grace.py::grace_report": (1, "chunked"),
+    "src/reaper/services/imdb_dataset.py::ImdbRatings.lookup": (1, "chunked"),
     "src/reaper/services/instances.py::arr_rows": (1, "bounded: two enum members"),
     "src/reaper/services/retention.py::_doomed": (
         2,
@@ -4861,9 +4880,11 @@ def test_every_scan_sized_in_clause_is_chunked_or_classified() -> None:
     ``IntegrationError`` and so was caught nowhere.
 
     Reading the code is the only way to tell a scan-sized list from a two-element one, so this
-    does not try to: it collects every membership filter and requires each to carry a written
-    classification. A new one fails here, which is the point -- the site that broke was missed
-    because nothing made anyone look at it.
+    does not try to: it collects the three spellings the tree uses and requires each site to
+    carry a written classification. A new one fails here, which is the point -- the site that
+    broke was missed because nothing made anyone look at it. A **fourth** spelling would be
+    missing from this walk and from its counts alike (rule 147), which is why the walk is
+    driven against each form in the test below rather than trusted.
     """
     found = _membership_sites(SRC)
 
@@ -4902,10 +4923,11 @@ def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> 
     """The guard above is only as wide as this walk (rule 147).
 
     Driven against every spelling ``src/`` uses -- the three ORM operators, a raw-SQL
-    ``expanding`` bindparam, several filters in one function, a method inside a class -- and
-    against the two that must NOT count: a plain ``bindparam`` binds one value and cannot
-    overflow anything, and an unrelated method whose name merely ends in the same letters is
-    not a membership filter at all.
+    ``expanding`` bindparam, a hand-built placeholder list inside an f-string, several filters
+    in one function, a method inside a class -- and against the three that must NOT count: a
+    plain ``bindparam`` binds one value and cannot overflow anything, an unrelated method whose
+    name merely ends in the same letters is not a membership filter, and neither is SQL naming
+    a function that happens to end in those two letters.
 
     The chunked flag is driven both ways too, and the negative case is the one that matters:
     ``one`` carries ``KEY_CHUNK`` in a comment and nowhere in its code, which is exactly what
@@ -4920,11 +4942,15 @@ def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> 
         "def two():\n"
         "    return text('x IN :k').bindparams(bindparam('k', expanding=True))\n"
         "def three():\n"
-        "    return text('x = :k').bindparams(bindparam('k')), obj.join_(keys)\n"
+        "    q = 'SELECT MIN(x) FROM t JOIN (SELECT 1) u'\n"
+        "    return text('x = :k').bindparams(bindparam('k')), obj.join_(keys), q\n"
         "class C:\n"
         "    def four(self):\n"
         "        for chunk in batched(keys, KEY_CHUNK):\n"
-        "            yield T.a.in_(chunk)\n",
+        "            yield T.a.in_(chunk)\n"
+        "    def five(self):\n"
+        "        marks = ', '.join(f':id{i}' for i in range(len(keys)))\n"
+        "        return text(f'SELECT 1 FROM t WHERE k IN ({marks})')\n",
         encoding="utf-8",
     )
     global REPO
@@ -4938,7 +4964,10 @@ def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> 
         "src/reaper/m.py::one",
         "src/reaper/m.py::two",
         "src/reaper/m.py::C.four",
+        "src/reaper/m.py::C.five",
     }, found
     assert found["src/reaper/m.py::one"].sites == 3
     assert not found["src/reaper/m.py::one"].chunked
     assert found["src/reaper/m.py::C.four"].chunked
+    # The placeholder list is attributed to the innermost def that builds it, not to its class.
+    assert found["src/reaper/m.py::C.five"].sites == 1

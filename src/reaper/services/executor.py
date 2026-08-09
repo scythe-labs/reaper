@@ -1042,10 +1042,12 @@ class Executor:
         candidates_by_key = dict(condemned)
         planned_keys = {s.media_key for s in steps}
         missing = sorted(planned_keys - set(candidates_by_key))
-        # Chunked (rule 94). Usually a handful -- the items spared since the plan was built --
-        # but with the caps off a plan is library-sized, and a plan whose snapshot has since
-        # aged out of retention leaves every one of its keys missing, so the whole plan can
-        # land here. Merged into a map keyed by media_key, so the chunks cannot reorder it.
+        # Chunked (rule 94). `condemned` is the FROZEN scan-condemned set while the steps were
+        # planned from the effective one, so `missing` is exactly the honored hand reaps --
+        # bounded by whitelist rows, one per hand click, the same bound
+        # `condemned._reap_overridden_rows` carries. Chunked anyway because nothing in the type
+        # says so, and a later planner that admits a wider set would find this read already
+        # safe. Merged into a map keyed by media_key, so the chunks cannot reorder it.
         for chunk in batched(missing, KEY_CHUNK, strict=False):
             extra = (
                 (

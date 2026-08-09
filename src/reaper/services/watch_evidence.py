@@ -81,9 +81,9 @@ log = structlog.get_logger(__name__)
 #: The sibling to match is ``snapshot._insert_first_flags``, the other multi-row INSERT, which
 #: chunks at 300 rows of three bound values "to stay under SQLite's historical 999-variable
 #: limit". Four values a row puts this at 800, under the same bound. It is deliberately NOT
-#: ``db.KEY_CHUNK``: that one is 500 because it chunks a ``WHERE ... IN`` at one variable per
-#: key, so 500 there is 500 variables and 500 here would be 2,000. The read side needs no
-#: companion constant at all: :func:`recall_all` takes the whole table and binds nothing.
+#: ``db.KEY_CHUNK``: that one bounds a ``WHERE ... IN`` at one variable per key, so the same
+#: number here would bind four times as many. The read side needs no companion constant at
+#: all: :func:`recall_all` takes the whole table and binds nothing.
 _CHUNK = 200
 
 #: What the operator is told when the check fires. One string for both branches, because
