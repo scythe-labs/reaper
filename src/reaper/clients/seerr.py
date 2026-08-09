@@ -291,10 +291,7 @@ class SeerrClient(BaseClient):
         self.link_base_url = link_base_url
 
     async def status(self) -> dict[str, Any]:
-        data = await self.get_json("/api/v1/status")
-        if not isinstance(data, dict):
-            raise IntegrationError(self.service, "/status did not return an object")
-        return data
+        return await self.get_dict("/api/v1/status")
 
     async def requests(
         self,
@@ -310,13 +307,10 @@ class SeerrClient(BaseClient):
         on it would quietly analyze the ten most recent requests and report the
         rest as non-existent.
         """
-        payload = await self.get_json(
+        payload = await self.get_dict(
             "/api/v1/request",
             params={"take": take, "skip": skip, "filter": filter_, "sort": sort},
         )
-        if not isinstance(payload, dict):
-            raise IntegrationError(self.service, "/request did not return an object")
-
         total = int((payload.get("pageInfo") or {}).get("results") or 0)
         rows = payload.get("results")
         if not isinstance(rows, list):
@@ -368,9 +362,7 @@ class SeerrClient(BaseClient):
         out: list[SeerrUser] = []
         skip = 0
         while True:
-            payload = await self.get_json("/api/v1/user", params={"take": take, "skip": skip})
-            if not isinstance(payload, dict):
-                raise IntegrationError(self.service, "/user did not return an object")
+            payload = await self.get_dict("/api/v1/user", params={"take": take, "skip": skip})
             results = payload.get("results")
             if not isinstance(results, list):
                 # Unreadable rows are not zero rows. Same defect as :meth:`requests`, and
@@ -399,9 +391,7 @@ class SeerrClient(BaseClient):
         override, or the global default). The ``restricted`` flag it carries is the only
         source of truth for "at their cap right now", computed live inside each type's
         window."""
-        payload = await self.get_json(f"/api/v1/user/{user_id}/quota")
-        if not isinstance(payload, dict):
-            raise IntegrationError(self.service, "/quota did not return an object")
+        payload = await self.get_dict(f"/api/v1/user/{user_id}/quota")
         return UserQuota(
             movie=_parse_quota(payload.get("movie")), tv=_parse_quota(payload.get("tv"))
         )
@@ -414,9 +404,7 @@ class SeerrClient(BaseClient):
         the page. The kind (movie vs tv) picks the endpoint and the title field, since the
         two id spaces overlap and each endpoint names the field differently."""
         kind = "movie" if media_type == "movie" else "tv"
-        payload = await self.get_json(f"/api/v1/{kind}/{tmdb_id}")
-        if not isinstance(payload, dict):
-            raise IntegrationError(self.service, f"/{kind}/{tmdb_id} did not return an object")
+        payload = await self.get_dict(f"/api/v1/{kind}/{tmdb_id}")
         if kind == "movie":
             name = payload.get("title") or payload.get("originalTitle")
             released = payload.get("releaseDate")
@@ -443,9 +431,7 @@ class SeerrClient(BaseClient):
             ("/api/v1/settings/sonarr", "sonarr"),
             ("/api/v1/settings/radarr", "radarr"),
         ):
-            payload = await self.get_json(path)
-            if not isinstance(payload, list):
-                raise IntegrationError(self.service, f"{path} did not return a list")
+            payload = await self.get_list(path)
             for row in payload:
                 if isinstance(row, dict) and (svc := _parse_service(row, kind)) is not None:
                     out.append(svc)

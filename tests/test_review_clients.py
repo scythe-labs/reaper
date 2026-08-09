@@ -10,6 +10,7 @@ must not be relayed same-origin.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ import respx
 
 from reaper import logbuffer
 from reaper.clients.arr import RadarrClient, SonarrClient
-from reaper.clients.base import IntegrationError, SafetyViolationError
+from reaper.clients.base import BaseClient, IntegrationError, SafetyViolationError
 from reaper.clients.plex import GuardedSession
 from reaper.clients.plextv import PlexTvClient
 from reaper.clients.public import PublicClient
@@ -134,12 +135,13 @@ class TestEveryListReadRefusesANonListBody:
                 "/api/v3/importlistexclusion",
                 lambda c: c.exclusions(),
             ),
+            (SeerrClient, "seerr.test", "/api/v1/settings/sonarr", lambda c: c.services()),
         ],
     )
     async def test_a_non_list_200_raises(
         self,
         httpx2_mock: respx.Router,
-        client_cls: type[RadarrClient] | type[SonarrClient],
+        client_cls: type[RadarrClient] | type[SonarrClient] | type[SeerrClient],
         host: str,
         path: str,
         call: Any,
@@ -159,6 +161,80 @@ class TestEveryListReadRefusesANonListBody:
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
             assert await client.movies() == []
+
+
+class TestEveryObjectReadRefusesANonObjectBody:
+    """The list guards' other half, and the half nothing drove. Eleven shape guards were
+    written out by hand in ``arr.py``; the parametrize above reached seven of them and
+    ``tags`` had its own test, so the three object reads were the members missing from the
+    proof (rules 145, 147). They are now one helper with the eight list reads, which is
+    exactly why the population has to be pinned: a site quietly reverted to ``get_json``
+    coerces again, and only a per-site case says so.
+
+    Seerr's five sit here too, because the same helper serves them (rule 72)."""
+
+    @pytest.mark.parametrize(
+        ("client_cls", "host", "path", "call"),
+        [
+            (RadarrClient, "radarr.test", "/api/v3/system/status", lambda c: c.system_status()),
+            (RadarrClient, "radarr.test", "/api/v3/movie/7", lambda c: c.movie_by_id(7)),
+            (SonarrClient, "sonarr.test", "/api/v3/series/7", lambda c: c.series_by_id(7)),
+            (SeerrClient, "seerr.test", "/api/v1/status", lambda c: c.status()),
+            (SeerrClient, "seerr.test", "/api/v1/request", lambda c: c.requests()),
+            (SeerrClient, "seerr.test", "/api/v1/user", lambda c: c.users()),
+            (SeerrClient, "seerr.test", "/api/v1/user/7/quota", lambda c: c.quota(7)),
+            (
+                SeerrClient,
+                "seerr.test",
+                "/api/v1/movie/7",
+                lambda c: c.title(tmdb_id=7, media_type="movie"),
+            ),
+        ],
+    )
+    async def test_a_non_object_200_raises(
+        self,
+        httpx2_mock: respx.Router,
+        client_cls: type[RadarrClient] | type[SonarrClient] | type[SeerrClient],
+        host: str,
+        path: str,
+        call: Any,
+    ) -> None:
+        httpx2_mock.get(host=host, path=path).mock(
+            return_value=httpx.Response(200, json=["bad gateway"])
+        )
+        async with client_cls(f"https://{host}", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError, match="did not return an object"):
+                await call(client)
+
+    async def test_the_message_names_the_path_that_was_asked(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The three arr messages used to be hand-written and dropped the API prefix, so
+        an operator on a v5 Sonarr read "series/7 did not return an object" and could not
+        tell which API path had answered. Generating the message from the path fixes that,
+        and this is the assertion that would notice it going back."""
+        httpx2_mock.get(host="sonarr.test", path="/api/v5/series/7").mock(
+            return_value=httpx.Response(200, json=["bad gateway"])
+        )
+        async with SonarrClient(
+            "https://sonarr.test", "k", safety=READ_ONLY, api_path_prefix="/api/v5"
+        ) as client:
+            with pytest.raises(
+                IntegrationError, match=r"/api/v5/series/7 did not return an object"
+            ):
+                await client.series_by_id(7)
+
+    async def test_a_helper_cannot_be_asked_not_to_raise(self) -> None:
+        """The one property that makes the extraction safe rather than convenient: a
+        ``default=`` or ``coerce=`` parameter would reopen rules 28/93 at every call site
+        at once, from one line nobody reviews again."""
+        for helper in (BaseClient.get_list, BaseClient.get_dict):
+            assert set(inspect.signature(helper).parameters) == {
+                "self",
+                "path",
+                "params",
+                "headers",
+            }
 
 
 class TestAShortSeerrWalkRefusesRatherThanUndercounting:
