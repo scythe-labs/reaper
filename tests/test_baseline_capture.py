@@ -26,17 +26,11 @@ from typing import Any
 
 import pytest
 
-from tests._generators import (
-    functions_that_can_write,
-    keyword_string_values,
-    load_script,
-    returned_string_literals,
-)
+from tests._generators import functions_that_can_write, keyword_string_values, load_script
 
 REPO = Path(__file__).resolve().parents[1]
 _SCRIPT = REPO / "scripts" / "baseline_capture.py"
 _PLANNER = REPO / "src" / "reaper" / "services" / "planner.py"
-_VERDICT = REPO / "src" / "reaper" / "engine" / "verdict.py"
 
 capture = load_script(_SCRIPT)
 
@@ -176,9 +170,15 @@ class TestOneWriterRunsTheGuard:
 
 
 class TestTheHandWrittenSetsAgreeWithTheirSource:
-    """Rule 103. Neither set has a declaration to derive from, so each is reconciled against
-    the source that produces it. Both counts are pinned as well as both memberships, because a
-    matcher that silently collected nothing would agree with an emptied set (rule 145)."""
+    """Rule 103. The step kinds have no declaration to derive from, so they are reconciled
+    against the source that produces them, count as well as membership, because a matcher that
+    silently collected nothing would agree with an emptied set (rule 145).
+
+    The verdicts used to be reconciled here the same way. They are not any more: ``Verdict`` is
+    a ``Literal`` in ``engine.verdict`` and the capture reads it, so mypy fails the engine if a
+    ``return`` in ``decide_verdict`` leaves the set. That is the declaration rule 103 asks for
+    first, and a test walking the AST beside it would be a second answer to a settled question.
+    """
 
     def test_the_step_kinds_are_the_ones_the_planner_writes(self) -> None:
         """The capture publishes the kinds a plan produced. A kind added to the planner and
@@ -189,14 +189,6 @@ class TestTheHandWrittenSetsAgreeWithTheirSource:
 
         assert from_planner == capture._STEP_KINDS
         assert len(from_planner) == 4
-
-    def test_the_verdicts_are_the_ones_decide_verdict_returns(self) -> None:
-        """W4.3 of the simplification plan types this as a ``Literal``. When it lands, the
-        capture derives from that and this test goes away rather than being updated."""
-        from_engine = returned_string_literals(_VERDICT.read_text(), "decide_verdict")
-
-        assert from_engine == capture._VERDICTS
-        assert len(from_engine) == 3
 
     def test_the_committed_capture_uses_only_terms_the_sets_allow(self) -> None:
         """The population the guard scans, not the population the sets describe -- rule 147's

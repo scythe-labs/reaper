@@ -42,7 +42,7 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from sqlalchemy import select
 
@@ -54,6 +54,7 @@ from reaper.config import Settings  # noqa: E402
 from reaper.db.models import ActionStep  # noqa: E402
 from reaper.db.session import create_engine, create_session_factory  # noqa: E402
 from reaper.engine.policy import SCORER_VERSION  # noqa: E402
+from reaper.engine.verdict import Verdict  # noqa: E402
 from reaper.logging import configure_logging  # noqa: E402
 from reaper.services.planner import PlanError, build_plan  # noqa: E402
 from reaper.services.profiles import active_profile  # noqa: E402
@@ -105,10 +106,11 @@ _STEP_KINDS = frozenset(
     }
 )
 
-#: What ``decide_verdict`` returns. Also hand-written, also reconciled by the same test.
-#: W4.3 of the simplification plan proposes typing this as a ``Literal``; when that lands,
-#: derive from it and delete the guard.
-_VERDICTS = frozenset({"condemn", "abstain", "protect"})
+#: What ``decide_verdict`` returns, read off the declaration it returns. Nothing is hand-written
+#: here and no drift guard is needed: mypy fails the engine if a ``return`` in that function
+#: leaves the set, which is rule 103's first option and is why the AST walk that used to check
+#: this pair is gone.
+_VERDICTS = frozenset(get_args(Verdict))
 
 #: Every string this capture may contain, beyond an item id and a hex digest. Anything else
 #: is refused before the file is written, which is what makes committing a title

@@ -114,27 +114,3 @@ def keyword_string_values(source: str, keyword: str) -> set[str]:
             ):
                 found.add(word.value.value)
     return found
-
-
-def returned_string_literals(source: str, function: str) -> set[str]:
-    """Every string a named function returns as a literal.
-
-    The drift guard for a set of magic strings that has no declaration to derive from. Where
-    one is introduced, derive from it and delete the caller (rule 103's first option beats its
-    second).
-
-    Walks INSIDE each return rather than reading its value as a constant. Rule 147 again:
-    ``return "protect" if blocked else "condemn"`` is a return whose value is an ``IfExp``, so
-    a constant-shaped matcher collects neither arm -- and `decide_verdict`, the one function
-    this exists for, opens with exactly that line.
-    """
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == function:
-            return {
-                leaf.value
-                for inner in ast.walk(node)
-                if isinstance(inner, ast.Return) and inner.value is not None
-                for leaf in ast.walk(inner.value)
-                if isinstance(leaf, ast.Constant) and isinstance(leaf.value, str)
-            }
-    raise AssertionError(f"no function named {function!r} in the source given")

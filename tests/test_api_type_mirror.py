@@ -34,6 +34,7 @@ import importlib
 import pkgutil
 import re
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import BaseModel
@@ -466,6 +467,65 @@ class TestEverySimulatorRefusalReachesThePanel:
         )
         for value in self._declared():
             assert f"{value}:" in panel, f"{value} has no heading in STALE_HEADINGS"
+
+
+class TestTheCentralVocabularyIsOneDeclaration:
+    """``Verdict`` and ``Override`` are the words the whole app is written in, and until now
+    they were declared in TypeScript and passed around Python as a bare ``str``.
+
+    Neither is covered by the field comparison above. That walk pairs ``export interface``
+    declarations and compares field NAMES; these two are ``export type`` unions, so both sides
+    agree that ``verdict`` exists and neither notices that they disagree about what may be in
+    it. That is the same hole ``SimStale`` above is written for, at the two names it would cost
+    the most: a verdict the browser does not know renders with no ``.score-*`` class at all,
+    because ``ReviewQueue.tsx`` interpolates the value straight into a class name.
+
+    Bounded per rule 147: read however the union is spaced, but only while it is one
+    ``export type NAME = ...;`` statement of quoted literals. The member count is pinned as
+    well as the membership, so a declaration this stops finding fails loudly rather than
+    quietly matching nothing (rule 145).
+    """
+
+    def _declared(self, name: str) -> set[str]:
+        found = re.search(rf"export type {name}\s*=\s*([^;]+);", API_TS.read_text(encoding="utf-8"))
+        assert found is not None, (
+            f"frontend/src/api.ts no longer declares `export type {name}` as one statement, so "
+            "this guard is reading nothing. Re-point it at the new spelling."
+        )
+        return set(re.findall(r'"([^"]+)"', found.group(1)))
+
+    def test_the_browser_knows_every_verdict_the_engine_decides(self) -> None:
+        from reaper.engine.verdict import Verdict
+
+        server = set(get_args(Verdict))
+        assert self._declared("Verdict") == server, (
+            "engine.verdict.Verdict and frontend/src/api.ts's Verdict union disagree. The "
+            "queue interpolates this value into a class name (ReviewQueue.tsx's "
+            "`score-${...}` and `strip-${...}`), so a verdict the browser does not know "
+            "renders unstyled rather than failing."
+        )
+        assert len(server) == 3
+
+    def test_the_browser_knows_every_override_the_owner_can_set(self) -> None:
+        from reaper.engine.verdict import Override
+
+        server = set(get_args(Override))
+        assert self._declared("Override") == server, (
+            "engine.verdict.Override and frontend/src/api.ts's Override union disagree. "
+            "api.schemas.OverrideIn.decision validates against the Python side, so a member "
+            "only the browser knows is refused at the route with a 422."
+        )
+        assert len(server) == 2
+
+    def test_the_request_model_reads_the_declaration_rather_than_restating_it(self) -> None:
+        """Rule 131. ``OverrideIn.decision`` used to spell the pair itself, which is a second
+        copy of the vocabulary sitting one import away from the first."""
+        from reaper.api.schemas import OverrideIn
+        from reaper.engine.verdict import Override
+
+        assert set(get_args(OverrideIn.model_fields["decision"].annotation)) == set(
+            get_args(Override)
+        )
 
 
 class TestEveryGateIdHasOperatorCopy:
