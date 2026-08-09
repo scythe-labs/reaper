@@ -20,7 +20,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
 
-from reaper.api.schemas import GateSettingIn, PolicyIn
+from reaper.api.schemas import GateSettingIn, GateSettingOut, PolicyIn
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.engine import policy as policy_module
 from reaper.engine.dormancy import dormancy_days, reference_instant
@@ -769,6 +769,19 @@ class TestDefaultPolicy:
             GateSettingIn(gate=gate, enabled=True)
 
         assert gate.value in str(caught.value)
+
+    @pytest.mark.parametrize("gate", sorted(set(GateId) - _BUILDABLE_GATES))
+    def test_the_same_gate_is_still_carried_on_the_way_out(self, gate: GateId) -> None:
+        """The twin of the refusal above, and the two together are the whole of #627.
+
+        ``PolicyOut.body`` was typed as the request model, so this refusal ran on the
+        RESPONSE as well and ``GET /api/policy`` raised on the one stored shape the loader
+        preserves on purpose -- an enabled ``whitelisted``/``curated_list`` whose replacement
+        keep rule cannot be named. Refusing a write of these ids and serving one that is
+        already stored are different questions, and only the first has an operator asking
+        for something that does not exist.
+        """
+        assert GateSettingOut(gate=gate, enabled=True).gate is gate
 
     @pytest.mark.parametrize("gate", sorted(PolicyBody.RETIRED_GATES))
     def test_a_retired_gate_cannot_take_an_install_offline(self, gate: GateId) -> None:

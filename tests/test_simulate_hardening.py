@@ -42,7 +42,13 @@ from sqlalchemy.orm import Session
 
 from reaper.api.policy import _policy_out, _to_body
 from reaper.api.review import _contribution
-from reaper.api.schemas import ConditionIn, GateSettingIn, PolicyIn, SignalSettingIn
+from reaper.api.schemas import (
+    ConditionIn,
+    GateSettingIn,
+    PolicyBodyOut,
+    PolicyIn,
+    SignalSettingIn,
+)
 from reaper.api.simulate import _fired_gates, _has_blocked_protections
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -931,7 +937,8 @@ class TestSwitchingAProtectionIsPreviewedRatherThanRefused:
 
 
 class TestTheWireRoundTripPreservesBothHashes:
-    """A body that survives ``PolicyBody -> PolicyIn -> _to_body`` keeps both simulator hashes.
+    """A body surviving ``PolicyBody -> PolicyBodyOut -> PolicyIn -> _to_body`` keeps both
+    simulator hashes.
 
     This is the test whose absence let the simulator die silently. ``_policy_out`` builds the
     wire body field by field, so a ``PolicyBody`` field it forgets is not merely missing from
@@ -946,9 +953,16 @@ class TestTheWireRoundTripPreservesBothHashes:
 
     @staticmethod
     def _round_trip(body: PolicyBody) -> PolicyBody:
-        """Through the real response builder and the real request parser, not a copy."""
+        """Through the real response builder and the real request parser, not a copy.
+
+        The re-parse is the request parser, not ceremony. ``_policy_out`` answers with
+        ``PolicyBodyOut``, which is deliberately wider than what a save accepts, and the
+        browser posts that same body back: FastAPI validates it as a ``PolicyIn`` before any
+        route sees it. Handing the served model straight to ``_to_body`` would skip the one
+        hop where a body the operator cannot save is caught (#627).
+        """
         out = _policy_out(body, "Movies", requests_app_configured=True, settings=ProfileSettings())
-        return _to_body(out.body)
+        return _to_body(PolicyIn.model_validate(out.body.model_dump(mode="json")))
 
     def test_a_body_stored_under_an_older_schema_version_still_simulates(self) -> None:
         stored = DEFAULT_MOVIE_POLICY.model_copy(update={"schema_version": SCHEMA_VERSION - 1})
@@ -1033,7 +1047,10 @@ class TestAnUpgradedInstallStillGetsNumbers:
     """
 
     @staticmethod
-    def _simulate(client: TestClient, body: PolicyIn) -> dict[str, Any]:
+    def _simulate(client: TestClient, body: PolicyBodyOut) -> dict[str, Any]:
+        """Takes the SERVED body, which is what these tests hand back: the request boundary
+        is the route's own, and posting something it refuses is the failure, not a type error
+        here."""
         r = client.post(
             "/api/policy/simulate",
             json=body.model_dump(mode="json"),

@@ -25,7 +25,8 @@ from reaper.api import tags as api_tags
 from reaper.api.review import _sessions
 from reaper.api.schemas import (
     ConditionIn,
-    GateSettingIn,
+    GateSettingOut,
+    PolicyBodyOut,
     PolicyIn,
     PolicyOut,
     PolicyProbeIn,
@@ -194,7 +195,13 @@ def _policy_out(
             ).signals
         ],
         repairs=list(repairs),
-        body=PolicyIn(
+        # The SERVED body model, not the request one. Every other row rebuilt below is
+        # loosened or matched by its wire model -- `SignalSettingIn` and `ConditionIn` ask
+        # strictly less than `engine.policy`'s own `SignalSetting` and `ConditionSpec`, so a
+        # body that loaded satisfies them -- and the gate row was the single place the wire
+        # model asked for MORE than the engine did. It refuses a retired id the loader keeps
+        # on purpose, which turned this rebuild into a 500 on the editor (#627).
+        body=PolicyBodyOut(
             name=name,
             media_type=body.media_type,
             condemn_at=body.condemn_at,
@@ -209,7 +216,7 @@ def _policy_out(
             protect_incomplete_seasons=body.protect_incomplete_seasons,
             flag_keep_conflicts=body.flag_keep_conflicts,
             gates=[
-                GateSettingIn(
+                GateSettingOut(
                     gate=g.gate,
                     enabled=g.enabled,
                     threshold=g.threshold,

@@ -30,10 +30,12 @@ from reaper.crypto import SecretBox
 from reaper.db.base import Base
 from reaper.db.models import (
     ActionStep,
+    AppSetting,
     Candidate,
     FirstFlagged,
     Instance,
     InstanceKind,
+    ListConfig,
     PlexServer,
     Profile,
     Snapshot,
@@ -1633,6 +1635,112 @@ class TestPolicyPersistence:
 
         assert out["name"] == "default"
         assert out["repairs"] == ["fell_back"]
+
+    @pytest.mark.parametrize(
+        ("gate", "keep_tags", "lists"),
+        [
+            pytest.param(
+                "whitelisted",
+                ["reaper-keep"],
+                [("Saturday movie night", "arr_tag", {"tags": ["movie-night"]})],
+                id="the tag list their tags became is gone",
+            ),
+            pytest.param(
+                "curated_list",
+                [],
+                [("IMDb Top 250", "plex_collection", {})],
+                id="a collection of their own already holds the shipped list's name",
+            ),
+        ],
+    )
+    def test_a_leftover_list_protection_still_opens_the_editor(
+        self,
+        settings: Settings,
+        gate: str,
+        keep_tags: list[str],
+        lists: list[tuple[str, str, dict[str, Any]]],
+    ) -> None:
+        """#627, and the pair of routes that reach it.
+
+        ``convert_list_protections`` leaves an ENABLED ``whitelisted``/``curated_list`` row in
+        the body when its replacement keep rule cannot be named, so the cover stands and
+        ``build_gates`` refuses the scan out loud rather than the protection being withdrawn
+        in silence (rule 38). Both halves are reachable on a real upgrade: the tag list the
+        conversion looks for is the operator's to rename, retag or delete, and the shipped IMDb
+        list is skipped by the upgrade migration when a list of that name already exists under
+        any source, so either row can be missing on its own.
+
+        Seeded and flagged BEFORE the app boots, which is the state that migration leaves: the
+        seed is guarded by ``lists_seeded`` rather than by the rows, so an install that has
+        been through it never gains a second shipped copy.
+
+        The editor is the only place this state can be cleared, and it was rebuilding every
+        loaded row through the SAVE boundary, so it answered 500 for exactly the bodies it
+        exists to repair. Nothing here relaxes that boundary: the save below is still refused,
+        and the row leaves only when the operator takes it off.
+        """
+        stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        stored["protect_conditions"] = []
+        stored["keep_tags"] = keep_tags
+        stored["keep_tags_match"] = "any"
+        stored["gates"] = [{"gate": gate, "enabled": True}, *stored["gates"]]
+
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            for name, source, config in lists:
+                session.add(
+                    ListConfig(
+                        name=name,
+                        source=source,
+                        config_json=json.dumps(config),
+                        enabled=True,
+                        created_at=utcnow(),
+                    )
+                )
+            session.add(AppSetting(key="lists_seeded", value_json="true", updated_at=utcnow()))
+            session.add(
+                PolicyModel(
+                    name="upgraded",
+                    media_type="movie",
+                    body_json=json.dumps(stored),
+                    policy_hash="0" * 64,
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+        engine.dispose()
+
+        with TestClient(create_app(settings)) as client:
+            login(client, settings)
+            loaded = client.get("/api/policy")
+
+            assert loaded.status_code == 200, loaded.text
+            out = loaded.json()
+            # Served as it is stored, still on: the editor's leftover-row notice renders off
+            # this row, and it is the switch beside it that the operator turns off.
+            row = next(g for g in out["body"]["gates"] if g["gate"] == gate)
+            assert row["enabled"] is True
+            # The savebar is up either way, so there is a Save to press once they have.
+            assert out["repairs"] == ["lists_migrated"]
+
+            # Serving it did NOT make it savable. Handing the body straight back is refused,
+            # in the plain sentence the SPA renders verbatim (rule 21).
+            refused = client.post("/api/policy", json=out["body"])
+
+            assert refused.status_code == 422
+            message = " ".join(d["msg"] for d in refused.json()["detail"])
+            assert gate in message
+            assert "Value error" not in message
+
+            # The exit the row's notice names: take it off, save, and the install scans again.
+            cleared = dict(out["body"])
+            cleared["gates"] = [g for g in cleared["gates"] if g["gate"] != gate]
+            saved = client.post("/api/policy", json=cleared)
+
+            assert saved.status_code == 200, saved.text
+            reloaded = client.get("/api/policy").json()
+            assert gate not in {g["gate"] for g in reloaded["body"]["gates"]}
+            assert reloaded["repairs"] == []
 
     def test_a_saved_policy_is_what_loads_next(self, client: TestClient) -> None:
         client.post("/api/policy", json=_policy(condemn_at=55, name="mine"))

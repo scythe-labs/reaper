@@ -180,10 +180,15 @@ function gateWarningField(gate: string, setting: keyof Omit<GateSetting, "gate">
 function GateRow({
   gate,
   onChange,
+  onRemove,
   warnings,
 }: {
   gate: GateSetting;
   onChange: (g: GateSetting) => void;
+  /** Take the row out of the body entirely. What "off" means for a retired id: there is no
+   *  such protection to store in either position, and the save boundary refuses the id
+   *  whether it is on or off (`GateSettingIn._must_be_authorable`). */
+  onRemove: () => void;
   /** Every warning rendered at the `gates` anchor, unfiltered. `warningsDescribing` numbers
    *  ids by position within THAT list, so narrowing before handing it over would point each
    *  box at the wrong notice. */
@@ -213,7 +218,16 @@ function GateRow({
       <label className="toggle rule-toggle">
         <Switch
           checked={gate.enabled}
-          onChange={(enabled) => onChange({ ...gate, enabled })}
+          // Turning a RETIRED row off takes it out of the body rather than storing it off,
+          // because there is nothing to store: the save boundary refuses the id in either
+          // position, so `{...gate, enabled: false}` left the page unsavable and the notice
+          // below naming an exit that did not work (#627). Every live protection keeps the
+          // ordinary two-position switch, and `meta.retired` is exactly the server's
+          // "no policy row can carry this id" -- `tests/test_api_type_mirror.py` pins the two
+          // sets against each other, both directions.
+          onChange={(enabled) =>
+            meta.retired && !enabled ? onRemove() : onChange({ ...gate, enabled })
+          }
           describedBy={describes("enabled")}
         />
         <span className="rule-name">{meta.label}</span>
@@ -225,11 +239,12 @@ function GateRow({
           (`ScanConfigError`). The row rendered through the ordinary path with a live-sounding
           label and no warning, so the one switch that was stopping every scan looked like an
           ordinary healthy protection. Said beside that switch, which is what fixes it
-          (rules 25, 42). */}
+          (rules 25, 42). The sentence says what the switch now does, since the row leaves the
+          page on that click and nothing else on screen would account for it. */}
       {meta.retired && gate.enabled && (
         <Notice tone="warn" inline>
           A leftover from an older version, and Reaper won&apos;t scan while it is on. Add its list
-          again on Settings → Lists, or turn this off to stop protecting those titles.
+          again on Settings → Lists, or turn it off to remove it and stop protecting those titles.
         </Notice>
       )}
 
@@ -2066,12 +2081,22 @@ export function PolicyEditor({
               gates[i] = g;
               update({ gates });
             };
+            // Only a retired row reaches this, and it is the one edit that is a REMOVAL: the
+            // id cannot be saved in either switch position, so taking it off means taking it
+            // out. By index rather than by id, like `setGate` above.
+            const dropGate = () => update({ gates: draft.gates.filter((_, j) => j !== i) });
             // A protection that carries its own settings renders as a card below the plain
             // rows (the rating card), so the visual weight says which protections have more
             // to configure. It is skipped here.
             if (gate.gate === "rating_floor") return null;
             return (
-              <GateRow key={gate.gate} gate={gate} onChange={setGate} warnings={gateWarnings} />
+              <GateRow
+                key={gate.gate}
+                gate={gate}
+                onChange={setGate}
+                onRemove={dropGate}
+                warnings={gateWarnings}
+              />
             );
           })}
         </ul>

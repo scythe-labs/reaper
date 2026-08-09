@@ -21,7 +21,13 @@ export type GateMeta = {
    *  counts, so its copy has to stay readable. The docs' protections-table guard excludes
    *  these, because that table lists the switches an operator can set. **It does not mean
    *  the id is inert**: `season_progression` fires on every TV scan and `custom` on every
-   *  keep rule the operator wrote, which is why they need copy at all. */
+   *  keep rule the operator wrote, which is why they need copy at all.
+   *
+   *  It is also what `PolicyEditor` reads to decide that turning a row off REMOVES it: a
+   *  policy carrying one of these cannot be saved in either switch position. That makes this
+   *  flag the browser's copy of `engine.gates.POLICY_AUTHORABLE_GATES`, and
+   *  `tests/test_api_type_mirror.py` fails on either set drifting from the other, in either
+   *  direction (rules 103, 144). */
   retired?: boolean;
 };
 
@@ -139,11 +145,11 @@ export const GATE_META: Record<string, GateMeta> = {
   // None of the four can reach `PolicyEditor`'s leftover-row notice, whose copy is about a
   // gate whose LIST is gone: `PolicyBody._drop_retired_gates` strips `unmanaged` and
   // `others_watching` from every stored body on load, and `GateSettingIn._must_be_authorable`
-  // refuses `season_progression` and `custom`, which no policy row builds. That notice is in
-  // fact unreachable for EVERY id right now, including the two it was written for:
-  // `api/policy.py`'s `_policy_out` rebuilds each row as a `GateSettingIn`, so the same
-  // validator rejects a stored `whitelisted` on the way OUT and the route 500s (#627). The
-  // point here is only that these four cannot make it say something wrong.
+  // refuses `season_progression` and `custom`, which no policy row builds. The two it WAS
+  // written for reach it now: `api/policy.py`'s `_policy_out` serves each loaded row through
+  // `GateSettingOut`, which is the same model without that refusal, so a stored `whitelisted`
+  // arrives instead of taking the route down with it (#627). The point here is only that
+  // these four cannot make the notice say something wrong.
   // NOT "Your season rules", which names a lever that does not always exist. Every season on
   // disk is held under this id when the guard cannot be ANSWERED -- `progress_is_establishable`
   // is False whenever the watch mirror reaches back less far than `in_progress_hold_days`,
