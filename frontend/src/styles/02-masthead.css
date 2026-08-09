@@ -155,7 +155,7 @@
   height: 24px;
 }
 /* Deletion armed, said as a mark on the one section that does it. `SafetyBanner` states the
-   same fact in words on every view, which is why this is aria-hidden in App.tsx. Amber is the
+   same fact in words on every view, which is why this is aria-hidden in SectionNav.tsx. Amber is the
    app's "we could not look" tone (--unknown), so a failed read never reads as disarmed. */
 .view-armed {
   position: absolute;

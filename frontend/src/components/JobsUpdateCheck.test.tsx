@@ -67,7 +67,7 @@ beforeEach(() => {
   apiMock.notifications.mockResolvedValue({ has_webhook: false });
 });
 
-/** Stands in for the account chip in the app's header (`UserMenu`, App.tsx), which holds the
+/** Stands in for the account chip in the app's header (`UserMenu.tsx`), which holds the
  *  same `["update"]` query on every page and is therefore what turns an invalidation into a
  *  real re-ask. Settings does not mount the chip, so without this the query has no observer
  *  here and the invalidation would only mark it stale -- a test that passes whether or not the

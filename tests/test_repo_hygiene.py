@@ -2843,7 +2843,7 @@ def test_every_silent_notice_says_why_it_is_silent() -> None:
 # which argues the same thing in as many words. A ban would have to exempt all of them; a count
 # does not care which way a site resolved, only that nobody added one without deciding.
 _QUERY_FAILURE_HANDLES = {
-    "frontend/src/App.tsx": 8,
+    "frontend/src/App.tsx": 7,
     "frontend/src/components/DeletionToggle.tsx": 1,
     "frontend/src/components/Fairness.tsx": 1,
     # Whether each protection list is still protecting anything (#475). Undivided on purpose,
@@ -2884,6 +2884,7 @@ _QUERY_FAILURE_HANDLES = {
     # "we could not look" branch is the same handle it always had, now in its own module so
     # the wizard states the regime from the same declaration.
     "frontend/src/components/SafetyBanner.tsx": 1,
+    "frontend/src/components/SectionNav.tsx": 1,
     # 6 -> 7: the library pickers now consult the SYNC's failure as well as the query's. A read
     # that lands empty while the sync that would fill it fails is the ordinary answer when Plex
     # is not linked at all, and with only the query consulted the panel stated as fact that the
