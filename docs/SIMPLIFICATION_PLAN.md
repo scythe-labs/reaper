@@ -2246,14 +2246,22 @@ disagreement.
    didn't update" in red. **Neither sentence is pinned by any test, on either side.** Fix: compute
    the summary in the route after the merge, ship it in `LeavingSoonOut`, render both from it.
 
-   > **Fixed, #617. The summary is the service's, not the route's.** The route cannot own it:
+   > **Fixed, #617, on this branch rather than off `dev`.** *Entering a phase* asks a session
+   > that fixes item 1, 4 or 5 anyway to branch off `dev`, and the owner directed otherwise, so
+   > the fix reaches operators when this branch does and #555 does not auto-close on merge.
+   > Phase 4's row stays at 4 of 4: that paragraph is also what makes this not phase 4's work.
+   >
+   > **The summary is the service's, not the route's.** The route cannot own it:
    > `after_scan` reaches `_run_pass` without passing through a route at all, so a summary
    > computed at the edge leaves every automatic pass storing the sentence this item is about.
    > `LeavingSoonResult` grew `no_libraries`, `ok` and `summary`, the no-libraries case moved
    > into the service ahead of the store, and `LeavingSoonOut` ships `ok` and `result` off that
    > same derivation. A **fourth** copy the item does not name was found and fixed with it:
    > `PlexPanel.tsx`'s `lsStatus` worded the preview caveat itself off `applied`, on the very
-   > screen those libraries are turned on.
+   > screen those libraries are turned on. It was also the copy with no test on either end,
+   > which is how it kept that caveat and a second defect the review found beside it: it read
+   > the completed pass alone, so a shelf a later scan had skipped read there as a current
+   > verdict. That comparison is now one declaration (`shelfStatus.ts`) both surfaces make.
 
 2. **`InstanceError` maps to two different HTTP statuses.** `api/settings.py` hand-writes the
    mapping five times: 422 at three sites, 404 at two. The 404 arms are correct only by accident,

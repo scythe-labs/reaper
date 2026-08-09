@@ -1192,3 +1192,80 @@ describe("saving the Plex web address", () => {
     await waitFor(() => expect(address).toHaveFocus());
   });
 });
+
+describe("the shelf status line", () => {
+  // The one sentence on this screen that says how the Leaving Soon shelf is doing, and until
+  // now the only one of the four copies of that answer with no test on it -- which is how it
+  // went on wording its own preview caveat while the other three were fixed (#555), and how
+  // it went on answering for a shelf a later scan had skipped.
+  const PASS = {
+    at: "2026-08-03T02:00:00+00:00",
+    movies: 280,
+    seasons: 311,
+    applied: true,
+    ok: true,
+    result: "4 added, 1 cleared",
+  };
+  /** After `PASS`, since the whole decision is which record is newer (rule 141). */
+  const SKIP = { at: "2026-08-04T20:06:00+00:00", result: "Reaper couldn't reach Plex" };
+
+  async function statusLine(over: Record<string, unknown>): Promise<string> {
+    apiMock.leavingSoonSettings.mockResolvedValue({
+      enabled: true,
+      allow_unarmed: false,
+      last: PASS,
+      last_skip: null,
+      ...over,
+    });
+    const { container } = renderPanel();
+    const line = await waitFor(() => {
+      const found = [...container.querySelectorAll(".set-status")].find((n) =>
+        n.textContent?.includes("on the shelves"),
+      );
+      expect(found, "the shelf status line is not on the panel").toBeDefined();
+      return found as HTMLElement;
+    });
+    return line.textContent ?? "";
+  }
+
+  /** The whole line bar the elapsed phrase, which is the wall clock and not a claim this
+   *  panel makes (rule 133). Anchored at both ends, so a stray lead is a failure. */
+  const LINE = (lead: string) =>
+    new RegExp(
+      `^${lead}Last updated .+, 280 movies and 311 seasons on the shelves, ` +
+        "next update after the next scan\\.$",
+    );
+
+  it("leads with the pass's own sentence, never one worded here", async () => {
+    expect(await statusLine({})).toMatch(LINE("4 added, 1 cleared\\. "));
+  });
+
+  it("says a later scan skipped the shelves, and past-tenses the counts it left behind", async () => {
+    // Without this the panel answered with the completed pass alone: a green, confident
+    // verdict about a shelf that has stopped updating, on the screen an operator comes to
+    // when they suspect exactly that.
+    const line = await statusLine({ last_skip: SKIP });
+
+    expect(line).toContain("A later scan didn't update the shelves. The Jobs page says why.");
+    expect(line).toContain("were on the shelves at the last update");
+    expect(line).not.toContain("4 added, 1 cleared");
+  });
+
+  it("goes back to the pass once a later one lands", async () => {
+    // The direction that proves it COMPARES the two. Nothing clears a skip, so without this
+    // the panel would report a recovered shelf as broken forever.
+    const line = await statusLine({
+      last: { ...PASS, at: "2026-08-04T22:30:00+00:00" },
+      last_skip: SKIP,
+    });
+
+    expect(line).toContain("4 added, 1 cleared.");
+    expect(line).not.toContain("didn't update the shelves");
+  });
+
+  it("opens with the date, not a stray period, for a row stored before summaries existed", async () => {
+    // `ok` and `result` were added to the stored row after the shelf shipped, and the JSON
+    // is never migrated, so a tester's row can thaw as `result: ""`.
+    expect(await statusLine({ last: { ...PASS, result: "" } })).toMatch(LINE(""));
+  });
+});

@@ -214,9 +214,11 @@ class LeavingSoonLastOut(BaseModel):
     #: one turned on to update. Never false merely because it ran in preview (unarmed).
     #: This, not ``applied``, is what should color the Jobs page's status dot.
     ok: bool
-    #: The pass's own one-line summary (``LeavingSoonResult.summary``), for the Jobs page's
-    #: resting line and the Plex panel's shelf status. Rendered as it arrives: every surface
-    #: reporting a pass reads this string rather than wording one of its own (#555).
+    #: The pass's own one-line summary (``LeavingSoonResult.summary``). Rendered as it
+    #: arrives: no surface words a pass of its own (#555). The Plex panel's shelf status
+    #: shows it on every pass; the Jobs row shows it only when ``ok`` is false, since
+    #: ``JobStatus`` reads it as the reason a run failed and a run that worked is already
+    #: described by the counts beside it.
     result: str
 
 

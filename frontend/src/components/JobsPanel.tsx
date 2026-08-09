@@ -14,6 +14,7 @@ import { announce } from "../announce";
 import { api, type Schedule, type ScheduledJob } from "../api";
 import { useBackGuard } from "../backnav";
 import { count } from "../format";
+import { shelfSkipIsCurrent } from "../shelfStatus";
 import { JobStatus, useJobFlash } from "./JobStatus";
 import { ModalShell } from "./ModalShell";
 import { ScanRow } from "./ScanBar";
@@ -470,9 +471,10 @@ function LeavingSoonRow({
   // a line reading "Runs after every scan". `after_scan` records the skip separately; prefer
   // it only while it is actually newer, so a pass that later completes wins on its own
   // timestamp with nothing to clear. Every clause of this is ScanRow's treatment of a
-  // scheduled scan that crashed and wrote no snapshot, at its sibling (rule 72).
-  const currentSkip =
-    skip && (!last || new Date(skip.at).getTime() > new Date(last.at).getTime()) ? skip : null;
+  // scheduled scan that crashed and wrote no snapshot, at its sibling (rule 72). The
+  // comparison itself is shared with the Plex panel's status line (`shelfStatus.ts`), which
+  // is the other surface that has to make it.
+  const currentSkip = shelfSkipIsCurrent(ls.data) ? skip : null;
 
   if (!enabled) {
     return (
