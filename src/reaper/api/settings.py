@@ -210,11 +210,15 @@ class LeavingSoonLastOut(BaseModel):
     movies: int
     seasons: int
     applied: bool
-    #: Whether the last sync was actually clean: false only for a real per-library
-    #: problem, never merely because it ran in preview (unarmed). This, not ``applied``,
-    #: is what should color the Jobs page's status dot.
+    #: Whether the last sync did what it set out to do: no library failed, and there was
+    #: one turned on to update. Never false merely because it ran in preview (unarmed).
+    #: This, not ``applied``, is what should color the Jobs page's status dot.
     ok: bool
-    #: A short plain-language summary of the last sync, for the Jobs page's resting line.
+    #: The pass's own one-line summary (``LeavingSoonResult.summary``). Rendered as it
+    #: arrives: no surface words a pass of its own (#555). The Plex panel's shelf status
+    #: shows it on every pass; the Jobs row shows it only when ``ok`` is false, since
+    #: ``JobStatus`` reads it as the reason a run failed and a run that worked is already
+    #: described by the counts beside it.
     result: str
 
 

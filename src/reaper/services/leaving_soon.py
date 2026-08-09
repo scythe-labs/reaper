@@ -182,6 +182,44 @@ class LeavingSoonResult:
     def problems(self) -> list[str]:
         return [f"{o.section_title}: {o.error}" for o in self.outcomes if o.error]
 
+    @property
+    def no_libraries(self) -> bool:
+        """Nothing is turned on, so the pass had nothing it was allowed to touch.
+
+        One outcome is recorded per enabled library (``sync_shelves``), so an empty list is
+        exactly that state, and never a library that ran and found nothing to do.
+        """
+        return not self.outcomes
+
+    @property
+    def ok(self) -> bool:
+        """Whether the pass did what it set out to do: no library failed, and there was one
+        turned on to update. Preview is not a failure, so this stays true there -- the shelf
+        was computed and the heads-up went out, and only the Plex write was held back."""
+        return not self.problems and not self.no_libraries
+
+    @property
+    def summary(self) -> str:
+        """One plain sentence saying how this pass went.
+
+        Every surface reporting the pass reads this one: the stored Jobs row, the response the
+        "Update now" button flashes, and the Plex panel's status line. It was written twice --
+        here, and again in TypeScript over the response -- and the two disagreed, because the
+        route added the no-libraries case AFTER this had been stored. A pass with nothing
+        turned on was stored green while the button flashed red about the same pass (#555).
+
+        The order is the fix. Nothing turned on is reported as itself rather than as preview,
+        which is what ``applied`` alone calls it (it is false whenever there are no outcomes),
+        and a real per-library failure beats the benign preview caveat.
+        """
+        if self.no_libraries:
+            return "No libraries are turned on, so no shelf was updated"
+        if self.problems:
+            return "Some shelves didn't update"
+        if not self.applied:
+            return "Preview only, nothing written"
+        return f"{self.added:,} added, {self.removed:,} cleared"
+
 
 def _grace_keys(report: GraceReport) -> tuple[set[int], set[int], dict[int, str]]:
     """The in-grace rating keys by kind, plus rating key -> title for the announce.
@@ -511,17 +549,8 @@ async def _run_pass(
         seasons_on_shelves=sum(o.on_shelf for o in outcomes if o.kind == "show"),
     )
 
-    # A plain-language summary for the Jobs page's status line, in the same precedence a
-    # real per-library problem takes over the (benign) preview-mode caveat, which takes
-    # over a clean run's counts. ``applied`` alone cannot drive this: it is false in
-    # preview too, and a preview with no problems is not a failure.
-    if result.problems:
-        last_result = "Some shelves didn't update"
-    elif not result.applied:
-        last_result = "Preview only, nothing written"
-    else:
-        last_result = f"{result.added} added, {result.removed} cleared"
-
+    # The row stores the same two answers the route hands the browser, off one derivation
+    # (``ok`` and ``summary``). Nothing downstream re-words this pass.
     async with session_factory() as session:
         await app_settings.set_leaving_soon_announced(session, set(result.announced))
         await app_settings.set_leaving_soon_last(
@@ -530,8 +559,8 @@ async def _run_pass(
             movies=result.movies_on_shelves,
             seasons=result.seasons_on_shelves,
             applied=result.applied,
-            ok=not result.problems,
-            result=last_result,
+            ok=result.ok,
+            result=result.summary,
         )
         await session.commit()
 

@@ -21,11 +21,15 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session
 
+from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
+from reaper.db.models import PlexServer
 from reaper.db.session import create_engine, create_session_factory
 from reaper.services import app_settings, leaving_soon
 
@@ -187,6 +191,40 @@ class TestTheSettingsRoutes:
         # feature, never an "everything" expansion.
         body = client.put("/api/settings/plex/libraries", json={"enabled_keys": []}).json()
         assert all(lib["enabled"] is False for lib in body)
+
+    def test_a_pass_with_no_libraries_says_the_same_thing_on_both_surfaces(
+        self, client: TestClient, sync_db: Engine
+    ) -> None:
+        """The shelf on, a server linked, and no library turned on: one pass, one sentence.
+
+        The route used to name this case in the response AFTER the pass had stored its own
+        summary, so the two disagreed about it -- the row rested green saying "Preview only,
+        nothing written" while the button flashed a failure (#555). Both halves are asserted
+        here, because a fix on either alone leaves the contradiction standing.
+
+        Hermetic: with no library enabled the reconcile visits no section, so the client is
+        built and closed without ever connecting.
+        """
+        box: SecretBox = client.app.state.secret_box  # type: ignore[attr-defined]
+        with Session(sync_db) as session:
+            session.add(
+                PlexServer(
+                    machine_identifier="abc123",
+                    name="Example Server",
+                    connection_uri="http://plex.local:32400",
+                    token_enc=box.encrypt("plex-token"),
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+        client.put("/api/settings/leaving-soon", json={"enabled": True})
+
+        body = client.post("/api/leaving-soon/sync").json()
+
+        assert body["result"] == "No libraries are turned on, so no shelf was updated"
+        assert body["ok"] is False
+        stored = client.get("/api/settings/leaving-soon").json()["last"]
+        assert (stored["ok"], stored["result"]) == (body["ok"], body["result"])
 
     def test_a_manual_update_while_off_is_refused_in_plain_words(self, client: TestClient) -> None:
         resp = client.post("/api/leaving-soon/sync")

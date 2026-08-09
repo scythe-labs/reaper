@@ -17,6 +17,8 @@ from reaper.services.grace import GraceItem, GraceReport
 from reaper.services.leaving_soon import (
     LEAVING_SOON_COLLECTION,
     LEAVING_SOON_LABEL,
+    LeavingSoonResult,
+    ShelfOutcome,
     announce_new,
     reconcile,
     sync_section,
@@ -130,6 +132,75 @@ class _FakeNotifier:
     async def announce_leaving_soon(self, titles: list[str], *, grace_days: int) -> bool:
         self.announced = titles
         return True
+
+
+def _outcome(
+    *,
+    added: int = 0,
+    removed: int = 0,
+    applied: bool = True,
+    error: str | None = None,
+) -> ShelfOutcome:
+    return ShelfOutcome(
+        section_key=2,
+        section_title="Movies",
+        kind="movie",
+        added=added,
+        removed=removed,
+        on_shelf=added,
+        applied=applied,
+        error=error,
+    )
+
+
+def _pass(*outcomes: ShelfOutcome) -> LeavingSoonResult:
+    return LeavingSoonResult(
+        outcomes=list(outcomes),
+        notified=False,
+        announced=frozenset(),
+        movies_on_shelves=0,
+        seasons_on_shelves=0,
+    )
+
+
+class TestTheSummary:
+    """The one sentence every surface reports this pass with (rule 104).
+
+    Written here and nowhere else: the stored Jobs row, the "Update now" response and the
+    Plex panel's status line all render this string, so the four branches and their ORDER
+    are the whole contract. The order is what #555 was: the route named the no-libraries
+    case after the row had already been stored as a preview.
+    """
+
+    def test_nothing_turned_on_is_reported_as_itself_not_as_preview(self) -> None:
+        # The bug's exact state. `applied` is false with no outcomes, so a ladder that asks
+        # about preview first calls a misconfiguration a successful dry run.
+        result = _pass()
+        assert result.applied is False
+        assert result.summary == "No libraries are turned on, so no shelf was updated"
+        assert result.ok is False
+
+    def test_a_library_that_failed_beats_the_preview_caveat(self) -> None:
+        result = _pass(_outcome(applied=False, error="connection refused"))
+        assert result.summary == "Some shelves didn't update"
+        assert result.ok is False
+
+    def test_a_preview_is_not_a_failure(self) -> None:
+        # Read-only with no opt-in: computed, announced, and deliberately not written. The
+        # tick stays green, and the sentence says why nothing moved in Plex.
+        result = _pass(_outcome(added=3, applied=False))
+        assert result.summary == "Preview only, nothing written"
+        assert result.ok is True
+
+    def test_a_clean_pass_counts_what_it_did(self) -> None:
+        result = _pass(_outcome(added=4, removed=1), _outcome(added=2))
+        assert result.summary == "6 added, 1 cleared"
+        assert result.ok is True
+
+    def test_the_counts_carry_thousands_separators(self) -> None:
+        # The browser used to format these itself and now renders this string as it arrives,
+        # so the grouping has to be here or it is nowhere.
+        assert _pass(_outcome(added=1200, removed=25)).summary == "1,200 added, 25 cleared"
 
 
 class TestReconcile:

@@ -14,6 +14,7 @@ import { announce } from "../announce";
 import { api, type Schedule, type ScheduledJob } from "../api";
 import { useBackGuard } from "../backnav";
 import { count } from "../format";
+import { shelfSkipIsCurrent } from "../shelfStatus";
 import { JobStatus, useJobFlash } from "./JobStatus";
 import { ModalShell } from "./ModalShell";
 import { ScanRow } from "./ScanBar";
@@ -409,19 +410,13 @@ function LeavingSoonRow({
   // The manual-run confirmation for this row: the sync is a synchronous mutation, so its
   // result is read straight off the mutation when it settles (unlike the polled upkeep jobs).
   // Called before the early returns below, so the hook order never changes.
+  //
+  // Both halves are the server's, which words the pass once and stores that same sentence on
+  // the row below (rule 104). This used to re-derive them from `problems`, `applied` and the
+  // counts, and the flash then contradicted the row it sat on: with no libraries turned on it
+  // said the shelves had failed while the row rested green (#555).
   const syncResult = runSync.data
-    ? {
-        ok: runSync.data.problems.length === 0,
-        // A real per-library problem always wins the message, even in preview: "preview
-        // only" is a benign caveat, but it must never mask an actual failure that happened
-        // in the same pass.
-        text:
-          runSync.data.problems.length > 0
-            ? "Some shelves didn't update"
-            : !runSync.data.applied
-              ? "Preview only, nothing written"
-              : `${count(runSync.data.added_count)} added, ${count(runSync.data.cleared_count)} cleared`,
-      }
+    ? { ok: runSync.data.ok, text: runSync.data.result }
     : runSync.error
       ? { ok: false, text: "It didn't update" }
       : null;
@@ -476,9 +471,10 @@ function LeavingSoonRow({
   // a line reading "Runs after every scan". `after_scan` records the skip separately; prefer
   // it only while it is actually newer, so a pass that later completes wins on its own
   // timestamp with nothing to clear. Every clause of this is ScanRow's treatment of a
-  // scheduled scan that crashed and wrote no snapshot, at its sibling (rule 72).
-  const currentSkip =
-    skip && (!last || new Date(skip.at).getTime() > new Date(last.at).getTime()) ? skip : null;
+  // scheduled scan that crashed and wrote no snapshot, at its sibling (rule 72). The
+  // comparison itself is shared with the Plex panel's status line (`shelfStatus.ts`), which
+  // is the other surface that has to make it.
+  const currentSkip = shelfSkipIsCurrent(ls.data) ? skip : null;
 
   if (!enabled) {
     return (

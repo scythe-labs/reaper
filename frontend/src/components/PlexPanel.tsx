@@ -14,6 +14,7 @@ import { api, type PlexLinkPoll, type PlexResourceConnection, type WatchEvidence
 import { useSuccessorFocus } from "../focus";
 import { count, since } from "../format";
 import { invalidateAllPlex as invalidateAllPlexQueries } from "../plexServerQueries";
+import { shelfSkipIsCurrent } from "../shelfStatus";
 import { usePlexLibraries } from "../usePlexLibraries";
 import { useSafety } from "../useSafety";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
@@ -488,11 +489,33 @@ export function PlexPanel({
   const lsStatus = (() => {
     if (!leavingSoon.data) return null;
     const last = leavingSoon.data.last;
-    if (!last) return "Not updated yet. It runs after every scan, or from the Jobs page.";
+    // A scan that skipped the shelf writes no pass, so reading `last` alone reported a shelf
+    // that had stopped updating as a current verdict -- here, of all screens (rule 72: the
+    // Jobs row got this in #522 and this one did not). The reason itself stays on that row,
+    // whose grammar the skip clauses are written for; this line says the state and points at
+    // it.
+    const skipped = shelfSkipIsCurrent(leavingSoon.data);
+    if (!last) {
+      return skipped
+        ? "The last scan didn't update the shelves. The Jobs page says why."
+        : "Not updated yet. It runs after every scan, or from the Jobs page.";
+    }
     const movies = `${count(last.movies)} movie${last.movies === 1 ? "" : "s"}`;
     const seasons = `${count(last.seasons)} season${last.seasons === 1 ? "" : "s"}`;
-    const wrote = last.applied ? "" : ", preview only, nothing was written in Plex";
-    return `Last updated ${since(last.at)}, ${movies} and ${seasons} on the shelves, next update after the next scan${wrote}`;
+    // How the pass went is the pass's own sentence (rule 104), never one worded here. This
+    // line used to read `applied` and word the caveat itself, which called a pass with no
+    // libraries turned on a preview, on the very screen those libraries are turned on (#555).
+    // A row stored before that field existed thaws as "" and is left out, rather than opening
+    // the line with a stray period.
+    const went = skipped
+      ? "A later scan didn't update the shelves. The Jobs page says why. "
+      : last.result
+        ? `${last.result}. `
+        : "";
+    // The counts survive a skip -- nothing was written, so the shelves still hold them -- and
+    // past tense is the whole correction, exactly as the Jobs row's counts line puts it.
+    const held = skipped ? "were on the shelves at the last update" : "on the shelves";
+    return `${went}Last updated ${since(last.at)}, ${movies} and ${seasons} ${held}, next update after the next scan.`;
   })();
 
   // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
