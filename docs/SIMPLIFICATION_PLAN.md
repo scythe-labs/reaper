@@ -948,7 +948,7 @@ below. Read the *Landed* row before acting on a line number in this table.
 
 > **Corrected: W1.1-a's line range is wrong and holds live code.** `CustomProtectGate` sits at
 > `fields.py:1016-1042`, inside the cited span, and is the whole user-authored-protection path
-> (`services/scan_runner.py`'s `build_gates`, both `gates.extend` arms). `evaluate_rules` ends at `:1104`. Delete the four named
+> (`services/scan_runner.py`'s `build_gates`, its one `gates.extend` and two `gates.append`). `evaluate_rules` ends at `:1104`. Delete the four named
 > symbols, not the range. `tests/test_fields.py`'s dead blocks are `:127-217` and `:274-287`, with
 > a live `TestCustomProtectGate` at `:239` between them. `docs/STATUS.md:69`'s "Flat AND of typed
 > conditions" loses its only code expression and carries no dagger, so the reasoning survives
@@ -1251,7 +1251,7 @@ Each of these files draws its own seams already, in banner comments or in the fa
 | File | Now | Split | Evidence the seam is real |
 | --- | --- | --- | --- |
 | `api/routes.py` | 2,789 | `api/review.py` (~1,315), `api/policy.py` (~480), `api/simulate.py` (~840), `api/about.py`. `routes.py` ceases to exist | Four banner comments already name the four. `main.py:47` imports only `router`, so the change is `include_router` calls |
-| `engine/policy.py` | 2,263 | `+policy_migrations.py` (~530), `+policy_warnings.py` (~1,030) | **Landed.** The file was 2,710, as the correction says, not 2,263. 1,578 lines out, 2,710 to 1,132: `policy_migrations.py` is 568 and `policy_warnings.py` 1,083, the two headers being the 73 lines the tree gains. Both halves import the model and neither is imported back, measured rather than argued: migrations reads `PolicyBody` and `SCHEMA_VERSION` alone, warnings reads six model types and `join_and`. `join_and` stays in `policy.py`, because `scan_runner` joins repair remedies with it and that is not a warning. The pinned module count goes 77 to 79; the logger count does not move, since a split inherits its parent's loggers |
+| `engine/policy.py` | 2,263 | `+policy_migrations.py` (~530), `+policy_warnings.py` (~1,030) | **Landed.** The file was 2,710 at this base, not 2,263; the correction's 2,709 was right at `759507b` and one line arrived after it. 1,577 lines out, 2,710 to 1,133: `policy_migrations.py` is 572 and `policy_warnings.py` 1,083, so the tree gains 78 lines, the two module headers plus the comment rewraps the longer module names forced. Measured at the tip, not at the first commit: three follow-up commits moved every one of these figures. Both halves import the model and neither is imported back, measured rather than argued: migrations reads `PolicyBody` and `SCHEMA_VERSION` alone, warnings reads six model types and `join_and`. `join_and` stays in `policy.py`, because `scan_runner` joins repair remedies with it and that is not a warning. The pinned module count goes 77 to 79; the logger count does not move, since a split inherits its parent's loggers |
 | `components/Settings.tsx` | 3,086 | 6 panels to their own files; the barrel keeps `PANELS`, the dirty record and the shell (~180) | **The tests are already split per panel** (6 files). Three sibling panels were already extracted. Only the source never followed |
 | `api/settings.py` | 2,025 | `api/plex.py` (~630, 12 routes) | **Landed, and it is 14 routes as the correction says, not 12.** 698 lines out, settings 2,044 to 1,344. The **sorted** document is byte-identical either side, same 96 operations; the one thing that moves is `paths` insertion order, which nothing reads. Reported as plain "byte-identical" first, which is the reassuring direction rule 144 warns about. `plex.py` **imports** the request accessors from `settings.py` rather than copying them, so phase 8's `api/deps.py` still collapses five copies and not six |
 | `components/PlexPanel.tsx` | 1,244 | 3 sections out (~450) | **Dropped from phase 6, filed as #607, and read the correction below before this cell.** It claimed the file draws the seams as banner comments; the banners are inside the function body. The rule-146 dirty contract half is the part that holds |
@@ -1338,7 +1338,9 @@ here is preventing a future divergence.
 - `clients/seerr.py:299-393` — the paging contract written three times; its own test is titled
   "Rule 72: the same loop, twenty lines down". `plex.py`'s `_iter_pages` is the complete-or-raise
   helper rule 56/89 names; Seerr never got one.
-- `services/scan_runner.py`'s `build_sources` (both `verify=r.verify_tls` arms) + `services/instances.py:582` — per-kind client construction
+- `services/scan_runner.py`'s `build_sources` (three `verify=r.verify_tls` arms) and
+  `build_reap_gateway` (three `verify=row.verify_tls`, which is why grepping the scan spelling
+  misses it) + `services/instances.py:582` — per-kind client construction
   in three places, and `instances.py:597` already records the drift incident (`api_path_prefix`
   reached the scan but not Test Connection).
 
@@ -1949,9 +1951,10 @@ fields and a fail-open guard.
   way at `routes.py:1211`. No production frontend code reads it; every render site asks `override`
   directly. It is the one of the item's spare-shaped fields that rules 120 to 122 do not justify.
   ~12 lines.
-- **`HealthOut` (`schemas.py`)** is an orphan model describing a response the route stopped
-  giving, and it still declares `destructive_actions_enabled` and `safety_note`: a wire model
-  asserting armed state on an unauthenticated probe. 6 lines.
+- **`HealthOut`** was an orphan model describing a response the route stopped giving, still
+  declaring `destructive_actions_enabled` and `safety_note`: a wire model asserting armed state
+  on an unauthenticated probe. **Deleted in #597**, which the Landed row above records; kept
+  here because the reasoning is what W7-3 was.
 - **`DiscordNotifier(client=…)`** is an injection seam wired zero times, and `build_notifier`'s
   docstring claims it exists "so tests can drive it" while all four test sites construct the
   notifier bare. 8 lines, plus a false sentence. The lane also reported a leaked client here; that
