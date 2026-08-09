@@ -140,11 +140,13 @@ async def _record_backup_taken(request: Request, created_at: str) -> None:
 
 
 # An archive, not JSON. Same published-shape correction as ``api/poster.py`` and
-# ``api/logs.py``'s download (rule 72).
+# ``api/logs.py``'s download (rule 72). The media type is the one the response actually sets
+# below, not a generic byte stream: the route sends `nosniff` beside it, so a generated client
+# has nothing but this declaration to dispatch on.
 @router.get(
     "/download",
     response_class=StreamingResponse,
-    responses={200: {"content": {"application/octet-stream": {}}}},
+    responses={200: {"content": {"application/gzip": {}}}},
 )
 async def download_backup(request: Request) -> StreamingResponse:
     """Build the backup and stream it to the browser as one downloadable file."""

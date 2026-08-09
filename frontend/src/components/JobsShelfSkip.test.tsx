@@ -54,8 +54,9 @@ const SKIPPED = { at: "2026-08-04T20:06:00+00:00", result: "Reaper couldn't reac
 const NO_LIBRARIES = "No libraries are turned on, so no shelf was updated";
 
 /** What the route returns for that pass. Nothing was written and no library failed, so a row
- *  reasoning from anything but `result` reads this as a clean preview: reverting the fix
- *  flashes a green "Preview only, nothing written" against this exact payload. */
+ *  reasoning from the write counts rather than from `ok` and `result` reads this as a clean
+ *  preview: reverting the fix flashes a green "Preview only, nothing written" against this
+ *  exact payload. */
 const NO_LIBRARY_PASS: LeavingSoonResult = {
   ok: false,
   result: NO_LIBRARIES,
