@@ -4971,3 +4971,117 @@ def test_the_membership_walk_reads_the_forms_the_tree_spells(tmp_path: Path) -> 
     assert found["src/reaper/m.py::C.four"].chunked
     # The placeholder list is attributed to the innermost def that builds it, not to its class.
     assert found["src/reaper/m.py::C.five"].sites == 1
+
+
+#: Every argument a Sonarr or Radarr client must be handed, beyond the URL and the key.
+#: Omitting one is not a crash: the client falls back to its own default, which is
+#: ``/api/v3`` for the path and ``verify=True`` for TLS. Both are the *narrow* direction, so
+#: the failure is a scan that reads nothing or a Test Connection that validates a path the
+#: scan will never send to, never a wider deletion.
+_ARR_CONSTRUCTION_ARGS = frozenset({"safety", "verify", "api_path_prefix"})
+
+#: Reconciled by hand against the tree, so a site that leaves the walk is noticed rather
+#: than silently dropping out of the assertion below (rule 145). **Six, which is three
+#: functions building two classes each**: ``scan_runner.build_sources``,
+#: ``scan_runner.build_reap_gateway`` and ``instances._client``. The plan's finding says
+#: "three places" and means the functions; this number counts calls, and the first draft of
+#: this constant wrote the finding's figure down without re-deriving it.
+_EXPECTED_ARR_CONSTRUCTIONS = 6
+
+
+def _arr_construction_sites(root: Path) -> dict[str, set[str]]:
+    """Every ``RadarrClient(...)`` / ``SonarrClient(...)`` call under ``src/``, by address.
+
+    Reads the call node and inspects its keywords, rather than anchoring on the text after
+    the paren: three of the four sites wrap across five lines and one is a single line, so a
+    line-oriented matcher reads one spelling and misses the rest (rule 147). A ``**kwargs``
+    splat would defeat this, and none exists; if one arrives it is recorded as passing
+    nothing, and the assertion below names it.
+    """
+    found: dict[str, set[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id not in ("RadarrClient", "SonarrClient"):
+                continue
+            rel = path.relative_to(REPO).as_posix()
+            found[f"{rel}:{node.lineno} {node.func.id}"] = {
+                kw.arg for kw in node.keywords if kw.arg is not None
+            }
+    return found
+
+
+def test_every_arr_client_is_built_with_the_same_arguments() -> None:
+    """The scan, the reap gateway and Test Connection each build these three ways.
+
+    ``api_path_prefix`` once reached the first two and not the third, so a green connection
+    test vouched for a path the scan does not use. The fix was adding the argument, and
+    ``instances._client`` still carries the note. Nothing binds a fourth site written by
+    someone who never read that note, which is what this is (rule 72, and CLAUDE.md's "write
+    the gate instead" -- a shared constructor would only bind the sites that call it).
+    """
+    sites = _arr_construction_sites(SRC)
+    assert len(sites) == _EXPECTED_ARR_CONSTRUCTIONS, (
+        f"expected {_EXPECTED_ARR_CONSTRUCTIONS} *arr client constructions under src/, walked "
+        f"{len(sites)}: {sorted(sites)}. A new one is fine and must pass "
+        f"{sorted(_ARR_CONSTRUCTION_ARGS)}; bump the number here AND in "
+        "docs/SIMPLIFICATION_PLAN.md's wave 3 row, which states the population in prose."
+    )
+    missing = {
+        site: sorted(_ARR_CONSTRUCTION_ARGS - args)
+        for site, args in sites.items()
+        if not args.issuperset(_ARR_CONSTRUCTION_ARGS)
+    }
+    assert not missing, (
+        f"these *arr clients are built without every argument the others pass: {missing}. "
+        "An omitted one falls back to the client's default rather than the operator's stored "
+        "value, so the scan and the connection test stop agreeing about what they reached."
+    )
+
+
+def test_the_arr_construction_walk_reads_every_spelling_the_tree_uses(tmp_path: Path) -> None:
+    """A guard that scans source is bounded by the syntax it parses (rule 147).
+
+    The tree spells these two ways -- one call per line, and one wrapped across five -- and a
+    matcher anchored on the text after the paren reads the first and misses the second. This
+    drives both, plus the two forms that must NOT be collected: a same-named method call
+    (``self.RadarrClient(...)`` is an Attribute, not a Name) and an unrelated client. The
+    ``**kwargs`` splat is the one shape that defeats the argument check rather than the walk,
+    so it is collected as passing nothing and the membership assertion is what names it.
+    """
+    scratch = tmp_path / "src" / "reaper"
+    scratch.mkdir(parents=True)
+    (scratch / "m.py").write_text(
+        "def flat():\n"
+        "    return RadarrClient(u, k, safety=s, verify=v, api_path_prefix=p)\n"
+        "def wrapped():\n"
+        "    return SonarrClient(\n"
+        "        u,\n"
+        "        k,\n"
+        "        safety=s,\n"
+        "        api_path_prefix=p,\n"
+        "        verify=v,\n"
+        "    )\n"
+        "def splatted():\n"
+        "    return RadarrClient(u, k, **kwargs)\n"
+        "def not_a_construction(self):\n"
+        "    return self.RadarrClient(u, k), TautulliClient(u, k, safety=s, verify=v)\n",
+        encoding="utf-8",
+    )
+    global REPO
+    real, REPO = REPO, tmp_path
+    try:
+        found = _arr_construction_sites(scratch)
+    finally:
+        REPO = real
+
+    assert set(found) == {
+        "src/reaper/m.py:2 RadarrClient",
+        "src/reaper/m.py:4 SonarrClient",
+        "src/reaper/m.py:12 RadarrClient",
+    }, found
+    assert found["src/reaper/m.py:2 RadarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
+    assert found["src/reaper/m.py:4 SonarrClient"].issuperset(_ARR_CONSTRUCTION_ARGS)
+    assert found["src/reaper/m.py:12 RadarrClient"] == set()
